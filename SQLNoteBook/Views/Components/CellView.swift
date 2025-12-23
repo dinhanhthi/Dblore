@@ -211,7 +211,6 @@ struct SQLEditorView: View {
 
             // Text editor with syntax highlighting
             HighlightedTextEditor(text: $content)
-                .frame(minHeight: ComponentSize.minCellHeight)
         }
         .padding(Spacing.sm)
         .background(Color.inputBackground)
@@ -221,8 +220,19 @@ struct SQLEditorView: View {
 
 // MARK: - Highlighted Text Editor
 
-struct HighlightedTextEditor: NSViewRepresentable {
+struct HighlightedTextEditor: View {
     @Binding var text: String
+    @State private var height: CGFloat = 40
+
+    var body: some View {
+        HighlightedTextEditorRepresentable(text: $text, height: $height)
+            .frame(height: height)
+    }
+}
+
+struct HighlightedTextEditorRepresentable: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var height: CGFloat
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -242,14 +252,25 @@ struct HighlightedTextEditor: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 4, height: 4)
         textView.textContainer?.lineFragmentPadding = 0
 
+        // Configure text container to expand vertically
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+
         scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
 
         // Set initial text with highlighting
         context.coordinator.applyHighlighting(to: textView, text: text)
+
+        // Update height after setting text
+        DispatchQueue.main.async {
+            context.coordinator.updateHeight(textView: textView)
+        }
 
         return scrollView
     }
@@ -261,18 +282,24 @@ struct HighlightedTextEditor: NSViewRepresentable {
             let selectedRanges = textView.selectedRanges
             context.coordinator.applyHighlighting(to: textView, text: text)
             textView.selectedRanges = selectedRanges
+
+            DispatchQueue.main.async {
+                context.coordinator.updateHeight(textView: textView)
+            }
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, height: $height)
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        var height: Binding<CGFloat>
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, height: Binding<CGFloat>) {
             self.text = text
+            self.height = height
         }
 
         func textDidChange(_ notification: Notification) {
@@ -283,6 +310,9 @@ struct HighlightedTextEditor: NSViewRepresentable {
 
             // Apply highlighting
             applyHighlighting(to: textView, text: textView.string)
+
+            // Update height to fit content
+            updateHeight(textView: textView)
         }
 
         func applyHighlighting(to textView: NSTextView, text: String) {
@@ -291,6 +321,33 @@ struct HighlightedTextEditor: NSViewRepresentable {
             textView.textStorage?.beginEditing()
             textView.textStorage?.setAttributedString(attributed)
             textView.textStorage?.endEditing()
+        }
+
+        func updateHeight(textView: NSTextView) {
+            guard let textContainer = textView.textContainer,
+                  let layoutManager = textView.layoutManager else { return }
+
+            // Force layout
+            layoutManager.ensureLayout(for: textContainer)
+
+            // Calculate the required height
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let insets = textView.textContainerInset
+            let requiredHeight = usedRect.height + insets.height * 2
+
+            // Set minimum height
+            let minHeight: CGFloat = 40
+            let newHeight = max(requiredHeight, minHeight)
+
+            // Update SwiftUI binding to trigger view update
+            if abs(height.wrappedValue - newHeight) > 1 {
+                height.wrappedValue = newHeight
+            }
+
+            // Update frame
+            var frame = textView.frame
+            frame.size.height = newHeight
+            textView.frame = frame
         }
     }
 }
