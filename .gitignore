@@ -65,10 +65,3 @@ fastlane/test_output
 build_output.txt
 
 .DS_Store
-
-# AI things
-.claude
-.cursor
-CLAUDE.md
-GEMINI.md
-docs/
