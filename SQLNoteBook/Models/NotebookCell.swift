@@ -45,6 +45,8 @@ struct CellResult: Codable, Sendable {
     let rowCount: Int
     let timestamp: Date
     var error: String?
+    /// True if the result was limited due to reaching max fetch rows
+    let wasLimited: Bool
 
     nonisolated init(
         columns: [ColumnInfo] = [],
@@ -52,7 +54,8 @@ struct CellResult: Codable, Sendable {
         executionTime: TimeInterval = 0,
         rowCount: Int = 0,
         timestamp: Date = Date(),
-        error: String? = nil
+        error: String? = nil,
+        wasLimited: Bool = false
     ) {
         self.columns = columns
         self.rows = rows
@@ -60,6 +63,7 @@ struct CellResult: Codable, Sendable {
         self.rowCount = rowCount
         self.timestamp = timestamp
         self.error = error
+        self.wasLimited = wasLimited
     }
 
     /// Creates an error result
