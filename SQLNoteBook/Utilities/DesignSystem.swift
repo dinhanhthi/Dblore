@@ -190,6 +190,7 @@ struct ToolbarButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: CornerRadius.md)
                     .fill(configuration.isPressed || isActive ? Color.cellBackgroundHover : Color.clear)
             )
+            .contentShape(Rectangle())
     }
 }
 

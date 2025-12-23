@@ -85,6 +85,7 @@ struct ConnectionButton: View {
                         Text(connectionText)
                             .foregroundColor(.success)
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 
@@ -119,6 +120,7 @@ struct ConnectionButton: View {
                     connectionIcon
                     Text(connectionText)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(ToolbarButtonStyle())
             .disabled(connectionState.isConnecting)
