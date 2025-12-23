@@ -63,10 +63,11 @@ struct CellView: View {
                         Image(systemName: "play.fill")
                             .font(.system(size: 12))
                             .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
-                            .frame(width: 1)
+                            .frame(width: 20, height: 20)
                     }
                 }
                 .buttonStyle(GhostButtonStyle())
+                .contentShape(Rectangle())
                 .disabled(cell.isRunning)
             }
     
@@ -89,8 +90,12 @@ struct CellView: View {
     private var editorArea: some View {
         switch cell.cellType {
         case .sql:
-            SQLEditorView(content: $cell.content, isSelected: isSelected)
-                .focused($isEditorFocused)
+            SQLEditorView(
+                content: $cell.content,
+                isSelected: isSelected,
+                onFocus: { viewModel.selectedCellId = cell.id }
+            )
+            .focused($isEditorFocused)
         case .markdown:
             MarkdownCellView(content: $cell.content, isSelected: isSelected)
         }
@@ -197,6 +202,7 @@ struct CellView: View {
 struct SQLEditorView: View {
     @Binding var content: String
     let isSelected: Bool
+    var onFocus: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -210,7 +216,7 @@ struct SQLEditorView: View {
             }
 
             // Text editor with syntax highlighting
-            HighlightedTextEditor(text: $content)
+            HighlightedTextEditor(text: $content, onFocus: onFocus)
         }
         .padding(Spacing.sm)
         .background(Color.inputBackground)
@@ -218,14 +224,81 @@ struct SQLEditorView: View {
     }
 }
 
+// MARK: - SQL Text View (handles keyboard shortcuts)
+
+class SQLTextView: NSTextView {
+    var onFocus: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            onFocus?()
+        }
+        return result
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if handleCellShortcut(with: event) {
+            return // Handled, don't pass to super
+        }
+        super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleCellShortcut(with: event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Returns true if the event was handled as a cell shortcut
+    private func handleCellShortcut(with event: NSEvent) -> Bool {
+        let isEnter = event.keyCode == 36
+        guard isEnter else { return false }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let hasControl = flags.contains(.control)
+        let hasShift = flags.contains(.shift)
+        let hasOption = flags.contains(.option)
+        let hasCommand = flags.contains(.command)
+
+        // Cmd+Shift+Enter -> Run All Cells
+        if hasCommand && hasShift && !hasControl && !hasOption {
+            NotificationCenter.default.post(name: .runAllCells, object: nil)
+            return true
+        }
+
+        // Ctrl+Enter -> Run current cell (stay on current cell)
+        if hasControl && !hasShift && !hasOption && !hasCommand {
+            NotificationCenter.default.post(name: .runCell, object: nil)
+            return true
+        }
+
+        // Shift+Enter -> Run cell and move to next (create new if last)
+        if hasShift && !hasControl && !hasOption && !hasCommand {
+            NotificationCenter.default.post(name: .runCellAndSelectNext, object: nil)
+            return true
+        }
+
+        // Alt/Option+Enter -> Run cell and insert new cell below
+        if hasOption && !hasControl && !hasShift && !hasCommand {
+            NotificationCenter.default.post(name: .runCellAndInsertBelow, object: nil)
+            return true
+        }
+
+        return false
+    }
+}
+
 // MARK: - Highlighted Text Editor
 
 struct HighlightedTextEditor: View {
     @Binding var text: String
+    var onFocus: (() -> Void)?
     @State private var height: CGFloat = 40
 
     var body: some View {
-        HighlightedTextEditorRepresentable(text: $text, height: $height)
+        HighlightedTextEditorRepresentable(text: $text, height: $height, onFocus: onFocus)
             .frame(height: height)
     }
 }
@@ -233,12 +306,14 @@ struct HighlightedTextEditor: View {
 struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
+    var onFocus: (() -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
-        let textView = NSTextView()
+        let textView = SQLTextView()
 
         textView.delegate = context.coordinator
+        textView.onFocus = onFocus
         textView.isRichText = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.textColor = NSColor(Color.foreground)
@@ -276,7 +351,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? SQLTextView else { return }
+
+        // Update onFocus callback
+        textView.onFocus = onFocus
 
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
