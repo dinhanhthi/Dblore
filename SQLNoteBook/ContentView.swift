@@ -271,7 +271,16 @@ private struct NotificationHandlerModifier: ViewModifier {
                 if let id = viewModel.selectedCellId {
                     Task {
                         await viewModel.runCell(id: id)
-                        viewModel.selectNextCell()
+                        viewModel.selectNextCell(createIfNeeded: true)
+                        syncDocument()
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
+                if let id = viewModel.selectedCellId {
+                    Task {
+                        await viewModel.runCell(id: id)
+                        viewModel.insertCellBelow(type: .sql)
                         syncDocument()
                     }
                 }

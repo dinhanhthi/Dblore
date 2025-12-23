@@ -109,13 +109,26 @@ class NotebookViewModel {
         notebook.cells.swapAt(index, index + 1)
     }
 
-    /// Select next cell
-    func selectNextCell() {
+    /// Select next cell, create new one if at the end
+    func selectNextCell(createIfNeeded: Bool = true) {
         guard let currentId = selectedCellId,
-              let index = notebook.cells.firstIndex(where: { $0.id == currentId }),
-              index < notebook.cells.count - 1 else { return }
+              let index = notebook.cells.firstIndex(where: { $0.id == currentId }) else { return }
 
-        selectedCellId = notebook.cells[index + 1].id
+        if index < notebook.cells.count - 1 {
+            selectedCellId = notebook.cells[index + 1].id
+        } else if createIfNeeded {
+            // At the last cell, create a new one
+            addCell(type: .sql, after: currentId)
+        }
+    }
+
+    /// Insert a new cell below and select it
+    func insertCellBelow(type: CellType = .sql) {
+        guard let currentId = selectedCellId else {
+            addCell(type: type)
+            return
+        }
+        addCell(type: type, after: currentId)
     }
 
     /// Select previous cell

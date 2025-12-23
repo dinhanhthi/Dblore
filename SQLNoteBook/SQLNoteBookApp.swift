@@ -59,12 +59,17 @@ struct NotebookCommands: Commands {
             Button("Run Cell") {
                 NotificationCenter.default.post(name: .runCell, object: nil)
             }
-            .keyboardShortcut(.return, modifiers: .command)
+            .keyboardShortcut(.return, modifiers: .control)
 
             Button("Run Cell and Select Next") {
                 NotificationCenter.default.post(name: .runCellAndSelectNext, object: nil)
             }
             .keyboardShortcut(.return, modifiers: .shift)
+
+            Button("Run Cell and Insert Below") {
+                NotificationCenter.default.post(name: .runCellAndInsertBelow, object: nil)
+            }
+            .keyboardShortcut(.return, modifiers: .option)
 
             Button("Run All Cells") {
                 NotificationCenter.default.post(name: .runAllCells, object: nil)
@@ -111,6 +116,7 @@ extension Notification.Name {
     static let addMarkdownCell = Notification.Name("addMarkdownCell")
     static let runCell = Notification.Name("runCell")
     static let runCellAndSelectNext = Notification.Name("runCellAndSelectNext")
+    static let runCellAndInsertBelow = Notification.Name("runCellAndInsertBelow")
     static let runAllCells = Notification.Name("runAllCells")
     static let clearCellOutput = Notification.Name("clearCellOutput")
     static let clearAllOutputs = Notification.Name("clearAllOutputs")
