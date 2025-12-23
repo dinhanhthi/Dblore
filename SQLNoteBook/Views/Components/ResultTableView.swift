@@ -22,9 +22,9 @@ struct ResultTableView: View {
                 // Header row (fixed at top)
                 headerRow
                 
-                // Data rows (scrollable vertically)
+                // Data rows (scrollable vertically with lazy loading)
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
                             dataRow(row: row, rowIndex: rowIndex)
                         }
@@ -32,6 +32,11 @@ struct ResultTableView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 800)
+
+                // Row limit warning (when DB fetch was limited)
+                if result.wasLimited {
+                    rowLimitWarning
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -43,6 +48,20 @@ struct ResultTableView: View {
         .onAppear {
             calculateInitialColumnWidths()
         }
+    }
+
+    private var rowLimitWarning: some View {
+        HStack(spacing: Spacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.warning)
+            Text("Result limited to \(result.rows.count.formatted()) rows. Use LIMIT in your query for specific ranges.")
+                .font(.caption)
+                .foregroundColor(.foregroundMuted)
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.warning.opacity(0.1))
     }
 
     // MARK: - Header Row
@@ -110,54 +129,8 @@ struct ResultTableView: View {
         .frame(width: columnWidth(for: column.name))
     }
 
-    @ViewBuilder
-    private func cellContent(value: CellValue) -> some View {
-        switch value {
-        case .null:
-            Text("NULL")
-                .font(.mono)
-                .foregroundColor(.foregroundSubtle)
-                .italic()
-
-        case .json:
-            HStack(spacing: Spacing.xs) {
-                Text(value.displayString)
-                    .font(.mono)
-                    .foregroundColor(.syntaxFunction)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundColor(.foregroundSubtle)
-            }
-
-        case .bool(let boolValue):
-            Text(boolValue ? "true" : "false")
-                .font(.mono)
-                .foregroundColor(boolValue ? .success : .foregroundMuted)
-
-        case .int, .double:
-            Text(value.displayString)
-                .font(.mono)
-                .foregroundColor(.syntaxNumber)
-
-        case .date:
-            Text(value.displayString)
-                .font(.mono)
-                .foregroundColor(.foreground)
-
-        case .string(let str):
-            Text(str)
-                .font(.mono)
-                .foregroundColor(.foreground)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-        case .data:
-            Text(value.displayString)
-                .font(.mono)
-                .foregroundColor(.foregroundMuted)
-                .italic()
-        }
+    private func cellContent(value: CellValue) -> CellContentView {
+        CellContentView(value: value)
     }
 
     // MARK: - Helpers
@@ -207,14 +180,6 @@ struct ResultTableView: View {
         let size = (text as NSString).size(withAttributes: attributes)
         return size.width
     }
-    
-    private func minColumnWidth(for columnName: String) -> CGFloat {
-        // Use the calculated content width as minimum
-        if let column = result.columns.first(where: { $0.name == columnName }) {
-            return calculateContentWidth(for: column)
-        }
-        return absoluteMinWidth
-    }
 
     private func columnWidth(for columnName: String) -> CGFloat {
         columnWidths[columnName] ?? absoluteMinWidth
@@ -250,6 +215,62 @@ struct ResultTableView: View {
                 columnType: column.type,
                 value: value
             )
+        }
+    }
+}
+
+// MARK: - Cell Content View
+// Extracted to reduce type complexity in ResultTableView
+
+private struct CellContentView: View {
+    let value: CellValue
+
+    var body: some View {
+        switch value {
+        case .null:
+            Text("NULL")
+                .font(.mono)
+                .foregroundColor(.foregroundSubtle)
+                .italic()
+
+        case .json:
+            HStack(spacing: Spacing.xs) {
+                Text(value.displayString)
+                    .font(.mono)
+                    .foregroundColor(.syntaxFunction)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundColor(.foregroundSubtle)
+            }
+
+        case .bool(let boolValue):
+            Text(boolValue ? "true" : "false")
+                .font(.mono)
+                .foregroundColor(boolValue ? .success : .foregroundMuted)
+
+        case .int, .double:
+            Text(value.displayString)
+                .font(.mono)
+                .foregroundColor(.syntaxNumber)
+
+        case .date:
+            Text(value.displayString)
+                .font(.mono)
+                .foregroundColor(.foreground)
+
+        case .string(let str):
+            Text(str)
+                .font(.mono)
+                .foregroundColor(.foreground)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+        case .data:
+            Text(value.displayString)
+                .font(.mono)
+                .foregroundColor(.foregroundMuted)
+                .italic()
         }
     }
 }

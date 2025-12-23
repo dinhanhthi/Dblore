@@ -154,7 +154,8 @@ class NotebookViewModel {
                 rows: queryResult.rows,
                 executionTime: queryResult.executionTime,
                 rowCount: queryResult.rowCount,
-                timestamp: Date()
+                timestamp: Date(),
+                wasLimited: queryResult.wasLimited
             )
 
             notebook.cells[index].result = result

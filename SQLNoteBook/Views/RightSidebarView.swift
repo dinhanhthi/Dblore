@@ -67,6 +67,7 @@ struct RightSidebarView: View {
 
     @ViewBuilder
     private func contentView(for content: SidebarContent) -> some View {
+        // Using explicit switch to help type inference
         switch content {
         case .jsonViewer(let json, let path):
             JSONViewerContent(json: json, path: path)

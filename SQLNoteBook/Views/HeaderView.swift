@@ -127,9 +127,32 @@ struct ConnectionButton: View {
         }
     }
 
-    @ViewBuilder
     private var connectionIcon: some View {
+        ConnectionIconView(state: connectionState)
+    }
+
+    private var connectionText: String {
         switch connectionState {
+        case .disconnected:
+            return "Connect"
+        case .connecting:
+            return "Connecting..."
+        case .connected:
+            return "Connected"
+        case .error(let message):
+            return "Error: \(message)"
+        }
+    }
+}
+
+// MARK: - Connection Icon View
+// Extracted to reduce type complexity in ConnectionButton
+
+private struct ConnectionIconView: View {
+    let state: ConnectionState
+
+    var body: some View {
+        switch state {
         case .disconnected:
             Image(systemName: "bolt.slash")
                 .foregroundColor(.foregroundMuted)
@@ -143,19 +166,6 @@ struct ConnectionButton: View {
         case .error:
             Image(systemName: "exclamationmark.triangle")
                 .foregroundColor(.destructive)
-        }
-    }
-
-    private var connectionText: String {
-        switch connectionState {
-        case .disconnected:
-            return "Connect"
-        case .connecting:
-            return "Connecting..."
-        case .connected:
-            return "Connected"
-        case .error(let message):
-            return "Error: \(message)"
         }
     }
 }

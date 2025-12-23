@@ -45,62 +45,7 @@ struct ContentView: View {
         .sheet(isPresented: $showConnectionSheet) {
             ConnectionSheet(viewModel: viewModel, isPresented: $showConnectionSheet)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
-            viewModel.addCell(type: .sql)
-            syncDocument()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .addMarkdownCell)) { _ in
-            viewModel.addCell(type: .markdown)
-            syncDocument()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
-            if let id = viewModel.selectedCellId {
-                Task {
-                    await viewModel.runCell(id: id)
-                    syncDocument()
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
-            if let id = viewModel.selectedCellId {
-                Task {
-                    await viewModel.runCell(id: id)
-                    viewModel.selectNextCell()
-                    syncDocument()
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
-            Task {
-                await viewModel.runAllCells()
-                syncDocument()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
-            if let id = viewModel.selectedCellId {
-                viewModel.clearCellOutput(id: id)
-                syncDocument()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
-            viewModel.clearAllOutputs()
-            syncDocument()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
-            if let id = viewModel.selectedCellId {
-                viewModel.deleteCell(id: id)
-                syncDocument()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
-            if let id = viewModel.selectedCellId {
-                viewModel.duplicateCell(id: id)
-                syncDocument()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-            viewModel.toggleSidebar()
-        }
+        .modifier(NotificationHandlerModifier(viewModel: viewModel, syncDocument: syncDocument))
         .onChange(of: viewModel.notebook.metadata.title) { _, _ in
             syncDocument()
         }
@@ -294,5 +239,73 @@ private struct ContentViewForPreview: View {
                 .padding(Spacing.lg)
             }
         }
+    }
+}
+
+// MARK: - Notification Handler Modifier
+// Extracted to reduce type complexity in ContentView body
+
+private struct NotificationHandlerModifier: ViewModifier {
+    let viewModel: NotebookViewModel
+    let syncDocument: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
+                viewModel.addCell(type: .sql)
+                syncDocument()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .addMarkdownCell)) { _ in
+                viewModel.addCell(type: .markdown)
+                syncDocument()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
+                if let id = viewModel.selectedCellId {
+                    Task {
+                        await viewModel.runCell(id: id)
+                        syncDocument()
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
+                if let id = viewModel.selectedCellId {
+                    Task {
+                        await viewModel.runCell(id: id)
+                        viewModel.selectNextCell()
+                        syncDocument()
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
+                Task {
+                    await viewModel.runAllCells()
+                    syncDocument()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
+                if let id = viewModel.selectedCellId {
+                    viewModel.clearCellOutput(id: id)
+                    syncDocument()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
+                viewModel.clearAllOutputs()
+                syncDocument()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
+                if let id = viewModel.selectedCellId {
+                    viewModel.deleteCell(id: id)
+                    syncDocument()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
+                if let id = viewModel.selectedCellId {
+                    viewModel.duplicateCell(id: id)
+                    syncDocument()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+                viewModel.toggleSidebar()
+            }
     }
 }

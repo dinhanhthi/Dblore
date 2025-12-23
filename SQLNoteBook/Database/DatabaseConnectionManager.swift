@@ -15,6 +15,9 @@ actor DatabaseConnectionManager {
     private var connection: PostgresConnection?
     private var eventLoopGroup: EventLoopGroup?
     private var config: ConnectionConfig?
+
+    /// Maximum number of rows to fetch from database to prevent memory issues
+    static let maxFetchRows = 500
     
     // MARK: - Connection Management
     
@@ -191,9 +194,17 @@ actor DatabaseConnectionManager {
             var resultRows: [[CellValue]] = []
             var isFirstRow = true
             
+            var wasLimited = false
+
             for try await row in stream {
+                // Stop fetching if we've reached the limit
+                if resultRows.count >= Self.maxFetchRows {
+                    wasLimited = true
+                    break
+                }
+
                 let randomAccess = row.makeRandomAccess()
-                
+
                 // On first row, extract column metadata from PostgresCells
                 if isFirstRow {
                     // PostgresRandomAccessRow is a Sequence of PostgresCell
@@ -205,7 +216,7 @@ actor DatabaseConnectionManager {
                     }
                     isFirstRow = false
                 }
-                
+
                 // Parse values for each cell
                 var rowValues: [CellValue] = []
                 for cell in randomAccess {
@@ -214,14 +225,15 @@ actor DatabaseConnectionManager {
                 }
                 resultRows.append(rowValues)
             }
-            
+
             let executionTime = Date().timeIntervalSince(startTime)
-            
+
             return QueryResult(
                 columns: columns,
                 rows: resultRows,
                 rowCount: resultRows.count,
-                executionTime: executionTime
+                executionTime: executionTime,
+                wasLimited: wasLimited
             )
             
         } catch let error as PSQLError {
@@ -387,11 +399,21 @@ actor DatabaseConnectionManager {
 // MARK: - Supporting Types
 
 /// Result of a query execution
-struct QueryResult {
+struct QueryResult: Sendable {
     let columns: [ColumnInfo]
     let rows: [[CellValue]]
     let rowCount: Int
     let executionTime: TimeInterval
+    /// True if the result was limited due to reaching maxFetchRows
+    let wasLimited: Bool
+
+    nonisolated init(columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval, wasLimited: Bool = false) {
+        self.columns = columns
+        self.rows = rows
+        self.rowCount = rowCount
+        self.executionTime = executionTime
+        self.wasLimited = wasLimited
+    }
 }
 
 /// Database-specific errors

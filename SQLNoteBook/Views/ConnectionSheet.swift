@@ -127,7 +127,7 @@ struct ConnectionSheet: View {
             }
             .padding(Spacing.lg)
         }
-        .frame(width: 450, height: 550)
+        .frame(width: 450, height: 570)
         .background(Color.cardBackground)
     }
 
