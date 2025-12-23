@@ -17,15 +17,21 @@ struct ResultTableView: View {
     private let absoluteMinWidth: CGFloat = 60 // Fallback minimum
 
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+        ScrollView(.horizontal, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 0) {
-                // Header row
+                // Header row (fixed at top)
                 headerRow
-
-                // Data rows
-                ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
-                    dataRow(row: row, rowIndex: rowIndex)
+                
+                // Data rows (scrollable vertically)
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
+                            dataRow(row: row, rowIndex: rowIndex)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxHeight: 800)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -62,27 +68,8 @@ struct ResultTableView: View {
                     .foregroundColor(.foregroundSubtle)
             }
             .padding(.horizontal, Spacing.lg)
-            .padding(.vertical, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
             .frame(width: columnWidth(for: column.name) - 1, alignment: .leading)
-
-            // Column resize handle
-            Rectangle()
-                .fill(Color.border)
-                .frame(width: 1)
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            let newWidth = columnWidth(for: column.name) + value.translation.width
-                            columnWidths[column.name] = max(minColumnWidth(for: column.name), min(maxColumnWidth, newWidth))
-                        }
-                )
-                .onHover { hovering in
-                    if hovering {
-                        NSCursor.resizeLeftRight.push()
-                    } else {
-                        NSCursor.pop()
-                    }
-                }
         }
         .frame(width: columnWidth(for: column.name))
     }
