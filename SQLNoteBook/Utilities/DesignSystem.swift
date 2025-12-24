@@ -194,6 +194,58 @@ struct ToolbarButtonStyle: ButtonStyle {
     }
 }
 
+struct FloatingActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(Spacing.xs)
+            .background(
+                Circle()
+                    .fill(configuration.isPressed ? Color.accent.opacity(0.2) : Color.clear)
+            )
+            .contentShape(Circle())
+    }
+}
+
+struct FloatingPanelButtonStyle: ButtonStyle {
+    @State private var isHovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(.foregroundMuted)
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(
+                ZStack {
+                    // Opaque base layer to hide content behind
+                    Capsule()
+                        .fill(Color.cellBackgroundHover)
+
+                    // Hover/press overlay with accent color
+                    if isHovering || configuration.isPressed {
+                        Capsule()
+                            .fill(Color.accent.opacity(0.15))
+                    }
+                }
+                .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isHovering ? Color.accent.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(.easeInOut(duration: 0.15), value: isHovering)
+            .onHover { hovering in
+                isHovering = hovering
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+    }
+}
+
 // MARK: - Custom Shapes
 
 struct RoundedLeftBorder: Shape {

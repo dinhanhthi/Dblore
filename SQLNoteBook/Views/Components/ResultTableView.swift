@@ -44,7 +44,6 @@ struct ResultTableView: View {
         .background(Color.cellBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         .padding(.horizontal, Spacing.md)
-        .padding(.top, Spacing.md)
         .onAppear {
             calculateInitialColumnWidths()
         }
