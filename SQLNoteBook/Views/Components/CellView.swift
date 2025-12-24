@@ -11,34 +11,49 @@ struct CellView: View {
     let isSelected: Bool
     let onRun: () -> Void
 
-    @State private var isHovered = false
+    @State private var isHovered = false // For run button visibility
+    @State private var isBottomEdgeHovered = false // For floating action panel
     @FocusState private var isEditorFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Main cell content
-            HStack(alignment: .top, spacing: 0) {
-                // Left sidebar with controls
-                cellSidebar
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                // Main cell content
+                HStack(alignment: .top, spacing: 0) {
+                    // Left sidebar with controls
+                    cellSidebar
 
-                // Editor area
-                VStack(alignment: .leading, spacing: 0) {
-                    editorArea
+                    // Editor area
+                    VStack(alignment: .leading, spacing: 0) {
+                        editorArea
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            .padding(.top, Spacing.md)
-            .padding(.bottom, Spacing.md)
-            .padding(.leading, 0)
-            .padding(.trailing, Spacing.md)
+                .padding(.top, Spacing.md)
+                .padding(.bottom, cell.result == nil ? Spacing.md : Spacing.sm)
+                .padding(.leading, 0)
+                .padding(.trailing, Spacing.md)
 
-            // Result area (if exists)
-            if let result = cell.result {
-                resultArea(result)
+                // Result area (if exists)
+                 if let result = cell.result {
+                     resultArea(result)
+                 }
             }
-        }
-        .cellStyle(isSelected: isSelected)
-        .onHover { hovering in
-            isHovered = hovering
+            .cellStyle(isSelected: isSelected)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+
+            // Bottom edge hover zone (invisible, just for hover detection)
+            // Extends below the cell to cover the floating panel area
+            bottomEdgeHoverZone
+                .offset(y: 15) // Extend zone downward to match panel position
+
+            // Floating action panel (shown on hover near bottom edge)
+            if isBottomEdgeHovered {
+                floatingActionPanel
+                    .offset(y: 12)
+            }
         }
         .onTapGesture {
             viewModel.selectedCellId = cell.id
@@ -64,6 +79,19 @@ struct CellView: View {
             // Unfocus from editor but keep cell selected
             isEditorFocused = false
         }
+    }
+
+    // MARK: - Bottom Edge Hover Zone
+
+    /// Invisible hover zone at the bottom edge of the cell (Jupyter-style)
+    /// This zone is offset downward to align with the floating panel position
+    private var bottomEdgeHoverZone: some View {
+        Color.clear
+            .frame(height: 50) // Height of the hover-sensitive area
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isBottomEdgeHovered = hovering
+            }
     }
 
     // MARK: - Cell Sidebar
@@ -95,11 +123,45 @@ struct CellView: View {
                     .font(.monoSmall)
                     .foregroundColor(.foregroundSubtle)
             }
-
-            Spacer()
         }
         .frame(width: ComponentSize.cellSidebarWidth)
         .padding(.top, Spacing.xs)
+    }
+
+    // MARK: - Floating Action Panel
+
+    private var floatingActionPanel: some View {
+        HStack(spacing: Spacing.sm) {
+            Button(action: {
+                viewModel.addCell(type: .sql, after: cell.id)
+            }) {
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: "plus.square")
+                        .font(.system(size: 12))
+                    Text("Code")
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .buttonStyle(FloatingPanelButtonStyle())
+            .help("Add Code Cell Below")
+
+            Button(action: {
+                viewModel.addCell(type: .markdown, after: cell.id)
+            }) {
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: "text.justify.left")
+                        .font(.system(size: 12))
+                    Text("Markdown")
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .buttonStyle(FloatingPanelButtonStyle())
+            .help("Add Markdown Cell Below")
+        }
+        .onHover { hovering in
+            // Keep panel visible when hovering over the buttons themselves
+            isBottomEdgeHovered = hovering
+        }
     }
 
     // MARK: - Editor Area
@@ -130,7 +192,8 @@ struct CellView: View {
             } else {
                 // Result table
                 ResultTableView(result: result, viewModel: viewModel)
-                    .frame(maxHeight: ComponentSize.maxResultHeight)
+//                    .frame(maxHeight: ComponentSize.maxResultHeight)
+                    .padding(.top, Spacing.sm)
 
                 // Result metadata
                 resultMetadata(result)
@@ -549,24 +612,10 @@ struct MarkdownCellView: View {
 }
 
 #Preview("Empty Cells") {
-    VStack {
-        CellView(
-            viewModel: NotebookViewModel(),
-            cell: .constant(NotebookCell(cellType: .sql, content: "SELECT * FROM users;")),
-            isSelected: true,
-            onRun: {}
-        )
-        
+    VStack {       
         CellView(
             viewModel: NotebookViewModel(),
             cell: .constant(NotebookCell(cellType: .sql, content: "")),
-            isSelected: false,
-            onRun: {}
-        )
-
-        CellView(
-            viewModel: NotebookViewModel(),
-            cell: .constant(NotebookCell(cellType: .markdown, content: "# Hello World")),
             isSelected: false,
             onRun: {}
         )

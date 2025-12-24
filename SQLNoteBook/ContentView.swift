@@ -146,7 +146,7 @@ struct ContentView: View {
     private var mainContent: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: Spacing.md) {
+                LazyVStack(spacing: Spacing.lg) {
                     ForEach($viewModel.notebook.cells) { $cell in
                         CellView(
                             viewModel: viewModel,
@@ -164,9 +164,6 @@ struct ContentView: View {
                             syncDocument()
                         }
                     }
-
-                    // Add cell button at the bottom
-                    addCellButton
                 }
                 .padding(Spacing.lg)
             }
@@ -178,27 +175,6 @@ struct ContentView: View {
                 }
             }
         }
-    }
-
-    private var addCellButton: some View {
-        HStack(spacing: Spacing.md) {
-            Button(action: {
-                viewModel.addCell(type: .sql)
-                syncDocument()
-            }) {
-                Label("Add Code", systemImage: "plus")
-            }
-            .buttonStyle(GhostButtonStyle())
-
-            Button(action: {
-                viewModel.addCell(type: .markdown)
-                syncDocument()
-            }) {
-                Label("Add Markdown", systemImage: "plus")
-            }
-            .buttonStyle(GhostButtonStyle())
-        }
-        .padding(.vertical, Spacing.xl)
     }
 }
 
