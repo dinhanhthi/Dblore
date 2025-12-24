@@ -42,9 +42,17 @@ struct CellView: View {
         }
         .onTapGesture {
             viewModel.selectedCellId = cell.id
+            // Clear editor focus when clicking outside editor
+            isEditorFocused = false
         }
         .contextMenu {
             cellContextMenu
+        }
+        .onChange(of: isSelected) { oldValue, newValue in
+            // Clear focus when cell becomes unselected
+            if !newValue {
+                isEditorFocused = false
+            }
         }
     }
 
@@ -241,6 +249,9 @@ class SQLTextView: NSTextView {
         if handleCellShortcut(with: event) {
             return // Handled, don't pass to super
         }
+        if handleArrowNavigation(with: event) {
+            return // Handled, don't pass to super
+        }
         super.keyDown(with: event)
     }
 
@@ -284,6 +295,48 @@ class SQLTextView: NSTextView {
         if hasOption && !hasControl && !hasShift && !hasCommand {
             NotificationCenter.default.post(name: .runCellAndInsertBelow, object: nil)
             return true
+        }
+
+        return false
+    }
+
+    /// Handles up/down arrow navigation between cells
+    /// Returns true if the event was handled as a navigation action
+    private func handleArrowNavigation(with event: NSEvent) -> Bool {
+        let isUpArrow = event.keyCode == 126
+        let isDownArrow = event.keyCode == 125
+
+        guard isUpArrow || isDownArrow else { return false }
+
+        // Check for actual modifier keys (Cmd, Ctrl, Alt, Shift) - ignore function key flag
+        let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
+
+        if hasModifiers {
+            return false
+        }
+
+        let text = self.string
+        let cursorPosition = self.selectedRange().location
+
+        if isUpArrow {
+            // Navigate to previous cell only if cursor is at the first line
+            // Check if there's a newline before the cursor position
+            let textBeforeCursor = text.prefix(cursorPosition)
+            if !textBeforeCursor.contains("\n") {
+                // No newline before cursor, we're on the first line
+                NotificationCenter.default.post(name: .selectPreviousCell, object: nil)
+                return true
+            }
+        } else if isDownArrow {
+            // Navigate to next cell only if cursor is at the last line
+            // Check if there's a newline after the cursor position
+            let textAfterCursor = text.suffix(text.count - cursorPosition)
+            if !textAfterCursor.contains("\n") {
+                // No newline after cursor, we're on the last line
+                NotificationCenter.default.post(name: .selectNextCell, object: nil)
+                return true
+            }
         }
 
         return false
@@ -383,11 +436,17 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
 
+            // Save cursor position before updating
+            let savedSelectedRanges = textView.selectedRanges
+
             // Update binding
             text.wrappedValue = textView.string
 
             // Apply highlighting
             applyHighlighting(to: textView, text: textView.string)
+
+            // Restore cursor position after highlighting
+            textView.selectedRanges = savedSelectedRanges
 
             // Update height to fit content
             updateHeight(textView: textView)

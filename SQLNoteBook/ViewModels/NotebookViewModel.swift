@@ -112,7 +112,13 @@ class NotebookViewModel {
     /// Select next cell, create new one if at the end
     func selectNextCell(createIfNeeded: Bool = true) {
         guard let currentId = selectedCellId,
-              let index = notebook.cells.firstIndex(where: { $0.id == currentId }) else { return }
+              let index = notebook.cells.firstIndex(where: { $0.id == currentId }) else {
+            // If no cell selected, select first cell
+            if !notebook.cells.isEmpty {
+                selectedCellId = notebook.cells[0].id
+            }
+            return
+        }
 
         if index < notebook.cells.count - 1 {
             selectedCellId = notebook.cells[index + 1].id
@@ -135,7 +141,13 @@ class NotebookViewModel {
     func selectPreviousCell() {
         guard let currentId = selectedCellId,
               let index = notebook.cells.firstIndex(where: { $0.id == currentId }),
-              index > 0 else { return }
+              index > 0 else {
+            // If no cell selected, select last cell
+            if !notebook.cells.isEmpty {
+                selectedCellId = notebook.cells[notebook.cells.count - 1].id
+            }
+            return
+        }
 
         selectedCellId = notebook.cells[index - 1].id
     }

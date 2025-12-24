@@ -123,4 +123,6 @@ extension Notification.Name {
     static let deleteCell = Notification.Name("deleteCell")
     static let duplicateCell = Notification.Name("duplicateCell")
     static let toggleSidebar = Notification.Name("toggleSidebar")
+    static let selectNextCell = Notification.Name("selectNextCell")
+    static let selectPreviousCell = Notification.Name("selectPreviousCell")
 }
