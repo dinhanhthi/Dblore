@@ -11,6 +11,8 @@ struct ContentView: View {
     @State private var showConnectionSheet = false
     @State private var lastSaved: Date?
 
+    @State private var keyEventMonitor: Any?
+
     init(document: Binding<SQLNotebookDocument>) {
         self._document = document
         self._viewModel = State(initialValue: NotebookViewModel(notebook: document.wrappedValue.notebook))
@@ -50,6 +52,12 @@ struct ContentView: View {
             syncDocument()
         }
         .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+        .onAppear {
+            setupKeyEventMonitor()
+        }
+        .onDisappear {
+            removeKeyEventMonitor()
+        }
     }
 
     // MARK: - Document Sync
@@ -57,6 +65,59 @@ struct ContentView: View {
     private func syncDocument() {
         document.notebook = viewModel.notebook
         lastSaved = nil // Mark as unsaved
+    }
+
+    // MARK: - Keyboard Event Monitoring
+
+    private func setupKeyEventMonitor() {
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            // Check if a NSTextView is currently first responder
+            let textViewIsFocused: Bool = {
+                guard let window = NSApplication.shared.keyWindow,
+                      let firstResponder = window.firstResponder else {
+                    return false  // No window or responder = no text view focused
+                }
+                return firstResponder is NSTextView
+            }()
+
+            // If a text view is focused, let it handle the event
+            if textViewIsFocused {
+                return event
+            }
+
+            // Handle up/down arrows for cell navigation when text view is NOT focused
+            let isUpArrow = event.keyCode == 126
+            let isDownArrow = event.keyCode == 125
+
+            if isUpArrow || isDownArrow {
+                // Check for actual modifier keys (Cmd, Ctrl, Alt, Shift) - ignore function key flag
+                let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+                let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
+
+                guard !hasModifiers else {
+                    return event
+                }
+
+                // Use MainActor to ensure we're on the main thread
+                Task { @MainActor in
+                    if isUpArrow {
+                        self.viewModel.selectPreviousCell()
+                    } else if isDownArrow {
+                        self.viewModel.selectNextCell(createIfNeeded: false)
+                    }
+                }
+                return nil // Event consumed
+            }
+
+            return event
+        }
+    }
+
+    private func removeKeyEventMonitor() {
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyEventMonitor = nil
+        }
     }
 
     // MARK: - Main Content
@@ -315,6 +376,12 @@ private struct NotificationHandlerModifier: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
                 viewModel.toggleSidebar()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .selectNextCell)) { _ in
+                viewModel.selectNextCell(createIfNeeded: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
+                viewModel.selectPreviousCell()
             }
     }
 }
