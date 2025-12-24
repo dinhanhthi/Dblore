@@ -119,7 +119,7 @@ enum ComponentSize {
     static let cellSidebarWidth: CGFloat = 34
     static let buttonHeight: CGFloat = 32
     static let inputHeight: CGFloat = 36
-    static let maxResultHeight: CGFloat = 300
+    static let maxResultHeight: CGFloat = 500
     static let minCellHeight: CGFloat = 80
 }
 
