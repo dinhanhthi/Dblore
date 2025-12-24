@@ -17,33 +17,33 @@ struct ResultTableView: View {
     private let absoluteMinWidth: CGFloat = 60 // Fallback minimum
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 0) {
-                // Header row (fixed at top)
-                headerRow
-                
-                // Data rows (scrollable vertically with lazy loading)
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header and data rows with both scrollbars visible
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        // Data rows
                         ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
                             dataRow(row: row, rowIndex: rowIndex)
                         }
+                    } header: {
+                        // Header row (pinned at top)
+                        headerRow
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 800)
-
-                // Row limit warning (when DB fetch was limited)
-                if result.wasLimited {
-                    rowLimitWarning
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxHeight: 800)
+
+            // Row limit warning (when DB fetch was limited)
+            if result.wasLimited {
+                rowLimitWarning
+            }
         }
         .frame(maxWidth: .infinity)
         .background(Color.cellBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .padding(.horizontal, Spacing.md)
+        .padding(.trailing, Spacing.md)
         .onAppear {
             calculateInitialColumnWidths()
         }

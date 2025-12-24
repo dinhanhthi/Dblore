@@ -185,19 +185,26 @@ struct CellView: View {
 
     @ViewBuilder
     private func resultArea(_ result: CellResult) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let error = result.error {
-                // Error display
-                errorView(error)
-            } else {
-                // Result table
-                ResultTableView(result: result, viewModel: viewModel)
-//                    .frame(maxHeight: ComponentSize.maxResultHeight)
-                    .padding(.top, Spacing.sm)
+        HStack(alignment: .top, spacing: 0) {
+            // Fake sidebar to align with cell sidebar
+            Color.clear
+                .frame(width: ComponentSize.cellSidebarWidth)
 
-                // Result metadata
-                resultMetadata(result)
+            VStack(alignment: .leading, spacing: 0) {
+                if let error = result.error {
+                    // Error display
+                    errorView(error)
+                } else {
+                    // Result table
+                    ResultTableView(result: result, viewModel: viewModel)
+    //                    .frame(maxHeight: ComponentSize.maxResultHeight)
+                        .padding(.top, Spacing.sm)
+
+                    // Result metadata
+                    resultMetadata(result)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.bottom, Spacing.md)
     }
@@ -717,7 +724,7 @@ struct MarkdownCellView: View {
         )
     }
     .padding()
-    .frame(width: 800, height: 500)
+    .frame(width: 600, height: 350)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
 }
