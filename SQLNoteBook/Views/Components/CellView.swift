@@ -54,6 +54,16 @@ struct CellView: View {
                 isEditorFocused = false
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .focusEditor)) { _ in
+            // Only focus if this cell is selected
+            if isSelected {
+                isEditorFocused = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .unfocusEditor)) { _ in
+            // Unfocus from editor but keep cell selected
+            isEditorFocused = false
+        }
     }
 
     // MARK: - Cell Sidebar
