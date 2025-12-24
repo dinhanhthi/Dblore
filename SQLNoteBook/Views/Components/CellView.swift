@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct CellView: View {
     @Bindable var viewModel: NotebookViewModel
@@ -16,43 +17,50 @@ struct CellView: View {
     @FocusState private var isEditorFocused: Bool
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                // Main cell content
-                HStack(alignment: .top, spacing: 0) {
-                    // Left sidebar with controls
-                    cellSidebar
+        ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    // Main cell content
+                    HStack(alignment: .top, spacing: 0) {
+                        // Left sidebar with controls
+                        cellSidebar
 
-                    // Editor area
-                    VStack(alignment: .leading, spacing: 0) {
-                        editorArea
+                        // Editor area
+                        VStack(alignment: .leading, spacing: 0) {
+                            editorArea
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, Spacing.md)
+                    .padding(.bottom, cell.result == nil ? Spacing.md : Spacing.sm)
+                    .padding(.leading, 0)
+                    .padding(.trailing, Spacing.md)
+
+                    // Result area (if exists)
+                     if let result = cell.result {
+                         resultArea(result)
+                     }
                 }
-                .padding(.top, Spacing.md)
-                .padding(.bottom, cell.result == nil ? Spacing.md : Spacing.sm)
-                .padding(.leading, 0)
-                .padding(.trailing, Spacing.md)
+                .cellStyle(isSelected: isSelected)
+                .onHover { hovering in
+                    isHovered = hovering
+                }
 
-                // Result area (if exists)
-                 if let result = cell.result {
-                     resultArea(result)
-                 }
+                // Bottom edge hover zone (invisible, just for hover detection)
+                // Extends below the cell to cover the floating panel area
+                bottomEdgeHoverZone
+                    .offset(y: 15) // Extend zone downward to match panel position
+
+                // Floating action panel (shown on hover near bottom edge)
+                if isBottomEdgeHovered {
+                    floatingActionPanel
+                        .offset(y: 12)
+                }
             }
-            .cellStyle(isSelected: isSelected)
-            .onHover { hovering in
-                isHovered = hovering
-            }
 
-            // Bottom edge hover zone (invisible, just for hover detection)
-            // Extends below the cell to cover the floating panel area
-            bottomEdgeHoverZone
-                .offset(y: 15) // Extend zone downward to match panel position
-
-            // Floating action panel (shown on hover near bottom edge)
-            if isBottomEdgeHovered {
-                floatingActionPanel
-                    .offset(y: 12)
+            // Top-right floating panel (shown only when cell is selected)
+            if isSelected {
+                topRightFloatingPanel.offset(x: -10, y: -15)
             }
         }
         .onTapGesture {
@@ -164,6 +172,48 @@ struct CellView: View {
         }
     }
 
+    // MARK: - Top-Right Floating Panel
+
+    private var topRightFloatingPanel: some View {
+        HStack(spacing: Spacing.sm) {
+            Button(action: {
+                viewModel.deleteCell(id: cell.id)
+            }) {
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                    Text("Delete")
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .buttonStyle(FloatingPanelButtonStyle())
+            .help("Delete Cell")
+
+            Button(action: {
+                copyCellContent()
+            }) {
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 12))
+                    Text("Copy")
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .buttonStyle(FloatingPanelButtonStyle())
+            .help("Copy Cell Content")
+        }
+        .padding(.top, Spacing.xs)
+        .padding(.trailing, Spacing.xs)
+    }
+
+    // MARK: - Helper Functions
+
+    private func copyCellContent() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(cell.content, forType: .string)
+    }
+
     // MARK: - Editor Area
 
     @ViewBuilder
@@ -197,11 +247,13 @@ struct CellView: View {
                 } else {
                     // Result table
                     ResultTableView(result: result, viewModel: viewModel)
-    //                    .frame(maxHeight: ComponentSize.maxResultHeight)
                         .padding(.top, Spacing.sm)
+                        .padding(.trailing, Spacing.md)
 
                     // Result metadata
                     resultMetadata(result)
+                        .padding(.top, Spacing.sm)
+                        .padding(.trailing, Spacing.md)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -238,8 +290,6 @@ struct CellView: View {
         }
         .font(.caption)
         .foregroundColor(.foregroundSubtle)
-        .padding(.horizontal, Spacing.md)
-        .padding(.top, Spacing.sm)
     }
 
     private func formatTimestamp(_ date: Date) -> String {

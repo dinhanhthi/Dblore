@@ -33,7 +33,7 @@ struct ResultTableView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 800)
+            .frame(maxHeight: ComponentSize.maxResultHeight)
 
             // Row limit warning (when DB fetch was limited)
             if result.wasLimited {
@@ -43,7 +43,6 @@ struct ResultTableView: View {
         .frame(maxWidth: .infinity)
         .background(Color.cellBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .padding(.trailing, Spacing.md)
         .onAppear {
             calculateInitialColumnWidths()
         }
@@ -78,12 +77,15 @@ struct ResultTableView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(column.name)
-                    .font(.system(.caption, weight: .semibold))
+                    .font(.system(.body, weight: .semibold))
                     .foregroundColor(.foreground)
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Text(column.type)
                     .font(.small)
                     .foregroundColor(.foregroundSubtle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .padding(.horizontal, Spacing.lg)
             .padding(.vertical, Spacing.xs)
@@ -143,7 +145,10 @@ struct ResultTableView: View {
             
             // Calculate width based on content
             let calculatedWidth = calculateContentWidth(for: column)
-            columnWidths[column.name] = min(calculatedWidth, maxColumnWidth)
+            // Ensure minimum width is at least the column name width
+            let headerNameFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            let minNameWidth = textWidth(column.name, font: headerNameFont) + padding
+            columnWidths[column.name] = max(calculatedWidth, minNameWidth)
         }
     }
     
