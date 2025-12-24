@@ -80,9 +80,30 @@ struct ContentView: View {
                 return firstResponder is NSTextView
             }()
 
+            // Handle ESC key - unfocus from editor but keep cell selected
+            let isEscape = event.keyCode == 53
+            if isEscape && textViewIsFocused {
+                NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+                return nil // Event consumed
+            }
+
             // If a text view is focused, let it handle the event
             if textViewIsFocused {
                 return event
+            }
+
+            // Handle Enter key - focus on the selected cell's editor
+            let isReturn = event.keyCode == 36
+            if isReturn {
+                // Check for modifier keys
+                let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+                let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
+
+                // Only handle plain Enter (no modifiers)
+                if !hasModifiers {
+                    NotificationCenter.default.post(name: .focusEditor, object: nil)
+                    return nil // Event consumed
+                }
             }
 
             // Handle up/down arrows for cell navigation when text view is NOT focused

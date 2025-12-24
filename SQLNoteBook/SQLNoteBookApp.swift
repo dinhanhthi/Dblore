@@ -125,4 +125,6 @@ extension Notification.Name {
     static let toggleSidebar = Notification.Name("toggleSidebar")
     static let selectNextCell = Notification.Name("selectNextCell")
     static let selectPreviousCell = Notification.Name("selectPreviousCell")
+    static let focusEditor = Notification.Name("focusEditor")
+    static let unfocusEditor = Notification.Name("unfocusEditor")
 }
