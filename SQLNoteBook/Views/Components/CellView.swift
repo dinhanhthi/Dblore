@@ -225,11 +225,12 @@ struct CellView: View {
             SQLEditorView(
                 content: $cell.content,
                 isSelected: isSelected,
+                isFocused: isEditorFocused,
                 onFocus: { viewModel.selectedCellId = cell.id }
             )
             .focused($isEditorFocused)
         case .markdown:
-            MarkdownCellView(content: $cell.content, isSelected: isSelected)
+            MarkdownCellView(content: $cell.content, isSelected: isSelected, isFocused: isEditorFocused)
         }
     }
 
@@ -342,6 +343,7 @@ struct CellView: View {
 struct SQLEditorView: View {
     @Binding var content: String
     let isSelected: Bool
+    let isFocused: Bool
     var onFocus: (() -> Void)?
 
     var body: some View {
@@ -361,6 +363,10 @@ struct SQLEditorView: View {
         .padding(Spacing.sm)
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+                .stroke(isFocused ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
     }
 }
 
@@ -686,6 +692,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 struct MarkdownCellView: View {
     @Binding var content: String
     let isSelected: Bool
+    let isFocused: Bool
     @State private var isEditing = false
 
     var body: some View {
@@ -703,6 +710,10 @@ struct MarkdownCellView: View {
         .padding(Spacing.sm)
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .overlay(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+                .stroke(isFocused && isEditing ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
     }
 
     private var renderedMarkdown: some View {
