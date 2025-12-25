@@ -32,7 +32,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Create new macOS app project in Xcode
 - [x] Set minimum deployment target to macOS 14.0
 - [x] Configure app as document-based application
-- [ ] Add PostgresNIO package dependency via Swift Package Manager
+- [x] Add PostgresNIO package dependency via Swift Package Manager (managed via Xcode)
 - [x] Define custom UTType for `.sqlnb` files in Info.plist
 
 ### 1.2 Data Models

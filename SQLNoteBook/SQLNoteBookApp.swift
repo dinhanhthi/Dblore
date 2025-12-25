@@ -106,6 +106,19 @@ struct NotebookCommands: Commands {
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
         }
+
+        // Undo/Redo commands (built-in Edit menu)
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                NotificationCenter.default.post(name: .undo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: .command)
+
+            Button("Redo") {
+                NotificationCenter.default.post(name: .redo, object: nil)
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
     }
 }
 
@@ -127,4 +140,8 @@ extension Notification.Name {
     static let selectPreviousCell = Notification.Name("selectPreviousCell")
     static let focusEditor = Notification.Name("focusEditor")
     static let unfocusEditor = Notification.Name("unfocusEditor")
+    static let undo = Notification.Name("undo")
+    static let redo = Notification.Name("redo")
+    static let editorFocused = Notification.Name("editorFocused")
+    static let editorUnfocused = Notification.Name("editorUnfocused")
 }
