@@ -13,6 +13,7 @@ struct CellView: View {
     let onRun: () -> Void
 
     @State private var isHovered = false // For run button visibility
+    @State private var isCellHovered = false // For cell border hover effect
     @State private var isBottomEdgeHovered = false // For floating action panel
     @FocusState private var isEditorFocused: Bool
 
@@ -41,9 +42,10 @@ struct CellView: View {
                          resultArea(result)
                      }
                 }
-                .cellStyle(isSelected: isSelected)
+                .cellStyle(isSelected: isSelected, isHovered: !isSelected && isCellHovered)
                 .onHover { hovering in
                     isHovered = hovering
+                    isCellHovered = hovering
                 }
 
                 // Bottom edge hover zone (invisible, just for hover detection)

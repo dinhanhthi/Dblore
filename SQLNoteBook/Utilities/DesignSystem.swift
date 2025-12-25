@@ -303,13 +303,16 @@ extension View {
             )
     }
 
-    func cellStyle(isSelected: Bool = false) -> some View {
+    func cellStyle(isSelected: Bool = false, isHovered: Bool = false) -> some View {
         self
             .background(Color.cellBackground)
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
             .overlay(
                 RoundedRectangle(cornerRadius: CornerRadius.lg)
-                    .stroke(isSelected ? Color.accent : Color.border, lineWidth: isSelected ? 0.5 : 1)
+                    .stroke(
+                        isSelected ? Color.accent : (isHovered ? Color.foregroundMuted.opacity(0.3) : Color.border),
+                        lineWidth: isSelected ? 0.5 : 1
+                    )
             )
     }
 
