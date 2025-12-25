@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**IMPORTANT**: Answer me in Vietnamese, keep terminologies in English.
+**IMPORTANT**: Answer me in Vietnamese, keep terminologies in English. Don't automatically open the app, I do it myself with XCode.
 
 ---
 
