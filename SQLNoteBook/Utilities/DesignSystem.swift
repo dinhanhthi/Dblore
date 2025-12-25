@@ -217,24 +217,23 @@ struct FloatingPanelButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .foregroundColor(.foregroundMuted)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
+      .frame(width: 26, height: 26)
       .background(
         ZStack {
           // Opaque base layer to hide content behind
-          Capsule()
+          Circle()
             .fill(Color.cellBackgroundHover)
 
           // Hover/press overlay with accent color
           if isHovering || configuration.isPressed {
-            Capsule()
+            Circle()
               .fill(Color.accent.opacity(0.15))
           }
         }
         .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
       )
       .overlay(
-        Capsule()
+        Circle()
           .stroke(isHovering ? Color.accent.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
       )
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)

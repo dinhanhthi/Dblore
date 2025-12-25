@@ -15,6 +15,7 @@ struct CellView: View {
   @State private var isHovered = false  // For run button visibility
   @State private var isCellHovered = false  // For cell border hover effect
   @State private var isBottomEdgeHovered = false  // For floating action panel
+  @State private var isCopied = false  // For copy button feedback
   @FocusState private var isEditorFocused: Bool
 
   var body: some View {
@@ -140,18 +141,13 @@ struct CellView: View {
   // MARK: - Floating Action Panel
 
   private var floatingActionPanel: some View {
-    Button(action: {
-      viewModel.addCell(type: .sql, after: cell.id)
-    }) {
-      HStack(spacing: Spacing.xs) {
-        Image(systemName: "plus.square")
-          .font(.system(size: 12))
-        Text("Code")
-          .font(.system(size: 12, weight: .medium))
+    FloatingPanelButton(
+      icon: "plus.square",
+      helpText: "Add Code Cell Below",
+      action: {
+        viewModel.addCell(type: .sql, after: cell.id)
       }
-    }
-    .buttonStyle(FloatingPanelButtonStyle())
-    .help("Add Code Cell Below")
+    )
     .onHover { hovering in
       // Keep panel visible when hovering over the button itself
       isBottomEdgeHovered = hovering
@@ -162,31 +158,20 @@ struct CellView: View {
 
   private var topRightFloatingPanel: some View {
     HStack(spacing: Spacing.sm) {
-      Button(action: {
-        viewModel.deleteCell(id: cell.id)
-      }) {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: "trash")
-            .font(.system(size: 12))
-          Text("Delete")
-            .font(.system(size: 12, weight: .medium))
+      FloatingPanelButton(
+        icon: "trash",
+        helpText: "Delete Cell",
+        action: {
+          viewModel.deleteCell(id: cell.id)
         }
-      }
-      .buttonStyle(FloatingPanelButtonStyle())
-      .help("Delete Cell")
+      )
 
-      Button(action: {
-        copyCellContent()
-      }) {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: "doc.on.doc")
-            .font(.system(size: 12))
-          Text("Copy")
-            .font(.system(size: 12, weight: .medium))
-        }
-      }
-      .buttonStyle(FloatingPanelButtonStyle())
-      .help("Copy Cell Content")
+      FloatingPanelButton(
+        icon: isCopied ? "checkmark" : "doc.on.doc",
+        helpText: "Copy Cell Content",
+        useSymbolEffect: true,
+        action: copyCellContent
+      )
     }
     .padding(.top, Spacing.xs)
     .padding(.trailing, Spacing.xs)
@@ -198,6 +183,14 @@ struct CellView: View {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(cell.content, forType: .string)
+
+    // Show checkmark feedback
+    isCopied = true
+
+    // Reset back to copy icon after 500ms
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+      isCopied = false
+    }
   }
 
   // MARK: - Editor Area
@@ -666,6 +659,28 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   }
 }
 
+// MARK: - Floating Panel Button Component
+
+/// Reusable button component for floating panels (top-right and bottom action panels)
+struct FloatingPanelButton: View {
+  let icon: String
+  let helpText: String
+  var useSymbolEffect: Bool = false
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: icon)
+        .font(.system(size: 12))
+        .if(useSymbolEffect) { view in
+          view.contentTransition(.symbolEffect(.replace))
+        }
+    }
+    .buttonStyle(FloatingPanelButtonStyle())
+    .help(helpText)
+  }
+}
+
 #Preview("Empty Cells") {
   VStack {
     CellView(
@@ -676,7 +691,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     )
   }
   .padding()
-  .frame(width: 800)
+  .frame(width: 700)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
