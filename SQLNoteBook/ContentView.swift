@@ -6,430 +6,435 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Binding var document: SQLNotebookDocument
-    @State private var viewModel: NotebookViewModel
-    @State private var showConnectionSheet = false
-    @State private var lastSaved: Date?
+  @Binding var document: SQLNotebookDocument
+  @State private var viewModel: NotebookViewModel
+  @State private var showConnectionSheet = false
+  @State private var lastSaved: Date?
 
-    @State private var keyEventMonitor: Any?
-    @State private var focusedTextView: NSTextView?
+  @State private var keyEventMonitor: Any?
+  @State private var focusedTextView: NSTextView?
 
-    init(document: Binding<SQLNotebookDocument>) {
-        self._document = document
-        let vm = NotebookViewModel(notebook: document.wrappedValue.notebook)
-        self._viewModel = State(initialValue: vm)
+  init(document: Binding<SQLNotebookDocument>) {
+    self._document = document
+    let vm = NotebookViewModel(notebook: document.wrappedValue.notebook)
+    self._viewModel = State(initialValue: vm)
+  }
+
+  var body: some View {
+    ZStack {
+      Color.appBackground
+        .ignoresSafeArea()
+
+      VStack(spacing: 0) {
+        // Header
+        HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
+
+        // Main content area
+        HStack(spacing: 0) {
+          // Main scrollable content
+          mainContent
+            .frame(maxWidth: .infinity)
+
+          // Right sidebar (conditionally shown)
+          if viewModel.isRightSidebarVisible {
+            RightSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .trailing))
+          }
+        }
+
+        // Footer
+        FooterView(viewModel: viewModel, lastSaved: lastSaved)
+      }
     }
-
-    var body: some View {
-        ZStack {
-            Color.appBackground
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                // Header
-                HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
-
-                // Main content area
-                HStack(spacing: 0) {
-                    // Main scrollable content
-                    mainContent
-                        .frame(maxWidth: .infinity)
-
-                    // Right sidebar (conditionally shown)
-                    if viewModel.isRightSidebarVisible {
-                        RightSidebarView(viewModel: viewModel)
-                            .transition(.move(edge: .trailing))
-                    }
-                }
-
-                // Footer
-                FooterView(viewModel: viewModel, lastSaved: lastSaved)
-            }
-        }
-        .sheet(isPresented: $showConnectionSheet) {
-            ConnectionSheet(viewModel: viewModel, isPresented: $showConnectionSheet)
-        }
-        .modifier(NotificationHandlerModifier(
-            viewModel: viewModel,
-            syncDocument: syncDocument
-        ))
-        .modifier(UndoRedoHandlerModifier(
-            viewModel: viewModel,
-            syncDocument: syncDocument,
-            focusedTextView: $focusedTextView
-        ))
-        .onChange(of: viewModel.notebook.metadata.title) { _, _ in
-            syncDocument()
-        }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
-        .onAppear {
-            setupKeyEventMonitor()
-            viewModel.onDocumentChanged = syncDocument
-        }
-        .onDisappear {
-            removeKeyEventMonitor()
-            viewModel.onDocumentChanged = nil
-        }
+    .sheet(isPresented: $showConnectionSheet) {
+      ConnectionSheet(viewModel: viewModel, isPresented: $showConnectionSheet)
     }
-
-    // MARK: - Document Sync
-
-    private func syncDocument() {
-        document.notebook = viewModel.notebook
-        lastSaved = nil // Mark as unsaved
+    .modifier(
+      NotificationHandlerModifier(
+        viewModel: viewModel,
+        syncDocument: syncDocument
+      )
+    )
+    .modifier(
+      UndoRedoHandlerModifier(
+        viewModel: viewModel,
+        syncDocument: syncDocument,
+        focusedTextView: $focusedTextView
+      )
+    )
+    .onChange(of: viewModel.notebook.metadata.title) { _, _ in
+      syncDocument()
     }
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+    .onAppear {
+      setupKeyEventMonitor()
+      viewModel.onDocumentChanged = syncDocument
+    }
+    .onDisappear {
+      removeKeyEventMonitor()
+      viewModel.onDocumentChanged = nil
+    }
+  }
 
-    // MARK: - Keyboard Event Monitoring
+  // MARK: - Document Sync
 
-    private func setupKeyEventMonitor() {
-        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            // Check if a NSTextView is currently first responder
-            let textViewIsFocused: Bool = {
-                guard let window = NSApplication.shared.keyWindow,
-                      let firstResponder = window.firstResponder else {
-                    return false  // No window or responder = no text view focused
-                }
-                return firstResponder is NSTextView
-            }()
+  private func syncDocument() {
+    document.notebook = viewModel.notebook
+    lastSaved = nil  // Mark as unsaved
+  }
 
-            // Handle ESC key - unfocus from editor but keep cell selected
-            let isEscape = event.keyCode == 53
-            if isEscape && textViewIsFocused {
-                NotificationCenter.default.post(name: .unfocusEditor, object: nil)
-                return nil // Event consumed
-            }
+  // MARK: - Keyboard Event Monitoring
 
-            // If a text view is focused, let it handle the event
-            if textViewIsFocused {
-                return event
-            }
-
-            // Handle Enter key - focus on the selected cell's editor
-            let isReturn = event.keyCode == 36
-            if isReturn {
-                // Check for modifier keys
-                let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-                let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
-
-                // Only handle plain Enter (no modifiers)
-                if !hasModifiers {
-                    NotificationCenter.default.post(name: .focusEditor, object: nil)
-                    return nil // Event consumed
-                }
-            }
-
-            // Handle up/down arrows for cell navigation when text view is NOT focused
-            let isUpArrow = event.keyCode == 126
-            let isDownArrow = event.keyCode == 125
-
-            if isUpArrow || isDownArrow {
-                // Check for actual modifier keys (Cmd, Ctrl, Alt, Shift) - ignore function key flag
-                let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-                let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
-
-                guard !hasModifiers else {
-                    return event
-                }
-
-                // Use MainActor to ensure we're on the main thread
-                Task { @MainActor in
-                    if isUpArrow {
-                        self.viewModel.selectPreviousCell()
-                    } else if isDownArrow {
-                        self.viewModel.selectNextCell(createIfNeeded: false)
-                    }
-                }
-                return nil // Event consumed
-            }
-
-            return event
+  private func setupKeyEventMonitor() {
+    keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Check if a NSTextView is currently first responder
+      let textViewIsFocused: Bool = {
+        guard let window = NSApplication.shared.keyWindow,
+          let firstResponder = window.firstResponder
+        else {
+          return false  // No window or responder = no text view focused
         }
-    }
+        return firstResponder is NSTextView
+      }()
 
-    private func removeKeyEventMonitor() {
-        if let monitor = keyEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyEventMonitor = nil
+      // Handle ESC key - unfocus from editor but keep cell selected
+      let isEscape = event.keyCode == 53
+      if isEscape && textViewIsFocused {
+        NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+        return nil  // Event consumed
+      }
+
+      // If a text view is focused, let it handle the event
+      if textViewIsFocused {
+        return event
+      }
+
+      // Handle Enter key - focus on the selected cell's editor
+      let isReturn = event.keyCode == 36
+      if isReturn {
+        // Check for modifier keys
+        let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
+
+        // Only handle plain Enter (no modifiers)
+        if !hasModifiers {
+          NotificationCenter.default.post(name: .focusEditor, object: nil)
+          return nil  // Event consumed
         }
-    }
+      }
 
-    // MARK: - Main Content
+      // Handle up/down arrows for cell navigation when text view is NOT focused
+      let isUpArrow = event.keyCode == 126
+      let isDownArrow = event.keyCode == 125
 
-    private var mainContent: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: Spacing.lg) {
-                    ForEach($viewModel.notebook.cells) { $cell in
-                        CellView(
-                            viewModel: viewModel,
-                            cell: $cell,
-                            isSelected: viewModel.selectedCellId == cell.id,
-                            onRun: {
-                                Task {
-                                    await viewModel.runCell(id: cell.id)
-                                    syncDocument()
-                                }
-                            }
-                        )
-                        .id(cell.id)
-                        .onChange(of: cell.content) { _, _ in
-                            syncDocument()
-                        }
-                    }
-                }
-                .padding(Spacing.lg)
-            }
-            .onChange(of: viewModel.selectedCellId) { _, newId in
-                if let id = newId {
-                    withAnimation {
-                        proxy.scrollTo(id, anchor: .center)
-                    }
-                }
-            }
+      if isUpArrow || isDownArrow {
+        // Check for actual modifier keys (Cmd, Ctrl, Alt, Shift) - ignore function key flag
+        let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let hasModifiers = !event.modifierFlags.intersection(modifiers).isEmpty
+
+        guard !hasModifiers else {
+          return event
         }
+
+        // Use MainActor to ensure we're on the main thread
+        Task { @MainActor in
+          if isUpArrow {
+            self.viewModel.selectPreviousCell()
+          } else if isDownArrow {
+            self.viewModel.selectNextCell(createIfNeeded: false)
+          }
+        }
+        return nil  // Event consumed
+      }
+
+      return event
     }
+  }
+
+  private func removeKeyEventMonitor() {
+    if let monitor = keyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+      keyEventMonitor = nil
+    }
+  }
+
+  // MARK: - Main Content
+
+  private var mainContent: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(spacing: Spacing.lg) {
+          ForEach($viewModel.notebook.cells) { $cell in
+            CellView(
+              viewModel: viewModel,
+              cell: $cell,
+              isSelected: viewModel.selectedCellId == cell.id,
+              onRun: {
+                Task {
+                  await viewModel.runCell(id: cell.id)
+                  syncDocument()
+                }
+              }
+            )
+            .id(cell.id)
+            .onChange(of: cell.content) { _, _ in
+              syncDocument()
+            }
+          }
+        }
+        .padding(Spacing.lg)
+      }
+      .onChange(of: viewModel.selectedCellId) { _, newId in
+        if let id = newId {
+          withAnimation {
+            proxy.scrollTo(id, anchor: .center)
+          }
+        }
+      }
+    }
+  }
 }
 
 // MARK: - Preview
 
 #Preview {
-    // Create 2 cells: SQL with content and SQL empty
-    var sqlCellWithContent = NotebookCell(
-        cellType: .sql,
-        content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
-        executionCount: 1
-    )
+  // Create 2 cells: SQL with content and SQL empty
+  var sqlCellWithContent = NotebookCell(
+    cellType: .sql,
+    content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
+    executionCount: 1
+  )
 
-    // Add example result table
-    sqlCellWithContent.result = CellResult(
-        columns: [
-            ColumnInfo(name: "id", type: "INTEGER"),
-            ColumnInfo(name: "name", type: "VARCHAR"),
-            ColumnInfo(name: "email", type: "VARCHAR")
-        ],
-        rows: [
-            [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
-            [.int(2), .string("Bob Smith"), .string("bob@example.com")],
-            [.int(3), .string("Charlie Davis"), .string("charlie@example.com")],
-            [.int(4), .string("Diana Wilson"), .string("diana@example.com")],
-            [.int(5), .string("Eve Martinez"), .string("eve@example.com")]
-        ],
-        executionTime: 0.045,
-        rowCount: 5,
-        timestamp: Date()
-    )
+  // Add example result table
+  sqlCellWithContent.result = CellResult(
+    columns: [
+      ColumnInfo(name: "id", type: "INTEGER"),
+      ColumnInfo(name: "name", type: "VARCHAR"),
+      ColumnInfo(name: "email", type: "VARCHAR"),
+    ],
+    rows: [
+      [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
+      [.int(2), .string("Bob Smith"), .string("bob@example.com")],
+      [.int(3), .string("Charlie Davis"), .string("charlie@example.com")],
+      [.int(4), .string("Diana Wilson"), .string("diana@example.com")],
+      [.int(5), .string("Eve Martinez"), .string("eve@example.com")],
+    ],
+    executionTime: 0.045,
+    rowCount: 5,
+    timestamp: Date()
+  )
 
-    let sqlCellEmpty = NotebookCell(
-        cellType: .sql,
-        content: ""
-    )
+  let sqlCellEmpty = NotebookCell(
+    cellType: .sql,
+    content: ""
+  )
 
-    let notebook = SQLNotebook(
-        cells: [sqlCellWithContent, sqlCellEmpty],
-        metadata: NotebookMetadata(title: "Preview Notebook")
-    )
+  let notebook = SQLNotebook(
+    cells: [sqlCellWithContent, sqlCellEmpty],
+    metadata: NotebookMetadata(title: "Preview Notebook")
+  )
 
-    struct PreviewContainer: View {
-        @State var document: SQLNotebookDocument
-        @State var viewModel: NotebookViewModel
+  struct PreviewContainer: View {
+    @State var document: SQLNotebookDocument
+    @State var viewModel: NotebookViewModel
 
-        init(notebook: SQLNotebook, selectedCellId: UUID) {
-            let doc = SQLNotebookDocument(notebook: notebook)
-            self._document = State(initialValue: doc)
+    init(notebook: SQLNotebook, selectedCellId: UUID) {
+      let doc = SQLNotebookDocument(notebook: notebook)
+      self._document = State(initialValue: doc)
 
-            let vm = NotebookViewModel(notebook: notebook)
-            vm.selectedCellId = selectedCellId
-            self._viewModel = State(initialValue: vm)
-        }
-
-        var body: some View {
-            ContentViewForPreview(document: $document, viewModel: viewModel)
-        }
+      let vm = NotebookViewModel(notebook: notebook)
+      vm.selectedCellId = selectedCellId
+      self._viewModel = State(initialValue: vm)
     }
 
-    return PreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
-        .frame(width: 820, height: 600)
-        .preferredColorScheme(.dark)
+    var body: some View {
+      ContentViewForPreview(document: $document, viewModel: viewModel)
+    }
+  }
+
+  return PreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
+    .frame(width: 820, height: 600)
+    .preferredColorScheme(.dark)
 }
 
 // Preview version of ContentView with injectable viewModel
 private struct ContentViewForPreview: View {
-    @Binding var document: SQLNotebookDocument
-    @State var viewModel: NotebookViewModel
-    @State private var showConnectionSheet = false
-    @State private var lastSaved: Date?
-    
-    var body: some View {
-        ZStack {
-            Color.appBackground
-                .ignoresSafeArea()
-            
-            VStack(spacing: 0) {
-                HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
-                
-                HStack(spacing: 0) {
-                    mainContent
-                        .frame(maxWidth: .infinity)
-                    
-                    if viewModel.isRightSidebarVisible {
-                        RightSidebarView(viewModel: viewModel)
-                            .transition(.move(edge: .trailing))
-                    }
-                }
-                
-                FooterView(viewModel: viewModel, lastSaved: lastSaved)
-            }
+  @Binding var document: SQLNotebookDocument
+  @State var viewModel: NotebookViewModel
+  @State private var showConnectionSheet = false
+  @State private var lastSaved: Date?
+
+  var body: some View {
+    ZStack {
+      Color.appBackground
+        .ignoresSafeArea()
+
+      VStack(spacing: 0) {
+        HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
+
+        HStack(spacing: 0) {
+          mainContent
+            .frame(maxWidth: .infinity)
+
+          if viewModel.isRightSidebarVisible {
+            RightSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .trailing))
+          }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+
+        FooterView(viewModel: viewModel, lastSaved: lastSaved)
+      }
     }
-    
-    private var mainContent: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: Spacing.md) {
-                    ForEach($viewModel.notebook.cells) { $cell in
-                        CellView(
-                            viewModel: viewModel,
-                            cell: $cell,
-                            isSelected: viewModel.selectedCellId == cell.id,
-                            onRun: {
-                                Task {
-                                    await viewModel.runCell(id: cell.id)
-                                }
-                            }
-                        )
-                        .id(cell.id)
-                    }
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+  }
+
+  private var mainContent: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(spacing: Spacing.md) {
+          ForEach($viewModel.notebook.cells) { $cell in
+            CellView(
+              viewModel: viewModel,
+              cell: $cell,
+              isSelected: viewModel.selectedCellId == cell.id,
+              onRun: {
+                Task {
+                  await viewModel.runCell(id: cell.id)
                 }
-                .padding(Spacing.lg)
-            }
+              }
+            )
+            .id(cell.id)
+          }
         }
+        .padding(Spacing.lg)
+      }
     }
+  }
 }
 
 // MARK: - Notification Handler Modifier
 // Extracted to reduce type complexity in ContentView body
 
 private struct NotificationHandlerModifier: ViewModifier {
-    let viewModel: NotebookViewModel
-    let syncDocument: () -> Void
+  let viewModel: NotebookViewModel
+  let syncDocument: () -> Void
 
-    func body(content: Content) -> some View {
-        content
-            .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
-                viewModel.addCell(type: .sql)
-                syncDocument()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
-                if let id = viewModel.selectedCellId {
-                    Task {
-                        await viewModel.runCell(id: id)
-                        syncDocument()
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
-                if let id = viewModel.selectedCellId {
-                    Task {
-                        await viewModel.runCell(id: id)
-                        viewModel.selectNextCell(createIfNeeded: true)
-                        syncDocument()
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
-                if let id = viewModel.selectedCellId {
-                    Task {
-                        await viewModel.runCell(id: id)
-                        viewModel.insertCellBelow(type: .sql)
-                        syncDocument()
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
-                Task {
-                    await viewModel.runAllCells()
-                    syncDocument()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
-                if let id = viewModel.selectedCellId {
-                    viewModel.clearCellOutput(id: id)
-                    syncDocument()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
-                viewModel.clearAllOutputs()
-                syncDocument()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
-                if let id = viewModel.selectedCellId {
-                    viewModel.deleteCell(id: id)
-                    syncDocument()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
-                if let id = viewModel.selectedCellId {
-                    viewModel.duplicateCell(id: id)
-                    syncDocument()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-                viewModel.toggleSidebar()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .selectNextCell)) { _ in
-                viewModel.selectNextCell(createIfNeeded: false)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
-                viewModel.selectPreviousCell()
-            }
-    }
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
+        viewModel.addCell(type: .sql)
+        syncDocument()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
+        if let id = viewModel.selectedCellId {
+          Task {
+            await viewModel.runCell(id: id)
+            syncDocument()
+          }
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
+        if let id = viewModel.selectedCellId {
+          Task {
+            await viewModel.runCell(id: id)
+            viewModel.selectNextCell(createIfNeeded: true)
+            syncDocument()
+          }
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
+        if let id = viewModel.selectedCellId {
+          Task {
+            await viewModel.runCell(id: id)
+            viewModel.insertCellBelow(type: .sql)
+            syncDocument()
+          }
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
+        Task {
+          await viewModel.runAllCells()
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
+        if let id = viewModel.selectedCellId {
+          viewModel.clearCellOutput(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
+        viewModel.clearAllOutputs()
+        syncDocument()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
+        if let id = viewModel.selectedCellId {
+          viewModel.deleteCell(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
+        if let id = viewModel.selectedCellId {
+          viewModel.duplicateCell(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+        viewModel.toggleSidebar()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .selectNextCell)) { _ in
+        viewModel.selectNextCell(createIfNeeded: false)
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
+        viewModel.selectPreviousCell()
+      }
+  }
 }
 
 // MARK: - Undo/Redo Handler Modifier
 
 private struct UndoRedoHandlerModifier: ViewModifier {
-    let viewModel: NotebookViewModel
-    let syncDocument: () -> Void
-    @Binding var focusedTextView: NSTextView?
+  let viewModel: NotebookViewModel
+  let syncDocument: () -> Void
+  @Binding var focusedTextView: NSTextView?
 
-    func body(content: Content) -> some View {
-        content
-            .onReceive(NotificationCenter.default.publisher(for: .undo)) { _ in
-                handleUndo()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .redo)) { _ in
-                handleRedo()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .editorFocused)) { notification in
-                if let textView = notification.object as? NSTextView {
-                    focusedTextView = textView
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .editorUnfocused)) { _ in
-                focusedTextView = nil
-            }
-    }
-
-    private func handleUndo() {
-        if let textView = focusedTextView, let undoManager = textView.undoManager {
-            // Editor is focused - use editor's undo manager
-            undoManager.undo()
-        } else {
-            // No editor focused - use cell-level undo manager
-            viewModel.undoManager.undo()
-            syncDocument()
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .undo)) { _ in
+        handleUndo()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .redo)) { _ in
+        handleRedo()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .editorFocused)) { notification in
+        if let textView = notification.object as? NSTextView {
+          focusedTextView = textView
         }
-    }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .editorUnfocused)) { _ in
+        focusedTextView = nil
+      }
+  }
 
-    private func handleRedo() {
-        if let textView = focusedTextView, let undoManager = textView.undoManager {
-            // Editor is focused - use editor's undo manager
-            undoManager.redo()
-        } else {
-            // No editor focused - use cell-level undo manager
-            viewModel.undoManager.redo()
-            syncDocument()
-        }
+  private func handleUndo() {
+    if let textView = focusedTextView, let undoManager = textView.undoManager {
+      // Editor is focused - use editor's undo manager
+      undoManager.undo()
+    } else {
+      // No editor focused - use cell-level undo manager
+      viewModel.undoManager.undo()
+      syncDocument()
     }
+  }
+
+  private func handleRedo() {
+    if let textView = focusedTextView, let undoManager = textView.undoManager {
+      // Editor is focused - use editor's undo manager
+      undoManager.redo()
+    } else {
+      // No editor focused - use cell-level undo manager
+      viewModel.undoManager.redo()
+      syncDocument()
+    }
+  }
 }
