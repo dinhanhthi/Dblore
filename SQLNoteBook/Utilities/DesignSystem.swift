@@ -326,4 +326,13 @@ extension View {
                     .stroke(Color.border, lineWidth: 1)
             )
     }
+
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
 }

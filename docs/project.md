@@ -33,7 +33,7 @@ struct SQLNotebook: Codable, Identifiable {
 
 struct NotebookCell: Codable, Identifiable {
    let id: UUID
-   var cellType: CellType // .sql or .markdown
+   var cellType: CellType // .sql only
    var content: String
    var executionCount: Int? // nil if never run
    var result: CellResult?
@@ -42,7 +42,6 @@ struct NotebookCell: Codable, Identifiable {
 
 enum CellType: String, Codable {
    case sql
-   case markdown
 }
 
 struct CellResult: Codable {
@@ -145,7 +144,6 @@ enum SidebarContent {
 
 **Leading Group (left-aligned):**
 - **"+ Code" Button:** Adds a new SQL cell below the currently selected cell (or at the end if none selected)
-- **"+ Markdown" Button:** Adds a new Markdown cell
 - **"Run All" Button:** Executes all SQL cells sequentially from top to bottom
 - **"Clear All Outputs" Button:** Clears all cell results but keeps the code
 
@@ -173,7 +171,7 @@ Each cell is a distinct visual block:
 │      │  ┌─────────────────────────────────────────────────┐│
 │ [▶]  │  │                                                 ││
 │      │  │            CODE EDITOR                          ││
-│ [1]  │  │         (SQL or Markdown)                       ││
+│ [1]  │  │              (SQL)                              ││
 │      │  │                                                 ││
 │      │  └─────────────────────────────────────────────────┘│
 ├──────┴─────────────────────────────────────────────────────┤
@@ -204,10 +202,6 @@ Each cell is a distinct visual block:
  - Minimum height: 3 lines
  - Auto-expand based on content
  - Background: Slightly darker than main background
-- **Markdown Cells:**
- - When editing: Plain text editor with markdown syntax
- - When not editing: Rendered markdown view
- - Double-click to edit, click outside or Cmd+Enter to render
 
 **Result Area (only visible if result exists):**
 - **Container:** 
@@ -510,7 +504,6 @@ Display SQL errors inline below the cell:
 | `Shift+Enter` | Run cell and move to next |
 | `Cmd+Shift+Enter` | Run all cells |
 | `Cmd+B` | Add code cell below |
-| `Cmd+M` | Add markdown cell below |
 | `Cmd+Backspace` | Delete selected cell |
 | `Cmd+D` | Duplicate cell |
 | `Cmd+Shift+R` | Toggle right sidebar |

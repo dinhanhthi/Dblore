@@ -47,11 +47,6 @@ struct NotebookCommands: Commands {
                 NotificationCenter.default.post(name: .addCodeCell, object: nil)
             }
             .keyboardShortcut("b", modifiers: .command)
-
-            Button("Add Markdown Cell") {
-                NotificationCenter.default.post(name: .addMarkdownCell, object: nil)
-            }
-            .keyboardShortcut("m", modifiers: .command)
         }
 
         // Run commands
@@ -126,7 +121,6 @@ struct NotebookCommands: Commands {
 
 extension Notification.Name {
     static let addCodeCell = Notification.Name("addCodeCell")
-    static let addMarkdownCell = Notification.Name("addMarkdownCell")
     static let runCell = Notification.Name("runCell")
     static let runCellAndSelectNext = Notification.Name("runCellAndSelectNext")
     static let runCellAndInsertBelow = Notification.Name("runCellAndInsertBelow")

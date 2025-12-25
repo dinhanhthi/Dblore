@@ -193,13 +193,13 @@ struct ContentView: View {
 // MARK: - Preview
 
 #Preview {
-    // Create 3 cells: SQL with content, SQL empty, and Markdown
+    // Create 2 cells: SQL with content and SQL empty
     var sqlCellWithContent = NotebookCell(
         cellType: .sql,
         content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
         executionCount: 1
     )
-    
+
     // Add example result table
     sqlCellWithContent.result = CellResult(
         columns: [
@@ -218,40 +218,35 @@ struct ContentView: View {
         rowCount: 5,
         timestamp: Date()
     )
-    
+
     let sqlCellEmpty = NotebookCell(
         cellType: .sql,
         content: ""
     )
-    
-    let markdownCell = NotebookCell(
-        cellType: .markdown,
-        content: "# Sample Markdown\n\nThis is a markdown cell with **bold** and *italic* text."
-    )
-    
+
     let notebook = SQLNotebook(
-        cells: [sqlCellWithContent, markdownCell, sqlCellEmpty],
+        cells: [sqlCellWithContent, sqlCellEmpty],
         metadata: NotebookMetadata(title: "Preview Notebook")
     )
-    
+
     struct PreviewContainer: View {
         @State var document: SQLNotebookDocument
         @State var viewModel: NotebookViewModel
-        
+
         init(notebook: SQLNotebook, selectedCellId: UUID) {
             let doc = SQLNotebookDocument(notebook: notebook)
             self._document = State(initialValue: doc)
-            
+
             let vm = NotebookViewModel(notebook: notebook)
             vm.selectedCellId = selectedCellId
             self._viewModel = State(initialValue: vm)
         }
-        
+
         var body: some View {
             ContentViewForPreview(document: $document, viewModel: viewModel)
         }
     }
-    
+
     return PreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
         .frame(width: 820, height: 600)
         .preferredColorScheme(.dark)
@@ -323,10 +318,6 @@ private struct NotificationHandlerModifier: ViewModifier {
         content
             .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
                 viewModel.addCell(type: .sql)
-                syncDocument()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .addMarkdownCell)) { _ in
-                viewModel.addCell(type: .markdown)
                 syncDocument()
             }
             .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in

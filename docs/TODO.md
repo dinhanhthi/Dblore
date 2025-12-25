@@ -89,14 +89,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Implement auto-expanding height based on content
 - [x] Add minimum height constraint (3 lines)
 
-### 2.4 Markdown Cell
-- [x] Create `MarkdownCellView` with edit/render modes
-- [x] Implement markdown rendering using AttributedString
-- [x] Implement double-click to edit behavior
-- [x] Implement click-outside to render behavior
-- [x] Style rendered markdown appropriately
-
-### 2.5 Cell Keyboard Navigation
+### 2.4 Cell Keyboard Navigation
 - [x] Implement `Cmd+Enter` to run cell
 - [x] Implement `Shift+Enter` to run and move next
 - [x] Implement `Cmd+D` to duplicate cell
@@ -172,7 +165,6 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 
 ### 4.2 Header Actions
 - [x] Wire up "+ Code" button
-- [x] Wire up "+ Markdown" button
 - [x] Implement "Run All" functionality (sequential execution)
 - [x] Implement "Clear All Outputs" functionality
 - [x] Add button icons using SF Symbols
@@ -205,7 +197,6 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Implement `Cmd+S` for save notebook
 - [x] Implement `Cmd+Shift+Enter` for run all
 - [x] Implement `Cmd+B` for add code cell
-- [x] Implement `Cmd+M` for add markdown cell
 - [x] Implement `Cmd+Backspace` for delete cell
 - [x] Implement `Cmd+Shift+R` for toggle sidebar
 - [ ] Implement `Cmd+/` for comment/uncomment SQL line

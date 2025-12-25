@@ -18,11 +18,6 @@ struct HeaderView: View {
                 }
                 .buttonStyle(ToolbarButtonStyle())
 
-                Button(action: { viewModel.addCell(type: .markdown) }) {
-                    Label("Markdown", systemImage: "plus")
-                }
-                .buttonStyle(ToolbarButtonStyle())
-
                 Divider()
                     .frame(height: 20)
 
