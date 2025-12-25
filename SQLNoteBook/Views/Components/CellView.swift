@@ -366,11 +366,27 @@ struct SQLEditorView: View {
 
 class SQLTextView: NSTextView {
     var onFocus: (() -> Void)?
+    var onBlur: ((String) -> Void)?  // Callback with current text when losing focus
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result {
             onFocus?()
+            // Notify that this editor is now focused
+            NotificationCenter.default.post(name: .editorFocused, object: self)
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        // Capture the string before calling super to avoid accessing potentially deallocated state
+        let currentText = self.string
+        let result = super.resignFirstResponder()
+        if result {
+            // Update binding when losing focus
+            onBlur?(currentText)
+            // Notify that this editor is no longer focused
+            NotificationCenter.default.post(name: .editorUnfocused, object: self)
         }
         return result
     }
@@ -497,6 +513,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
         textView.delegate = context.coordinator
         textView.onFocus = onFocus
+
+        // Use weak reference to coordinator to prevent crash on deallocation
+        textView.onBlur = { [weak coordinator = context.coordinator] newText in
+            // Update binding when editor loses focus
+            coordinator?.text.wrappedValue = newText
+        }
         textView.isRichText = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.textColor = NSColor(Color.foreground)
@@ -506,6 +528,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.allowsUndo = true
+
+        // Enable continuous undo grouping for better undo/redo behavior
+        textView.isContinuousSpellCheckingEnabled = false
+        if let undoManager = textView.undoManager {
+            undoManager.groupsByEvent = true
+        }
 
         textView.textContainerInset = NSSize(width: 4, height: 4)
         textView.textContainer?.lineFragmentPadding = 0
@@ -536,12 +564,23 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? SQLTextView else { return }
 
-        // Update onFocus callback
+        // Update callbacks
         textView.onFocus = onFocus
 
-        if textView.string != text {
+        // Use weak reference to coordinator to prevent crash on deallocation
+        textView.onBlur = { [weak coordinator = context.coordinator] newText in
+            // Update binding when editor loses focus
+            coordinator?.text.wrappedValue = newText
+        }
+
+        // Only update text from external source if different
+        // Don't update if textView is first responder (user is typing)
+        if textView.string != text && textView.window?.firstResponder != textView {
             let selectedRanges = textView.selectedRanges
-            context.coordinator.applyHighlighting(to: textView, text: text)
+
+            // Apply syntax highlighting when updating from external source
+            context.coordinator.applyHighlightingWithoutUndo(to: textView, text: text)
+
             textView.selectedRanges = selectedRanges
 
             DispatchQueue.main.async {
@@ -566,20 +605,17 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
 
-            // Save cursor position before updating
-            let savedSelectedRanges = textView.selectedRanges
+            // Safety check: ensure textView is still valid and attached to a window
+            guard textView.window != nil else { return }
 
-            // Update binding
-            text.wrappedValue = textView.string
-
-            // Apply highlighting
-            applyHighlighting(to: textView, text: textView.string)
-
-            // Restore cursor position after highlighting
-            textView.selectedRanges = savedSelectedRanges
+            // Apply syntax highlighting without affecting undo stack
+            applyHighlightingWithoutUndo(to: textView, text: textView.string)
 
             // Update height to fit content
             updateHeight(textView: textView)
+
+            // DO NOT update binding here - it causes undo/redo lag!
+            // The binding will be updated when editor loses focus (see resignFirstResponder)
         }
 
         func applyHighlighting(to textView: NSTextView, text: String) {
@@ -588,6 +624,30 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
             textView.textStorage?.beginEditing()
             textView.textStorage?.setAttributedString(attributed)
             textView.textStorage?.endEditing()
+        }
+
+        /// Apply syntax highlighting without creating undo operations
+        /// This prevents undo/redo lag when typing
+        func applyHighlightingWithoutUndo(to textView: NSTextView, text: String) {
+            guard let textStorage = textView.textStorage else { return }
+
+            let attributed = SQLSyntaxHighlighter.highlight(text)
+            let fullRange = NSRange(location: 0, length: textStorage.length)
+
+            // Use shouldChangeText to control undo behavior
+            // By wrapping in beginEditing/endEditing without shouldChangeText,
+            // we can modify attributes without registering undo
+            textStorage.beginEditing()
+
+            // Remove all attributes first
+            textStorage.setAttributes([:], range: fullRange)
+
+            // Apply new attributes from syntax highlighting
+            attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
+                textStorage.addAttributes(attrs, range: range)
+            }
+
+            textStorage.endEditing()
         }
 
         func updateHeight(textView: NSTextView) {
@@ -629,14 +689,8 @@ struct MarkdownCellView: View {
     var body: some View {
         Group {
             if isEditing {
-                TextEditor(text: $content)
-                    .font(.mono)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.inputBackground)
+                MarkdownTextEditorRepresentable(text: $content, isEditing: $isEditing)
                     .frame(minHeight: ComponentSize.minCellHeight)
-                    .onSubmit {
-                        isEditing = false
-                    }
             } else {
                 renderedMarkdown
                     .onTapGesture(count: 2) {
@@ -665,6 +719,94 @@ struct MarkdownCellView: View {
             }
         }
         .frame(minHeight: ComponentSize.minCellHeight, alignment: .topLeading)
+    }
+}
+
+// MARK: - Markdown Text Editor
+
+class MarkdownTextView: NSTextView {
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            NotificationCenter.default.post(name: .editorFocused, object: self)
+        }
+        return result
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            NotificationCenter.default.post(name: .editorUnfocused, object: self)
+        }
+        return result
+    }
+}
+
+struct MarkdownTextEditorRepresentable: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var isEditing: Bool
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        let textView = MarkdownTextView()
+
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textColor = NSColor(Color.foreground)
+        textView.backgroundColor = NSColor.clear
+        textView.drawsBackground = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.allowsUndo = true
+
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.textContainer?.lineFragmentPadding = 0
+
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+
+        textView.string = text
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? MarkdownTextView else { return }
+
+        if textView.string != text {
+            let selectedRanges = textView.selectedRanges
+            textView.string = text
+            textView.selectedRanges = selectedRanges
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, isEditing: $isEditing)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+        var isEditing: Binding<Bool>
+
+        init(text: Binding<String>, isEditing: Binding<Bool>) {
+            self.text = text
+            self.isEditing = isEditing
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text.wrappedValue = textView.string
+        }
     }
 }
 

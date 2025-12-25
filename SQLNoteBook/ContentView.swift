@@ -12,10 +12,12 @@ struct ContentView: View {
     @State private var lastSaved: Date?
 
     @State private var keyEventMonitor: Any?
+    @State private var focusedTextView: NSTextView?
 
     init(document: Binding<SQLNotebookDocument>) {
         self._document = document
-        self._viewModel = State(initialValue: NotebookViewModel(notebook: document.wrappedValue.notebook))
+        let vm = NotebookViewModel(notebook: document.wrappedValue.notebook)
+        self._viewModel = State(initialValue: vm)
     }
 
     var body: some View {
@@ -47,16 +49,26 @@ struct ContentView: View {
         .sheet(isPresented: $showConnectionSheet) {
             ConnectionSheet(viewModel: viewModel, isPresented: $showConnectionSheet)
         }
-        .modifier(NotificationHandlerModifier(viewModel: viewModel, syncDocument: syncDocument))
+        .modifier(NotificationHandlerModifier(
+            viewModel: viewModel,
+            syncDocument: syncDocument
+        ))
+        .modifier(UndoRedoHandlerModifier(
+            viewModel: viewModel,
+            syncDocument: syncDocument,
+            focusedTextView: $focusedTextView
+        ))
         .onChange(of: viewModel.notebook.metadata.title) { _, _ in
             syncDocument()
         }
         .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
         .onAppear {
             setupKeyEventMonitor()
+            viewModel.onDocumentChanged = syncDocument
         }
         .onDisappear {
             removeKeyEventMonitor()
+            viewModel.onDocumentChanged = nil
         }
     }
 
@@ -380,5 +392,53 @@ private struct NotificationHandlerModifier: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
                 viewModel.selectPreviousCell()
             }
+    }
+}
+
+// MARK: - Undo/Redo Handler Modifier
+
+private struct UndoRedoHandlerModifier: ViewModifier {
+    let viewModel: NotebookViewModel
+    let syncDocument: () -> Void
+    @Binding var focusedTextView: NSTextView?
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .undo)) { _ in
+                handleUndo()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .redo)) { _ in
+                handleRedo()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .editorFocused)) { notification in
+                if let textView = notification.object as? NSTextView {
+                    focusedTextView = textView
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .editorUnfocused)) { _ in
+                focusedTextView = nil
+            }
+    }
+
+    private func handleUndo() {
+        if let textView = focusedTextView, let undoManager = textView.undoManager {
+            // Editor is focused - use editor's undo manager
+            undoManager.undo()
+        } else {
+            // No editor focused - use cell-level undo manager
+            viewModel.undoManager.undo()
+            syncDocument()
+        }
+    }
+
+    private func handleRedo() {
+        if let textView = focusedTextView, let undoManager = textView.undoManager {
+            // Editor is focused - use editor's undo manager
+            undoManager.redo()
+        } else {
+            // No editor focused - use cell-level undo manager
+            viewModel.undoManager.redo()
+            syncDocument()
+        }
     }
 }
