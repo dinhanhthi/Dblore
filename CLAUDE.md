@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **SQLNotebook** là một native macOS application được xây dựng bằng Swift và SwiftUI, hoạt động như một interactive SQL notebook (tương tự Jupyter Notebook nhưng chuyên cho SQL queries). App cho phép users viết, thực thi và lưu trữ SQL queries trong cell-based interface với persistent results.
 
 ### Key Features
-- Cell-based interface với SQL và Markdown cells
+- Cell-based interface với SQL cells
 - Execute SQL queries với syntax highlighting
 - Save notebooks dưới dạng `.sqlnb` files (JSON format)
 - Display query results trong table format
@@ -38,7 +38,7 @@ SQLNotebook/
 │   └── DatabaseConnectionManager.swift    # Actor quản lý database connections
 ├── Models/
 │   ├── ConnectionConfig.swift            # Database connection configuration
-│   ├── NotebookCell.swift                # Cell model (SQL/Markdown)
+│   ├── NotebookCell.swift                # Cell model (SQL only)
 │   ├── SQLNotebook.swift                 # Main notebook model
 │   └── SQLNotebookDocument.swift         # FileDocument implementation
 ├── ViewModels/
@@ -63,7 +63,7 @@ SQLNotebook/
 
 ### Core Models
 - **SQLNotebook**: Main document model với cells, metadata, connection config
-- **NotebookCell**: Individual cell (SQL hoặc Markdown) với content và results
+- **NotebookCell**: Individual SQL cell với content và results
 - **CellResult**: Execution results với columns, rows, timing info
 - **ConnectionConfig**: Database connection parameters
 - **CellValue**: Enum cho các data types (string, int, double, bool, null, json, date, data)
@@ -173,7 +173,6 @@ Display SQL errors inline below cells với:
 | `Shift+Enter` | Run cell and move to next |
 | `Cmd+Shift+Enter` | Run all cells |
 | `Cmd+B` | Add code cell below |
-| `Cmd+M` | Add markdown cell below |
 | `Cmd+Backspace` | Delete selected cell |
 | `Cmd+D` | Duplicate cell |
 | `Cmd+Shift+R` | Toggle right sidebar |

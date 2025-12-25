@@ -106,27 +106,26 @@ struct CellView: View {
 
     // MARK: - Cell Sidebar
 
+    @ViewBuilder
     private var cellSidebar: some View {
         VStack(spacing: Spacing.sm) {
-            // Run button (only for SQL cells)
-            if cell.cellType == .sql {
-                Button(action: onRun) {
-                    if cell.isRunning {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 20, height: 20)
-                    } else {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
-                            .frame(width: 20, height: 20)
-                    }
+            // Run button
+            Button(action: onRun) {
+                if cell.isRunning {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 20, height: 20)
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
+                        .frame(width: 20, height: 20)
                 }
-                .buttonStyle(GhostButtonStyle())
-                .contentShape(Rectangle())
-                .disabled(cell.isRunning)
             }
-    
+            .buttonStyle(GhostButtonStyle())
+            .contentShape(Rectangle())
+            .disabled(cell.isRunning)
+
             // Execution count
             if let count = cell.executionCount {
                 Text("[\(count)]")
@@ -141,35 +140,20 @@ struct CellView: View {
     // MARK: - Floating Action Panel
 
     private var floatingActionPanel: some View {
-        HStack(spacing: Spacing.sm) {
-            Button(action: {
-                viewModel.addCell(type: .sql, after: cell.id)
-            }) {
-                HStack(spacing: Spacing.xs) {
-                    Image(systemName: "plus.square")
-                        .font(.system(size: 12))
-                    Text("Code")
-                        .font(.system(size: 12, weight: .medium))
-                }
+        Button(action: {
+            viewModel.addCell(type: .sql, after: cell.id)
+        }) {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: "plus.square")
+                    .font(.system(size: 12))
+                Text("Code")
+                    .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(FloatingPanelButtonStyle())
-            .help("Add Code Cell Below")
-
-            Button(action: {
-                viewModel.addCell(type: .markdown, after: cell.id)
-            }) {
-                HStack(spacing: Spacing.xs) {
-                    Image(systemName: "text.justify.left")
-                        .font(.system(size: 12))
-                    Text("Markdown")
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-            .buttonStyle(FloatingPanelButtonStyle())
-            .help("Add Markdown Cell Below")
         }
+        .buttonStyle(FloatingPanelButtonStyle())
+        .help("Add Code Cell Below")
         .onHover { hovering in
-            // Keep panel visible when hovering over the buttons themselves
+            // Keep panel visible when hovering over the button itself
             isBottomEdgeHovered = hovering
         }
     }
@@ -220,18 +204,13 @@ struct CellView: View {
 
     @ViewBuilder
     private var editorArea: some View {
-        switch cell.cellType {
-        case .sql:
-            SQLEditorView(
-                content: $cell.content,
-                isSelected: isSelected,
-                isFocused: isEditorFocused,
-                onFocus: { viewModel.selectedCellId = cell.id }
-            )
-            .focused($isEditorFocused)
-        case .markdown:
-            MarkdownCellView(content: $cell.content, isSelected: isSelected, isFocused: isEditorFocused)
-        }
+        SQLEditorView(
+            content: $cell.content,
+            isSelected: isSelected,
+            isFocused: isEditorFocused,
+            onFocus: { viewModel.selectedCellId = cell.id }
+        )
+        .focused($isEditorFocused)
     }
 
     // MARK: - Result Area
@@ -309,7 +288,6 @@ struct CellView: View {
         Button(action: onRun) {
             Label("Run", systemImage: "play.fill")
         }
-        .disabled(cell.cellType == .markdown)
 
         Divider()
 
@@ -584,12 +562,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         // Only update text from external source if different
         // Don't update if textView is first responder (user is typing)
         if textView.string != text && textView.window?.firstResponder != textView {
-            let selectedRanges = textView.selectedRanges
-
             // Apply syntax highlighting when updating from external source
-            context.coordinator.applyHighlightingWithoutUndo(to: textView, text: text)
-
-            textView.selectedRanges = selectedRanges
+            context.coordinator.applyHighlighting(to: textView, text: text)
 
             DispatchQueue.main.async {
                 context.coordinator.updateHeight(textView: textView)
@@ -640,6 +614,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
             guard let textStorage = textView.textStorage else { return }
 
             let attributed = SQLSyntaxHighlighter.highlight(text)
+
+            // Only apply if the text content matches (same length)
+            guard textStorage.length == attributed.length else { return }
+
             let fullRange = NSRange(location: 0, length: textStorage.length)
 
             // Use shouldChangeText to control undo behavior
@@ -687,141 +665,6 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     }
 }
 
-// MARK: - Markdown Cell View
-
-struct MarkdownCellView: View {
-    @Binding var content: String
-    let isSelected: Bool
-    let isFocused: Bool
-    @State private var isEditing = false
-
-    var body: some View {
-        Group {
-            if isEditing {
-                MarkdownTextEditorRepresentable(text: $content, isEditing: $isEditing)
-                    .frame(minHeight: ComponentSize.minCellHeight)
-            } else {
-                renderedMarkdown
-                    .onTapGesture(count: 2) {
-                        isEditing = true
-                    }
-            }
-        }
-        .padding(Spacing.sm)
-        .background(Color.inputBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .overlay(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-                .stroke(isFocused && isEditing ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
-        )
-    }
-
-    private var renderedMarkdown: some View {
-        Group {
-            if content.isEmpty {
-                Text("Double-click to edit markdown...")
-                    .font(.bodyText)
-                    .foregroundColor(.foregroundSubtle)
-                    .italic()
-            } else {
-                // Basic markdown rendering
-                Text(LocalizedStringKey(content))
-                    .font(.bodyText)
-                    .foregroundColor(.foreground)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .frame(minHeight: ComponentSize.minCellHeight, alignment: .topLeading)
-    }
-}
-
-// MARK: - Markdown Text Editor
-
-class MarkdownTextView: NSTextView {
-    override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result {
-            NotificationCenter.default.post(name: .editorFocused, object: self)
-        }
-        return result
-    }
-
-    override func resignFirstResponder() -> Bool {
-        let result = super.resignFirstResponder()
-        if result {
-            NotificationCenter.default.post(name: .editorUnfocused, object: self)
-        }
-        return result
-    }
-}
-
-struct MarkdownTextEditorRepresentable: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var isEditing: Bool
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let textView = MarkdownTextView()
-
-        textView.delegate = context.coordinator
-        textView.isRichText = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.textColor = NSColor(Color.foreground)
-        textView.backgroundColor = NSColor.clear
-        textView.drawsBackground = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.allowsUndo = true
-
-        textView.textContainerInset = NSSize(width: 4, height: 4)
-        textView.textContainer?.lineFragmentPadding = 0
-
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.heightTracksTextView = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-
-        textView.string = text
-
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? MarkdownTextView else { return }
-
-        if textView.string != text {
-            let selectedRanges = textView.selectedRanges
-            textView.string = text
-            textView.selectedRanges = selectedRanges
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, isEditing: $isEditing)
-    }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var text: Binding<String>
-        var isEditing: Binding<Bool>
-
-        init(text: Binding<String>, isEditing: Binding<Bool>) {
-            self.text = text
-            self.isEditing = isEditing
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            text.wrappedValue = textView.string
-        }
-    }
-}
 
 #Preview("Empty Cells") {
     VStack {       
@@ -933,3 +776,4 @@ struct MarkdownTextEditorRepresentable: NSViewRepresentable {
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
 }
+

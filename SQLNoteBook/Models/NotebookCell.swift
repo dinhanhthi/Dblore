@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// A single cell in the notebook (either SQL or Markdown)
+/// A single cell in the notebook (SQL only)
 struct NotebookCell: Codable, Identifiable, Sendable {
     let id: UUID
     var cellType: CellType
@@ -31,10 +31,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     }
 }
 
-/// The type of cell content
+/// The type of cell content (SQL only)
 enum CellType: String, Codable, Sendable {
     case sql
-    case markdown
 }
 
 /// Result of executing a SQL cell
