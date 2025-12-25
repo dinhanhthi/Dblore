@@ -6,182 +6,183 @@
 import SwiftUI
 
 struct HeaderView: View {
-    @Bindable var viewModel: NotebookViewModel
-    @Binding var showConnectionSheet: Bool
+  @Bindable var viewModel: NotebookViewModel
+  @Binding var showConnectionSheet: Bool
 
-    var body: some View {
-        HStack(spacing: Spacing.sm) {
-            // Leading group - Cell actions
-            HStack(spacing: Spacing.xs) {
-                Button(action: { viewModel.addCell(type: .sql) }) {
-                    Label("Code", systemImage: "plus")
-                }
-                .buttonStyle(ToolbarButtonStyle())
-
-                Divider()
-                    .frame(height: 20)
-
-                Button(action: {
-                    Task { await viewModel.runAllCells() }
-                }) {
-                    Label("Run All", systemImage: "play.fill")
-                }
-                .buttonStyle(ToolbarButtonStyle())
-                .disabled(!viewModel.connectionState.isConnected)
-
-                Button(action: { viewModel.clearAllOutputs() }) {
-                    Label("Clear All Outputs", systemImage: "trash")
-                }
-                .buttonStyle(ToolbarButtonStyle())
-            }
-
-            Spacer()
-
-            // Trailing group - Connection
-            ConnectionButton(
-                connectionState: viewModel.connectionState,
-                onConnect: { showConnectionSheet = true },
-                onDisconnect: { viewModel.disconnect() },
-                onShowDetails: {
-                    // Toggle sidebar if already showing connection details
-                    if viewModel.isRightSidebarVisible,
-                       case .connectionDetails = viewModel.rightSidebarContent {
-                        viewModel.closeSidebar()
-                    } else {
-                        viewModel.showConnectionDetails()
-                    }
-                }
-            )
+  var body: some View {
+    HStack(spacing: Spacing.sm) {
+      // Leading group - Cell actions
+      HStack(spacing: Spacing.xs) {
+        Button(action: { viewModel.addCell(type: .sql) }) {
+          Label("Code", systemImage: "plus")
         }
-        .padding(.horizontal, Spacing.sm)
-        .frame(height: ComponentSize.headerHeight)
-        .background(Color.cardBackground)
-        .overlay(alignment: .bottom) {
-            Divider()
+        .buttonStyle(ToolbarButtonStyle())
+
+        Divider()
+          .frame(height: 20)
+
+        Button(action: {
+          Task { await viewModel.runAllCells() }
+        }) {
+          Label("Run All", systemImage: "play.fill")
         }
+        .buttonStyle(ToolbarButtonStyle())
+        .disabled(!viewModel.connectionState.isConnected)
+
+        Button(action: { viewModel.clearAllOutputs() }) {
+          Label("Clear All Outputs", systemImage: "trash")
+        }
+        .buttonStyle(ToolbarButtonStyle())
+      }
+
+      Spacer()
+
+      // Trailing group - Connection
+      ConnectionButton(
+        connectionState: viewModel.connectionState,
+        onConnect: { showConnectionSheet = true },
+        onDisconnect: { viewModel.disconnect() },
+        onShowDetails: {
+          // Toggle sidebar if already showing connection details
+          if viewModel.isRightSidebarVisible,
+            case .connectionDetails = viewModel.rightSidebarContent
+          {
+            viewModel.closeSidebar()
+          } else {
+            viewModel.showConnectionDetails()
+          }
+        }
+      )
     }
+    .padding(.horizontal, Spacing.sm)
+    .frame(height: ComponentSize.headerHeight)
+    .background(Color.cardBackground)
+    .overlay(alignment: .bottom) {
+      Divider()
+    }
+  }
 }
 
 struct ConnectionButton: View {
-    let connectionState: ConnectionState
-    let onConnect: () -> Void
-    let onDisconnect: () -> Void
-    let onShowDetails: () -> Void
-    
-    @State private var showDisconnectConfirmation = false
+  let connectionState: ConnectionState
+  let onConnect: () -> Void
+  let onDisconnect: () -> Void
+  let onShowDetails: () -> Void
 
-    var body: some View {
+  @State private var showDisconnectConfirmation = false
+
+  var body: some View {
+    if connectionState.isConnected {
+      // Connected state - no button style, green text, with info icon
+      HStack(spacing: Spacing.xs) {
+        Button(action: { showDisconnectConfirmation = true }) {
+          HStack(spacing: Spacing.xs) {
+            connectionIcon
+            Text(connectionText)
+              .foregroundColor(.success)
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+
+        Button(action: onShowDetails) {
+          Image(systemName: "info.circle")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(.plain)
+      }
+      .confirmationDialog(
+        "Disconnect from database?",
+        isPresented: $showDisconnectConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Disconnect", role: .destructive) {
+          onDisconnect()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This will close the database connection and you won't be able to run queries.")
+      }
+    } else {
+      // Other states - use button style
+      Button(action: {
         if connectionState.isConnected {
-            // Connected state - no button style, green text, with info icon
-            HStack(spacing: Spacing.xs) {
-                Button(action: { showDisconnectConfirmation = true }) {
-                    HStack(spacing: Spacing.xs) {
-                        connectionIcon
-                        Text(connectionText)
-                            .foregroundColor(.success)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                
-                Button(action: onShowDetails) {
-                    Image(systemName: "info.circle")
-                        .foregroundColor(.foregroundMuted)
-                }
-                .buttonStyle(.plain)
-            }
-            .confirmationDialog(
-                "Disconnect from database?",
-                isPresented: $showDisconnectConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Disconnect", role: .destructive) {
-                    onDisconnect()
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will close the database connection and you won't be able to run queries.")
-            }
+          onDisconnect()
         } else {
-            // Other states - use button style
-            Button(action: {
-                if connectionState.isConnected {
-                    onDisconnect()
-                } else {
-                    onConnect()
-                }
-            }) {
-                HStack(spacing: Spacing.sm) {
-                    connectionIcon
-                    Text(connectionText)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(ToolbarButtonStyle())
-            .disabled(connectionState.isConnecting)
+          onConnect()
         }
-    }
-
-    private var connectionIcon: some View {
-        ConnectionIconView(state: connectionState)
-    }
-
-    private var connectionText: String {
-        switch connectionState {
-        case .disconnected:
-            return "Connect"
-        case .connecting:
-            return "Connecting..."
-        case .connected:
-            return "Connected"
-        case .error(let message):
-            return "Error: \(message)"
+      }) {
+        HStack(spacing: Spacing.sm) {
+          connectionIcon
+          Text(connectionText)
         }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(ToolbarButtonStyle())
+      .disabled(connectionState.isConnecting)
     }
+  }
+
+  private var connectionIcon: some View {
+    ConnectionIconView(state: connectionState)
+  }
+
+  private var connectionText: String {
+    switch connectionState {
+    case .disconnected:
+      return "Connect"
+    case .connecting:
+      return "Connecting..."
+    case .connected:
+      return "Connected"
+    case .error(let message):
+      return "Error: \(message)"
+    }
+  }
 }
 
 // MARK: - Connection Icon View
 // Extracted to reduce type complexity in ConnectionButton
 
 private struct ConnectionIconView: View {
-    let state: ConnectionState
+  let state: ConnectionState
 
-    var body: some View {
-        switch state {
-        case .disconnected:
-            Image(systemName: "bolt.slash")
-                .foregroundColor(.foregroundMuted)
-        case .connecting:
-            ProgressView()
-                .scaleEffect(0.7)
-                .frame(width: 14, height: 14)
-        case .connected:
-            Image(systemName: "bolt.fill")
-                .foregroundColor(.success)
-        case .error:
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundColor(.destructive)
-        }
+  var body: some View {
+    switch state {
+    case .disconnected:
+      Image(systemName: "bolt.slash")
+        .foregroundColor(.foregroundMuted)
+    case .connecting:
+      ProgressView()
+        .scaleEffect(0.7)
+        .frame(width: 14, height: 14)
+    case .connected:
+      Image(systemName: "bolt.fill")
+        .foregroundColor(.success)
+    case .error:
+      Image(systemName: "exclamationmark.triangle")
+        .foregroundColor(.destructive)
     }
+  }
 }
 
 #Preview("Connect") {
-    HeaderView(
-        viewModel: NotebookViewModel(),
-        showConnectionSheet: .constant(false)
-    )
-    .frame(width: 800)
-    .preferredColorScheme(.dark)
+  HeaderView(
+    viewModel: NotebookViewModel(),
+    showConnectionSheet: .constant(false)
+  )
+  .frame(width: 800)
+  .preferredColorScheme(.dark)
 }
 
 #Preview("Connected") {
-    let viewModel = NotebookViewModel()
-    viewModel.connectionState = .connected
-    
-    return HeaderView(
-        viewModel: viewModel,
-        showConnectionSheet: .constant(false)
-    )
-    .frame(width: 800)
-    .preferredColorScheme(.dark)
+  let viewModel = NotebookViewModel()
+  viewModel.connectionState = .connected
+
+  return HeaderView(
+    viewModel: viewModel,
+    showConnectionSheet: .constant(false)
+  )
+  .frame(width: 800)
+  .preferredColorScheme(.dark)
 }
