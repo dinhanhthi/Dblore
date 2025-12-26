@@ -7,7 +7,6 @@ import SwiftUI
 
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
-  @Binding var showConnectionSheet: Bool
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -61,7 +60,16 @@ struct HeaderView: View {
       // Trailing group - Connection
       ConnectionButton(
         connectionState: viewModel.connectionState,
-        onConnect: { showConnectionSheet = true },
+        onConnect: {
+          // Toggle sidebar if already showing connection form
+          if viewModel.isRightSidebarVisible,
+            case .connectionForm = viewModel.rightSidebarContent
+          {
+            viewModel.closeSidebar()
+          } else {
+            viewModel.showConnectionForm()
+          }
+        },
         onDisconnect: { viewModel.disconnect() },
         onShowDetails: {
           // Toggle sidebar if already showing connection details
@@ -226,22 +234,16 @@ private struct ConnectionIconView: View {
 }
 
 #Preview("Connect") {
-  HeaderView(
-    viewModel: NotebookViewModel(),
-    showConnectionSheet: .constant(false)
-  )
-  .frame(width: 800)
-  .preferredColorScheme(.dark)
+  HeaderView(viewModel: NotebookViewModel())
+    .frame(width: 800)
+    .preferredColorScheme(.dark)
 }
 
 #Preview("Connected") {
   let viewModel = NotebookViewModel()
   viewModel.connectionState = .connected
 
-  return HeaderView(
-    viewModel: viewModel,
-    showConnectionSheet: .constant(false)
-  )
-  .frame(width: 800)
-  .preferredColorScheme(.dark)
+  return HeaderView(viewModel: viewModel)
+    .frame(width: 800)
+    .preferredColorScheme(.dark)
 }
