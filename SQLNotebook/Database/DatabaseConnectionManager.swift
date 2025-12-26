@@ -279,6 +279,41 @@ actor DatabaseConnectionManager {
     }
   }
 
+  /// Fetch row count for a specific table
+  func fetchRowCount(tableSchema: String, tableName: String) async throws -> Int {
+    guard let connection = connection else {
+      throw DatabaseError.notConnected
+    }
+
+    // Use COUNT(*) to get exact row count
+    let query = """
+      SELECT COUNT(*) as row_count
+      FROM "\(tableSchema)".\"\(tableName)\"
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        if let countCell = randomAccess.first,
+           let count = try? countCell.decode(Int.self, context: .default) {
+          return count
+        }
+      }
+
+      return 0
+    } catch {
+      // If fetching row count fails, return 0 instead of throwing
+      print("Failed to fetch row count for \(tableSchema).\(tableName): \(error)")
+      return 0
+    }
+  }
+
   // MARK: - Query Execution
 
   /// Execute a SQL query and return results
