@@ -7,7 +7,7 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE  
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
-- ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
+- ✅ **Phase 4: Polish** - IN PROGRESS (left sidebar & minor features pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
@@ -207,6 +207,32 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Show unsaved indicator in footer
 - [ ] Prompt to save on close if unsaved
 
+### 4.8 Result Display Controls
+- [ ] Add show/hide toggle button in cell sidebar for results
+- [ ] Implement collapse/expand animation for result area
+- [ ] Persist result visibility state per cell
+- [ ] Add visual indicator (chevron icon) for collapsed state
+
+### 4.9 Left Sidebar - Database Structure
+- [ ] Create `LeftSidebarView` component
+- [ ] Add `isLeftSidebarVisible` state to `NotebookViewModel`
+- [ ] Implement database schema query methods in `DatabaseConnectionManager`
+  - [ ] Query list of tables from `information_schema.tables`
+  - [ ] Query columns for each table from `information_schema.columns`
+  - [ ] Query primary keys and foreign keys (optional)
+- [ ] Create tree view component for tables and columns
+  - [ ] Collapsible table nodes
+  - [ ] Expandable column list under each table
+  - [ ] Display column name and type
+  - [ ] Show table/column icons using SF Symbols
+- [ ] Add refresh button to reload schema
+- [ ] Add toggle button in header to show/hide left sidebar
+- [ ] Implement keyboard shortcut (`Cmd+Shift+L` or similar) to toggle
+- [ ] Auto-load schema when connection is established
+- [ ] Handle schema loading errors gracefully
+- [ ] Add click handler to insert table/column names into selected cell
+- [ ] Style sidebar according to design system (matching right sidebar)
+
 ---
 
 ## Phase 5: Advanced Features
@@ -272,12 +298,121 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 
 ---
 
+## Implementation Plan: Left Sidebar - Database Structure
+
+### Overview
+Thêm left sidebar để hiển thị database structure dưới dạng tree view, giúp user dễ dàng xem tables và columns, và có thể click để insert tên vào SQL editor.
+
+### Technical Approach
+
+#### 1. Database Schema Models
+```swift
+struct DatabaseTable: Identifiable {
+  let id = UUID()
+  let schema: String
+  let name: String
+  var columns: [DatabaseColumn] = []
+  var isExpanded: Bool = false
+}
+
+struct DatabaseColumn: Identifiable {
+  let id = UUID()
+  let name: String
+  let type: String
+  let isNullable: Bool
+  let isPrimaryKey: Bool
+}
+```
+
+#### 2. DatabaseConnectionManager Extensions
+- `func fetchTables() async throws -> [DatabaseTable]`
+  - Query: `SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name`
+- `func fetchColumns(tableSchema: String, tableName: String) async throws -> [DatabaseColumn]`
+  - Query: `SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`
+
+#### 3. NotebookViewModel Updates
+- Add `var isLeftSidebarVisible: Bool = false`
+- Add `var databaseTables: [DatabaseTable] = []`
+- Add `var isLoadingSchema: Bool = false`
+- Add `func loadDatabaseSchema() async`
+- Add `func toggleLeftSidebar()`
+- Auto-call `loadDatabaseSchema()` when connection state changes to `.connected`
+
+#### 4. LeftSidebarView Component
+- Similar structure to `RightSidebarView`
+- Header với title "Database" và close button
+- ScrollView chứa tree view
+- Empty state khi chưa connected
+- Loading state khi đang fetch schema
+- Tree view với:
+  - Table rows (collapsible)
+  - Column rows (nested under tables)
+  - Icons: `tablecells` for tables, `textformat.123` for columns
+  - Click handler để insert name vào selected cell
+
+#### 5. ContentView Updates
+- Add left sidebar vào HStack layout:
+  ```
+  HStack {
+    if viewModel.isLeftSidebarVisible {
+      LeftSidebarView(viewModel: viewModel)
+    }
+    mainContent
+    if viewModel.isRightSidebarVisible {
+      RightSidebarView(viewModel: viewModel)
+    }
+  }
+  ```
+
+#### 6. HeaderView Updates
+- Add toggle button cho left sidebar (icon: `sidebar.left`)
+- Add keyboard shortcut `Cmd+Shift+L` để toggle
+
+### SQL Queries for Schema
+
+**Tables Query:**
+```sql
+SELECT 
+  table_schema,
+  table_name
+FROM information_schema.tables
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  AND table_type = 'BASE TABLE'
+ORDER BY table_schema, table_name;
+```
+
+**Columns Query:**
+```sql
+SELECT 
+  column_name,
+  data_type,
+  is_nullable,
+  column_default
+FROM information_schema.columns
+WHERE table_schema = $1
+  AND table_name = $2
+ORDER BY ordinal_position;
+```
+
+### User Experience Flow
+1. User connects to database
+2. Schema tự động load và hiển thị trong left sidebar
+3. User có thể expand/collapse tables để xem columns
+4. Click vào table/column name sẽ insert vào selected cell tại cursor position
+5. User có thể refresh schema bằng button trong sidebar header
+6. Sidebar có thể toggle on/off bằng button hoặc keyboard shortcut
+
+---
+
 ## Next Priorities
 
 ### Recommended: Phase 4 Completion
-1. **Drag and Drop** (4.4) - Cell reordering with drag handles
-2. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
-3. **Save Prompt** (4.7) - Prompt to save on close if unsaved
+1. **Left Sidebar - Database Structure** (4.9) - Tree view showing tables and columns ⭐ NEW
+2. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
+3. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
+4. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
+5. **Drag and Drop** (4.4) - Cell reordering with drag handles
+6. **Save Prompt** (4.7) - Prompt to save on close if unsaved
 
 ### Then: Phase 5 Advanced Features
 1. **Query History** - Store and re-run past queries
