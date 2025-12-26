@@ -1,5 +1,5 @@
 ---
-name: swift-fixer
+name: fixer
 description: Specialized agent for fixing Swift compilation errors, runtime crashes, and bugs in macOS apps. Expert in Swift 6.2, AppKit, SwiftUI, and concurrency issues.
 tools: Read, Edit, Grep, Bash, mcp__XcodeBuildMCP__build_macos, mcp__XcodeBuildMCP__test_macos, mcp__XcodeBuildMCP__clean
 model: sonnet

@@ -1,5 +1,5 @@
 ---
-name: docs-writer
+name: doc
 description: Creates and maintains clear, comprehensive documentation for code, APIs, and user guides. Expert in technical writing for developers and end users.
 tools: Read, Write, Edit, Grep, Glob
 model: haiku
