@@ -1,5 +1,5 @@
 //
-//  SQLNoteBookApp.swift
+//  SQLNotebookApp.swift
 //  SQLNotebook
 //
 
@@ -7,7 +7,7 @@
 import SwiftUI
 
 @main
-struct SQLNoteBookApp: App {
+struct SQLNotebookApp: App {
   init() {
     // Configure SQLite temp directory to use app's temp directory
     configureSQLiteTempDirectory()
@@ -96,6 +96,11 @@ struct NotebookCommands: Commands {
 
     // View commands
     CommandGroup(after: .sidebar) {
+      Button("Toggle Left Sidebar") {
+        NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+      }
+      .keyboardShortcut("l", modifiers: [.command, .shift])
+
       Button("Toggle Right Sidebar") {
         NotificationCenter.default.post(name: .toggleSidebar, object: nil)
       }
@@ -130,6 +135,7 @@ extension Notification.Name {
   static let deleteCell = Notification.Name("deleteCell")
   static let duplicateCell = Notification.Name("duplicateCell")
   static let toggleSidebar = Notification.Name("toggleSidebar")
+  static let toggleLeftSidebar = Notification.Name("toggleLeftSidebar")
   static let selectNextCell = Notification.Name("selectNextCell")
   static let selectPreviousCell = Notification.Name("selectPreviousCell")
   static let focusEditor = Notification.Name("focusEditor")
@@ -138,4 +144,5 @@ extension Notification.Name {
   static let redo = Notification.Name("redo")
   static let editorFocused = Notification.Name("editorFocused")
   static let editorUnfocused = Notification.Name("editorUnfocused")
+  static let insertTextIntoCell = Notification.Name("insertTextIntoCell")
 }

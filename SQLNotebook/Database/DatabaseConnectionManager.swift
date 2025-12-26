@@ -169,6 +169,116 @@ actor DatabaseConnectionManager {
     connection != nil
   }
 
+  // MARK: - Schema Introspection
+
+  /// Fetch all tables from the database
+  func fetchTables() async throws -> [DatabaseTable] {
+    guard let connection = connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        table_schema,
+        table_name
+      FROM information_schema.tables
+      WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        AND table_type = 'BASE TABLE'
+      ORDER BY table_schema, table_name
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var tables: [DatabaseTable] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard let schemaCell = randomAccess.first,
+              let nameCell = randomAccess.dropFirst().first,
+              let schema = try? schemaCell.decode(String.self, context: .default),
+              let name = try? nameCell.decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        tables.append(DatabaseTable(schema: schema, name: name))
+      }
+
+      return tables
+    } catch {
+      throw DatabaseError.queryFailed("Failed to fetch tables: \(error.localizedDescription)", 0)
+    }
+  }
+
+  /// Fetch columns for a specific table
+  func fetchColumns(tableSchema: String, tableName: String) async throws -> [DatabaseColumn] {
+    guard let connection = connection else {
+      throw DatabaseError.notConnected
+    }
+
+    // Use string interpolation for now since parameter binding is complex with PostgresNIO
+    let query = """
+      SELECT
+        column_name,
+        data_type,
+        is_nullable,
+        column_default
+      FROM information_schema.columns
+      WHERE table_schema = '\(tableSchema)'
+        AND table_name = '\(tableName)'
+      ORDER BY ordinal_position
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var columns: [DatabaseColumn] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        let cells = Array(randomAccess)
+        guard cells.count >= 3 else { continue }
+
+        guard let columnName = try? cells[0].decode(String.self, context: .default),
+              let dataType = try? cells[1].decode(String.self, context: .default),
+              let isNullableStr = try? cells[2].decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        let isNullable = isNullableStr.uppercased() == "YES"
+
+        // TODO: Detect primary keys from constraints (for now, set to false)
+        let isPrimaryKey = false
+
+        columns.append(
+          DatabaseColumn(
+            name: columnName,
+            type: dataType,
+            isNullable: isNullable,
+            isPrimaryKey: isPrimaryKey
+          )
+        )
+      }
+
+      return columns
+    } catch {
+      throw DatabaseError.queryFailed(
+        "Failed to fetch columns for \(tableSchema).\(tableName): \(error.localizedDescription)",
+        0
+      )
+    }
+  }
+
   // MARK: - Query Execution
 
   /// Execute a SQL query and return results

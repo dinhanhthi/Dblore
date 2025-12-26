@@ -19,6 +19,7 @@ struct CellView: View {
   @State private var isCopied = false  // For copy button feedback
   @State private var isDeleteConfirming = false  // For delete confirmation state
   @FocusState private var isEditorFocused: Bool
+  @State private var textViewRef: SQLTextView?  // Reference to text view for text insertion
 
   var body: some View {
     ZStack(alignment: .topTrailing) {
@@ -91,6 +92,21 @@ struct CellView: View {
     .onReceive(NotificationCenter.default.publisher(for: .unfocusEditor)) { _ in
       // Unfocus from editor but keep cell selected
       isEditorFocused = false
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .insertTextIntoCell)) { notification in
+      // Only insert if this cell is selected
+      guard isSelected,
+            let userInfo = notification.userInfo,
+            let text = userInfo["text"] as? String,
+            let textView = textViewRef
+      else { return }
+
+      // Insert text at current cursor position
+      let selectedRange = textView.selectedRange()
+      textView.insertText(text, replacementRange: selectedRange)
+
+      // Focus the editor after inserting text
+      isEditorFocused = true
     }
   }
 
@@ -231,7 +247,8 @@ struct CellView: View {
       content: $cell.content,
       isSelected: isSelected,
       isFocused: isEditorFocused,
-      onFocus: { viewModel.selectedCellId = cell.id }
+      onFocus: { viewModel.selectedCellId = cell.id },
+      textViewRef: $textViewRef
     )
     .focused($isEditorFocused)
   }
@@ -343,6 +360,7 @@ struct SQLEditorView: View {
   let isSelected: Bool
   let isFocused: Bool
   var onFocus: (() -> Void)?
+  @Binding var textViewRef: SQLTextView?
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -356,7 +374,7 @@ struct SQLEditorView: View {
       }
 
       // Text editor with syntax highlighting
-      HighlightedTextEditor(text: $content, onFocus: onFocus)
+      HighlightedTextEditor(text: $content, onFocus: onFocus, textViewRef: $textViewRef)
     }
     .padding(Spacing.sm)
     .background(Color.inputBackground)
@@ -500,11 +518,17 @@ class SQLTextView: NSTextView {
 struct HighlightedTextEditor: View {
   @Binding var text: String
   var onFocus: (() -> Void)?
+  @Binding var textViewRef: SQLTextView?
   @State private var height: CGFloat = 40
 
   var body: some View {
-    HighlightedTextEditorRepresentable(text: $text, height: $height, onFocus: onFocus)
-      .frame(height: height)
+    HighlightedTextEditorRepresentable(
+      text: $text,
+      height: $height,
+      onFocus: onFocus,
+      textViewRef: $textViewRef
+    )
+    .frame(height: height)
   }
 }
 
@@ -512,6 +536,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var text: String
   @Binding var height: CGFloat
   var onFocus: (() -> Void)?
+  @Binding var textViewRef: SQLTextView?
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
@@ -519,6 +544,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     textView.delegate = context.coordinator
     textView.onFocus = onFocus
+
+    // Store reference to textView
+    DispatchQueue.main.async {
+      textViewRef = textView
+    }
 
     // Use weak reference to coordinator to prevent crash on deallocation
     textView.onBlur = { [weak coordinator = context.coordinator] newText in

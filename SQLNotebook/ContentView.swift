@@ -30,6 +30,12 @@ struct ContentView: View {
 
         // Main content area
         HStack(spacing: 0) {
+          // Left sidebar (conditionally shown)
+          if viewModel.isLeftSidebarVisible {
+            LeftSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .leading))
+          }
+
           // Main scrollable content
           mainContent
             .frame(maxWidth: .infinity)
@@ -62,6 +68,7 @@ struct ContentView: View {
       syncDocument()
     }
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
@@ -268,6 +275,12 @@ private struct ContentViewForPreview: View {
         HeaderView(viewModel: viewModel)
 
         HStack(spacing: 0) {
+          // Left sidebar (conditionally shown)
+          if viewModel.isLeftSidebarVisible {
+            LeftSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .leading))
+          }
+
           mainContent
             .frame(maxWidth: .infinity)
 
@@ -281,6 +294,7 @@ private struct ContentViewForPreview: View {
       }
     }
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
   }
 
   private var mainContent: some View {
@@ -376,6 +390,9 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
         viewModel.toggleSidebar()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .toggleLeftSidebar)) { _ in
+        viewModel.toggleLeftSidebar()
       }
       .onReceive(NotificationCenter.default.publisher(for: .selectNextCell)) { _ in
         viewModel.selectNextCell(createIfNeeded: false)
