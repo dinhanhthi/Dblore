@@ -11,6 +11,7 @@ enum SidebarContent: Equatable {
   case jsonViewer(json: String, path: String)
   case cellInfo(columnName: String, columnType: String, value: CellValue)
   case connectionDetails
+  case connectionForm
 }
 
 /// Main view model for the notebook editor
@@ -469,6 +470,12 @@ class NotebookViewModel {
   /// Show connection details in sidebar
   func showConnectionDetails() {
     rightSidebarContent = .connectionDetails
+    isRightSidebarVisible = true
+  }
+
+  /// Show connection form in sidebar
+  func showConnectionForm() {
+    rightSidebarContent = .connectionForm
     isRightSidebarVisible = true
   }
 

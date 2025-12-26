@@ -8,7 +8,6 @@ import SwiftUI
 struct ContentView: View {
   @Binding var document: SQLNotebookDocument
   @State private var viewModel: NotebookViewModel
-  @State private var showConnectionSheet = false
   @State private var lastSaved: Date?
 
   @State private var keyEventMonitor: Any?
@@ -27,7 +26,7 @@ struct ContentView: View {
 
       VStack(spacing: 0) {
         // Header
-        HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
+        HeaderView(viewModel: viewModel)
 
         // Main content area
         HStack(spacing: 0) {
@@ -45,9 +44,6 @@ struct ContentView: View {
         // Footer
         FooterView(viewModel: viewModel, lastSaved: lastSaved)
       }
-    }
-    .sheet(isPresented: $showConnectionSheet) {
-      ConnectionSheet(viewModel: viewModel, isPresented: $showConnectionSheet)
     }
     .modifier(
       NotificationHandlerModifier(
@@ -261,7 +257,6 @@ struct ContentView: View {
 private struct ContentViewForPreview: View {
   @Binding var document: SQLNotebookDocument
   @State var viewModel: NotebookViewModel
-  @State private var showConnectionSheet = false
   @State private var lastSaved: Date?
 
   var body: some View {
@@ -270,7 +265,7 @@ private struct ContentViewForPreview: View {
         .ignoresSafeArea()
 
       VStack(spacing: 0) {
-        HeaderView(viewModel: viewModel, showConnectionSheet: $showConnectionSheet)
+        HeaderView(viewModel: viewModel)
 
         HStack(spacing: 0) {
           mainContent
