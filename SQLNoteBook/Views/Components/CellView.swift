@@ -117,16 +117,15 @@ struct CellView: View {
         if cell.isRunning {
           ProgressView()
             .scaleEffect(0.7)
-            .frame(width: 20, height: 20)
+            .frame(width: 26, height: 26)
         } else {
           Image(systemName: "play.fill")
             .font(.system(size: 12))
             .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
-            .frame(width: 20, height: 20)
+            .frame(width: 26, height: 26)
         }
       }
       .buttonStyle(GhostButtonStyle())
-      .contentShape(Rectangle())
       .disabled(cell.isRunning)
 
       // Execution count
