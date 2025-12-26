@@ -34,7 +34,7 @@ struct CellView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
           }
           .padding(.top, Spacing.md)
-          .padding(.bottom, cell.result == nil ? Spacing.md : Spacing.sm)
+          .padding(.bottom, Spacing.md)
           .padding(.leading, 0)
           .padding(.trailing, Spacing.md)
 
@@ -215,7 +215,7 @@ struct CellView: View {
       Color.clear
         .frame(width: ComponentSize.cellSidebarWidth)
 
-      VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: Spacing.md) {
         if let error = result.error {
           // Error display
           errorView(error)
@@ -229,6 +229,7 @@ struct CellView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.top, 0)
+      .padding(.bottom, 0)
       .padding(.trailing, Spacing.md)
     }
     .padding(.bottom, Spacing.md)
@@ -680,16 +681,19 @@ struct FloatingPanelButton: View {
 }
 
 #Preview("Empty Cells") {
-  VStack {
-    CellView(
-      viewModel: NotebookViewModel(),
-      cell: .constant(NotebookCell(cellType: .sql, content: "")),
-      isSelected: false,
-      onRun: {}
-    )
+  ScrollView {
+    VStack(spacing: 0) {
+      CellView(
+        viewModel: NotebookViewModel(),
+        cell: .constant(NotebookCell(cellType: .sql, content: "")),
+        isSelected: false,
+        onRun: {}
+      )
+    }
+    .padding()
   }
-  .padding()
   .frame(width: 700)
+  .frame(maxHeight: .infinity)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
@@ -831,15 +835,17 @@ struct FloatingPanelButton: View {
     return cell
   }()
 
-  VStack {
-    CellView(
-      viewModel: NotebookViewModel(),
-      cell: $cellWithResult,
-      isSelected: true,
-      onRun: {}
-    )
+  ScrollView {
+    VStack(spacing: 0) {
+      CellView(
+        viewModel: NotebookViewModel(),
+        cell: $cellWithResult,
+        isSelected: true,
+        onRun: {}
+      )
+    }
+    .padding()
   }
-  .padding()
   .frame(width: 800, height: 700)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
@@ -873,16 +879,18 @@ struct FloatingPanelButton: View {
     return cell
   }()
 
-  VStack {
-    CellView(
-      viewModel: NotebookViewModel(),
-      cell: $cellWithResult,
-      isSelected: true,
-      onRun: {}
-    )
+  ScrollView {
+    VStack(spacing: 0) {
+      CellView(
+        viewModel: NotebookViewModel(),
+        cell: $cellWithResult,
+        isSelected: true,
+        onRun: {}
+      )
+    }
+    .padding()
   }
-  .padding()
-  .frame(width: 600, height: 350)
+  .frame(width: 600, height: 400)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
@@ -907,16 +915,19 @@ struct FloatingPanelButton: View {
     return cell
   }()
 
-  VStack {
-    CellView(
-      viewModel: NotebookViewModel(),
-      cell: $cellWithError,
-      isSelected: false,
-      onRun: {}
-    )
+  ScrollView {
+    VStack(spacing: 0) {
+      CellView(
+        viewModel: NotebookViewModel(),
+        cell: $cellWithError,
+        isSelected: false,
+        onRun: {}
+      )
+    }
+    .padding()
   }
-  .padding()
-  .frame(width: 600, height: 250)
+  .frame(width: 600)
+  .frame(maxHeight: .infinity)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
