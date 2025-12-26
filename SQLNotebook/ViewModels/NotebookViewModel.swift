@@ -520,7 +520,7 @@ class NotebookViewModel {
       // Fetch tables
       var tables = try await connectionManager.fetchTables()
 
-      // Fetch columns for each table
+      // Fetch columns and row count for each table
       for index in tables.indices {
         let table = tables[index]
         do {
@@ -529,6 +529,13 @@ class NotebookViewModel {
             tableName: table.name
           )
           tables[index].columns = columns
+
+          // Fetch row count
+          let rowCount = try await connectionManager.fetchRowCount(
+            tableSchema: table.schema,
+            tableName: table.name
+          )
+          tables[index].rowCount = rowCount
         } catch {
           // If fetching columns fails, continue with other tables
           print("Failed to fetch columns for \(table.qualifiedName): \(error)")

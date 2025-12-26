@@ -12,17 +12,20 @@ struct DatabaseTable: Identifiable, Sendable {
   let name: String
   var columns: [DatabaseColumn]
   var isExpanded: Bool
+  var rowCount: Int?
 
   nonisolated init(
     schema: String,
     name: String,
     columns: [DatabaseColumn] = [],
-    isExpanded: Bool = false
+    isExpanded: Bool = false,
+    rowCount: Int? = nil
   ) {
     self.schema = schema
     self.name = name
     self.columns = columns
     self.isExpanded = isExpanded
+    self.rowCount = rowCount
   }
 
   /// Full qualified name: schema.table

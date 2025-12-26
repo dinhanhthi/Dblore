@@ -177,16 +177,18 @@ struct TableRowView: View {
 
             Spacer()
 
-            // Column count badge
-            Text("\(table.columns.count)")
-              .font(.system(.caption2))
-              .foregroundColor(.foregroundSubtle)
-              .padding(.horizontal, Spacing.xs)
-              .padding(.vertical, 1)
-              .background(
-                RoundedRectangle(cornerRadius: 3)
-                  .fill(Color.inputBackground)
-              )
+            // Row count badge
+            if let rowCount = table.rowCount {
+              Text("\(rowCount)")
+                .font(.system(.caption2))
+                .foregroundColor(.foregroundSubtle)
+                .padding(.horizontal, Spacing.xs)
+                .padding(.vertical, 1)
+                .background(
+                  RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.inputBackground)
+                )
+            }
           }
           .contentShape(Rectangle())
         }
@@ -324,7 +326,8 @@ struct ColumnRowView: View {
       DatabaseColumn(name: "name", type: "varchar", isNullable: true),
       DatabaseColumn(name: "created_at", type: "timestamp", isNullable: false),
     ],
-    isExpanded: true
+    isExpanded: true,
+    rowCount: 1234
   )
 
   let postsTable = DatabaseTable(
@@ -337,7 +340,8 @@ struct ColumnRowView: View {
       DatabaseColumn(name: "content", type: "text", isNullable: true),
       DatabaseColumn(name: "published", type: "boolean", isNullable: false),
     ],
-    isExpanded: false
+    isExpanded: false,
+    rowCount: 5678
   )
 
   viewModel.databaseTables = [usersTable, postsTable]
