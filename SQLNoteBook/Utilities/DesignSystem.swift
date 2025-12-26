@@ -196,6 +196,8 @@ struct GhostButtonStyle: ButtonStyle {
 
 struct ToolbarButtonStyle: ButtonStyle {
   var isActive: Bool = false
+  @State private var isHovering = false
+  @Environment(\.isEnabled) private var isEnabled
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
@@ -207,9 +209,17 @@ struct ToolbarButtonStyle: ButtonStyle {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(configuration.isPressed || isActive ? Color.cellBackgroundHover : Color.clear)
+          .fill(
+            configuration.isPressed || isActive
+              ? Color.cellBackgroundHover
+              : (isHovering && isEnabled ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          )
       )
       .contentShape(Rectangle())
+      .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .onHover { hovering in
+        isHovering = hovering
+      }
   }
 }
 
