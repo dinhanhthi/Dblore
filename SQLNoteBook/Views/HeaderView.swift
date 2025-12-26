@@ -17,6 +17,13 @@ struct HeaderView: View {
           Label("Code", systemImage: "plus")
         }
         .buttonStyle(ToolbarButtonStyle())
+        .onHover { hovering in
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
 
         Divider()
           .frame(height: 20)
@@ -28,11 +35,25 @@ struct HeaderView: View {
         }
         .buttonStyle(ToolbarButtonStyle())
         .disabled(!viewModel.connectionState.isConnected)
+        .onHover { hovering in
+          if hovering && viewModel.connectionState.isConnected {
+            NSCursor.pointingHand.push()
+          } else if !hovering && viewModel.connectionState.isConnected {
+            NSCursor.pop()
+          }
+        }
 
         Button(action: { viewModel.clearAllOutputs() }) {
           Label("Clear All Outputs", systemImage: "trash")
         }
         .buttonStyle(ToolbarButtonStyle())
+        .onHover { hovering in
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
       }
 
       Spacer()
@@ -70,6 +91,8 @@ struct ConnectionButton: View {
   let onShowDetails: () -> Void
 
   @State private var showDisconnectConfirmation = false
+  @State private var isHoveringDisconnect = false
+  @State private var isHoveringInfo = false
 
   var body: some View {
     if connectionState.isConnected {
@@ -81,15 +104,44 @@ struct ConnectionButton: View {
             Text(connectionText)
               .foregroundColor(.success)
           }
+          .padding(.horizontal, Spacing.sm)
+          .padding(.vertical, Spacing.xs)
+          .background(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+              .fill(isHoveringDisconnect ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          )
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: isHoveringDisconnect)
+        .onHover { hovering in
+          isHoveringDisconnect = hovering
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
 
         Button(action: onShowDetails) {
           Image(systemName: "info.circle")
             .foregroundColor(.foregroundMuted)
+            .padding(Spacing.xs)
+            .background(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .fill(isHoveringInfo ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+            )
         }
         .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
+        .onHover { hovering in
+          isHoveringInfo = hovering
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
       }
       .confirmationDialog(
         "Disconnect from database?",
@@ -120,6 +172,13 @@ struct ConnectionButton: View {
       }
       .buttonStyle(ToolbarButtonStyle())
       .disabled(connectionState.isConnecting)
+      .onHover { hovering in
+        if hovering && !connectionState.isConnecting {
+          NSCursor.pointingHand.push()
+        } else if !hovering && !connectionState.isConnecting {
+          NSCursor.pop()
+        }
+      }
     }
   }
 
