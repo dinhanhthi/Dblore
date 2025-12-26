@@ -17,6 +17,7 @@ struct CellView: View {
   @State private var isBottomEdgeHovered = false  // For floating action panel
   @State private var isTopRightPanelHovered = false  // For top-right panel hover
   @State private var isCopied = false  // For copy button feedback
+  @State private var isDeleteConfirming = false  // For delete confirmation state
   @FocusState private var isEditorFocused: Bool
 
   var body: some View {
@@ -159,13 +160,34 @@ struct CellView: View {
 
   private var topRightFloatingPanel: some View {
     HStack(spacing: Spacing.sm) {
-      FloatingPanelButton(
-        icon: "trash",
-        helpText: "Delete Cell",
-        action: {
-          viewModel.deleteCell(id: cell.id)
-        }
-      )
+      if isDeleteConfirming {
+        // Confirmation buttons (check and cross)
+        FloatingPanelButton(
+          icon: "checkmark",
+          helpText: "Confirm Delete",
+          action: {
+            viewModel.deleteCell(id: cell.id)
+            isDeleteConfirming = false
+          }
+        )
+
+        FloatingPanelButton(
+          icon: "xmark",
+          helpText: "Cancel Delete",
+          action: {
+            isDeleteConfirming = false
+          }
+        )
+      } else {
+        // Normal buttons (delete and copy)
+        FloatingPanelButton(
+          icon: "trash",
+          helpText: "Delete Cell",
+          action: {
+            isDeleteConfirming = true
+          }
+        )
+      }
 
       FloatingPanelButton(
         icon: isCopied ? "checkmark" : "doc.on.doc",
@@ -179,6 +201,10 @@ struct CellView: View {
     .onHover { hovering in
       // Keep panel visible when hovering over the buttons
       isTopRightPanelHovered = hovering
+      // Reset confirmation state when mouse leaves the panel
+      if !hovering && isDeleteConfirming {
+        isDeleteConfirming = false
+      }
     }
   }
 
@@ -220,7 +246,7 @@ struct CellView: View {
       Color.clear
         .frame(width: ComponentSize.cellSidebarWidth)
 
-    VStack(alignment: .leading, spacing: Spacing.md) {
+      VStack(alignment: .leading, spacing: Spacing.md) {
         if let error = result.error {
           // Error display
           errorView(error)
@@ -907,7 +933,8 @@ struct FloatingPanelButton: View {
       executionTime: 0.003,
       rowCount: 0,
       timestamp: Date(),
-      error: "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^"
+      error:
+        "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^"
     )
 
     var cell = NotebookCell(
