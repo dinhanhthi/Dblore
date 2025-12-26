@@ -330,8 +330,8 @@ struct ResultMetadataBar: View {
     timestamp: Date()
   )
 
-  return ResultTableView(result: mockResult, viewModel: NotebookViewModel())
-    .frame(width: 800)
+  ResultTableView(result: mockResult, viewModel: NotebookViewModel())
+    .frame(width: 600, height: 300)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
 }
