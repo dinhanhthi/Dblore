@@ -167,16 +167,30 @@ struct SecondaryButtonStyle: ButtonStyle {
 }
 
 struct GhostButtonStyle: ButtonStyle {
+  @State private var isHovering = false
+
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .font(.system(.body, weight: .medium))
       .foregroundColor(configuration.isPressed ? .foreground : .foregroundMuted)
-      .padding(.horizontal, 0)
-      .padding(.vertical, Spacing.xs)
+      .contentShape(Rectangle())
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(configuration.isPressed ? Color.cellBackgroundHover : Color.clear)
+          .fill(
+            configuration.isPressed
+              ? Color.cellBackgroundHover
+              : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          )
       )
+      .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .onHover { hovering in
+        isHovering = hovering
+        if hovering {
+          NSCursor.pointingHand.push()
+        } else {
+          NSCursor.pop()
+        }
+      }
   }
 }
 
