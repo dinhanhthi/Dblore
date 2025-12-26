@@ -10,8 +10,24 @@ struct HeaderView: View {
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
-      // Leading group - Cell actions
+      // Leading group - Sidebars and Cell actions
       HStack(spacing: Spacing.xs) {
+        // Left sidebar toggle
+        Button(action: { viewModel.toggleLeftSidebar() }) {
+          Image(systemName: "sidebar.left")
+        }
+        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible))
+        .onHover { hovering in
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
+
+        Divider()
+          .frame(height: 20)
+
         Button(action: { viewModel.addCell(type: .sql) }) {
           Label("Code", systemImage: "plus")
         }

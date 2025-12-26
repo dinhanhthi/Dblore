@@ -14,22 +14,9 @@
 		D3E0FB932EF70DBB009A0E5A /* SQLNotebook.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SQLNotebook.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		D3E0FBE12EF70DBC009A0E5A /* Exceptions for "SQLNotebook" folder in "SQLNotebook" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D3E0FB952EF70DBB009A0E5A /* SQLNotebook */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				D3E0FBE12EF70DBC009A0E5A /* Exceptions for "SQLNotebook" folder in "SQLNotebook" target */,
-			);
 			path = SQLNotebook;
 			sourceTree = "<group>";
 		};

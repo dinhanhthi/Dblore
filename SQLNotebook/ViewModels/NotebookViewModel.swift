@@ -24,6 +24,11 @@ class NotebookViewModel {
   var isRightSidebarVisible: Bool = false
   var executionCounter: Int = 0
 
+  // Left sidebar state
+  var isLeftSidebarVisible: Bool = false
+  var databaseTables: [DatabaseTable] = []
+  var isLoadingSchema: Bool = false
+
   // Connection config for the sheet
   var editingConnectionConfig: ConnectionConfig
 
@@ -430,6 +435,9 @@ class NotebookViewModel {
       try await connectionManager.connect(config: editingConnectionConfig)
       notebook.connectionConfig = editingConnectionConfig
       connectionState = .connected
+
+      // Auto-load database schema after successful connection
+      await loadDatabaseSchema()
     } catch {
       connectionState = .error(error.localizedDescription)
       throw error
@@ -441,6 +449,9 @@ class NotebookViewModel {
     Task {
       await connectionManager.disconnect()
       connectionState = .disconnected
+
+      // Clear database schema when disconnected
+      databaseTables = []
     }
   }
 
@@ -487,6 +498,72 @@ class NotebookViewModel {
   /// Close the sidebar
   func closeSidebar() {
     isRightSidebarVisible = false
+  }
+
+  // MARK: - Left Sidebar - Database Schema
+
+  /// Toggle left sidebar visibility
+  func toggleLeftSidebar() {
+    isLeftSidebarVisible.toggle()
+  }
+
+  /// Load database schema (tables and columns)
+  func loadDatabaseSchema() async {
+    guard connectionState.isConnected else {
+      databaseTables = []
+      return
+    }
+
+    isLoadingSchema = true
+
+    do {
+      // Fetch tables
+      var tables = try await connectionManager.fetchTables()
+
+      // Fetch columns for each table
+      for index in tables.indices {
+        let table = tables[index]
+        do {
+          let columns = try await connectionManager.fetchColumns(
+            tableSchema: table.schema,
+            tableName: table.name
+          )
+          tables[index].columns = columns
+        } catch {
+          // If fetching columns fails, continue with other tables
+          print("Failed to fetch columns for \(table.qualifiedName): \(error)")
+        }
+      }
+
+      databaseTables = tables
+    } catch {
+      print("Failed to load database schema: \(error)")
+      databaseTables = []
+    }
+
+    isLoadingSchema = false
+  }
+
+  /// Refresh database schema
+  func refreshDatabaseSchema() async {
+    await loadDatabaseSchema()
+  }
+
+  /// Toggle table expansion state
+  func toggleTableExpansion(tableId: UUID) {
+    if let index = databaseTables.firstIndex(where: { $0.id == tableId }) {
+      databaseTables[index].isExpanded.toggle()
+    }
+  }
+
+  /// Insert text into selected cell at cursor position
+  func insertTextIntoSelectedCell(_ text: String) {
+    // Post notification to insert text - will be handled by CellView
+    NotificationCenter.default.post(
+      name: .insertTextIntoCell,
+      object: nil,
+      userInfo: ["text": text]
+    )
   }
 
   // MARK: - Statistics
