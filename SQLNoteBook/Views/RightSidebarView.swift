@@ -23,8 +23,11 @@ struct RightSidebarView: View {
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
-            contentView(for: content)
-              .padding(Spacing.md)
+            VStack(alignment: .leading, spacing: 0) {
+              contentView(for: content)
+                .padding(Spacing.md)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
           }
         }
       } else {
@@ -55,6 +58,7 @@ struct RightSidebarView: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
+    .background(Color.cellBackground)
   }
 
   private var headerTitle: String {
@@ -96,7 +100,7 @@ struct RightSidebarView: View {
     case .cellInfo(let columnName, let columnType, let value):
       CellInfoContent(columnName: columnName, columnType: columnType, value: value)
     case .connectionDetails:
-      ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
+        ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
       ConnectionFormContent(viewModel: viewModel)
     }
@@ -770,7 +774,7 @@ struct FormField<Content: View>: View {
   .preferredColorScheme(.dark)
 }
 
-#Preview("Connection Details - Not Configured") {
+#Preview("Connection - Not Configured") {
   let viewModel = NotebookViewModel()
   viewModel.rightSidebarContent = .connectionDetails
 
@@ -796,31 +800,52 @@ struct FormField<Content: View>: View {
   .preferredColorScheme(.dark)
 }
 
+#Preview("Connection - Connected") {
+  let viewModel = NotebookViewModel()
+  viewModel.notebook.connectionConfig = ConnectionConfig(
+    host: "db.example.com",
+    port: 5432,
+    database: "my_database",
+    username: "admin_user",
+    password: "secret123",
+    sslMode: .require
+  )
+  viewModel.rightSidebarContent = .connectionDetails
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 600)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}
+
 #Preview("JSON Viewer") {
   let viewModel = NotebookViewModel()
   let jsonData = """
-  {
-    "user": {
-      "id": 456,
-      "name": "Jane Smith",
-      "profile": {
-        "bio": "Software engineer passionate about databases",
-        "location": "San Francisco, CA",
-        "website": "https://janesmith.dev"
+    {
+      "user": {
+        "id": 456,
+        "name": "Jane Smith",
+        "profile": {
+          "bio": "Software engineer passionate about databases",
+          "location": "San Francisco, CA",
+          "website": "https://janesmith.dev"
+        },
+        "preferences": {
+          "theme": "dark",
+          "notifications": true,
+          "language": "en-US"
+        }
       },
-      "preferences": {
-        "theme": "dark",
-        "notifications": true,
-        "language": "en-US"
+      "metadata": {
+        "created_at": "2024-01-15T10:30:00Z",
+        "updated_at": "2024-03-20T14:45:00Z",
+        "version": 3
       }
-    },
-    "metadata": {
-      "created_at": "2024-01-15T10:30:00Z",
-      "updated_at": "2024-03-20T14:45:00Z",
-      "version": 3
     }
-  }
-  """
+    """
   viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "users.details")
 
   return HStack {
@@ -835,8 +860,8 @@ struct FormField<Content: View>: View {
 #Preview("Cell Info - Long Text") {
   let viewModel = NotebookViewModel()
   let longText = """
-  Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-  """
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+    """
   viewModel.rightSidebarContent = .cellInfo(
     columnName: "description",
     columnType: "TEXT",
