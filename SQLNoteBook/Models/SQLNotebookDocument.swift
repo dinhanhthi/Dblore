@@ -66,18 +66,9 @@ private enum DocumentCoder {
     let title = metadataDict["title"] as? String ?? "Untitled"
     let metadata = NotebookMetadata(createdAt: createdAt, modifiedAt: modifiedAt, title: title)
 
-    // Decode connection config if present
-    var connectionConfig: ConnectionConfig? = nil
-    if let connDict = json["connectionConfig"] as? [String: Any] {
-      connectionConfig = ConnectionConfig(
-        host: connDict["host"] as? String ?? "localhost",
-        port: connDict["port"] as? Int ?? 5432,
-        database: connDict["database"] as? String ?? "",
-        username: connDict["username"] as? String ?? "",
-        password: connDict["password"] as? String ?? "",
-        sslMode: SSLMode(rawValue: connDict["sslMode"] as? String ?? "prefer") ?? .prefer
-      )
-    }
+    // NOTE: connectionConfig is no longer loaded from file for security reasons
+    // Connection information should be managed separately
+    let connectionConfig: ConnectionConfig? = nil
 
     // Decode cells
     var cells: [NotebookCell] = []
@@ -123,16 +114,8 @@ private enum DocumentCoder {
       ],
     ]
 
-    if let config = notebook.connectionConfig {
-      json["connectionConfig"] = [
-        "host": config.host,
-        "port": config.port,
-        "database": config.database,
-        "username": config.username,
-        "password": config.password,
-        "sslMode": config.sslMode.rawValue,
-      ]
-    }
+    // NOTE: connectionConfig is NOT saved to file for security reasons
+    // Connection information should be managed separately (e.g., via Keychain)
 
     var cellsArray: [[String: Any]] = []
     for cell in notebook.cells {
