@@ -15,6 +15,7 @@ struct CellView: View {
   @State private var isHovered = false  // For run button visibility
   @State private var isCellHovered = false  // For cell border hover effect
   @State private var isBottomEdgeHovered = false  // For floating action panel
+  @State private var isTopRightPanelHovered = false  // For top-right panel hover
   @State private var isCopied = false  // For copy button feedback
   @FocusState private var isEditorFocused: Bool
 
@@ -61,8 +62,8 @@ struct CellView: View {
         }
       }
 
-      // Top-right floating panel (shown only when cell is selected)
-      if isSelected {
+      // Top-right floating panel (shown when cell is hovered or selected)
+      if isHovered || isSelected || isTopRightPanelHovered {
         topRightFloatingPanel.offset(x: -10, y: -15)
       }
     }
@@ -175,6 +176,10 @@ struct CellView: View {
     }
     .padding(.top, Spacing.xs)
     .padding(.trailing, Spacing.xs)
+    .onHover { hovering in
+      // Keep panel visible when hovering over the buttons
+      isTopRightPanelHovered = hovering
+    }
   }
 
   // MARK: - Helper Functions
@@ -692,8 +697,7 @@ struct FloatingPanelButton: View {
     }
     .padding()
   }
-  .frame(width: 700)
-  .frame(maxHeight: .infinity)
+  .frame(width: 700, height: 150)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
