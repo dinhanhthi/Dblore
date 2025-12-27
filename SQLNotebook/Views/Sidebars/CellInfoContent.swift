@@ -11,6 +11,7 @@ struct CellInfoContent: View {
   let columnName: String
   let columnType: String
   let value: CellValue
+  @State private var isCopied = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -49,10 +50,12 @@ struct CellInfoContent: View {
 
           Spacer()
 
-          Button(action: copyToClipboard) {
-            Label("Copy", systemImage: "doc.on.doc")
-          }
-          .buttonStyle(GhostButtonStyle())
+          FloatingPanelButton(
+            icon: isCopied ? "checkmark" : "doc.on.doc",
+            helpText: "Copy Value",
+            useSymbolEffect: true,
+            action: copyToClipboard
+          )
         }
 
         ScrollView {
@@ -87,5 +90,13 @@ struct CellInfoContent: View {
   private func copyToClipboard() {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(value.fullString, forType: .string)
+
+    // Show checkmark feedback
+    isCopied = true
+
+    // Reset back to copy icon after 500ms
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+      isCopied = false
+    }
   }
 }
