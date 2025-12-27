@@ -10,9 +10,13 @@ import SwiftUI
 struct JSONViewerContent: View {
   let json: String
   let path: String
+  let onSave: ((String) -> Void)?
+
   @State private var isPrettyPrinted = true
   @State private var searchText = ""
   @State private var isCopied = false
+  @State private var isEditing = false
+  @State private var editedJSON: String = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -25,31 +29,69 @@ struct JSONViewerContent: View {
 
         // Toolbar
         HStack {
-          Toggle("Pretty Print", isOn: $isPrettyPrinted)
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+          if !isEditing {
+            Toggle("Pretty Print", isOn: $isPrettyPrinted)
+              .toggleStyle(.switch)
+              .controlSize(.mini)
+          }
 
           Spacer()
 
-          FloatingPanelButton(
-            icon: isCopied ? "checkmark" : "doc.on.doc",
-            helpText: "Copy JSON",
-            useSymbolEffect: true,
-            action: copyToClipboard
-          )
+          if isEditing {
+            // Cancel and Save icon buttons
+            FloatingPanelButton(
+              icon: "xmark",
+              helpText: "Cancel",
+              useSymbolEffect: false,
+              action: cancelEdit
+            )
+
+            FloatingPanelButton(
+              icon: "checkmark",
+              helpText: "Save",
+              useSymbolEffect: false,
+              action: saveEdit
+            )
+          } else {
+            // Edit and Copy buttons
+            FloatingPanelButton(
+              icon: "pencil",
+              helpText: "Edit JSON",
+              useSymbolEffect: false,
+              action: startEdit
+            )
+
+            FloatingPanelButton(
+              icon: isCopied ? "checkmark" : "doc.on.doc",
+              helpText: "Copy JSON",
+              useSymbolEffect: true,
+              action: copyToClipboard
+            )
+          }
         }
       }
       .padding(.bottom, Spacing.md)
 
-      // JSON content with syntax highlighting - scrollable both vertically and horizontally
-      ScrollView([.vertical, .horizontal], showsIndicators: true) {
-        HighlightedJSONText(json: formattedJSON)
-          .frame(maxWidth: .infinity, alignment: .leading)
+      // JSON content - scrollable both vertically and horizontally
+      if isEditing {
+        TextEditor(text: $editedJSON)
+          .font(.mono)
+          .foregroundColor(.foreground)
+          .scrollContentBackground(.hidden)
           .padding(Spacing.sm)
+          .background(Color.cellBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+          .frame(maxHeight: .infinity)
+      } else {
+        ScrollView([.vertical, .horizontal], showsIndicators: true) {
+          HighlightedJSONText(json: formattedJSON)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.sm)
+        }
+        .background(Color.cellBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .frame(maxHeight: .infinity)
       }
-      .background(Color.cellBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-      .frame(maxHeight: .infinity)
     }
   }
 
@@ -66,6 +108,21 @@ struct JSONViewerContent: View {
       return prettyString
     }
     return json
+  }
+
+  private func startEdit() {
+    editedJSON = formattedJSON
+    isEditing = true
+  }
+
+  private func cancelEdit() {
+    isEditing = false
+    editedJSON = ""
+  }
+
+  private func saveEdit() {
+    onSave?(editedJSON)
+    isEditing = false
   }
 
   private func copyToClipboard() {

@@ -3,6 +3,7 @@
 //  SQLNotebook
 //
 
+import AppKit
 import Foundation
 
 // MARK: - Sidebar Management
@@ -17,8 +18,22 @@ extension NotebookViewModel {
   }
 
   /// Show cell value details in sidebar
-  func showCellDetail(columnName: String, columnType: String, value: CellValue) {
-    rightSidebarContent = .cellInfo(columnName: columnName, columnType: columnType, value: value)
+  func showCellDetail(
+    columnName: String,
+    columnType: String,
+    value: CellValue,
+    tableName: String? = nil,
+    rowData: [String: CellValue]? = nil,
+    primaryKeyColumns: [String] = []
+  ) {
+    rightSidebarContent = .cellInfo(
+      columnName: columnName,
+      columnType: columnType,
+      value: value,
+      tableName: tableName,
+      rowData: rowData,
+      primaryKeyColumns: primaryKeyColumns
+    )
     isRightSidebarVisible = true
   }
 
@@ -121,5 +136,128 @@ extension NotebookViewModel {
       object: nil,
       userInfo: ["text": text]
     )
+  }
+
+  // MARK: - Cell Value Editing
+
+  /// Handle JSON value edit from sidebar
+  func handleJSONEdit(newJSON: String, originalPath: String) {
+    // Validate JSON
+    guard let data = newJSON.data(using: .utf8),
+      (try? JSONSerialization.jsonObject(with: data)) != nil
+    else {
+      // Show error - invalid JSON
+      print("Invalid JSON format")
+      // TODO: Show alert to user
+      return
+    }
+
+    // Copy to clipboard
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(newJSON, forType: .string)
+
+    // Update the sidebar content with the new JSON value
+    rightSidebarContent = .jsonViewer(json: newJSON, path: originalPath)
+
+    print("JSON edited and copied to clipboard")
+    // TODO: In the future, this could update the actual database value
+  }
+
+  /// Handle cell value edit from sidebar
+  func handleCellValueEdit(
+    columnName: String,
+    columnType: String,
+    newValue: String,
+    originalValue: CellValue,
+    tableName: String?,
+    rowData: [String: CellValue]?,
+    primaryKeyColumns: [String]
+  ) {
+    // Try to convert the new string value to the appropriate CellValue type
+    let updatedCellValue: CellValue
+    switch originalValue {
+    case .string:
+      updatedCellValue = .string(newValue)
+    case .int:
+      if let intValue = Int(newValue) {
+        updatedCellValue = .int(intValue)
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    case .double:
+      if let doubleValue = Double(newValue) {
+        updatedCellValue = .double(doubleValue)
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    case .bool:
+      if let boolValue = Bool(newValue) {
+        updatedCellValue = .bool(boolValue)
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    case .null:
+      if newValue.isEmpty || newValue.lowercased() == "null" {
+        updatedCellValue = .null
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    case .json:
+      updatedCellValue = .json(newValue)
+    case .date:
+      // Try to parse the date string
+      if let date = ISO8601DateFormatter().date(from: newValue) {
+        updatedCellValue = .date(date)
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    case .data:
+      if let data = newValue.data(using: .utf8) {
+        updatedCellValue = .data(data)
+      } else {
+        updatedCellValue = .string(newValue)
+      }
+    }
+
+    // Copy to clipboard
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(newValue, forType: .string)
+
+    // Update the sidebar content with the new value
+    rightSidebarContent = .cellInfo(
+      columnName: columnName,
+      columnType: columnType,
+      value: updatedCellValue,
+      tableName: tableName,
+      rowData: rowData,
+      primaryKeyColumns: primaryKeyColumns
+    )
+
+    // If we have table name and row data, attempt to update database
+    if let tableName = tableName, let rowData = rowData, !tableName.isEmpty {
+      Task {
+        do {
+          let rowsAffected = try await connectionManager.updateCellValue(
+            tableName: tableName,
+            columnName: columnName,
+            newValue: updatedCellValue,
+            rowData: rowData,
+            primaryKeyColumns: primaryKeyColumns
+          )
+
+          print(
+            "Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)"
+          )
+          // TODO: Show success notification to user
+        } catch {
+          print("Failed to update database: \(error.localizedDescription)")
+          // TODO: Show error alert to user
+        }
+      }
+    } else {
+      print(
+        "Cell value for '\(columnName)' edited and copied to clipboard (no database update - missing table info)"
+      )
+    }
   }
 }

@@ -216,10 +216,24 @@ struct ResultTableView: View {
         )
       }
     } else {
+      // Build row data dictionary with all column values
+      var rowData: [String: CellValue] = [:]
+      if rowIndex < result.rows.count {
+        let row = result.rows[rowIndex]
+        for (index, column) in result.columns.enumerated() {
+          if index < row.count {
+            rowData[column.name] = row[index]
+          }
+        }
+      }
+
       viewModel.showCellDetail(
         columnName: column.name,
         columnType: column.type,
-        value: value
+        value: value,
+        tableName: result.tableName,
+        rowData: rowData,
+        primaryKeyColumns: result.primaryKeyColumns
       )
     }
   }

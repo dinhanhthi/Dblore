@@ -12,6 +12,7 @@ struct ContentView: View {
 
   @State private var keyEventMonitor: Any?
   @State private var focusedTextView: NSTextView?
+  @State private var isCellValueEditing = false
 
   init(document: Binding<SQLNotebookDocument>) {
     self._document = document
@@ -61,7 +62,8 @@ struct ContentView: View {
       UndoRedoHandlerModifier(
         viewModel: viewModel,
         syncDocument: syncDocument,
-        focusedTextView: $focusedTextView
+        focusedTextView: $focusedTextView,
+        isCellValueEditing: $isCellValueEditing
       )
     )
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
@@ -106,6 +108,26 @@ struct ContentView: View {
       let isEscape = event.keyCode == 53
       if isEscape && textViewIsFocused {
         NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+        return nil  // Event consumed
+      }
+
+      // Handle Cmd+Z (Undo) and Cmd+Shift+Z (Redo)
+      let isZ = event.keyCode == 6  // Z key
+      let hasCommand = event.modifierFlags.contains(.command)
+      let hasShift = event.modifierFlags.contains(.shift)
+
+      if isZ && hasCommand {
+        // If editing cell value, let TextEditor handle its own undo/redo natively
+        if self.isCellValueEditing {
+          return event  // Let TextEditor handle it
+        }
+
+        // For cell content editors and cell-level operations, post notifications
+        if hasShift {
+          NotificationCenter.default.post(name: .redo, object: nil)
+        } else {
+          NotificationCenter.default.post(name: .undo, object: nil)
+        }
         return nil  // Event consumed
       }
 
@@ -411,6 +433,7 @@ private struct UndoRedoHandlerModifier: ViewModifier {
   let viewModel: NotebookViewModel
   let syncDocument: () -> Void
   @Binding var focusedTextView: NSTextView?
+  @Binding var isCellValueEditing: Bool
 
   func body(content: Content) -> some View {
     content
@@ -428,9 +451,18 @@ private struct UndoRedoHandlerModifier: ViewModifier {
       .onReceive(NotificationCenter.default.publisher(for: .editorUnfocused)) { _ in
         focusedTextView = nil
       }
+      .onReceive(NotificationCenter.default.publisher(for: .cellValueEditingStarted)) { _ in
+        isCellValueEditing = true
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .cellValueEditingEnded)) { _ in
+        isCellValueEditing = false
+      }
   }
 
   private func handleUndo() {
+    // Note: Cell value editing is handled by key event monitor
+    // If we reach here, it's either cell content editing or cell-level operations
+
     if let textView = focusedTextView, let undoManager = textView.undoManager {
       // Editor is focused - use editor's undo manager
       undoManager.undo()
@@ -442,6 +474,9 @@ private struct UndoRedoHandlerModifier: ViewModifier {
   }
 
   private func handleRedo() {
+    // Note: Cell value editing is handled by key event monitor
+    // If we reach here, it's either cell content editing or cell-level operations
+
     if let textView = focusedTextView, let undoManager = textView.undoManager {
       // Editor is focused - use editor's undo manager
       undoManager.redo()

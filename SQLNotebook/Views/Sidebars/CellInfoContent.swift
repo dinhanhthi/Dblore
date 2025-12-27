@@ -11,7 +11,12 @@ struct CellInfoContent: View {
   let columnName: String
   let columnType: String
   let value: CellValue
+  let onSave: ((String) -> Void)?
+
   @State private var isCopied = false
+  @State private var isEditing = false
+  @State private var editedValue: String = ""
+  @FocusState private var isTextEditorFocused: Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -43,7 +48,7 @@ struct CellInfoContent: View {
 
         Divider()
 
-        // Value header with copy button
+        // Value header with action buttons
         HStack {
           Text("Value")
             .font(.caption)
@@ -51,29 +56,67 @@ struct CellInfoContent: View {
 
           Spacer()
 
-          FloatingPanelButton(
-            icon: isCopied ? "checkmark" : "doc.on.doc",
-            helpText: "Copy Value",
-            useSymbolEffect: true,
-            action: copyToClipboard
-          )
+          if isEditing {
+            // Cancel and Save icon buttons
+            FloatingPanelButton(
+              icon: "xmark",
+              helpText: "Cancel",
+              useSymbolEffect: false,
+              action: cancelEdit
+            )
+
+            FloatingPanelButton(
+              icon: "checkmark",
+              helpText: "Save",
+              useSymbolEffect: false,
+              action: saveEdit
+            )
+          } else {
+            // Edit and Copy buttons
+            FloatingPanelButton(
+              icon: "pencil",
+              helpText: "Edit Value",
+              useSymbolEffect: false,
+              action: startEdit
+            )
+
+            FloatingPanelButton(
+              icon: isCopied ? "checkmark" : "doc.on.doc",
+              helpText: "Copy Value",
+              useSymbolEffect: true,
+              action: copyToClipboard
+            )
+          }
         }
       }
       .padding(.bottom, Spacing.md)
 
       // Scrollable value content - spans remaining vertical space
-      ScrollView {
-        Text(value.fullString)
+      if isEditing {
+        TextEditor(text: $editedValue)
           .font(.mono)
-          .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
-          .italic(value.isNull)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
+          .foregroundColor(.foreground)
+          .scrollContentBackground(.hidden)
           .padding(Spacing.sm)
+          .background(Color.cellBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+          .frame(maxHeight: .infinity)
+          .focused($isTextEditorFocused)
+          .focusedValue(\.isCellValueEditing, isEditing)
+      } else {
+        ScrollView {
+          Text(value.fullString)
+            .font(.mono)
+            .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
+            .italic(value.isNull)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.sm)
+        }
+        .background(Color.cellBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .frame(maxHeight: .infinity)
       }
-      .background(Color.cellBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-      .frame(maxHeight: .infinity)
     }
   }
 
@@ -88,6 +131,27 @@ struct CellInfoContent: View {
     case .date: return "Date"
     case .data: return "Binary Data"
     }
+  }
+
+  private func startEdit() {
+    editedValue = value.fullString
+    isEditing = true
+    isTextEditorFocused = true
+    NotificationCenter.default.post(name: .cellValueEditingStarted, object: nil)
+  }
+
+  private func cancelEdit() {
+    isEditing = false
+    isTextEditorFocused = false
+    editedValue = ""
+    NotificationCenter.default.post(name: .cellValueEditingEnded, object: nil)
+  }
+
+  private func saveEdit() {
+    onSave?(editedValue)
+    isEditing = false
+    isTextEditorFocused = false
+    NotificationCenter.default.post(name: .cellValueEditingEnded, object: nil)
   }
 
   private func copyToClipboard() {
