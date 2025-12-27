@@ -46,7 +46,6 @@ struct NotebookCommands: Commands {
       Button("Add Code Cell") {
         NotificationCenter.default.post(name: .addCodeCell, object: nil)
       }
-      .keyboardShortcut("b", modifiers: .command)
     }
 
     // Run commands
@@ -101,7 +100,7 @@ struct NotebookCommands: Commands {
       } label: {
         Label("Toggle Left Sidebar", systemImage: "sidebar.left")
       }
-      .keyboardShortcut("l", modifiers: [.command, .shift])
+      .keyboardShortcut("b", modifiers: .command)
 
       Button {
         NotificationCenter.default.post(name: .toggleSidebar, object: nil)
