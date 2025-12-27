@@ -85,7 +85,7 @@ struct RightSidebarView: View {
 
     switch content {
     case .connectionForm:
-      return 450
+      return 360
     default:
       return ComponentSize.sidebarWidth
     }

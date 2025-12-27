@@ -96,13 +96,17 @@ struct NotebookCommands: Commands {
 
     // View commands
     CommandGroup(after: .sidebar) {
-      Button("Toggle Left Sidebar") {
+      Button {
         NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+      } label: {
+        Label("Toggle Left Sidebar", systemImage: "sidebar.left")
       }
       .keyboardShortcut("l", modifiers: [.command, .shift])
 
-      Button("Toggle Right Sidebar") {
+      Button {
         NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+      } label: {
+        Label("Toggle Right Sidebar", systemImage: "sidebar.right")
       }
       .keyboardShortcut("r", modifiers: [.command, .shift])
     }

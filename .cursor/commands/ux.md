@@ -1,4 +1,4 @@
-# ui-ux-pro-max
+# ux
 
 Searchable database of UI styles, color palettes, font pairings, chart types, product recommendations, UX guidelines, and stack-specific best practices.
 
