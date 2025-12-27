@@ -129,6 +129,7 @@ struct JSONViewerContent: View {
   let path: String
   @State private var isPrettyPrinted = true
   @State private var searchText = ""
+  @State private var isCopied = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -146,9 +147,11 @@ struct JSONViewerContent: View {
         Spacer()
 
         Button(action: copyToClipboard) {
-          Label("Copy", systemImage: "doc.on.doc")
+          Label(isCopied ? "Copied" : "Copy", systemImage: isCopied ? "checkmark" : "doc.on.doc")
+            .frame(width: 70, height: 20, alignment: .leading)
         }
         .buttonStyle(GhostButtonStyle())
+        .animation(.easeInOut(duration: 0.1), value: isCopied)
       }
 
       // JSON content
@@ -182,6 +185,14 @@ struct JSONViewerContent: View {
   private func copyToClipboard() {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(formattedJSON, forType: .string)
+
+    isCopied = true
+    Task {
+      try? await Task.sleep(for: .milliseconds(1000))
+      await MainActor.run {
+        isCopied = false
+      }
+    }
   }
 }
 
