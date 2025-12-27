@@ -64,52 +64,6 @@ import SwiftUI
   .preferredColorScheme(.dark)
 }
 
-#Preview("JSON Viewer") {
-  let viewModel = NotebookViewModel()
-  let jsonData = """
-    {
-      "user": {
-        "id": 456,
-        "name": "Jane Smith",
-        "profile": {
-          "bio": "Software engineer passionate about databases",
-          "location": "San Francisco, CA",
-          "website": "https://janesmith.dev"
-        },
-        "preferences": {
-          "theme": "dark",
-          "notifications": true,
-          "language": "en-US"
-        }
-      },
-      "metadata": {
-        "created_at": "2024-01-15T10:30:00Z",
-        "updated_at": "2024-03-20T14:45:00Z",
-        "version": 3
-      },
-      "array": [1, 2, 3, 4, 5],
-      "object": {
-        "key": "value",
-        "key2": "value2"
-      }
-      "null": null,
-      "boolean": true,
-      "number": 123.45,
-      "date": "2024-01-15T10:30:00Z",
-      "binary": "SGVsbG8sIFdvcmxkIQ=="
-    }
-    """
-  viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "users.details")
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
 #Preview("Cell Info - Long Text") {
   let viewModel = NotebookViewModel()
   let longText = """
