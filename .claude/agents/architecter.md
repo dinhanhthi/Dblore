@@ -197,6 +197,7 @@ SQLNotebook/
 - **Models**: `<EntityName>.swift`
 - **Extensions**: `<Type>+<Category>.swift`
 - **Utilities**: `<Purpose>Helper.swift` or `<Type>Extensions.swift`
+- **Previews**: Preview code should be in the same main implementation file so that developers can modify and see the Canvas preview at the same time
 
 ### File Size Guidelines
 - **Maximum**: 400 lines (STRICT)
@@ -404,6 +405,7 @@ extension MainType {
 5. **Maintain git history** với clear commit messages
 6. **Group related code** trong extensions
 7. **Use meaningful file names** cho split files
+8. **Keep previews in main file** - Preview code should be in the same implementation file so developers can modify and see Canvas preview simultaneously
 
 ### ❌ Never Do
 1. **Split arbitrarily** - follow logical boundaries
