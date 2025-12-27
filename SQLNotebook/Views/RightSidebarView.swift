@@ -119,11 +119,28 @@ struct RightSidebarView: View {
     // Using explicit switch to help type inference
     switch content {
     case .jsonViewer(let json, let path):
-      JSONViewerContent(json: json, path: path)
-    case .cellInfo(let columnName, let columnType, let value):
-      CellInfoContent(columnName: columnName, columnType: columnType, value: value)
+      JSONViewerContent(json: json, path: path, onSave: { newJSON in
+        viewModel.handleJSONEdit(newJSON: newJSON, originalPath: path)
+      })
+    case .cellInfo(let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns):
+      CellInfoContent(
+        columnName: columnName,
+        columnType: columnType,
+        value: value,
+        onSave: { newValue in
+          viewModel.handleCellValueEdit(
+            columnName: columnName,
+            columnType: columnType,
+            newValue: newValue,
+            originalValue: value,
+            tableName: tableName,
+            rowData: rowData,
+            primaryKeyColumns: primaryKeyColumns
+          )
+        }
+      )
     case .connectionDetails:
-        ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
+      ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
       ConnectionFormContent(viewModel: viewModel)
     case .settings:
@@ -214,7 +231,10 @@ struct RightSidebarView: View {
   viewModel.rightSidebarContent = .cellInfo(
     columnName: "description",
     columnType: "TEXT",
-    value: .string(longText)
+    value: .string(longText),
+    tableName: nil,
+    rowData: nil,
+    primaryKeyColumns: []
   )
 
   return HStack {

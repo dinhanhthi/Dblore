@@ -46,6 +46,12 @@ struct CellResult: Codable, Sendable {
   var error: String?
   /// True if the result was limited due to reaching max fetch rows
   let wasLimited: Bool
+  /// The original SQL query that produced this result
+  let sourceQuery: String?
+  /// Table name if this is a simple SELECT from a single table
+  let tableName: String?
+  /// Primary key column names for the table (empty if no PK or unable to fetch)
+  let primaryKeyColumns: [String]
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -54,7 +60,10 @@ struct CellResult: Codable, Sendable {
     rowCount: Int = 0,
     timestamp: Date = Date(),
     error: String? = nil,
-    wasLimited: Bool = false
+    wasLimited: Bool = false,
+    sourceQuery: String? = nil,
+    tableName: String? = nil,
+    primaryKeyColumns: [String] = []
   ) {
     self.columns = columns
     self.rows = rows
@@ -63,6 +72,9 @@ struct CellResult: Codable, Sendable {
     self.timestamp = timestamp
     self.error = error
     self.wasLimited = wasLimited
+    self.sourceQuery = sourceQuery
+    self.tableName = tableName
+    self.primaryKeyColumns = primaryKeyColumns
   }
 
   /// Creates an error result

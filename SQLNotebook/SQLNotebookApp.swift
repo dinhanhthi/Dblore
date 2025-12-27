@@ -38,6 +38,8 @@ struct SQLNotebookApp: App {
 // MARK: - Menu Commands
 
 struct NotebookCommands: Commands {
+  @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
+
   var body: some Commands {
     // Cell commands
     CommandGroup(after: .newItem) {
@@ -110,18 +112,8 @@ struct NotebookCommands: Commands {
       .keyboardShortcut("r", modifiers: [.command, .shift])
     }
 
-    // Undo/Redo commands (built-in Edit menu)
-    CommandGroup(replacing: .undoRedo) {
-      Button("Undo") {
-        NotificationCenter.default.post(name: .undo, object: nil)
-      }
-      .keyboardShortcut("z", modifiers: .command)
-
-      Button("Redo") {
-        NotificationCenter.default.post(name: .redo, object: nil)
-      }
-      .keyboardShortcut("z", modifiers: [.command, .shift])
-    }
+    // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
+    // Custom undo/redo handling is done via key event monitoring in ContentView
   }
 }
 
@@ -148,4 +140,6 @@ extension Notification.Name {
   static let editorFocused = Notification.Name("editorFocused")
   static let editorUnfocused = Notification.Name("editorUnfocused")
   static let insertTextIntoCell = Notification.Name("insertTextIntoCell")
+  static let cellValueEditingStarted = Notification.Name("cellValueEditingStarted")
+  static let cellValueEditingEnded = Notification.Name("cellValueEditingEnded")
 }

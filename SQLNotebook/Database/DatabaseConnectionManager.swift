@@ -391,6 +391,171 @@ actor DatabaseConnectionManager {
     }
   }
 
+  /// Execute an UPDATE statement for a single cell value
+  /// - Parameters:
+  ///   - tableName: The name of the table to update
+  ///   - columnName: The column to update
+  ///   - newValue: The new value as CellValue
+  ///   - rowData: All column values for the row (used to build WHERE clause)
+  /// - Returns: Number of rows affected
+  func updateCellValue(
+    tableName: String,
+    columnName: String,
+    newValue: CellValue,
+    rowData: [String: CellValue],
+    primaryKeyColumns: [String]
+  ) async throws -> Int {
+    guard connection != nil else {
+      throw DatabaseError.notConnected
+    }
+
+    // Build WHERE clause with priority strategy:
+    // 1. Use primary key columns if available
+    // 2. Fall back to all columns (current approach)
+    var whereConditions: [String] = []
+
+    if !primaryKeyColumns.isEmpty {
+      // Priority 1: Use only primary key columns
+      for pkColumn in primaryKeyColumns {
+        if let pkValue = rowData[pkColumn] {
+          let sqlValue = cellValueToSQL(pkValue)
+          whereConditions.append("\"\(pkColumn)\" = \(sqlValue)")
+        } else {
+          // PK column not found in rowData, fall back to all columns
+          whereConditions = []
+          break
+        }
+      }
+    }
+
+    // Fallback: Use all columns if no primary key or PK columns missing from rowData
+    if whereConditions.isEmpty {
+      for (col, val) in rowData {
+        let sqlValue = cellValueToSQL(val)
+        whereConditions.append("\"\(col)\" = \(sqlValue)")
+      }
+    }
+
+    let whereClause = whereConditions.joined(separator: " AND ")
+
+    // Build UPDATE query
+    let newSQLValue = cellValueToSQL(newValue)
+    let updateQuery = """
+      UPDATE "\(tableName)"
+      SET "\(columnName)" = \(newSQLValue)
+      WHERE \(whereClause)
+      """
+
+    let startTime = Date()
+
+    do {
+      guard let connection = connection else {
+        throw DatabaseError.notConnected
+      }
+
+      // Execute UPDATE
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: updateQuery),
+        logger: Logger(label: "sqlnotebook.update")
+      )
+
+      // Count affected rows
+      var rowsAffected = 0
+      for try await _ in stream {
+        rowsAffected += 1
+      }
+
+      return rowsAffected
+
+    } catch let error as PSQLError {
+      let executionTime = Date().timeIntervalSince(startTime)
+      throw DatabaseError.queryFailed(error.code.description, executionTime)
+    } catch {
+      let executionTime = Date().timeIntervalSince(startTime)
+      throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
+    }
+  }
+
+  /// Fetch primary key column names for a table
+  /// Returns array of column names that form the primary key (empty if no PK)
+  func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
+    guard connection != nil else {
+      throw DatabaseError.notConnected
+    }
+
+    // Parse table name to handle schema.table format
+    let parts = tableName.split(separator: ".")
+    let schema: String
+    let table: String
+
+    if parts.count == 2 {
+      schema = String(parts[0])
+      table = String(parts[1])
+    } else {
+      schema = "public"
+      table = tableName
+    }
+
+    // Query to get primary key columns from PostgreSQL system catalogs
+    let pkQuery = """
+      SELECT a.attname AS column_name
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indrelid = '\(schema).\(table)'::regclass
+        AND i.indisprimary
+      ORDER BY array_position(i.indkey, a.attnum)
+      """
+
+    do {
+      let stream = try await connection!.query(
+        PostgresQuery(unsafeSQL: pkQuery),
+        logger: Logger(label: "sqlnotebook.pk")
+      )
+
+      var pkColumns: [String] = []
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+        if let columnName = try? randomAccess[0].decode(String.self) {
+          pkColumns.append(columnName)
+        }
+      }
+
+      return pkColumns
+
+    } catch {
+      // If query fails (table doesn't exist, permissions, etc.), return empty array
+      return []
+    }
+  }
+
+  /// Convert CellValue to SQL literal string
+  private func cellValueToSQL(_ value: CellValue) -> String {
+    switch value {
+    case .null:
+      return "NULL"
+    case .int(let i):
+      return String(i)
+    case .double(let d):
+      return String(d)
+    case .bool(let b):
+      return b ? "TRUE" : "FALSE"
+    case .string(let s):
+      // Escape single quotes by doubling them
+      let escaped = s.replacingOccurrences(of: "'", with: "''")
+      return "'\(escaped)'"
+    case .json(let j):
+      let escaped = j.replacingOccurrences(of: "'", with: "''")
+      return "'\(escaped)'::jsonb"
+    case .date(let d):
+      let iso = ISO8601DateFormatter().string(from: d)
+      return "'\(iso)'::timestamp"
+    case .data(let data):
+      // Convert to hex format for bytea
+      let hex = data.map { String(format: "%02x", $0) }.joined()
+      return "'\\x\(hex)'::bytea"
+    }
+  }
+
   // MARK: - Type Mapping
 
   /// Map PostgreSQL data type to display name

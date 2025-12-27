@@ -9,7 +9,14 @@ import SwiftUI
 /// Content types for the right sidebar
 enum SidebarContent: Equatable {
   case jsonViewer(json: String, path: String)
-  case cellInfo(columnName: String, columnType: String, value: CellValue)
+  case cellInfo(
+    columnName: String,
+    columnType: String,
+    value: CellValue,
+    tableName: String?,
+    rowData: [String: CellValue]?,  // All column values for this row
+    primaryKeyColumns: [String]  // Primary key column names
+  )
   case connectionDetails
   case connectionForm
   case settings

@@ -27,6 +27,15 @@ extension NotebookViewModel {
 
       executionCounter += 1
 
+      // Extract table name from query (simple SELECT parsing)
+      let tableName = extractTableName(from: query)
+
+      // Fetch primary key columns if we have a table name
+      var primaryKeyColumns: [String] = []
+      if let tableName = tableName {
+        primaryKeyColumns = (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+      }
+
       // Convert QueryResult to CellResult
       let result = CellResult(
         columns: queryResult.columns,
@@ -34,7 +43,10 @@ extension NotebookViewModel {
         executionTime: queryResult.executionTime,
         rowCount: queryResult.rowCount,
         timestamp: Date(),
-        wasLimited: queryResult.wasLimited
+        wasLimited: queryResult.wasLimited,
+        sourceQuery: query,
+        tableName: tableName,
+        primaryKeyColumns: primaryKeyColumns
       )
 
       notebook.cells[index].result = result
@@ -141,6 +153,40 @@ extension NotebookViewModel {
       undoManager.registerUndo(withTarget: self) { target in
         target.clearAllOutputs(registerUndo: true)
       }
+    }
+  }
+
+  // MARK: - Helper Methods
+
+  /// Extract table name from a SQL query (simple SELECT parsing)
+  /// Only works for simple SELECT queries like "SELECT * FROM table_name" or "SELECT col FROM schema.table"
+  private func extractTableName(from query: String) -> String? {
+    // Normalize query: trim whitespace and convert to lowercase
+    let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+    // Check if it's a SELECT query
+    guard normalized.hasPrefix("select") else {
+      return nil
+    }
+
+    // Find "FROM" keyword
+    guard let fromRange = normalized.range(of: "from") else {
+      return nil
+    }
+
+    // Get everything after "FROM"
+    let afterFrom = String(normalized[fromRange.upperBound...])
+      .trimmingCharacters(in: .whitespaces)
+
+    // Extract first word (table name) - stop at whitespace, comma, semicolon, or parenthesis
+    let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;()"))
+    if let endIndex = afterFrom.rangeOfCharacter(from: separators)?.lowerBound {
+      let tableName = String(afterFrom[..<endIndex])
+      return tableName.isEmpty ? nil : tableName
+    } else {
+      // No separator found, use the whole string
+      let tableName = afterFrom.trimmingCharacters(in: separators)
+      return tableName.isEmpty ? nil : tableName
     }
   }
 }

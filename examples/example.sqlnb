@@ -2,8 +2,8 @@
   "cells" : [
     {
       "cellType" : "sql",
-      "content" : "select * from document limit 10;",
-      "executionCount" : 1,
+      "content" : "select * from document ORDER BY id limit 10;",
+      "executionCount" : 3,
       "id" : "FEB11389-E756-4DD0-A667-EC293FD9A1A0",
       "result" : {
         "columns" : [
@@ -56,9 +56,55 @@
             "type" : "DOUBLE PRECISION"
           }
         ],
-        "executionTime" : 0.012719035148620605,
-        "rowCount" : 20,
+        "executionTime" : 0.0025680065155029297,
+        "rowCount" : 10,
         "rows" : [
+          [
+            {
+              "type" : "int",
+              "value" : 18
+            },
+            {
+              "type" : "string",
+              "value" : "Question: What is the pricing?\nAnswer: xxx"
+            },
+            {
+              "type" : "string",
+              "value" : "-NzS26OzQHWCtbpFaond"
+            },
+            {
+              "type" : "date",
+              "value" : "2024-06-03T09:42:15Z"
+            },
+            {
+              "type" : "string",
+              "value" : "What is the pricing?"
+            },
+            {
+              "type" : "string",
+              "value" : "trained"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "string",
+              "value" : "created"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "double",
+              "value" : 0.20000000000000001
+            }
+          ],
           [
             {
               "type" : "int",
@@ -103,6 +149,190 @@
             {
               "type" : "double",
               "value" : 0.20000000000000001
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 33
+            },
+            {
+              "type" : "string",
+              "value" : "thu nghiem"
+            },
+            {
+              "type" : "string",
+              "value" : "-NzTKBbHn17p_zXomZfY"
+            },
+            {
+              "type" : "date",
+              "value" : "2024-06-03T15:43:28Z"
+            },
+            {
+              "type" : "string",
+              "value" : "xxx"
+            },
+            {
+              "type" : "string",
+              "value" : "trained"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "string",
+              "value" : "created"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "double",
+              "value" : 1
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 621
+            },
+            {
+              "type" : "string",
+              "value" : "Sample PDFThis is a simple PDF ﬁle. Fun fun fun.Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Phasellus facilisis odio sed mi. Curabitur suscipit. Nullam vel nisi. Etiam semper ipsum ut lectus. Proin aliquam, erat eget pharetra commodo, eros mi condimentum quam, sed commodo justo quam ut velit. Integer a erat. Cras laoreet ligula cursus enim. Aenean scelerisque velit et tellus. Vestibulum dictum aliquet sem. Nulla facilisi. Vestibulum accumsan ante vitae elit. Nulla erat dolor, blandit in, rutrum quis, semper pulvinar, enim. Nullam varius congue risus. Vivamus sollicitudin, metus ut interdum eleifend, nisi tellus pellentesque elit, tristique accumsan eros quam et risus. Suspendisse libero odio, mattis sit amet, aliquet eget, hendrerit vel, nulla. Sed vitae augue. Aliquam erat volutpat. Aliquam feugiat vulputate nisl. Suspendisse quis nulla pretium ante pretium mollis. Proin velit ligula, sagittis at, egestas a, pulvinar quis, nisl.Pellentesque sit amet lectus. Praesent pulvinar, nunc quis iaculis sagittis, justo quam lobortis tortor, sed vestibulum dui metus venenatis est. Nunc cursus ligula. Nulla facilisi. Phasellus ullamcorper consectetuer ante. Duis tincidunt, urna id condimentum luctus, nibh ante vulputate sapien, id sagittis massa orci ut enim. Pellentesque vestibulum convallis sem. Nulla consequat quam ut nisl. Nullam est. Curabitur tincidunt dapibus lorem. Proin velit turpis, scelerisque sit amet, iaculis nec, rhoncus ac, ipsum. Phasellus lorem arcu, feugiat eu, gravida eu, consequat molestie, ipsum. Nullam vel est ut ipsum volutpat feugiat. Aenean pellentesque.In mauris. Pellentesque dui nisi, iaculis eu, rhoncus in, venenatis ac, ante. Ut odio justo, scelerisque vel, facilisis non, commodo a, pede. Cras nec massa sit amet tortor volutpat varius. Donec lacinia, neque a luctus aliquet, pede massa imperdiet ante, at varius lorem pede sed sapien. Fusce erat nibh, aliquet in, eleifend eget, commodo eget, erat. Fusce consectetuer. Cras risus tortor, porttitor nec, tristique sed, convallis semper, eros. Fusce vulputate ipsum a mauris. Phasellus mollis. Curabitur sed urna. Aliquam nec sapien non nibh pulvinar convallis. Vivamus facilisis augue quis quam. Proin cursus aliquet metus. Suspendisse lacinia. Nulla at tellus ac turpis eleifend scelerisque. Maecenas a pede vitae enim commodo interdum. Donec odio. Sed sollicitudin dui vitae justo.Morbi elit nunc, facilisis a, mollis a, molestie at, lectus. Suspendisse eget mauris eu tellus molestie cursus. Duis ut magna at justo dignissim condimentum. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Vivamus varius. Ut sit amet diam suscipit mauris ornare aliquam. Sed varius. Duis arcu. Etiam tristique massa eget dui. Phasellus congue. Aenean est erat, tincidunt eget, venenatis quis, commodo at, quam."
+            },
+            {
+              "type" : "string",
+              "value" : "-Nzctb3UcI7jPUakm8xb"
+            },
+            {
+              "type" : "date",
+              "value" : "2024-06-05T16:56:10Z"
+            },
+            {
+              "type" : "string",
+              "value" : "sample.pdf"
+            },
+            {
+              "type" : "string",
+              "value" : "trained"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "string",
+              "value" : "added"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "double",
+              "value" : 0.20000000000000001
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 622
+            },
+            {
+              "type" : "string",
+              "value" : "custom file"
+            },
+            {
+              "type" : "string",
+              "value" : "-Nzctb3UcI7jPUakm8xb"
+            },
+            {
+              "type" : "date",
+              "value" : "2024-06-05T16:56:10Z"
+            },
+            {
+              "type" : "string",
+              "value" : "custom file"
+            },
+            {
+              "type" : "string",
+              "value" : "trained"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "string",
+              "value" : "created"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "double",
+              "value" : 0.20000000000000001
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 623
+            },
+            {
+              "type" : "string",
+              "value" : "00000000"
+            },
+            {
+              "type" : "string",
+              "value" : "-Nzctb3UcI7jPUakm8xb"
+            },
+            {
+              "type" : "date",
+              "value" : "2024-06-05T16:58:29Z"
+            },
+            {
+              "type" : "string",
+              "value" : "xxxzsasss"
+            },
+            {
+              "type" : "string",
+              "value" : "trained"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "string",
+              "value" : "created"
+            },
+            {
+              "type" : "null"
+            },
+            {
+              "type" : "double",
+              "value" : 0.90000000000000002
             }
           ],
           [
@@ -200,11 +430,11 @@
           [
             {
               "type" : "int",
-              "value" : 694
+              "value" : 688
             },
             {
               "type" : "string",
-              "value" : "content 2"
+              "value" : "Please visit pricing page."
             },
             {
               "type" : "string",
@@ -212,53 +442,7 @@
             },
             {
               "type" : "date",
-              "value" : "2024-06-10T17:47:55Z"
-            },
-            {
-              "type" : "string",
-              "value" : "created 2"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 1
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1207
-            },
-            {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: 10000"
-            },
-            {
-              "type" : "string",
-              "value" : "-OA3QaiM0akiNj4HExBk"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-10-25T18:07:06Z"
+              "value" : "2024-06-10T16:09:22Z"
             },
             {
               "type" : "string",
@@ -272,102 +456,7 @@
               "type" : "null"
             },
             {
-              "type" : "string",
-              "value" : ""
-            },
-            {
               "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.90000000000000002
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1208
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: Contact us at xxxx@yuyyyy.com"
-            },
-            {
-              "type" : "string",
-              "value" : "-OA3QaiM0akiNj4HExBk"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-10-25T18:07:06Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.90000000000000002
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1928
-            },
-            {
-              "type" : "string",
-              "value" : "Question: When I have some problem, where can I ask for help?\nAnswer: https:\/\/bymycar.fr\/contact"
-            },
-            {
-              "type" : "string",
-              "value" : "-OWoZZxkG_nr31dglDT-"
-            },
-            {
-              "type" : "date",
-              "value" : "2025-08-04T13:26:17Z"
-            },
-            {
-              "type" : "string",
-              "value" : "When I have some problem, where can I ask for help?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
             },
             {
               "type" : "null"
@@ -387,65 +476,19 @@
           [
             {
               "type" : "int",
-              "value" : 723
+              "value" : 689
             },
             {
               "type" : "string",
-              "value" : "content change"
+              "value" : "Question: How do I cancel my subscription?\nAnswer: Please visit subscription page."
             },
             {
               "type" : "string",
-              "value" : "-O-FiwUEy7BaBrn0B6KM"
+              "value" : "-O-1TqC-JS22QRx1S1-0"
             },
             {
               "type" : "date",
-              "value" : "2024-06-13T13:56:49Z"
-            },
-            {
-              "type" : "string",
-              "value" : "new faq name changed"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 759
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: asdasdsa"
-            },
-            {
-              "type" : "string",
-              "value" : "-O-H0LDSgWa8p4SG2Twi"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-06-13T16:34:24Z"
+              "value" : "2024-06-10T16:09:22Z"
             },
             {
               "type" : "string",
@@ -467,99 +510,6 @@
             {
               "type" : "string",
               "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 932
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: xxxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-O1IaL0UP1mlX_S336jW"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-07-08T20:27:04Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1927
-            },
-            {
-              "type" : "string",
-              "value" : "Mr XXX is a guy who is died."
-            },
-            {
-              "type" : "string",
-              "value" : "-Ny0EyCK7JrEjvVYywd0"
-            },
-            {
-              "type" : "date",
-              "value" : "2025-07-21T15:45:07Z"
-            },
-            {
-              "type" : "string",
-              "value" : "Who is Mr XXXX?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
             },
             {
               "type" : "null"
@@ -567,436 +517,22 @@
             {
               "type" : "double",
               "value" : 1
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 933
-            },
-            {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: xxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-O1Icx-nr0m6_UQUVxcD"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-07-08T20:38:27Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1291
-            },
-            {
-              "type" : "string",
-              "value" : "If the user ask about the pricing of contract, give them the price of $222."
-            },
-            {
-              "type" : "string",
-              "value" : "-Ny0EyCK7JrEjvVYywd0"
-            },
-            {
-              "type" : "date",
-              "value" : "2025-03-12T17:04:32Z"
-            },
-            {
-              "type" : "string",
-              "value" : "Contract 222"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 1
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1203
-            },
-            {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: 1000$"
-            },
-            {
-              "type" : "string",
-              "value" : "-O9OaD1ak10UW6KSvIOH"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-10-17T10:29:48Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.90000000000000002
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1204
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: xxxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-O9OaD1ak10UW6KSvIOH"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-10-17T10:29:48Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.90000000000000002
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1293
-            },
-            {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: $1000"
-            },
-            {
-              "type" : "string",
-              "value" : "-OMIfejF2s5HP2NeOTZo"
-            },
-            {
-              "type" : "date",
-              "value" : "2025-03-26T19:19:58Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.96999999999999997
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 1294
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: You cannot!"
-            },
-            {
-              "type" : "string",
-              "value" : "-OMIfejF2s5HP2NeOTZo"
-            },
-            {
-              "type" : "date",
-              "value" : "2025-03-26T19:19:58Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : ""
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.96999999999999997
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 726
-            },
-            {
-              "type" : "string",
-              "value" : "21\/09\/2023, 17:12 Hi! I'm Thi\nhttps:\/\/dinhanhthi.com 1\/3\nHi! I'm Thi\nI am a guy with a curious mind. I would like to learn something new every day. I\nalso have a PhD in Applied Mathematics and currently work as a Data Scientist\nand Full Stack Developer at Ideta. On this page, you can find the notes I made\nwhen I discovered something new in the fields of Data Science and Web\nDevelopment.\n \n \nCONTACT 📋 MY CV 🎨 MY SKETCHES\n📚 READING LIST 🍲 I COOK\nLatest blog posts\nBuild a\nwebsite with\nWordpressBuild a\nwebsite\nwith\nWordpressA workflow\nfor\ncreating a\nDocker\nHome AboutBlog Note s \/search posts21\/09\/2023, 17:12 Hi! I'm Thi\nhttps:\/\/dinhanhthi.com 2\/3 GCP AIO Notes • updated\n Fresh MacOS installation\n TypeScript discrete notes •\n Creating a Chrome extension • †\n Github •\n JS discrete notes\n Git\n Yarn •\n Zelda: BOTW •and Gatsby\n2and\nGatsby 1image  with\nsuppo rt for\nTensorFlow,\nPyTorch,\nand GPU\"Blog\" vs\n\"Notes\" on\nthis site?\nWorking\nwith image s\nin\nmarkdown\nfiles and\nstatic sites\n(11ty)\nRecently updated notes \n...m ore\n\n\n\n\n\n\n\n\n\n• Draft posts ,† Private posts ,Outside this site\nBuilding the\ncomponents\nForeword\n& Setting\nup\nHome AboutBlog Note s \/21\/09\/2023, 17:12 Hi! I'm Thi\nhttps:\/\/dinhanhthi.com 3\/311ty Angular API & Services Data Science\nDeep Learning Docker Gaming & Puzzles GatsbyJS\nJavaScript Machine Learning MLOps MOOC\nNLP Prob & Stats Project-based Learning Python\nSkills Static Site Generators Testing Time Series\nWeb Dev Wordpress\nThi  ©  2023  •  About this site  •  My sketches  •  I cook  •   Support ThiTopics \n...m ore\nBuilt with 11ty, hosted on Netlify\nHome AboutBlog Note s \/"
-            },
-            {
-              "type" : "string",
-              "value" : "-O-FiwUEy7BaBrn0B6KM"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-06-13T14:02:53Z"
-            },
-            {
-              "type" : "string",
-              "value" : "Hi! I'm Thi.pdf"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "added"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 1
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 931
-            },
-            {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: xxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-O1IaL0UP1mlX_S336jW"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-07-08T20:27:04Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 934
-            },
-            {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: xxxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-O1Icx-nr0m6_UQUVxcD"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-07-08T20:38:27Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 0.20000000000000001
             }
           ]
         ],
-        "timestamp" : "2025-12-26T15:57:51Z",
+        "timestamp" : "2025-12-27T20:59:34Z",
         "wasLimited" : false
       }
     },
     {
       "cellType" : "sql",
-      "content" : "",
+      "content" : "sdsad",
       "id" : "F833A60C-CF04-445B-ADAC-0E8D07C5F634"
+    },
+    {
+      "cellType" : "sql",
+      "content" : "",
+      "id" : "A895D5E9-E0BD-446C-95E7-8711950BBF29"
     },
     {
       "cellType" : "sql",
@@ -1021,7 +557,7 @@
   "id" : "3532119E-CDD9-45F6-9101-550A053F90F4",
   "metadata" : {
     "createdAt" : "2025-12-21T17:00:53Z",
-    "modifiedAt" : "2025-12-27T14:25:45Z",
+    "modifiedAt" : "2025-12-27T20:59:44Z",
     "title" : "Untitled Notebook"
   },
   "settings" : {
