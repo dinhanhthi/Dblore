@@ -229,6 +229,24 @@ struct ConnectionFormContent: View {
       .pickerStyle(.menu)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    // Remember Connection Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Remember connection")
+          .font(.body)
+        Text("Automatically reconnect when you reopen the app")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .scaleEffect(0.8)
+    }
   }
 
   @ViewBuilder
@@ -278,6 +296,24 @@ struct ConnectionFormContent: View {
         viewModel.editingConnectionConfig.sslMode = newMode
         testResult = nil
       }
+    }
+
+    // Remember Connection Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Remember connection")
+          .font(.body)
+        Text("Automatically reconnect when you reopen the app")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .scaleEffect(0.8)
     }
   }
 

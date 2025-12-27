@@ -71,7 +71,7 @@ struct FooterView: View {
       return "Connecting..."
     case .connected:
       if let config = viewModel.notebook.connectionConfig {
-        return "Connection: \(config.database)@\(config.host) | User: \(config.username)"
+        return "Connected: \(config.database)@\(config.host) (User: \(config.username))"
       }
       return "Connected"
     case .error(let message):

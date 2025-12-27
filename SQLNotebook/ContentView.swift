@@ -72,6 +72,8 @@ struct ContentView: View {
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
+      // Auto-connect to saved session if available
+      viewModel.autoConnectIfNeeded()
     }
     .onDisappear {
       removeKeyEventMonitor()
