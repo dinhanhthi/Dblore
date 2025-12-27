@@ -14,35 +14,36 @@ struct CellInfoContent: View {
   @State private var isCopied = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Column info
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        Text("Column")
-          .font(.caption)
-          .foregroundColor(.foregroundSubtle)
+    VStack(alignment: .leading, spacing: 0) {
+      // Fixed header section
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        // Column info
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          Text("Column")
+            .font(.caption)
+            .foregroundColor(.foregroundSubtle)
 
-        Text("\(columnName) (\(columnType))")
-          .font(.mono)
-          .foregroundColor(.foreground)
-      }
+          Text("\(columnName) (\(columnType))")
+            .font(.mono)
+            .foregroundColor(.foreground)
+        }
 
-      Divider()
+        Divider()
 
-      // Value type
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        Text("Type")
-          .font(.caption)
-          .foregroundColor(.foregroundSubtle)
+        // Value type
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          Text("Type")
+            .font(.caption)
+            .foregroundColor(.foregroundSubtle)
 
-        Text(valueTypeName)
-          .font(.mono)
-          .foregroundColor(.foregroundMuted)
-      }
+          Text(valueTypeName)
+            .font(.mono)
+            .foregroundColor(.foregroundMuted)
+        }
 
-      Divider()
+        Divider()
 
-      // Full value
-      VStack(alignment: .leading, spacing: Spacing.xs) {
+        // Value header with copy button
         HStack {
           Text("Value")
             .font(.caption)
@@ -57,20 +58,22 @@ struct CellInfoContent: View {
             action: copyToClipboard
           )
         }
-
-        ScrollView {
-          Text(value.fullString)
-            .font(.mono)
-            .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
-            .italic(value.isNull)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxHeight: 200)
-        .padding(Spacing.sm)
-        .background(Color.cellBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
+      .padding(.bottom, Spacing.md)
+
+      // Scrollable value content - spans remaining vertical space
+      ScrollView {
+        Text(value.fullString)
+          .font(.mono)
+          .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
+          .italic(value.isNull)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(Spacing.sm)
+      }
+      .background(Color.cellBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .frame(maxHeight: .infinity)
     }
   }
 
