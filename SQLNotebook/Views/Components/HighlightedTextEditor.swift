@@ -42,12 +42,6 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     DispatchQueue.main.async {
       textViewRef = textView
     }
-
-    // Use weak reference to coordinator to prevent crash on deallocation
-    textView.onBlur = { [weak coordinator = context.coordinator] newText in
-      // Update binding when editor loses focus
-      coordinator?.text.wrappedValue = newText
-    }
     textView.isRichText = false
     textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     textView.textColor = NSColor(Color.foreground)
@@ -96,12 +90,6 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Update callbacks
     textView.onFocus = onFocus
 
-    // Use weak reference to coordinator to prevent crash on deallocation
-    textView.onBlur = { [weak coordinator = context.coordinator] newText in
-      // Update binding when editor loses focus
-      coordinator?.text.wrappedValue = newText
-    }
-
     // Only update text from external source if different
     // Don't update if textView is first responder (user is typing)
     if textView.string != text && textView.window?.firstResponder != textView {
@@ -139,8 +127,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       // Update height to fit content
       updateHeight(textView: textView)
 
-      // DO NOT update binding here - it causes undo/redo lag!
-      // The binding will be updated when editor loses focus (see resignFirstResponder)
+      // Update binding immediately so placeholder can react
+      // This is needed for placeholder to disappear while typing
+      text.wrappedValue = textView.string
     }
 
     func applyHighlighting(to textView: NSTextView, text: String) {
