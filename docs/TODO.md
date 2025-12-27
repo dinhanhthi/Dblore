@@ -7,7 +7,7 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE  
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
-- ✅ **Phase 4: Polish** - IN PROGRESS (left sidebar & minor features pending)
+- ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
@@ -213,25 +213,25 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Persist result visibility state per cell
 - [ ] Add visual indicator (chevron icon) for collapsed state
 
-### 4.9 Left Sidebar - Database Structure
-- [ ] Create `LeftSidebarView` component
-- [ ] Add `isLeftSidebarVisible` state to `NotebookViewModel`
-- [ ] Implement database schema query methods in `DatabaseConnectionManager`
-  - [ ] Query list of tables from `information_schema.tables`
-  - [ ] Query columns for each table from `information_schema.columns`
-  - [ ] Query primary keys and foreign keys (optional)
-- [ ] Create tree view component for tables and columns
-  - [ ] Collapsible table nodes
-  - [ ] Expandable column list under each table
-  - [ ] Display column name and type
-  - [ ] Show table/column icons using SF Symbols
-- [ ] Add refresh button to reload schema
-- [ ] Add toggle button in header to show/hide left sidebar
-- [ ] Implement keyboard shortcut (`Cmd+Shift+L` or similar) to toggle
-- [ ] Auto-load schema when connection is established
-- [ ] Handle schema loading errors gracefully
-- [ ] Add click handler to insert table/column names into selected cell
-- [ ] Style sidebar according to design system (matching right sidebar)
+### 4.9 Left Sidebar - Database Structure ✅
+- [x] Create `LeftSidebarView` component
+- [x] Add `isLeftSidebarVisible` state to `NotebookViewModel`
+- [x] Implement database schema query methods in `DatabaseConnectionManager`
+  - [x] Query list of tables from `information_schema.tables`
+  - [x] Query columns for each table from `information_schema.columns`
+  - [x] Query row count for each table
+- [x] Create tree view component for tables and columns
+  - [x] Collapsible table nodes
+  - [x] Expandable column list under each table
+  - [x] Display column name and type
+  - [x] Show table/column icons using SF Symbols
+- [x] Add refresh button to reload schema
+- [x] Add toggle button in header to show/hide left sidebar
+- [x] Implement keyboard shortcut (`Cmd+Shift+L`) to toggle
+- [x] Auto-load schema when connection is established
+- [x] Handle schema loading errors gracefully
+- [x] Add click handler to insert table/column names into selected cell
+- [x] Style sidebar according to design system (matching right sidebar)
 
 ---
 
@@ -262,6 +262,33 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Implement SQL keyword autocomplete
 - [ ] Handle popup positioning and selection
 
+### 5.5 Tabs Support - Multiple Database Connections
+- [ ] Create tab management system (similar to VSCode)
+- [ ] Implement tab model to store multiple database connections per notebook
+- [ ] Add tab bar UI component above main content area
+- [ ] Each tab maintains its own:
+  - [ ] `DatabaseConnectionManager` instance
+  - [ ] Connection state and config
+  - [ ] Database schema (tables/columns)
+  - [ ] Query execution context
+- [ ] Add "New Tab" button to create additional database connections
+- [ ] Implement tab switching functionality
+- [ ] Add close button (X) on each tab
+- [ ] Show active tab indicator (highlighted background)
+- [ ] Display connection status icon on each tab (connected/disconnected)
+- [ ] Show database name and host in tab label
+- [ ] Handle tab reordering (drag and drop)
+- [ ] Persist tab configurations in notebook document
+- [ ] Update left sidebar to show schema for active tab's database
+- [ ] Update query execution to use active tab's connection
+- [ ] Add keyboard shortcuts:
+  - [ ] `Cmd+T` to create new tab
+  - [ ] `Cmd+W` to close current tab
+  - [ ] `Cmd+1-9` to switch to tab by number
+  - [ ] `Cmd+Shift+]` / `Cmd+Shift+[` to navigate between tabs
+- [ ] Handle connection errors per tab (don't affect other tabs)
+- [ ] Add context menu on tabs (Connect, Disconnect, Close, Close Others, etc.)
+
 ---
 
 ## Testing Checklist ❌ (Not implemented yet)
@@ -287,6 +314,17 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 ---
 
 ## Recent Completions (Dec 2025)
+
+### Left Sidebar - Database Structure ✅
+- ✅ Implemented `LeftSidebarView` with tree view for tables and columns
+- ✅ Added expand/collapse functionality for tables
+- ✅ Click to insert table/column names into SQL editor
+- ✅ Auto-load schema when connection is established
+- ✅ Refresh button to reload schema
+- ✅ Toggle button in header with `Cmd+Shift+L` shortcut
+- ✅ Empty states and loading states
+- ✅ Row count display for each table
+- ✅ Primary key indicators on columns
 
 ### SSL Connection Enhancement ✅
 - ✅ Added connection string input mode with auto-parsing
@@ -407,17 +445,17 @@ ORDER BY ordinal_position;
 ## Next Priorities
 
 ### Recommended: Phase 4 Completion
-1. **Left Sidebar - Database Structure** (4.9) - Tree view showing tables and columns ⭐ NEW
-2. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
-3. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
-4. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
-5. **Drag and Drop** (4.4) - Cell reordering with drag handles
-6. **Save Prompt** (4.7) - Prompt to save on close if unsaved
+1. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
+2. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
+3. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
+4. **Drag and Drop** (4.4) - Cell reordering with drag handles
+5. **Save Prompt** (4.7) - Prompt to save on close if unsaved
 
 ### Then: Phase 5 Advanced Features
-1. **Query History** - Store and re-run past queries
-2. **Export Results** - CSV export functionality
-3. **Multiple Database Support** - SQLite, MySQL
+1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
+2. **Query History** (5.1) - Store and re-run past queries
+3. **Export Results** (5.2) - CSV export functionality
+4. **Multiple Database Support** (5.3) - SQLite, MySQL
 
 ---
 

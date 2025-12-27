@@ -17,10 +17,23 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D3E0FB952EF70DBB009A0E5A /* SQLNotebook */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D3E0FC102EF71234009A0E5C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 			path = SQLNotebook;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D3E0FC102EF71234009A0E5C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		D3E0FB902EF70DBB009A0E5A /* Frameworks */ = {
