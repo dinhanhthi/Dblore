@@ -34,6 +34,12 @@ extension NotebookViewModel {
     isRightSidebarVisible = true
   }
 
+  /// Show settings in sidebar
+  func showSettings() {
+    rightSidebarContent = .settings
+    isRightSidebarVisible = true
+  }
+
   /// Toggle sidebar visibility
   func toggleSidebar() {
     isRightSidebarVisible.toggle()

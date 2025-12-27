@@ -11,17 +11,20 @@ struct SQLNotebook: Codable, Identifiable, Sendable {
   var cells: [NotebookCell]
   var metadata: NotebookMetadata
   var connectionConfig: ConnectionConfig?
+  var settings: NotebookSettings
 
   nonisolated init(
     id: UUID = UUID(),
     cells: [NotebookCell] = [],
     metadata: NotebookMetadata = NotebookMetadata(),
-    connectionConfig: ConnectionConfig? = nil
+    connectionConfig: ConnectionConfig? = nil,
+    settings: NotebookSettings = NotebookSettings()
   ) {
     self.id = id
     self.cells = cells
     self.metadata = metadata
     self.connectionConfig = connectionConfig
+    self.settings = settings
   }
 
   /// Creates a new notebook with a default empty SQL cell
