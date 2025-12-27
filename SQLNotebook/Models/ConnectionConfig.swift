@@ -13,6 +13,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var username: String
   var password: String
   var sslMode: SSLMode
+  var rememberConnection: Bool
 
   nonisolated init(
     host: String = "localhost",
@@ -20,7 +21,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     database: String = "",
     username: String = "",
     password: String = "",
-    sslMode: SSLMode = .prefer
+    sslMode: SSLMode = .prefer,
+    rememberConnection: Bool = false
   ) {
     self.host = host
     self.port = port
@@ -28,6 +30,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.username = username
     self.password = password
     self.sslMode = sslMode
+    self.rememberConnection = rememberConnection
   }
 
   /// Display string for connection info

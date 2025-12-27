@@ -17,6 +17,9 @@ extension NotebookViewModel {
       notebook.connectionConfig = editingConnectionConfig
       connectionState = .connected
 
+      // Save session if remember connection is enabled
+      SessionManager.saveSession(editingConnectionConfig)
+
       // Auto-load database schema after successful connection
       await loadDatabaseSchema()
     } catch {
@@ -31,6 +34,9 @@ extension NotebookViewModel {
       await connectionManager.disconnect()
       connectionState = .disconnected
 
+      // Clear saved session when manually disconnecting
+      SessionManager.clearSession()
+
       // Clear database schema when disconnected
       databaseTables = []
     }
@@ -42,6 +48,29 @@ extension NotebookViewModel {
       return try await connectionManager.testConnection(config: editingConnectionConfig)
     } catch {
       return false
+    }
+  }
+
+  /// Auto-connect to saved session if available
+  func autoConnectIfNeeded() {
+    Task {
+      guard SessionManager.hasSession(),
+            let savedConfig = SessionManager.loadSession() else {
+        return
+      }
+
+      // Load the saved config
+      editingConnectionConfig = savedConfig
+
+      // Attempt to connect automatically
+      do {
+        try await connect()
+        print("Auto-connected to saved session: \(savedConfig.displayString)")
+      } catch {
+        // If auto-connect fails, just log it and let user manually connect
+        print("Auto-connect failed: \(error.localizedDescription)")
+        connectionState = .disconnected
+      }
     }
   }
 }

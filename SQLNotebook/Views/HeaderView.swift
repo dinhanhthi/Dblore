@@ -29,7 +29,7 @@ struct HeaderView: View {
           .frame(height: 20)
 
         Button(action: { viewModel.addCell(type: .sql) }) {
-          Label("Cell", systemImage: "plus")
+          Label("New", systemImage: "plus")
         }
         .buttonStyle(ToolbarButtonStyle())
         .onHover { hovering in
