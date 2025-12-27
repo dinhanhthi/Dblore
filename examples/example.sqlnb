@@ -56,7 +56,7 @@
             "type" : "DOUBLE PRECISION"
           }
         ],
-        "executionTime" : 0.0025680065155029297,
+        "executionTime" : 0.0025680065155029288,
         "rowCount" : 10,
         "rows" : [
           [
@@ -557,7 +557,7 @@
   "id" : "3532119E-CDD9-45F6-9101-550A053F90F4",
   "metadata" : {
     "createdAt" : "2025-12-21T17:00:53Z",
-    "modifiedAt" : "2025-12-27T20:59:44Z",
+    "modifiedAt" : "2025-12-27T21:07:11Z",
     "title" : "Untitled Notebook"
   },
   "settings" : {
