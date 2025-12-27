@@ -141,7 +141,7 @@ struct JSONViewerContent: View {
       HStack {
         Toggle("Pretty Print", isOn: $isPrettyPrinted)
           .toggleStyle(.switch)
-          .controlSize(.small)
+          .controlSize(.mini)
 
         Spacer()
 
@@ -534,10 +534,10 @@ struct ConnectionFormContent: View {
   private func connectionStringFields() -> some View {
     FormField(label: "Connection String") {
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        TextEditor(text: $connectionString)
+        TextField("postgresql://username:password@localhost:5432/database", text: $connectionString, axis: .vertical)
+          .textFieldStyle(.plain)
           .font(.system(.body, design: .monospaced))
-          .frame(minHeight: 80)
-          .scrollContentBackground(.hidden)
+          .lineLimit(3...6)
           .padding(Spacing.sm)
           .background(
             RoundedRectangle(cornerRadius: CornerRadius.md)

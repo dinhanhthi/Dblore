@@ -90,6 +90,7 @@ extension Font {
   static let bodyText = Font.system(.body)  // 17pt
   static let caption = Font.system(.subheadline)  // 15pt
   static let small = Font.system(.footnote)  // 13pt
+  static let smallest = Font.system(.caption)  // 12pt
 }
 
 // MARK: - Spacing
@@ -216,6 +217,7 @@ struct ToolbarButtonStyle: ButtonStyle {
           )
       )
       .contentShape(Rectangle())
+      .opacity(isEnabled ? 1.0 : 0.4)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering

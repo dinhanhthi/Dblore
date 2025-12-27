@@ -251,7 +251,7 @@ private struct ConnectionIconView: View {
 
 #Preview("Connect") {
   HeaderView(viewModel: NotebookViewModel())
-    .frame(width: 800)
+    .frame(width: 700)
     .preferredColorScheme(.dark)
 }
 
