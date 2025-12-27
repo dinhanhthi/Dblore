@@ -1,5 +1,5 @@
 ---
-name: todo
+name: planner
 description: Manages TODO items throughout the project - updates completion status, adds new tasks based on discoveries, and keeps the task list organized and current
 tools: Read, Write, Edit, Glob, Grep, TodoWrite
 model: haiku
