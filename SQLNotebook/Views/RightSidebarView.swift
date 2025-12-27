@@ -154,12 +154,10 @@ struct JSONViewerContent: View {
         .animation(.easeInOut(duration: 0.1), value: isCopied)
       }
 
-      // JSON content
+      // JSON content with syntax highlighting
       ScrollView(.horizontal, showsIndicators: false) {
-        Text(formattedJSON)
-          .font(.monoSmall)
-          .foregroundColor(.foreground)
-          .textSelection(.enabled)
+        HighlightedJSONText(json: formattedJSON)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
       .padding(Spacing.sm)
       .background(Color.cellBackground)
@@ -854,7 +852,17 @@ struct FormField<Content: View>: View {
         "created_at": "2024-01-15T10:30:00Z",
         "updated_at": "2024-03-20T14:45:00Z",
         "version": 3
+      },
+      "array": [1, 2, 3, 4, 5],
+      "object": {
+        "key": "value",
+        "key2": "value2"
       }
+      "null": null,
+      "boolean": true,
+      "number": 123.45,
+      "date": "2024-01-15T10:30:00Z",
+      "binary": "SGVsbG8sIFdvcmxkIQ=="
     }
     """
   viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "users.details")
