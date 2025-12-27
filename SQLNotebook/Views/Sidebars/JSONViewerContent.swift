@@ -15,36 +15,41 @@ struct JSONViewerContent: View {
   @State private var isCopied = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Path info
-      Text(path)
-        .font(.caption)
-        .foregroundColor(.foregroundMuted)
+    VStack(alignment: .leading, spacing: 0) {
+      // Fixed header: Path info and Toolbar
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        // Path info
+        Text(path)
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
 
-      // Toolbar
-      HStack {
-        Toggle("Pretty Print", isOn: $isPrettyPrinted)
-          .toggleStyle(.switch)
-          .controlSize(.mini)
+        // Toolbar
+        HStack {
+          Toggle("Pretty Print", isOn: $isPrettyPrinted)
+            .toggleStyle(.switch)
+            .controlSize(.mini)
 
-        Spacer()
+          Spacer()
 
-        FloatingPanelButton(
-          icon: isCopied ? "checkmark" : "doc.on.doc",
-          helpText: "Copy JSON",
-          useSymbolEffect: true,
-          action: copyToClipboard
-        )
+          FloatingPanelButton(
+            icon: isCopied ? "checkmark" : "doc.on.doc",
+            helpText: "Copy JSON",
+            useSymbolEffect: true,
+            action: copyToClipboard
+          )
+        }
       }
+      .padding(.bottom, Spacing.md)
 
-      // JSON content with syntax highlighting
-      ScrollView(.horizontal, showsIndicators: false) {
+      // JSON content with syntax highlighting - scrollable both vertically and horizontally
+      ScrollView([.vertical, .horizontal], showsIndicators: true) {
         HighlightedJSONText(json: formattedJSON)
           .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(Spacing.sm)
       }
-      .padding(Spacing.sm)
       .background(Color.cellBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .frame(maxHeight: .infinity)
     }
   }
 
