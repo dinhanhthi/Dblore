@@ -33,7 +33,7 @@ struct ResultTableView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .frame(maxHeight: ComponentSize.maxResultHeight)
+      .frame(maxHeight: viewModel.notebook.settings.maxResultHeight)
 
       // Row limit warning (when DB fetch was limited)
       if result.wasLimited {

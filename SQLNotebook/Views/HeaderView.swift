@@ -73,8 +73,35 @@ struct HeaderView: View {
 
       Spacer()
 
-      // Trailing group - Connection
-      ConnectionButton(
+      // Trailing group - Settings and Connection
+      HStack(spacing: Spacing.xs) {
+        // Settings button
+        Button(action: {
+          // Toggle sidebar if already showing settings
+          if viewModel.isRightSidebarVisible,
+            case .settings = viewModel.rightSidebarContent
+          {
+            viewModel.closeSidebar()
+          } else {
+            viewModel.showSettings()
+          }
+        }) {
+          Image(systemName: "gearshape")
+        }
+        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isRightSidebarVisible && 
+          (viewModel.rightSidebarContent == .settings)))
+        .onHover { hovering in
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
+
+        Divider()
+          .frame(height: 20)
+
+        ConnectionButton(
         connectionState: viewModel.connectionState,
         onConnect: {
           // Toggle sidebar if already showing connection form
@@ -98,6 +125,7 @@ struct HeaderView: View {
           }
         }
       )
+      }
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)

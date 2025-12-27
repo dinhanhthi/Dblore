@@ -12,6 +12,7 @@ enum SidebarContent: Equatable {
   case cellInfo(columnName: String, columnType: String, value: CellValue)
   case connectionDetails
   case connectionForm
+  case settings
 }
 
 /// Main view model for the notebook editor

@@ -70,6 +70,17 @@ private enum DocumentCoder {
     // Connection information should be managed separately
     let connectionConfig: ConnectionConfig? = nil
 
+    // Decode settings
+    let settingsDict = json["settings"] as? [String: Any] ?? [:]
+    let maxResultHeight = (settingsDict["maxResultHeight"] as? Double).map { CGFloat($0) } ?? 500.0
+    let includeResultsOnSave = settingsDict["includeResultsOnSave"] as? Bool ?? true
+    let keyboardShortcuts = settingsDict["keyboardShortcuts"] as? [String: String] ?? [:]
+    let settings = NotebookSettings(
+      maxResultHeight: maxResultHeight,
+      includeResultsOnSave: includeResultsOnSave,
+      keyboardShortcuts: keyboardShortcuts
+    )
+
     // Decode cells
     var cells: [NotebookCell] = []
     if let cellsArray = json["cells"] as? [[String: Any]] {
@@ -98,7 +109,7 @@ private enum DocumentCoder {
       }
     }
 
-    return SQLNotebook(id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig)
+    return SQLNotebook(id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig, settings: settings)
   }
 
   nonisolated static func encode(_ notebook: SQLNotebook) throws -> Data {
@@ -117,6 +128,13 @@ private enum DocumentCoder {
     // NOTE: connectionConfig is NOT saved to file for security reasons
     // Connection information should be managed separately (e.g., via Keychain)
 
+    // Encode settings
+    json["settings"] = [
+      "maxResultHeight": Double(notebook.settings.maxResultHeight),
+      "includeResultsOnSave": notebook.settings.includeResultsOnSave,
+      "keyboardShortcuts": notebook.settings.keyboardShortcuts,
+    ]
+
     var cellsArray: [[String: Any]] = []
     for cell in notebook.cells {
       var cellDict: [String: Any] = [
@@ -127,8 +145,8 @@ private enum DocumentCoder {
       if let count = cell.executionCount {
         cellDict["executionCount"] = count
       }
-      // Encode result if present
-      if let result = cell.result {
+      // Encode result if present AND if settings allow it
+      if let result = cell.result, notebook.settings.includeResultsOnSave {
         cellDict["result"] = encodeResult(result, dateFormatter: dateFormatter)
       }
       cellsArray.append(cellDict)

@@ -162,6 +162,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Create `CellDetailView` for non-JSON values
 - [x] Create `ConnectionInfoView` for connection details
 - [x] Add close button to sidebar header
+- [x] Create Settings view in right sidebar
 
 ### 4.2 Header Actions
 - [x] Wire up "+ Code" button
@@ -200,6 +201,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Implement `Cmd+Backspace` for delete cell
 - [x] Implement `Cmd+Shift+R` for toggle sidebar
 - [ ] Implement `Cmd+/` for comment/uncomment SQL line
+- [x] Add Settings panel with keyboard shortcuts customization (basic structure)
 
 ### 4.7 Auto-save & Document State
 - [x] Implement auto-save on changes (debounced)
@@ -212,6 +214,17 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Implement collapse/expand animation for result area
 - [ ] Persist result visibility state per cell
 - [ ] Add visual indicator (chevron icon) for collapsed state
+
+### 4.10 Settings Panel ✅
+- [x] Create `NotebookSettings` model to store notebook preferences
+- [x] Add settings to `SQLNotebook` model
+- [x] Create `SettingsContent` view component for right sidebar
+- [x] Add settings case to `SidebarContent` enum
+- [x] Implement max height configuration for result table view
+- [x] Implement include/exclude results when saving option
+- [x] Add basic keyboard shortcuts customization structure
+- [x] Update document save/load to respect settings
+- [x] Add Settings button to header or menu
 
 ### 4.9 Left Sidebar - Database Structure ✅
 - [x] Create `LeftSidebarView` component

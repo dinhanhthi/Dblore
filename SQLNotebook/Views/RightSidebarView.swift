@@ -20,6 +20,11 @@ struct RightSidebarView: View {
         // ConnectionFormContent handles its own layout with ScrollView and fixed footer
         if case .connectionForm = content {
           contentView(for: content)
+        } else if case .settings = content {
+          // SettingsContent handles its own ScrollView
+          ScrollView {
+            contentView(for: content)
+          }
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -75,6 +80,8 @@ struct RightSidebarView: View {
       return "Connection"
     case .connectionForm:
       return "Database Connection"
+    case .settings:
+      return "Settings"
     }
   }
 
@@ -86,6 +93,8 @@ struct RightSidebarView: View {
     switch content {
     case .connectionForm:
       return 360
+    case .settings:
+      return 420  // Wider for settings
     default:
       return ComponentSize.sidebarWidth
     }
@@ -103,6 +112,8 @@ struct RightSidebarView: View {
         ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
       ConnectionFormContent(viewModel: viewModel)
+    case .settings:
+      SettingsContent(viewModel: viewModel)
     }
   }
 
