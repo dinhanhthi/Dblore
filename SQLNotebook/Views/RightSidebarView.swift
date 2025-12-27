@@ -25,6 +25,13 @@ struct RightSidebarView: View {
           ScrollView {
             contentView(for: content)
           }
+        } else if case .jsonViewer = content {
+          // JSONViewerContent handles its own ScrollView for both vertical and horizontal
+          VStack(alignment: .leading, spacing: 0) {
+            contentView(for: content)
+              .padding(Spacing.md)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
