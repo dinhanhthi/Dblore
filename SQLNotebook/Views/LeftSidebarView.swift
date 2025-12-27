@@ -317,7 +317,7 @@ struct ColumnRowView: View {
   viewModel.connectionState = .connected
 
   // Create sample tables
-  var usersTable = DatabaseTable(
+  let usersTable = DatabaseTable(
     schema: "public",
     name: "users",
     columns: [

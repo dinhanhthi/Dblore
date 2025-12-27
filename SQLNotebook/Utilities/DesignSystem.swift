@@ -81,15 +81,15 @@ extension Color {
 // MARK: - Typography
 
 extension Font {
-  static let mono = Font.system(.body, design: .monospaced)
-  static let monoSmall = Font.system(.caption, design: .monospaced)
-  static let monoLarge = Font.system(.title3, design: .monospaced)
+  static let mono = Font.system(.body, design: .monospaced)  // 17pt
+  static let monoSmall = Font.system(.footnote, design: .monospaced)  // 13pt
+  static let monoLarge = Font.system(.title3, design: .monospaced)  // 20pt
 
-  static let heading = Font.system(.title2, weight: .semibold)
-  static let subheading = Font.system(.headline, weight: .medium)
-  static let bodyText = Font.system(.body)
-  static let caption = Font.system(.caption)
-  static let small = Font.system(.caption2)
+  static let heading = Font.system(.title2, weight: .semibold)  // 22pt
+  static let subheading = Font.system(.headline, weight: .medium)  // 17pt
+  static let bodyText = Font.system(.body)  // 17pt
+  static let caption = Font.system(.subheadline)  // 15pt
+  static let small = Font.system(.footnote)  // 13pt
 }
 
 // MARK: - Spacing
