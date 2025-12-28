@@ -176,9 +176,10 @@ struct ResultTableView: View {
       }
     }
 
-    // Add padding and return the maximum
+    // Add padding and return the maximum, but cap at maxColumnWidth
     let contentWidth = max(headerWidth, maxDataWidth) + padding
-    return max(contentWidth, absoluteMinWidth)
+    let clampedWidth = min(contentWidth, maxColumnWidth)
+    return max(clampedWidth, absoluteMinWidth)
   }
 
   private func textWidth(_ text: String, font: NSFont) -> CGFloat {
@@ -252,12 +253,15 @@ private struct CellContentView: View {
         .font(.mono)
         .foregroundColor(.foregroundSubtle)
         .italic()
+        .lineLimit(1)
 
     case .json:
       HStack(spacing: Spacing.xs) {
         Text(value.displayString)
           .font(.mono)
           .foregroundColor(.syntaxFunction)
+          .lineLimit(1)
+          .truncationMode(.tail)
 
         Image(systemName: "chevron.right")
           .font(.caption2)
@@ -268,16 +272,20 @@ private struct CellContentView: View {
       Text(boolValue ? "true" : "false")
         .font(.mono)
         .foregroundColor(boolValue ? .success : .foregroundMuted)
+        .lineLimit(1)
 
     case .int, .double:
       Text(value.displayString)
         .font(.mono)
         .foregroundColor(.syntaxNumber)
+        .lineLimit(1)
 
     case .date:
       Text(value.displayString)
         .font(.mono)
         .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.tail)
 
     case .string(let str):
       Text(str)
@@ -291,6 +299,8 @@ private struct CellContentView: View {
         .font(.mono)
         .foregroundColor(.foregroundMuted)
         .italic()
+        .lineLimit(1)
+        .truncationMode(.tail)
     }
   }
 }
@@ -321,7 +331,7 @@ struct ResultMetadataBar: View {
   }
 }
 
-#Preview {
+#Preview("Standard Data") {
   let mockResult = CellResult(
     columns: [
       ColumnInfo(name: "id", type: "INTEGER"),
@@ -340,6 +350,39 @@ struct ResultMetadataBar: View {
       [.int(3), .null, .string("charlie@example.com"), .null],
     ],
     executionTime: 0.034,
+    rowCount: 3,
+    timestamp: Date()
+  )
+
+  ResultTableView(result: mockResult, viewModel: NotebookViewModel())
+    .frame(width: 600, height: 300)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Long Text Values") {
+  let longText = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
+
+  let mockResult = CellResult(
+    columns: [
+      ColumnInfo(name: "id", type: "INTEGER"),
+      ColumnInfo(name: "description", type: "TEXT")
+    ],
+    rows: [
+      [
+        .int(1),
+        .string(longText)
+      ],
+      [
+        .int(2),
+        .string("Short text")
+      ],
+      [
+        .int(3),
+        .string("The quick brown fox jumps over the lazy dog. This sentence is repeated multiple times to create a very long text value. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.")
+      ],
+    ],
+    executionTime: 0.021,
     rowCount: 3,
     timestamp: Date()
   )
