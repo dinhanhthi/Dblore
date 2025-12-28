@@ -13,6 +13,7 @@ struct ContentView: View {
   @State private var keyEventMonitor: Any?
   @State private var focusedTextView: NSTextView?
   @State private var isCellValueEditing = false
+  @State private var showRunAllConfirmation = false
 
   init(document: Binding<SQLNotebookDocument>) {
     self._document = document
@@ -55,9 +56,25 @@ struct ContentView: View {
     .modifier(
       NotificationHandlerModifier(
         viewModel: viewModel,
-        syncDocument: syncDocument
+        syncDocument: syncDocument,
+        showRunAllConfirmation: $showRunAllConfirmation
       )
     )
+    .confirmationDialog(
+      "Run all cells?",
+      isPresented: $showRunAllConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Run All Cells", role: .none) {
+        Task {
+          await viewModel.runAllCells()
+          syncDocument()
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
+    }
     .modifier(
       UndoRedoHandlerModifier(
         viewModel: viewModel,
@@ -362,6 +379,7 @@ private struct ContentViewForPreview: View {
 private struct NotificationHandlerModifier: ViewModifier {
   let viewModel: NotebookViewModel
   let syncDocument: () -> Void
+  @Binding var showRunAllConfirmation: Bool
 
   func body(content: Content) -> some View {
     content
@@ -396,10 +414,7 @@ private struct NotificationHandlerModifier: ViewModifier {
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
-        Task {
-          await viewModel.runAllCells()
-          syncDocument()
-        }
+        showRunAllConfirmation = true
       }
       .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
         if let id = viewModel.selectedCellId {

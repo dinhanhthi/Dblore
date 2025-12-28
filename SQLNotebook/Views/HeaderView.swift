@@ -7,6 +7,7 @@ import SwiftUI
 
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
+  @State private var showRunAllConfirmation = false
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -41,7 +42,7 @@ struct HeaderView: View {
         }
 
         Button(action: {
-          Task { await viewModel.runAllCells() }
+          showRunAllConfirmation = true
         }) {
           Label("Run All", systemImage: "play.fill")
         }
@@ -53,6 +54,18 @@ struct HeaderView: View {
           } else if !hovering && viewModel.connectionState.isConnected {
             NSCursor.pop()
           }
+        }
+        .confirmationDialog(
+          "Run all cells?",
+          isPresented: $showRunAllConfirmation,
+          titleVisibility: .visible
+        ) {
+          Button("Run All Cells", role: .none) {
+            Task { await viewModel.runAllCells() }
+          }
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
         }
 
         Button(action: { viewModel.clearAllOutputs() }) {
