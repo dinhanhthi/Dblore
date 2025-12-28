@@ -304,7 +304,139 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 
 ---
 
-## Testing Checklist ❌ (Not implemented yet)
+## Phase 6: Testing Suite ⏳ (NOT STARTED)
+
+### Overview
+Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framework (built-in trong Xcode). Testing sẽ bao gồm Unit Tests, Integration Tests, và UI Tests.
+
+### 6.1 Test Target Setup
+- [ ] Create new Unit Test target trong Xcode (`SQLNotebookTests`)
+- [ ] Create new UI Test target trong Xcode (`SQLNotebookUITests`)
+- [ ] Configure test targets với proper dependencies (PostgresNIO, etc.)
+- [ ] Set up test schemes và build configurations
+- [ ] Add test helper utilities và mock objects
+
+### 6.2 Unit Tests - Data Models
+- [ ] `SQLNotebook` encoding/decoding (JSON serialization)
+- [ ] `NotebookCell` encoding/decoding với all properties
+- [ ] `CellResult` encoding/decoding với error cases
+- [ ] `CellValue` enum encoding/decoding cho all cases
+  - [ ] Test string, int, double, bool, null, json, date, data
+- [ ] `ConnectionConfig` encoding/decoding (không lưu password)
+- [ ] `NotebookMetadata` encoding/decoding
+- [ ] `NotebookSettings` encoding/decoding
+- [ ] `DatabaseSchema` models encoding/decoding
+
+### 6.3 Unit Tests - Utilities
+- [ ] `SQLSyntaxHighlighter` tokenizer correctness
+  - [ ] Test keyword detection (case-insensitive)
+  - [ ] Test function detection với parentheses
+  - [ ] Test string highlighting (single-quote, dollar-quote)
+  - [ ] Test comment highlighting (single-line, multi-line)
+  - [ ] Test number highlighting
+  - [ ] Test operator highlighting
+- [ ] `JSONSyntaxHighlighter` (nếu có)
+- [ ] `CellValue` type conversions
+  - [ ] Test `displayString` property cho all types
+  - [ ] Test `fullString` property cho all types
+  - [ ] Test `isNull` và `isJSON` computed properties
+
+### 6.4 Unit Tests - Document Operations
+- [ ] `SQLNotebookDocument.read()` với valid JSON
+- [ ] `SQLNotebookDocument.read()` với invalid JSON (error handling)
+- [ ] `SQLNotebookDocument.write()` tạo valid JSON
+- [ ] Document round-trip (write → read → verify)
+- [ ] Document với empty cells
+- [ ] Document với cells có results
+- [ ] Document với connection config (không lưu password)
+
+### 6.5 Unit Tests - ViewModel Logic
+- [ ] `NotebookViewModel.addCell()` - add cell ở different positions
+- [ ] `NotebookViewModel.deleteCell()` - delete existing cell
+- [ ] `NotebookViewModel.moveCell()` - reorder cells
+- [ ] `NotebookViewModel.selectCell()` - selection state management
+- [ ] `NotebookViewModel.clearAllOutputs()` - clear all results
+- [ ] Cell execution count increment
+- [ ] Cell running state management
+
+### 6.6 Integration Tests - Database Connection
+- [ ] `DatabaseConnectionManager.connect()` với valid config
+- [ ] `DatabaseConnectionManager.connect()` với invalid config (error handling)
+- [ ] `DatabaseConnectionManager.testConnection()` success case
+- [ ] `DatabaseConnectionManager.testConnection()` failure case
+- [ ] `DatabaseConnectionManager.disconnect()` cleanup
+- [ ] Connection state transitions (disconnected → connecting → connected)
+- [ ] SSL/TLS connection modes (require, verify-ca, etc.)
+- [ ] Connection string parsing và validation
+
+### 6.7 Integration Tests - Query Execution
+- [ ] Execute SELECT query và parse results
+- [ ] Execute INSERT/UPDATE/DELETE và verify affected rows
+- [ ] Execute DDL statements (CREATE TABLE, etc.)
+- [ ] Execute multiple statements sequentially
+- [ ] Error handling cho invalid SQL syntax
+- [ ] Error handling cho database errors (table not found, etc.)
+- [ ] Type mapping từ PostgreSQL types → CellValue
+  - [ ] Test VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN
+  - [ ] Test JSON/JSONB types
+  - [ ] Test DATE, TIMESTAMP types
+  - [ ] Test NULL values
+- [ ] Result row limiting (max fetch rows)
+- [ ] Execution time measurement accuracy
+
+### 6.8 Integration Tests - Schema Loading
+- [ ] `fetchTables()` returns correct table list
+- [ ] `fetchColumns()` returns correct column info
+- [ ] Schema loading với empty database
+- [ ] Schema loading error handling
+- [ ] Table row count calculation
+
+### 6.9 UI Tests - Basic Flows
+- [ ] Create new notebook (`Cmd+N`)
+- [ ] Open existing notebook (`Cmd+O`)
+- [ ] Save notebook (`Cmd+S`)
+- [ ] Add code cell (`Cmd+B`)
+- [ ] Delete cell (`Cmd+Backspace`)
+- [ ] Duplicate cell (`Cmd+D`)
+- [ ] Run cell (`Cmd+Enter`)
+- [ ] Run all cells (`Cmd+Shift+Enter`)
+- [ ] Toggle sidebars (`Cmd+Shift+R`, `Cmd+Shift+L`)
+
+### 6.10 UI Tests - Query Execution Flow
+- [ ] Enter SQL query trong cell
+- [ ] Execute query và verify results display
+- [ ] Verify result table columns và rows
+- [ ] Verify execution time display
+- [ ] Verify error display cho invalid queries
+- [ ] Test với empty result set
+- [ ] Test với large result set (scrolling)
+
+### 6.11 UI Tests - Connection Flow
+- [ ] Open connection sheet
+- [ ] Enter connection details
+- [ ] Test connection button
+- [ ] Connect to database
+- [ ] Verify connection status in footer
+- [ ] Verify schema loads in left sidebar
+- [ ] Disconnect from database
+
+### 6.12 UI Tests - Document Persistence
+- [ ] Save notebook với cells và results
+- [ ] Close và reopen notebook
+- [ ] Verify cells content preserved
+- [ ] Verify results preserved (nếu settings allow)
+- [ ] Verify connection config preserved (không có password)
+
+### Test Infrastructure
+- [ ] Create mock `DatabaseConnectionManager` cho unit tests
+- [ ] Create test database setup/teardown helpers
+- [ ] Create sample notebook files cho testing
+- [ ] Set up CI/CD test execution (optional)
+- [ ] Document test coverage goals (aim for 70%+)
+
+---
+
+## Testing Checklist ❌ (Legacy - See Phase 6 above)
 
 ### Unit Tests
 - [ ] Data model encoding/decoding
@@ -456,6 +588,12 @@ ORDER BY ordinal_position;
 ---
 
 ## Next Priorities
+
+### ⭐ NEXT TASK: Phase 6 - Testing Suite
+**Status:** NOT STARTED
+**Priority:** HIGH (Foundation for quality assurance)
+
+Xem chi tiết kế hoạch ở section "Phase 6: Testing Suite" bên dưới.
 
 ### Recommended: Phase 4 Completion
 1. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
