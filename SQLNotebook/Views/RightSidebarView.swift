@@ -122,7 +122,7 @@ struct RightSidebarView: View {
       JSONViewerContent(json: json, path: path, onSave: { newJSON in
         viewModel.handleJSONEdit(newJSON: newJSON, originalPath: path)
       })
-    case .cellInfo(let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns, let rowIdentifier):
+    case .cellInfo(let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns, let rowIdentifier, let cellId):
       CellInfoContent(
         columnName: columnName,
         columnType: columnType,
@@ -136,7 +136,8 @@ struct RightSidebarView: View {
             tableName: tableName,
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
-            rowIdentifier: rowIdentifier
+            rowIdentifier: rowIdentifier,
+            cellId: cellId
           )
         }
       )
@@ -236,7 +237,8 @@ struct RightSidebarView: View {
     tableName: nil,
     rowData: nil,
     primaryKeyColumns: [],
-    rowIdentifier: nil
+    rowIdentifier: nil,
+    cellId: nil
   )
 
   return HStack {

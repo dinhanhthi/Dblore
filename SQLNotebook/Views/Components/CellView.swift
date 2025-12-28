@@ -268,7 +268,7 @@ struct CellView: View {
           errorView(error)
         } else {
           // Result table
-          ResultTableView(result: result, viewModel: viewModel)
+          ResultTableView(result: result, viewModel: viewModel, cellId: cell.id)
 
           // Result metadata
           resultMetadata(result)

@@ -8,6 +8,7 @@ import SwiftUI
 struct ResultTableView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
+  let cellId: UUID?  // ID of the cell that produced this result
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
@@ -240,7 +241,8 @@ struct ResultTableView: View {
         tableName: result.tableName,
         rowData: rowData,
         primaryKeyColumns: result.primaryKeyColumns,
-        rowIdentifier: rowIdentifier
+        rowIdentifier: rowIdentifier,
+        cellId: cellId
       )
     }
   }
@@ -360,7 +362,7 @@ struct ResultMetadataBar: View {
     timestamp: Date()
   )
 
-  ResultTableView(result: mockResult, viewModel: NotebookViewModel())
+  ResultTableView(result: mockResult, viewModel: NotebookViewModel(), cellId: nil)
     .frame(width: 600, height: 300)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
@@ -393,7 +395,7 @@ struct ResultMetadataBar: View {
     timestamp: Date()
   )
 
-  ResultTableView(result: mockResult, viewModel: NotebookViewModel())
+  ResultTableView(result: mockResult, viewModel: NotebookViewModel(), cellId: nil)
     .frame(width: 600, height: 300)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)

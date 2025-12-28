@@ -23,7 +23,7 @@ struct AboutView: View {
           .foregroundColor(.foregroundSubtle)
 
         Link(
-          "dinhanhthi/SQLNotebook",
+          "github.com/dinhanhthi/SQLNotebook",
           destination: URL(string: "https://github.com/dinhanhthi/SQLNotebook")!
         )
         .fontWeight(.medium)
