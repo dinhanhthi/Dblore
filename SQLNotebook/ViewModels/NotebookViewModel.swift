@@ -16,7 +16,8 @@ enum SidebarContent: Equatable {
     tableName: String?,
     rowData: [String: CellValue]?,  // All column values for this row
     primaryKeyColumns: [String],  // Primary key column names
-    rowIdentifier: CellValue?  // Row identifier (ctid for PostgreSQL, rowid for SQLite)
+    rowIdentifier: CellValue?,  // Row identifier (ctid for PostgreSQL, rowid for SQLite)
+    cellId: UUID?  // ID of the cell that produced this result (for re-running after edit)
   )
   case connectionDetails
   case connectionForm

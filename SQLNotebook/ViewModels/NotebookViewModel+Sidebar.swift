@@ -25,7 +25,8 @@ extension NotebookViewModel {
     tableName: String? = nil,
     rowData: [String: CellValue]? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifier: CellValue? = nil
+    rowIdentifier: CellValue? = nil,
+    cellId: UUID? = nil
   ) {
     rightSidebarContent = .cellInfo(
       columnName: columnName,
@@ -34,7 +35,8 @@ extension NotebookViewModel {
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
-      rowIdentifier: rowIdentifier
+      rowIdentifier: rowIdentifier,
+      cellId: cellId
     )
     isRightSidebarVisible = true
   }
@@ -174,7 +176,8 @@ extension NotebookViewModel {
     tableName: String?,
     rowData: [String: CellValue]?,
     primaryKeyColumns: [String],
-    rowIdentifier: CellValue?
+    rowIdentifier: CellValue?,
+    cellId: UUID?
   ) {
     // Try to convert the new string value to the appropriate CellValue type
     let updatedCellValue: CellValue
@@ -234,7 +237,8 @@ extension NotebookViewModel {
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
-      rowIdentifier: rowIdentifier
+      rowIdentifier: rowIdentifier,
+      cellId: cellId
     )
 
     // If we have table name and row data, attempt to update database
@@ -253,6 +257,13 @@ extension NotebookViewModel {
           print(
             "Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)"
           )
+
+          // Re-run the cell to refresh the table view with updated data
+          if let cellId = cellId {
+            await runCell(id: cellId)
+            print("Re-ran cell \(cellId) to refresh results")
+          }
+
           // TODO: Show success notification to user
         } catch {
           print("Failed to update database: \(error.localizedDescription)")
