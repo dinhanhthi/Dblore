@@ -16,11 +16,26 @@ struct ResultTableView: View {
   private let padding: CGFloat = 40  // Total horizontal padding for each cell
   private let maxColumnWidth: CGFloat = 300
   private let absoluteMinWidth: CGFloat = 60  // Fallback minimum
+  private let rowHeight: CGFloat = 32  // Approximate row height
+  private let headerHeight: CGFloat = 48  // Approximate header height
+
+  // Estimate if vertical scrolling is needed
+  private var estimatedContentHeight: CGFloat {
+    headerHeight + (CGFloat(result.rows.count) * rowHeight)
+  }
+
+  private var needsVerticalScroll: Bool {
+    estimatedContentHeight > viewModel.notebook.settings.maxResultHeight
+  }
+
+  private var scrollAxes: Axis.Set {
+    needsVerticalScroll ? [.horizontal, .vertical] : .horizontal
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header and data rows
-      ScrollView([.horizontal, .vertical]) {
+      ScrollView(scrollAxes) {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
           Section {
             // Data rows
@@ -34,6 +49,8 @@ struct ResultTableView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .scrollBounceBehavior(.basedOnSize)
+      .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
       .frame(maxHeight: viewModel.notebook.settings.maxResultHeight)
 
       // Row limit warning (when DB fetch was limited)
@@ -309,6 +326,32 @@ private struct CellContentView: View {
         .italic()
         .lineLimit(1)
         .truncationMode(.tail)
+    }
+  }
+}
+
+// MARK: - Scroller Configurator
+
+private struct ScrollerConfigurator: NSViewRepresentable {
+  let needsVerticalScroller: Bool
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    DispatchQueue.main.async {
+      guard let scrollView = nsView.enclosingScrollView else { return }
+
+      // Configure scroller style
+      scrollView.scrollerStyle = .overlay
+      scrollView.autohidesScrollers = true
+      scrollView.hasHorizontalScroller = true
+      scrollView.hasVerticalScroller = needsVerticalScroller
+
+      // Force scroller update
+      scrollView.flashScrollers()
     }
   }
 }
