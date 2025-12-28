@@ -121,7 +121,7 @@ struct ResultTableView: View {
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, Spacing.sm)
         .contentShape(Rectangle())
-        .onTapGesture {
+        .onTapGesture(count: 2) {
           handleCellTap(value: value, column: column, rowIndex: rowIndex)
         }
 
