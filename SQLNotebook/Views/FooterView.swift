@@ -32,6 +32,15 @@ struct FooterView: View {
           .font(.caption)
           .foregroundColor(.foregroundSubtle)
       }
+
+      // Version
+      Text("|")
+        .font(.caption)
+        .foregroundColor(.foregroundSubtle)
+
+      Text("v\(appVersion)")
+        .font(.caption)
+        .foregroundColor(.foregroundSubtle)
     }
     .padding(.horizontal, Spacing.lg)
     .frame(height: ComponentSize.footerHeight)
@@ -92,6 +101,10 @@ struct FooterView: View {
       formatter.timeStyle = .short
       return "Last saved: \(formatter.string(from: date))"
     }
+  }
+
+  private var appVersion: String {
+    Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
   }
 }
 
