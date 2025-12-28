@@ -40,9 +40,6 @@ struct HeaderView: View {
           }
         }
 
-        Divider()
-          .frame(height: 20)
-
         Button(action: {
           Task { await viewModel.runAllCells() }
         }) {
@@ -88,8 +85,11 @@ struct HeaderView: View {
         }) {
           Image(systemName: "gearshape")
         }
-        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isRightSidebarVisible && 
-          (viewModel.rightSidebarContent == .settings)))
+        .buttonStyle(
+          ToolbarButtonStyle(
+            isActive: viewModel.isRightSidebarVisible
+              && (viewModel.rightSidebarContent == .settings))
+        )
         .onHover { hovering in
           if hovering {
             NSCursor.pointingHand.push()
@@ -102,29 +102,29 @@ struct HeaderView: View {
           .frame(height: 20)
 
         ConnectionButton(
-        connectionState: viewModel.connectionState,
-        onConnect: {
-          // Toggle sidebar if already showing connection form
-          if viewModel.isRightSidebarVisible,
-            case .connectionForm = viewModel.rightSidebarContent
-          {
-            viewModel.closeSidebar()
-          } else {
-            viewModel.showConnectionForm()
+          connectionState: viewModel.connectionState,
+          onConnect: {
+            // Toggle sidebar if already showing connection form
+            if viewModel.isRightSidebarVisible,
+              case .connectionForm = viewModel.rightSidebarContent
+            {
+              viewModel.closeSidebar()
+            } else {
+              viewModel.showConnectionForm()
+            }
+          },
+          onDisconnect: { viewModel.disconnect() },
+          onShowDetails: {
+            // Toggle sidebar if already showing connection details
+            if viewModel.isRightSidebarVisible,
+              case .connectionDetails = viewModel.rightSidebarContent
+            {
+              viewModel.closeSidebar()
+            } else {
+              viewModel.showConnectionDetails()
+            }
           }
-        },
-        onDisconnect: { viewModel.disconnect() },
-        onShowDetails: {
-          // Toggle sidebar if already showing connection details
-          if viewModel.isRightSidebarVisible,
-            case .connectionDetails = viewModel.rightSidebarContent
-          {
-            viewModel.closeSidebar()
-          } else {
-            viewModel.showConnectionDetails()
-          }
-        }
-      )
+        )
       }
     }
     .padding(.horizontal, Spacing.sm)
@@ -149,7 +149,7 @@ struct ConnectionButton: View {
   var body: some View {
     if connectionState.isConnected {
       // Connected state - no button style, green text, with info icon
-      HStack(spacing: Spacing.xs) {
+      HStack(spacing: 0) {
         Button(action: { showDisconnectConfirmation = true }) {
           HStack(spacing: Spacing.xs) {
             connectionIcon
@@ -177,14 +177,8 @@ struct ConnectionButton: View {
 
         Button(action: onShowDetails) {
           Image(systemName: "info.circle")
-            .foregroundColor(.foregroundMuted)
-            .padding(Spacing.xs)
-            .background(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(isHoveringInfo ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ToolbarButtonStyle())
         .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
         .onHover { hovering in
           isHoveringInfo = hovering
@@ -288,6 +282,6 @@ private struct ConnectionIconView: View {
   viewModel.connectionState = .connected
 
   return HeaderView(viewModel: viewModel)
-    .frame(width: 800)
+    .frame(width: 700)
     .preferredColorScheme(.dark)
 }
