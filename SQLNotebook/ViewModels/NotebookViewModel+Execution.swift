@@ -160,9 +160,10 @@ extension NotebookViewModel {
   // MARK: - Helper Methods
 
   /// Extract table name from a SQL query (simple SELECT parsing)
-  /// Only works for simple SELECT queries like "SELECT * FROM table_name" or "SELECT col FROM schema.table"
-  private func extractTableName(from query: String) -> String? {
-    // Normalize query: trim whitespace and convert to lowercase
+  /// Works for SELECT queries with WHERE, ORDER BY, LIMIT, GROUP BY, HAVING, etc.
+  /// Returns nil for JOINs, subqueries, or other complex queries
+  func extractTableName(from query: String) -> String? {
+    // Normalize query: trim whitespace and convert to lowercase for parsing
     let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
     // Check if it's a SELECT query
@@ -170,8 +171,9 @@ extension NotebookViewModel {
       return nil
     }
 
-    // Find "FROM" keyword
-    guard let fromRange = normalized.range(of: "from") else {
+    // Find "FROM" keyword using word boundary pattern
+    // Use regex to find FROM as a separate word (not part of another word)
+    guard let fromRange = normalized.range(of: "\\bfrom\\b", options: .regularExpression) else {
       return nil
     }
 
@@ -179,15 +181,45 @@ extension NotebookViewModel {
     let afterFrom = String(normalized[fromRange.upperBound...])
       .trimmingCharacters(in: .whitespaces)
 
-    // Extract first word (table name) - stop at whitespace, comma, semicolon, or parenthesis
-    let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;()"))
-    if let endIndex = afterFrom.rangeOfCharacter(from: separators)?.lowerBound {
-      let tableName = String(afterFrom[..<endIndex])
-      return tableName.isEmpty ? nil : tableName
-    } else {
-      // No separator found, use the whole string
-      let tableName = afterFrom.trimmingCharacters(in: separators)
-      return tableName.isEmpty ? nil : tableName
+    // Define SQL keywords that indicate end of table name
+    let endKeywords = [
+      "where", "order", "group", "having", "limit", "offset",
+      "union", "intersect", "except", "window", "for"
+    ]
+
+    // Find the position of the first keyword or separator
+    var endPosition = afterFrom.endIndex
+
+    // Check for SQL keywords (word boundaries)
+    for keyword in endKeywords {
+      if let keywordRange = afterFrom.range(of: "\\b\(keyword)\\b", options: .regularExpression) {
+        if keywordRange.lowerBound < endPosition {
+          endPosition = keywordRange.lowerBound
+        }
+      }
     }
+
+    // Also check for other separators (comma for multi-table, semicolon, parenthesis for subquery)
+    let separators = CharacterSet(charactersIn: ",;()")
+    if let separatorRange = afterFrom.rangeOfCharacter(from: separators) {
+      if separatorRange.lowerBound < endPosition {
+        endPosition = separatorRange.lowerBound
+      }
+    }
+
+    // Extract table name (everything from start to endPosition)
+    let tableName = String(afterFrom[..<endPosition])
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Return nil if empty or if it contains JOIN keyword (multi-table query)
+    if tableName.isEmpty || tableName.contains("join") {
+      return nil
+    }
+
+    // Handle quoted identifiers (strip quotes)
+    let cleanedTableName = tableName
+      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
+
+    return cleanedTableName.isEmpty ? nil : cleanedTableName
   }
 }

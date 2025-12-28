@@ -151,6 +151,7 @@ struct CellInfoContent: View {
     onSave?(editedValue)
     isEditing = false
     isTextEditorFocused = false
+    editedValue = ""
     NotificationCenter.default.post(name: .cellValueEditingEnded, object: nil)
   }
 

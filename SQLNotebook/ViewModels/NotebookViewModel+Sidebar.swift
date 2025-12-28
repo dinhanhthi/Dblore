@@ -179,6 +179,21 @@ extension NotebookViewModel {
     rowIdentifier: CellValue?,
     cellId: UUID?
   ) {
+    // If tableName is missing, try to extract it from the cell's source query
+    var resolvedTableName = tableName
+    let resolvedPrimaryKeyColumns = primaryKeyColumns
+
+    if resolvedTableName == nil || resolvedTableName?.isEmpty == true {
+      // Try to get the source query from the cell result
+      if let cellId = cellId,
+         let cellIndex = notebook.cells.firstIndex(where: { $0.id == cellId }),
+         let result = notebook.cells[cellIndex].result {
+        // Try to get sourceQuery from result, or fallback to cell content
+        let queryToExtract = result.sourceQuery ?? notebook.cells[cellIndex].content
+        resolvedTableName = extractTableName(from: queryToExtract)
+      }
+    }
+
     // Try to convert the new string value to the appropriate CellValue type
     let updatedCellValue: CellValue
     switch originalValue {
@@ -229,39 +244,42 @@ extension NotebookViewModel {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(newValue, forType: .string)
 
-    // Update the sidebar content with the new value
+    // Update the sidebar content with the new value (use resolved table name)
     rightSidebarContent = .cellInfo(
       columnName: columnName,
       columnType: columnType,
       value: updatedCellValue,
-      tableName: tableName,
+      tableName: resolvedTableName,
       rowData: rowData,
-      primaryKeyColumns: primaryKeyColumns,
+      primaryKeyColumns: resolvedPrimaryKeyColumns,
       rowIdentifier: rowIdentifier,
       cellId: cellId
     )
 
-    // If we have table name and row data, attempt to update database
-    if let tableName = tableName, let rowData = rowData, !tableName.isEmpty {
+    // If we have table name and row data, attempt to update database (use resolved values)
+    if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty {
       Task {
         do {
+          // Fetch primary key columns if we don't have them yet
+          var pkColumns = resolvedPrimaryKeyColumns
+          if pkColumns.isEmpty {
+            pkColumns = (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+          }
+
           let rowsAffected = try await connectionManager.updateCellValue(
             tableName: tableName,
             columnName: columnName,
             newValue: updatedCellValue,
             rowData: rowData,
-            primaryKeyColumns: primaryKeyColumns,
+            primaryKeyColumns: pkColumns,
             rowIdentifier: rowIdentifier
           )
 
-          print(
-            "Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)"
-          )
+          print("Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)")
 
           // Re-run the cell to refresh the table view with updated data
           if let cellId = cellId {
             await runCell(id: cellId)
-            print("Re-ran cell \(cellId) to refresh results")
           }
 
           // TODO: Show success notification to user
