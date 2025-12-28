@@ -5,6 +5,7 @@
 
 @preconcurrency import SQLite3
 import SwiftUI
+import AppKit
 
 @main
 struct SQLNotebookApp: App {
@@ -41,6 +42,12 @@ struct NotebookCommands: Commands {
   @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
 
   var body: some Commands {
+    // About command
+    CommandGroup(replacing: .appInfo) {
+      Button("About SQLNotebook") {
+        showAboutWindow()
+      }
+    }
     // Cell commands
     CommandGroup(after: .newItem) {
       Divider()
@@ -114,6 +121,18 @@ struct NotebookCommands: Commands {
 
     // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
     // Custom undo/redo handling is done via key event monitoring in ContentView
+  }
+
+  private func showAboutWindow() {
+    let aboutView = AboutView()
+    let hostingController = NSHostingController(rootView: aboutView)
+
+    let window = NSWindow(contentViewController: hostingController)
+    window.title = "About SQLNotebook"
+    window.styleMask = [.titled, .closable]
+    window.isReleasedWhenClosed = false
+    window.center()
+    window.makeKeyAndOrderFront(nil)
   }
 }
 
