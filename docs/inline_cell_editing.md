@@ -146,6 +146,56 @@ All PostgreSQL types supported via `CellValue` enum:
 - NULL values in PK columns → Falls back to all columns
 - Very wide tables → WHERE clause with all columns may be slow
 
+## Known Issues & Fixes
+
+### Bug Fix 1: "Cold Start" Edit (Fixed)
+**Problem**: First edit attempt after opening sidebar didn't apply changes.
+
+**Root Cause**: SwiftUI reused `@State` variables when view was recreated, causing `editedValue` to retain empty string.
+
+**Solution** ([CellInfoContent.swift:154](../SQLNotebook/Views/Sidebars/CellInfoContent.swift#L154)):
+```swift
+private func saveEdit() {
+  onSave?(editedValue)
+  isEditing = false
+  editedValue = ""  // ✅ Reset state to prevent reuse
+}
+```
+
+### Bug Fix 2: Missing Table Info (Fixed)
+**Problem**: Editing cells from saved `.sqlnb` files failed with "missing table info" error.
+
+**Root Causes**:
+1. `extractTableName()` couldn't parse queries with WHERE/ORDER BY/LIMIT clauses
+2. Old `.sqlnb` files had `result.sourceQuery = nil`
+
+**Solutions**:
+
+**2.1 Enhanced SQL Parser** ([NotebookViewModel+Execution.swift:165-224](../SQLNotebook/ViewModels/NotebookViewModel+Execution.swift#L165-L224)):
+- Support WHERE, ORDER BY, GROUP BY, LIMIT, OFFSET, etc.
+- Use regex word boundaries: `\bfrom\b`, `\bwhere\b`
+- Handle quoted identifiers and strip quotes
+- Detect JOINs and return nil (multi-table not supported)
+
+**Supported queries**:
+- ✅ `SELECT * FROM users WHERE id = 1`
+- ✅ `SELECT * FROM products ORDER BY price DESC`
+- ✅ `SELECT * FROM document LIMIT 10`
+- ✅ `SELECT * FROM "my table" WHERE active = true`
+- ❌ `SELECT * FROM users JOIN orders` (multi-table)
+
+**2.2 Fallback to Cell Content** ([NotebookViewModel+Sidebar.swift:206-212](../SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L206-L212)):
+```swift
+// Fallback for legacy files without sourceQuery
+let queryToExtract = result.sourceQuery ?? notebook.cells[cellIndex].content
+resolvedTableName = extractTableName(from: queryToExtract)
+```
+
+**Behavior**:
+1. Try `result.sourceQuery` (new files, most accurate)
+2. Fallback to `cell.content` (old files, current query)
+3. Backward compatible with all `.sqlnb` versions
+
 ## Future Enhancements
 
 1. **User Notifications**: Replace console logs with toast/alert UI
