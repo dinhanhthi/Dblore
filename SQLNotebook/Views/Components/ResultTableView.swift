@@ -18,8 +18,8 @@ struct ResultTableView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Header and data rows with both scrollbars visible
-      ScrollView([.horizontal, .vertical], showsIndicators: true) {
+      // Header and data rows
+      ScrollView([.horizontal, .vertical]) {
         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
           Section {
             // Data rows
