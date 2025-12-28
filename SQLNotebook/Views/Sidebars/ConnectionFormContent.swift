@@ -40,8 +40,14 @@ struct ConnectionFormContent: View {
               parseError = nil
               testResult = nil
               if newMode == .connectionString {
-                // Generate connection string from current config
-                connectionString = generateConnectionString()
+                // Generate connection string from current config only if we have valid data
+                let config = viewModel.editingConnectionConfig
+                if !config.username.isEmpty && !config.database.isEmpty {
+                  connectionString = generateConnectionString()
+                } else {
+                  // Keep empty to show placeholder
+                  connectionString = ""
+                }
                 // Sync SSL mode state with current config
                 connectionStringSSLMode = viewModel.editingConnectionConfig.sslMode
               }
