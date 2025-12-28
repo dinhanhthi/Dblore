@@ -46,7 +46,8 @@ extension NotebookViewModel {
         wasLimited: queryResult.wasLimited,
         sourceQuery: query,
         tableName: tableName,
-        primaryKeyColumns: primaryKeyColumns
+        primaryKeyColumns: primaryKeyColumns,
+        rowIdentifiers: queryResult.rowIdentifiers
       )
 
       notebook.cells[index].result = result

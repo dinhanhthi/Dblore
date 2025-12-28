@@ -3,7 +3,7 @@
     {
       "cellType" : "sql",
       "content" : "select * from document ORDER BY id limit 10;",
-      "executionCount" : 3,
+      "executionCount" : 9,
       "id" : "FEB11389-E756-4DD0-A667-EC293FD9A1A0",
       "result" : {
         "columns" : [
@@ -56,7 +56,7 @@
             "type" : "DOUBLE PRECISION"
           }
         ],
-        "executionTime" : 0.0025680065155029288,
+        "executionTime" : 0.0025269985198974609,
         "rowCount" : 10,
         "rows" : [
           [
@@ -296,7 +296,7 @@
             },
             {
               "type" : "string",
-              "value" : "00000000"
+              "value" : "Test edited!"
             },
             {
               "type" : "string",
@@ -342,7 +342,7 @@
             },
             {
               "type" : "string",
-              "value" : "xxxxx"
+              "value" : "xxxxx testing"
             },
             {
               "type" : "string",
@@ -388,7 +388,7 @@
             },
             {
               "type" : "string",
-              "value" : "xxxxx"
+              "value" : "111111"
             },
             {
               "type" : "string",
@@ -520,7 +520,7 @@
             }
           ]
         ],
-        "timestamp" : "2025-12-27T20:59:34Z",
+        "timestamp" : "2025-12-28T02:53:41Z",
         "wasLimited" : false
       }
     },
@@ -557,7 +557,7 @@
   "id" : "3532119E-CDD9-45F6-9101-550A053F90F4",
   "metadata" : {
     "createdAt" : "2025-12-21T17:00:53Z",
-    "modifiedAt" : "2025-12-27T21:07:11Z",
+    "modifiedAt" : "2025-12-28T02:53:42Z",
     "title" : "Untitled Notebook"
   },
   "settings" : {

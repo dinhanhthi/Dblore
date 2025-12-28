@@ -24,7 +24,8 @@ extension NotebookViewModel {
     value: CellValue,
     tableName: String? = nil,
     rowData: [String: CellValue]? = nil,
-    primaryKeyColumns: [String] = []
+    primaryKeyColumns: [String] = [],
+    rowIdentifier: CellValue? = nil
   ) {
     rightSidebarContent = .cellInfo(
       columnName: columnName,
@@ -32,7 +33,8 @@ extension NotebookViewModel {
       value: value,
       tableName: tableName,
       rowData: rowData,
-      primaryKeyColumns: primaryKeyColumns
+      primaryKeyColumns: primaryKeyColumns,
+      rowIdentifier: rowIdentifier
     )
     isRightSidebarVisible = true
   }
@@ -171,7 +173,8 @@ extension NotebookViewModel {
     originalValue: CellValue,
     tableName: String?,
     rowData: [String: CellValue]?,
-    primaryKeyColumns: [String]
+    primaryKeyColumns: [String],
+    rowIdentifier: CellValue?
   ) {
     // Try to convert the new string value to the appropriate CellValue type
     let updatedCellValue: CellValue
@@ -230,7 +233,8 @@ extension NotebookViewModel {
       value: updatedCellValue,
       tableName: tableName,
       rowData: rowData,
-      primaryKeyColumns: primaryKeyColumns
+      primaryKeyColumns: primaryKeyColumns,
+      rowIdentifier: rowIdentifier
     )
 
     // If we have table name and row data, attempt to update database
@@ -242,7 +246,8 @@ extension NotebookViewModel {
             columnName: columnName,
             newValue: updatedCellValue,
             rowData: rowData,
-            primaryKeyColumns: primaryKeyColumns
+            primaryKeyColumns: primaryKeyColumns,
+            rowIdentifier: rowIdentifier
           )
 
           print(

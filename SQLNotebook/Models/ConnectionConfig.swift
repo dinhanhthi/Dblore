@@ -5,8 +5,19 @@
 
 import Foundation
 
+/// Database type supported by the application
+enum DatabaseType: String, Codable, CaseIterable, Sendable {
+  case postgresql = "PostgreSQL"
+  case sqlite = "SQLite"
+
+  var displayName: String {
+    rawValue
+  }
+}
+
 /// Configuration for database connection
 struct ConnectionConfig: Codable, Equatable, Sendable {
+  var databaseType: DatabaseType
   var host: String
   var port: Int
   var database: String
@@ -16,6 +27,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var rememberConnection: Bool
 
   nonisolated init(
+    databaseType: DatabaseType = .postgresql,
     host: String = "localhost",
     port: Int = 5432,
     database: String = "",
@@ -24,6 +36,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode: SSLMode = .prefer,
     rememberConnection: Bool = false
   ) {
+    self.databaseType = databaseType
     self.host = host
     self.port = port
     self.database = database

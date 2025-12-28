@@ -52,6 +52,8 @@ struct CellResult: Codable, Sendable {
   let tableName: String?
   /// Primary key column names for the table (empty if no PK or unable to fetch)
   let primaryKeyColumns: [String]
+  /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
+  let rowIdentifiers: [CellValue]
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -63,7 +65,8 @@ struct CellResult: Codable, Sendable {
     wasLimited: Bool = false,
     sourceQuery: String? = nil,
     tableName: String? = nil,
-    primaryKeyColumns: [String] = []
+    primaryKeyColumns: [String] = [],
+    rowIdentifiers: [CellValue] = []
   ) {
     self.columns = columns
     self.rows = rows
@@ -75,6 +78,7 @@ struct CellResult: Codable, Sendable {
     self.sourceQuery = sourceQuery
     self.tableName = tableName
     self.primaryKeyColumns = primaryKeyColumns
+    self.rowIdentifiers = rowIdentifiers
   }
 
   /// Creates an error result
