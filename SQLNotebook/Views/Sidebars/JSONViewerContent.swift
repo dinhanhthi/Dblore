@@ -83,7 +83,7 @@ struct JSONViewerContent: View {
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)
       } else {
-        ScrollView([.vertical, .horizontal], showsIndicators: true) {
+        ScrollView([.vertical, .horizontal]) {
           HighlightedJSONText(json: formattedJSON)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Spacing.sm)
