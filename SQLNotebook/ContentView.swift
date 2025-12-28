@@ -104,11 +104,22 @@ struct ContentView: View {
         return firstResponder is NSTextView
       }()
 
-      // Handle ESC key - unfocus from editor but keep cell selected
+      // Handle ESC key
       let isEscape = event.keyCode == 53
-      if isEscape && textViewIsFocused {
-        NotificationCenter.default.post(name: .unfocusEditor, object: nil)
-        return nil  // Event consumed
+      if isEscape {
+        // Priority 1: If text editor is focused, unfocus it
+        if textViewIsFocused {
+          NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+          return nil  // Event consumed
+        }
+
+        // Priority 2: If right sidebar is open, close it
+        if self.viewModel.isRightSidebarVisible {
+          Task { @MainActor in
+            self.viewModel.closeSidebar()
+          }
+          return nil  // Event consumed
+        }
       }
 
       // Handle Cmd+Z (Undo) and Cmd+Shift+Z (Redo)
