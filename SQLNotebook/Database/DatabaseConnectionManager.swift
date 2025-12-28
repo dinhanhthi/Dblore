@@ -19,6 +19,11 @@ actor DatabaseConnectionManager {
   /// Maximum number of rows to fetch from database to prevent memory issues
   static let maxFetchRows = 500
 
+  /// Current database type (nil if not connected)
+  var databaseType: DatabaseType? {
+    config?.databaseType
+  }
+
   // MARK: - Connection Management
 
   /// Connect to PostgreSQL database
@@ -328,18 +333,23 @@ actor DatabaseConnectionManager {
 
     let startTime = Date()
 
+    // For PostgreSQL SELECT queries, wrap to include ctid
+    let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(query)
+    let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(query) : query
     do {
       // Execute query and collect rows
       let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
+        PostgresQuery(unsafeSQL: executionQuery),
         logger: Logger(label: "sqlnotebook")
       )
 
       var columns: [ColumnInfo] = []
       var resultRows: [[CellValue]] = []
+      var rowIdentifiers: [CellValue] = []
       var isFirstRow = true
 
       var wasLimited = false
+      var ctidColumnIndex: Int? = nil
 
       for try await row in stream {
         // Stop fetching if we've reached the limit
@@ -353,23 +363,47 @@ actor DatabaseConnectionManager {
         // On first row, extract column metadata from PostgresCells
         if isFirstRow {
           // PostgresRandomAccessRow is a Sequence of PostgresCell
+          var columnIndex = 0
           for cell in randomAccess {
-            columns.append(
-              ColumnInfo(
-                name: cell.columnName,
-                type: postgresDataTypeName(cell.dataType)
-              ))
+            let columnName = cell.columnName
+            // Detect ctid column (our internal identifier)
+            if shouldFetchCtid && columnName == "_sqlnb_ctid" {
+              ctidColumnIndex = columnIndex
+            } else {
+              columns.append(
+                ColumnInfo(
+                  name: columnName,
+                  type: postgresDataTypeName(cell.dataType)
+                ))
+            }
+            columnIndex += 1
           }
           isFirstRow = false
         }
 
         // Parse values for each cell
         var rowValues: [CellValue] = []
+        var columnIndex = 0
+        var ctidValue: CellValue? = nil
+
         for cell in randomAccess {
           let value = parseCellValue(from: cell)
-          rowValues.append(value)
+
+          // If this is the ctid column, store it separately
+          if let ctidIndex = ctidColumnIndex, columnIndex == ctidIndex {
+            ctidValue = value
+          } else {
+            rowValues.append(value)
+          }
+          columnIndex += 1
         }
+
         resultRows.append(rowValues)
+
+        // Store ctid value if we found it
+        if let ctid = ctidValue {
+          rowIdentifiers.append(ctid)
+        }
       }
 
       let executionTime = Date().timeIntervalSince(startTime)
@@ -379,7 +413,8 @@ actor DatabaseConnectionManager {
         rows: resultRows,
         rowCount: resultRows.count,
         executionTime: executionTime,
-        wasLimited: wasLimited
+        wasLimited: wasLimited,
+        rowIdentifiers: rowIdentifiers
       )
 
     } catch let error as PSQLError {
@@ -391,44 +426,95 @@ actor DatabaseConnectionManager {
     }
   }
 
+  /// Check if a query is a SELECT statement
+  private func isSelectQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.uppercased().hasPrefix("SELECT")
+  }
+
+  /// Wrap a SELECT query to include ctid as an aliased column
+  /// Note: This only works for simple SELECT * FROM table queries
+  /// For complex queries (joins, subqueries, etc.), ctid won't be available
+  private func wrapQueryWithCtid(_ query: String) -> String {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Simple approach: Try to detect "SELECT * FROM" and add ctid
+    // This is a best-effort approach and won't work for all queries
+    if trimmed.uppercased().hasPrefix("SELECT * FROM") {
+      // Replace "SELECT *" with "SELECT *, ctid AS _sqlnb_ctid"
+      return trimmed.replacingOccurrences(
+        of: "SELECT *",
+        with: "SELECT *, ctid AS _sqlnb_ctid",
+        options: [.caseInsensitive],
+        range: trimmed.startIndex..<trimmed.index(trimmed.startIndex, offsetBy: 8)
+      )
+    }
+
+    // For other SELECT queries, return as-is
+    // ctid won't be available for complex queries
+    return query
+  }
+
   /// Execute an UPDATE statement for a single cell value
   /// - Parameters:
   ///   - tableName: The name of the table to update
   ///   - columnName: The column to update
   ///   - newValue: The new value as CellValue
   ///   - rowData: All column values for the row (used to build WHERE clause)
+  ///   - rowIdentifier: Optional row identifier (ctid for PostgreSQL, rowid for SQLite)
   /// - Returns: Number of rows affected
   func updateCellValue(
     tableName: String,
     columnName: String,
     newValue: CellValue,
     rowData: [String: CellValue],
-    primaryKeyColumns: [String]
+    primaryKeyColumns: [String],
+    rowIdentifier: CellValue?
   ) async throws -> Int {
     guard connection != nil else {
       throw DatabaseError.notConnected
     }
 
     // Build WHERE clause with priority strategy:
-    // 1. Use primary key columns if available
-    // 2. Fall back to all columns (current approach)
+    // 1. Use primary key columns if available (most reliable and portable)
+    // 2. Use row identifier (ctid for PostgreSQL) if available
+    // 3. Fall back to all columns (current approach)
     var whereConditions: [String] = []
 
+    // Priority 1: Use primary key columns if available
     if !primaryKeyColumns.isEmpty {
-      // Priority 1: Use only primary key columns
+      var pkConditionsValid = true
       for pkColumn in primaryKeyColumns {
         if let pkValue = rowData[pkColumn] {
           let sqlValue = cellValueToSQL(pkValue)
           whereConditions.append("\"\(pkColumn)\" = \(sqlValue)")
         } else {
-          // PK column not found in rowData, fall back to all columns
+          // PK column not found in rowData, cannot use PK approach
+          pkConditionsValid = false
           whereConditions = []
           break
         }
       }
+      // If we successfully built PK conditions, we're done
+      if pkConditionsValid {
+        // Successfully used primary key
+      }
     }
 
-    // Fallback: Use all columns if no primary key or PK columns missing from rowData
+    // Priority 2: Use row identifier (ctid) for PostgreSQL if no PK available
+    if whereConditions.isEmpty, let rowId = rowIdentifier, let dbType = databaseType {
+      switch dbType {
+      case .postgresql:
+        // Use ctid for PostgreSQL
+        let tidValue = cellValueToSQL(rowId)
+        whereConditions.append("ctid = \(tidValue)::tid")
+      case .sqlite:
+        // SQLite rowid support planned for phase 5
+        break
+      }
+    }
+
+    // Priority 3 (Fallback): Use all columns if no PK and no row identifier
     if whereConditions.isEmpty {
       for (col, val) in rowData {
         let sqlValue = cellValueToSQL(val)
@@ -718,16 +804,19 @@ struct QueryResult: Sendable {
   let executionTime: TimeInterval
   /// True if the result was limited due to reaching maxFetchRows
   let wasLimited: Bool
+  /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
+  let rowIdentifiers: [CellValue]
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
-    wasLimited: Bool = false
+    wasLimited: Bool = false, rowIdentifiers: [CellValue] = []
   ) {
     self.columns = columns
     self.rows = rows
     self.rowCount = rowCount
     self.executionTime = executionTime
     self.wasLimited = wasLimited
+    self.rowIdentifiers = rowIdentifiers
   }
 }
 

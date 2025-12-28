@@ -228,13 +228,19 @@ struct ResultTableView: View {
         }
       }
 
+      // Get row identifier (ctid) for this row if available
+      let rowIdentifier: CellValue? = rowIndex < result.rowIdentifiers.count
+        ? result.rowIdentifiers[rowIndex]
+        : nil
+
       viewModel.showCellDetail(
         columnName: column.name,
         columnType: column.type,
         value: value,
         tableName: result.tableName,
         rowData: rowData,
-        primaryKeyColumns: result.primaryKeyColumns
+        primaryKeyColumns: result.primaryKeyColumns,
+        rowIdentifier: rowIdentifier
       )
     }
   }
