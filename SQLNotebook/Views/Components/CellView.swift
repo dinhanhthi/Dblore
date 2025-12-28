@@ -283,13 +283,22 @@ struct CellView: View {
   }
 
   private func errorView(_ error: String) -> some View {
-    HStack(spacing: Spacing.sm) {
-      Image(systemName: "exclamationmark.triangle.fill")
-        .foregroundColor(.destructive)
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundColor(.destructive)
+
+        Text("Error")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundColor(.destructive)
+      }
+      .padding(.bottom, Spacing.sm)
 
       Text(error)
         .font(.mono)
         .foregroundColor(.destructive)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .leading)
