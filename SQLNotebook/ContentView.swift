@@ -257,7 +257,8 @@ struct ContentView: View {
       .onChange(of: viewModel.selectedCellId) { _, newId in
         if let id = newId {
           withAnimation {
-            proxy.scrollTo(id, anchor: .center)
+            // Only scroll if the cell is not visible (no anchor means minimal scroll to make visible)
+            proxy.scrollTo(id, anchor: nil)
           }
         }
       }
