@@ -1,0 +1,359 @@
+// DataModelTests.swift
+// Template for testing SQLNotebook data models
+// Copy this to SQLNotebookTests/ folder after creating test target
+
+import XCTest
+@testable import SQLNotebook
+
+final class DataModelTests: XCTestCase {
+
+    // MARK: - Setup & Teardown
+
+    override func setUpWithError() throws {
+        // Put setup code here. Called before each test method.
+    }
+
+    override func tearDownWithError() throws {
+        // Put teardown code here. Called after each test method.
+    }
+
+    // MARK: - SQLNotebook Tests
+
+    func testSQLNotebookEncodingDecoding() throws {
+        // Arrange
+        let notebook = SQLNotebook(
+            id: UUID(),
+            metadata: NotebookMetadata(
+                title: "Test Notebook",
+                createdAt: Date(),
+                modifiedAt: Date()
+            ),
+            cells: [
+                NotebookCell(
+                    id: UUID(),
+                    type: .code,
+                    content: "SELECT * FROM users;",
+                    result: nil,
+                    executionCount: 0
+                )
+            ],
+            connectionConfig: nil,
+            settings: NotebookSettings()
+        )
+
+        // Act - Encode
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(notebook)
+
+        // Act - Decode
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decodedNotebook = try decoder.decode(SQLNotebook.self, from: data)
+
+        // Assert
+        XCTAssertEqual(decodedNotebook.id, notebook.id)
+        XCTAssertEqual(decodedNotebook.metadata.title, notebook.metadata.title)
+        XCTAssertEqual(decodedNotebook.cells.count, notebook.cells.count)
+        XCTAssertEqual(decodedNotebook.cells.first?.content, "SELECT * FROM users;")
+    }
+
+    func testSQLNotebookWithEmptyCells() throws {
+        // Arrange
+        let notebook = SQLNotebook(
+            id: UUID(),
+            metadata: NotebookMetadata(
+                title: "Empty Notebook",
+                createdAt: Date(),
+                modifiedAt: Date()
+            ),
+            cells: [],
+            connectionConfig: nil,
+            settings: NotebookSettings()
+        )
+
+        // Act
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(notebook)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decodedNotebook = try decoder.decode(SQLNotebook.self, from: data)
+
+        // Assert
+        XCTAssertEqual(decodedNotebook.cells.count, 0)
+    }
+
+    // MARK: - NotebookCell Tests
+
+    func testNotebookCellEncodingDecoding() throws {
+        // Arrange
+        let cell = NotebookCell(
+            id: UUID(),
+            type: .code,
+            content: "SELECT COUNT(*) FROM products;",
+            result: nil,
+            executionCount: 5
+        )
+
+        // Act
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(cell)
+
+        let decoder = JSONDecoder()
+        let decodedCell = try decoder.decode(NotebookCell.self, from: data)
+
+        // Assert
+        XCTAssertEqual(decodedCell.id, cell.id)
+        XCTAssertEqual(decodedCell.type, .code)
+        XCTAssertEqual(decodedCell.content, cell.content)
+        XCTAssertEqual(decodedCell.executionCount, 5)
+        XCTAssertNil(decodedCell.result)
+    }
+
+    func testNotebookCellWithResults() throws {
+        // Arrange
+        let result = CellResult(
+            columns: [
+                ColumnInfo(name: "id", type: "integer"),
+                ColumnInfo(name: "name", type: "text")
+            ],
+            rows: [
+                [.int(1), .string("Alice")],
+                [.int(2), .string("Bob")]
+            ],
+            executionTime: 0.042,
+            timestamp: Date(),
+            error: nil
+        )
+
+        let cell = NotebookCell(
+            id: UUID(),
+            type: .code,
+            content: "SELECT id, name FROM users;",
+            result: result,
+            executionCount: 1
+        )
+
+        // Act
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(cell)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decodedCell = try decoder.decode(NotebookCell.self, from: data)
+
+        // Assert
+        XCTAssertNotNil(decodedCell.result)
+        XCTAssertEqual(decodedCell.result?.columns.count, 2)
+        XCTAssertEqual(decodedCell.result?.rows.count, 2)
+        XCTAssertEqual(decodedCell.result?.executionTime, 0.042, accuracy: 0.001)
+    }
+
+    // MARK: - CellValue Tests
+
+    func testCellValueStringEncodingDecoding() throws {
+        // Arrange
+        let value = CellValue.string("Hello, World!")
+
+        // Act
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(value)
+
+        let decoder = JSONDecoder()
+        let decodedValue = try decoder.decode(CellValue.self, from: data)
+
+        // Assert
+        if case .string(let str) = decodedValue {
+            XCTAssertEqual(str, "Hello, World!")
+        } else {
+            XCTFail("Expected .string case")
+        }
+    }
+
+    func testCellValueIntEncodingDecoding() throws {
+        let value = CellValue.int(42)
+        let data = try JSONEncoder().encode(value)
+        let decodedValue = try JSONDecoder().decode(CellValue.self, from: data)
+
+        if case .int(let num) = decodedValue {
+            XCTAssertEqual(num, 42)
+        } else {
+            XCTFail("Expected .int case")
+        }
+    }
+
+    func testCellValueDoubleEncodingDecoding() throws {
+        let value = CellValue.double(3.14159)
+        let data = try JSONEncoder().encode(value)
+        let decodedValue = try JSONDecoder().decode(CellValue.self, from: data)
+
+        if case .double(let num) = decodedValue {
+            XCTAssertEqual(num, 3.14159, accuracy: 0.00001)
+        } else {
+            XCTFail("Expected .double case")
+        }
+    }
+
+    func testCellValueBoolEncodingDecoding() throws {
+        let value = CellValue.bool(true)
+        let data = try JSONEncoder().encode(value)
+        let decodedValue = try JSONDecoder().decode(CellValue.self, from: data)
+
+        if case .bool(let flag) = decodedValue {
+            XCTAssertTrue(flag)
+        } else {
+            XCTFail("Expected .bool case")
+        }
+    }
+
+    func testCellValueNullEncodingDecoding() throws {
+        let value = CellValue.null
+        let data = try JSONEncoder().encode(value)
+        let decodedValue = try JSONDecoder().decode(CellValue.self, from: data)
+
+        if case .null = decodedValue {
+            XCTAssertTrue(true) // Success
+        } else {
+            XCTFail("Expected .null case")
+        }
+    }
+
+    func testCellValueJSONEncodingDecoding() throws {
+        let jsonString = "{\"name\":\"Alice\",\"age\":30}"
+        let value = CellValue.json(jsonString)
+        let data = try JSONEncoder().encode(value)
+        let decodedValue = try JSONDecoder().decode(CellValue.self, from: data)
+
+        if case .json(let str) = decodedValue {
+            XCTAssertEqual(str, jsonString)
+        } else {
+            XCTFail("Expected .json case")
+        }
+    }
+
+    // MARK: - CellValue Display Tests
+
+    func testCellValueDisplayString() {
+        XCTAssertEqual(CellValue.string("test").displayString, "test")
+        XCTAssertEqual(CellValue.int(42).displayString, "42")
+        XCTAssertEqual(CellValue.double(3.14).displayString, "3.14")
+        XCTAssertEqual(CellValue.bool(true).displayString, "true")
+        XCTAssertEqual(CellValue.null.displayString, "NULL")
+    }
+
+    func testCellValueIsNull() {
+        XCTAssertTrue(CellValue.null.isNull)
+        XCTAssertFalse(CellValue.string("test").isNull)
+        XCTAssertFalse(CellValue.int(0).isNull)
+    }
+
+    func testCellValueIsJSON() {
+        XCTAssertTrue(CellValue.json("{}").isJSON)
+        XCTAssertFalse(CellValue.string("{}").isJSON)
+        XCTAssertFalse(CellValue.null.isJSON)
+    }
+
+    // MARK: - ConnectionConfig Tests
+
+    func testConnectionConfigEncodingDoesNotIncludePassword() throws {
+        // Arrange
+        let config = ConnectionConfig(
+            host: "localhost",
+            port: 5432,
+            database: "testdb",
+            username: "testuser",
+            password: "secret123",
+            sslMode: .disable
+        )
+
+        // Act
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(config)
+        let jsonString = String(data: data, encoding: .utf8)!
+
+        // Assert
+        XCTAssertFalse(jsonString.contains("secret123"), "Password should not be encoded")
+        XCTAssertTrue(jsonString.contains("localhost"))
+        XCTAssertTrue(jsonString.contains("testdb"))
+        XCTAssertTrue(jsonString.contains("testuser"))
+    }
+
+    // MARK: - NotebookMetadata Tests
+
+    func testNotebookMetadataEncodingDecoding() throws {
+        // Arrange
+        let metadata = NotebookMetadata(
+            title: "My Notebook",
+            createdAt: Date(),
+            modifiedAt: Date()
+        )
+
+        // Act
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(metadata)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decodedMetadata = try decoder.decode(NotebookMetadata.self, from: data)
+
+        // Assert
+        XCTAssertEqual(decodedMetadata.title, "My Notebook")
+        XCTAssertNotNil(decodedMetadata.createdAt)
+        XCTAssertNotNil(decodedMetadata.modifiedAt)
+    }
+
+    // MARK: - NotebookSettings Tests
+
+    func testNotebookSettingsEncodingDecoding() throws {
+        // Arrange
+        let settings = NotebookSettings(
+            maxResultTableHeight: 500.0,
+            includeResultsWhenSaving: false
+        )
+
+        // Act
+        let data = try JSONEncoder().encode(settings)
+        let decodedSettings = try JSONDecoder().decode(NotebookSettings.self, from: data)
+
+        // Assert
+        XCTAssertEqual(decodedSettings.maxResultTableHeight, 500.0)
+        XCTAssertFalse(decodedSettings.includeResultsWhenSaving)
+    }
+
+    // MARK: - Performance Tests
+
+    func testNotebookEncodingPerformance() throws {
+        // Create a large notebook with 100 cells
+        let cells = (0..<100).map { i in
+            NotebookCell(
+                id: UUID(),
+                type: .code,
+                content: "SELECT * FROM table_\(i);",
+                result: nil,
+                executionCount: 0
+            )
+        }
+
+        let notebook = SQLNotebook(
+            id: UUID(),
+            metadata: NotebookMetadata(
+                title: "Large Notebook",
+                createdAt: Date(),
+                modifiedAt: Date()
+            ),
+            cells: cells,
+            connectionConfig: nil,
+            settings: NotebookSettings()
+        )
+
+        measure {
+            _ = try? JSONEncoder().encode(notebook)
+        }
+    }
+}

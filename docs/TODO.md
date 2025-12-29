@@ -5,10 +5,11 @@ This document outlines the implementation phases and specific tasks for building
 ## 📊 Current Status
 
 - ✅ **Phase 1: Core Structure** - COMPLETE
-- ✅ **Phase 2: Cell Editor** - COMPLETE  
+- ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
 - ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
+- 🚨 **Phase 6: Testing Suite** - **CURRENT TOP PRIORITY** ⭐
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
 **BUILD STATUS: SUCCESS ✅**
@@ -352,7 +353,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 
 ---
 
-## Phase 6: Testing Suite ⏳ (NOT STARTED)
+## Phase 6: Testing Suite 🚨 **CURRENT TOP PRIORITY**
 
 ### Overview
 Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framework (built-in trong Xcode). Testing sẽ bao gồm Unit Tests, Integration Tests, và UI Tests.
@@ -363,6 +364,8 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Configure test targets với proper dependencies (PostgresNIO, etc.)
 - [ ] Set up test schemes và build configurations
 - [ ] Add test helper utilities và mock objects
+
+**📖 Detailed Setup Guide:** See [TESTING_SETUP_GUIDE.md](./TESTING_SETUP_GUIDE.md) for step-by-step instructions.
 
 ### 6.2 Unit Tests - Data Models
 - [ ] `SQLNotebook` encoding/decoding (JSON serialization)
@@ -637,18 +640,30 @@ ORDER BY ordinal_position;
 
 ## Next Priorities
 
-### ⭐ NEXT TASK: Theme Toggle (4.13)
+### ⭐ CURRENT TOP PRIORITY: Phase 6 - Testing Suite
 **Status:** NOT STARTED
-**Priority:** MEDIUM (User experience improvement)
+**Priority:** CRITICAL (Foundation for quality assurance and preventing regressions)
 
-Implement toggle dark/light theme cho app. Hiện tại app đang force dark mode với `.preferredColorScheme(.dark)`. Cần:
-- Thêm theme preference vào AppSettings
-- Update DesignSystem để support cả light và dark mode
-- Add theme toggle trong Settings panel
-- Test tất cả UI components trong cả hai modes
+**WHY NOW:** App đã có nhiều features implemented với cross-dependencies. Testing suite là CRITICAL để:
+- Prevent regressions khi add new features
+- Ensure existing features work correctly after changes
+- Build confidence trong code quality
+- Enable safe refactoring
+- Catch bugs early before they reach users
 
-### Recommended: Phase 4 Completion
-1. **Theme Toggle** (4.13) - Toggle dark/light theme for the app ⭐ NEW
+**IMMEDIATE NEXT STEPS:**
+1. Set up test targets (6.1) - Unit Test & UI Test targets
+2. Start with Data Models tests (6.2) - Foundation layer
+3. Add Utilities tests (6.3) - SQLSyntaxHighlighter, CellValue conversions
+4. Build up to Integration tests (6.6, 6.7, 6.8) - Database operations
+5. Add UI tests (6.9, 6.10, 6.11, 6.12) - Critical user flows
+
+Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dưới.
+
+---
+
+### After Testing: Phase 4 Completion
+1. **Theme Toggle** (4.13) - Toggle dark/light theme for the app
 2. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
 3. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
 4. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
@@ -656,12 +671,6 @@ Implement toggle dark/light theme cho app. Hiện tại app đang force dark mod
 6. **Save Prompt** (4.7) - Prompt to save on close if unsaved
 7. **File Optimization** (4.11) - Optimize .sqlnb file when it's large
 8. **Logging System** (4.12) - Centralized logging with send-to-developer option
-
-### Then: Phase 6 - Testing Suite
-**Status:** NOT STARTED
-**Priority:** HIGH (Foundation for quality assurance)
-
-Xem chi tiết kế hoạch ở section "Phase 6: Testing Suite" bên dưới.
 
 ### Then: Phase 5 Advanced Features
 1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
