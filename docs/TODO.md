@@ -248,17 +248,6 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
   - [ ] Show confirmation dialog before sending
   - [ ] Add privacy notice about what data is included
 
-### 4.10 Settings Panel ✅
-- [x] Create `NotebookSettings` model to store notebook preferences
-- [x] Add settings to `SQLNotebook` model
-- [x] Create `SettingsContent` view component for right sidebar
-- [x] Add settings case to `SidebarContent` enum
-- [x] Implement max height configuration for result table view
-- [x] Implement include/exclude results when saving option
-- [x] Add basic keyboard shortcuts customization structure
-- [x] Update document save/load to respect settings
-- [x] Add Settings button to header or menu
-
 ### 4.9 Left Sidebar - Database Structure ✅
 - [x] Create `LeftSidebarView` component
 - [x] Add `isLeftSidebarVisible` state to `NotebookViewModel`
@@ -278,6 +267,32 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Handle schema loading errors gracefully
 - [x] Add click handler to insert table/column names into selected cell
 - [x] Style sidebar according to design system (matching right sidebar)
+
+### 4.10 Settings Panel ✅
+- [x] Create `NotebookSettings` model to store notebook preferences
+- [x] Add settings to `SQLNotebook` model
+- [x] Create `SettingsContent` view component for right sidebar
+- [x] Add settings case to `SidebarContent` enum
+- [x] Implement max height configuration for result table view
+- [x] Implement include/exclude results when saving option
+- [x] Add basic keyboard shortcuts customization structure
+- [x] Update document save/load to respect settings
+- [x] Add Settings button to header or menu
+
+### 4.13 Theme Toggle (Dark/Light Mode)
+- [ ] Add theme preference to `AppSettings` (dark, light, system)
+- [ ] Store theme preference in UserDefaults
+- [ ] Update `DesignSystem.swift` to support both light and dark color schemes
+  - [ ] Create light mode color variants for all semantic colors
+  - [ ] Use `@Environment(\.colorScheme)` to adapt colors dynamically
+- [ ] Remove hardcoded `.preferredColorScheme(.dark)` from `SQLNotebookApp.swift`
+- [ ] Apply theme preference to app using `.preferredColorScheme()` modifier
+- [ ] Add theme toggle control to Settings panel
+  - [ ] Radio buttons or picker for: Dark, Light, System
+  - [ ] Show preview of current theme
+- [ ] Update all views to use semantic colors from DesignSystem (not hardcoded)
+- [ ] Test all UI components in both light and dark modes
+- [ ] Ensure proper contrast ratios for accessibility
 
 ---
 
@@ -622,20 +637,31 @@ ORDER BY ordinal_position;
 
 ## Next Priorities
 
-### ⭐ NEXT TASK: Phase 6 - Testing Suite
+### ⭐ NEXT TASK: Theme Toggle (4.13)
+**Status:** NOT STARTED
+**Priority:** MEDIUM (User experience improvement)
+
+Implement toggle dark/light theme cho app. Hiện tại app đang force dark mode với `.preferredColorScheme(.dark)`. Cần:
+- Thêm theme preference vào AppSettings
+- Update DesignSystem để support cả light và dark mode
+- Add theme toggle trong Settings panel
+- Test tất cả UI components trong cả hai modes
+
+### Recommended: Phase 4 Completion
+1. **Theme Toggle** (4.13) - Toggle dark/light theme for the app ⭐ NEW
+2. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
+3. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
+4. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
+5. **Drag and Drop** (4.4) - Cell reordering with drag handles
+6. **Save Prompt** (4.7) - Prompt to save on close if unsaved
+7. **File Optimization** (4.11) - Optimize .sqlnb file when it's large
+8. **Logging System** (4.12) - Centralized logging with send-to-developer option
+
+### Then: Phase 6 - Testing Suite
 **Status:** NOT STARTED
 **Priority:** HIGH (Foundation for quality assurance)
 
 Xem chi tiết kế hoạch ở section "Phase 6: Testing Suite" bên dưới.
-
-### Recommended: Phase 4 Completion
-1. **Result Show/Hide** (4.8) - Toggle button to collapse/expand query results
-2. **Context Menu Copy** (4.5) - Add "Copy" menu item for cell content
-3. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
-4. **Drag and Drop** (4.4) - Cell reordering with drag handles
-5. **Save Prompt** (4.7) - Prompt to save on close if unsaved
-6. **File Optimization** (4.11) - Optimize .sqlnb file when it's large
-7. **Logging System** (4.12) - Centralized logging with send-to-developer option ⭐ NEW
 
 ### Then: Phase 5 Advanced Features
 1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
