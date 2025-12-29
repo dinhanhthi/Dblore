@@ -292,7 +292,7 @@ struct CellView: View {
           .font(.system(size: 13, weight: .semibold))
           .foregroundColor(.destructive)
       }
-      .padding(.bottom, Spacing.sm)
+      .padding(.bottom, Spacing.md)
 
       Text(error)
         .font(.mono)

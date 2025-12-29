@@ -439,7 +439,9 @@ actor DatabaseConnectionManager {
 
     } catch let error as PSQLError {
       let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.code.description, executionTime)
+      // Extract detailed error information from PostgreSQL
+      let errorMessage = formatPostgresError(error, query: query)
+      throw DatabaseError.queryFailed(errorMessage, executionTime)
     } catch {
       let executionTime = Date().timeIntervalSince(startTime)
       throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
@@ -641,7 +643,9 @@ actor DatabaseConnectionManager {
 
     } catch let error as PSQLError {
       let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.code.description, executionTime)
+      // Extract detailed error information from PostgreSQL
+      let errorMessage = formatPostgresError(error, query: updateQuery)
+      throw DatabaseError.queryFailed(errorMessage, executionTime)
     } catch {
       let executionTime = Date().timeIntervalSince(startTime)
       throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
@@ -788,6 +792,110 @@ actor DatabaseConnectionManager {
     default:
       return "UNKNOWN"
     }
+  }
+
+  /// Format a PostgreSQL error with detailed information
+  /// - Parameters:
+  ///   - error: The PostgreSQL error
+  ///   - query: The SQL query that caused the error (optional, for better position reporting)
+  private func formatPostgresError(_ error: PSQLError, query: String? = nil) -> String {
+    var message = ""
+
+    // Get the main error message
+    if let serverInfo = error.serverInfo {
+      // Extract message from server info
+      if let errorMessage = serverInfo[.message] {
+        message = errorMessage
+      } else if let severity = serverInfo[.severity] {
+        message = "\(severity): \(error.code.description)"
+      } else {
+        message = error.code.description
+      }
+
+      // Add detail if available
+      if let detail = serverInfo[.detail] {
+        message += "\n\nDetail: \(detail)"
+      }
+
+      // Add hint if available
+      if let hint = serverInfo[.hint] {
+        message += "\n\nHint: \(hint)"
+      }
+
+      // Add position if available (where in the query the error occurred)
+      if let positionStr = serverInfo[.position],
+         let position = Int(positionStr) {
+
+        // If we have the query text, extract the problematic keyword/text
+        if let query = query, position > 0 && position <= query.count {
+          let errorContext = extractErrorContext(from: query, at: position)
+          message += "\n\nNear: \"\(errorContext)\""
+        } else {
+          // Fallback to position number
+          message += "\n\nPosition: \(positionStr)"
+        }
+      }
+    } else {
+      // Fallback to basic error description
+      message = error.code.description
+    }
+
+    return message
+  }
+
+  /// Extract the problematic keyword or context from query at the given position
+  /// - Parameters:
+  ///   - query: The SQL query text
+  ///   - position: Character position in the query (1-indexed)
+  /// - Returns: The word/keyword at the position or surrounding context
+  private func extractErrorContext(from query: String, at position: Int) -> String {
+    // Convert to 0-indexed
+    let index = position - 1
+
+    guard index >= 0 && index < query.count else {
+      return "..."
+    }
+
+    // Get string index
+    let stringIndex = query.index(query.startIndex, offsetBy: index)
+
+    // Define word boundary characters (whitespace, punctuation, operators)
+    let boundaries = CharacterSet.whitespacesAndNewlines
+      .union(CharacterSet(charactersIn: "(),;=<>!+-*/[]{}"))
+
+    // Find start of word (go backward from position)
+    var startIndex = stringIndex
+    while startIndex > query.startIndex {
+      let prevIndex = query.index(before: startIndex)
+      let char = query[prevIndex]
+      if char.unicodeScalars.allSatisfy({ boundaries.contains($0) }) {
+        break
+      }
+      startIndex = prevIndex
+    }
+
+    // Find end of word (go forward from position)
+    var endIndex = stringIndex
+    while endIndex < query.endIndex {
+      let char = query[endIndex]
+      if char.unicodeScalars.allSatisfy({ boundaries.contains($0) }) {
+        break
+      }
+      endIndex = query.index(after: endIndex)
+    }
+
+    // Extract the word
+    let word = String(query[startIndex..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // If word is empty or very short, provide more context (5 chars before and after)
+    if word.count < 2 {
+      let contextStart = query.index(stringIndex, offsetBy: -5, limitedBy: query.startIndex) ?? query.startIndex
+      let contextEnd = query.index(stringIndex, offsetBy: 5, limitedBy: query.endIndex) ?? query.endIndex
+      let context = String(query[contextStart..<contextEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+      return context.isEmpty ? "..." : context
+    }
+
+    return word
   }
 
   /// Parse a cell value from PostgresCell
