@@ -215,6 +215,15 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Persist result visibility state per cell
 - [ ] Add visual indicator (chevron icon) for collapsed state
 
+### 4.11 File Optimization
+- [ ] Optimize .sqlnb file when it's large
+  - [ ] Detect large file size (e.g., > 10MB)
+  - [ ] Implement compression option (gzip/deflate)
+  - [ ] Add option to remove old results automatically
+  - [ ] Use compact JSON format (no pretty printing) for large files
+  - [ ] Add file size indicator in footer
+  - [ ] Add "Optimize File" menu option
+
 ### 4.10 Settings Panel ✅
 - [x] Create `NotebookSettings` model to store notebook preferences
 - [x] Add settings to `SQLNotebook` model
@@ -601,6 +610,7 @@ Xem chi tiết kế hoạch ở section "Phase 6: Testing Suite" bên dưới.
 3. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
 4. **Drag and Drop** (4.4) - Cell reordering with drag handles
 5. **Save Prompt** (4.7) - Prompt to save on close if unsaved
+6. **File Optimization** (4.11) - Optimize .sqlnb file when it's large ⭐ NEW
 
 ### Then: Phase 5 Advanced Features
 1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
