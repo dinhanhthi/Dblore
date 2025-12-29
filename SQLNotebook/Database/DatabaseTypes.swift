@@ -26,11 +26,14 @@ struct QueryResult: Sendable {
   let userLimitExceeded: Bool
   /// The original LIMIT value user specified (if any)
   let userRequestedLimit: Int?
+  /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
+  let affectedRows: Int?
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
     wasLimited: Bool = false, rowIdentifiers: [CellValue] = [],
-    userLimitExceeded: Bool = false, userRequestedLimit: Int? = nil
+    userLimitExceeded: Bool = false, userRequestedLimit: Int? = nil,
+    affectedRows: Int? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -40,6 +43,7 @@ struct QueryResult: Sendable {
     self.rowIdentifiers = rowIdentifiers
     self.userLimitExceeded = userLimitExceeded
     self.userRequestedLimit = userRequestedLimit
+    self.affectedRows = affectedRows
   }
 }
 

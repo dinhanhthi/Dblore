@@ -190,6 +190,7 @@ private enum DocumentCoder {
       (dict["timestamp"] as? String).flatMap { dateFormatter.date(from: $0) } ?? Date()
     let error = dict["error"] as? String
     let wasLimited = dict["wasLimited"] as? Bool ?? false
+    let affectedRows = dict["affectedRows"] as? Int
 
     return CellResult(
       columns: columns,
@@ -198,7 +199,8 @@ private enum DocumentCoder {
       rowCount: rowCount,
       timestamp: timestamp,
       error: error,
-      wasLimited: wasLimited
+      wasLimited: wasLimited,
+      affectedRows: affectedRows
     )
   }
 
@@ -228,6 +230,11 @@ private enum DocumentCoder {
 
     if let error = result.error {
       dict["error"] = error
+    }
+
+    // Encode affectedRows for modification queries
+    if let affectedRows = result.affectedRows {
+      dict["affectedRows"] = affectedRows
     }
 
     return dict
