@@ -53,6 +53,8 @@ class NotebookViewModel {
 
   // Toast notification
   var currentToast: ToastMessage?
+  var isToastHovered = false
+  private var toastDismissTask: Task<Void, Never>?
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
@@ -63,14 +65,31 @@ class NotebookViewModel {
 
   func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
     currentToast = ToastMessage(message: message, type: type)
+    startToastDismissTimer(for: message)
+  }
 
-    // Auto-dismiss after 4 seconds
-    Task { @MainActor in
+  private func startToastDismissTimer(for message: String) {
+    // Cancel any existing dismiss task
+    toastDismissTask?.cancel()
+
+    // Auto-dismiss after 4 seconds, but only if not hovered
+    toastDismissTask = Task { @MainActor in
       try? await Task.sleep(for: .seconds(4))
+
+      // Wait until toast is no longer hovered
+      while isToastHovered {
+        try? await Task.sleep(for: .seconds(0.5))
+      }
+
+      // Dismiss only if the message matches (user might have shown a new toast)
       if currentToast?.message == message {
         currentToast = nil
       }
     }
+  }
+
+  func setToastHovered(_ hovered: Bool) {
+    isToastHovered = hovered
   }
 
   // MARK: - Statistics
