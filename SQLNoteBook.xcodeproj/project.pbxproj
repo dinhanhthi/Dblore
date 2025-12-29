@@ -7,10 +7,31 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D30425902F033777008916E0 /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D304258F2F033777008916E0 /* PostgresNIO */; };
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		D30425792F0310D3008916E0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D3E0FB8B2EF70DBB009A0E5A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D3E0FB922EF70DBB009A0E5A;
+			remoteInfo = SQLNotebook;
+		};
+		D30425882F031148008916E0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D3E0FB8B2EF70DBB009A0E5A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D3E0FB922EF70DBB009A0E5A;
+			remoteInfo = SQLNotebook;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		D30425752F0310D3008916E0 /* SQLNotebookTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SQLNotebookTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D30425822F031148008916E0 /* SQLNotebookUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SQLNotebookUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D304258D2F0314CC008916E0 /* SQLNotebook.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = file; path = SQLNotebook.xctestplan; sourceTree = "<group>"; };
 		D3E0FB932EF70DBB009A0E5A /* SQLNotebook.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SQLNotebook.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -25,6 +46,16 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D30425762F0310D3008916E0 /* SQLNotebookTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SQLNotebookTests;
+			sourceTree = "<group>";
+		};
+		D30425832F031148008916E0 /* SQLNotebookUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SQLNotebookUITests;
+			sourceTree = "<group>";
+		};
 		D3E0FB952EF70DBB009A0E5A /* SQLNotebook */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -36,6 +67,21 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D30425722F0310D3008916E0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D30425902F033777008916E0 /* PostgresNIO in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D304257F2F031148008916E0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D3E0FB902EF70DBB009A0E5A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -47,10 +93,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		D304258E2F033777008916E0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		D3E0FB8A2EF70DBB009A0E5A = {
 			isa = PBXGroup;
 			children = (
+				D304258D2F0314CC008916E0 /* SQLNotebook.xctestplan */,
 				D3E0FB952EF70DBB009A0E5A /* SQLNotebook */,
+				D30425762F0310D3008916E0 /* SQLNotebookTests */,
+				D30425832F031148008916E0 /* SQLNotebookUITests */,
+				D304258E2F033777008916E0 /* Frameworks */,
 				D3E0FB942EF70DBB009A0E5A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,6 +116,8 @@
 			isa = PBXGroup;
 			children = (
 				D3E0FB932EF70DBB009A0E5A /* SQLNotebook.app */,
+				D30425752F0310D3008916E0 /* SQLNotebookTests.xctest */,
+				D30425822F031148008916E0 /* SQLNotebookUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,6 +125,53 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D30425742F0310D3008916E0 /* SQLNotebookTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D304257D2F0310D3008916E0 /* Build configuration list for PBXNativeTarget "SQLNotebookTests" */;
+			buildPhases = (
+				D30425712F0310D3008916E0 /* Sources */,
+				D30425722F0310D3008916E0 /* Frameworks */,
+				D30425732F0310D3008916E0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D304257A2F0310D3008916E0 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D30425762F0310D3008916E0 /* SQLNotebookTests */,
+			);
+			name = SQLNotebookTests;
+			packageProductDependencies = (
+				D304258F2F033777008916E0 /* PostgresNIO */,
+			);
+			productName = SQLNotebookTests;
+			productReference = D30425752F0310D3008916E0 /* SQLNotebookTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D30425812F031148008916E0 /* SQLNotebookUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D304258A2F031148008916E0 /* Build configuration list for PBXNativeTarget "SQLNotebookUITests" */;
+			buildPhases = (
+				D304257E2F031148008916E0 /* Sources */,
+				D304257F2F031148008916E0 /* Frameworks */,
+				D30425802F031148008916E0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D30425892F031148008916E0 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D30425832F031148008916E0 /* SQLNotebookUITests */,
+			);
+			name = SQLNotebookUITests;
+			packageProductDependencies = (
+			);
+			productName = SQLNotebookUITests;
+			productReference = D30425822F031148008916E0 /* SQLNotebookUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		D3E0FB922EF70DBB009A0E5A /* SQLNotebook */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D3E0FB9E2EF70DBC009A0E5A /* Build configuration list for PBXNativeTarget "SQLNotebook" */;
@@ -99,6 +205,14 @@
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					D30425742F0310D3008916E0 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = D3E0FB922EF70DBB009A0E5A;
+					};
+					D30425812F031148008916E0 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = D3E0FB922EF70DBB009A0E5A;
+					};
 					D3E0FB922EF70DBB009A0E5A = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -122,11 +236,27 @@
 			projectRoot = "";
 			targets = (
 				D3E0FB922EF70DBB009A0E5A /* SQLNotebook */,
+				D30425742F0310D3008916E0 /* SQLNotebookTests */,
+				D30425812F031148008916E0 /* SQLNotebookUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		D30425732F0310D3008916E0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D30425802F031148008916E0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D3E0FB912EF70DBB009A0E5A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -137,6 +267,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		D30425712F0310D3008916E0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D304257E2F031148008916E0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D3E0FB8F2EF70DBB009A0E5A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -146,7 +290,98 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		D304257A2F0310D3008916E0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
+			targetProxy = D30425792F0310D3008916E0 /* PBXContainerItemProxy */;
+		};
+		D30425892F031148008916E0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
+			targetProxy = D30425882F031148008916E0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		D304257B2F0310D3008916E0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.SQLNotebookTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SQLNotebook.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SQLNotebook";
+			};
+			name = Debug;
+		};
+		D304257C2F0310D3008916E0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.SQLNotebookTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SQLNotebook.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SQLNotebook";
+			};
+			name = Release;
+		};
+		D304258B2F031148008916E0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.SQLNotebookUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = SQLNotebook;
+			};
+			name = Debug;
+		};
+		D304258C2F031148008916E0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.SQLNotebookUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = SQLNotebook;
+			};
+			name = Release;
+		};
 		D3E0FB9C2EF70DBC009A0E5A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -364,6 +599,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		D304257D2F0310D3008916E0 /* Build configuration list for PBXNativeTarget "SQLNotebookTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D304257B2F0310D3008916E0 /* Debug */,
+				D304257C2F0310D3008916E0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D304258A2F031148008916E0 /* Build configuration list for PBXNativeTarget "SQLNotebookUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D304258B2F031148008916E0 /* Debug */,
+				D304258C2F031148008916E0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D3E0FB8E2EF70DBB009A0E5A /* Build configuration list for PBXProject "SQLNotebook" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -396,6 +649,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		D304258F2F033777008916E0 /* PostgresNIO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */;
+			productName = PostgresNIO;
+		};
 		D3E0FC002EF71234009A0E5B /* PostgresNIO */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */;
