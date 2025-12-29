@@ -1,400 +1,565 @@
 # Testing Plan for SQLNotebook
 
-## Có thể tạo Unit Tests/Testing Suite cho Swift/macOS App không?
-
-**CÓ!** Swift và Xcode cung cấp comprehensive testing framework:
-
-### 1. **XCTest Framework** (Built-in)
-- **Unit Tests**: Test individual functions, classes, structs
-- **Integration Tests**: Test interactions giữa components
-- **UI Tests**: Test user interface flows
-- **Performance Tests**: Measure code performance
-
-### 2. **Test Targets trong Xcode**
-- **Unit Test Target**: `SQLNotebookTests` - cho business logic tests
-- **UI Test Target**: `SQLNotebookUITests` - cho user interface tests
-- Tự động integrate với Xcode Test Navigator
-- Run tests với `Cmd+U` hoặc từ Test Navigator
-
-### 3. **Testing Capabilities**
-- ✅ Test Swift structs, classes, enums
-- ✅ Test async/await code (PostgresNIO operations)
-- ✅ Test SwiftUI views (với ViewInspector hoặc UI tests)
-- ✅ Test Codable serialization/deserialization
-- ✅ Mock objects và dependencies
-- ✅ Test database operations (với test database)
-- ✅ Test document read/write operations
+Danh sách tất cả test cases cần implement cho SQLNotebook project, organized theo categories với todo-style checklist.
 
 ---
 
-## Testing Architecture Plan
+## Data Models
 
-### Phase 6.1: Test Target Setup
+### SQLNotebook Model
+- [x] Encode và decode notebook với cells
+- [x] Encode và decode notebook với empty cells
+- [x] Round-trip encoding/decoding preserves data
+- [x] Notebook với connection config (password không được encode)
+- [x] Notebook với multiple cells và results
+- [x] Notebook encoding performance với 100+ cells
 
-#### Tạo Test Targets trong Xcode:
-1. **Unit Test Target** (`SQLNotebookTests`)
-   - File location: `SQLNotebookTests/`
-   - Dependencies: Main app target, PostgresNIO (nếu cần)
-   - Test các models, utilities, ViewModels
+### NotebookCell Model
+- [x] Encode và decode cell với all properties
+- [x] Cell với result data
+- [x] Cell với execution count
+- [ ] Cell với running state
+- [x] Cell với nil result
+- [ ] Cell content updates preserve other properties
 
-2. **UI Test Target** (`SQLNotebookUITests`)
-   - File location: `SQLNotebookUITests/`
-   - Dependencies: Main app target
-   - Test user interactions, keyboard shortcuts, flows
+### CellValue Enum
+- [x] Encode/decode `.string` case
+- [x] Encode/decode `.int` case
+- [x] Encode/decode `.double` case
+- [x] Encode/decode `.bool` case
+- [x] Encode/decode `.null` case
+- [x] Encode/decode `.json` case
+- [ ] Encode/decode `.date` case
+- [ ] Encode/decode `.data` case
+- [x] `displayString` property cho all types
+- [ ] `fullString` property cho all types
+- [x] `isNull` computed property
+- [x] `isJSON` computed property
+- [ ] Long string truncation trong `displayString`
+- [ ] JSON formatting trong display
 
-#### Test Helper Structure:
-```
-SQLNotebookTests/
-├── Models/
-│   ├── SQLNotebookTests.swift
-│   ├── NotebookCellTests.swift
-│   └── CellValueTests.swift
-├── Utilities/
-│   └── SQLSyntaxHighlighterTests.swift
-├── ViewModels/
-│   └── NotebookViewModelTests.swift
-├── Database/
-│   └── DatabaseConnectionManagerTests.swift
-├── Document/
-│   └── SQLNotebookDocumentTests.swift
-└── Helpers/
-    ├── MockDatabaseConnectionManager.swift
-    └── TestHelpers.swift
-```
+### CellResult Model
+- [x] Result với columns và rows
+- [x] Result với execution time
+- [x] Result với timestamp
+- [ ] Result với error message
+- [ ] Result với null values
+- [ ] Result với mixed data types
+- [ ] Empty result set (0 rows)
+- [ ] Large result set encoding
 
----
+### ConnectionConfig Model
+- [x] Encode config WITHOUT password
+- [x] Decode config preserves all fields except password
+- [ ] Connection string parsing
+- [ ] Default port và database values
+- [x] All SSL modes (disable, require, verifyCA, verifyFull)
+- [ ] Invalid config validation
 
-## Detailed Test Cases
+### NotebookMetadata Model
+- [x] Encode và decode metadata
+- [x] Title, createdAt, modifiedAt preservation
+- [ ] Metadata updates modify modifiedAt timestamp
+- [ ] Custom tags/labels (if added)
 
-### 6.2 Unit Tests - Data Models
-
-#### `SQLNotebookTests.swift`
-```swift
-import XCTest
-@testable import SQLNotebook
-
-final class SQLNotebookTests: XCTestCase {
-    func testEncodingDecoding() throws {
-        // Test round-trip encoding/decoding
-    }
-    
-    func testNewDocument() {
-        // Test newDocument() creates notebook với empty SQL cell
-    }
-}
-```
-
-**Test Cases:**
-- ✅ Encode `SQLNotebook` to JSON
-- ✅ Decode JSON to `SQLNotebook`
-- ✅ Round-trip (encode → decode → verify)
-- ✅ `newDocument()` creates notebook với default cell
-- ✅ Notebook với multiple cells
-- ✅ Notebook với connection config (không lưu password)
-
-#### `NotebookCellTests.swift`
-**Test Cases:**
-- ✅ Encode/decode cell với all properties
-- ✅ Cell với result
-- ✅ Cell với execution count
-- ✅ Cell với isRunning state
-
-#### `CellValueTests.swift`
-**Test Cases:**
-- ✅ Encode/decode all enum cases:
-  - `.string("test")`
-  - `.int(42)`
-  - `.double(3.14)`
-  - `.bool(true)`
-  - `.null`
-  - `.json("{\"key\":\"value\"}")`
-  - `.date(Date())`
-  - `.data(Data())`
-- ✅ `displayString` property cho all types
-- ✅ `fullString` property cho all types
-- ✅ `isNull` và `isJSON` computed properties
+### NotebookSettings Model
+- [x] Encode và decode settings
+- [x] maxResultTableHeight value
+- [x] includeResultsWhenSaving flag
+- [ ] Default settings values
+- [ ] Settings updates persist
 
 ---
 
-### 6.3 Unit Tests - Utilities
+## SQL Syntax Highlighter
 
-#### `SQLSyntaxHighlighterTests.swift`
-**Test Cases:**
-- ✅ Keyword highlighting (case-insensitive)
-  - Test: `SELECT`, `select`, `Select` đều được highlight
-- ✅ Function highlighting với parentheses
-  - Test: `COUNT(` được highlight, `COUNT` không có `(` thì không
-- ✅ String highlighting
-  - Single-quote: `'hello world'`
-  - Dollar-quote: `$$text$$`
-- ✅ Comment highlighting
-  - Single-line: `-- comment`
-  - Multi-line: `/* comment */`
-- ✅ Number highlighting: `123`, `45.67`
-- ✅ Operator highlighting: `=`, `<>`, `+`, `-`, etc.
-- ✅ Complex SQL query highlighting
+### Keyword Highlighting
+- [x] SELECT, FROM, WHERE keywords
+- [x] Keywords case-insensitive (SELECT, select, SeLeCt)
+- [x] DDL keywords (CREATE, TABLE, PRIMARY KEY, etc.)
+- [x] DML keywords (INSERT, UPDATE, DELETE, VALUES)
+- [ ] DCL keywords (GRANT, REVOKE)
+- [ ] TCL keywords (COMMIT, ROLLBACK, SAVEPOINT)
+- [ ] Keywords trong comments không được highlight
+- [ ] Keywords trong strings không được highlight
 
----
+### Function Highlighting
+- [x] Aggregate functions (COUNT, SUM, MAX, MIN, AVG)
+- [x] String functions (UPPER, LOWER, TRIM)
+- [x] Nested functions
+- [ ] Window functions (ROW_NUMBER, RANK, PARTITION BY)
+- [ ] PostgreSQL-specific functions (COALESCE, NOW, CURRENT_TIMESTAMP)
+- [ ] Function case-insensitivity
+- [ ] Functions phải có opening parenthesis để match
 
-### 6.4 Unit Tests - Document Operations
+### String Literal Highlighting
+- [x] Single-quote strings ('text')
+- [x] Escaped quotes (O''Brien)
+- [x] Multiple strings trong same query
+- [x] PostgreSQL dollar-quoted strings ($$text$$)
+- [ ] Dollar-quoted với custom tags ($tag$text$tag$)
+- [ ] Empty strings ('')
+- [ ] Multiline strings
+- [ ] Strings với special characters (\n, \t, etc.)
 
-#### `SQLNotebookDocumentTests.swift`
-**Test Cases:**
-- ✅ `read()` với valid JSON file
-- ✅ `read()` với invalid JSON (throws error)
-- ✅ `read()` với missing file (throws error)
-- ✅ `write()` tạo valid JSON file
-- ✅ Round-trip: write → read → verify
-- ✅ Document với empty cells
-- ✅ Document với cells có results
-- ✅ Document với connection config (password không được lưu)
+### Number Highlighting
+- [x] Integers (123, 456)
+- [x] Decimals (3.14, 19.99)
+- [x] Negative numbers (-100, -50.5)
+- [x] Scientific notation (1.5e10, 2.3e-5)
+- [ ] Hexadecimal numbers (0x1A2B)
+- [ ] Binary numbers (0b1010)
 
----
+### Comment Highlighting
+- [x] Single-line comments (-- comment)
+- [x] Multi-line comments (/* comment */)
+- [x] Nested multi-line comments
+- [ ] Comments at end of line
+- [ ] Comments preserving indentation
+- [ ] Empty comments
 
-### 6.5 Unit Tests - ViewModel Logic
+### Operator Highlighting
+- [x] Comparison operators (=, <>, <=, >=, <, >)
+- [x] Arithmetic operators (+, -, *, /)
+- [x] Logical operators (AND, OR, NOT)
+- [ ] PostgreSQL cast operator (::)
+- [ ] Modulo operator (%)
+- [ ] Concatenation operator (||)
 
-#### `NotebookViewModelTests.swift`
-**Test Cases:**
-- ✅ `addCell()` - add ở đầu, giữa, cuối
-- ✅ `deleteCell()` - delete existing cell
-- ✅ `moveCell()` - move từ position A → B
-- ✅ `selectCell()` - selection state
-- ✅ `clearAllOutputs()` - clear all results
-- ✅ Execution count increment
-- ✅ Cell running state management
+### Complex Queries
+- [x] SELECT với JOINs và GROUP BY
+- [x] Common Table Expressions (WITH ... AS)
+- [x] Subqueries trong WHERE clause
+- [ ] UNION/INTERSECT/EXCEPT queries
+- [ ] Window functions queries
+- [ ] Recursive CTEs
 
-**Note:** ViewModel tests có thể cần `@MainActor` vì SwiftUI ViewModels thường chạy trên main thread.
+### PostgreSQL-Specific Syntax
+- [x] PostgreSQL data types (SERIAL, JSONB, TIMESTAMPTZ)
+- [x] Cast operator (::DATE, ::INTEGER)
+- [x] Arrays (ARRAY[1, 2, 3])
+- [ ] JSON operators (->, ->>)
+- [ ] Range types (INT4RANGE, TSRANGE)
+- [ ] Custom enum types
 
----
+### Edge Cases
+- [x] Empty string
+- [x] Whitespace only
+- [x] Single keyword
+- [x] Unicode characters trong strings
+- [ ] Very long lines (1000+ characters)
+- [ ] Mixed tabs và spaces
+- [ ] Invalid SQL syntax (should still highlight)
 
-### 6.6 Integration Tests - Database Connection
-
-#### `DatabaseConnectionManagerTests.swift`
-**Test Cases:**
-- ✅ `connect()` với valid PostgreSQL config
-- ✅ `connect()` với invalid host (throws error)
-- ✅ `connect()` với invalid credentials (throws error)
-- ✅ `testConnection()` success case
-- ✅ `testConnection()` failure case
-- ✅ `disconnect()` cleanup
-- ✅ Connection state transitions
-- ✅ SSL/TLS modes:
-  - `.disable`
-  - `.require`
-  - `.verifyCA`
-  - `.verifyFull`
-- ✅ Connection string parsing
-
-**Test Database Setup:**
-- Sử dụng local PostgreSQL instance hoặc Docker container
-- Test database với sample tables
-- Cleanup sau mỗi test
-
----
-
-### 6.7 Integration Tests - Query Execution
-
-#### `QueryExecutionTests.swift`
-**Test Cases:**
-- ✅ SELECT query → parse results
-- ✅ INSERT query → verify affected rows
-- ✅ UPDATE query → verify affected rows
-- ✅ DELETE query → verify affected rows
-- ✅ DDL (CREATE TABLE) → verify success
-- ✅ Multiple statements → execute sequentially
-- ✅ Invalid SQL syntax → error handling
-- ✅ Database errors (table not found) → error handling
-- ✅ Type mapping:
-  - VARCHAR → `.string`
-  - INTEGER → `.int`
-  - BIGINT → `.int`
-  - DECIMAL → `.double`
-  - BOOLEAN → `.bool`
-  - JSON/JSONB → `.json`
-  - DATE/TIMESTAMP → `.date`
-  - NULL → `.null`
-- ✅ Result row limiting (max fetch rows)
-- ✅ Execution time measurement
+### Performance
+- [x] Highlighting 100 repeated queries under 5s
+- [x] Very long query với 1000+ columns under 5s
+- [ ] Real-time highlighting performance (debouncing)
+- [ ] Memory usage với large queries
 
 ---
 
-### 6.8 Integration Tests - Schema Loading
+## ViewModel Logic
 
-#### `SchemaLoadingTests.swift`
-**Test Cases:**
-- ✅ `fetchTables()` returns correct tables
-- ✅ `fetchColumns()` returns correct columns với types
-- ✅ Schema với empty database
-- ✅ Schema loading error handling
-- ✅ Table row count calculation
+### Cell Management
+- [x] Add cell at end of notebook
+- [x] Add cell after specific cell
+- [x] Add cell to empty notebook
+- [x] Delete existing cell
+- [x] Delete non-existent cell (no crash)
+- [x] Move cell từ position A to B
+- [x] Move multiple cells
+- [x] Add multiple cells (performance test)
+- [x] Delete all cells
+- [ ] Duplicate cell
+- [ ] Duplicate cell với results
+- [ ] Undo/redo cell operations
+
+### Cell Selection
+- [x] Select cell by ID
+- [x] Deselect cell
+- [x] Select non-existent cell
+- [ ] Select next cell
+- [ ] Select previous cell
+- [ ] Multi-cell selection
+- [ ] Selection preservation after add/delete
+
+### Cell Output Management
+- [x] Clear all outputs
+- [x] Clear single cell output
+- [ ] Clear outputs preserves cell content
+- [ ] Clear running cell output
+- [ ] Preserve outputs setting honored
+
+### Execution State
+- [x] Increment execution count
+- [x] Set cell running state to true
+- [x] Set cell running state to false
+- [x] Check if cell is running
+- [ ] Cancel running query
+- [ ] Multiple cells running concurrently
+- [ ] Running state cleanup on error
+
+### Sidebar Management
+- [x] Toggle right sidebar
+- [x] Toggle left sidebar
+- [x] Show specific sidebar content
+- [ ] Sidebar state persistence
+- [ ] Sidebar width resize
+- [ ] Hide sidebar on small screens
+
+### Connection State
+- [x] Initial state is disconnected
+- [ ] Transition to connecting state
+- [ ] Transition to connected state
+- [ ] Transition to disconnected after error
+- [ ] Connection state changes trigger UI updates
+- [ ] Reconnect after disconnect
+
+### Notebook Metadata
+- [x] Metadata accessible from ViewModel
+- [x] Settings accessible from ViewModel
+- [ ] Update title through ViewModel
+- [ ] Modified timestamp updates on changes
+- [ ] Autosave triggers
+
+### Cell Content
+- [x] Update cell content directly
+- [ ] Content change triggers modified timestamp
+- [ ] Content validation (if any)
+- [ ] Max content length handling
+
+### Performance
+- [x] Add 100 cells under 5s
+- [x] Delete 100 cells under 5s
+- [ ] Search through 1000+ cells
+- [ ] Render 100+ cells efficiently
 
 ---
 
-### 6.9 UI Tests - Basic Flows
+## Document Operations
 
-#### `NotebookUITests.swift`
-**Test Cases:**
-- ✅ Create new notebook (`Cmd+N`)
-- ✅ Open notebook (`Cmd+O`)
-- ✅ Save notebook (`Cmd+S`)
-- ✅ Add code cell (`Cmd+B`)
-- ✅ Delete cell (`Cmd+Backspace`)
-- ✅ Duplicate cell (`Cmd+D`)
-- ✅ Run cell (`Cmd+Enter`)
-- ✅ Run all cells (`Cmd+Shift+Enter`)
-- ✅ Toggle right sidebar (`Cmd+Shift+R`)
-- ✅ Toggle left sidebar (`Cmd+Shift+L`)
+### File Read Operations
+- [ ] Read valid `.sqlnb` JSON file
+- [ ] Read invalid JSON (should throw error)
+- [ ] Read missing file (should throw error)
+- [ ] Read corrupted file
+- [ ] Read file với wrong version
+- [ ] Read file với legacy format
+- [ ] Read very large notebook file (100+ MB)
 
-**UI Test Example:**
-```swift
-import XCTest
+### File Write Operations
+- [ ] Write notebook to valid JSON file
+- [ ] Write với pretty-printed formatting
+- [ ] Write excludes passwords
+- [ ] Write respects includeResultsWhenSaving setting
+- [ ] Atomic write (no corruption on crash)
+- [ ] Write permission errors handled
 
-final class NotebookUITests: XCTestCase {
-    var app: XCUIApplication!
-    
-    override func setUp() {
-        app = XCUIApplication()
-        app.launch()
-    }
-    
-    func testCreateNewNotebook() {
-        app.typeKey("n", modifierFlags: .command)
-        // Verify new notebook created
-    }
-}
-```
+### Round-Trip Operations
+- [ ] Write then read preserves all data
+- [ ] Round-trip với cells có results
+- [ ] Round-trip với connection config
+- [ ] Round-trip với empty notebook
+- [ ] Round-trip với large notebook
+
+### Document State
+- [ ] isDocumentEdited flag after changes
+- [ ] isDocumentEdited false after save
+- [ ] Autosave functionality
+- [ ] Unsaved changes warning
 
 ---
 
-### 6.10 UI Tests - Query Execution Flow
+## Database Connection (Integration Tests)
 
-**Test Cases:**
-- ✅ Enter SQL query trong cell
-- ✅ Execute query
-- ✅ Verify results display trong table
-- ✅ Verify columns và rows
-- ✅ Verify execution time
-- ✅ Verify error display cho invalid queries
-- ✅ Test với empty result set
-- ✅ Test với large result set (scrolling)
+### PostgreSQL Connection
+- [ ] Connect với valid config
+- [ ] Connect với invalid host (throws error)
+- [ ] Connect với invalid port (throws error)
+- [ ] Connect với invalid credentials (throws error)
+- [ ] Connect với invalid database name (throws error)
+- [ ] Test connection success case
+- [ ] Test connection failure case
+- [ ] Disconnect cleanup
+- [ ] Connection timeout handling
+- [ ] Reconnect after connection loss
+
+### SSL/TLS Modes
+- [ ] SSL mode: disable
+- [ ] SSL mode: require
+- [ ] SSL mode: verifyCA
+- [ ] SSL mode: verifyFull
+- [ ] Invalid certificate handling
+
+### Connection String Parsing
+- [ ] Parse standard connection string
+- [ ] Parse connection string với all parameters
+- [ ] Parse connection string với URL encoding
+- [ ] Invalid connection string error
+
+### Connection State Transitions
+- [ ] disconnected → connecting → connected
+- [ ] connected → disconnecting → disconnected
+- [ ] connecting → error → disconnected
+- [ ] Connection state observable by UI
+
+### Connection Pooling
+- [ ] Reuse existing connection
+- [ ] Connection pool max size
+- [ ] Connection cleanup on idle timeout
 
 ---
 
-### 6.11 UI Tests - Connection Flow
+## Query Execution (Integration Tests)
 
-**Test Cases:**
-- ✅ Open connection sheet
-- ✅ Enter connection details
-- ✅ Test connection button
-- ✅ Connect to database
-- ✅ Verify connection status trong footer
-- ✅ Verify schema loads trong left sidebar
-- ✅ Disconnect from database
+### SELECT Queries
+- [ ] Execute simple SELECT
+- [ ] SELECT với WHERE clause
+- [ ] SELECT với JOIN
+- [ ] SELECT với GROUP BY và HAVING
+- [ ] SELECT với ORDER BY và LIMIT
+- [ ] SELECT returning large result set (1000+ rows)
+- [ ] SELECT với NULL values
+- [ ] SELECT với all supported data types
+
+### DML Queries
+- [ ] INSERT single row
+- [ ] INSERT multiple rows
+- [ ] INSERT RETURNING
+- [ ] UPDATE rows (return affected count)
+- [ ] UPDATE với WHERE clause
+- [ ] DELETE rows (return affected count)
+- [ ] DELETE với WHERE clause
+
+### DDL Queries
+- [ ] CREATE TABLE
+- [ ] ALTER TABLE
+- [ ] DROP TABLE
+- [ ] CREATE INDEX
+- [ ] Create/drop database objects
+
+### Transaction Queries
+- [ ] BEGIN transaction
+- [ ] COMMIT transaction
+- [ ] ROLLBACK transaction
+- [ ] Savepoint operations
+
+### Multiple Statements
+- [ ] Execute multiple statements sequentially
+- [ ] Error trong one statement doesn't affect others
+- [ ] Transaction semantics với multiple statements
+
+### Error Handling
+- [ ] Invalid SQL syntax (return error)
+- [ ] Table not found error
+- [ ] Column not found error
+- [ ] Type mismatch error
+- [ ] Permission denied error
+- [ ] Connection lost during execution
+
+### Data Type Mapping
+- [ ] VARCHAR → `.string`
+- [ ] TEXT → `.string`
+- [ ] INTEGER → `.int`
+- [ ] BIGINT → `.int`
+- [ ] DECIMAL/NUMERIC → `.double`
+- [ ] REAL/DOUBLE → `.double`
+- [ ] BOOLEAN → `.bool`
+- [ ] JSON/JSONB → `.json`
+- [ ] DATE → `.date`
+- [ ] TIMESTAMP → `.date`
+- [ ] TIMESTAMPTZ → `.date`
+- [ ] NULL → `.null`
+- [ ] BYTEA → `.data`
+- [ ] ARRAY types
+- [ ] Custom enum types
+
+### Performance
+- [ ] Query execution time measurement accuracy
+- [ ] Result row limiting (max fetch rows)
+- [ ] Pagination for large results
+- [ ] Query cancellation
 
 ---
 
-### 6.12 UI Tests - Document Persistence
+## Schema Loading (Integration Tests)
 
-**Test Cases:**
-- ✅ Save notebook với cells và results
-- ✅ Close app
-- ✅ Reopen notebook
-- ✅ Verify cells content preserved
-- ✅ Verify results preserved (nếu settings allow)
-- ✅ Verify connection config preserved (không có password)
+### Table Discovery
+- [ ] Fetch all tables trong database
+- [ ] Fetch tables từ specific schema
+- [ ] Filter system tables
+- [ ] Table row count calculation
+- [ ] Empty database returns empty list
+
+### Column Discovery
+- [ ] Fetch columns cho table
+- [ ] Column names và types correct
+- [ ] Nullable column detection
+- [ ] Primary key detection
+- [ ] Foreign key relationships
+- [ ] Default values
+
+### Schema Organization
+- [ ] List all schemas trong database
+- [ ] Schema filtering
+- [ ] Public schema default
+
+### Error Handling
+- [ ] Schema loading với invalid connection
+- [ ] Permission denied for schema info
+- [ ] Schema load failure graceful handling
+
+---
+
+## UI Tests
+
+### Document Lifecycle
+- [ ] Create new notebook (Cmd+N)
+- [ ] Open existing notebook (Cmd+O)
+- [ ] Save notebook (Cmd+S)
+- [ ] Save As functionality
+- [ ] Close notebook với unsaved changes warning
+- [ ] Reopen notebook preserves state
+
+### Cell Operations
+- [ ] Add code cell (Cmd+B)
+- [ ] Delete cell (Cmd+Backspace)
+- [ ] Duplicate cell (Cmd+D)
+- [ ] Move cell up/down
+- [ ] Select cell via click
+- [ ] Focus cell editor
+
+### Query Execution Flow
+- [ ] Enter SQL query trong cell
+- [ ] Run cell (Cmd+Enter)
+- [ ] Run cell và move to next (Shift+Enter)
+- [ ] Run all cells (Cmd+Shift+Enter)
+- [ ] Cancel running query
+- [ ] Results display trong table
+- [ ] Execution time display
+- [ ] Error message display
+
+### Result Table Interaction
+- [ ] Scroll through large result set
+- [ ] Column resizing
+- [ ] Column sorting (if implemented)
+- [ ] Copy cell value
+- [ ] Copy row
+- [ ] Copy entire result
+- [ ] JSON viewer for JSONB columns
+
+### Connection Flow
+- [ ] Open connection sheet
+- [ ] Enter connection details
+- [ ] Test connection button
+- [ ] Connect to database
+- [ ] Connection status trong footer
+- [ ] Schema loads trong left sidebar
+- [ ] Disconnect from database
+- [ ] Switch databases
+
+### Sidebar Interactions
+- [ ] Toggle right sidebar (Cmd+Shift+R)
+- [ ] Toggle left sidebar (Cmd+Shift+L)
+- [ ] Browse schema tables
+- [ ] Click table để insert name
+- [ ] Resize sidebar width
+- [ ] Sidebar content switching
+
+### Keyboard Navigation
+- [ ] All documented shortcuts work
+- [ ] Tab navigation through cells
+- [ ] Arrow key navigation
+- [ ] Escape to deselect
+
+### Visual Feedback
+- [ ] Running indicator on cell
+- [ ] Connection status indicator
+- [ ] Progress indicator for long queries
+- [ ] Error highlighting
+- [ ] Syntax highlighting updates live
+
+---
+
+## Accessibility & Polish
+
+### Accessibility
+- [ ] VoiceOver support
+- [ ] Keyboard-only navigation
+- [ ] Focus indicators visible
+- [ ] Color contrast sufficient
+- [ ] Screen reader labels
+
+### Error Messages
+- [ ] User-friendly database errors
+- [ ] SQL syntax error suggestions
+- [ ] Connection error guidance
+- [ ] File I/O error messages
+
+### Edge Cases
+- [ ] Very long cell content (10,000+ chars)
+- [ ] Very wide tables (100+ columns)
+- [ ] Unicode trong SQL queries
+- [ ] Special characters trong table/column names
+- [ ] Emoji trong data values
+
+### Performance
+- [ ] App launch time
+- [ ] Large notebook load time (100+ cells)
+- [ ] Smooth scrolling với many cells
+- [ ] Memory usage với large results
+- [ ] Responsive UI during query execution
 
 ---
 
 ## Test Infrastructure
 
 ### Mock Objects
-
-#### `MockDatabaseConnectionManager.swift`
-```swift
-actor MockDatabaseConnectionManager {
-    var connectionState: ConnectionState = .disconnected
-    var mockResults: CellResult?
-    var shouldThrowError = false
-    
-    func connect(config: ConnectionConfig) async throws {
-        if shouldThrowError {
-            throw DatabaseError.connectionFailed
-        }
-        connectionState = .connected
-    }
-    
-    func execute(query: String) async throws -> CellResult {
-        if shouldThrowError {
-            throw DatabaseError.queryFailed
-        }
-        return mockResults ?? CellResult()
-    }
-}
-```
+- [ ] MockDatabaseConnectionManager
+- [ ] Mock query results
+- [ ] Mock error scenarios
+- [ ] Mock connection states
 
 ### Test Helpers
-
-#### `TestHelpers.swift`
-```swift
-extension XCTestCase {
-    func createTestNotebook() -> SQLNotebook {
-        // Helper để tạo test notebook
-    }
-    
-    func createTestCell() -> NotebookCell {
-        // Helper để tạo test cell
-    }
-}
-```
+- [ ] Create test notebook helper
+- [ ] Create test cell helper
+- [ ] Create test result helper
+- [ ] Cleanup test database
 
 ### Test Database Setup
-
-- Sử dụng Docker PostgreSQL container cho integration tests
-- Hoặc local PostgreSQL instance
-- Sample data: tables, rows
-- Cleanup sau mỗi test
-
----
-
-## Test Coverage Goals
-
-- **Unit Tests**: 80%+ coverage cho models, utilities, ViewModels
-- **Integration Tests**: Cover all database operations
-- **UI Tests**: Cover critical user flows
+- [ ] Docker PostgreSQL container
+- [ ] Test schema creation
+- [ ] Sample data insertion
+- [ ] Cleanup after tests
 
 ---
 
-## Running Tests
+## Coverage Goals
 
-### Trong Xcode:
-1. `Cmd+U` - Run all tests
-2. Test Navigator (`Cmd+6`) - Run individual tests
-3. Code coverage: Product → Scheme → Edit Scheme → Test → Options → Code Coverage
+- **Data Models**: 80%+ (Currently: ~70%)
+- **SQL Highlighter**: 80%+ (Currently: ~65%)
+- **ViewModel**: 75%+ (Currently: ~60%)
+- **Database Operations**: 70%+ (Currently: 0%)
+- **Document I/O**: 70%+ (Currently: 0%)
+- **UI Tests**: Coverage of critical flows (Currently: 0%)
 
-### Command Line:
+---
+
+## Test Execution
+
+### Xcode
+- Run all: `Cmd+U`
+- Run specific test: Click trong Test Navigator
+- Enable code coverage: Scheme → Test → Options → Code Coverage
+
+### Command Line
 ```bash
 xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
 ```
 
----
-
-## Best Practices
-
-1. **Arrange-Act-Assert Pattern**: Structure tests clearly
-2. **Test Naming**: `testFunctionName_Scenario_ExpectedResult()`
-3. **Isolation**: Mỗi test independent, không depend on others
-4. **Mock External Dependencies**: Database, file system, network
-5. **Async Testing**: Sử dụng `XCTestExpectation` cho async code
-6. **Cleanup**: Clean up test data sau mỗi test
-
----
-
-## Next Steps
-
-1. ✅ Create test targets trong Xcode
-2. ✅ Set up test infrastructure (helpers, mocks)
-3. ✅ Start với Unit Tests (models, utilities)
-4. ✅ Add Integration Tests (database operations)
-5. ✅ Add UI Tests (critical flows)
-6. ✅ Set up CI/CD test execution (optional)
-
+### CI/CD
+- [ ] Setup GitHub Actions
+- [ ] Run tests on PR
+- [ ] Code coverage reports
+- [ ] Performance regression tests
