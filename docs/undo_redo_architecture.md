@@ -482,6 +482,94 @@ Add visual indicators:
 
 ---
 
+## Common Issues and Fixes
+
+### Undo/Redo Only Works for Single Character
+
+**Symptom:** When pressing Cmd+Z multiple times, only the last character typed is undone. The undo stack appears to only contain one undo operation instead of multiple text changes.
+
+**Root Cause:** The binding update in `textDidChange()` was interfering with the undo manager. When the text binding is updated immediately on every keystroke, it creates conflicts with the undo stack, causing only the last character to be undoable.
+
+**Solution:**
+
+1. **Move binding updates to focus loss**: Only update the SwiftUI binding when the editor loses focus (via `onBlur` callback in `resignFirstResponder`), not on every text change.
+
+2. **Disable undo registration for syntax highlighting**: Explicitly disable undo registration when applying syntax highlighting to prevent these operations from polluting the undo stack.
+
+```swift
+// In textDidChange - DO NOT update binding here
+func textDidChange(_ notification: Notification) {
+  guard let textView = notification.object as? NSTextView else { return }
+
+  // Apply syntax highlighting without affecting undo stack
+  applyHighlightingWithoutUndo(to: textView, text: textView.string)
+
+  // Update height to fit content
+  updateHeight(textView: textView)
+
+  // DO NOT update binding here - it causes undo/redo issues!
+  // The binding will be updated when editor loses focus
+}
+
+// In makeNSView and updateNSView - setup onBlur callback
+textView.onBlur = { [weak coordinator = context.coordinator] newText in
+  coordinator?.text.wrappedValue = newText
+}
+
+// In applyHighlightingWithoutUndo - disable undo registration
+func applyHighlightingWithoutUndo(to textView: NSTextView, text: String) {
+  let undoManager = textView.undoManager
+  undoManager?.disableUndoRegistration()
+
+  textStorage.beginEditing()
+  // ... modify attributes ...
+  textStorage.endEditing()
+
+  undoManager?.enableUndoRegistration()
+}
+```
+
+This ensures that:
+- User text edits are properly tracked by the undo manager
+- Syntax highlighting operations are completely invisible to the undo manager
+- The binding stays in sync (updated on blur) without interfering with undo/redo
+- Placeholder disappears immediately when typing (via separate `isEmpty` state)
+
+**Placeholder Reactivity:**
+
+Since the text binding is only updated on blur, the placeholder needs a separate mechanism to react immediately when user types. This is solved by:
+
+1. Adding an `isEmpty: Bool` binding to track whether text is empty
+2. Updating this binding in `textDidChange()` (safe because it's just a Bool, not the full text)
+3. Placeholder checks `isEmpty` instead of `content.isEmpty`
+
+```swift
+// In SQLEditorView
+@State private var isTextEmpty: Bool = true
+
+// Placeholder checks isTextEmpty
+if isTextEmpty {
+  Text("-- Write your SQL query here...")
+}
+
+// In textDidChange - update isEmpty immediately
+isEmpty.wrappedValue = textView.string.isEmpty
+```
+
+**Files Changed:**
+- `SQLNotebook/Views/Components/HighlightedTextEditor.swift`
+  - Removed text binding update from `textDidChange()`
+  - Added `isEmpty` binding parameter and update it in `textDidChange()`
+  - Added `onBlur` callback setup in `makeNSView()` and `updateNSView()`
+  - Added `disableUndoRegistration()` and `enableUndoRegistration()` calls around syntax highlighting operations
+
+- `SQLNotebook/Views/Components/CellView+Editor.swift`
+  - Added `isTextEmpty` state to track empty status
+  - Placeholder now checks `isTextEmpty` instead of `content.isEmpty`
+  - Added `onChange(of: content)` to sync `isTextEmpty` when content changes externally
+
+---
+
 ## Conclusion
 
 The undo/redo system demonstrates how to build context-aware command routing in SwiftUI apps that mix native AppKit controls (NSTextView) with SwiftUI views. The key insight is using **selective event interception** rather than complete command replacement, allowing native behaviors to work where appropriate while providing custom handling where needed.

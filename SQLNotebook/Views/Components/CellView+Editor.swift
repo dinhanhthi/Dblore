@@ -13,11 +13,12 @@ struct SQLEditorView: View {
   let isFocused: Bool
   var onFocus: (() -> Void)?
   @Binding var textViewRef: SQLTextView?
+  @State private var isTextEmpty: Bool = true
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      // Placeholder
-      if content.isEmpty {
+      // Placeholder - use isTextEmpty state for immediate reactivity
+      if isTextEmpty {
         Text("-- Write your SQL query here...")
           .font(.system(size: 13, design: .monospaced))
           .foregroundColor(.foregroundSubtle)
@@ -26,7 +27,12 @@ struct SQLEditorView: View {
       }
 
       // Text editor with syntax highlighting
-      HighlightedTextEditor(text: $content, onFocus: onFocus, textViewRef: $textViewRef)
+      HighlightedTextEditor(
+        text: $content,
+        onFocus: onFocus,
+        textViewRef: $textViewRef,
+        isEmpty: $isTextEmpty
+      )
     }
     .padding(Spacing.sm)
     .background(Color.inputBackground)
@@ -35,5 +41,13 @@ struct SQLEditorView: View {
       RoundedRectangle(cornerRadius: CornerRadius.md)
         .stroke(isFocused ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
     )
+    .onAppear {
+      // Initialize isEmpty state based on content
+      isTextEmpty = content.isEmpty
+    }
+    .onChange(of: content) { _, newValue in
+      // Update isEmpty when content changes externally
+      isTextEmpty = newValue.isEmpty
+    }
   }
 }
