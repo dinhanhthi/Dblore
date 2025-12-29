@@ -19,14 +19,14 @@ struct SettingsContent: View {
               Text("Max Height")
                 .font(.subheading)
                 .foregroundColor(.foreground)
-              
+
               Spacer()
-              
+
               Text("\(Int(viewModel.notebook.settings.maxResultHeight)) pt")
                 .font(.monoSmall)
                 .foregroundColor(.foregroundMuted)
             }
-            
+
             Slider(
               value: Binding(
                 get: { viewModel.notebook.settings.maxResultHeight },
@@ -38,8 +38,39 @@ struct SettingsContent: View {
               in: 200...1000,
               step: 50
             )
-            
+
             Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
+              .font(.caption)
+              .foregroundColor(.foregroundSubtle)
+          }
+
+          // Max Row Limit
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack {
+              Text("Max Rows")
+                .font(.subheading)
+                .foregroundColor(.foreground)
+
+              Spacer()
+
+              Text("\(viewModel.notebook.settings.maxRowLimit) rows")
+                .font(.monoSmall)
+                .foregroundColor(.foregroundMuted)
+            }
+
+            Slider(
+              value: Binding(
+                get: { Double(viewModel.notebook.settings.maxRowLimit) },
+                set: { newValue in
+                  viewModel.notebook.settings.maxRowLimit = Int(newValue)
+                  viewModel.onDocumentChanged?()
+                }
+              ),
+              in: 10...200,
+              step: 10
+            )
+
+            Text("Maximum rows to fetch from database. Values between 10-200 rows.")
               .font(.caption)
               .foregroundColor(.foregroundSubtle)
           }
@@ -80,30 +111,7 @@ struct SettingsContent: View {
             .foregroundColor(.foregroundSubtle)
           
           // Placeholder for future keyboard shortcut customization UI
-          VStack(alignment: .leading, spacing: Spacing.sm) {
-            ForEach([
-              ("Run Cell", "Ctrl+Enter"),
-              ("Run All", "Cmd+Shift+Enter"),
-              ("Add Cell", "Cmd+B"),
-              ("Delete Cell", "Cmd+Delete"),
-            ], id: \.0) { shortcut in
-              HStack {
-                Text(shortcut.0)
-                  .font(.bodyText)
-                  .foregroundColor(.foregroundMuted)
-                
-                Spacer()
-                
-                Text(shortcut.1)
-                  .font(.monoSmall)
-                  .foregroundColor(.foregroundSubtle)
-                  .padding(.horizontal, Spacing.sm)
-                  .padding(.vertical, Spacing.xs)
-                  .background(Color.inputBackground)
-                  .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-              }
-            }
-          }
+          keyboardShortcutsList
         }
       }
     }
@@ -119,8 +127,35 @@ struct SettingsContent: View {
       Text(title)
         .font(.heading)
         .foregroundColor(.foreground)
-      
+
       content()
+    }
+  }
+
+  private var keyboardShortcutsList: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      shortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
+      shortcutRow(action: "Run All", shortcut: "Cmd+Shift+Enter")
+      shortcutRow(action: "Add Cell", shortcut: "Cmd+B")
+      shortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
+    }
+  }
+
+  private func shortcutRow(action: String, shortcut: String) -> some View {
+    HStack {
+      Text(action)
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+
+      Spacer()
+
+      Text(shortcut)
+        .font(.monoSmall)
+        .foregroundColor(.foregroundSubtle)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.xs)
+        .background(Color.inputBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
     }
   }
 }

@@ -16,8 +16,9 @@ actor DatabaseConnectionManager {
   private var eventLoopGroup: EventLoopGroup?
   private var config: ConnectionConfig?
 
-  /// Maximum number of rows to fetch from database to prevent memory issues
-  static let maxFetchRows = 500
+  /// Default maximum number of rows to fetch from database to prevent memory issues
+  /// This is overridden by the notebook's maxRowLimit setting
+  static let defaultMaxFetchRows = 500
 
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {
@@ -322,7 +323,10 @@ actor DatabaseConnectionManager {
   // MARK: - Query Execution
 
   /// Execute a SQL query and return results
-  func executeQuery(_ query: String) async throws -> QueryResult {
+  /// - Parameters:
+  ///   - query: The SQL query to execute
+  ///   - maxRows: Maximum number of rows to fetch (defaults to defaultMaxFetchRows)
+  func executeQuery(_ query: String, maxRows: Int = defaultMaxFetchRows) async throws -> QueryResult {
     guard let connection = connection else {
       throw DatabaseError.notConnected
     }
@@ -333,9 +337,21 @@ actor DatabaseConnectionManager {
 
     let startTime = Date()
 
-    // For PostgreSQL SELECT queries, wrap to include ctid
-    let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(query)
-    let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(query) : query
+    // Check if user specified a LIMIT that exceeds maxRows
+    let userRequestedLimit = extractLimitValue(query)
+    let userLimitExceeded = if let userLimit = userRequestedLimit {
+      userLimit > maxRows
+    } else {
+      false
+    }
+
+    // Step 1: Wrap query with LIMIT to enforce maxRows
+    // This prevents database from processing too many rows
+    let limitedQuery = wrapQueryWithLimit(query, maxRows: maxRows)
+
+    // Step 2: For PostgreSQL SELECT queries, wrap to include ctid
+    let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(limitedQuery)
+    let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(limitedQuery) : limitedQuery
     do {
       // Execute query and collect rows
       let stream = try await connection.query(
@@ -352,12 +368,6 @@ actor DatabaseConnectionManager {
       var ctidColumnIndex: Int? = nil
 
       for try await row in stream {
-        // Stop fetching if we've reached the limit
-        if resultRows.count >= Self.maxFetchRows {
-          wasLimited = true
-          break
-        }
-
         let randomAccess = row.makeRandomAccess()
 
         // On first row, extract column metadata from PostgresCells
@@ -408,13 +418,23 @@ actor DatabaseConnectionManager {
 
       let executionTime = Date().timeIntervalSince(startTime)
 
+      // Check if result was limited:
+      // - If we got exactly maxRows AND the original query didn't have LIMIT
+      // - This indicates there might be more rows available
+      let hadNoLimit = !hasLimitClause(query)
+      if resultRows.count == maxRows && hadNoLimit && isSelectQuery(query) {
+        wasLimited = true
+      }
+
       return QueryResult(
         columns: columns,
         rows: resultRows,
         rowCount: resultRows.count,
         executionTime: executionTime,
         wasLimited: wasLimited,
-        rowIdentifiers: rowIdentifiers
+        rowIdentifiers: rowIdentifiers,
+        userLimitExceeded: userLimitExceeded,
+        userRequestedLimit: userRequestedLimit
       )
 
     } catch let error as PSQLError {
@@ -430,6 +450,72 @@ actor DatabaseConnectionManager {
   private func isSelectQuery(_ query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.uppercased().hasPrefix("SELECT")
+  }
+
+  /// Check if a query already has a LIMIT clause
+  private func hasLimitClause(_ query: String) -> Bool {
+    let normalized = query.lowercased()
+    // Use regex to find LIMIT as a separate word (not part of another word)
+    return normalized.range(of: "\\blimit\\b", options: .regularExpression) != nil
+  }
+
+  /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
+  private func extractLimitValue(_ query: String) -> Int? {
+    // Remove semicolons and trim
+    let cleaned = query.replacingOccurrences(of: ";", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = cleaned.lowercased()
+
+    // Pattern: LIMIT <number> (may have whitespace, semicolon, or end of string after)
+    let pattern = "\\blimit\\s+(\\d+)"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+          let match = regex.firstMatch(in: normalized, options: [], range: NSRange(normalized.startIndex..., in: normalized)),
+          match.numberOfRanges > 1,
+          let numberRange = Range(match.range(at: 1), in: normalized)
+    else {
+      return nil
+    }
+
+    let numberString = String(normalized[numberRange])
+    return Int(numberString)
+  }
+
+  /// Wrap a SELECT query with LIMIT clause to prevent fetching too many rows
+  /// Enforces maxRows limit even if the query already has a LIMIT clause
+  private func wrapQueryWithLimit(_ query: String, maxRows: Int) -> String {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Don't wrap if it's not a SELECT query
+    if !isSelectQuery(trimmed) {
+      return trimmed
+    }
+
+    // Check if query already has a LIMIT clause
+    if hasLimitClause(trimmed) {
+      // Replace existing LIMIT with min(userLimit, maxRows)
+      return replaceLimitValue(trimmed, maxRows: maxRows)
+    }
+
+    // No LIMIT clause - append LIMIT maxRows
+    return "\(trimmed) LIMIT \(maxRows)"
+  }
+
+  /// Replace LIMIT value in query with maxRows if user's LIMIT exceeds it
+  private func replaceLimitValue(_ query: String, maxRows: Int) -> String {
+    // Pattern: LIMIT <number>
+    let pattern = "\\bLIMIT\\s+\\d+"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+      return query
+    }
+
+    let nsRange = NSRange(query.startIndex..., in: query)
+    let modifiedQuery = regex.stringByReplacingMatches(
+      in: query,
+      options: [],
+      range: nsRange,
+      withTemplate: "LIMIT \(maxRows)"
+    )
+
+    return modifiedQuery
   }
 
   /// Wrap a SELECT query to include ctid as an aliased column
@@ -806,10 +892,15 @@ struct QueryResult: Sendable {
   let wasLimited: Bool
   /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
   let rowIdentifiers: [CellValue]
+  /// True if user's LIMIT in query exceeded maxRows and was capped
+  let userLimitExceeded: Bool
+  /// The original LIMIT value user specified (if any)
+  let userRequestedLimit: Int?
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
-    wasLimited: Bool = false, rowIdentifiers: [CellValue] = []
+    wasLimited: Bool = false, rowIdentifiers: [CellValue] = [],
+    userLimitExceeded: Bool = false, userRequestedLimit: Int? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -817,6 +908,8 @@ struct QueryResult: Sendable {
     self.executionTime = executionTime
     self.wasLimited = wasLimited
     self.rowIdentifiers = rowIdentifiers
+    self.userLimitExceeded = userLimitExceeded
+    self.userRequestedLimit = userRequestedLimit
   }
 }
 

@@ -51,9 +51,26 @@ class NotebookViewModel {
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
 
+  // Toast notification
+  var currentToast: ToastMessage?
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     self.editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
+  }
+
+  // MARK: - Toast Notifications
+
+  func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
+    currentToast = ToastMessage(message: message, type: type)
+
+    // Auto-dismiss after 4 seconds
+    Task { @MainActor in
+      try? await Task.sleep(for: .seconds(4))
+      if currentToast?.message == message {
+        currentToast = nil
+      }
+    }
   }
 
   // MARK: - Statistics

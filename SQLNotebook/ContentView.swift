@@ -52,7 +52,22 @@ struct ContentView: View {
         // Footer
         FooterView(viewModel: viewModel, lastSaved: lastSaved)
       }
+
+      // Toast notification (bottom-right corner)
+      if let toast = viewModel.currentToast {
+        VStack {
+          Spacer()
+          HStack {
+            Spacer()
+            ToastView(toast: toast)
+              .padding(Spacing.lg)
+              .transition(.move(edge: .trailing).combined(with: .opacity))
+          }
+        }
+        .allowsHitTesting(false)
+      }
     }
+    .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
     .modifier(
       NotificationHandlerModifier(
         viewModel: viewModel,

@@ -23,7 +23,11 @@ extension NotebookViewModel {
 
     do {
       // Execute query using DatabaseConnectionManager
-      let queryResult = try await connectionManager.executeQuery(query)
+      // Use notebook's maxRowLimit setting
+      let queryResult = try await connectionManager.executeQuery(
+        query,
+        maxRows: notebook.settings.maxRowLimit
+      )
 
       executionCounter += 1
 
@@ -47,11 +51,21 @@ extension NotebookViewModel {
         sourceQuery: query,
         tableName: tableName,
         primaryKeyColumns: primaryKeyColumns,
-        rowIdentifiers: queryResult.rowIdentifiers
+        rowIdentifiers: queryResult.rowIdentifiers,
+        userLimitExceeded: queryResult.userLimitExceeded,
+        userRequestedLimit: queryResult.userRequestedLimit
       )
 
       notebook.cells[index].result = result
       notebook.cells[index].executionCount = executionCounter
+
+      // Show toast if user's LIMIT was exceeded and capped
+      if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
+        showToast(
+          "Query limit capped from \(requestedLimit) to \(notebook.settings.maxRowLimit) rows. Increase in Settings.",
+          type: .warning
+        )
+      }
     } catch let error as DatabaseError {
       // Handle database-specific errors
       let executionTime = error.executionTime ?? 0
