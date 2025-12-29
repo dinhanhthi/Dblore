@@ -167,6 +167,13 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 ### 4.2 Header Actions
 - [x] Wire up "+ Code" button
 - [x] Implement "Run All" functionality (sequential execution)
+- [ ] Implement cell execution queue system
+  - [ ] Add queue management to execute multiple cells one after another
+  - [ ] Add visual indicator (icon) to show when cell is in queue
+  - [ ] Implement queue state for cells (pending, queued, running, completed)
+  - [ ] Add queue position indicator (e.g., "3/5" in queue)
+  - [ ] Allow adding individual cells to queue (not just "Run All")
+  - [ ] Add ability to cancel queued cells
 - [x] Implement "Clear All Outputs" functionality
 - [x] Add button icons using SF Symbols
 - [x] Style buttons according to design system
