@@ -25,7 +25,7 @@ struct ResultTableView: View {
   }
 
   private var needsVerticalScroll: Bool {
-    estimatedContentHeight > viewModel.notebook.settings.maxResultHeight
+    estimatedContentHeight > AppSettings.shared.maxResultHeight
   }
 
   private var scrollAxes: Axis.Set {
@@ -51,7 +51,7 @@ struct ResultTableView: View {
       }
       .scrollBounceBehavior(.basedOnSize)
       .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
-      .frame(maxHeight: viewModel.notebook.settings.maxResultHeight)
+      .frame(maxHeight: AppSettings.shared.maxResultHeight)
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)

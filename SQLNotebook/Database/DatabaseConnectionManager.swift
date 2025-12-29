@@ -18,7 +18,7 @@ actor DatabaseConnectionManager {
 
   /// Default maximum number of rows to fetch from database to prevent memory issues
   /// This is overridden by the notebook's maxRowLimit setting
-  static let defaultMaxFetchRows = 500
+  static let defaultMaxFetchRows = 100
 
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {

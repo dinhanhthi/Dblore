@@ -23,10 +23,10 @@ extension NotebookViewModel {
 
     do {
       // Execute query using DatabaseConnectionManager
-      // Use notebook's maxRowLimit setting
+      // Use app's maxRowLimit setting
       let queryResult = try await connectionManager.executeQuery(
         query,
-        maxRows: notebook.settings.maxRowLimit
+        maxRows: AppSettings.shared.maxRowLimit
       )
 
       executionCounter += 1
@@ -62,7 +62,7 @@ extension NotebookViewModel {
       // Show toast if user's LIMIT was exceeded and capped
       if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
         showToast(
-          "Query limit capped from \(requestedLimit) to \(notebook.settings.maxRowLimit) rows. Increase in Settings.",
+          "Query limit capped from \(requestedLimit) to \(AppSettings.shared.maxRowLimit) rows. Increase in Settings.",
           type: .warning
         )
       }

@@ -316,7 +316,7 @@ struct CellView: View {
           Text("(")
           Image(systemName: "exclamationmark.triangle.fill")
             .foregroundColor(.foregroundSubtle)
-          Text("limited to \(viewModel.notebook.settings.maxRowLimit) rows")
+          Text("limited to \(AppSettings.shared.maxRowLimit) rows")
             .foregroundColor(.foregroundSubtle)
           Text(")")
         }.font(.caption2)

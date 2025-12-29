@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SettingsContent: View {
   @Bindable var viewModel: NotebookViewModel
+  @Bindable var appSettings = AppSettings.shared
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -22,19 +23,13 @@ struct SettingsContent: View {
 
               Spacer()
 
-              Text("\(Int(viewModel.notebook.settings.maxResultHeight)) pt")
+              Text("\(Int(appSettings.maxResultHeight)) pt")
                 .font(.monoSmall)
                 .foregroundColor(.foregroundMuted)
             }
 
             Slider(
-              value: Binding(
-                get: { viewModel.notebook.settings.maxResultHeight },
-                set: { newValue in
-                  viewModel.notebook.settings.maxResultHeight = newValue
-                  viewModel.onDocumentChanged?()
-                }
-              ),
+              value: $appSettings.maxResultHeight,
               in: 200...1000,
               step: 50
             )
@@ -53,17 +48,16 @@ struct SettingsContent: View {
 
               Spacer()
 
-              Text("\(viewModel.notebook.settings.maxRowLimit) rows")
+              Text("\(appSettings.maxRowLimit) rows")
                 .font(.monoSmall)
                 .foregroundColor(.foregroundMuted)
             }
 
             Slider(
               value: Binding(
-                get: { Double(viewModel.notebook.settings.maxRowLimit) },
+                get: { Double(appSettings.maxRowLimit) },
                 set: { newValue in
-                  viewModel.notebook.settings.maxRowLimit = Int(newValue)
-                  viewModel.onDocumentChanged?()
+                  appSettings.maxRowLimit = Int(newValue)
                 }
               ),
               in: 10...200,
@@ -76,25 +70,19 @@ struct SettingsContent: View {
           }
         }
       }
-      
+
       Divider()
-      
+
       // Save Settings
       settingsSection(title: "Save Options") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Toggle(
             "Include Results When Saving",
-            isOn: Binding(
-              get: { viewModel.notebook.settings.includeResultsOnSave },
-              set: { newValue in
-                viewModel.notebook.settings.includeResultsOnSave = newValue
-                viewModel.onDocumentChanged?()
-              }
-            )
+            isOn: $appSettings.includeResultsOnSave
           )
           .font(.bodyText)
           .foregroundColor(.foreground)
-          
+
           Text("When enabled, query results are saved with the notebook. Disable to reduce file size.")
             .font(.caption)
             .foregroundColor(.foregroundSubtle)
