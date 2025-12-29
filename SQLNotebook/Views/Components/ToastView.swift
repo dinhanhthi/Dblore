@@ -22,23 +22,51 @@ struct ToastMessage: Identifiable, Equatable {
 /// Toast notification view (bottom-right corner)
 struct ToastView: View {
   let toast: ToastMessage
+  let viewModel: NotebookViewModel
+
+  @State private var isHovered = false
 
   var body: some View {
-    HStack(spacing: Spacing.sm) {
+    HStack(spacing: Spacing.md) {
       icon
-        .font(.system(size: 14))
+        .font(.system(size: 20, weight: .semibold))
         .foregroundColor(iconColor)
 
       Text(toast.message)
-        .font(.caption)
+        .font(.body)
         .foregroundColor(.foreground)
         .lineLimit(2)
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
-    .background(backgroundColor)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-    .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+    .padding(.horizontal, Spacing.lg)
+    .padding(.vertical, Spacing.md)
+    .background(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .fill(backgroundColor)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .strokeBorder(borderColor, lineWidth: 1)
+    )
+    .overlay(
+      // Subtle inner glow
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .strokeBorder(
+          LinearGradient(
+            colors: [borderColor.opacity(0.3), .clear],
+            startPoint: .top,
+            endPoint: .bottom
+          ),
+          lineWidth: 1
+        )
+        .padding(1)
+    )
+    .shadow(color: borderColor.opacity(0.2), radius: 8, x: 0, y: 0)  // Glow effect
+    .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 4)  // Deep shadow
+    .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)   // Close shadow
+    .onHover { hovering in
+      isHovered = hovering
+      viewModel.setToastHovered(hovering)
+    }
   }
 
   @ViewBuilder
@@ -68,32 +96,59 @@ struct ToastView: View {
     }
   }
 
+  private var borderColor: Color {
+    switch toast.type {
+    case .info:
+      return .accent
+    case .warning:
+      return .warning
+    case .error:
+      return .destructive
+    case .success:
+      return .success
+    }
+  }
+
   private var backgroundColor: Color {
-    Color.cardBackground.opacity(0.95)
+    Color.cellBackground.opacity(0.95)
   }
 }
 
 #Preview {
-  VStack(spacing: Spacing.lg) {
-    ToastView(toast: ToastMessage(
-      message: "Query limit enforced to 50 rows. Increase in Settings.",
-      type: .warning
-    ))
+  let viewModel = NotebookViewModel()
 
-    ToastView(toast: ToastMessage(
-      message: "Query executed successfully",
-      type: .success
-    ))
+  return VStack(spacing: Spacing.lg) {
+    ToastView(
+      toast: ToastMessage(
+        message: "Query limit enforced to 50 rows. Increase in Settings.",
+        type: .warning
+      ),
+      viewModel: viewModel
+    )
 
-    ToastView(toast: ToastMessage(
-      message: "Connection failed",
-      type: .error
-    ))
+    ToastView(
+      toast: ToastMessage(
+        message: "Query executed successfully",
+        type: .success
+      ),
+      viewModel: viewModel
+    )
 
-    ToastView(toast: ToastMessage(
-      message: "New notebook created",
-      type: .info
-    ))
+    ToastView(
+      toast: ToastMessage(
+        message: "Connection failed",
+        type: .error
+      ),
+      viewModel: viewModel
+    )
+
+    ToastView(
+      toast: ToastMessage(
+        message: "New notebook created",
+        type: .info
+      ),
+      viewModel: viewModel
+    )
   }
   .padding()
   .background(Color.appBackground)

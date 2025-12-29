@@ -59,12 +59,12 @@ struct ContentView: View {
           Spacer()
           HStack {
             Spacer()
-            ToastView(toast: toast)
-              .padding(Spacing.lg)
+            ToastView(toast: toast, viewModel: viewModel)
+              .padding(.horizontal, Spacing.lg)
+              .padding(.vertical, Spacing.xxl)
               .transition(.move(edge: .trailing).combined(with: .opacity))
           }
         }
-        .allowsHitTesting(false)
       }
     }
     .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
