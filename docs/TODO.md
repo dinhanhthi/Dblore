@@ -224,6 +224,23 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
   - [ ] Add file size indicator in footer
   - [ ] Add "Optimize File" menu option
 
+### 4.12 Logging System
+- [ ] Implement centralized logging system throughout the app
+  - [ ] Create `AppLogger` utility class using `swift-log`
+  - [ ] Replace all `print()` statements with proper logging calls
+  - [ ] Add log levels (debug, info, warning, error)
+  - [ ] Implement log capture system (store logs in memory/file)
+  - [ ] Add log rotation (limit log file size, keep last N files)
+  - [ ] Add log filtering by level and component
+- [ ] Add menu option to send logs to developers
+  - [ ] Create "Send Logs" menu item in Help menu
+  - [ ] Implement log export functionality (format as text/JSON)
+  - [ ] Add option to include/exclude sensitive data (passwords, connection strings)
+  - [ ] Add option to attach system info (OS version, app version)
+  - [ ] Implement log sending mechanism (email, webhook, or file export)
+  - [ ] Show confirmation dialog before sending
+  - [ ] Add privacy notice about what data is included
+
 ### 4.10 Settings Panel ✅
 - [x] Create `NotebookSettings` model to store notebook preferences
 - [x] Add settings to `SQLNotebook` model
@@ -610,7 +627,8 @@ Xem chi tiết kế hoạch ở section "Phase 6: Testing Suite" bên dưới.
 3. **Comment/Uncomment** (4.6) - `Cmd+/` for SQL line commenting
 4. **Drag and Drop** (4.4) - Cell reordering with drag handles
 5. **Save Prompt** (4.7) - Prompt to save on close if unsaved
-6. **File Optimization** (4.11) - Optimize .sqlnb file when it's large ⭐ NEW
+6. **File Optimization** (4.11) - Optimize .sqlnb file when it's large
+7. **Logging System** (4.12) - Centralized logging with send-to-developer option ⭐ NEW
 
 ### Then: Phase 5 Advanced Features
 1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
