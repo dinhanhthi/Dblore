@@ -16,12 +16,6 @@ extension UTType {
 struct SQLNotebookDocument: FileDocument {
   var notebook: SQLNotebook
 
-  // Store includeResultsOnSave flag to avoid MainActor issues in fileWrapper
-  @MainActor
-  private static var _includeResultsOnSave: Bool {
-    AppSettings.shared.includeResultsOnSave
-  }
-
   nonisolated static var readableContentTypes: [UTType] {
     [.sqlNotebook, .json]
   }
@@ -45,10 +39,8 @@ struct SQLNotebookDocument: FileDocument {
     var notebookToSave = notebook
     notebookToSave.metadata.modifiedAt = Date()
 
-    // Access AppSettings on MainActor synchronously
-    let includeResults = MainActor.assumeIsolated {
-      AppSettings.shared.includeResultsOnSave
-    }
+    // Access AppSettings in a thread-safe way
+    let includeResults = AppSettings.getIncludeResultsOnSave()
 
     let data = try DocumentCoder.encode(notebookToSave, includeResultsOnSave: includeResults)
     return FileWrapper(regularFileWithContents: data)
