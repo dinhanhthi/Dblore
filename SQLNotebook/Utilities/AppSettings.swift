@@ -16,7 +16,7 @@ class AppSettings {
 
   // MARK: - UserDefaults Keys
 
-  private enum Keys {
+  nonisolated private enum Keys {
     static let maxResultHeight = "app.settings.maxResultHeight"
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
     static let maxRowLimit = "app.settings.maxRowLimit"
@@ -49,6 +49,17 @@ class AppSettings {
       }
       UserDefaults.standard.set(maxRowLimit, forKey: Keys.maxRowLimit)
     }
+  }
+
+  // MARK: - Thread-safe accessors for non-MainActor contexts
+
+  /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
+  nonisolated static func getIncludeResultsOnSave() -> Bool {
+    // Check if key exists, otherwise use default
+    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
+      return UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    }
+    return true // default value
   }
 
   // MARK: - Initialization
