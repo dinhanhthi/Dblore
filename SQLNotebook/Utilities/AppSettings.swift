@@ -1,0 +1,83 @@
+//
+//  AppSettings.swift
+//  SQLNotebook
+//
+
+import Foundation
+import SwiftUI
+
+/// Global app settings using UserDefaults
+/// These settings apply to the entire app, not per-notebook
+@MainActor
+@Observable
+class AppSettings {
+  /// Shared singleton instance
+  static let shared = AppSettings()
+
+  // MARK: - UserDefaults Keys
+
+  private enum Keys {
+    static let maxResultHeight = "app.settings.maxResultHeight"
+    static let includeResultsOnSave = "app.settings.includeResultsOnSave"
+    static let maxRowLimit = "app.settings.maxRowLimit"
+  }
+
+  // MARK: - Settings Properties
+
+  /// Maximum height for result table view (in points)
+  var maxResultHeight: CGFloat = 500.0 {
+    didSet {
+      UserDefaults.standard.set(Double(maxResultHeight), forKey: Keys.maxResultHeight)
+    }
+  }
+
+  /// Whether to include results when saving the notebook
+  var includeResultsOnSave: Bool = true {
+    didSet {
+      UserDefaults.standard.set(includeResultsOnSave, forKey: Keys.includeResultsOnSave)
+    }
+  }
+
+  /// Maximum number of rows to fetch from database (default 50, max 200)
+  var maxRowLimit: Int = 50 {
+    didSet {
+      // Clamp between 1 and 200
+      let clampedValue = min(max(maxRowLimit, 1), 200)
+      if clampedValue != maxRowLimit {
+        maxRowLimit = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      UserDefaults.standard.set(maxRowLimit, forKey: Keys.maxRowLimit)
+    }
+  }
+
+  // MARK: - Initialization
+
+  private init() {
+    // Load from UserDefaults or use defaults
+    let savedHeight = UserDefaults.standard.double(forKey: Keys.maxResultHeight)
+    if savedHeight > 0 {
+      self.maxResultHeight = CGFloat(savedHeight)
+    }
+
+    // Check if key exists, otherwise use default
+    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
+      self.includeResultsOnSave = UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    }
+
+    let savedLimit = UserDefaults.standard.integer(forKey: Keys.maxRowLimit)
+    if savedLimit > 0 {
+      // Clamp between 1 and 200
+      self.maxRowLimit = min(max(savedLimit, 1), 200)
+    }
+  }
+
+  // MARK: - Reset to Defaults
+
+  /// Reset all settings to their default values
+  func resetToDefaults() {
+    maxResultHeight = 500.0
+    includeResultsOnSave = true
+    maxRowLimit = 50
+  }
+}

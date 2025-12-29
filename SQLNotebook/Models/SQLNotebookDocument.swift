@@ -16,6 +16,12 @@ extension UTType {
 struct SQLNotebookDocument: FileDocument {
   var notebook: SQLNotebook
 
+  // Store includeResultsOnSave flag to avoid MainActor issues in fileWrapper
+  @MainActor
+  private static var _includeResultsOnSave: Bool {
+    AppSettings.shared.includeResultsOnSave
+  }
+
   nonisolated static var readableContentTypes: [UTType] {
     [.sqlNotebook, .json]
   }
@@ -35,10 +41,16 @@ struct SQLNotebookDocument: FileDocument {
     self.notebook = try DocumentCoder.decode(from: data)
   }
 
-  func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+  nonisolated func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
     var notebookToSave = notebook
     notebookToSave.metadata.modifiedAt = Date()
-    let data = try DocumentCoder.encode(notebookToSave)
+
+    // Access AppSettings on MainActor synchronously
+    let includeResults = MainActor.assumeIsolated {
+      AppSettings.shared.includeResultsOnSave
+    }
+
+    let data = try DocumentCoder.encode(notebookToSave, includeResultsOnSave: includeResults)
     return FileWrapper(regularFileWithContents: data)
   }
 }
@@ -70,16 +82,12 @@ private enum DocumentCoder {
     // Connection information should be managed separately
     let connectionConfig: ConnectionConfig? = nil
 
-    // Decode settings
+    // Decode settings (legacy format for backward compatibility)
     let settingsDict = json["settings"] as? [String: Any] ?? [:]
-    let maxResultHeight = (settingsDict["maxResultHeight"] as? Double).map { CGFloat($0) } ?? 500.0
-    let includeResultsOnSave = settingsDict["includeResultsOnSave"] as? Bool ?? true
     let keyboardShortcuts = settingsDict["keyboardShortcuts"] as? [String: String] ?? [:]
-    let settings = NotebookSettings(
-      maxResultHeight: maxResultHeight,
-      includeResultsOnSave: includeResultsOnSave,
-      keyboardShortcuts: keyboardShortcuts
-    )
+    let settings = NotebookSettings(keyboardShortcuts: keyboardShortcuts)
+
+    // NOTE: maxResultHeight, includeResultsOnSave, and maxRowLimit are now in AppSettings (global)
 
     // Decode cells
     var cells: [NotebookCell] = []
@@ -112,7 +120,7 @@ private enum DocumentCoder {
     return SQLNotebook(id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig, settings: settings)
   }
 
-  nonisolated static func encode(_ notebook: SQLNotebook) throws -> Data {
+  nonisolated static func encode(_ notebook: SQLNotebook, includeResultsOnSave: Bool) throws -> Data {
     let dateFormatter = ISO8601DateFormatter()
 
     var json: [String: Any] = [
@@ -129,10 +137,9 @@ private enum DocumentCoder {
     // Connection information should be managed separately (e.g., via Keychain)
 
     // Encode settings
+    // NOTE: maxResultHeight, includeResultsOnSave, and maxRowLimit are now in AppSettings (global)
     json["settings"] = [
-      "maxResultHeight": Double(notebook.settings.maxResultHeight),
-      "includeResultsOnSave": notebook.settings.includeResultsOnSave,
-      "keyboardShortcuts": notebook.settings.keyboardShortcuts,
+      "keyboardShortcuts": notebook.settings.keyboardShortcuts
     ]
 
     var cellsArray: [[String: Any]] = []
@@ -145,8 +152,8 @@ private enum DocumentCoder {
       if let count = cell.executionCount {
         cellDict["executionCount"] = count
       }
-      // Encode result if present AND if settings allow it
-      if let result = cell.result, notebook.settings.includeResultsOnSave {
+      // Encode result if present AND if app settings allow it
+      if let result = cell.result, includeResultsOnSave {
         cellDict["result"] = encodeResult(result, dateFormatter: dateFormatter)
       }
       cellsArray.append(cellDict)
