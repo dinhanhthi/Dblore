@@ -53,7 +53,8 @@ extension NotebookViewModel {
         primaryKeyColumns: primaryKeyColumns,
         rowIdentifiers: queryResult.rowIdentifiers,
         userLimitExceeded: queryResult.userLimitExceeded,
-        userRequestedLimit: queryResult.userRequestedLimit
+        userRequestedLimit: queryResult.userRequestedLimit,
+        affectedRows: queryResult.affectedRows
       )
 
       notebook.cells[index].result = result

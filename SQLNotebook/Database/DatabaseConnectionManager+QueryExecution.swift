@@ -27,6 +27,56 @@ extension DatabaseConnectionManager {
 
     let startTime = Date()
 
+    // Check if this is a modification query (UPDATE, DELETE, INSERT)
+    let isModification = isModificationQuery(query)
+
+    // For modification queries, we need to get affected rows count
+    if isModification {
+      do {
+        // NOTE: PostgresNIO 1.30.1 does not expose commandTag via onMetadata callback
+        // The onMetadata parameter is not available in the current version
+        // Solution: Use CTE with RETURNING to get affected rows count
+        // This is reliable and works across all PostgreSQL versions (8.2+)
+        let wrappedQuery = wrapModificationQueryForCount(query)
+
+        let stream = try await connection.query(
+          PostgresQuery(unsafeSQL: wrappedQuery),
+          logger: Logger(label: "sqlnotebook")
+        )
+
+        // The wrapped query returns a single row with count
+        var affectedRows = 0
+        for try await row in stream {
+          let randomAccess = row.makeRandomAccess()
+          // Get the first column which contains the count
+          if let cell = randomAccess.first {
+            if let count = try? cell.decode(Int64.self, context: .default) {
+              affectedRows = Int(count)
+            }
+          }
+        }
+
+        let executionTime = Date().timeIntervalSince(startTime)
+
+        return QueryResult(
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          executionTime: executionTime,
+          affectedRows: affectedRows
+        )
+
+      } catch let error as PSQLError {
+        let executionTime = Date().timeIntervalSince(startTime)
+        let errorMessage = formatPostgresError(error, query: query)
+        throw DatabaseError.queryFailed(errorMessage, executionTime)
+      } catch {
+        let executionTime = Date().timeIntervalSince(startTime)
+        throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
+      }
+    }
+
+    // For SELECT queries, proceed with normal logic
     // Check if user specified a LIMIT that exceeds maxRows
     let userRequestedLimit = extractLimitValue(query)
     let userLimitExceeded = if let userLimit = userRequestedLimit {
@@ -253,6 +303,55 @@ extension DatabaseConnectionManager {
   private func isSelectQuery(_ query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.uppercased().hasPrefix("SELECT")
+  }
+
+  /// Check if a query is a data modification statement (UPDATE, DELETE, INSERT)
+  private func isModificationQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT")
+  }
+
+  /// Wrap a modification query (UPDATE/DELETE/INSERT) to return affected row count
+  /// Uses WITH (CTE) to capture the affected rows and count them
+  /// This is necessary because PostgresNIO 1.30.1 doesn't expose commandTag in public API
+  private func wrapModificationQueryForCount(_ query: String) -> String {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    let upperQuery = trimmed.uppercased()
+
+    // Remove trailing semicolon if present
+    let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
+
+    // For UPDATE, DELETE, and INSERT, we can use RETURNING to get affected rows
+    if upperQuery.hasPrefix("UPDATE") || upperQuery.hasPrefix("DELETE") || upperQuery.hasPrefix("INSERT") {
+      // Wrap with CTE and count
+      return """
+        WITH affected AS (
+          \(cleanQuery) RETURNING 1
+        )
+        SELECT COUNT(*) FROM affected;
+        """
+    }
+
+    // Fallback (shouldn't happen if isModificationQuery is correct)
+    return cleanQuery
+  }
+
+  /// Parse affected rows count from PostgreSQL commandTag
+  /// NOTE: This is for future use when PostgresNIO exposes commandTag
+  /// CommandTag format examples:
+  /// - "UPDATE 5" -> 5 rows affected
+  /// - "DELETE 3" -> 3 rows affected
+  /// - "INSERT 0 1" -> 1 row inserted (oid is 0)
+  private func parseAffectedRows(from commandTag: String) -> Int? {
+    let parts = commandTag.split(separator: " ")
+
+    // For INSERT: "INSERT oid rows" - we want the last part (rows)
+    // For UPDATE/DELETE: "UPDATE rows" or "DELETE rows" - we want the last part
+    if let last = parts.last, let count = Int(last) {
+      return count
+    }
+
+    return nil
   }
 
   /// Check if a query already has a LIMIT clause

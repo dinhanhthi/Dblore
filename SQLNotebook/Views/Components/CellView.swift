@@ -266,6 +266,9 @@ struct CellView: View {
         if let error = result.error {
           // Error display
           errorView(error)
+        } else if let affectedRows = result.affectedRows {
+          // Success message for UPDATE/DELETE/INSERT
+          successView(affectedRows: affectedRows, executionTime: result.executionTime)
         } else {
           // Result table
           ResultTableView(result: result, viewModel: viewModel, cellId: cell.id)
@@ -280,6 +283,37 @@ struct CellView: View {
       .padding(.trailing, Spacing.md)
     }
     .padding(.bottom, Spacing.md)
+  }
+
+  private func successView(affectedRows: Int, executionTime: TimeInterval) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
+        Image(systemName: "checkmark.circle.fill")
+          .foregroundColor(.green)
+
+        Text("Success")
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundColor(.green)
+      }
+      .padding(.bottom, Spacing.md)
+
+      HStack(spacing: Spacing.md) {
+        Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
+          .font(.mono)
+          .foregroundColor(.foreground)
+
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+
+        Text(String(format: "Execution time: %.3fs", executionTime))
+          .font(.mono)
+          .foregroundColor(.foregroundSubtle)
+      }
+    }
+    .padding(Spacing.md)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.green.opacity(0.1))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 
   private func errorView(_ error: String) -> some View {
