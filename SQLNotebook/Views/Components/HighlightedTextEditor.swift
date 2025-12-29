@@ -12,12 +12,14 @@ struct HighlightedTextEditor: View {
   @Binding var text: String
   var onFocus: (() -> Void)?
   @Binding var textViewRef: SQLTextView?
+  @Binding var isEmpty: Bool
   @State private var height: CGFloat = 40
 
   var body: some View {
     HighlightedTextEditorRepresentable(
       text: $text,
       height: $height,
+      isEmpty: $isEmpty,
       onFocus: onFocus,
       textViewRef: $textViewRef
     )
@@ -28,6 +30,7 @@ struct HighlightedTextEditor: View {
 struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var text: String
   @Binding var height: CGFloat
+  @Binding var isEmpty: Bool
   var onFocus: (() -> Void)?
   @Binding var textViewRef: SQLTextView?
 
@@ -37,6 +40,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     textView.delegate = context.coordinator
     textView.onFocus = onFocus
+
+    // Setup onBlur callback to update binding when editor loses focus
+    textView.onBlur = { [weak coordinator = context.coordinator] newText in
+      coordinator?.text.wrappedValue = newText
+    }
 
     // Store reference to textView
     DispatchQueue.main.async {
@@ -90,6 +98,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Update callbacks
     textView.onFocus = onFocus
 
+    // Setup onBlur callback to update binding when editor loses focus
+    textView.onBlur = { [weak coordinator = context.coordinator] newText in
+      coordinator?.text.wrappedValue = newText
+    }
+
     // Only update text from external source if different
     // Don't update if textView is first responder (user is typing)
     if textView.string != text && textView.window?.firstResponder != textView {
@@ -103,16 +116,18 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   }
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(text: $text, height: $height)
+    Coordinator(text: $text, height: $height, isEmpty: $isEmpty)
   }
 
   class Coordinator: NSObject, NSTextViewDelegate {
     var text: Binding<String>
     var height: Binding<CGFloat>
+    var isEmpty: Binding<Bool>
 
-    init(text: Binding<String>, height: Binding<CGFloat>) {
+    init(text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>) {
       self.text = text
       self.height = height
+      self.isEmpty = isEmpty
     }
 
     func textDidChange(_ notification: Notification) {
@@ -127,17 +142,26 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       // Update height to fit content
       updateHeight(textView: textView)
 
-      // Update binding immediately so placeholder can react
-      // This is needed for placeholder to disappear while typing
-      text.wrappedValue = textView.string
+      // Update isEmpty state for placeholder reactivity (this is safe and doesn't affect undo)
+      isEmpty.wrappedValue = textView.string.isEmpty
+
+      // DO NOT update text binding here - it causes undo/redo issues!
+      // The text binding will be updated when editor loses focus (see onBlur callback in resignFirstResponder)
     }
 
     func applyHighlighting(to textView: NSTextView, text: String) {
       let attributed = SQLSyntaxHighlighter.highlight(text)
 
+      // Disable undo registration for programmatic text changes
+      let undoManager = textView.undoManager
+      undoManager?.disableUndoRegistration()
+
       textView.textStorage?.beginEditing()
       textView.textStorage?.setAttributedString(attributed)
       textView.textStorage?.endEditing()
+
+      // Re-enable undo registration
+      undoManager?.enableUndoRegistration()
     }
 
     /// Apply syntax highlighting without creating undo operations
@@ -152,9 +176,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
       let fullRange = NSRange(location: 0, length: textStorage.length)
 
-      // Use shouldChangeText to control undo behavior
-      // By wrapping in beginEditing/endEditing without shouldChangeText,
-      // we can modify attributes without registering undo
+      // Disable undo registration while applying syntax highlighting
+      // This prevents syntax highlighting from interfering with text editing undo/redo
+      let undoManager = textView.undoManager
+      undoManager?.disableUndoRegistration()
+
       textStorage.beginEditing()
 
       // Remove all attributes first
@@ -168,6 +194,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       }
 
       textStorage.endEditing()
+
+      // Re-enable undo registration
+      undoManager?.enableUndoRegistration()
     }
 
     func updateHeight(textView: NSTextView) {
