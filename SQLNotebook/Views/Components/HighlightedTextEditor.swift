@@ -58,7 +58,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       undoManager.groupsByEvent = true
     }
 
-    textView.textContainerInset = NSSize(width: 4, height: 4)
+    textView.textContainerInset = NSSize(width: 4, height: 2)
     textView.textContainer?.lineFragmentPadding = 0
 
     // Configure text container to expand vertically
@@ -184,7 +184,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       let requiredHeight = usedRect.height + insets.height * 2
 
       // Set minimum height
-      let minHeight: CGFloat = 40
+      let minHeight: CGFloat = 28
       let newHeight = max(requiredHeight, minHeight)
 
       // Update SwiftUI binding to trigger view update
