@@ -52,11 +52,6 @@ struct ResultTableView: View {
       .scrollBounceBehavior(.basedOnSize)
       .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
       .frame(maxHeight: viewModel.notebook.settings.maxResultHeight)
-
-      // Row limit warning (when DB fetch was limited)
-      if result.wasLimited {
-        rowLimitWarning
-      }
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
@@ -64,22 +59,6 @@ struct ResultTableView: View {
     .onAppear {
       calculateInitialColumnWidths()
     }
-  }
-
-  private var rowLimitWarning: some View {
-    HStack(spacing: Spacing.xs) {
-      Image(systemName: "exclamationmark.triangle.fill")
-        .foregroundColor(.warning)
-      Text(
-        "Result limited to \(result.rows.count.formatted()) rows. Use LIMIT in your query for specific ranges."
-      )
-      .font(.caption)
-      .foregroundColor(.foregroundMuted)
-    }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.warning.opacity(0.1))
   }
 
   // MARK: - Header Row

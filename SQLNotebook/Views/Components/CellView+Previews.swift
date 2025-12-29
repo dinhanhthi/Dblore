@@ -148,7 +148,8 @@ import SwiftUI
       ],
       executionTime: 0.087,
       rowCount: 18,
-      timestamp: Date()
+      timestamp: Date(),
+      wasLimited: true
     )
 
     var cell = NotebookCell(

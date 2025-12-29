@@ -309,6 +309,19 @@ struct CellView: View {
   private func resultMetadata(_ result: CellResult) -> some View {
     HStack(spacing: Spacing.md) {
       Text("Rows: \(result.rowCount)")
+
+      // Show warning if limited (either auto-limited or user LIMIT exceeded)
+      if result.wasLimited || result.userLimitExceeded {
+        HStack(spacing: Spacing.xs) {
+          Text("(")
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundColor(.foregroundSubtle)
+          Text("limited to \(viewModel.notebook.settings.maxRowLimit) rows")
+            .foregroundColor(.foregroundSubtle)
+          Text(")")
+        }.font(.caption2)
+      }
+
       Text("|")
         .foregroundColor(.foregroundSubtle)
       Text(String(format: "Execution time: %.3fs", result.executionTime))

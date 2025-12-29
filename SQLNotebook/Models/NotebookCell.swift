@@ -54,6 +54,10 @@ struct CellResult: Codable, Sendable {
   let primaryKeyColumns: [String]
   /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
   let rowIdentifiers: [CellValue]
+  /// True if user's LIMIT in query exceeded maxRows and was capped
+  let userLimitExceeded: Bool
+  /// The original LIMIT value user specified (if any)
+  let userRequestedLimit: Int?
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -66,7 +70,9 @@ struct CellResult: Codable, Sendable {
     sourceQuery: String? = nil,
     tableName: String? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifiers: [CellValue] = []
+    rowIdentifiers: [CellValue] = [],
+    userLimitExceeded: Bool = false,
+    userRequestedLimit: Int? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -79,6 +85,8 @@ struct CellResult: Codable, Sendable {
     self.tableName = tableName
     self.primaryKeyColumns = primaryKeyColumns
     self.rowIdentifiers = rowIdentifiers
+    self.userLimitExceeded = userLimitExceeded
+    self.userRequestedLimit = userRequestedLimit
   }
 
   /// Creates an error result
