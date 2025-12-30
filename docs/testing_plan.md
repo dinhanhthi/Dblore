@@ -7,41 +7,41 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## Data Models
 
 ### SQLNotebook Model
-- [x] Encode và decode notebook với cells
-- [x] Encode và decode notebook với empty cells
-- [x] Round-trip encoding/decoding preserves data
-- [x] Notebook với connection config (password không được encode)
-- [x] Notebook với multiple cells và results
-- [x] Notebook encoding performance với 100+ cells
+- [x] Encode và decode notebook với cells — DataModelTests: `sqlNotebookEncodingDecoding()`
+- [x] Encode và decode notebook với empty cells — DataModelTests: `sqlNotebookWithEmptyCells()`
+- [x] Round-trip encoding/decoding preserves data — DataModelTests: `sqlNotebookEncodingDecoding()`
+- [x] Notebook với connection config (password không được encode) — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
+- [x] Notebook với multiple cells và results — DataModelTests: `sqlNotebookEncodingDecoding()`
+- [x] Notebook encoding performance với 100+ cells — DataModelTests: `notebookEncodingPerformance()`
 
 ### NotebookCell Model
-- [x] Encode và decode cell với all properties
-- [x] Cell với result data
-- [x] Cell với execution count
+- [x] Encode và decode cell với all properties — DataModelTests: `notebookCellEncodingDecoding()`
+- [x] Cell với result data — DataModelTests: `notebookCellWithResults()`
+- [x] Cell với execution count — DataModelTests: `notebookCellEncodingDecoding()`
 - [ ] Cell với running state
-- [x] Cell với nil result
+- [x] Cell với nil result — DataModelTests: `notebookCellEncodingDecoding()`
 - [ ] Cell content updates preserve other properties
 
 ### CellValue Enum
-- [x] Encode/decode `.string` case
-- [x] Encode/decode `.int` case
-- [x] Encode/decode `.double` case
-- [x] Encode/decode `.bool` case
-- [x] Encode/decode `.null` case
-- [x] Encode/decode `.json` case
+- [x] Encode/decode `.string` case — DataModelTests: `cellValueStringEncodingDecoding()`
+- [x] Encode/decode `.int` case — DataModelTests: `cellValueIntEncodingDecoding()`
+- [x] Encode/decode `.double` case — DataModelTests: `cellValueDoubleEncodingDecoding()`
+- [x] Encode/decode `.bool` case — DataModelTests: `cellValueBoolEncodingDecoding()`
+- [x] Encode/decode `.null` case — DataModelTests: `cellValueNullEncodingDecoding()`
+- [x] Encode/decode `.json` case — DataModelTests: `cellValueJSONEncodingDecoding()`
 - [ ] Encode/decode `.date` case
 - [ ] Encode/decode `.data` case
-- [x] `displayString` property cho all types
+- [x] `displayString` property cho all types — DataModelTests: `cellValueDisplayStrings()`
 - [ ] `fullString` property cho all types
-- [x] `isNull` computed property
-- [x] `isJSON` computed property
+- [x] `isNull` computed property — DataModelTests: `cellValueIsNull()`
+- [x] `isJSON` computed property — DataModelTests: `cellValueIsJSON()`
 - [ ] Long string truncation trong `displayString`
 - [ ] JSON formatting trong display
 
 ### CellResult Model
-- [x] Result với columns và rows
-- [x] Result với execution time
-- [x] Result với timestamp
+- [x] Result với columns và rows — DataModelTests: `notebookCellWithResults()`
+- [x] Result với execution time — DataModelTests: `notebookCellWithResults()`
+- [x] Result với timestamp — DataModelTests: `notebookCellWithResults()`
 - [ ] Result với error message
 - [ ] Result với null values
 - [ ] Result với mixed data types
@@ -49,23 +49,23 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Large result set encoding
 
 ### ConnectionConfig Model
-- [x] Encode config WITHOUT password
-- [x] Decode config preserves all fields except password
+- [x] Encode config WITHOUT password — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
+- [x] Decode config preserves all fields except password — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
 - [ ] Connection string parsing
 - [ ] Default port và database values
-- [x] All SSL modes (disable, require, verifyCA, verifyFull)
+- [x] All SSL modes (disable, require, verifyCA, verifyFull) — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
 - [ ] Invalid config validation
 
 ### NotebookMetadata Model
-- [x] Encode và decode metadata
-- [x] Title, createdAt, modifiedAt preservation
+- [x] Encode và decode metadata — DataModelTests: `notebookMetadataEncodingDecoding()`
+- [x] Title, createdAt, modifiedAt preservation — DataModelTests: `notebookMetadataEncodingDecoding()`
 - [ ] Metadata updates modify modifiedAt timestamp
 - [ ] Custom tags/labels (if added)
 
 ### NotebookSettings Model
-- [x] Encode và decode settings
-- [x] maxResultTableHeight value
-- [x] includeResultsWhenSaving flag
+- [x] Encode và decode settings — DataModelTests: `notebookSettingsEncodingDecoding()`
+- [x] maxResultTableHeight value — DataModelTests: `notebookSettingsEncodingDecoding()`
+- [x] includeResultsWhenSaving flag — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [ ] Default settings values
 - [ ] Settings updates persist
 
@@ -74,86 +74,86 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## SQL Syntax Highlighter
 
 ### Keyword Highlighting
-- [x] SELECT, FROM, WHERE keywords
-- [x] Keywords case-insensitive (SELECT, select, SeLeCt)
-- [x] DDL keywords (CREATE, TABLE, PRIMARY KEY, etc.)
-- [x] DML keywords (INSERT, UPDATE, DELETE, VALUES)
+- [x] SELECT, FROM, WHERE keywords — SQLSyntaxHighlighterTests: `keywordHighlighting()`
+- [x] Keywords case-insensitive (SELECT, select, SeLeCt) — SQLSyntaxHighlighterTests: `keywordsCaseInsensitive()`
+- [x] DDL keywords (CREATE, TABLE, PRIMARY KEY, etc.) — SQLSyntaxHighlighterTests: `ddlKeywords()`
+- [x] DML keywords (INSERT, UPDATE, DELETE, VALUES) — SQLSyntaxHighlighterTests: `dmlKeywords()`
 - [ ] DCL keywords (GRANT, REVOKE)
 - [ ] TCL keywords (COMMIT, ROLLBACK, SAVEPOINT)
 - [ ] Keywords trong comments không được highlight
 - [ ] Keywords trong strings không được highlight
 
 ### Function Highlighting
-- [x] Aggregate functions (COUNT, SUM, MAX, MIN, AVG)
-- [x] String functions (UPPER, LOWER, TRIM)
-- [x] Nested functions
+- [x] Aggregate functions (COUNT, SUM, MAX, MIN, AVG) — SQLSyntaxHighlighterTests: `functionHighlighting()`, `multipleFunctions()`
+- [x] String functions (UPPER, LOWER, TRIM) — SQLSyntaxHighlighterTests: `nestedFunctions()`
+- [x] Nested functions — SQLSyntaxHighlighterTests: `nestedFunctions()`
 - [ ] Window functions (ROW_NUMBER, RANK, PARTITION BY)
 - [ ] PostgreSQL-specific functions (COALESCE, NOW, CURRENT_TIMESTAMP)
 - [ ] Function case-insensitivity
 - [ ] Functions phải có opening parenthesis để match
 
 ### String Literal Highlighting
-- [x] Single-quote strings ('text')
-- [x] Escaped quotes (O''Brien)
-- [x] Multiple strings trong same query
-- [x] PostgreSQL dollar-quoted strings ($$text$$)
+- [x] Single-quote strings ('text') — SQLSyntaxHighlighterTests: `singleQuoteStrings()`
+- [x] Escaped quotes (O''Brien) — SQLSyntaxHighlighterTests: `stringWithEscapedQuotes()`
+- [x] Multiple strings trong same query — SQLSyntaxHighlighterTests: `multipleStrings()`
+- [x] PostgreSQL dollar-quoted strings ($$text$$) — SQLSyntaxHighlighterTests: `dollarQuotedStrings()`
 - [ ] Dollar-quoted với custom tags ($tag$text$tag$)
 - [ ] Empty strings ('')
 - [ ] Multiline strings
 - [ ] Strings với special characters (\n, \t, etc.)
 
 ### Number Highlighting
-- [x] Integers (123, 456)
-- [x] Decimals (3.14, 19.99)
-- [x] Negative numbers (-100, -50.5)
-- [x] Scientific notation (1.5e10, 2.3e-5)
+- [x] Integers (123, 456) — SQLSyntaxHighlighterTests: `integerNumbers()`
+- [x] Decimals (3.14, 19.99) — SQLSyntaxHighlighterTests: `decimalNumbers()`
+- [x] Negative numbers (-100, -50.5) — SQLSyntaxHighlighterTests: `negativeNumbers()`
+- [x] Scientific notation (1.5e10, 2.3e-5) — SQLSyntaxHighlighterTests: `scientificNotation()`
 - [ ] Hexadecimal numbers (0x1A2B)
 - [ ] Binary numbers (0b1010)
 
 ### Comment Highlighting
-- [x] Single-line comments (-- comment)
-- [x] Multi-line comments (/* comment */)
-- [x] Nested multi-line comments
+- [x] Single-line comments (-- comment) — SQLSyntaxHighlighterTests: `singleLineComment()`
+- [x] Multi-line comments (/* comment */) — SQLSyntaxHighlighterTests: `multiLineComment()`
+- [x] Nested multi-line comments — SQLSyntaxHighlighterTests: `nestedMultiLineComments()`
 - [ ] Comments at end of line
 - [ ] Comments preserving indentation
 - [ ] Empty comments
 
 ### Operator Highlighting
-- [x] Comparison operators (=, <>, <=, >=, <, >)
-- [x] Arithmetic operators (+, -, *, /)
-- [x] Logical operators (AND, OR, NOT)
+- [x] Comparison operators (=, <>, <=, >=, <, >) — SQLSyntaxHighlighterTests: `comparisonOperators()`
+- [x] Arithmetic operators (+, -, *, /) — SQLSyntaxHighlighterTests: `arithmeticOperators()`
+- [x] Logical operators (AND, OR, NOT) — SQLSyntaxHighlighterTests: `logicalOperators()`
 - [ ] PostgreSQL cast operator (::)
 - [ ] Modulo operator (%)
 - [ ] Concatenation operator (||)
 
 ### Complex Queries
-- [x] SELECT với JOINs và GROUP BY
-- [x] Common Table Expressions (WITH ... AS)
-- [x] Subqueries trong WHERE clause
+- [x] SELECT với JOINs và GROUP BY — SQLSyntaxHighlighterTests: `complexSelectQuery()`
+- [x] Common Table Expressions (WITH ... AS) — SQLSyntaxHighlighterTests: `cteQuery()`
+- [x] Subqueries trong WHERE clause — SQLSyntaxHighlighterTests: `subquery()`
 - [ ] UNION/INTERSECT/EXCEPT queries
 - [ ] Window functions queries
 - [ ] Recursive CTEs
 
 ### PostgreSQL-Specific Syntax
-- [x] PostgreSQL data types (SERIAL, JSONB, TIMESTAMPTZ)
-- [x] Cast operator (::DATE, ::INTEGER)
-- [x] Arrays (ARRAY[1, 2, 3])
+- [x] PostgreSQL data types (SERIAL, JSONB, TIMESTAMPTZ) — SQLSyntaxHighlighterTests: `postgreSQLDataTypes()`
+- [x] Cast operator (::DATE, ::INTEGER) — SQLSyntaxHighlighterTests: `postgreSQLCastOperator()`
+- [x] Arrays (ARRAY[1, 2, 3]) — SQLSyntaxHighlighterTests: `postgreSQLArrays()`
 - [ ] JSON operators (->, ->>)
 - [ ] Range types (INT4RANGE, TSRANGE)
 - [ ] Custom enum types
 
 ### Edge Cases
-- [x] Empty string
-- [x] Whitespace only
-- [x] Single keyword
-- [x] Unicode characters trong strings
+- [x] Empty string — SQLSyntaxHighlighterTests: `emptyString()`
+- [x] Whitespace only — SQLSyntaxHighlighterTests: `whitespaceOnly()`
+- [x] Single keyword — SQLSyntaxHighlighterTests: `singleKeyword()`
+- [x] Unicode characters trong strings — SQLSyntaxHighlighterTests: `unicodeCharacters()`
 - [ ] Very long lines (1000+ characters)
 - [ ] Mixed tabs và spaces
 - [ ] Invalid SQL syntax (should still highlight)
 
 ### Performance
-- [x] Highlighting 100 repeated queries under 5s
-- [x] Very long query với 1000+ columns under 5s
+- [x] Highlighting 100 repeated queries under 5s — SQLSyntaxHighlighterTests: `highlightingPerformance()`
+- [x] Very long query với 1000+ columns under 5s — SQLSyntaxHighlighterTests: `highlightingVeryLongQuery()`
 - [ ] Real-time highlighting performance (debouncing)
 - [ ] Memory usage với large queries
 
@@ -162,54 +162,54 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## ViewModel Logic
 
 ### Cell Management
-- [x] Add cell at end of notebook
-- [x] Add cell after specific cell
-- [x] Add cell to empty notebook
-- [x] Delete existing cell
-- [x] Delete non-existent cell (no crash)
-- [x] Move cell từ position A to B
-- [x] Move multiple cells
-- [x] Add multiple cells (performance test)
-- [x] Delete all cells
+- [x] Add cell at end of notebook — ViewModelTests: `addCell()`
+- [x] Add cell after specific cell — ViewModelTests: `addCellAfterSpecificCell()`
+- [x] Add cell to empty notebook — ViewModelTests: `addCellToEmptyNotebook()`
+- [x] Delete existing cell — ViewModelTests: `deleteCell()`
+- [x] Delete non-existent cell (no crash) — ViewModelTests: `deleteNonExistentCell()`
+- [x] Move cell từ position A to B — ViewModelTests: `moveCell()`
+- [x] Move multiple cells — ViewModelTests: `moveCell()`
+- [x] Add multiple cells (performance test) — ViewModelTests: `addMultipleCells()`
+- [x] Delete all cells — ViewModelTests: `deleteAllCells()`
 - [ ] Duplicate cell
 - [ ] Duplicate cell với results
 - [ ] Undo/redo cell operations
 
 ### Cell Selection
-- [x] Select cell by ID
-- [x] Deselect cell
-- [x] Select non-existent cell
+- [x] Select cell by ID — ViewModelTests: `selectCell()`
+- [x] Deselect cell — ViewModelTests: `deselectCell()`
+- [x] Select non-existent cell — ViewModelTests: `selectNonExistentCell()`
 - [ ] Select next cell
 - [ ] Select previous cell
 - [ ] Multi-cell selection
 - [ ] Selection preservation after add/delete
 
 ### Cell Output Management
-- [x] Clear all outputs
-- [x] Clear single cell output
+- [x] Clear all outputs — ViewModelTests: `clearAllOutputs()`
+- [x] Clear single cell output — ViewModelTests: `clearSingleCellOutput()`
 - [ ] Clear outputs preserves cell content
 - [ ] Clear running cell output
 - [ ] Preserve outputs setting honored
 
 ### Execution State
-- [x] Increment execution count
-- [x] Set cell running state to true
-- [x] Set cell running state to false
-- [x] Check if cell is running
+- [x] Increment execution count — ViewModelTests: `incrementExecutionCount()`
+- [x] Set cell running state to true — ViewModelTests: `setCellRunning()`
+- [x] Set cell running state to false — ViewModelTests: `setCellNotRunning()`
+- [x] Check if cell is running — ViewModelTests: `isCellRunning()`
 - [ ] Cancel running query
 - [ ] Multiple cells running concurrently
 - [ ] Running state cleanup on error
 
 ### Sidebar Management
-- [x] Toggle right sidebar
-- [x] Toggle left sidebar
-- [x] Show specific sidebar content
+- [x] Toggle right sidebar — ViewModelTests: `toggleRightSidebar()`
+- [x] Toggle left sidebar — ViewModelTests: `toggleLeftSidebar()`
+- [x] Show specific sidebar content — ViewModelTests: `showSidebarContent()`
 - [ ] Sidebar state persistence
 - [ ] Sidebar width resize
 - [ ] Hide sidebar on small screens
 
 ### Connection State
-- [x] Initial state is disconnected
+- [x] Initial state is disconnected — ViewModelTests: `connectionStateInitiallyDisconnected()`
 - [ ] Transition to connecting state
 - [ ] Transition to connected state
 - [ ] Transition to disconnected after error
@@ -217,21 +217,21 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Reconnect after disconnect
 
 ### Notebook Metadata
-- [x] Metadata accessible from ViewModel
-- [x] Settings accessible from ViewModel
+- [x] Metadata accessible from ViewModel — ViewModelTests: `notebookMetadataAccessible()`
+- [x] Settings accessible from ViewModel — ViewModelTests: `notebookSettings()`
 - [ ] Update title through ViewModel
 - [ ] Modified timestamp updates on changes
 - [ ] Autosave triggers
 
 ### Cell Content
-- [x] Update cell content directly
+- [x] Update cell content directly — ViewModelTests: `updateCellContent()`
 - [ ] Content change triggers modified timestamp
 - [ ] Content validation (if any)
 - [ ] Max content length handling
 
 ### Performance
-- [x] Add 100 cells under 5s
-- [x] Delete 100 cells under 5s
+- [x] Add 100 cells under 5s — ViewModelTests: `addCellPerformance()`
+- [x] Delete 100 cells under 5s — ViewModelTests: `deleteCellPerformance()`
 - [ ] Search through 1000+ cells
 - [ ] Render 100+ cells efficiently
 

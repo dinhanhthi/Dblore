@@ -105,135 +105,119 @@ import ApplicationServices
 
 ### README Structure
 ```markdown
-# PopGuy
+# SQLNotebook
 
-> A macOS toolbar that appears when you select text, offering quick translation and text improvement powered by AI.
+> A native macOS application for interactive SQL development. Write, execute, and save SQL queries in a notebook-style interface.
 
 ## Features
 
-- 🌐 **Instant Translation**: Translate selected text to any language
-- ✍️ **Text Improvement**: Enhance writing style, tone, and clarity
-- ⚡ **System-wide**: Works in Safari, Notes, Mail, and any macOS app
-- 🎨 **Native UI**: Beautiful, non-intrusive floating toolbar
-- 🔒 **Privacy First**: Your API keys stored securely in macOS Keychain
-- ⌨️ **Keyboard Shortcuts**: Trigger actions without clicking
+- 📝 **Cell-based Interface**: Jupyter-style cells for SQL queries
+- 🚀 **Multi-database Support**: PostgreSQL and SQLite connectivity
+- 💾 **Persistent Notebooks**: Save your work as `.sqlnb` files
+- 🎨 **Syntax Highlighting**: SQL keyword and function highlighting
+- 📊 **Result Tables**: Interactive table view for query results
+- 🔍 **JSON Viewer**: Integrated viewer for JSON/JSONB columns
+- ⌨️ **Keyboard Shortcuts**: Execute queries and navigate cells efficiently
 
 ## Installation
 
 ### Requirements
-- macOS 13.0 (Ventura) or later
-- Xcode 26.0.1 or later (for building from source)
+- macOS 16.0 or later
+- Xcode 16+ (for building from source)
 
 ### From Source
 1. Clone this repository
-2. Open `PopGuy.xcodeproj` in Xcode
+2. Open `SQLNotebook.xcodeproj` in Xcode
 3. Build and run (Cmd+R)
-4. Grant Accessibility permission when prompted
 
 ## Usage
 
-1. Select any text in any application
-2. A floating toolbar appears near your selection
-3. Click "Translate" or "Improve"
-4. Results are copied to clipboard automatically
+1. Create a new notebook (Cmd+N)
+2. Configure database connection
+3. Write SQL queries in cells
+4. Execute with Cmd+Enter
+5. View results in table format
+6. Save notebook (Cmd+S)
 
-## Configuration
+## Database Setup
 
-### API Keys
-1. Open PopGuy preferences (Cmd+,)
-2. Navigate to "API Keys" tab
-3. Enter your API key for OpenAI, Anthropic, or Google
-4. Select preferred model for each action
+### PostgreSQL
+See [docs/POSTGRESQL_SETUP.md](docs/POSTGRESQL_SETUP.md) for setup instructions.
 
-### Keyboard Shortcuts
-Customize shortcuts in Preferences > Shortcuts
+### SQLite
+Point to any `.sqlite` or `.db` file on your system.
+
+## Documentation
+
+- [Project Overview](docs/project.md) - Architecture and technical details
+- [Keyboard Shortcuts](docs/keyboard_shortcuts.md) - All keyboard shortcuts
+- [Testing Plan](docs/testing_plan.md) - Testing strategy
 
 ## Development
 
-See [docs/TECH_STACK.md](docs/TECH_STACK.md) for architecture details.
+See [docs/project.md](docs/project.md) for architecture details and development guidelines.
 
 ## License
 
 MIT License - see LICENSE file for details
 ```
 
-## Documentation Types for PopGuy
+## Documentation Types for SQLNotebook
 
-### 1. Architecture Documentation
-**Location**: `docs/ARCHITECTURE.md`
+### 1. Project Documentation
+**Location**: `docs/project.md`
 
 Content should include:
 - High-level system overview
-- Component diagram
-- Data flow between services
+- Component architecture
+- Database connectivity (PostgreSQL, SQLite)
 - Technology decisions and rationale
-- Design patterns used
+- Design patterns used (MVVM, Observable)
 
-### 2. API Documentation
-**Location**: `docs/API_INTEGRATION.md`
-
-Content should include:
-- Supported AI providers
-- Request/response formats
-- Error handling
-- Rate limits and retry logic
-- Adding new providers
-
-### 3. Development Guide
-**Location**: `docs/DEVELOPMENT.md`
+### 2. Implementation Documentation
+**Location**: `docs/implementation/*.md`
 
 Content should include:
-- Setup instructions
-- Project structure explanation
-- Build process
-- Testing procedures
-- Common development tasks
+- Feature implementation details (e.g., AFFECTED_ROWS_FEATURE.md)
+- Performance optimization reports
+- Architecture decisions (e.g., undo_redo_architecture.md)
+- Problem-solving documentation (e.g., SCROLLBAR_ISSUE.md)
+- Setup guides (e.g., TESTING_SETUP_GUIDE.md)
 
-### 4. User Guide
-**Location**: `docs/USER_GUIDE.md`
+### 3. Testing Documentation
+**Location**: `docs/testing_plan.md` and `docs/test-templates/`
 
 Content should include:
-- Installation steps
-- First-time setup
-- Feature walkthrough with screenshots
-- Troubleshooting FAQ
-- Keyboard shortcuts reference
+- Testing strategy (unit, integration, UI tests)
+- Test templates and guidelines
+- Testing setup procedures
+- Test coverage goals
 
-### 5. Troubleshooting
-**Location**: `docs/TROUBLESHOOTING.md`
+### 4. Dependencies Documentation
+**Location**: `docs/dependencies.md`
 
-Common issues:
-```markdown
-## Toolbar Not Appearing
+Content should include:
+- Swift Package Manager dependencies
+- Third-party libraries (PostgresNIO, etc.)
+- Version constraints
+- Update procedures
 
-**Problem**: Text selection doesn't show toolbar
+### 5. Keyboard Shortcuts
+**Location**: `docs/keyboard_shortcuts.md`
 
-**Causes**:
-1. Accessibility permission not granted
-2. App is running in sandboxed mode
-3. Selected text is in a password field
+Content should include:
+- All keyboard shortcuts reference
+- Shortcut categories (notebook, cell, execution, navigation)
+- Platform-specific shortcuts
 
-**Solutions**:
-1. Check System Settings > Privacy & Security > Accessibility
-2. Ensure app sandbox is disabled (dev builds)
-3. Password fields are intentionally ignored for security
+### 6. TODO Tracking
+**Location**: `docs/TODO.md`
 
----
-
-## Translation Not Working
-
-**Problem**: "Translate" button shows error
-
-**Causes**:
-1. API key not configured
-2. Network connection issues
-3. Rate limit exceeded
-
-**Solutions**:
-1. Add API key in Preferences > API Keys
-2. Check internet connection
-3. Wait a few minutes and try again
-```
+Content should include:
+- Pending features
+- Known issues
+- Future improvements
+- Technical debt items
 
 ## Style Guidelines
 
@@ -252,15 +236,21 @@ Common issues:
 ### Organization
 ```
 docs/
-├── README.md                  # Main project overview
-├── TECH_STACK.md             # Technology choices (existing)
-├── APP_DESCRIPTION.md        # App requirements (existing)
-├── ARCHITECTURE.md           # System design
-├── DEVELOPMENT.md            # Developer guide
-├── API_INTEGRATION.md        # API provider guide
-├── USER_GUIDE.md             # End user instructions
-├── TROUBLESHOOTING.md        # Common issues & solutions
-└── CHANGELOG.md              # Version history
+├── project.md                           # Main project overview & architecture
+├── dependencies.md                      # Dependencies & SPM packages
+├── keyboard_shortcuts.md                # Keyboard shortcuts reference
+├── testing_plan.md                      # Testing strategy & plan
+├── TODO.md                              # Task tracking & roadmap
+├── implementation/                      # Implementation details
+│   ├── AFFECTED_ROWS_FEATURE.md        # Feature docs
+│   ├── ROW_LIMIT_FEATURE.md
+│   ├── SCROLLBAR_ISSUE.md
+│   ├── inline_cell_editing.md
+│   ├── undo_redo_architecture.md
+│   ├── TESTING_SETUP_GUIDE.md
+│   └── performance_optimization_report.md
+└── test-templates/                      # Test templates & guidelines
+    └── README.md
 ```
 
 ## Documentation Checklist
@@ -271,41 +261,44 @@ Before considering documentation complete:
 - [ ] Complex logic has explanatory comments
 - [ ] README is up-to-date with features
 - [ ] Installation instructions are accurate
-- [ ] Configuration steps are clear
-- [ ] Troubleshooting covers common issues
+- [ ] Database setup instructions are clear
+- [ ] Testing procedures are documented
 - [ ] Code examples are tested and working
-- [ ] Architecture diagrams are current
-- [ ] API integration guide is complete
-- [ ] User guide has screenshots
-- [ ] Changelog tracks all changes
+- [ ] Architecture documentation is current (docs/project.md)
+- [ ] Implementation details are documented (docs/implementation/)
+- [ ] Keyboard shortcuts are listed (docs/keyboard_shortcuts.md)
+- [ ] TODO.md tracks pending tasks
+- [ ] Test templates are up-to-date
 
-## Examples for PopGuy
+## Examples for SQLNotebook
 
 ### Good Comment
 ```swift
-// Debounce selection events to avoid showing toolbar on accidental selections.
-// Wait 300ms after last selection change before triggering toolbar display.
-// Cancel previous timer if new selection occurs during waiting period.
-private func debounceSelection(_ text: String) {
-    selectionTask?.cancel()
-    selectionTask = Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        guard !Task.isCancelled else { return }
-        await showToolbar(for: text)
-    }
+// Execute SQL query with timeout to prevent long-running queries from blocking UI.
+// Query executes on background actor to avoid blocking main thread.
+// Results are paginated to limit memory usage for large result sets.
+private func executeQuery(_ sql: String, limit: Int?) async throws -> CellResult {
+    let startTime = Date()
+    let limitedSQL = limit.map { "\(sql) LIMIT \($0)" } ?? sql
+
+    let result = try await connectionManager.execute(limitedSQL)
+    let duration = Date().timeIntervalSince(startTime)
+
+    return CellResult(columns: result.columns, rows: result.rows,
+                     executionTime: duration, rowCount: result.rows.count)
 }
 ```
 
 ### Bad Comment
 ```swift
-// Wait 300ms
-private func debounceSelection(_ text: String) {
-    selectionTask?.cancel()
-    selectionTask = Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 300_000_000)
-        guard !Task.isCancelled else { return }
-        await showToolbar(for: text)
-    }
+// Execute query
+private func executeQuery(_ sql: String, limit: Int?) async throws -> CellResult {
+    let startTime = Date()
+    let limitedSQL = limit.map { "\(sql) LIMIT \($0)" } ?? sql
+    let result = try await connectionManager.execute(limitedSQL)
+    let duration = Date().timeIntervalSince(startTime)
+    return CellResult(columns: result.columns, rows: result.rows,
+                     executionTime: duration, rowCount: result.rows.count)
 }
 ```
 
@@ -323,13 +316,20 @@ Update documentation when:
 ## Integration Points
 
 This agent maintains:
-- All files in `docs/` directory
+- All files in `docs/` directory (project.md, testing_plan.md, TODO.md, etc.)
+- Implementation documentation in `docs/implementation/`
+- Test templates in `docs/test-templates/`
 - Inline code comments in Swift files
 - README.md at project root
 - Code documentation using `///` comments
 
 Works with:
+- **tester agent**: Documents testing procedures and maintains testing_plan.md
+- **fixer agent**: Documents bug fixes and solutions in implementation/ folder
+- **architecter agent**: Documents architecture decisions and refactorings
+- **teacher agent**: Provides examples and explanations based on documentation
 - All other agents - documents their implementations
-- Reads code to keep docs in sync
 
-Refer to [docs/TECH_STACK.md](docs/TECH_STACK.md) for technical context when writing documentation.
+Refer to:
+- [docs/project.md](docs/project.md) for project overview and architecture
+- [CLAUDE.md](CLAUDE.md) for project-specific instructions and guidelines
