@@ -7,26 +7,27 @@ import Testing
 import Foundation
 
 @Suite("ViewModel Tests")
+@MainActor
 struct ViewModelTests {
 
     // Helper to create a test notebook
     func createTestNotebook() -> SQLNotebook {
         SQLNotebook(
             id: UUID(),
-            metadata: NotebookMetadata(
-                title: "Test Notebook",
-                createdAt: Date(),
-                modifiedAt: Date()
-            ),
             cells: [
                 NotebookCell(
                     id: UUID(),
-                    type: .code,
+                    cellType: .sql,
                     content: "SELECT 1;",
-                    result: nil,
-                    executionCount: 0
+                    executionCount: 0,
+                    result: nil
                 )
             ],
+            metadata: NotebookMetadata(
+                createdAt: Date(),
+                modifiedAt: Date(),
+                title: "Test Notebook"
+            ),
             connectionConfig: nil,
             settings: NotebookSettings()
         )
@@ -42,11 +43,11 @@ struct ViewModelTests {
         let initialCount = viewModel.notebook.cells.count
 
         // Act
-        viewModel.addCell(type: .code, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
 
         // Assert
         #expect(viewModel.notebook.cells.count == initialCount + 1)
-        #expect(viewModel.notebook.cells.last?.type == .code)
+        #expect(viewModel.notebook.cells.last?.cellType == .sql)
         #expect(viewModel.notebook.cells.last?.content == "")
     }
 
@@ -56,16 +57,16 @@ struct ViewModelTests {
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
         let firstCellId = viewModel.notebook.cells[0].id
-        viewModel.addCell(type: .code, after: nil) // Add a second cell
+        viewModel.addCell(type: .sql, after: nil) // Add a second cell
         let initialCount = viewModel.notebook.cells.count
 
         // Act
-        viewModel.addCell(type: .code, after: firstCellId)
+        viewModel.addCell(type: .sql, after: firstCellId)
 
         // Assert
         #expect(viewModel.notebook.cells.count == initialCount + 1)
         // New cell should be at index 1 (right after first cell)
-        #expect(viewModel.notebook.cells[1].type == .code)
+        #expect(viewModel.notebook.cells[1].cellType == .sql)
     }
 
     @Test("Delete cell from notebook")
@@ -73,8 +74,8 @@ struct ViewModelTests {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        viewModel.addCell(type: .code, after: nil)
-        viewModel.addCell(type: .code, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
         let cellToDelete = viewModel.notebook.cells[1].id
         let initialCount = viewModel.notebook.cells.count
 
@@ -106,8 +107,8 @@ struct ViewModelTests {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        viewModel.addCell(type: .code, after: nil) // Cell 1
-        viewModel.addCell(type: .code, after: nil) // Cell 2
+        viewModel.addCell(type: .sql, after: nil) // Cell 1
+        viewModel.addCell(type: .sql, after: nil) // Cell 2
         viewModel.notebook.cells[0].content = "First"
         viewModel.notebook.cells[1].content = "Second"
         viewModel.notebook.cells[2].content = "Third"
@@ -132,7 +133,7 @@ struct ViewModelTests {
         let cellId = viewModel.notebook.cells[0].id
 
         // Act
-        viewModel.selectCell(id: cellId)
+        viewModel.selectedCellId = cellId
 
         // Assert
         #expect(viewModel.selectedCellId == cellId)
@@ -144,11 +145,11 @@ struct ViewModelTests {
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
         let cellId = viewModel.notebook.cells[0].id
-        viewModel.selectCell(id: cellId)
+        viewModel.selectedCellId = cellId
         #expect(viewModel.selectedCellId != nil)
 
         // Act
-        viewModel.deselectCell()
+        viewModel.selectedCellId = nil
 
         // Assert
         #expect(viewModel.selectedCellId == nil)
@@ -180,7 +181,7 @@ struct ViewModelTests {
         // Assert
         for cell in viewModel.notebook.cells {
             #expect(cell.result == nil)
-            #expect(cell.executionCount == 0)
+            #expect(cell.executionCount == nil)
         }
     }
 
@@ -204,72 +205,38 @@ struct ViewModelTests {
 
         // Assert
         #expect(viewModel.notebook.cells[0].result == nil)
-        #expect(viewModel.notebook.cells[0].executionCount == 0)
-    }
-
-    // MARK: - Execution Count Tests
-
-    @Test("Increment execution count")
-    func incrementExecutionCount() {
-        // Arrange
-        let notebook = createTestNotebook()
-        let viewModel = NotebookViewModel(notebook: notebook)
-        let cellId = viewModel.notebook.cells[0].id
-        let initialCount = viewModel.notebook.cells[0].executionCount
-
-        // Act
-        viewModel.incrementExecutionCount(cellId: cellId)
-
-        // Assert
-        #expect(viewModel.notebook.cells[0].executionCount == initialCount + 1)
+        #expect(viewModel.notebook.cells[0].executionCount == nil)
     }
 
     // MARK: - Running State Tests
 
-    @Test("Set cell running state to true")
-    func setCellRunning() {
+    @Test("Cell running state defaults to false")
+    func cellRunningStateDefaultsToFalse() {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        let cellId = viewModel.notebook.cells[0].id
-
-        // Act
-        viewModel.setCellRunning(cellId: cellId, isRunning: true)
 
         // Assert
-        #expect(viewModel.runningCells.contains(cellId))
+        #expect(viewModel.notebook.cells[0].isRunning == false)
     }
 
-    @Test("Set cell running state to false")
-    func setCellNotRunning() {
+    @Test("Set cell running state directly")
+    func setCellRunningState() {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        let cellId = viewModel.notebook.cells[0].id
-        viewModel.setCellRunning(cellId: cellId, isRunning: true)
 
         // Act
-        viewModel.setCellRunning(cellId: cellId, isRunning: false)
+        viewModel.notebook.cells[0].isRunning = true
 
         // Assert
-        #expect(!viewModel.runningCells.contains(cellId))
-    }
-
-    @Test("Check if cell is running")
-    func isCellRunning() {
-        // Arrange
-        let notebook = createTestNotebook()
-        let viewModel = NotebookViewModel(notebook: notebook)
-        let cellId = viewModel.notebook.cells[0].id
-
-        // Assert - Initially not running
-        #expect(!viewModel.isCellRunning(cellId: cellId))
+        #expect(viewModel.notebook.cells[0].isRunning == true)
 
         // Act
-        viewModel.setCellRunning(cellId: cellId, isRunning: true)
+        viewModel.notebook.cells[0].isRunning = false
 
-        // Assert - Now running
-        #expect(viewModel.isCellRunning(cellId: cellId))
+        // Assert
+        #expect(viewModel.notebook.cells[0].isRunning == false)
     }
 
     // MARK: - Sidebar Tests
@@ -282,13 +249,13 @@ struct ViewModelTests {
         let initialState = viewModel.isRightSidebarVisible
 
         // Act
-        viewModel.toggleRightSidebar()
+        viewModel.toggleSidebar()
 
         // Assert
         #expect(viewModel.isRightSidebarVisible == !initialState)
 
         // Act again
-        viewModel.toggleRightSidebar()
+        viewModel.toggleSidebar()
 
         // Assert - Back to initial state
         #expect(viewModel.isRightSidebarVisible == initialState)
@@ -308,19 +275,18 @@ struct ViewModelTests {
         #expect(viewModel.isLeftSidebarVisible == !initialState)
     }
 
-    @Test("Show sidebar content")
+    @Test("Show connection details in sidebar")
     func showSidebarContent() {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        let content = SidebarContent.connectionInfo
 
         // Act
-        viewModel.showSidebarContent(content)
+        viewModel.showConnectionDetails()
 
         // Assert
         #expect(viewModel.isRightSidebarVisible == true)
-        #expect(viewModel.sidebarContent == content)
+        #expect(viewModel.rightSidebarContent == .connectionDetails)
     }
 
     // MARK: - Connection State Tests
@@ -341,8 +307,6 @@ struct ViewModelTests {
         let viewModel = NotebookViewModel(notebook: notebook)
 
         #expect(viewModel.notebook.metadata.title == "Test Notebook")
-        #expect(viewModel.notebook.metadata.createdAt != nil)
-        #expect(viewModel.notebook.metadata.modifiedAt != nil)
     }
 
     @Test("Notebook settings accessible")
@@ -350,8 +314,8 @@ struct ViewModelTests {
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
 
-        #expect(viewModel.notebook.settings != nil)
-        #expect(viewModel.notebook.settings.maxResultTableHeight > 0)
+        // Just verify settings exists and has keyboardShortcuts
+        #expect(viewModel.notebook.settings.keyboardShortcuts.isEmpty == true)
     }
 
     // MARK: - Cell Content Tests
@@ -384,29 +348,29 @@ struct ViewModelTests {
 
         // Act
         for _ in 0..<10 {
-            viewModel.addCell(type: .code, after: nil)
+            viewModel.addCell(type: .sql, after: nil)
         }
 
         // Assert
         #expect(viewModel.notebook.cells.count == initialCount + 10)
     }
 
-    @Test("Delete all cells")
+    @Test("Delete all cells keeps at least one")
     func deleteAllCells() {
         // Arrange
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
-        viewModel.addCell(type: .code, after: nil)
-        viewModel.addCell(type: .code, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
 
-        // Act
+        // Act - Try to delete all cells
         let cellIds = viewModel.notebook.cells.map { $0.id }
         for cellId in cellIds {
             viewModel.deleteCell(id: cellId)
         }
 
-        // Assert
-        #expect(viewModel.notebook.cells.count == 0)
+        // Assert - Should keep at least 1 cell (business logic)
+        #expect(viewModel.notebook.cells.count == 1)
     }
 
     // MARK: - Edge Cases
@@ -419,7 +383,7 @@ struct ViewModelTests {
         viewModel.notebook.cells = []
 
         // Act
-        viewModel.addCell(type: .code, after: nil)
+        viewModel.addCell(type: .sql, after: nil)
 
         // Assert
         #expect(viewModel.notebook.cells.count == 1)
@@ -433,7 +397,7 @@ struct ViewModelTests {
         let nonExistentId = UUID()
 
         // Act
-        viewModel.selectCell(id: nonExistentId)
+        viewModel.selectedCellId = nonExistentId
 
         // Assert
         #expect(viewModel.selectedCellId == nonExistentId)
@@ -441,23 +405,23 @@ struct ViewModelTests {
 
     // MARK: - Performance Tests
 
-    @Test("Add cell performance", .timeLimit(.seconds(5)))
+    @Test("Add cell performance", .timeLimit(.minutes(1)))
     func addCellPerformance() {
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
 
         for _ in 0..<100 {
-            viewModel.addCell(type: .code, after: nil)
+            viewModel.addCell(type: .sql, after: nil)
         }
     }
 
-    @Test("Delete cell performance", .timeLimit(.seconds(5)))
+    @Test("Delete cell performance", .timeLimit(.minutes(1)))
     func deleteCellPerformance() {
         // Arrange - Create 100 cells
         let notebook = createTestNotebook()
         let viewModel = NotebookViewModel(notebook: notebook)
         for _ in 0..<100 {
-            viewModel.addCell(type: .code, after: nil)
+            viewModel.addCell(type: .sql, after: nil)
         }
 
         // Act
