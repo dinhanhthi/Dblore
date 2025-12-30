@@ -1,17 +1,36 @@
 # Testing Setup Guide - SQLNotebook
 
-This guide provides step-by-step instructions for setting up the testing infrastructure for the SQLNotebook macOS application using XCTest framework.
+This guide provides step-by-step instructions for setting up the testing infrastructure for the SQLNotebook macOS application.
 
 **Target Xcode Version:** Xcode 26+ on macOS 16+
 **Last Updated:** December 2025
 
 ---
 
+## Testing Framework Strategy
+
+**IMPORTANT**: This project uses TWO testing frameworks:
+
+1. **Swift Testing** (primary for unit & integration tests)
+   - Modern framework built into Xcode
+   - Use `import Testing`, `@Suite`, `@Test`, `#expect()`
+   - Already configured in `SQLNotebookTests` target
+
+2. **XCTest** (for UI tests ONLY)
+   - Legacy framework required for UI automation
+   - Use `import XCTest`, `XCTestCase`, `XCTAssert*()`
+   - Required for `XCUIApplication` and UI testing
+   - Configured in `SQLNotebookUITests` target
+
+**This guide focuses on XCTest UI test setup, as unit tests already use Swift Testing.**
+
+---
+
 ## Overview
 
-We'll create two test targets:
-1. **SQLNotebookTests** - Unit tests and integration tests
-2. **SQLNotebookUITests** - UI/end-to-end tests
+Test targets in this project:
+1. **SQLNotebookTests** - Unit & integration tests using Swift Testing (already set up)
+2. **SQLNotebookUITests** - UI/end-to-end tests using XCTest (this guide)
 
 ---
 
@@ -324,12 +343,9 @@ After setup, verify the following:
 
 Once test targets are set up, proceed to:
 
-1. **Create Test Helpers** - Mock objects and utilities
-2. **Write Data Model Tests** - Test `SQLNotebook`, `NotebookCell`, `CellValue` encoding/decoding
-3. **Write Utility Tests** - Test `SQLSyntaxHighlighter` tokenizer
-4. **Write ViewModel Tests** - Test `NotebookViewModel` logic
-5. **Write Integration Tests** - Test `DatabaseConnectionManager`
-6. **Write UI Tests** - Test critical user flows
+1. **Write Unit Tests using Swift Testing** - Already migrated! See `SQLNotebookTests/DataModelTests.swift`
+2. **Write Integration Tests using Swift Testing** - Test `DatabaseConnectionManager` with `@Test` và `#expect`
+3. **Write UI Tests using XCTest** - Test critical user flows với `XCTestCase`
 
 See `docs/TODO.md` Phase 6 for detailed test implementation plan.
 
@@ -337,14 +353,20 @@ See `docs/TODO.md` Phase 6 for detailed test implementation plan.
 
 ## Additional Resources
 
+- [Swift Testing Documentation](https://developer.apple.com/documentation/testing) - Modern testing framework
 - [Apple Documentation: Testing with Xcode](https://developer.apple.com/documentation/xcode/testing-your-apps-in-xcode)
-- [XCTest Framework Reference](https://developer.apple.com/documentation/xctest)
+- [XCTest Framework Reference](https://developer.apple.com/documentation/xctest) - For UI tests only
 - [Writing Testable Code in Swift](https://developer.apple.com/videos/play/wwdc2017/414/)
 
 ---
 
 ## Notes
 
+### Framework Choice
+- **Unit/Integration tests**: Use Swift Testing (`import Testing`, `@Suite`, `@Test`, `#expect`)
+- **UI tests**: Use XCTest (`import XCTest`, `XCTestCase`, `XCTAssert*`) - required for `XCUIApplication`
+
+### General Guidelines
 - Test files should have `@testable import SQLNotebook` to access internal types
 - Integration tests may require a test database setup/teardown
 - UI tests run slower than unit tests - keep them focused on critical flows
