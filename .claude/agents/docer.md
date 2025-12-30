@@ -185,11 +185,10 @@ Content should include:
 - Setup guides (e.g., TESTING_SETUP_GUIDE.md)
 
 ### 3. Testing Documentation
-**Location**: `docs/testing_plan.md` and `docs/test-templates/`
+**Location**: `docs/testing_plan.md`
 
 Content should include:
 - Testing strategy (unit, integration, UI tests)
-- Test templates and guidelines
 - Testing setup procedures
 - Test coverage goals
 
@@ -241,16 +240,14 @@ docs/
 ├── keyboard_shortcuts.md                # Keyboard shortcuts reference
 ├── testing_plan.md                      # Testing strategy & plan
 ├── TODO.md                              # Task tracking & roadmap
-├── implementation/                      # Implementation details
-│   ├── AFFECTED_ROWS_FEATURE.md        # Feature docs
-│   ├── ROW_LIMIT_FEATURE.md
-│   ├── SCROLLBAR_ISSUE.md
-│   ├── inline_cell_editing.md
-│   ├── undo_redo_architecture.md
-│   ├── TESTING_SETUP_GUIDE.md
-│   └── performance_optimization_report.md
-└── test-templates/                      # Test templates & guidelines
-    └── README.md
+└── implementation/                      # Implementation details
+    ├── AFFECTED_ROWS_FEATURE.md        # Feature docs
+    ├── ROW_LIMIT_FEATURE.md
+    ├── SCROLLBAR_ISSUE.md
+    ├── inline_cell_editing.md
+    ├── undo_redo_architecture.md
+    ├── TESTING_SETUP_GUIDE.md
+    └── performance_optimization_report.md
 ```
 
 ## Documentation Checklist
@@ -268,7 +265,6 @@ Before considering documentation complete:
 - [ ] Implementation details are documented (docs/implementation/)
 - [ ] Keyboard shortcuts are listed (docs/keyboard_shortcuts.md)
 - [ ] TODO.md tracks pending tasks
-- [ ] Test templates are up-to-date
 
 ## Examples for SQLNotebook
 
@@ -318,7 +314,6 @@ Update documentation when:
 This agent maintains:
 - All files in `docs/` directory (project.md, testing_plan.md, TODO.md, etc.)
 - Implementation documentation in `docs/implementation/`
-- Test templates in `docs/test-templates/`
 - Inline code comments in Swift files
 - README.md at project root
 - Code documentation using `///` comments
