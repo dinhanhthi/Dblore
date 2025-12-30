@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D30425902F033777008916E0 /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D304258F2F033777008916E0 /* PostgresNIO */; };
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 /* End PBXBuildFile section */
 
@@ -31,7 +30,7 @@
 /* Begin PBXFileReference section */
 		D30425752F0310D3008916E0 /* SQLNotebookTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SQLNotebookTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D30425822F031148008916E0 /* SQLNotebookUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SQLNotebookUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		D304258D2F0314CC008916E0 /* SQLNotebook.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = file; path = SQLNotebook.xctestplan; sourceTree = "<group>"; };
+		D304258D2F0314CC008916E0 /* SQLNotebook.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = SQLNotebook.xctestplan; sourceTree = "<group>"; };
 		D3E0FB932EF70DBB009A0E5A /* SQLNotebook.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SQLNotebook.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -71,7 +70,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D30425902F033777008916E0 /* PostgresNIO in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,7 +141,6 @@
 			);
 			name = SQLNotebookTests;
 			packageProductDependencies = (
-				D304258F2F033777008916E0 /* PostgresNIO */,
 			);
 			productName = SQLNotebookTests;
 			productReference = D30425752F0310D3008916E0 /* SQLNotebookTests.xctest */;
@@ -653,11 +650,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		D304258F2F033777008916E0 /* PostgresNIO */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */;
-			productName = PostgresNIO;
-		};
 		D3E0FC002EF71234009A0E5B /* PostgresNIO */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */;
