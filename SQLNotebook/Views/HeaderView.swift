@@ -18,13 +18,6 @@ struct HeaderView: View {
           Image(systemName: "sidebar.left")
         }
         .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible))
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
 
         Divider()
           .frame(height: 20)
@@ -33,13 +26,6 @@ struct HeaderView: View {
           Label("New", systemImage: "plus")
         }
         .buttonStyle(ToolbarButtonStyle())
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
 
         Button(action: {
           showRunAllConfirmation = true
@@ -48,13 +34,6 @@ struct HeaderView: View {
         }
         .buttonStyle(ToolbarButtonStyle())
         .disabled(!viewModel.connectionState.isConnected)
-        .onHover { hovering in
-          if hovering && viewModel.connectionState.isConnected {
-            NSCursor.pointingHand.push()
-          } else if !hovering && viewModel.connectionState.isConnected {
-            NSCursor.pop()
-          }
-        }
         .confirmationDialog(
           "Run all cells?",
           isPresented: $showRunAllConfirmation,
@@ -72,13 +51,6 @@ struct HeaderView: View {
           Label("Clear All Outputs", systemImage: "trash")
         }
         .buttonStyle(ToolbarButtonStyle())
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
       }
 
       Spacer()
@@ -103,13 +75,6 @@ struct HeaderView: View {
             isActive: viewModel.isRightSidebarVisible
               && (viewModel.rightSidebarContent == .settings))
         )
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
 
         Divider()
           .frame(height: 20)

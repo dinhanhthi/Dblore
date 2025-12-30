@@ -159,6 +159,13 @@ struct ConnectionFormContent: View {
                   .contentShape(Rectangle())
               }
               .buttonStyle(PlainButtonStyle())
+              .onHover { hovering in
+                if hovering {
+                  NSCursor.pointingHand.push()
+                } else {
+                  NSCursor.pop()
+                }
+              }
             }
           }
         }
@@ -218,6 +225,13 @@ struct ConnectionFormContent: View {
             .frame(width: 20, height: 20)
         }
         .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
+          }
+        }
         .padding(.trailing, Spacing.sm)
       }
       .inputStyle()
