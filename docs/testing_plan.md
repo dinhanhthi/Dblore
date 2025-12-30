@@ -67,7 +67,13 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] maxResultTableHeight value — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [x] includeResultsWhenSaving flag — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [ ] Default settings values
-- [ ] Settings updates persist
+- [ ] Settings updates persist globally
+- [ ] Settings loaded on app reopen
+- [ ] maxResultTableHeight applies in real-time to result table
+- [ ] maxRows setting limits query before execution
+- [ ] Warning shown when maxRows in settings < maxRows in query
+- [ ] includeResultsWhenSaving saves results to .sqlnb when active
+- [ ] includeResultsWhenSaving excludes results from .sqlnb when inactive
 
 ---
 
@@ -274,16 +280,20 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## Database Connection (Integration Tests)
 
 ### PostgreSQL Connection
-- [ ] Connect với valid config
+- [ ] Connect với valid config (localhost)
+- [ ] Connect với valid config (production/remote server)
 - [ ] Connect với invalid host (throws error)
 - [ ] Connect với invalid port (throws error)
 - [ ] Connect với invalid credentials (throws error)
 - [ ] Connect với invalid database name (throws error)
 - [ ] Test connection success case
 - [ ] Test connection failure case
+- [ ] Error messages displayed correctly at footer of connection sidebar
 - [ ] Disconnect cleanup
 - [ ] Connection timeout handling
 - [ ] Reconnect after connection loss
+- [ ] Connection state persisted when app closes
+- [ ] Connection auto-reconnects when app reopens
 
 ### SSL/TLS Modes
 - [ ] SSL mode: disable
@@ -468,10 +478,21 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Sidebar content switching
 
 ### Keyboard Navigation
-- [ ] All documented shortcuts work
+- [ ] All documented shortcuts work (comprehensive test)
 - [ ] Tab navigation through cells
 - [ ] Arrow key navigation
 - [ ] Escape to deselect
+- [ ] Cmd+N creates new notebook
+- [ ] Cmd+O opens existing notebook
+- [ ] Cmd+S saves notebook
+- [ ] Cmd+Enter runs selected cell
+- [ ] Shift+Enter runs cell and moves to next
+- [ ] Cmd+Shift+Enter runs all cells (with confirmation)
+- [ ] Cmd+B adds code cell below
+- [ ] Cmd+Backspace deletes selected cell
+- [ ] Cmd+D duplicates cell
+- [ ] Cmd+Shift+R toggles right sidebar
+- [ ] Cmd+Shift+L toggles left sidebar
 
 ### Visual Feedback
 - [ ] Running indicator on cell
@@ -479,6 +500,30 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Progress indicator for long queries
 - [ ] Error highlighting
 - [ ] Syntax highlighting updates live
+
+### Undo/Redo Functionality
+- [ ] Undo/Redo works locally in focused query editor (cell-level)
+- [ ] Undo/Redo works globally when editor unfocused (notebook-level)
+- [ ] Undo removing a cell (global)
+- [ ] Undo moving a cell (global)
+- [ ] Undo adding a cell (global)
+- [ ] Undo/Redo in sidebar cell value editor (isolated to editor)
+- [ ] Undo/Redo scope switches correctly between local and global
+
+### Run All Functionality
+- [ ] Run all shows confirmation dialog when clicked via button
+- [ ] Run all shows confirmation dialog when via menu option
+- [ ] Run all shows confirmation dialog when via Cmd+Shift+Enter
+- [ ] Confirmation dialog can be cancelled
+- [ ] Confirmation dialog proceeds with execution when confirmed
+
+### Cell Selection & Scrolling Behavior
+- [ ] Clicking in query editor focuses editor and selects cell
+- [ ] Clicking outside query editor selects cell but doesn't focus editor
+- [ ] Selected cell change doesn't scroll if cell in viewport
+- [ ] Selected cell change scrolls only when cell overflows viewport
+- [ ] Scroll behavior correct for cell above viewport
+- [ ] Scroll behavior correct for cell below viewport
 
 ---
 
