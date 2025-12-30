@@ -2,6 +2,22 @@
 
 Manages testing aspects for SQLNotebook - creates test targets, writes test cases, sets up test infrastructure, and ensures comprehensive test coverage following the testing plan.
 
+## Testing Framework Strategy
+
+**IMPORTANT**: This project uses TWO testing frameworks:
+
+1. **Swift Testing** (primary for unit & integration tests)
+   - Use `import Testing`
+   - Use `@Suite` and `@Test` macros
+   - Use `#expect()` assertions
+   - Modern, type-safe, async-first
+
+2. **XCTest** (for UI tests ONLY)
+   - Use `import XCTest`
+   - Use `XCTestCase` classes
+   - Use `XCTAssert*()` assertions
+   - Required for `XCUIApplication` and UI automation
+
 ## How to Use This Command
 
 When user requests testing work (create tests, setup test targets, write test cases, check test coverage), follow this workflow:
@@ -89,10 +105,11 @@ Based on the request, follow the appropriate workflow below.
 
 ### 3. Write Tests
 - Follow AAA pattern (Arrange-Act-Assert)
-- Use descriptive test names: `testFunctionName_Scenario_ExpectedResult()`
+- **For Swift Testing**: Use `@Test("description")` với descriptive function names
+- **For XCTest UI tests**: Use descriptive test names like `testFunctionName_Scenario_ExpectedResult()`
 - Keep tests isolated và independent
 - Mock external dependencies (database, file system, network)
-- Handle async testing với `async/await` hoặc `XCTestExpectation`
+- Handle async testing với `async/await` (Swift Testing) hoặc `XCTestExpectation` (XCTest)
 
 ### 4. Verify Coverage
 - Run tests với `Cmd+U` hoặc CLI
@@ -147,52 +164,41 @@ Based on the request, follow the appropriate workflow below.
 
 ## Phase 6.2-6.5: Unit Tests
 
-### Writing Model Tests
+### Writing Model Tests (Swift Testing)
 
 **Reference**: `@docs/testing_plan.md` section "6.2 Unit Tests - Data Models"
 
 **Template**:
 ```swift
-import XCTest
+import Testing
 @testable import SQLNotebook
 
-final class SQLNotebookTests: XCTestCase {
-    // MARK: - Test Lifecycle
-
-    override func setUp() {
-        super.setUp()
-        // Arrange: Set up test fixtures
-    }
-
-    override func tearDown() {
-        // Cleanup after each test
-        super.tearDown()
-    }
-
-    // MARK: - Tests
-
-    func testEncodingDecoding_ValidNotebook_RoundTripSuccess() throws {
+@Suite("SQLNotebook Tests")
+struct SQLNotebookTests {
+    @Test("Encoding and decoding valid notebook succeeds")
+    func encodingDecodingValidNotebookRoundTripSuccess() throws {
         // Arrange
         let notebook = SQLNotebook.newDocument()
-        
+
         // Act
         let encoder = JSONEncoder()
         let data = try encoder.encode(notebook)
         let decoder = JSONDecoder()
         let decoded = try decoder.decode(SQLNotebook.self, from: data)
-        
+
         // Assert
-        XCTAssertEqual(notebook.id, decoded.id)
-        XCTAssertEqual(notebook.cells.count, decoded.cells.count)
+        #expect(notebook.id == decoded.id)
+        #expect(notebook.cells.count == decoded.cells.count)
     }
-    
-    func testNewDocument_DefaultState_ReturnsNotebookWithOneCell() {
+
+    @Test("New document has default state with one cell")
+    func newDocumentDefaultStateReturnsNotebookWithOneCell() {
         // Arrange & Act
         let notebook = SQLNotebook.newDocument()
-        
+
         // Assert
-        XCTAssertEqual(notebook.cells.count, 1)
-        XCTAssertEqual(notebook.cells.first?.cellType, .sql)
+        #expect(notebook.cells.count == 1)
+        #expect(notebook.cells.first?.cellType == .sql)
     }
 }
 ```
@@ -203,37 +209,42 @@ final class SQLNotebookTests: XCTestCase {
 - `SQLNotebookTests/Models/CellValueTests.swift`
 - `SQLNotebookTests/Models/ConnectionConfigTests.swift`
 
-### Writing Utility Tests
+### Writing Utility Tests (Swift Testing)
 
 **Reference**: `@docs/testing_plan.md` section "6.3 Unit Tests - Utilities"
 
 **Template**:
 ```swift
-import XCTest
+import Testing
 @testable import SQLNotebook
 
-final class SQLSyntaxHighlighterTests: XCTestCase {
-    func testKeywordHighlighting() {
+@Suite("SQL Syntax Highlighter Tests")
+struct SQLSyntaxHighlighterTests {
+    @Test("Keyword highlighting works correctly")
+    func keywordHighlighting() {
         // Arrange
         let sql = "SELECT * FROM users WHERE id = 1"
-        
+
         // Act
         let highlighted = SQLSyntaxHighlighter.highlight(sql)
-        
+
         // Assert
         // Check that keywords are highlighted with correct color
         // (This requires checking NSAttributedString attributes)
     }
-    
-    func testCaseInsensitiveKeywords() {
+
+    @Test("Case insensitive keywords are highlighted")
+    func caseInsensitiveKeywords() {
         // Test: SELECT, select, Select all get highlighted
     }
-    
-    func testStringHighlighting() {
+
+    @Test("String highlighting works")
+    func stringHighlighting() {
         // Test single-quote và dollar-quote strings
     }
-    
-    func testCommentHighlighting() {
+
+    @Test("Comment highlighting works")
+    func commentHighlighting() {
         // Test single-line và multi-line comments
     }
 }
@@ -243,44 +254,40 @@ final class SQLSyntaxHighlighterTests: XCTestCase {
 - `SQLNotebookTests/Utilities/SQLSyntaxHighlighterTests.swift`
 - `SQLNotebookTests/Utilities/JSONSyntaxHighlighterTests.swift` (if exists)
 
-### Writing Document Tests
+### Writing Document Tests (Swift Testing)
 
 **Reference**: `@docs/testing_plan.md` section "6.4 Unit Tests - Document Operations"
 
 **Template**:
 ```swift
-import XCTest
+import Testing
 @testable import SQLNotebook
+import Foundation
 
-final class SQLNotebookDocumentTests: XCTestCase {
-    var tempURL: URL!
-    
-    override func setUp() {
-        tempURL = FileManager.default.temporaryDirectory
+@Suite("SQLNotebook Document Tests")
+struct SQLNotebookDocumentTests {
+    @Test("Read write round trip preserves data")
+    func readWriteRoundTrip() throws {
+        // Arrange
+        let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("sqlnb")
-    }
-    
-    override func tearDown() {
-        try? FileManager.default.removeItem(at: tempURL)
-    }
-    
-    func testReadWriteRoundTrip() throws {
-        // Arrange
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
         let original = SQLNotebook.newDocument()
         let document = SQLNotebookDocument(notebook: original)
-        
+
         // Act
         try document.write(to: tempURL)
         let loaded = try SQLNotebookDocument.read(from: tempURL)
-        
+
         // Assert
-        XCTAssertEqual(original.id, loaded.notebook.id)
+        #expect(original.id == loaded.notebook.id)
     }
 }
 ```
 
-### Writing ViewModel Tests
+### Writing ViewModel Tests (Swift Testing)
 
 **Reference**: `@docs/testing_plan.md` section "6.5 Unit Tests - ViewModel Logic"
 
@@ -288,33 +295,32 @@ final class SQLNotebookDocumentTests: XCTestCase {
 
 **Template**:
 ```swift
-import XCTest
+import Testing
 @testable import SQLNotebook
 
+@Suite("Notebook ViewModel Tests")
 @MainActor
-final class NotebookViewModelTests: XCTestCase {
-    var viewModel: NotebookViewModel!
-    
-    override func setUp() {
-        viewModel = NotebookViewModel(notebook: SQLNotebook.newDocument())
-    }
-    
-    func testAddCell() {
+struct NotebookViewModelTests {
+    @Test("Add cell increases cell count")
+    func addCell() {
         // Arrange
+        let viewModel = NotebookViewModel(notebook: SQLNotebook.newDocument())
         let initialCount = viewModel.notebook.cells.count
-        
+
         // Act
         viewModel.addCell(type: .sql, after: nil)
-        
+
         // Assert
-        XCTAssertEqual(viewModel.notebook.cells.count, initialCount + 1)
+        #expect(viewModel.notebook.cells.count == initialCount + 1)
     }
-    
-    func testDeleteCell() {
+
+    @Test("Delete cell removes cell")
+    func deleteCell() {
         // Test delete existing cell
     }
-    
-    func testMoveCell() {
+
+    @Test("Move cell reorders cells")
+    func moveCell() {
         // Test reorder cells
     }
 }
@@ -324,7 +330,7 @@ final class NotebookViewModelTests: XCTestCase {
 
 ## Phase 6.6-6.8: Integration Tests
 
-### Writing Database Connection Tests
+### Writing Database Connection Tests (Swift Testing)
 
 **Reference**: `@docs/testing_plan.md` section "6.6 Integration Tests - Database Connection"
 
@@ -335,38 +341,37 @@ final class NotebookViewModelTests: XCTestCase {
 
 **Template**:
 ```swift
-import XCTest
+import Testing
 @testable import SQLNotebook
 
-final class DatabaseConnectionManagerTests: XCTestCase {
-    var manager: DatabaseConnectionManager!
-    var testConfig: ConnectionConfig!
-    
-    override func setUp() {
-        manager = DatabaseConnectionManager()
-        testConfig = ConnectionConfig(
-            host: "localhost",
-            port: 5432,
-            database: "test_db",
-            username: "test_user",
-            password: "test_password"
-        )
-    }
-    
-    func testConnectSuccess_ValidConfig_ConnectionEstablished() async throws {
+@Suite("Database Connection Manager Tests")
+struct DatabaseConnectionManagerTests {
+    let testConfig = ConnectionConfig(
+        host: "localhost",
+        port: 5432,
+        database: "test_db",
+        username: "test_user",
+        password: "test_password"
+    )
+
+    @Test("Connect with valid config establishes connection")
+    func connectSuccessValidConfigConnectionEstablished() async throws {
         // Arrange
+        let manager = DatabaseConnectionManager()
         // (Requires test database setup)
-        
+
         // Act
         try await manager.connect(config: testConfig)
-        
+
         // Assert
         let state = await manager.connectionState
-        XCTAssertEqual(state, .connected)
+        #expect(state == .connected)
     }
-    
-    func testConnectInvalidHost_InvalidHost_ThrowsError() async throws {
+
+    @Test("Connect with invalid host throws error")
+    func connectInvalidHostThrowsError() async throws {
         // Arrange
+        let manager = DatabaseConnectionManager()
         let invalidConfig = ConnectionConfig(
             host: "invalid.host",
             port: 5432,
@@ -374,13 +379,10 @@ final class DatabaseConnectionManagerTests: XCTestCase {
             username: "test_user",
             password: "test_password"
         )
-        
+
         // Act & Assert
-        do {
+        #expect(throws: Error.self) {
             try await manager.connect(config: invalidConfig)
-            XCTFail("Expected connection to fail")
-        } catch {
-            // Expected error
         }
     }
 }
@@ -400,9 +402,11 @@ final class DatabaseConnectionManagerTests: XCTestCase {
 
 ---
 
-## Phase 6.9-6.12: UI Tests
+## Phase 6.9-6.12: UI Tests (XCTest Required)
 
 ### Writing UI Tests
+
+**IMPORTANT**: UI tests MUST use XCTest because Swift Testing does not support `XCUIApplication` and UI automation.
 
 **Reference**: `@docs/testing_plan.md` section "6.9-6.12 UI Tests"
 
@@ -412,26 +416,33 @@ import XCTest
 
 final class NotebookUITests: XCTestCase {
     var app: XCUIApplication!
-    
+
     override func setUp() {
+        continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
     }
-    
+
+    @MainActor
     func testCreateNewNotebook() {
         // Act
         app.typeKey("n", modifierFlags: .command)
-        
+
         // Assert
         // Verify new notebook created
+        XCTAssertTrue(app.windows.count > 0)
     }
-    
+
+    @MainActor
     func testAddCodeCell() {
         // Test Cmd+B adds new cell
+        app.typeKey("b", modifierFlags: .command)
     }
-    
+
+    @MainActor
     func testRunCell() {
         // Test Cmd+Enter executes cell
+        app.typeKey(.enter, modifierFlags: .command)
     }
 }
 ```
@@ -441,6 +452,8 @@ final class NotebookUITests: XCTestCase {
 - `SQLNotebookUITests/QueryExecutionUITests.swift`
 - `SQLNotebookUITests/ConnectionUITests.swift`
 - `SQLNotebookUITests/DocumentPersistenceUITests.swift`
+
+**Note**: All UI test files use XCTest framework, not Swift Testing.
 
 ---
 
@@ -594,28 +607,33 @@ In Xcode: Report Navigator (⌘9) → Coverage tab
 
 ### ✅ Always Do
 1. **Read testing plan** trước khi viết tests
-2. **Follow Arrange-Act-Assert** pattern
-3. **Use descriptive test names**: `testFunctionName_Scenario_ExpectedResult()`
-4. **Keep tests isolated** - mỗi test independent
-5. **Mock external dependencies** - database, file system, network
-6. **Clean up** test data sau mỗi test
-7. **Test edge cases** - empty data, nil values, errors
-8. **Use async testing** với `async/await` hoặc `XCTestExpectation` cho async code
-9. **Test behavior, not implementation** - Focus on what code does, not how
-10. **Keep tests focused** - One assertion per test (when practical)
-11. **Make tests readable** - Tests are documentation, make them clear
-12. **Use MARK comments** - Organize test files với `// MARK: - Test Lifecycle` và `// MARK: - Tests`
+2. **Choose correct framework**:
+   - Unit/Integration tests → Swift Testing (`@Test`, `#expect`)
+   - UI tests → XCTest (`XCTestCase`, `XCTAssert*`)
+3. **Follow Arrange-Act-Assert** pattern
+4. **Use descriptive test names**:
+   - Swift Testing: `@Test("Description")` với clear function names
+   - XCTest: `testFunctionName_Scenario_ExpectedResult()`
+5. **Keep tests isolated** - mỗi test independent
+6. **Mock external dependencies** - database, file system, network
+7. **Clean up** test data sau mỗi test (use `defer` trong Swift Testing)
+8. **Test edge cases** - empty data, nil values, errors
+9. **Use async testing** với `async/await` (preferred) hoặc `XCTestExpectation`
+10. **Test behavior, not implementation** - Focus on what code does, not how
+11. **Keep tests focused** - One assertion per test (when practical)
+12. **Make tests readable** - Tests are documentation, make them clear
 
 ### ❌ Never Do
 1. **Skip reading testing plan** - always check `@docs/testing_plan.md`
-2. **Write tests without understanding** the code being tested
-3. **Depend on test execution order** - tests must be independent
-4. **Use real database** trong unit tests (use mocks)
-5. **Skip cleanup** - always clean up test data
-6. **Test implementation details** - test behavior, not internals
-7. **Write flaky tests** - tests should be deterministic
-8. **Ignore async/await** - Handle async code properly với `async throws` hoặc `XCTestExpectation`
-9. **Forget Sendable** - Ensure test mocks meet Sendable requirements
+2. **Use wrong framework** - Don't use XCTest for unit tests, don't use Swift Testing for UI tests
+3. **Write tests without understanding** the code being tested
+4. **Depend on test execution order** - tests must be independent
+5. **Use real database** trong unit tests (use mocks)
+6. **Skip cleanup** - always clean up test data
+7. **Test implementation details** - test behavior, not internals
+8. **Write flaky tests** - tests should be deterministic
+9. **Ignore async/await** - Handle async code properly với `async throws` hoặc `XCTestExpectation`
+10. **Forget Sendable** - Ensure test mocks meet Sendable requirements
 
 ## Swift 6 Testing Checklist
 
