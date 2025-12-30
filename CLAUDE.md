@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Tech Stack
 - **Language:** Swift 6+
 - **UI Framework:** SwiftUI (latest)
-- **Target:** macOS 16.0+
+- **Target:** macOS 15.0+ (Sequoia)
 - **Architecture:** MVVM với Observable macro
 - **Database Connectivity:** PostgresNIO (PostgreSQL), native Swift APIs (SQLite)
 - **Persistence:** Codable documents saved as `.sqlnb` JSON files
