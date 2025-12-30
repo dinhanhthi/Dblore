@@ -8,8 +8,8 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
 - ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
-- ⏳ **Phase 5: Advanced Features** - NOT STARTED
-- 🚨 **Phase 6: Testing Suite** - **CURRENT TOP PRIORITY** ⭐
+- ⏳ **Phase 5: Advanced Features** - NOT STARTED (AI feature added: 5.6)
+- 🚨 **Phase 6: Testing Suite** - **IN PROGRESS** ⭐ (Test targets setup ✅, Data Models tests ✅, Utilities tests ✅, ViewModel tests ✅)
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
 **BUILD STATUS: SUCCESS ✅**
@@ -351,6 +351,27 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Handle connection errors per tab (don't affect other tabs)
 - [ ] Add context menu on tabs (Connect, Disconnect, Close, Close Others, etc.)
 
+### 5.6 AI-Powered Natural Language Query (Local Model Only)
+- [ ] Research và select local LLM framework (e.g., llama.cpp, CoreML, or Swift-native solution)
+- [ ] Integrate local model vào app (download/load model files)
+- [ ] Create `AIService` actor để handle natural language processing
+- [ ] Implement prompt engineering để convert natural language → SQL queries
+  - [ ] Include database schema context (tables, columns, types)
+  - [ ] Include recent query history for context
+  - [ ] Add validation để ensure generated SQL is safe
+- [ ] Create UI component cho AI query input
+  - [ ] Add AI button/icon trong cell editor hoặc header
+  - [ ] Create input field cho natural language query
+  - [ ] Show loading state khi AI đang process
+  - [ ] Display generated SQL trước khi execute (allow user to review/edit)
+  - [ ] Add "Insert SQL" button để insert vào cell
+- [ ] Implement error handling cho AI failures
+- [ ] Add settings để configure AI model path/options
+- [ ] Ensure all processing happens locally (no network calls)
+- [ ] Add privacy notice về local-only processing
+- [ ] Test với various natural language queries
+- [ ] Optimize model size/performance cho macOS
+
 ---
 
 ## Phase 6: Testing Suite 🚨 **CURRENT TOP PRIORITY**
@@ -359,38 +380,38 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framework (built-in trong Xcode). Testing sẽ bao gồm Unit Tests, Integration Tests, và UI Tests.
 
 ### 6.1 Test Target Setup
-- [ ] Create new Unit Test target trong Xcode (`SQLNotebookTests`)
-- [ ] Create new UI Test target trong Xcode (`SQLNotebookUITests`)
-- [ ] Configure test targets với proper dependencies (PostgresNIO, etc.)
-- [ ] Set up test schemes và build configurations
-- [ ] Add test helper utilities và mock objects
+- [x] Create new Unit Test target trong Xcode (`SQLNotebookTests`)
+- [x] Create new UI Test target trong Xcode (`SQLNotebookUITests`)
+- [x] Configure test targets với proper dependencies (PostgresNIO, etc.)
+- [x] Set up test schemes và build configurations
+- [x] Add test helper utilities và mock objects
 
 **📖 Detailed Setup Guide:** See [TESTING_SETUP_GUIDE.md](./TESTING_SETUP_GUIDE.md) for step-by-step instructions.
 
 ### 6.2 Unit Tests - Data Models
-- [ ] `SQLNotebook` encoding/decoding (JSON serialization)
-- [ ] `NotebookCell` encoding/decoding với all properties
+- [x] `SQLNotebook` encoding/decoding (JSON serialization)
+- [x] `NotebookCell` encoding/decoding với all properties
 - [ ] `CellResult` encoding/decoding với error cases
-- [ ] `CellValue` enum encoding/decoding cho all cases
-  - [ ] Test string, int, double, bool, null, json, date, data
-- [ ] `ConnectionConfig` encoding/decoding (không lưu password)
-- [ ] `NotebookMetadata` encoding/decoding
-- [ ] `NotebookSettings` encoding/decoding
+- [x] `CellValue` enum encoding/decoding cho all cases
+  - [x] Test string, int, double, bool, null, json, date, data
+- [x] `ConnectionConfig` encoding/decoding (không lưu password)
+- [x] `NotebookMetadata` encoding/decoding
+- [x] `NotebookSettings` encoding/decoding
 - [ ] `DatabaseSchema` models encoding/decoding
 
 ### 6.3 Unit Tests - Utilities
-- [ ] `SQLSyntaxHighlighter` tokenizer correctness
-  - [ ] Test keyword detection (case-insensitive)
-  - [ ] Test function detection với parentheses
-  - [ ] Test string highlighting (single-quote, dollar-quote)
-  - [ ] Test comment highlighting (single-line, multi-line)
-  - [ ] Test number highlighting
-  - [ ] Test operator highlighting
+- [x] `SQLSyntaxHighlighter` tokenizer correctness
+  - [x] Test keyword detection (case-insensitive)
+  - [x] Test function detection với parentheses
+  - [x] Test string highlighting (single-quote, dollar-quote)
+  - [x] Test comment highlighting (single-line, multi-line)
+  - [x] Test number highlighting
+  - [x] Test operator highlighting
 - [ ] `JSONSyntaxHighlighter` (nếu có)
-- [ ] `CellValue` type conversions
-  - [ ] Test `displayString` property cho all types
-  - [ ] Test `fullString` property cho all types
-  - [ ] Test `isNull` và `isJSON` computed properties
+- [x] `CellValue` type conversions
+  - [x] Test `displayString` property cho all types
+  - [x] Test `fullString` property cho all types
+  - [x] Test `isNull` và `isJSON` computed properties
 
 ### 6.4 Unit Tests - Document Operations
 - [ ] `SQLNotebookDocument.read()` với valid JSON
@@ -402,13 +423,13 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Document với connection config (không lưu password)
 
 ### 6.5 Unit Tests - ViewModel Logic
-- [ ] `NotebookViewModel.addCell()` - add cell ở different positions
-- [ ] `NotebookViewModel.deleteCell()` - delete existing cell
-- [ ] `NotebookViewModel.moveCell()` - reorder cells
-- [ ] `NotebookViewModel.selectCell()` - selection state management
-- [ ] `NotebookViewModel.clearAllOutputs()` - clear all results
+- [x] `NotebookViewModel.addCell()` - add cell ở different positions
+- [x] `NotebookViewModel.deleteCell()` - delete existing cell
+- [x] `NotebookViewModel.moveCell()` - reorder cells
+- [x] `NotebookViewModel.selectCell()` - selection state management
+- [x] `NotebookViewModel.clearAllOutputs()` - clear all results
 - [ ] Cell execution count increment
-- [ ] Cell running state management
+- [x] Cell running state management
 
 ### 6.6 Integration Tests - Database Connection
 - [ ] `DatabaseConnectionManager.connect()` với valid config
@@ -641,22 +662,23 @@ ORDER BY ordinal_position;
 ## Next Priorities
 
 ### ⭐ CURRENT TOP PRIORITY: Phase 6 - Testing Suite
-**Status:** NOT STARTED
+**Status:** IN PROGRESS ✅
 **Priority:** CRITICAL (Foundation for quality assurance and preventing regressions)
 
-**WHY NOW:** App đã có nhiều features implemented với cross-dependencies. Testing suite là CRITICAL để:
-- Prevent regressions khi add new features
-- Ensure existing features work correctly after changes
-- Build confidence trong code quality
-- Enable safe refactoring
-- Catch bugs early before they reach users
+**COMPLETED SO FAR:**
+- ✅ Test targets setup (6.1) - Unit Test & UI Test targets created
+- ✅ Data Models tests (6.2) - SQLNotebook, NotebookCell, CellValue, ConnectionConfig, NotebookMetadata, NotebookSettings
+- ✅ Utilities tests (6.3) - SQLSyntaxHighlighter comprehensive tests, CellValue conversions
+- ✅ ViewModel tests (6.5) - Cell management, selection, sidebar toggles, clear outputs
 
-**IMMEDIATE NEXT STEPS:**
-1. Set up test targets (6.1) - Unit Test & UI Test targets
-2. Start with Data Models tests (6.2) - Foundation layer
-3. Add Utilities tests (6.3) - SQLSyntaxHighlighter, CellValue conversions
-4. Build up to Integration tests (6.6, 6.7, 6.8) - Database operations
-5. Add UI tests (6.9, 6.10, 6.11, 6.12) - Critical user flows
+**REMAINING TASKS:**
+1. **Document Operations tests (6.4)** - SQLNotebookDocument read/write operations
+2. **Integration Tests (6.6, 6.7, 6.8)** - Database connection, query execution, schema loading
+3. **UI Tests (6.9, 6.10, 6.11, 6.12)** - Basic flows, query execution, connection flow, document persistence
+4. **Test Infrastructure** - Mock DatabaseConnectionManager, test helpers, sample data
+
+**IMMEDIATE NEXT STEP:**
+Complete **6.4 Unit Tests - Document Operations** (SQLNotebookDocument read/write with various scenarios)
 
 Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dưới.
 
@@ -673,10 +695,11 @@ Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dư
 8. **Logging System** (4.12) - Centralized logging with send-to-developer option
 
 ### Then: Phase 5 Advanced Features
-1. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode) ⭐ NEW
-2. **Query History** (5.1) - Store and re-run past queries
-3. **Export Results** (5.2) - CSV export functionality
-4. **Multiple Database Support** (5.3) - SQLite, MySQL
+1. **AI-Powered Natural Language Query** (5.6) - Using local model only ⭐ NEW
+2. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode)
+3. **Query History** (5.1) - Store and re-run past queries
+4. **Export Results** (5.2) - CSV export functionality
+5. **Multiple Database Support** (5.3) - SQLite, MySQL
 
 ---
 

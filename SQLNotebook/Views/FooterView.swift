@@ -11,8 +11,9 @@ struct FooterView: View {
 
   var body: some View {
     HStack(spacing: Spacing.lg) {
-      // Connection status
+      //      Left side
       HStack(spacing: Spacing.sm) {
+        // Connection status
         connectionStatusIcon
         Text(connectionStatusText)
           .font(.caption)
@@ -21,26 +22,24 @@ struct FooterView: View {
 
       Spacer()
 
-      // Notebook stats
-      Text("\(viewModel.cellCount) cells | \(viewModel.executedCellCount) executed")
-        .font(.caption)
-        .foregroundColor(.foregroundSubtle)
+      HStack(spacing: Spacing.sm) {
+        // Last saved
+        if let lastSaved {
+          Text(lastSavedText(lastSaved))
+            .font(.caption)
+            .foregroundColor(.foregroundSubtle)
 
-      // Last saved
-      if let lastSaved {
-        Text(lastSavedText(lastSaved))
+          Text("|")
+            .font(.caption)
+            .foregroundColor(.foregroundSubtle)
+        }
+
+        // Notebook stats
+        Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
           .font(.caption)
           .foregroundColor(.foregroundSubtle)
       }
 
-      // Version
-      Text("|")
-        .font(.caption)
-        .foregroundColor(.foregroundSubtle)
-
-      Text("v\(appVersion)")
-        .font(.caption)
-        .foregroundColor(.foregroundSubtle)
     }
     .padding(.horizontal, Spacing.lg)
     .frame(height: ComponentSize.footerHeight)
