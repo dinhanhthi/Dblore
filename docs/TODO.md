@@ -10,6 +10,7 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED (AI feature added: 5.6)
 - 🚨 **Phase 6: Testing Suite** - **IN PROGRESS** ⭐ (Test targets setup ✅, Data Models tests ✅, Utilities tests ✅, ViewModel tests ✅)
+- 🎯 **Phase 7: Editor Mode** - **NOT STARTED** (LAST PHASE - Implement after all other features)
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
 **BUILD STATUS: SUCCESS ✅**
@@ -508,25 +509,76 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 
 ---
 
-## Testing Checklist ❌ (Legacy - See Phase 6 above)
+## Phase 7: Editor Mode (Traditional SQL Editor) 🎯 **LAST PHASE**
 
-### Unit Tests
-- [ ] Data model encoding/decoding
-- [ ] SQL tokenizer correctness
-- [ ] CellValue type conversions
-- [ ] Document read/write operations
+### Overview
+Implement traditional SQL editor mode với single editor và result panel, cho phép user switch giữa notebook mode và editor mode. Editor mode giống các SQL editor thông thường (như DBeaver, DataGrip) với khả năng run whole file hoặc chỉ selection.
 
-### Integration Tests
-- [ ] Database connection lifecycle
-- [ ] Query execution and result parsing
-- [ ] Error handling for invalid queries
+### 7.1 Core Editor Mode Implementation
+- [ ] Add `ViewMode` enum (`.notebook`, `.editor`) to `NotebookViewModel`
+- [ ] Add `viewMode` state property to `NotebookViewModel` (default: `.notebook`)
+- [ ] Create `EditorModeView` component với single editor và result panel
+  - [ ] Single SQL editor (full-width, no cells)
+  - [ ] Single result panel below editor
+  - [ ] Editor supports text selection
+  - [ ] Result panel shows last execution result
+- [ ] Update `ContentView` để conditionally render based on `viewMode`
+  - [ ] If `.notebook`: show current cell-based layout
+  - [ ] If `.editor`: show `EditorModeView`
 
-### UI Tests
-- [ ] Create new notebook flow
-- [ ] Add and delete cells
-- [ ] Run query and verify results display
-- [ ] Save and reopen notebook with results
-- [ ] Keyboard navigation
+### 7.2 Execution Features
+- [ ] Implement "Run Selection" functionality
+  - [ ] Detect selected text trong editor
+  - [ ] Execute only selected SQL text (nếu có selection)
+  - [ ] Show visual indicator khi có selection
+- [ ] Implement "Run All" functionality trong editor mode
+  - [ ] Execute entire .sql file content (all text trong editor)
+  - [ ] Handle multiple statements (split by semicolon or execute as batch)
+- [ ] Add execution buttons trong editor mode
+  - [ ] "Run Selection" button (enabled khi có selection)
+  - [ ] "Run All" button (always enabled)
+  - [ ] Keyboard shortcuts: `Cmd+Enter` (run selection/all), `Cmd+Shift+Enter` (run all)
+
+### 7.3 Mode Switching UI
+- [ ] Add mode toggle button trong header
+  - [ ] Icon: `square.split.2x1` (notebook) / `doc.text` (editor)
+  - [ ] Tooltip: "Switch to Editor Mode" / "Switch to Notebook Mode"
+- [ ] Add visual indicator trong header showing current mode
+- [ ] Add keyboard shortcut để toggle mode (e.g., `Cmd+Shift+E`)
+- [ ] Persist view mode preference trong `NotebookSettings`
+
+### 7.4 Sidebar Integration
+- [ ] Preserve left sidebar functionality trong editor mode
+  - [ ] Table list vẫn hoạt động
+  - [ ] Click table/column name inserts vào editor tại cursor position
+  - [ ] Cell value editing vẫn available (nếu có result selected)
+- [ ] Preserve right sidebar functionality trong editor mode
+  - [ ] Cell info viewer (khi click vào result cell)
+  - [ ] Connection details
+  - [ ] Settings panel
+
+### 7.5 Data Conversion
+- [ ] Handle file content loading vào editor mode
+  - [ ] Khi switch từ notebook → editor: concatenate all cells content
+  - [ ] Join cells với newline hoặc separator
+  - [ ] Preserve cell order
+- [ ] Handle saving từ editor mode back to notebook mode
+  - [ ] Option 1: Split by SQL statements (semicolon-separated)
+  - [ ] Option 2: Preserve as single cell
+  - [ ] Let user choose strategy hoặc auto-detect
+- [ ] Preserve document state khi switching modes
+- [ ] Handle unsaved changes warning khi switching modes
+
+### 7.6 Testing & Polish
+- [ ] Ensure editor mode works với existing connection system
+- [ ] Test mode switching preserves connection state
+- [ ] Test mode switching preserves document state
+- [ ] Test "Run Selection" với various SQL statements
+- [ ] Test "Run All" với multiple statements
+- [ ] Test sidebar interactions trong editor mode
+- [ ] Test keyboard shortcuts trong editor mode
+- [ ] Test data conversion (notebook ↔ editor)
+- [ ] Ensure editor mode works với all existing features
 
 ---
 
@@ -700,6 +752,23 @@ Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dư
 3. **Query History** (5.1) - Store and re-run past queries
 4. **Export Results** (5.2) - CSV export functionality
 5. **Multiple Database Support** (5.3) - SQLite, MySQL
+
+### Finally: Phase 7 - Editor Mode 🎯
+**Status:** NOT STARTED
+**Priority:** LAST PHASE (Implement after all other features are complete)
+
+**OVERVIEW:**
+Traditional SQL editor mode với single editor và result panel, cho phép user switch giữa notebook mode và editor mode. Editor mode giống các SQL editor thông thường với khả năng run whole file hoặc chỉ selection.
+
+**TASKS:**
+- Core implementation (7.1) - ViewMode enum, EditorModeView component
+- Execution features (7.2) - Run Selection, Run All
+- Mode switching UI (7.3) - Toggle button, keyboard shortcuts
+- Sidebar integration (7.4) - Preserve left/right sidebar functionality
+- Data conversion (7.5) - Notebook ↔ Editor content conversion
+- Testing & polish (7.6) - Comprehensive testing và integration
+
+Xem chi tiết ở "Phase 7: Editor Mode" section bên dưới.
 
 ---
 
