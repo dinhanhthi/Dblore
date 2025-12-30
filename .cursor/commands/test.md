@@ -21,6 +21,7 @@ Identify what the user needs:
 - **Unit Tests**: Write tests for models, utilities, ViewModels
 - **Integration Tests**: Write tests for database operations
 - **UI Tests**: Write tests for user flows
+- **Performance Tests**: Write tests for performance-critical code
 - **Mock Objects**: Create mock dependencies
 - **Test Helpers**: Create utility functions
 - **Run Tests**: Execute tests và check coverage
@@ -42,6 +43,68 @@ find . -name "*Tests.swift" -o -name "*Test.swift" 2>/dev/null
 ### Step 4: Execute Testing Tasks
 
 Based on the request, follow the appropriate workflow below.
+
+---
+
+## Testing Strategy
+
+### Test Types to Create
+
+1. **Unit Tests**
+   - Data models (Codable, business logic)
+   - Utilities (syntax highlighters, formatters)
+   - ViewModels (state management, user actions)
+   - Isolated components
+
+2. **Integration Tests**
+   - Database connections và operations
+   - Query execution và result parsing
+   - Schema loading
+   - Document persistence (read/write)
+
+3. **UI Tests**
+   - User flows (create, open, save notebooks)
+   - Keyboard shortcuts
+   - UI interactions (buttons, sidebars, cells)
+   - End-to-end scenarios
+
+4. **Performance Tests**
+   - Large dataset handling
+   - Query execution timing
+   - UI rendering với many cells
+
+## Testing Approach
+
+### 1. Analyze Requirements
+- Read the testing plan (`docs/testing_plan.md`)
+- Understand the feature being tested
+- Identify test boundaries và dependencies
+- Determine appropriate test types
+
+### 2. Set Up Test Infrastructure
+- Create test targets if needed
+- Set up mock objects và test helpers
+- Configure test database (Docker hoặc local PostgreSQL)
+- Create test data builders
+
+### 3. Write Tests
+- Follow AAA pattern (Arrange-Act-Assert)
+- Use descriptive test names: `testFunctionName_Scenario_ExpectedResult()`
+- Keep tests isolated và independent
+- Mock external dependencies (database, file system, network)
+- Handle async testing với `async/await` hoặc `XCTestExpectation`
+
+### 4. Verify Coverage
+- Run tests với `Cmd+U` hoặc CLI
+- Check code coverage reports
+- Identify gaps trong test coverage
+- Add missing test cases
+
+### 5. Maintain Tests
+- Update tests when code changes
+- Refactor tests for clarity
+- Remove obsolete tests
+- Keep test suite fast
 
 ---
 
@@ -94,7 +157,21 @@ import XCTest
 @testable import SQLNotebook
 
 final class SQLNotebookTests: XCTestCase {
-    func testEncodingDecoding() throws {
+    // MARK: - Test Lifecycle
+
+    override func setUp() {
+        super.setUp()
+        // Arrange: Set up test fixtures
+    }
+
+    override func tearDown() {
+        // Cleanup after each test
+        super.tearDown()
+    }
+
+    // MARK: - Tests
+
+    func testEncodingDecoding_ValidNotebook_RoundTripSuccess() throws {
         // Arrange
         let notebook = SQLNotebook.newDocument()
         
@@ -109,7 +186,7 @@ final class SQLNotebookTests: XCTestCase {
         XCTAssertEqual(notebook.cells.count, decoded.cells.count)
     }
     
-    func testNewDocument() {
+    func testNewDocument_DefaultState_ReturnsNotebookWithOneCell() {
         // Arrange & Act
         let notebook = SQLNotebook.newDocument()
         
@@ -276,7 +353,7 @@ final class DatabaseConnectionManagerTests: XCTestCase {
         )
     }
     
-    func testConnectSuccess() async throws {
+    func testConnectSuccess_ValidConfig_ConnectionEstablished() async throws {
         // Arrange
         // (Requires test database setup)
         
@@ -284,11 +361,27 @@ final class DatabaseConnectionManagerTests: XCTestCase {
         try await manager.connect(config: testConfig)
         
         // Assert
-        // Verify connection state
+        let state = await manager.connectionState
+        XCTAssertEqual(state, .connected)
     }
     
-    func testConnectInvalidHost() async throws {
-        // Test error handling
+    func testConnectInvalidHost_InvalidHost_ThrowsError() async throws {
+        // Arrange
+        let invalidConfig = ConnectionConfig(
+            host: "invalid.host",
+            port: 5432,
+            database: "test_db",
+            username: "test_user",
+            password: "test_password"
+        )
+        
+        // Act & Assert
+        do {
+            try await manager.connect(config: invalidConfig)
+            XCTFail("Expected connection to fail")
+        } catch {
+            // Expected error
+        }
     }
 }
 ```
@@ -348,6 +441,41 @@ final class NotebookUITests: XCTestCase {
 - `SQLNotebookUITests/QueryExecutionUITests.swift`
 - `SQLNotebookUITests/ConnectionUITests.swift`
 - `SQLNotebookUITests/DocumentPersistenceUITests.swift`
+
+---
+
+## Test Categories from Testing Plan
+
+### Data Models
+- Encoding/decoding (JSON round-trip)
+- Validation logic
+- Computed properties
+- Enum cases (CellValue types)
+
+### Database Operations
+- Connection lifecycle (connect, disconnect, reconnect)
+- Query execution (SELECT, INSERT, UPDATE, DELETE, DDL)
+- Error handling (invalid SQL, connection failures)
+- Type mapping (PostgreSQL types → CellValue enum)
+- SSL/TLS modes
+
+### Document Persistence
+- Read valid/invalid JSON files
+- Write notebooks to disk
+- Round-trip testing (save → load → verify)
+- Password security (not saved trong files)
+
+### ViewModel Logic
+- Cell management (add, delete, move, duplicate)
+- Selection state
+- Execution flow
+- Output clearing
+
+### UI Flows
+- Keyboard shortcuts
+- Sidebar toggles
+- Cell execution
+- Result display
 
 ---
 
@@ -435,9 +563,22 @@ extension XCTestCase {
 - Code Coverage: Product → Scheme → Edit Scheme → Test → Options → Code Coverage
 
 ### Command Line
+
+**Run All Tests**:
 ```bash
 xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
 ```
+
+**Run Specific Test**:
+```bash
+xcodebuild test -scheme SQLNotebook -destination 'platform=macOS' -only-testing:SQLNotebookTests/FeatureTests/testSpecificCase
+```
+
+**Enable Code Coverage**:
+Product → Scheme → Edit Scheme → Test → Options → Code Coverage
+
+**View Coverage Report**:
+In Xcode: Report Navigator (⌘9) → Coverage tab
 
 ---
 
@@ -459,7 +600,11 @@ xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
 5. **Mock external dependencies** - database, file system, network
 6. **Clean up** test data sau mỗi test
 7. **Test edge cases** - empty data, nil values, errors
-8. **Use async testing** với `XCTestExpectation` cho async code
+8. **Use async testing** với `async/await` hoặc `XCTestExpectation` cho async code
+9. **Test behavior, not implementation** - Focus on what code does, not how
+10. **Keep tests focused** - One assertion per test (when practical)
+11. **Make tests readable** - Tests are documentation, make them clear
+12. **Use MARK comments** - Organize test files với `// MARK: - Test Lifecycle` và `// MARK: - Tests`
 
 ### ❌ Never Do
 1. **Skip reading testing plan** - always check `@docs/testing_plan.md`
@@ -469,6 +614,18 @@ xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
 5. **Skip cleanup** - always clean up test data
 6. **Test implementation details** - test behavior, not internals
 7. **Write flaky tests** - tests should be deterministic
+8. **Ignore async/await** - Handle async code properly với `async throws` hoặc `XCTestExpectation`
+9. **Forget Sendable** - Ensure test mocks meet Sendable requirements
+
+## Swift 6 Testing Checklist
+
+When testing concurrent code:
+- [ ] Are async tests using `async throws`?
+- [ ] Are actor-isolated methods tested correctly?
+- [ ] Is `@MainActor` isolation respected trong tests?
+- [ ] Are race conditions tested?
+- [ ] Is Task cancellation handled?
+- [ ] Are Sendable requirements met trong test mocks?
 
 ---
 
@@ -516,7 +673,28 @@ xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
 
 ## Response Format
 
-When reporting test status:
+When reporting test status, use this format:
+
+```markdown
+## Test Suite Created
+[Name of test file/suite]
+
+## Test Cases Implemented
+- ✅ testCase1_Scenario_ExpectedResult
+- ✅ testCase2_Scenario_ExpectedResult
+- ✅ testCase3_Scenario_ExpectedResult
+
+## Test Infrastructure
+[Mocks, helpers, hoặc test utilities created]
+
+## Coverage
+[Code coverage percentage hoặc areas covered]
+
+## Test Results
+[Pass/fail status, any issues found]
+```
+
+Or for comprehensive status report:
 
 ```markdown
 # Testing Status Report
@@ -541,6 +719,12 @@ When reporting test status:
 - [ ] Set up test database for integration tests
 ```
 
+## Key Reference Files
+
+- `docs/testing_plan.md` - Comprehensive testing plan. **IMPORTANT**: Always check, verify và update this doc.
+- `CLAUDE.md` - Development guidelines
+- `docs/TODO.md` - Task breakdown
+
 ---
 
 ## Your Goal
@@ -554,4 +738,15 @@ Maintain **comprehensive test coverage** với:
 - Clear test structure following testing plan
 
 Prioritize **test quality over quantity** và **meaningful tests over coverage numbers**.
+
+## Workflow Summary
+
+1. **Read the testing plan**: Understand what needs testing
+2. **Identify test category**: Unit, integration, hoặc UI test?
+3. **Create test file**: Follow naming convention `[Feature]Tests.swift`
+4. **Write test cases**: Implement test methods với AAA pattern
+5. **Add test helpers**: Create mocks và utilities as needed
+6. **Run tests**: Use Xcode (`Cmd+U`) hoặc CLI
+7. **Check coverage**: Verify adequate coverage
+8. **Report results**: Summarize what was tested và results
 

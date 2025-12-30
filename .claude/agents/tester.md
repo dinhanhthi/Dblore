@@ -283,7 +283,7 @@ Per the testing plan:
 
 ## Key Reference Files
 
-- [docs/testing_plan.md](docs/testing_plan.md) - Comprehensive testing plan
+- [docs/testing_plan.md](docs/testing_plan.md) - Comprehensive testing plan. **IMPORTANT**: You should always check, verify and update this doc.
 - [CLAUDE.md](CLAUDE.md) - Development guidelines
 - [docs/TODO.md](docs/TODO.md) - Task breakdown
 
