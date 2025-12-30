@@ -15,7 +15,7 @@ A native macOS application for writing and executing SQL queries in a cell-based
 
 - **Language:** Swift 6+
 - **UI Framework:** SwiftUI
-- **Target:** macOS 16.0+
+- **Target:** macOS 15.0+
 - **Architecture:** MVVM with Observable macro
 - **Database:** PostgreSQL (PostgresNIO), SQLite (native)
 - **Persistence:** Codable + JSON (`.sqlnb` files)
@@ -46,6 +46,15 @@ open SQLNotebook.xcodeproj
 Swift Package Manager will automatically fetch dependencies:
 - [PostgresNIO](https://github.com/vapor/postgres-nio) - PostgreSQL client
 
+### Testing Environment Setup
+
+1. Open Project in Xcode → Wait for indexing to complete
+2. Go to File → New → Target... then select macOS → search “Unit Testing Bundle” → Next → SQLNotebookTests → … → Finish
+3. The same as 2 but choose “UI Testing Bundle” → name SQLNotebookUITests → … → Finish.
+4. Verify that there are new folders in the project: SQLNotebook (main app), SQLNotebookTests, SQLNotebookUITests. Normally, they are already integrated in this repository.
+5. Product → Scheme → Edit Scheme → in the left, choose Test/Test, we should see Test Plans “SQLNotebook” (2 test targets)
+6. Don't add any dependency for test target. Otherwise, we get a building error with PostgresNIO.
+
 ## 📁 File Format
 
 Notebooks are saved as `.sqlnb` files (JSON):
@@ -56,7 +65,7 @@ Notebooks are saved as `.sqlnb` files (JSON):
 
 ## 📚 Documentation
 
-See [docs/project.md](docs/project.md) for detailed information
+See [docs/project.md](docs/project.md) for detailed information, [docs/TODO.md] for TODO.
 
 ## 📝 License
 

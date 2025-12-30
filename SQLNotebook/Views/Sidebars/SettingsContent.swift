@@ -123,9 +123,13 @@ struct SettingsContent: View {
   private var keyboardShortcutsList: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       shortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
-      shortcutRow(action: "Run All", shortcut: "Cmd+Shift+Enter")
-      shortcutRow(action: "Add Cell", shortcut: "Cmd+B")
+      shortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
+      shortcutRow(action: "Run Cell and Insert Below", shortcut: "Option+Enter")
+      shortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
       shortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
+      shortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
+      shortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
+      shortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+R")
     }
   }
 
