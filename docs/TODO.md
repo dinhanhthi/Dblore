@@ -8,7 +8,7 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
 - ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
-- ⏳ **Phase 5: Advanced Features** - NOT STARTED (AI feature added: 5.6)
+- ⏳ **Phase 5: Advanced Features** - NOT STARTED (Features planned: Schema Visualizer 5.7, AI Query 5.6, Tabs 5.5)
 - 🔒 **Phase 6: Security & Safety** - **IN PROGRESS** ⚠️ (Credentials security ✅, Connection security ⚠️, Query execution security ⚠️)
 - 🚨 **Phase 7: Testing Suite** - **IN PROGRESS** ⭐ (Test targets setup ✅, Data Models tests ✅, Utilities tests ✅, ViewModel tests ✅)
 - 🎯 **Phase 8: Editor Mode** - **NOT STARTED** (LAST PHASE - Implement after all other features)
@@ -373,6 +373,43 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [ ] Add privacy notice về local-only processing
 - [ ] Test với various natural language queries
 - [ ] Optimize model size/performance cho macOS
+
+### 5.7 Schema Visualizer
+- [ ] Query foreign key relationships từ `information_schema`
+  - [ ] Query `information_schema.table_constraints` để get foreign keys
+  - [ ] Query `information_schema.key_column_usage` để get column mappings
+  - [ ] Query `information_schema.constraint_column_usage` để get referenced tables
+  - [ ] Build relationship graph với tables as nodes và foreign keys as edges
+- [ ] Create visual graph component
+  - [ ] Use SwiftUI Canvas hoặc third-party graph library
+  - [ ] Render tables as nodes (boxes) với table name
+  - [ ] Render relationships as edges (lines/arrows) between tables
+  - [ ] Show relationship type (one-to-one, one-to-many, many-to-many)
+  - [ ] Display foreign key column names on edges
+- [ ] Implement interactive features
+  - [ ] Pan và zoom functionality cho large schemas
+  - [ ] Click table node để highlight related tables
+  - [ ] Click edge để show relationship details (columns, constraint name)
+  - [ ] Drag nodes để rearrange layout
+  - [ ] Auto-layout algorithm (force-directed, hierarchical, etc.)
+- [ ] Add schema visualizer view
+  - [ ] Create new view component `SchemaVisualizerView`
+  - [ ] Add button trong left sidebar hoặc header để open visualizer
+  - [ ] Show visualizer trong modal window hoặc dedicated panel
+  - [ ] Add refresh button để reload relationships
+  - [ ] Add filter options (show only specific tables, hide certain relationships)
+- [ ] Enhance with additional information
+  - [ ] Show primary keys on table nodes
+  - [ ] Color-code tables by schema
+  - [ ] Show table row counts
+  - [ ] Display column count per table
+  - [ ] Add search/filter để find specific tables
+- [ ] Handle edge cases
+  - [ ] Empty database (no tables)
+  - [ ] Tables without relationships
+  - [ ] Circular references
+  - [ ] Large schemas (performance optimization)
+  - [ ] Error handling khi query fails
 
 ---
 
@@ -875,11 +912,12 @@ Xem chi tiết implementation plan ở "Phase 7: Testing Suite" section bên dư
 8. **Logging System** (4.12) - Centralized logging with send-to-developer option
 
 ### Then: Phase 5 Advanced Features
-1. **AI-Powered Natural Language Query** (5.6) - Using local model only ⭐ NEW
-2. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode)
-3. **Query History** (5.1) - Store and re-run past queries
-4. **Export Results** (5.2) - CSV export functionality
-5. **Multiple Database Support** (5.3) - SQLite, MySQL
+1. **Schema Visualizer** (5.7) - Visual graph of tables and relationships ⭐ NEW
+2. **AI-Powered Natural Language Query** (5.6) - Using local model only
+3. **Tabs Support** (5.5) - Multiple database connections per notebook (like VSCode)
+4. **Query History** (5.1) - Store and re-run past queries
+5. **Export Results** (5.2) - CSV export functionality
+6. **Multiple Database Support** (5.3) - SQLite, MySQL
 
 ### Finally: Phase 8 - Editor Mode 🎯
 **Status:** NOT STARTED
