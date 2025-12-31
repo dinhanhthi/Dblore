@@ -256,6 +256,46 @@ final class NotebookUITests: XCTestCase {
 7. **Check coverage**: Verify adequate coverage
 8. **Report results**: Summarize what was tested and results
 
+## Common Testing Scenarios
+
+### Scenario 1: Create Test Target
+**User request**: "Set up testing cho project"
+
+**AI should**:
+1. Check if test targets exist
+2. Guide user to create targets trong Xcode (hoặc provide instructions)
+3. Create folder structure
+4. Create basic test infrastructure (helpers, mocks)
+
+### Scenario 2: Write Model Tests
+**User request**: "Write tests cho SQLNotebook model"
+
+**AI should**:
+1. Read `docs/testing_plan.md` section 6.2
+2. Read `SQLNotebook/Models/SQLNotebook.swift` để understand structure
+3. Create `SQLNotebookTests/Models/SQLNotebookTests.swift`
+4. Write test cases cho encoding/decoding, newDocument(), etc.
+5. Ensure tests follow Arrange-Act-Assert pattern
+
+### Scenario 3: Write Integration Tests
+**User request**: "Write tests cho database connection"
+
+**AI should**:
+1. Read `docs/testing_plan.md` section 6.6
+2. Read `SQLNotebook/Database/DatabaseConnectionManager.swift`
+3. Create `SQLNotebookTests/Database/DatabaseConnectionManagerTests.swift`
+4. Write tests cho connect, disconnect, execute
+5. Note về test database setup requirements
+
+### Scenario 4: Fix Failing Tests
+**User request**: "Fix failing tests"
+
+**AI should**:
+1. Run tests để see failures
+2. Analyze error messages
+3. Fix issues trong test code hoặc production code
+4. Verify tests pass
+
 ## Output Format
 
 ```
