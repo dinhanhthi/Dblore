@@ -428,6 +428,7 @@ struct ConnectionFormContent: View {
         .foregroundColor(.warning)
       Text(message)
         .foregroundColor(.warning)
+        .textSelection(.enabled)
     }
     .font(.caption)
     .padding(Spacing.sm)
@@ -447,11 +448,13 @@ struct ConnectionFormContent: View {
           .foregroundColor(.success)
         Text("Connection successful!")
           .foregroundColor(.success)
+          .textSelection(.enabled)
       case .failure(let message):
         Image(systemName: "xmark.circle.fill")
           .foregroundColor(.destructive)
         Text(message)
           .foregroundColor(.destructive)
+          .textSelection(.enabled)
       }
     }
     .font(.caption)
