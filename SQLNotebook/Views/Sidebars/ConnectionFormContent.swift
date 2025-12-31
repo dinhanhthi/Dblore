@@ -471,11 +471,17 @@ struct ConnectionFormContent: View {
     testResult = nil
 
     Task {
-      let success = await viewModel.testConnection()
-
-      await MainActor.run {
-        isTesting = false
-        testResult = success ? .success : .failure("Connection failed. Check your credentials.")
+      do {
+        let success = try await viewModel.testConnection()
+        await MainActor.run {
+          isTesting = false
+          testResult = success ? .success : .failure("Connection failed unexpectedly")
+        }
+      } catch {
+        await MainActor.run {
+          isTesting = false
+          testResult = .failure(error.localizedDescription)
+        }
       }
     }
   }

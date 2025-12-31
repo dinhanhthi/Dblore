@@ -23,7 +23,9 @@ extension NotebookViewModel {
       // Auto-load database schema after successful connection
       await loadDatabaseSchema()
     } catch {
-      connectionState = .error(error.localizedDescription)
+      // Set to disconnected instead of error state
+      // Error message will be shown in the connection form, not in the header
+      connectionState = .disconnected
       throw error
     }
   }
@@ -43,12 +45,8 @@ extension NotebookViewModel {
   }
 
   /// Test the current connection configuration
-  func testConnection() async -> Bool {
-    do {
-      return try await connectionManager.testConnection(config: editingConnectionConfig)
-    } catch {
-      return false
-    }
+  func testConnection() async throws -> Bool {
+    return try await connectionManager.testConnection(config: editingConnectionConfig)
   }
 
   /// Auto-connect to saved session if available
