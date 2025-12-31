@@ -83,14 +83,19 @@ struct JSONViewerContent: View {
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)
       } else {
-        ScrollView([.vertical, .horizontal]) {
-          HighlightedJSONText(json: formattedJSON)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Spacing.sm)
+        GeometryReader { geometry in
+          ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            HighlightedJSONText(json: formattedJSON)
+              .padding(Spacing.sm)
+              .frame(
+                minWidth: geometry.size.width,
+                minHeight: geometry.size.height,
+                alignment: .topLeading
+              )
+          }
+          .background(Color.cellBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         }
-        .background(Color.cellBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .frame(maxHeight: .infinity)
       }
     }
   }
@@ -139,7 +144,7 @@ struct JSONViewerContent: View {
   }
 }
 
-#Preview("JSON Viewer") {
+#Preview("Big JSON") {
   let viewModel = NotebookViewModel()
   let jsonData = """
     {
@@ -166,7 +171,7 @@ struct JSONViewerContent: View {
       "object": {
         "key": "value",
         "key2": "value2"
-      }
+      },
       "null": null,
       "boolean": true,
       "number": 123.45,
@@ -175,6 +180,27 @@ struct JSONViewerContent: View {
     }
     """
   viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "users.details")
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 600)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Short JSON") {
+  let viewModel = NotebookViewModel()
+  let jsonData = """
+    {
+      "screen" : "15.6 inch",
+      "ram" : "16GB",
+      "storage" : "512GB SSD",
+      "cpu" : "Intel i7"
+    }
+    """
+  viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "Row 1, Column 'specifications'")
 
   return HStack {
     Spacer()
