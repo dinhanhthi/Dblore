@@ -1,25 +1,25 @@
 # Testing Plan for SQLNotebook
 
-Danh sách tất cả test cases cần implement cho SQLNotebook project, organized theo categories với todo-style checklist.
+List of all test cases to implement for SQLNotebook project, organized by categories with todo-style checklist.
 
 ---
 
 ## Data Models
 
 ### SQLNotebook Model
-- [x] Encode và decode notebook với cells — DataModelTests: `sqlNotebookEncodingDecoding()`
-- [x] Encode và decode notebook với empty cells — DataModelTests: `sqlNotebookWithEmptyCells()`
+- [x] Encode and decode notebook with cells — DataModelTests: `sqlNotebookEncodingDecoding()`
+- [x] Encode and decode notebook with empty cells — DataModelTests: `sqlNotebookWithEmptyCells()`
 - [x] Round-trip encoding/decoding preserves data — DataModelTests: `sqlNotebookEncodingDecoding()`
-- [x] Notebook với connection config (password không được encode) — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
-- [x] Notebook với multiple cells và results — DataModelTests: `sqlNotebookEncodingDecoding()`
-- [x] Notebook encoding performance với 100+ cells — DataModelTests: `notebookEncodingPerformance()`
+- [x] Notebook with connection config (password should not be encoded) — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
+- [x] Notebook with multiple cells and results — DataModelTests: `sqlNotebookEncodingDecoding()`
+- [x] Notebook encoding performance with 100+ cells — DataModelTests: `notebookEncodingPerformance()`
 
 ### NotebookCell Model
-- [x] Encode và decode cell với all properties — DataModelTests: `notebookCellEncodingDecoding()`
-- [x] Cell với result data — DataModelTests: `notebookCellWithResults()`
-- [x] Cell với execution count — DataModelTests: `notebookCellEncodingDecoding()`
-- [ ] Cell với running state
-- [x] Cell với nil result — DataModelTests: `notebookCellEncodingDecoding()`
+- [x] Encode and decode cell with all properties — DataModelTests: `notebookCellEncodingDecoding()`
+- [x] Cell with result data — DataModelTests: `notebookCellWithResults()`
+- [x] Cell with execution count — DataModelTests: `notebookCellEncodingDecoding()`
+- [ ] Cell with running state
+- [x] Cell with nil result — DataModelTests: `notebookCellEncodingDecoding()`
 - [ ] Cell content updates preserve other properties
 
 ### CellValue Enum
@@ -31,20 +31,20 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] Encode/decode `.json` case — DataModelTests: `cellValueJSONEncodingDecoding()`
 - [ ] Encode/decode `.date` case
 - [ ] Encode/decode `.data` case
-- [x] `displayString` property cho all types — DataModelTests: `cellValueDisplayStrings()`
-- [ ] `fullString` property cho all types
+- [x] `displayString` property for all types — DataModelTests: `cellValueDisplayStrings()`
+- [ ] `fullString` property for all types
 - [x] `isNull` computed property — DataModelTests: `cellValueIsNull()`
 - [x] `isJSON` computed property — DataModelTests: `cellValueIsJSON()`
-- [ ] Long string truncation trong `displayString`
-- [ ] JSON formatting trong display
+- [ ] Long string truncation in `displayString`
+- [ ] JSON formatting in display
 
 ### CellResult Model
-- [x] Result với columns và rows — DataModelTests: `notebookCellWithResults()`
-- [x] Result với execution time — DataModelTests: `notebookCellWithResults()`
-- [x] Result với timestamp — DataModelTests: `notebookCellWithResults()`
-- [ ] Result với error message
-- [ ] Result với null values
-- [ ] Result với mixed data types
+- [x] Result with columns and rows — DataModelTests: `notebookCellWithResults()`
+- [x] Result with execution time — DataModelTests: `notebookCellWithResults()`
+- [x] Result with timestamp — DataModelTests: `notebookCellWithResults()`
+- [ ] Result with error message
+- [ ] Result with null values
+- [ ] Result with mixed data types
 - [ ] Empty result set (0 rows)
 - [ ] Large result set encoding
 
@@ -52,18 +52,18 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] Encode config WITHOUT password — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
 - [x] Decode config preserves all fields except password — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
 - [ ] Connection string parsing
-- [ ] Default port và database values
+- [ ] Default port and database values
 - [x] All SSL modes (disable, require, verifyCA, verifyFull) — DataModelTests: `connectionConfigEncodingDoesNotIncludePassword()`
 - [ ] Invalid config validation
 
 ### NotebookMetadata Model
-- [x] Encode và decode metadata — DataModelTests: `notebookMetadataEncodingDecoding()`
+- [x] Encode and decode metadata — DataModelTests: `notebookMetadataEncodingDecoding()`
 - [x] Title, createdAt, modifiedAt preservation — DataModelTests: `notebookMetadataEncodingDecoding()`
 - [ ] Metadata updates modify modifiedAt timestamp
 - [ ] Custom tags/labels (if added)
 
 ### NotebookSettings Model
-- [x] Encode và decode settings — DataModelTests: `notebookSettingsEncodingDecoding()`
+- [x] Encode and decode settings — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [x] maxResultTableHeight value — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [x] includeResultsWhenSaving flag — DataModelTests: `notebookSettingsEncodingDecoding()`
 - [ ] Default settings values
@@ -86,8 +86,8 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] DML keywords (INSERT, UPDATE, DELETE, VALUES) — SQLSyntaxHighlighterTests: `dmlKeywords()`
 - [ ] DCL keywords (GRANT, REVOKE)
 - [ ] TCL keywords (COMMIT, ROLLBACK, SAVEPOINT)
-- [ ] Keywords trong comments không được highlight
-- [ ] Keywords trong strings không được highlight
+- [ ] Keywords in comments should not be highlighted
+- [ ] Keywords in strings should not be highlighted
 
 ### Function Highlighting
 - [x] Aggregate functions (COUNT, SUM, MAX, MIN, AVG) — SQLSyntaxHighlighterTests: `functionHighlighting()`, `multipleFunctions()`
@@ -96,17 +96,17 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Window functions (ROW_NUMBER, RANK, PARTITION BY)
 - [ ] PostgreSQL-specific functions (COALESCE, NOW, CURRENT_TIMESTAMP)
 - [ ] Function case-insensitivity
-- [ ] Functions phải có opening parenthesis để match
+- [ ] Functions must have opening parenthesis to match
 
 ### String Literal Highlighting
 - [x] Single-quote strings ('text') — SQLSyntaxHighlighterTests: `singleQuoteStrings()`
 - [x] Escaped quotes (O''Brien) — SQLSyntaxHighlighterTests: `stringWithEscapedQuotes()`
-- [x] Multiple strings trong same query — SQLSyntaxHighlighterTests: `multipleStrings()`
+- [x] Multiple strings in same query — SQLSyntaxHighlighterTests: `multipleStrings()`
 - [x] PostgreSQL dollar-quoted strings ($$text$$) — SQLSyntaxHighlighterTests: `dollarQuotedStrings()`
-- [ ] Dollar-quoted với custom tags ($tag$text$tag$)
+- [ ] Dollar-quoted with custom tags ($tag$text$tag$)
 - [ ] Empty strings ('')
 - [ ] Multiline strings
-- [ ] Strings với special characters (\n, \t, etc.)
+- [ ] Strings with special characters (\n, \t, etc.)
 
 ### Number Highlighting
 - [x] Integers (123, 456) — SQLSyntaxHighlighterTests: `integerNumbers()`
@@ -133,9 +133,9 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Concatenation operator (||)
 
 ### Complex Queries
-- [x] SELECT với JOINs và GROUP BY — SQLSyntaxHighlighterTests: `complexSelectQuery()`
+- [x] SELECT with JOINs and GROUP BY — SQLSyntaxHighlighterTests: `complexSelectQuery()`
 - [x] Common Table Expressions (WITH ... AS) — SQLSyntaxHighlighterTests: `cteQuery()`
-- [x] Subqueries trong WHERE clause — SQLSyntaxHighlighterTests: `subquery()`
+- [x] Subqueries in WHERE clause — SQLSyntaxHighlighterTests: `subquery()`
 - [ ] UNION/INTERSECT/EXCEPT queries
 - [ ] Window functions queries
 - [ ] Recursive CTEs
@@ -152,16 +152,16 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] Empty string — SQLSyntaxHighlighterTests: `emptyString()`
 - [x] Whitespace only — SQLSyntaxHighlighterTests: `whitespaceOnly()`
 - [x] Single keyword — SQLSyntaxHighlighterTests: `singleKeyword()`
-- [x] Unicode characters trong strings — SQLSyntaxHighlighterTests: `unicodeCharacters()`
+- [x] Unicode characters in strings — SQLSyntaxHighlighterTests: `unicodeCharacters()`
 - [ ] Very long lines (1000+ characters)
-- [ ] Mixed tabs và spaces
+- [ ] Mixed tabs and spaces
 - [ ] Invalid SQL syntax (should still highlight)
 
 ### Performance
 - [x] Highlighting 100 repeated queries under 5s — SQLSyntaxHighlighterTests: `highlightingPerformance()`
-- [x] Very long query với 1000+ columns under 5s — SQLSyntaxHighlighterTests: `highlightingVeryLongQuery()`
+- [x] Very long query with 1000+ columns under 5s — SQLSyntaxHighlighterTests: `highlightingVeryLongQuery()`
 - [ ] Real-time highlighting performance (debouncing)
-- [ ] Memory usage với large queries
+- [ ] Memory usage with large queries
 
 ---
 
@@ -173,12 +173,12 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [x] Add cell to empty notebook — ViewModelTests: `addCellToEmptyNotebook()`
 - [x] Delete existing cell — ViewModelTests: `deleteCell()`
 - [x] Delete non-existent cell (no crash) — ViewModelTests: `deleteNonExistentCell()`
-- [x] Move cell từ position A to B — ViewModelTests: `moveCell()`
+- [x] Move cell from position A to B — ViewModelTests: `moveCell()`
 - [x] Move multiple cells — ViewModelTests: `moveCell()`
 - [x] Add multiple cells (performance test) — ViewModelTests: `addMultipleCells()`
 - [x] Delete all cells — ViewModelTests: `deleteAllCells()`
 - [ ] Duplicate cell
-- [ ] Duplicate cell với results
+- [ ] Duplicate cell with results
 - [ ] Undo/redo cell operations
 
 ### Cell Selection
@@ -250,13 +250,13 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Read invalid JSON (should throw error)
 - [ ] Read missing file (should throw error)
 - [ ] Read corrupted file
-- [ ] Read file với wrong version
-- [ ] Read file với legacy format
+- [ ] Read file with wrong version
+- [ ] Read file with legacy format
 - [ ] Read very large notebook file (100+ MB)
 
 ### File Write Operations
 - [ ] Write notebook to valid JSON file
-- [ ] Write với pretty-printed formatting
+- [ ] Write with pretty-printed formatting
 - [ ] Write excludes passwords
 - [ ] Write respects includeResultsWhenSaving setting
 - [ ] Atomic write (no corruption on crash)
@@ -264,10 +264,10 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 
 ### Round-Trip Operations
 - [ ] Write then read preserves all data
-- [ ] Round-trip với cells có results
-- [ ] Round-trip với connection config
-- [ ] Round-trip với empty notebook
-- [ ] Round-trip với large notebook
+- [ ] Round-trip with cells that have results
+- [ ] Round-trip with connection config
+- [ ] Round-trip with empty notebook
+- [ ] Round-trip with large notebook
 
 ### Document State
 - [ ] isDocumentEdited flag after changes
@@ -280,12 +280,12 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## Database Connection (Integration Tests)
 
 ### PostgreSQL Connection
-- [ ] Connect với valid config (localhost)
-- [ ] Connect với valid config (production/remote server)
-- [ ] Connect với invalid host (throws error)
-- [ ] Connect với invalid port (throws error)
-- [ ] Connect với invalid credentials (throws error)
-- [ ] Connect với invalid database name (throws error)
+- [ ] Connect with valid config (localhost)
+- [ ] Connect with valid config (production/remote server)
+- [ ] Connect with invalid host (throws error)
+- [ ] Connect with invalid port (throws error)
+- [ ] Connect with invalid credentials (throws error)
+- [ ] Connect with invalid database name (throws error)
 - [ ] Test connection success case
 - [ ] Test connection failure case
 - [ ] Error messages displayed correctly at footer of connection sidebar
@@ -304,8 +304,8 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 
 ### Connection String Parsing
 - [ ] Parse standard connection string
-- [ ] Parse connection string với all parameters
-- [ ] Parse connection string với URL encoding
+- [ ] Parse connection string with all parameters
+- [ ] Parse connection string with URL encoding
 - [ ] Invalid connection string error
 
 ### Connection State Transitions
@@ -325,22 +325,22 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 
 ### SELECT Queries
 - [ ] Execute simple SELECT
-- [ ] SELECT với WHERE clause
-- [ ] SELECT với JOIN
-- [ ] SELECT với GROUP BY và HAVING
-- [ ] SELECT với ORDER BY và LIMIT
+- [ ] SELECT with WHERE clause
+- [ ] SELECT with JOIN
+- [ ] SELECT with GROUP BY and HAVING
+- [ ] SELECT with ORDER BY and LIMIT
 - [ ] SELECT returning large result set (1000+ rows)
-- [ ] SELECT với NULL values
-- [ ] SELECT với all supported data types
+- [ ] SELECT with NULL values
+- [ ] SELECT with all supported data types
 
 ### DML Queries
 - [ ] INSERT single row
 - [ ] INSERT multiple rows
 - [ ] INSERT RETURNING
 - [ ] UPDATE rows (return affected count)
-- [ ] UPDATE với WHERE clause
+- [ ] UPDATE with WHERE clause
 - [ ] DELETE rows (return affected count)
-- [ ] DELETE với WHERE clause
+- [ ] DELETE with WHERE clause
 
 ### DDL Queries
 - [ ] CREATE TABLE
@@ -357,8 +357,8 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 
 ### Multiple Statements
 - [ ] Execute multiple statements sequentially
-- [ ] Error trong one statement doesn't affect others
-- [ ] Transaction semantics với multiple statements
+- [ ] Error in one statement doesn't affect others
+- [ ] Transaction semantics with multiple statements
 
 ### Error Handling
 - [ ] Invalid SQL syntax (return error)
@@ -396,27 +396,27 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ## Schema Loading (Integration Tests)
 
 ### Table Discovery
-- [ ] Fetch all tables trong database
-- [ ] Fetch tables từ specific schema
+- [ ] Fetch all tables in database
+- [ ] Fetch tables from specific schema
 - [ ] Filter system tables
 - [ ] Table row count calculation
 - [ ] Empty database returns empty list
 
 ### Column Discovery
-- [ ] Fetch columns cho table
-- [ ] Column names và types correct
+- [ ] Fetch columns for table
+- [ ] Column names and types correct
 - [ ] Nullable column detection
 - [ ] Primary key detection
 - [ ] Foreign key relationships
 - [ ] Default values
 
 ### Schema Organization
-- [ ] List all schemas trong database
+- [ ] List all schemas in database
 - [ ] Schema filtering
 - [ ] Public schema default
 
 ### Error Handling
-- [ ] Schema loading với invalid connection
+- [ ] Schema loading with invalid connection
 - [ ] Permission denied for schema info
 - [ ] Schema load failure graceful handling
 
@@ -429,7 +429,7 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Open existing notebook (Cmd+O)
 - [ ] Save notebook (Cmd+S)
 - [ ] Save As functionality
-- [ ] Close notebook với unsaved changes warning
+- [ ] Close notebook with unsaved changes warning
 - [ ] Reopen notebook preserves state
 
 ### Cell Operations
@@ -441,12 +441,12 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Focus cell editor
 
 ### Query Execution Flow
-- [ ] Enter SQL query trong cell
+- [ ] Enter SQL query in cell
 - [ ] Run cell (Cmd+Enter)
-- [ ] Run cell và move to next (Shift+Enter)
+- [ ] Run cell and move to next (Shift+Enter)
 - [ ] Run all cells (Cmd+Shift+Enter)
 - [ ] Cancel running query
-- [ ] Results display trong table
+- [ ] Results display in table
 - [ ] Execution time display
 - [ ] Error message display
 
@@ -464,8 +464,8 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Enter connection details
 - [ ] Test connection button
 - [ ] Connect to database
-- [ ] Connection status trong footer
-- [ ] Schema loads trong left sidebar
+- [ ] Connection status in footer
+- [ ] Schema loads in left sidebar
 - [ ] Disconnect from database
 - [ ] Switch databases
 
@@ -473,7 +473,7 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 - [ ] Toggle right sidebar (Cmd+Shift+R)
 - [ ] Toggle left sidebar (Cmd+Shift+L)
 - [ ] Browse schema tables
-- [ ] Click table để insert name
+- [ ] Click table to insert name
 - [ ] Resize sidebar width
 - [ ] Sidebar content switching
 
@@ -545,15 +545,15 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 ### Edge Cases
 - [ ] Very long cell content (10,000+ chars)
 - [ ] Very wide tables (100+ columns)
-- [ ] Unicode trong SQL queries
-- [ ] Special characters trong table/column names
-- [ ] Emoji trong data values
+- [ ] Unicode in SQL queries
+- [ ] Special characters in table/column names
+- [ ] Emoji in data values
 
 ### Performance
 - [ ] App launch time
 - [ ] Large notebook load time (100+ cells)
-- [ ] Smooth scrolling với many cells
-- [ ] Memory usage với large results
+- [ ] Smooth scrolling with many cells
+- [ ] Memory usage with large results
 - [ ] Responsive UI during query execution
 
 ---
@@ -595,7 +595,7 @@ Danh sách tất cả test cases cần implement cho SQLNotebook project, organi
 
 ### Xcode
 - Run all: `Cmd+U`
-- Run specific test: Click trong Test Navigator
+- Run specific test: Click in Test Navigator
 - Enable code coverage: Scheme → Test → Options → Code Coverage
 
 ### Command Line

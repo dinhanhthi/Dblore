@@ -46,6 +46,25 @@ open SQLNotebook.xcodeproj
 Swift Package Manager will automatically fetch dependencies:
 - [PostgresNIO](https://github.com/vapor/postgres-nio) - PostgreSQL client
 
+### Docker Development Database
+
+For quick development and testing, we provide a PostgreSQL Docker setup with sample data:
+
+```bash
+cd docker/postgresql
+cp .env.example .env
+docker compose up -d
+```
+
+**Connection info:**
+- Host: `localhost`
+- Port: `5432`
+- Database: `sqlnotebook`
+- User: `sqlnotebook`
+- Password: `sqlnotebook123`
+
+The database includes sample tables (customers, products, orders, employees, analytics) with realistic data and JSONB columns for testing. See [docker/README.md](docker/README.md) for details and example queries.
+
 ### Testing Environment Setup
 
 1. Open Project in Xcode → Wait for indexing to complete

@@ -1,0 +1,87 @@
+-- Migration Example 001: Add Reviews Table
+-- Purpose: Add product reviews feature
+-- Date: 2024-03-15
+-- Author: Example
+--
+-- This is an EXAMPLE migration file. To use it:
+-- 1. Copy this file and remove the .example extension
+-- 2. Modify the SQL as needed
+-- 3. Apply it: ./scripts/add-data.sh migrations/001-add-reviews-table.sql
+
+-- =============================================================================
+-- CREATE TABLE
+-- =============================================================================
+
+-- Use IF NOT EXISTS to make this migration idempotent (can run multiple times safely)
+CREATE TABLE IF NOT EXISTS reviews (
+    review_id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+    customer_id INTEGER NOT NULL REFERENCES customers(customer_id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment TEXT,
+    helpful_count INTEGER DEFAULT 0 CHECK (helpful_count >= 0),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add indexes for performance
+CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_customer ON reviews(customer_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_rating ON reviews(rating);
+CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews(created_at DESC);
+
+-- Add comment for documentation
+COMMENT ON TABLE reviews IS 'Product reviews from customers';
+COMMENT ON COLUMN reviews.helpful_count IS 'Number of users who found this review helpful';
+
+-- =============================================================================
+-- SAMPLE DATA (optional)
+-- =============================================================================
+
+INSERT INTO reviews (product_id, customer_id, rating, comment, helpful_count)
+VALUES
+    (1, 1, 5, 'Excellent laptop! Very fast and the battery life is amazing. Highly recommended for developers.', 15),
+    (1, 2, 4, 'Great performance but a bit pricey. The screen quality is outstanding though.', 8),
+    (1, 3, 5, 'Best purchase this year. Works perfectly for video editing and gaming.', 12),
+    (5, 2, 5, 'Crystal clear display with accurate colors. Perfect for photo editing.', 10),
+    (5, 4, 4, 'Great monitor but the stand could be more adjustable.', 5),
+    (10, 5, 5, 'The noise cancellation is incredible! Can''t hear anything when music is playing.', 20),
+    (10, 6, 3, 'Good headphones but the Bluetooth connection drops occasionally.', 3),
+    (2, 7, 5, 'Ergonomic and responsive. My wrist pain is gone after switching to this mouse.', 7),
+    (4, 8, 5, 'The Cherry MX switches feel great. RGB lighting is customizable.', 9),
+    (4, 9, 4, 'Solid keyboard but a bit noisy for office use.', 4)
+ON CONFLICT DO NOTHING;  -- Skip if data already exists
+
+-- =============================================================================
+-- CREATE VIEW (optional)
+-- =============================================================================
+
+CREATE OR REPLACE VIEW product_reviews_summary AS
+SELECT
+    p.product_id,
+    p.name as product_name,
+    COUNT(r.review_id) as review_count,
+    ROUND(AVG(r.rating)::numeric, 2) as average_rating,
+    SUM(r.helpful_count) as total_helpful_votes
+FROM products p
+LEFT JOIN reviews r ON p.product_id = r.product_id
+GROUP BY p.product_id, p.name;
+
+COMMENT ON VIEW product_reviews_summary IS 'Aggregated product review statistics';
+
+-- =============================================================================
+-- VERIFY
+-- =============================================================================
+
+-- Show what was created
+\echo '✅ Reviews table created'
+\echo ''
+\echo 'Tables:'
+SELECT COUNT(*) || ' reviews' FROM reviews;
+
+\echo ''
+\echo 'Sample query - Top rated products:'
+SELECT * FROM product_reviews_summary
+WHERE review_count > 0
+ORDER BY average_rating DESC, review_count DESC
+LIMIT 5;

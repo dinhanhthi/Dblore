@@ -68,3 +68,9 @@ fastlane/test_output
 build_output.txt
 
 .DS_Store
+
+# Docker
+docker/**/.env
+docker/**/data/
+docker/**/backups/
+*.sql.backup
