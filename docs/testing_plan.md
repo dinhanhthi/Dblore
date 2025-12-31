@@ -391,6 +391,25 @@ List of all test cases to implement for SQLNotebook project, organized by catego
 - [ ] Pagination for large results
 - [ ] Query cancellation
 
+### LIMIT Clause Handling (Unit Tests)
+- [x] User LIMIT < maxRows preserved — DatabaseQueryExecutionTests: `userLimitLessThanMaxRowsPreserved()`
+- [x] User LIMIT = maxRows preserved — DatabaseQueryExecutionTests: `userLimitEqualToMaxRowsPreserved()`
+- [x] User LIMIT > maxRows replaced with maxRows — DatabaseQueryExecutionTests: `userLimitGreaterThanMaxRowsReplaced()`
+- [x] No LIMIT clause appends maxRows — DatabaseQueryExecutionTests: `noLimitClauseShouldAppendMaxRows()`
+- [x] LIMIT in WHERE clause ignored (not treated as LIMIT keyword) — DatabaseQueryExecutionTests: `limitInWhereClauseIgnored()`
+- [x] Query with ORDER BY and LIMIT preserves both — DatabaseQueryExecutionTests: `queryWithOrderByAndLimitPreservesBoth()`
+- [x] Query with trailing semicolon handles LIMIT — DatabaseQueryExecutionTests: `queryWithTrailingSemicolonHandlesLimitCorrectly()`
+- [x] LIMIT keyword case insensitive (lowercase) — DatabaseQueryExecutionTests: `limitKeywordCaseInsensitiveLowercase()`
+- [x] LIMIT keyword case insensitive (mixed case) — DatabaseQueryExecutionTests: `limitKeywordCaseInsensitiveMixedCase()`
+- [x] Empty query remains empty — DatabaseQueryExecutionTests: `emptyQueryShouldRemainEmpty()`
+- [x] UPDATE query should not get LIMIT — DatabaseQueryExecutionTests: `nonSelectQueryShouldNotGetLimit()`
+- [x] INSERT query should not get LIMIT — DatabaseQueryExecutionTests: `insertQueryShouldNotGetLimit()`
+- [x] DELETE query should not get LIMIT — DatabaseQueryExecutionTests: `deleteQueryShouldNotGetLimit()`
+- [x] Query with extra whitespace handled — DatabaseQueryExecutionTests: `queryWithExtraWhitespaceHandledCorrectly()`
+- [x] Query with newlines handled — DatabaseQueryExecutionTests: `queryWithNewlinesHandledCorrectly()`
+- [x] LIMIT with OFFSET preserves user LIMIT — DatabaseQueryExecutionTests: `limitWithOffsetPreservesUserLimit()`
+- [x] LIMIT with OFFSET - user LIMIT exceeds maxRows — DatabaseQueryExecutionTests: `limitWithOffsetUserLimitExceedsMaxRows()`
+
 ---
 
 ## Schema Loading (Integration Tests)

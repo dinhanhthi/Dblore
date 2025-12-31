@@ -251,6 +251,7 @@ struct CellView: View {
       textViewRef: $textViewRef
     )
     .focused($isEditorFocused)
+    .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage
   }
 
   // MARK: - Result Area
