@@ -26,8 +26,7 @@ extension DatabaseConnectionManager {
     }
 
     // DEBUG: Log the full query before execution
-    print("🗄️ [DatabaseConnectionManager] About to execute query: `\(query)`")
-    print("__Max rows: \(maxRows)")
+    print("🗄️ [DatabaseConnectionManager] About to execute query: `\(query)` (maxRows: \(maxRows))")
 
     let startTime = Date()
 
