@@ -270,6 +270,7 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 - [x] Handle schema loading errors gracefully
 - [x] Add click handler to insert table/column names into selected cell
 - [x] Style sidebar according to design system (matching right sidebar)
+- [ ] Persist left sidebar open state (restore visibility when app reopens)
 
 ### 4.10 Settings Panel ✅
 - [x] Create `NotebookSettings` model to store notebook preferences
@@ -533,29 +534,29 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 **📖 Detailed Setup Guide:** See [TESTING_SETUP_GUIDE.md](./TESTING_SETUP_GUIDE.md) for step-by-step instructions.
 
 ### 7.2 Unit Tests - Data Models
-- [x] `SQLNotebook` encoding/decoding (JSON serialization)
-- [x] `NotebookCell` encoding/decoding với all properties
+- [x] `SQLNotebook` encoding/decoding (JSON serialization) ✅
+- [x] `NotebookCell` encoding/decoding với all properties ✅
 - [ ] `CellResult` encoding/decoding với error cases
-- [x] `CellValue` enum encoding/decoding cho all cases
-  - [x] Test string, int, double, bool, null, json, date, data
-- [x] `ConnectionConfig` encoding/decoding (không lưu password)
-- [x] `NotebookMetadata` encoding/decoding
-- [x] `NotebookSettings` encoding/decoding
+- [x] `CellValue` enum encoding/decoding cho all cases ✅
+  - [x] Test string, int, double, bool, null, json, date, data ✅
+- [x] `ConnectionConfig` encoding/decoding (không lưu password) ✅
+- [x] `NotebookMetadata` encoding/decoding ✅
+- [x] `NotebookSettings` encoding/decoding ✅
 - [ ] `DatabaseSchema` models encoding/decoding
 
 ### 7.3 Unit Tests - Utilities
-- [x] `SQLSyntaxHighlighter` tokenizer correctness
-  - [x] Test keyword detection (case-insensitive)
-  - [x] Test function detection với parentheses
-  - [x] Test string highlighting (single-quote, dollar-quote)
-  - [x] Test comment highlighting (single-line, multi-line)
-  - [x] Test number highlighting
-  - [x] Test operator highlighting
+- [x] `SQLSyntaxHighlighter` tokenizer correctness ✅
+  - [x] Test keyword detection (case-insensitive) ✅
+  - [x] Test function detection với parentheses ✅
+  - [x] Test string highlighting (single-quote, dollar-quote) ✅
+  - [x] Test comment highlighting (single-line, multi-line) ✅
+  - [x] Test number highlighting ✅
+  - [x] Test operator highlighting ✅
 - [ ] `JSONSyntaxHighlighter` (nếu có)
-- [x] `CellValue` type conversions
-  - [x] Test `displayString` property cho all types
-  - [x] Test `fullString` property cho all types
-  - [x] Test `isNull` và `isJSON` computed properties
+- [x] `CellValue` type conversions ✅
+  - [x] Test `displayString` property cho all types ✅
+  - [x] Test `fullString` property cho all types ✅
+  - [x] Test `isNull` và `isJSON` computed properties ✅
 
 ### 7.4 Unit Tests - Document Operations
 - [ ] `SQLNotebookDocument.read()` với valid JSON
@@ -567,13 +568,13 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Document với connection config (không lưu password)
 
 ### 7.5 Unit Tests - ViewModel Logic
-- [x] `NotebookViewModel.addCell()` - add cell ở different positions
-- [x] `NotebookViewModel.deleteCell()` - delete existing cell
-- [x] `NotebookViewModel.moveCell()` - reorder cells
-- [x] `NotebookViewModel.selectCell()` - selection state management
-- [x] `NotebookViewModel.clearAllOutputs()` - clear all results
+- [x] `NotebookViewModel.addCell()` - add cell ở different positions ✅
+- [x] `NotebookViewModel.deleteCell()` - delete existing cell ✅
+- [x] `NotebookViewModel.moveCell()` - reorder cells ✅
+- [x] `NotebookViewModel.selectCell()` - selection state management ✅
+- [x] `NotebookViewModel.clearAllOutputs()` - clear all results ✅
 - [ ] Cell execution count increment
-- [x] Cell running state management
+- [x] Cell running state management ✅
 
 ### 7.6 Integration Tests - Database Connection
 - [ ] `DatabaseConnectionManager.connect()` với valid config
@@ -597,7 +598,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
   - [ ] Test JSON/JSONB types
   - [ ] Test DATE, TIMESTAMP types
   - [ ] Test NULL values
-- [ ] Result row limiting (max fetch rows)
+- [x] Result row limiting (max fetch rows) ✅ (DatabaseQueryExecutionTests.swift - LIMIT handling tests)
 - [ ] Execution time measurement accuracy
 
 ### 7.8 Integration Tests - Schema Loading
@@ -647,8 +648,63 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Create mock `DatabaseConnectionManager` cho unit tests
 - [ ] Create test database setup/teardown helpers
 - [ ] Create sample notebook files cho testing
-- [ ] Set up CI/CD test execution (optional)
+- [ ] **Set up GitHub Actions CI/CD workflow** ⭐ **NEXT PRIORITY**
+  - [ ] Create `.github/workflows/ci.yml` file
+  - [ ] Configure workflow to run on push và pull requests
+  - [ ] Set up macOS runner (required for Swift/macOS app)
+  - [ ] Install Xcode và dependencies
+  - [ ] Run all unit tests (`SQLNotebookTests` target)
+  - [ ] Run all UI tests (`SQLNotebookUITests` target) - optional (can be slow)
+  - [ ] Build app để verify compilation succeeds
+  - [ ] Add test coverage reporting (optional)
+  - [ ] Configure workflow to fail nếu any test fails
+  - [ ] Add status badge to README.md
 - [ ] Document test coverage goals (aim for 70%+)
+
+### 7.13 GitHub Actions CI/CD Workflow ⭐ **IMMEDIATE NEXT STEP**
+
+**Overview:**
+Set up automated CI/CD pipeline sử dụng GitHub Actions để ensure code quality và prevent regressions. Workflow sẽ automatically run all tests mỗi khi có push hoặc pull request.
+
+**Requirements:**
+1. **Workflow File:** `.github/workflows/ci.yml`
+   - Trigger: `on: [push, pull_request]`
+   - Platform: `macos-latest` (required cho macOS app)
+   - Xcode version: Latest stable (hoặc specific version nếu cần)
+
+2. **Build Steps:**
+   - Checkout code
+   - Setup Xcode (install dependencies, select Xcode version)
+   - Build app target để verify compilation
+   - Run unit tests (`SQLNotebookTests` target)
+   - Optionally run UI tests (`SQLNotebookUITests` target) - có thể skip nếu quá slow
+
+3. **Test Execution:**
+   - Run all tests trong `SQLNotebookTests` target
+   - Ensure all tests pass (workflow fails nếu any test fails)
+   - Display test results summary
+
+4. **Optional Enhancements:**
+   - Test coverage reporting (sử dụng Xcode's built-in coverage)
+   - Artifact upload (test results, coverage reports)
+   - Matrix testing (multiple Xcode versions nếu cần)
+   - Caching Swift packages để speed up builds
+
+5. **Status Badge:**
+   - Add workflow status badge to README.md
+   - Format: `![CI](https://github.com/USERNAME/SQLNotebook/workflows/CI/badge.svg)`
+
+**Implementation Notes:**
+- macOS runners có thể slower và more expensive than Linux runners
+- UI tests có thể skip trong CI nếu quá slow (focus on unit tests)
+- Ensure PostgresNIO dependency resolves correctly trong CI environment
+- Consider using `xcodebuild test` command với proper scheme và destination
+
+**Expected Outcome:**
+- Every push/PR automatically triggers test execution
+- PRs cannot be merged nếu tests fail
+- Build status visible trong GitHub UI
+- Confidence khi merging code changes
 
 ---
 
@@ -878,24 +934,29 @@ Xem chi tiết implementation plan ở "Phase 6: Security & Safety Features" sec
 
 ---
 
-### ⭐ CURRENT TOP PRIORITY: Phase 6 - Testing Suite
+### ⭐ CURRENT TOP PRIORITY: Phase 7 - Testing Suite
 **Status:** IN PROGRESS ✅
 **Priority:** CRITICAL (Foundation for quality assurance and preventing regressions)
 
 **COMPLETED SO FAR:**
-- ✅ Test targets setup (6.1) - Unit Test & UI Test targets created
-- ✅ Data Models tests (6.2) - SQLNotebook, NotebookCell, CellValue, ConnectionConfig, NotebookMetadata, NotebookSettings
-- ✅ Utilities tests (6.3) - SQLSyntaxHighlighter comprehensive tests, CellValue conversions
-- ✅ ViewModel tests (6.5) - Cell management, selection, sidebar toggles, clear outputs
+- ✅ Test targets setup (7.1) - Unit Test & UI Test targets created
+- ✅ Data Models tests (7.2) - SQLNotebook, NotebookCell, CellValue, ConnectionConfig, NotebookMetadata, NotebookSettings
+- ✅ Utilities tests (7.3) - SQLSyntaxHighlighter comprehensive tests, CellValue conversions
+- ✅ ViewModel tests (7.5) - Cell management, selection, sidebar toggles, clear outputs
+- ✅ Query LIMIT handling tests (7.7) - DatabaseQueryExecutionTests.swift với comprehensive LIMIT logic tests
 
 **REMAINING TASKS:**
-1. **Document Operations tests (6.4)** - SQLNotebookDocument read/write operations
-2. **Integration Tests (6.6, 6.7, 6.8)** - Database connection, query execution, schema loading
-3. **UI Tests (6.9, 6.10, 6.11, 6.12)** - Basic flows, query execution, connection flow, document persistence
-4. **Test Infrastructure** - Mock DatabaseConnectionManager, test helpers, sample data
+1. **GitHub Actions CI/CD Setup (Test Infrastructure)** ⭐ **IMMEDIATE NEXT STEP**
+   - Set up automated test execution on every push/PR
+   - Ensure all tests pass before merging
+   - Build verification
+2. **Document Operations tests (7.4)** - SQLNotebookDocument read/write operations
+3. **Integration Tests (7.6, 7.7, 7.8)** - Database connection, query execution, schema loading
+4. **UI Tests (7.9, 7.10, 7.11, 7.12)** - Basic flows, query execution, connection flow, document persistence
+5. **Test Infrastructure (remaining)** - Mock DatabaseConnectionManager, test helpers, sample data
 
 **IMMEDIATE NEXT STEP:**
-Complete **7.4 Unit Tests - Document Operations** (SQLNotebookDocument read/write with various scenarios)
+Set up **GitHub Actions CI/CD workflow** để automatically run all tests trên mỗi push và pull request, đảm bảo tất cả test cases pass trước khi merge code.
 
 Xem chi tiết implementation plan ở "Phase 7: Testing Suite" section bên dưới.
 
