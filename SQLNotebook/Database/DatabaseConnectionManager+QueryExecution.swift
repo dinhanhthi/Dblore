@@ -25,6 +25,10 @@ extension DatabaseConnectionManager {
       throw DatabaseError.emptyQuery
     }
 
+    // DEBUG: Log the full query before execution
+    print("🗄️ [DatabaseConnectionManager] About to execute query: `\(query)`")
+    print("__Max rows: \(maxRows)")
+
     let startTime = Date()
 
     // Check if this is a modification query (UPDATE, DELETE, INSERT)
@@ -92,6 +96,10 @@ extension DatabaseConnectionManager {
     // Step 2: For PostgreSQL SELECT queries, wrap to include ctid
     let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(limitedQuery)
     let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(limitedQuery) : limitedQuery
+
+    // DEBUG: Log the final query that will be sent to database
+    print("🚀 [DatabaseConnectionManager] Final query to be sent to database: `\(executionQuery)`")
+
     do {
       // Execute query and collect rows
       let stream = try await connection.query(
