@@ -12,10 +12,12 @@ struct ResultTableView: View {
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
+  @State private var resizingColumn: String?
+  @State private var resizeStartWidth: CGFloat = 0
 
-  private let padding: CGFloat = 40  // Total horizontal padding for each cell
-  private let maxColumnWidth: CGFloat = 300
-  private let absoluteMinWidth: CGFloat = 60  // Fallback minimum
+  private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
+  private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
+  private let maxColumnWidth: CGFloat = 500  // Maximum width when resizing
   private let rowHeight: CGFloat = 32  // Approximate row height
   private let headerHeight: CGFloat = 48  // Approximate header height
 
@@ -89,9 +91,18 @@ struct ResultTableView: View {
       }
       .padding(.horizontal, Spacing.lg)
       .padding(.vertical, Spacing.xs)
-      .frame(width: columnWidth(for: column.name) - 1, alignment: .leading)
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      // Resize handle
+      ResizeHandle(
+        columnName: column.name,
+        resizingColumn: $resizingColumn,
+        columnWidths: $columnWidths,
+        minWidth: minColumnWidth,
+        maxWidth: maxColumnWidth
+      )
     }
-    .frame(width: columnWidth(for: column.name))
+    .frame(width: columnWidth(for: column.name), alignment: .leading)
   }
 
   // MARK: - Data Row
@@ -142,53 +153,13 @@ struct ResultTableView: View {
       if columnWidths[column.name] != nil {
         continue
       }
-
-      // Calculate width based on content
-      let calculatedWidth = calculateContentWidth(for: column)
-      // Ensure minimum width is at least the column name width with proper font size
-      let headerNameFont = NSFont.systemFont(ofSize: 13, weight: .semibold)  // Match actual header font
-      let minNameWidth = textWidth(column.name, font: headerNameFont) + padding
-      columnWidths[column.name] = max(calculatedWidth, minNameWidth)
+      // Set default width for all columns
+      columnWidths[column.name] = defaultColumnWidth
     }
-  }
-
-  private func calculateContentWidth(for column: ColumnInfo) -> CGFloat {
-    // Width for header (column name + type)
-    let headerNameFont = NSFont.systemFont(ofSize: 13, weight: .semibold)  // .body weight semibold
-    let headerTypeFont = NSFont.systemFont(ofSize: 11)  // .small
-    let headerNameWidth = textWidth(column.name, font: headerNameFont)
-    let headerTypeWidth = textWidth(column.type, font: headerTypeFont)
-    // Use the wider of the two, since they stack vertically
-    let headerWidth = max(headerNameWidth, headerTypeWidth)
-
-    // Width for data cells
-    var maxDataWidth: CGFloat = 0
-
-    if let columnIndex = result.columns.firstIndex(where: { $0.name == column.name }) {
-      let dataFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)  // .body monospaced
-      for row in result.rows.prefix(100) {  // Sample first 100 rows for performance
-        if columnIndex < row.count {
-          let value = row[columnIndex]
-          let dataWidth = textWidth(value.displayString, font: dataFont)
-          maxDataWidth = max(maxDataWidth, dataWidth)
-        }
-      }
-    }
-
-    // Add padding and return the maximum, but cap at maxColumnWidth
-    let contentWidth = max(headerWidth, maxDataWidth) + padding
-    let clampedWidth = min(contentWidth, maxColumnWidth)
-    return max(clampedWidth, absoluteMinWidth)
-  }
-
-  private func textWidth(_ text: String, font: NSFont) -> CGFloat {
-    let attributes = [NSAttributedString.Key.font: font]
-    let size = (text as NSString).size(withAttributes: attributes)
-    return size.width
   }
 
   private func columnWidth(for columnName: String) -> CGFloat {
-    columnWidths[columnName] ?? absoluteMinWidth
+    columnWidths[columnName] ?? defaultColumnWidth
   }
 
   private func alignment(for value: CellValue) -> Alignment {
@@ -308,6 +279,41 @@ private struct CellContentView: View {
         .lineLimit(1)
         .truncationMode(.tail)
     }
+  }
+}
+
+// MARK: - Resize Handle
+
+private struct ResizeHandle: View {
+  let columnName: String
+  @Binding var resizingColumn: String?
+  @Binding var columnWidths: [String: CGFloat]
+  let minWidth: CGFloat
+  let maxWidth: CGFloat
+
+  @State private var isHovering = false
+
+  var body: some View {
+    Rectangle()
+      .fill(isHovering ? Color.accent.opacity(0.5) : Color.clear)
+      .frame(width: 4)
+      .contentShape(Rectangle())
+      .onHover { hovering in
+        isHovering = hovering
+        if hovering {
+          NSCursor.resizeLeftRight.push()
+        } else {
+          NSCursor.pop()
+        }
+      }
+      .gesture(
+        DragGesture()
+          .onChanged { value in
+            let currentWidth = columnWidths[columnName] ?? 150
+            let newWidth = max(minWidth, min(maxWidth, currentWidth + value.translation.width))
+            columnWidths[columnName] = newWidth
+          }
+      )
   }
 }
 
