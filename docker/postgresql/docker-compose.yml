@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sqlnotebook-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sqlnotebook}
+      POSTGRES_USER: ${POSTGRES_USER:-sqlnotebook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sqlnotebook123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      # Persistent data
+      - postgres_data:/var/lib/postgresql/data
+      # Initialization scripts (run only on first start)
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sqlnotebook} -d ${POSTGRES_DB:-sqlnotebook}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - sqlnotebook
+
+volumes:
+  postgres_data:
+    name: sqlnotebook-postgres-data
+
+networks:
+  sqlnotebook:
+    name: sqlnotebook-network
