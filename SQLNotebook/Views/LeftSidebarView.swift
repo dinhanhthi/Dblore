@@ -163,36 +163,36 @@ struct TableRowView: View {
           .foregroundColor(.accent)
 
         // Table name
-        Button(action: onTableClick) {
-          HStack(spacing: Spacing.xs) {
-            Text(table.name)
-              .font(.system(.caption, design: .monospaced))
-              .foregroundColor(.foreground)
+        HStack(spacing: Spacing.xs) {
+          Text(table.name)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundColor(.foreground)
 
-            if !table.schema.isEmpty && table.schema != "public" {
-              Text("(\(table.schema))")
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundColor(.foregroundSubtle)
-            }
-
-            Spacer()
-
-            // Row count badge
-            if let rowCount = table.rowCount {
-              Text("\(rowCount)")
-                .font(.system(.caption2))
-                .foregroundColor(.foregroundSubtle)
-                .padding(.horizontal, Spacing.xs)
-                .padding(.vertical, 1)
-                .background(
-                  RoundedRectangle(cornerRadius: 3)
-                    .fill(Color.inputBackground)
-                )
-            }
+          if !table.schema.isEmpty && table.schema != "public" {
+            Text("(\(table.schema))")
+              .font(.system(.caption2, design: .monospaced))
+              .foregroundColor(.foregroundSubtle)
           }
-          .contentShape(Rectangle())
+
+          Spacer()
+
+          // Row count badge
+          if let rowCount = table.rowCount {
+            Text("\(rowCount)")
+              .font(.system(.caption2))
+              .foregroundColor(.foregroundSubtle)
+              .padding(.horizontal, Spacing.xs)
+              .padding(.vertical, 1)
+              .background(
+                RoundedRectangle(cornerRadius: 3)
+                  .fill(Color.inputBackground)
+              )
+          }
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+          onTableClick()
+        }
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
