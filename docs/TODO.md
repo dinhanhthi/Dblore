@@ -9,8 +9,9 @@ This document outlines the implementation phases and specific tasks for building
 - ✅ **Phase 3: Database Integration** - **COMPLETE!** 🎉
 - ✅ **Phase 4: Polish** - MOSTLY COMPLETE (minor features pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED (AI feature added: 5.6)
-- 🚨 **Phase 6: Testing Suite** - **IN PROGRESS** ⭐ (Test targets setup ✅, Data Models tests ✅, Utilities tests ✅, ViewModel tests ✅)
-- 🎯 **Phase 7: Editor Mode** - **NOT STARTED** (LAST PHASE - Implement after all other features)
+- 🔒 **Phase 6: Security & Safety** - **IN PROGRESS** ⚠️ (Credentials security ✅, Connection security ⚠️, Query execution security ⚠️)
+- 🚨 **Phase 7: Testing Suite** - **IN PROGRESS** ⭐ (Test targets setup ✅, Data Models tests ✅, Utilities tests ✅, ViewModel tests ✅)
+- 🎯 **Phase 8: Editor Mode** - **NOT STARTED** (LAST PHASE - Implement after all other features)
 
 ### 🎉 Latest Achievement: SSL Connection Support Enhanced!
 **BUILD STATUS: SUCCESS ✅**
@@ -375,12 +376,117 @@ See `docs/IMPLEMENTATION_COMPLETE.md` for full details!
 
 ---
 
-## Phase 6: Testing Suite 🚨 **CURRENT TOP PRIORITY**
+## Phase 6: Security & Safety Features 🔒 **HIGH PRIORITY**
+
+### Overview
+Implement comprehensive security features để protect database credentials, prevent accidental data loss, và ensure safe database operations.
+
+### 6.0.1 Credentials Security ✅
+- [x] Store passwords in macOS Keychain (not in UserDefaults)
+- [x] Don't save passwords in notebook files (.sqlnb)
+- [x] Don't include passwords in ConnectionConfig encoding
+- [x] Use SessionManager to handle credential persistence securely
+
+### 6.0.2 Connection Security ⚠️
+- [x] Support SSL/TLS connection modes (disable, allow, prefer, require, verify-ca, verify-full)
+- [x] Smart cloud database detection (auto-set SSL require)
+- [ ] **TODO: Fix certificate verification for `.require` mode**
+  - [ ] Current issue: `.require` mode sets `certificateVerification = .none` to allow self-signed certs
+  - [ ] Add warning dialog when using `.require` with `.none` verification
+  - [ ] Consider adding option to use `.fullVerification` even for `.require` mode
+  - [ ] Document security implications in connection UI
+- [ ] Add connection timeout configuration
+- [ ] Add connection retry logic with exponential backoff
+- [ ] Validate connection string format before attempting connection
+
+### 6.0.3 Query Execution Security ⚠️
+- [x] Enforce row limits to prevent memory exhaustion
+- [x] Detect modification queries (UPDATE, DELETE, INSERT)
+- [ ] **TODO: Add confirmation dialogs for destructive operations**
+  - [ ] Detect DROP, TRUNCATE, ALTER TABLE, DELETE without WHERE clause
+  - [ ] Show confirmation dialog với query preview
+  - [ ] Add "Don't ask again" option (stored in settings)
+  - [ ] Show affected rows estimate (if possible) before confirmation
+- [ ] **TODO: Add read-only mode option**
+  - [ ] Add "Read-only" checkbox in connection form
+  - [ ] Block all modification queries (UPDATE, DELETE, INSERT, DROP, etc.) in read-only mode
+  - [ ] Show clear error message when attempting modification in read-only mode
+  - [ ] Store read-only preference in ConnectionConfig
+- [ ] **TODO: Add transaction management**
+  - [ ] Wrap modification queries in transactions
+  - [ ] Auto-rollback on error
+  - [ ] Add "Commit" / "Rollback" buttons for manual transaction control
+  - [ ] Show transaction status indicator
+- [ ] **TODO: Improve SQL injection protection**
+  - [ ] Review `cellValueToSQL` function - ensure all value types are properly escaped
+  - [ ] Add validation for table/column names (prevent injection via identifiers)
+  - [ ] Consider using parameterized queries where possible (PostgresNIO supports this)
+  - [ ] Add query sanitization warnings for suspicious patterns
+
+### 6.0.4 Data Modification Safety ⚠️
+- [x] Use primary key columns for UPDATE WHERE clause (most reliable)
+- [x] Use ctid (PostgreSQL) for row identification when PK not available
+- [x] Escape string values in UPDATE queries (single quotes doubled)
+- [ ] **TODO: Add confirmation for inline cell editing (UPDATE operations)**
+  - [ ] Show confirmation dialog before executing UPDATE
+  - [ ] Display: table name, column name, old value, new value
+  - [ ] Show affected rows estimate
+  - [ ] Add "Don't ask again" option
+- [ ] **TODO: Add transaction support for inline edits**
+  - [ ] Wrap UPDATE in transaction
+  - [ ] Auto-rollback if UPDATE affects unexpected number of rows (e.g., 0 or >1)
+  - [ ] Show transaction status during edit
+- [ ] **TODO: Add validation for UPDATE operations**
+  - [ ] Verify row still exists before updating
+  - [ ] Check data type compatibility
+  - [ ] Validate constraints (NOT NULL, CHECK, etc.) before executing
+  - [ ] Show clear error messages for constraint violations
+
+### 6.0.5 Audit & Logging Security
+- [ ] **TODO: Add query execution logging (with security considerations)**
+  - [ ] Log all queries executed (for debugging)
+  - [ ] **CRITICAL: Never log passwords or sensitive data**
+  - [ ] Mask sensitive values in logs (e.g., credit card numbers, SSNs)
+  - [ ] Add option to disable query logging
+  - [ ] Store logs securely (encrypted if containing sensitive data)
+- [ ] **TODO: Add connection audit trail**
+  - [ ] Log connection attempts (success/failure)
+  - [ ] Log disconnections
+  - [ ] Don't log credentials, only connection metadata (host, database, username)
+- [ ] **TODO: Add error reporting with privacy**
+  - [ ] Sanitize error messages before logging (remove sensitive data)
+  - [ ] Add option to send error reports (with user consent)
+  - [ ] Ensure error reports don't contain credentials or sensitive data
+
+### 6.0.6 User Education & Warnings
+- [ ] **TODO: Add security warnings in UI**
+  - [ ] Show warning when connecting without SSL
+  - [ ] Show warning when using `.require` mode with `.none` certificate verification
+  - [ ] Show warning when executing destructive operations
+  - [ ] Add "Security Tips" section in Settings or Help menu
+- [ ] **TODO: Add connection security indicator**
+  - [ ] Show SSL/TLS status icon in footer
+  - [ ] Color code: Green (secure), Yellow (insecure), Red (no encryption)
+  - [ ] Show certificate information on click
+
+### 6.0.7 Testing Security Features
+- [ ] **TODO: Add security-focused tests**
+  - [ ] Test password not saved in UserDefaults
+  - [ ] Test password not included in notebook file encoding
+  - [ ] Test SQL injection attempts are blocked/escaped
+  - [ ] Test read-only mode blocks modifications
+  - [ ] Test confirmation dialogs appear for destructive operations
+  - [ ] Test transaction rollback on errors
+  - [ ] Test sensitive data masking in logs
+
+---
+
+## Phase 7: Testing Suite 🚨 **CURRENT TOP PRIORITY**
 
 ### Overview
 Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framework (built-in trong Xcode). Testing sẽ bao gồm Unit Tests, Integration Tests, và UI Tests.
 
-### 6.1 Test Target Setup
+### 7.1 Test Target Setup
 - [x] Create new Unit Test target trong Xcode (`SQLNotebookTests`)
 - [x] Create new UI Test target trong Xcode (`SQLNotebookUITests`)
 - [x] Configure test targets với proper dependencies (PostgresNIO, etc.)
@@ -389,7 +495,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 
 **📖 Detailed Setup Guide:** See [TESTING_SETUP_GUIDE.md](./TESTING_SETUP_GUIDE.md) for step-by-step instructions.
 
-### 6.2 Unit Tests - Data Models
+### 7.2 Unit Tests - Data Models
 - [x] `SQLNotebook` encoding/decoding (JSON serialization)
 - [x] `NotebookCell` encoding/decoding với all properties
 - [ ] `CellResult` encoding/decoding với error cases
@@ -400,7 +506,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [x] `NotebookSettings` encoding/decoding
 - [ ] `DatabaseSchema` models encoding/decoding
 
-### 6.3 Unit Tests - Utilities
+### 7.3 Unit Tests - Utilities
 - [x] `SQLSyntaxHighlighter` tokenizer correctness
   - [x] Test keyword detection (case-insensitive)
   - [x] Test function detection với parentheses
@@ -414,7 +520,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
   - [x] Test `fullString` property cho all types
   - [x] Test `isNull` và `isJSON` computed properties
 
-### 6.4 Unit Tests - Document Operations
+### 7.4 Unit Tests - Document Operations
 - [ ] `SQLNotebookDocument.read()` với valid JSON
 - [ ] `SQLNotebookDocument.read()` với invalid JSON (error handling)
 - [ ] `SQLNotebookDocument.write()` tạo valid JSON
@@ -423,7 +529,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Document với cells có results
 - [ ] Document với connection config (không lưu password)
 
-### 6.5 Unit Tests - ViewModel Logic
+### 7.5 Unit Tests - ViewModel Logic
 - [x] `NotebookViewModel.addCell()` - add cell ở different positions
 - [x] `NotebookViewModel.deleteCell()` - delete existing cell
 - [x] `NotebookViewModel.moveCell()` - reorder cells
@@ -432,7 +538,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Cell execution count increment
 - [x] Cell running state management
 
-### 6.6 Integration Tests - Database Connection
+### 7.6 Integration Tests - Database Connection
 - [ ] `DatabaseConnectionManager.connect()` với valid config
 - [ ] `DatabaseConnectionManager.connect()` với invalid config (error handling)
 - [ ] `DatabaseConnectionManager.testConnection()` success case
@@ -442,7 +548,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] SSL/TLS connection modes (require, verify-ca, etc.)
 - [ ] Connection string parsing và validation
 
-### 6.7 Integration Tests - Query Execution
+### 7.7 Integration Tests - Query Execution
 - [ ] Execute SELECT query và parse results
 - [ ] Execute INSERT/UPDATE/DELETE và verify affected rows
 - [ ] Execute DDL statements (CREATE TABLE, etc.)
@@ -457,14 +563,14 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Result row limiting (max fetch rows)
 - [ ] Execution time measurement accuracy
 
-### 6.8 Integration Tests - Schema Loading
+### 7.8 Integration Tests - Schema Loading
 - [ ] `fetchTables()` returns correct table list
 - [ ] `fetchColumns()` returns correct column info
 - [ ] Schema loading với empty database
 - [ ] Schema loading error handling
 - [ ] Table row count calculation
 
-### 6.9 UI Tests - Basic Flows
+### 7.9 UI Tests - Basic Flows
 - [ ] Create new notebook (`Cmd+N`)
 - [ ] Open existing notebook (`Cmd+O`)
 - [ ] Save notebook (`Cmd+S`)
@@ -475,7 +581,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Run all cells (`Cmd+Shift+Enter`)
 - [ ] Toggle sidebars (`Cmd+Shift+R`, `Cmd+Shift+L`)
 
-### 6.10 UI Tests - Query Execution Flow
+### 7.10 UI Tests - Query Execution Flow
 - [ ] Enter SQL query trong cell
 - [ ] Execute query và verify results display
 - [ ] Verify result table columns và rows
@@ -484,7 +590,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Test với empty result set
 - [ ] Test với large result set (scrolling)
 
-### 6.11 UI Tests - Connection Flow
+### 7.11 UI Tests - Connection Flow
 - [ ] Open connection sheet
 - [ ] Enter connection details
 - [ ] Test connection button
@@ -493,7 +599,7 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Verify schema loads in left sidebar
 - [ ] Disconnect from database
 
-### 6.12 UI Tests - Document Persistence
+### 7.12 UI Tests - Document Persistence
 - [ ] Save notebook với cells và results
 - [ ] Close và reopen notebook
 - [ ] Verify cells content preserved
@@ -509,12 +615,12 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 
 ---
 
-## Phase 7: Editor Mode (Traditional SQL Editor) 🎯 **LAST PHASE**
+## Phase 8: Editor Mode (Traditional SQL Editor) 🎯 **LAST PHASE**
 
 ### Overview
 Implement traditional SQL editor mode với single editor và result panel, cho phép user switch giữa notebook mode và editor mode. Editor mode giống các SQL editor thông thường (như DBeaver, DataGrip) với khả năng run whole file hoặc chỉ selection.
 
-### 7.1 Core Editor Mode Implementation
+### 8.1 Core Editor Mode Implementation
 - [ ] Add `ViewMode` enum (`.notebook`, `.editor`) to `NotebookViewModel`
 - [ ] Add `viewMode` state property to `NotebookViewModel` (default: `.notebook`)
 - [ ] Create `EditorModeView` component với single editor và result panel
@@ -526,7 +632,7 @@ Implement traditional SQL editor mode với single editor và result panel, cho 
   - [ ] If `.notebook`: show current cell-based layout
   - [ ] If `.editor`: show `EditorModeView`
 
-### 7.2 Execution Features
+### 8.2 Execution Features
 - [ ] Implement "Run Selection" functionality
   - [ ] Detect selected text trong editor
   - [ ] Execute only selected SQL text (nếu có selection)
@@ -539,7 +645,7 @@ Implement traditional SQL editor mode với single editor và result panel, cho 
   - [ ] "Run All" button (always enabled)
   - [ ] Keyboard shortcuts: `Cmd+Enter` (run selection/all), `Cmd+Shift+Enter` (run all)
 
-### 7.3 Mode Switching UI
+### 8.3 Mode Switching UI
 - [ ] Add mode toggle button trong header
   - [ ] Icon: `square.split.2x1` (notebook) / `doc.text` (editor)
   - [ ] Tooltip: "Switch to Editor Mode" / "Switch to Notebook Mode"
@@ -547,7 +653,7 @@ Implement traditional SQL editor mode với single editor và result panel, cho 
 - [ ] Add keyboard shortcut để toggle mode (e.g., `Cmd+Shift+E`)
 - [ ] Persist view mode preference trong `NotebookSettings`
 
-### 7.4 Sidebar Integration
+### 8.4 Sidebar Integration
 - [ ] Preserve left sidebar functionality trong editor mode
   - [ ] Table list vẫn hoạt động
   - [ ] Click table/column name inserts vào editor tại cursor position
@@ -557,7 +663,7 @@ Implement traditional SQL editor mode với single editor và result panel, cho 
   - [ ] Connection details
   - [ ] Settings panel
 
-### 7.5 Data Conversion
+### 8.5 Data Conversion
 - [ ] Handle file content loading vào editor mode
   - [ ] Khi switch từ notebook → editor: concatenate all cells content
   - [ ] Join cells với newline hoặc separator
@@ -569,7 +675,7 @@ Implement traditional SQL editor mode với single editor và result panel, cho 
 - [ ] Preserve document state khi switching modes
 - [ ] Handle unsaved changes warning khi switching modes
 
-### 7.6 Testing & Polish
+### 8.6 Testing & Polish
 - [ ] Ensure editor mode works với existing connection system
 - [ ] Test mode switching preserves connection state
 - [ ] Test mode switching preserves document state
@@ -713,6 +819,28 @@ ORDER BY ordinal_position;
 
 ## Next Priorities
 
+### 🔒 HIGH PRIORITY: Phase 6 - Security & Safety Features
+**Status:** IN PROGRESS ⚠️
+**Priority:** HIGH (Critical for production use, prevent data loss and credential leaks)
+
+**COMPLETED SO FAR:**
+- ✅ Credentials security (6.0.1) - Passwords stored in Keychain, not in files/UserDefaults
+
+**CRITICAL ISSUES TO ADDRESS:**
+1. **Query Execution Security (6.0.3)** - Add confirmation dialogs for destructive operations (DROP, TRUNCATE, DELETE without WHERE)
+2. **Read-only Mode (6.0.3)** - Add option to prevent accidental modifications
+3. **Transaction Management (6.0.3, 6.0.4)** - Wrap modifications in transactions with auto-rollback
+4. **SQL Injection Protection (6.0.3)** - Review and improve query sanitization
+5. **Connection Security (6.0.2)** - Fix certificate verification warning for `.require` mode
+6. **Inline Edit Safety (6.0.4)** - Add confirmation for UPDATE operations
+
+**IMMEDIATE NEXT STEP:**
+Implement **6.0.3 - Confirmation dialogs for destructive operations** to prevent accidental data loss.
+
+Xem chi tiết implementation plan ở "Phase 6: Security & Safety Features" section bên dưới.
+
+---
+
 ### ⭐ CURRENT TOP PRIORITY: Phase 6 - Testing Suite
 **Status:** IN PROGRESS ✅
 **Priority:** CRITICAL (Foundation for quality assurance and preventing regressions)
@@ -730,9 +858,9 @@ ORDER BY ordinal_position;
 4. **Test Infrastructure** - Mock DatabaseConnectionManager, test helpers, sample data
 
 **IMMEDIATE NEXT STEP:**
-Complete **6.4 Unit Tests - Document Operations** (SQLNotebookDocument read/write with various scenarios)
+Complete **7.4 Unit Tests - Document Operations** (SQLNotebookDocument read/write with various scenarios)
 
-Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dưới.
+Xem chi tiết implementation plan ở "Phase 7: Testing Suite" section bên dưới.
 
 ---
 
@@ -753,7 +881,7 @@ Xem chi tiết implementation plan ở "Phase 6: Testing Suite" section bên dư
 4. **Export Results** (5.2) - CSV export functionality
 5. **Multiple Database Support** (5.3) - SQLite, MySQL
 
-### Finally: Phase 7 - Editor Mode 🎯
+### Finally: Phase 8 - Editor Mode 🎯
 **Status:** NOT STARTED
 **Priority:** LAST PHASE (Implement after all other features are complete)
 
@@ -768,7 +896,7 @@ Traditional SQL editor mode với single editor và result panel, cho phép user
 - Data conversion (7.5) - Notebook ↔ Editor content conversion
 - Testing & polish (7.6) - Comprehensive testing và integration
 
-Xem chi tiết ở "Phase 7: Editor Mode" section bên dưới.
+Xem chi tiết ở "Phase 8: Editor Mode" section bên dưới.
 
 ---
 
