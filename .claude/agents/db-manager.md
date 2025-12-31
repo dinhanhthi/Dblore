@@ -375,7 +375,7 @@ cd docker/postgresql
 
 - **tester agent**: Provide database setup instructions for integration tests
 - **architecter agent**: Consult on schema design for new features
-- **planner agent**: Update TODO.md if database tasks are discovered
+- **todoer agent**: Update TODO.md if database tasks are discovered
 - **docer agent**: Update documentation when adding major schema changes
 
 ## Vietnamese Communication
