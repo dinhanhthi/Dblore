@@ -75,6 +75,12 @@ actor DatabaseConnectionManager {
         logger: Logger(label: "sqlnotebook.connection")
       )
       self.connection = conn
+    } catch let error as PSQLError {
+      // Cleanup on failure
+      try? await group.shutdownGracefully()
+      self.eventLoopGroup = nil
+      let errorMessage = formatPostgresError(error)
+      throw DatabaseError.connectionFailed(errorMessage)
     } catch {
       // Cleanup on failure
       try? await group.shutdownGracefully()
@@ -147,7 +153,8 @@ actor DatabaseConnectionManager {
       return true
     } catch let error as PSQLError {
       try? await group.shutdownGracefully()
-      throw DatabaseError.connectionFailed("Authentication failed: \(error.code.description)")
+      let errorMessage = formatPostgresError(error)
+      throw DatabaseError.connectionFailed(errorMessage)
     } catch {
       try? await group.shutdownGracefully()
       throw DatabaseError.connectionFailed(error.localizedDescription)

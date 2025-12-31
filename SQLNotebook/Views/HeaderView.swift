@@ -195,11 +195,10 @@ struct ConnectionButton: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(ToolbarButtonStyle())
-      .disabled(connectionState.isConnecting)
       .onHover { hovering in
-        if hovering && !connectionState.isConnecting {
+        if hovering {
           NSCursor.pointingHand.push()
-        } else if !hovering && !connectionState.isConnecting {
+        } else {
           NSCursor.pop()
         }
       }
@@ -212,14 +211,12 @@ struct ConnectionButton: View {
 
   private var connectionText: String {
     switch connectionState {
-    case .disconnected:
-      return "Connect"
-    case .connecting:
-      return "Connecting..."
     case .connected:
       return "Connected"
-    case .error(let message):
-      return "Error: \(message)"
+    default:
+      // Show "Connect" for all other states (disconnected, connecting, error)
+      // The icon will indicate the actual state
+      return "Connect"
     }
   }
 }
@@ -232,19 +229,14 @@ private struct ConnectionIconView: View {
 
   var body: some View {
     switch state {
-    case .disconnected:
-      Image(systemName: "bolt.slash")
-        .foregroundColor(.foregroundMuted)
-    case .connecting:
-      ProgressView()
-        .scaleEffect(0.7)
-        .frame(width: 14, height: 14)
     case .connected:
       Image(systemName: "bolt.fill")
         .foregroundColor(.success)
-    case .error:
-      Image(systemName: "exclamationmark.triangle")
-        .foregroundColor(.destructive)
+    default:
+      // Show disconnected icon for all non-connected states
+      // (.disconnected, .connecting, .error)
+      Image(systemName: "bolt.slash")
+        .foregroundColor(.foregroundMuted)
     }
   }
 }
