@@ -29,6 +29,9 @@ extension NotebookViewModel {
 
     let query = notebook.cells[index].content
 
+    // DEBUG: Log the query being executed
+    print("🔍 [NotebookViewModel] Executing query from cell \(id): `\(query)`")
+
     do {
       // Execute query using DatabaseConnectionManager
       // Use app's maxRowLimit setting
