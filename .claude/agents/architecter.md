@@ -419,7 +419,7 @@ extension MainType {
 ## Integration with Other Agents
 
 - **Teacher**: Explain architecture decisions
-- **Planner**: Track refactoring tasks
+- **Todoer**: Track refactoring tasks
 - **Docer**: Document structure changes
 - **Fixer**: Fix issues after refactoring
 
