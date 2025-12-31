@@ -78,7 +78,8 @@ struct ResultTableView: View {
         Text(column.name)
           .font(.system(.body, weight: .semibold))
           .foregroundColor(.foreground)
-          .fixedSize(horizontal: true, vertical: false)
+          .lineLimit(1)
+          .truncationMode(.tail)
 
         Text(column.type)
           .font(.small)
@@ -144,8 +145,8 @@ struct ResultTableView: View {
 
       // Calculate width based on content
       let calculatedWidth = calculateContentWidth(for: column)
-      // Ensure minimum width is at least the column name width
-      let headerNameFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+      // Ensure minimum width is at least the column name width with proper font size
+      let headerNameFont = NSFont.systemFont(ofSize: 13, weight: .semibold)  // Match actual header font
       let minNameWidth = textWidth(column.name, font: headerNameFont) + padding
       columnWidths[column.name] = max(calculatedWidth, minNameWidth)
     }
@@ -153,10 +154,11 @@ struct ResultTableView: View {
 
   private func calculateContentWidth(for column: ColumnInfo) -> CGFloat {
     // Width for header (column name + type)
-    let headerNameFont = NSFont.systemFont(ofSize: 11, weight: .semibold)  // .caption
+    let headerNameFont = NSFont.systemFont(ofSize: 13, weight: .semibold)  // .body weight semibold
     let headerTypeFont = NSFont.systemFont(ofSize: 11)  // .small
     let headerNameWidth = textWidth(column.name, font: headerNameFont)
     let headerTypeWidth = textWidth(column.type, font: headerTypeFont)
+    // Use the wider of the two, since they stack vertically
     let headerWidth = max(headerNameWidth, headerTypeWidth)
 
     // Width for data cells
