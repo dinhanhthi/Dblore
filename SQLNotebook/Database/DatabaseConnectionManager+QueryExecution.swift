@@ -410,8 +410,19 @@ extension DatabaseConnectionManager {
   }
 
   /// Replace LIMIT value in query with maxRows if user's LIMIT exceeds it
+  /// If user's LIMIT is less than maxRows, keep the user's LIMIT
   private func replaceLimitValue(_ query: String, maxRows: Int) -> String {
-    // Pattern: LIMIT <number>
+    // Extract user's LIMIT value
+    guard let userLimit = extractLimitValue(query) else {
+      return query
+    }
+
+    // If user's LIMIT is already within maxRows, keep it as-is
+    if userLimit <= maxRows {
+      return query
+    }
+
+    // User's LIMIT exceeds maxRows, replace it with maxRows
     let pattern = "\\bLIMIT\\s+\\d+"
     guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
       return query
