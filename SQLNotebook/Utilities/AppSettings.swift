@@ -20,6 +20,7 @@ class AppSettings {
     static let maxResultHeight = "app.settings.maxResultHeight"
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
     static let maxRowLimit = "app.settings.maxRowLimit"
+    static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
   }
 
   // MARK: - Settings Properties
@@ -48,6 +49,13 @@ class AppSettings {
         return  // Avoid triggering didSet again
       }
       UserDefaults.standard.set(maxRowLimit, forKey: Keys.maxRowLimit)
+    }
+  }
+
+  /// Whether the left sidebar (database schema) is visible
+  var isLeftSidebarVisible: Bool = false {
+    didSet {
+      UserDefaults.standard.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
     }
   }
 
@@ -81,6 +89,11 @@ class AppSettings {
       // Clamp between 1 and 200
       self.maxRowLimit = min(max(savedLimit, 1), 200)
     }
+
+    // Load left sidebar visibility state
+    if UserDefaults.standard.object(forKey: Keys.isLeftSidebarVisible) != nil {
+      self.isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -90,5 +103,6 @@ class AppSettings {
     maxResultHeight = 500.0
     includeResultsOnSave = true
     maxRowLimit = 50
+    isLeftSidebarVisible = false
   }
 }
