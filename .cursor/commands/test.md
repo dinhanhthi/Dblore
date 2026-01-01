@@ -593,6 +593,13 @@ Product → Scheme → Edit Scheme → Test → Options → Code Coverage
 **View Coverage Report**:
 In Xcode: Report Navigator (⌘9) → Coverage tab
 
+**Build with Strict Concurrency (Match GitHub Actions)**:
+```bash
+./scripts/build-strict.sh
+```
+
+**IMPORTANT**: Always run strict build before pushing to catch concurrency issues!
+
 ---
 
 ## Test Coverage Goals
@@ -634,6 +641,7 @@ In Xcode: Report Navigator (⌘9) → Coverage tab
 8. **Write flaky tests** - tests should be deterministic
 9. **Ignore async/await** - Handle async code properly với `async throws` hoặc `XCTestExpectation`
 10. **Forget Sendable** - Ensure test mocks meet Sendable requirements
+11. **Push without strict build** - Always run `./scripts/build-strict.sh` before pushing!
 
 ## Swift 6 Testing Checklist
 
@@ -644,6 +652,33 @@ When testing concurrent code:
 - [ ] Are race conditions tested?
 - [ ] Is Task cancellation handled?
 - [ ] Are Sendable requirements met trong test mocks?
+- [ ] Did you run `./scripts/build-strict.sh` to catch concurrency issues?
+
+### Common Concurrency Test Issues
+
+#### Missing `await` for @MainActor
+```swift
+// ❌ Fails in GitHub Actions
+let value = AppSettings.shared.property
+
+// ✅ Correct
+let value = await AppSettings.shared.property
+```
+
+#### Task Capture Lists
+```swift
+// ❌ Sending main actor to nonisolated context
+Task { @MainActor in
+    await viewModel.doSomething()
+}
+
+// ✅ Explicit capture
+Task { @MainActor [viewModel] in
+    await viewModel.doSomething()
+}
+```
+
+**Reference**: `docs/implementation/SWIFT_CONCURRENCY_FIXES.md`
 
 ---
 

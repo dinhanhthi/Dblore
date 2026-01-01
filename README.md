@@ -1,5 +1,7 @@
 # SQLNotebook
 
+[![CI](https://github.com/dinhanhthi/SQLNoteBook/actions/workflows/ci.yml/badge.svg)](https://github.com/dinhanhthi/SQLNoteBook/actions/workflows/ci.yml)
+
 A native macOS application for writing and executing SQL queries in a cell-based interface similar to Jupyter Notebook. Supports PostgreSQL and SQLite with persistent query results.
 
 ## ✨ Features
@@ -39,6 +41,19 @@ cd SQLNotebook
 open SQLNotebook.xcodeproj
 
 # Build and run (Cmd+R)
+```
+
+### Xcode Build Settings
+
+**Important:** To catch concurrency errors before CI/CD:
+
+1. Select project → Target "SQLNotebook" → Build Settings
+2. Search for `"Strict Concurrency Checking"`
+3. Set to `Complete` (matches GitHub Actions)
+
+Or build via CLI:
+```bash
+xcodebuild -scheme SQLNotebook build SWIFT_STRICT_CONCURRENCY=complete
 ```
 
 ### Package Dependencies

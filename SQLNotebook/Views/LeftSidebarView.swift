@@ -44,7 +44,7 @@ struct LeftSidebarView: View {
       // Refresh button
       if viewModel.connectionState.isConnected {
         Button(action: {
-          Task {
+          Task { @MainActor [viewModel] in
             await viewModel.refreshDatabaseSchema()
           }
         }) {

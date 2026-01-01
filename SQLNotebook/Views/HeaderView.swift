@@ -40,7 +40,7 @@ struct HeaderView: View {
           titleVisibility: .visible
         ) {
           Button("Run All Cells", role: .none) {
-            Task { await viewModel.runAllCells() }
+            Task { @MainActor [viewModel] in await viewModel.runAllCells() }
           }
           Button("Cancel", role: .cancel) {}
         } message: {

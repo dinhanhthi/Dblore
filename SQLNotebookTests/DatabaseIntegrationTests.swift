@@ -2,12 +2,9 @@
 // Integration tests for Database operations requiring actual PostgreSQL connection
 // Tests NUMERIC decoding and column type enrichment with real database
 
-import Testing
-@testable import SQLNotebook
-import Foundation
-
-// NOTE: These integration tests require a running PostgreSQL instance
-// Set SKIP_INTEGRATION_TESTS=true environment variable to skip these tests
+// MARK: - Integration Tests
+// These tests require a running PostgreSQL instance
+// They run by default locally and are skipped in CI via SKIP_INTEGRATION_TESTS=true
 // Database configuration can be set via environment variables:
 // - TEST_DB_HOST (default: localhost)
 // - TEST_DB_PORT (default: 5432)
@@ -15,14 +12,17 @@ import Foundation
 // - TEST_DB_USER (default: postgres)
 // - TEST_DB_PASSWORD (default: empty)
 
-@Suite("Database Integration Tests (Requires PostgreSQL)")
+import Testing
+@testable import SQLNotebook
+import Foundation
+
+@Suite("Database Integration Tests (Requires PostgreSQL)",
+       .enabled(if: ProcessInfo.processInfo.environment["SKIP_INTEGRATION_TESTS"] != "true"))
 struct DatabaseIntegrationTests {
 
     // MARK: - Test Configuration
 
     /// Test database configuration
-    /// NOTE: These tests require a running PostgreSQL instance
-    /// Set SKIP_INTEGRATION_TESTS environment variable to skip these tests
     static let testConfig = ConnectionConfig(
         host: ProcessInfo.processInfo.environment["TEST_DB_HOST"] ?? "localhost",
         port: Int(ProcessInfo.processInfo.environment["TEST_DB_PORT"] ?? "5432") ?? 5432,
@@ -31,11 +31,6 @@ struct DatabaseIntegrationTests {
         password: ProcessInfo.processInfo.environment["TEST_DB_PASSWORD"] ?? "",
         sslMode: .disable
     )
-
-    /// Check if integration tests should be skipped
-    static var shouldSkipTests: Bool {
-        ProcessInfo.processInfo.environment["SKIP_INTEGRATION_TESTS"] == "true"
-    }
 
     // MARK: - Setup and Teardown Helpers
 
@@ -104,10 +99,6 @@ struct DatabaseIntegrationTests {
     @Test("NUMERIC(10,2) values decode correctly to Double - Integration Test")
     func numericDecimalDecodesToDoubleIntegration() async throws {
         // Skip if integration tests disabled
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test (SKIP_INTEGRATION_TESTS=true)")
-            return
-        }
 
         // Arrange
         let manager = DatabaseConnectionManager()
@@ -155,10 +146,6 @@ struct DatabaseIntegrationTests {
 
     @Test("NUMERIC(15,4) high precision values decode correctly - Integration Test")
     func numericHighPrecisionDecodesToDoubleIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -192,10 +179,6 @@ struct DatabaseIntegrationTests {
 
     @Test("NUMERIC NULL values decode to CellValue.null - Integration Test")
     func numericNullDecodesToNullIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -235,10 +218,6 @@ struct DatabaseIntegrationTests {
 
     @Test("Negative NUMERIC values decode correctly - Integration Test")
     func negativeNumericDecodesToDoubleIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -273,10 +252,6 @@ struct DatabaseIntegrationTests {
 
     @Test("Zero NUMERIC value decodes to 0.0 - Integration Test")
     func zeroNumericDecodesToZeroIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -310,10 +285,6 @@ struct DatabaseIntegrationTests {
 
     @Test("Very large NUMERIC values decode correctly - Integration Test")
     func veryLargeNumericDecodesToDoubleIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -350,10 +321,6 @@ struct DatabaseIntegrationTests {
 
     @Test("VARCHAR column enriched with length - Integration Test")
     func varcharColumnEnrichedWithLengthIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -394,10 +361,6 @@ struct DatabaseIntegrationTests {
 
     @Test("NUMERIC column enriched with precision and scale - Integration Test")
     func numericColumnEnrichedWithPrecisionScaleIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -437,10 +400,6 @@ struct DatabaseIntegrationTests {
 
     @Test("TIMESTAMP column enriched with precision and time zone - Integration Test")
     func timestampColumnEnrichedWithPrecisionTimeZoneIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -496,10 +455,6 @@ struct DatabaseIntegrationTests {
 
     @Test("Column type enrichment fails gracefully for complex queries - Integration Test")
     func columnTypeEnrichmentFailsGracefullyForComplexQueriesIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 
@@ -539,10 +494,6 @@ struct DatabaseIntegrationTests {
 
     @Test("NUMERIC values decode correctly AND column types are enriched - Integration Test")
     func numericDecodingAndTypeEnrichmentIntegration() async throws {
-        guard !Self.shouldSkipTests else {
-            print("⏭️ Skipping integration test")
-            return
-        }
 
         let manager = DatabaseConnectionManager()
 

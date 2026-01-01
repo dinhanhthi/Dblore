@@ -72,6 +72,7 @@ extension NotebookViewModel {
   // MARK: - Left Sidebar - Database Schema
 
   /// Toggle left sidebar visibility
+  @MainActor
   func toggleLeftSidebar() {
     isLeftSidebarVisible.toggle()
     AppSettings.shared.isLeftSidebarVisible = isLeftSidebarVisible
@@ -259,7 +260,7 @@ extension NotebookViewModel {
 
     // If we have table name and row data, attempt to update database (use resolved values)
     if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty {
-      Task {
+      Task { @MainActor [connectionManager] in
         do {
           // Fetch primary key columns if we don't have them yet
           var pkColumns = resolvedPrimaryKeyColumns

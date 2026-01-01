@@ -149,6 +149,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       // The text binding will be updated when editor loses focus (see onBlur callback in resignFirstResponder)
     }
 
+    @MainActor
     func applyHighlighting(to textView: NSTextView, text: String) {
       let attributed = SQLSyntaxHighlighter.highlight(text)
 
@@ -166,6 +167,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     /// Apply syntax highlighting without creating undo operations
     /// This prevents undo/redo lag when typing
+    @MainActor
     func applyHighlightingWithoutUndo(to textView: NSTextView, text: String) {
       guard let textStorage = textView.textStorage else { return }
 
@@ -199,6 +201,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       undoManager?.enableUndoRegistration()
     }
 
+    @MainActor
     func updateHeight(textView: NSTextView) {
       guard let textContainer = textView.textContainer,
         let layoutManager = textView.layoutManager

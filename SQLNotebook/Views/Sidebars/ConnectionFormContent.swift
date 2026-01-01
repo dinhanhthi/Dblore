@@ -470,18 +470,14 @@ struct ConnectionFormContent: View {
     isTesting = true
     testResult = nil
 
-    Task {
+    Task { @MainActor [viewModel] in
       do {
         let success = try await viewModel.testConnection()
-        await MainActor.run {
-          isTesting = false
-          testResult = success ? .success : .failure("Connection failed unexpectedly")
-        }
+        isTesting = false
+        testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
-        await MainActor.run {
-          isTesting = false
-          testResult = .failure(error.localizedDescription)
-        }
+        isTesting = false
+        testResult = .failure(error.localizedDescription)
       }
     }
   }
@@ -489,18 +485,14 @@ struct ConnectionFormContent: View {
   private func connect() {
     isConnecting = true
 
-    Task {
+    Task { @MainActor [viewModel] in
       do {
         try await viewModel.connect()
-        await MainActor.run {
-          isConnecting = false
-          viewModel.closeSidebar()
-        }
+        isConnecting = false
+        viewModel.closeSidebar()
       } catch {
-        await MainActor.run {
-          isConnecting = false
-          testResult = .failure(error.localizedDescription)
-        }
+        isConnecting = false
+        testResult = .failure(error.localizedDescription)
       }
     }
   }
