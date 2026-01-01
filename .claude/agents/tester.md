@@ -371,3 +371,74 @@ Product → Scheme → Edit Scheme → Test → Options → Code Coverage
 
 ### View Coverage Report
 In Xcode: Report Navigator (⌘9) → Coverage tab
+
+---
+
+## 🧪 Testing with Strict Concurrency (Match GitHub Actions)
+
+### Why Test with Strict Settings?
+
+**Problem**: Local Xcode (newer) has lenient concurrency checking, but GitHub Actions uses strict checking.
+
+**Result**: Code passes locally but fails in CI!
+
+### Solution: Build with Strict Checking Before Pushing
+
+**Use the build script:**
+```bash
+./scripts/build-strict.sh
+```
+
+**Or manually:**
+```bash
+xcodebuild \
+  -scheme SQLNotebook \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  CODE_SIGN_IDENTITY="" \
+  CODE_SIGNING_REQUIRED=NO \
+  OTHER_SWIFT_FLAGS="-Xfrontend -warn-concurrency -Xfrontend -enable-actor-data-race-checks" \
+  clean build
+```
+
+### Common Concurrency Issues in Tests
+
+#### 1. Missing `await` for @MainActor
+```swift
+// ❌ Error in strict mode
+let value = AppSettings.shared.property
+
+// ✅ Fix
+let value = await AppSettings.shared.property
+```
+
+#### 2. Task Capture Lists
+```swift
+// ❌ Sending main actor value to nonisolated context
+Task { @MainActor in
+    await viewModel.doSomething()
+}
+
+// ✅ Fix - explicit capture
+Task { @MainActor [viewModel] in
+    await viewModel.doSomething()
+}
+```
+
+### Testing Workflow
+
+**Before pushing to GitHub:**
+
+1. **Write/update tests**
+2. **Run strict build:**
+   ```bash
+   ./scripts/build-strict.sh
+   ```
+3. **Fix any concurrency errors**
+4. **Run tests:**
+   ```bash
+   xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
+   ```
+5. **Commit and push**
+
+**Reference**: See `docs/implementation/SWIFT_CONCURRENCY_FIXES.md` for detailed concurrency fix patterns

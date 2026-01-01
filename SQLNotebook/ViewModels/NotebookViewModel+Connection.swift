@@ -32,7 +32,7 @@ extension NotebookViewModel {
 
   /// Disconnect from database
   func disconnect() {
-    Task {
+    Task { @MainActor [connectionManager] in
       await connectionManager.disconnect()
       connectionState = .disconnected
 
@@ -51,18 +51,19 @@ extension NotebookViewModel {
 
   /// Auto-connect to saved session if available
   func autoConnectIfNeeded() {
-    Task {
+    Task { @MainActor [weak self] in
+      guard let self else { return }
       guard SessionManager.hasSession(),
             let savedConfig = SessionManager.loadSession() else {
         return
       }
 
       // Load the saved config
-      editingConnectionConfig = savedConfig
+      self.editingConnectionConfig = savedConfig
 
       // Attempt to connect automatically
       do {
-        try await connect()
+        try await self.connect()
         print("Auto-connected to saved session: \(savedConfig.displayString)")
       } catch {
         // If auto-connect fails, just log it and let user manually connect

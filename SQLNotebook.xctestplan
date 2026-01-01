@@ -4,7 +4,16 @@
       "id" : "F5D31976-1AF5-4DA9-89E4-BC98D6B48362",
       "name" : "Test Scheme Action",
       "options" : {
-
+        "environmentVariableEntries" : [
+          {
+            "key" : "SKIP_INTEGRATION_TESTS",
+            "value" : "$(SKIP_INTEGRATION_TESTS)"
+          },
+          {
+            "key" : "SKIP_UI_TESTS",
+            "value" : "$(SKIP_UI_TESTS)"
+          }
+        ]
       }
     }
   ],

@@ -5,6 +5,9 @@
 //  Created by Anh-Thi Dinh on 12/29/25.
 //
 
+// MARK: - UI Launch Tests
+// These tests run by default locally and are skipped in CI via SKIP_UI_TESTS=true
+
 import XCTest
 
 final class SQLNotebookUITestsLaunchTests: XCTestCase {
@@ -14,6 +17,12 @@ final class SQLNotebookUITestsLaunchTests: XCTestCase {
     }
 
     override func setUpWithError() throws {
+        // Skip all UI tests if SKIP_UI_TESTS environment variable is set
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["SKIP_UI_TESTS"] == "true",
+            "UI tests skipped in CI environment"
+        )
+        
         continueAfterFailure = false
     }
 

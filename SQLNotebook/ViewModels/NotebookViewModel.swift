@@ -25,6 +25,7 @@ enum SidebarContent: Equatable {
 }
 
 /// Main view model for the notebook editor
+@MainActor
 @Observable
 class NotebookViewModel {
   var notebook: SQLNotebook
@@ -35,7 +36,7 @@ class NotebookViewModel {
   var executionCounter: Int = 0
 
   // Left sidebar state
-  var isLeftSidebarVisible: Bool = AppSettings.shared.isLeftSidebarVisible
+  var isLeftSidebarVisible: Bool = false
   var databaseTables: [DatabaseTable] = []
   var isLoadingSchema: Bool = false
 
@@ -59,6 +60,11 @@ class NotebookViewModel {
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     self.editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
+
+    // Load sidebar visibility from settings after init
+    Task {
+      self.isLeftSidebarVisible = AppSettings.shared.isLeftSidebarVisible
+    }
   }
 
   // MARK: - Toast Notifications
@@ -73,17 +79,17 @@ class NotebookViewModel {
     toastDismissTask?.cancel()
 
     // Auto-dismiss after 4 seconds, but only if not hovered
-    toastDismissTask = Task { @MainActor in
+    toastDismissTask = Task {
       try? await Task.sleep(for: .seconds(4))
 
       // Wait until toast is no longer hovered
-      while isToastHovered {
+      while self.isToastHovered {
         try? await Task.sleep(for: .seconds(0.5))
       }
 
       // Dismiss only if the message matches (user might have shown a new toast)
-      if currentToast?.message == message {
-        currentToast = nil
+      if self.currentToast?.message == message {
+        self.currentToast = nil
       }
     }
   }

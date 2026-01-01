@@ -1,0 +1,15 @@
+{
+    "allowedCommands": {
+        "Read": [
+            "**/.github/**"
+        ],
+        "Edit": [
+            "**/.github/**"
+        ],
+        "Write": [
+            "**/.github/**"
+        ],
+        "Bash(cat:*)": true,
+        "Bash(head:*)": true
+    }
+}

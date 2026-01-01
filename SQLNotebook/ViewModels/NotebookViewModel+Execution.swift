@@ -73,8 +73,9 @@ extension NotebookViewModel {
 
       // Show toast if user's LIMIT was exceeded and capped
       if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
+        let maxLimit = AppSettings.shared.maxRowLimit
         showToast(
-          "Query limit capped from \(requestedLimit) to \(AppSettings.shared.maxRowLimit) rows. Increase in Settings.",
+          "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
           type: .warning
         )
       }
@@ -113,12 +114,14 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.restoreCellOutput(
-          id: id,
-          result: previousResult,
-          executionCount: previousExecutionCount,
-          registerUndo: true
-        )
+        MainActor.assumeIsolated {
+          target.restoreCellOutput(
+            id: id,
+            result: previousResult,
+            executionCount: previousExecutionCount,
+            registerUndo: true
+          )
+        }
       }
       undoManager.setActionName("Clear Output")
       onDocumentChanged?()
@@ -137,7 +140,9 @@ extension NotebookViewModel {
     // Register redo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.clearCellOutput(id: id, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.clearCellOutput(id: id, registerUndo: true)
+        }
       }
     }
   }
@@ -157,7 +162,9 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.restoreAllOutputs(outputs: previousOutputs, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.restoreAllOutputs(outputs: previousOutputs, registerUndo: true)
+        }
       }
       undoManager.setActionName("Clear All Outputs")
       onDocumentChanged?()
@@ -178,7 +185,9 @@ extension NotebookViewModel {
     // Register redo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.clearAllOutputs(registerUndo: true)
+        MainActor.assumeIsolated {
+          target.clearAllOutputs(registerUndo: true)
+        }
       }
     }
   }

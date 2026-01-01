@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+  #   paths:
+  #     - '**.swift'
+  #     - '.github/workflows/**'
+  #     - '!docs/**'
+  #     - '!examples/**'
+  #     - '!.claude/**'
+  #     - '!.vscode/**'
+  #     - '!.cursor/**'
+  #     - '!.gitignore'
+  #     - '!.gitignore'
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: macos-15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Show Xcode and Swift versions
+      run: |
+        xcodebuild -version
+        swift --version
+
+    - name: Resolve Swift Package Dependencies
+      run: |
+        xcodebuild -resolvePackageDependencies \
+          -project SQLNotebook.xcodeproj \
+          -scheme SQLNotebook
+
+    - name: Build App
+      run: |
+        xcodebuild build \
+          -project SQLNotebook.xcodeproj \
+          -scheme SQLNotebook \
+          -destination 'platform=macOS' \
+          CODE_SIGNING_ALLOWED=YES \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO
+
+    - name: Run Unit Tests
+      run: |
+        env SKIP_INTEGRATION_TESTS=true SKIP_UI_TESTS=true xcodebuild test \
+          -project SQLNotebook.xcodeproj \
+          -scheme SQLNotebook \
+          -destination 'platform=macOS' \
+          CODE_SIGNING_ALLOWED=YES \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: test-results
+        path: |
+          ~/Library/Logs/DiagnosticReports/
+          ~/Library/Developer/Xcode/DerivedData/*/Logs/Test/
+        retention-days: 7

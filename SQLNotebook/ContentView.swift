@@ -81,7 +81,7 @@ struct ContentView: View {
       titleVisibility: .visible
     ) {
       Button("Run All Cells", role: .none) {
-        Task {
+        Task { @MainActor [viewModel] in
           await viewModel.runAllCells()
           syncDocument()
         }
@@ -147,8 +147,8 @@ struct ContentView: View {
 
         // Priority 2: If right sidebar is open, close it
         if self.viewModel.isRightSidebarVisible {
-          Task { @MainActor in
-            self.viewModel.closeSidebar()
+          Task { @MainActor [viewModel] in
+            viewModel.closeSidebar()
           }
           return nil  // Event consumed
         }
@@ -207,11 +207,11 @@ struct ContentView: View {
         }
 
         // Use MainActor to ensure we're on the main thread
-        Task { @MainActor in
+        Task { @MainActor [viewModel] in
           if isUpArrow {
-            self.viewModel.selectPreviousCell()
+            viewModel.selectPreviousCell()
           } else if isDownArrow {
-            self.viewModel.selectNextCell(createIfNeeded: false)
+            viewModel.selectNextCell(createIfNeeded: false)
           }
         }
         return nil  // Event consumed
@@ -240,7 +240,7 @@ struct ContentView: View {
               cell: $cell,
               isSelected: viewModel.selectedCellId == cell.id,
               onRun: {
-                Task {
+                Task { @MainActor [viewModel] in
                   await viewModel.runCell(id: cell.id)
                   syncDocument()
                 }
@@ -375,7 +375,7 @@ private struct ContentViewForPreview: View {
               cell: $cell,
               isSelected: viewModel.selectedCellId == cell.id,
               onRun: {
-                Task {
+                Task { @MainActor [viewModel] in
                   await viewModel.runCell(id: cell.id)
                 }
               }
@@ -405,7 +405,7 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
         if let id = viewModel.selectedCellId {
-          Task {
+          Task { @MainActor [viewModel] in
             await viewModel.runCell(id: id)
             syncDocument()
           }
@@ -413,7 +413,7 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
         if let id = viewModel.selectedCellId {
-          Task {
+          Task { @MainActor [viewModel] in
             await viewModel.runCell(id: id)
             viewModel.selectNextCell(createIfNeeded: true)
             syncDocument()
@@ -422,7 +422,7 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
         if let id = viewModel.selectedCellId {
-          Task {
+          Task { @MainActor [viewModel] in
             await viewModel.runCell(id: id)
             viewModel.insertCellBelow(type: .sql)
             syncDocument()

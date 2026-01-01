@@ -30,8 +30,10 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.removeCellForUndo(
-          id: newCell.id, restoreSelection: previousSelection, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.removeCellForUndo(
+            id: newCell.id, restoreSelection: previousSelection, registerUndo: true)
+        }
       }
       undoManager.setActionName("Add Cell")
       onDocumentChanged?()
@@ -65,13 +67,15 @@ extension NotebookViewModel {
     if registerUndo {
       let newSelection = selectedCellId
       undoManager.registerUndo(withTarget: self) { target in
-        target.restoreCellForUndo(
-          cell: deletedCell,
-          at: deletedIndex,
-          restoreSelection: previousSelection,
-          currentSelection: newSelection,
-          registerUndo: true
-        )
+        MainActor.assumeIsolated {
+          target.restoreCellForUndo(
+            cell: deletedCell,
+            at: deletedIndex,
+            restoreSelection: previousSelection,
+            currentSelection: newSelection,
+            registerUndo: true
+          )
+        }
       }
       undoManager.setActionName("Delete Cell")
       onDocumentChanged?()
@@ -92,7 +96,9 @@ extension NotebookViewModel {
     if registerUndo {
       let afterId = deletedIndex > 0 ? notebook.cells[deletedIndex - 1].id : nil
       undoManager.registerUndo(withTarget: self) { target in
-        target.addCell(type: deletedCell.cellType, after: afterId, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.addCell(type: deletedCell.cellType, after: afterId, registerUndo: true)
+        }
       }
     }
   }
@@ -111,7 +117,9 @@ extension NotebookViewModel {
     // Register redo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.deleteCell(id: cell.id, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.deleteCell(id: cell.id, registerUndo: true)
+        }
       }
     }
   }
@@ -135,8 +143,10 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.removeCellForUndo(
-          id: duplicate.id, restoreSelection: previousSelection, registerUndo: true)
+        MainActor.assumeIsolated {
+          target.removeCellForUndo(
+            id: duplicate.id, restoreSelection: previousSelection, registerUndo: true)
+        }
       }
       undoManager.setActionName("Duplicate Cell")
       onDocumentChanged?()
@@ -155,10 +165,12 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        // Move back from actualDestination to sourceIndex
-        let reverseSource = IndexSet(integer: actualDestination)
-        let reverseDestination = sourceIndex < actualDestination ? sourceIndex : sourceIndex + 1
-        target.moveCell(from: reverseSource, to: reverseDestination, registerUndo: true)
+        MainActor.assumeIsolated {
+          // Move back from actualDestination to sourceIndex
+          let reverseSource = IndexSet(integer: actualDestination)
+          let reverseDestination = sourceIndex < actualDestination ? sourceIndex : sourceIndex + 1
+          target.moveCell(from: reverseSource, to: reverseDestination, registerUndo: true)
+        }
       }
       undoManager.setActionName("Move Cell")
       onDocumentChanged?()
@@ -177,7 +189,9 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.moveSelectedCellDown(registerUndo: true)
+        MainActor.assumeIsolated {
+          target.moveSelectedCellDown(registerUndo: true)
+        }
       }
       undoManager.setActionName("Move Cell Up")
       onDocumentChanged?()
@@ -196,7 +210,9 @@ extension NotebookViewModel {
     // Register undo
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
-        target.moveSelectedCellUp(registerUndo: true)
+        MainActor.assumeIsolated {
+          target.moveSelectedCellUp(registerUndo: true)
+        }
       }
       undoManager.setActionName("Move Cell Down")
       onDocumentChanged?()
