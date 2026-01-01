@@ -107,9 +107,9 @@ struct CellResult: Codable, Sendable {
 
 /// Information about a result column
 struct ColumnInfo: Codable, Identifiable, Sendable {
-  var id: String { name }
-  let name: String
-  let type: String
+  nonisolated var id: String { name }
+  nonisolated let name: String
+  nonisolated let type: String
 }
 
 /// A value in a result cell, supporting multiple SQL types
@@ -124,7 +124,7 @@ enum CellValue: Codable, Equatable, Sendable {
   case data(Data)
 
   /// Display string for the value
-  var displayString: String {
+  nonisolated var displayString: String {
     switch self {
     case .string(let value):
       return value
@@ -155,7 +155,7 @@ enum CellValue: Codable, Equatable, Sendable {
   }
 
   /// Full string representation (not truncated)
-  var fullString: String {
+  nonisolated var fullString: String {
     switch self {
     case .string(let value):
       return value
@@ -176,12 +176,12 @@ enum CellValue: Codable, Equatable, Sendable {
     }
   }
 
-  var isNull: Bool {
+  nonisolated var isNull: Bool {
     if case .null = self { return true }
     return false
   }
 
-  var isJSON: Bool {
+  nonisolated var isJSON: Bool {
     if case .json = self { return true }
     return false
   }
