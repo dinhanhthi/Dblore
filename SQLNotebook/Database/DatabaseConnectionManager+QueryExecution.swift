@@ -173,8 +173,11 @@ extension DatabaseConnectionManager {
         wasLimited = true
       }
 
+      // Try to enrich column type information with modifiers
+      let enrichedColumns = await enrichColumnTypes(columns: columns, query: executionQuery)
+
       return QueryResult(
-        columns: columns,
+        columns: enrichedColumns,
         rows: resultRows,
         rowCount: resultRows.count,
         executionTime: executionTime,
@@ -459,5 +462,138 @@ extension DatabaseConnectionManager {
     // For other SELECT queries, return as-is
     // ctid won't be available for complex queries
     return query
+  }
+
+  /// Enrich column type information with modifiers (precision, scale, length)
+  /// Uses information_schema to get detailed type info
+  private func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
+    // Only proceed if we have columns and connection
+    guard !columns.isEmpty, let connection = _connection, databaseType == .postgresql else {
+      return columns
+    }
+
+    // Try to extract table name from query (simple SELECT from single table)
+    guard let tableName = extractSingleTableName(query) else {
+      return columns
+    }
+
+    do {
+      // Build IN clause with column names
+      let columnNames = columns.map { "'\($0.name)'" }.joined(separator: ", ")
+
+      // Query information_schema to get detailed column types
+      let typeQuery = """
+        SELECT column_name, data_type,
+               character_maximum_length,
+               numeric_precision,
+               numeric_scale,
+               datetime_precision,
+               interval_type
+        FROM information_schema.columns
+        WHERE table_name = '\(tableName)'
+          AND column_name IN (\(columnNames))
+        """
+
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: typeQuery),
+        logger: Logger(label: "sqlnotebook.typeinfo")
+      )
+
+      // Collect type information
+      var typeMap: [String: String] = [:]
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+        guard randomAccess.count >= 7 else { continue }
+
+        // Extract values
+        var cellValues: [PostgresCell] = []
+        for cell in randomAccess {
+          cellValues.append(cell)
+        }
+
+        guard let columnName = try? cellValues[0].decode(String.self, context: .default),
+              let dataType = try? cellValues[1].decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        // Build detailed type string
+        var detailedType = dataType.uppercased()
+
+        // Add length for character types
+        if let maxLength = try? cellValues[2].decode(Int.self, context: .default) {
+          detailedType += "(\(maxLength))"
+        }
+        // Add precision and scale for numeric types
+        else if let precision = try? cellValues[3].decode(Int.self, context: .default) {
+          if let scale = try? cellValues[4].decode(Int.self, context: .default) {
+            detailedType += "(\(precision),\(scale))"
+          } else {
+            detailedType += "(\(precision))"
+          }
+        }
+        // Add precision for datetime types
+        else if let datetimePrecision = try? cellValues[5].decode(Int.self, context: .default) {
+          // For timestamp types, check if it's WITH/WITHOUT TIME ZONE
+          if dataType.uppercased().contains("TIMESTAMP") {
+            if dataType.uppercased().contains("WITH TIME ZONE") {
+              detailedType = "TIMESTAMP(\(datetimePrecision)) WITH TIME ZONE"
+            } else {
+              detailedType = "TIMESTAMP(\(datetimePrecision)) WITHOUT TIME ZONE"
+            }
+          }
+        }
+
+        typeMap[columnName] = detailedType
+      }
+
+      // Update columns with enriched type info
+      return columns.map { column in
+        if let enrichedType = typeMap[column.name] {
+          return ColumnInfo(name: column.name, type: enrichedType)
+        }
+        return column
+      }
+
+    } catch {
+      // If enrichment fails, return original columns
+      print("⚠️ Failed to enrich column types: \(error)")
+      return columns
+    }
+  }
+
+  /// Extract table name from a simple SELECT query (SELECT ... FROM table_name ...)
+  /// Returns nil if query is complex (joins, subqueries, etc.)
+  private func extractSingleTableName(_ query: String) -> String? {
+    let normalized = query
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+
+    // Pattern: SELECT ... FROM table_name (with optional WHERE/LIMIT/etc.)
+    // This is a simple regex that handles basic cases
+    let pattern = "(?i)SELECT\\s+.+?\\s+FROM\\s+([a-zA-Z_][a-zA-Z0-9_]*)"
+
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+          let match = regex.firstMatch(
+            in: normalized,
+            options: [],
+            range: NSRange(normalized.startIndex..., in: normalized)
+          ),
+          match.numberOfRanges > 1,
+          let tableRange = Range(match.range(at: 1), in: normalized)
+    else {
+      return nil
+    }
+
+    let tableName = String(normalized[tableRange])
+
+    // Exclude queries with JOINs or subqueries (simple check)
+    let upperQuery = normalized.uppercased()
+    if upperQuery.contains(" JOIN ") || upperQuery.contains("(SELECT") {
+      return nil
+    }
+
+    return tableName
   }
 }

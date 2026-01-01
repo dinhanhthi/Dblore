@@ -373,17 +373,55 @@ List of all test cases to implement for SQLNotebook project, organized by catego
 - [ ] TEXT → `.string`
 - [ ] INTEGER → `.int`
 - [ ] BIGINT → `.int`
-- [ ] DECIMAL/NUMERIC → `.double`
+- [x] DECIMAL/NUMERIC → `.double` — DatabaseIntegrationTests: `numericDecimalDecodesToDoubleIntegration()`
 - [ ] REAL/DOUBLE → `.double`
 - [ ] BOOLEAN → `.bool`
 - [ ] JSON/JSONB → `.json`
 - [ ] DATE → `.date`
 - [ ] TIMESTAMP → `.date`
 - [ ] TIMESTAMPTZ → `.date`
-- [ ] NULL → `.null`
+- [x] NULL → `.null` — DatabaseIntegrationTests: `numericNullDecodesToNullIntegration()`
 - [ ] BYTEA → `.data`
 - [ ] ARRAY types
 - [ ] Custom enum types
+
+### NUMERIC Type Decoding (Unit & Integration Tests)
+- [x] NUMERIC(10,2) decodes to Double — DatabaseTypeDecodingTests: `numericValueDecodesToDouble()`, DatabaseIntegrationTests: `numericDecimalDecodesToDoubleIntegration()`
+- [x] NUMERIC(15,4) high precision decodes to Double — DatabaseTypeDecodingTests: `numericHighPrecisionDecodesToDouble()`, DatabaseIntegrationTests: `numericHighPrecisionDecodesToDoubleIntegration()`
+- [x] NUMERIC NULL decodes to CellValue.null — DatabaseTypeDecodingTests: `numericNullValueDecodesToNull()`, DatabaseIntegrationTests: `numericNullDecodesToNullIntegration()`
+- [x] Negative NUMERIC values decode correctly — DatabaseTypeDecodingTests: `negativeNumericValuesDecodeCorrectly()`, DatabaseIntegrationTests: `negativeNumericDecodesToDoubleIntegration()`
+- [x] Zero NUMERIC value decodes to 0.0 — DatabaseTypeDecodingTests: `zeroNumericValueDecodesToZero()`, DatabaseIntegrationTests: `zeroNumericDecodesToZeroIntegration()`
+- [x] NUMERIC with many decimal places — DatabaseTypeDecodingTests: `numericManyDecimalPlacesDecodesToDouble()`
+- [x] Very large NUMERIC values — DatabaseTypeDecodingTests: `veryLargeNumericValuesDecodeCorrectly()`, DatabaseIntegrationTests: `veryLargeNumericDecodesToDoubleIntegration()`
+
+### Column Type Enrichment (Unit & Integration Tests)
+- [x] VARCHAR shows length modifier (VARCHAR(255)) — DatabaseTypeDecodingTests: `varcharColumnTypeShowsLength()`, DatabaseIntegrationTests: `varcharColumnEnrichedWithLengthIntegration()`
+- [x] CHAR shows length modifier (CHAR(10)) — DatabaseTypeDecodingTests: `charColumnTypeShowsLength()`
+- [x] NUMERIC shows precision and scale (NUMERIC(10,2)) — DatabaseTypeDecodingTests: `numericColumnTypeShowsPrecisionAndScale()`, DatabaseIntegrationTests: `numericColumnEnrichedWithPrecisionScaleIntegration()`
+- [x] DECIMAL shows precision and scale (DECIMAL(15,4)) — DatabaseTypeDecodingTests: `decimalColumnTypeShowsPrecisionAndScale()`
+- [x] TIMESTAMP shows precision (TIMESTAMP(6)) — DatabaseTypeDecodingTests: `timestampColumnTypeShowsPrecision()`, DatabaseIntegrationTests: `timestampColumnEnrichedWithPrecisionTimeZoneIntegration()`
+- [x] TIMESTAMP WITHOUT TIME ZONE enriched — DatabaseTypeDecodingTests: `timestampWithoutTimeZoneShowsInfo()`, DatabaseIntegrationTests: `timestampColumnEnrichedWithPrecisionTimeZoneIntegration()`
+- [x] TIMESTAMP WITH TIME ZONE enriched — DatabaseTypeDecodingTests: `timestampWithTimeZoneShowsInfo()`, DatabaseIntegrationTests: `timestampColumnEnrichedWithPrecisionTimeZoneIntegration()`
+
+### extractSingleTableName Helper (Unit Tests)
+- [x] Extract table from simple SELECT — DatabaseTypeDecodingTests: `extractTableNameFromSimpleSelect()`
+- [x] Extract table from SELECT with WHERE — DatabaseTypeDecodingTests: `extractTableNameFromSelectWithWhere()`
+- [x] Extract table from SELECT with LIMIT — DatabaseTypeDecodingTests: `extractTableNameFromSelectWithLimit()`
+- [x] Returns nil for query with JOIN — DatabaseTypeDecodingTests: `returnsNilForQueryWithJoin()`
+- [x] Returns nil for query with subquery — DatabaseTypeDecodingTests: `returnsNilForQueryWithSubquery()`
+- [x] Handles table name with underscores — DatabaseTypeDecodingTests: `handlesTableNameWithUnderscores()`
+- [x] Handles table name with numbers — DatabaseTypeDecodingTests: `handlesTableNameWithNumbers()`
+- [x] Handles lowercase SELECT — DatabaseTypeDecodingTests: `handlesLowercaseSelectQuery()`
+- [x] Handles extra whitespace — DatabaseTypeDecodingTests: `handlesExtraWhitespaceInQuery()`
+
+### enrichColumnTypes Helper (Unit Tests)
+- [x] Returns original types for complex query — DatabaseTypeDecodingTests: `enrichColumnTypesReturnsOriginalForComplexQuery()`
+- [x] Handles empty columns array — DatabaseTypeDecodingTests: `enrichColumnTypesHandlesEmptyColumns()`
+- [x] Handles errors gracefully — DatabaseTypeDecodingTests: `enrichColumnTypesHandlesErrorGracefully()`
+- [x] Fails gracefully for complex queries — DatabaseIntegrationTests: `columnTypeEnrichmentFailsGracefullyForComplexQueriesIntegration()`
+
+### Mixed Tests (Integration)
+- [x] NUMERIC decoding + type enrichment work together — DatabaseIntegrationTests: `numericDecodingAndTypeEnrichmentIntegration()`
 
 ### Performance
 - [ ] Query execution time measurement accuracy

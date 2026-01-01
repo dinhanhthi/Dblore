@@ -648,6 +648,23 @@ Thêm comprehensive testing suite cho SQLNotebook app sử dụng XCTest framewo
 - [ ] Create mock `DatabaseConnectionManager` cho unit tests
 - [ ] Create test database setup/teardown helpers
 - [ ] Create sample notebook files cho testing
+- [ ] **Setup Dedicated PostgreSQL Test Database** 🗄️
+  - [ ] Create Docker Compose file for test PostgreSQL instance on port 5435
+  - [ ] Create SQL script to initialize test database schema and sample data
+    - [ ] Create tables with NUMERIC, VARCHAR, TIMESTAMP columns
+    - [ ] Add sample test data for various data types
+    - [ ] Create relationships (foreign keys) for schema testing
+  - [ ] Update `DatabaseIntegrationTests` configuration to point to test database
+  - [ ] Remove `SKIP_INTEGRATION_TESTS` flag and run all integration tests against real database
+  - [ ] Add README/documentation for setting up test database locally
+    - [ ] Instructions for Docker setup
+    - [ ] Manual PostgreSQL setup instructions (alternative)
+    - [ ] How to run test database
+    - [ ] Connection details (host: localhost, port: 5435, database: sqlnotebook_test)
+  - [ ] Run all integration tests and verify they pass
+  - [ ] Consider adding test database setup to GitHub Actions CI workflow
+    - [ ] Use Docker service or PostgreSQL action in CI
+    - [ ] Initialize test database before running tests
 - [ ] **Set up GitHub Actions CI/CD workflow** ⭐ **NEXT PRIORITY**
   - [ ] Create `.github/workflows/ci.yml` file
   - [ ] Configure workflow to run on push và pull requests

@@ -14,20 +14,20 @@ import PostgresNIO
 
 /// Result of a query execution
 struct QueryResult: Sendable {
-  let columns: [ColumnInfo]
-  let rows: [[CellValue]]
-  let rowCount: Int
-  let executionTime: TimeInterval
+  nonisolated let columns: [ColumnInfo]
+  nonisolated let rows: [[CellValue]]
+  nonisolated let rowCount: Int
+  nonisolated let executionTime: TimeInterval
   /// True if the result was limited due to reaching maxFetchRows
-  let wasLimited: Bool
+  nonisolated let wasLimited: Bool
   /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
-  let rowIdentifiers: [CellValue]
+  nonisolated let rowIdentifiers: [CellValue]
   /// True if user's LIMIT in query exceeded maxRows and was capped
-  let userLimitExceeded: Bool
+  nonisolated let userLimitExceeded: Bool
   /// The original LIMIT value user specified (if any)
-  let userRequestedLimit: Int?
+  nonisolated let userRequestedLimit: Int?
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
-  let affectedRows: Int?
+  nonisolated let affectedRows: Int?
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
@@ -177,9 +177,28 @@ extension DatabaseConnectionManager {
         return .double(value)
       }
 
-    case .numeric, .money:
+    case .numeric:
+      // PostgresNIO returns NUMERIC as Decimal (Foundation.Decimal) in binary format
+      // Decode as Decimal first, then convert to Double for display
+      if let decimalValue = try? cell.decode(Decimal.self, context: .default) {
+        // Convert Decimal to Double
+        return .double(Double(truncating: decimalValue as NSDecimalNumber))
+      }
+      // Fallback to String decoding for text format
       if let value = try? cell.decode(String.self, context: .default) {
         if let doubleValue = Double(value) {
+          return .double(doubleValue)
+        }
+        return .string(value)
+      }
+
+    case .money:
+      // Money type should be decoded as String first, then parsed
+      if let value = try? cell.decode(String.self, context: .default) {
+        // Remove currency symbols and parse
+        let cleaned = value.replacingOccurrences(of: "$", with: "")
+          .replacingOccurrences(of: ",", with: "")
+        if let doubleValue = Double(cleaned) {
           return .double(doubleValue)
         }
         return .string(value)
