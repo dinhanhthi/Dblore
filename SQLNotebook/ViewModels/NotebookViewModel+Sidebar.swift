@@ -74,6 +74,7 @@ extension NotebookViewModel {
   /// Toggle left sidebar visibility
   func toggleLeftSidebar() {
     isLeftSidebarVisible.toggle()
+    AppSettings.shared.isLeftSidebarVisible = isLeftSidebarVisible
   }
 
   /// Load database schema (tables and columns)

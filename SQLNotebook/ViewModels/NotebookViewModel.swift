@@ -35,7 +35,7 @@ class NotebookViewModel {
   var executionCounter: Int = 0
 
   // Left sidebar state
-  var isLeftSidebarVisible: Bool = false
+  var isLeftSidebarVisible: Bool = AppSettings.shared.isLeftSidebarVisible
   var databaseTables: [DatabaseTable] = []
   var isLoadingSchema: Bool = false
 
