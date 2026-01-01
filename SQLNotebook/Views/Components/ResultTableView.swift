@@ -99,7 +99,10 @@ struct ResultTableView: View {
         resizingColumn: $resizingColumn,
         columnWidths: $columnWidths,
         minWidth: minColumnWidth,
-        maxWidth: maxColumnWidth
+        maxWidth: maxColumnWidth,
+        onAutoResize: {
+          autoResizeColumn(column: column)
+        }
       )
     }
     .frame(width: columnWidth(for: column.name), alignment: .leading)
@@ -215,6 +218,48 @@ struct ResultTableView: View {
       )
     }
   }
+
+  // MARK: - Auto Resize
+
+  private func autoResizeColumn(column: ColumnInfo) {
+    let columnIndex = result.columns.firstIndex(where: { $0.name == column.name })
+    guard let columnIndex = columnIndex else { return }
+
+    // Calculate width needed for header (both name and type should fit)
+    let headerNameFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+    let headerTypeFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+
+    let headerNameWidth = estimateTextWidth(text: column.name, nsFont: headerNameFont)
+    let headerTypeWidth = estimateTextWidth(text: column.type, nsFont: headerTypeFont)
+    // Both texts are stacked vertically, so we need the wider of the two
+    let headerTextWidth = max(headerNameWidth, headerTypeWidth)
+    // Add horizontal padding (lg on both sides), resize handle width (4pt), and extra buffer (8pt)
+    let headerWidth = headerTextWidth + (Spacing.lg * 2) + 4 + 8
+
+    // Calculate width needed for data cells
+    let dataFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    var maxDataWidth: CGFloat = 0
+    for row in result.rows {
+      guard columnIndex < row.count else { continue }
+      let value = row[columnIndex]
+      let displayText = value.displayString
+      let textWidth = estimateTextWidth(text: displayText, nsFont: dataFont)
+      // Add horizontal padding (sm on both sides), cell border (Spacing.md on right), and extra buffer
+      maxDataWidth = max(maxDataWidth, textWidth + (Spacing.sm * 2) + Spacing.md + 8)
+    }
+
+    // Choose the larger of header or data width, but respect min/max bounds
+    let optimalWidth = max(headerWidth, maxDataWidth)
+    let constrainedWidth = min(max(optimalWidth, minColumnWidth), maxColumnWidth)
+
+    columnWidths[column.name] = constrainedWidth
+  }
+
+  private func estimateTextWidth(text: String, nsFont: NSFont) -> CGFloat {
+    let attributes: [NSAttributedString.Key: Any] = [.font: nsFont]
+    let size = (text as NSString).size(withAttributes: attributes)
+    return size.width
+  }
 }
 
 // MARK: - Cell Content View
@@ -290,6 +335,7 @@ private struct ResizeHandle: View {
   @Binding var columnWidths: [String: CGFloat]
   let minWidth: CGFloat
   let maxWidth: CGFloat
+  let onAutoResize: () -> Void
 
   @State private var isHovering = false
 
@@ -305,6 +351,10 @@ private struct ResizeHandle: View {
         } else {
           NSCursor.pop()
         }
+      }
+      .onTapGesture(count: 2) {
+        // Double-click to auto-resize
+        onAutoResize()
       }
       .gesture(
         DragGesture()
