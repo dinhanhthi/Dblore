@@ -2,13 +2,13 @@
 
 ## Current Status
 
-- ✅ **Phase 1: Core Structure** - COMPLETE
-- ✅ **Phase 2: Cell Editor** - COMPLETE
-- ✅ **Phase 3: Database Integration** - COMPLETE
-- ✅ **Phase 4: Polish** - MOSTLY COMPLETE
+- ✅ **Phase 1: Core Structure** - COMPLETE (All 1.1-1.4 items done)
+- ✅ **Phase 2: Cell Editor** - COMPLETE (All 2.1-2.4 items done)
+- ✅ **Phase 3: Database Integration** - COMPLETE (All 3.1-3.5 items done)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (9 of 13 sections complete, 4 pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
-- 🔒 **Phase 6: Security & Safety** - IN PROGRESS
-- 🚨 **Phase 7: Testing Suite** - IN PROGRESS
+- 🔒 **Phase 6: Security & Safety** - PARTIAL (1 complete, 4 in progress/not started)
+- ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (4 complete: 7.1, 7.2, 7.3, 7.13 with CI/CD; rest partial/not started)
 - 🎯 **Phase 8: Editor Mode** - NOT STARTED (LAST PHASE)
 
 ---
@@ -31,7 +31,7 @@
 - [x] Implement `CellValue` enum
 - [x] Implement `ConnectionConfig` struct
 - [x] Implement `NotebookMetadata` struct
-- [ ] Write unit tests for model serialization
+- [x] Write unit tests for model serialization
 
 ### 1.3 Document Architecture
 - [x] Implement `SQLNotebookDocument` with `FileDocument`
@@ -157,6 +157,7 @@
   - [ ] Cancel queued cells
 - [x] Implement "Clear All Outputs"
 - [x] Button icons using SF Symbols
+- [x] Add confirmation dialog for Run All
 
 ### 4.3 Footer
 - [x] Display connection status with icon
@@ -164,7 +165,7 @@
 - [x] Display last saved time
 - [x] "Unsaved changes" indicator
 
-### 4.4 Drag and Drop
+### 4.4 Drag and Drop - NOT STARTED
 - [ ] Add drag handle to cell left sidebar
 - [ ] Implement `onMove` modifier for cell reordering
 - [ ] Add visual feedback during drag
@@ -176,7 +177,7 @@
 - [x] Add "Delete" menu item
 - [x] Add "Duplicate" menu item
 - [x] Add "Move Up" / "Move Down" menu items
-- [ ] Add "Copy" menu item
+- [x] Add "Copy" menu item (implemented as floating panel button)
 - [x] Add "Clear Output" menu item
 
 ### 4.6 Global Keyboard Shortcuts
@@ -187,16 +188,17 @@
 - [x] `Cmd+B` for add code cell
 - [x] `Cmd+Backspace` for delete cell
 - [x] `Cmd+Shift+R` for toggle sidebar
-- [ ] `Cmd+/` for comment/uncomment SQL line
+- [x] `Cmd+Shift+L` for toggle left sidebar
+- [ ] `Cmd+/` for comment/uncomment SQL line - NOT STARTED
 - [x] Settings panel with keyboard shortcuts (basic structure)
 
 ### 4.7 Auto-save & Document State
 - [x] Implement auto-save on changes (debounced)
 - [x] Track document dirty state
 - [x] Show unsaved indicator in footer
-- [ ] Prompt to save on close if unsaved
+- [ ] Prompt to save on close if unsaved - NOT STARTED
 
-### 4.8 Result Display Controls
+### 4.8 Result Display Controls - NOT STARTED
 - [ ] Add show/hide toggle button in cell sidebar
 - [ ] Implement collapse/expand animation
 - [ ] Persist result visibility state per cell
@@ -228,7 +230,7 @@
 - [x] Update document save/load for settings
 - [x] Add Settings button to header
 
-### 4.11 File Optimization
+### 4.11 File Optimization - NOT STARTED
 - [ ] Detect large file size (> 10MB)
 - [ ] Implement compression option
 - [ ] Add option to remove old results automatically
@@ -236,7 +238,7 @@
 - [ ] Add file size indicator in footer
 - [ ] Add "Optimize File" menu option
 
-### 4.12 Logging System
+### 4.12 Logging System - NOT STARTED
 - [ ] Create `AppLogger` utility class
 - [ ] Replace `print()` statements with logging calls
 - [ ] Add log levels (debug, info, warning, error)
@@ -250,7 +252,7 @@
 - [ ] Implement log sending mechanism
 - [ ] Show confirmation dialog before sending
 
-### 4.13 Theme Toggle (Dark/Light Mode)
+### 4.13 Theme Toggle (Dark/Light Mode) - NOT STARTED
 - [ ] Add theme preference to `AppSettings`
 - [ ] Store theme preference in UserDefaults
 - [ ] Update `DesignSystem.swift` for light/dark modes
@@ -370,12 +372,12 @@
 ### 6.0.2 Connection Security
 - [x] Support SSL/TLS connection modes (all 6 PostgreSQL modes)
 - [x] Smart cloud database detection
-- [ ] Fix certificate verification for `.require` mode
-- [ ] Add connection timeout configuration
-- [ ] Add connection retry logic with exponential backoff
-- [ ] Validate connection string format
+- [ ] Fix certificate verification for `.require` mode - IN PROGRESS
+- [ ] Add connection timeout configuration - NOT STARTED
+- [ ] Add connection retry logic with exponential backoff - NOT STARTED
+- [ ] Validate connection string format - NOT STARTED
 
-### 6.0.3 Query Execution Security
+### 6.0.3 Query Execution Security - NOT STARTED
 - [x] Enforce row limits to prevent memory exhaustion
 - [x] Detect modification queries
 - [ ] Add confirmation dialogs for destructive operations
@@ -383,25 +385,25 @@
 - [ ] Add transaction management
 - [ ] Improve SQL injection protection
 
-### 6.0.4 Data Modification Safety
+### 6.0.4 Data Modification Safety - PARTIAL
 - [x] Use primary key columns for UPDATE WHERE clause
 - [x] Use ctid (PostgreSQL) for row identification
 - [x] Escape string values in UPDATE queries
-- [ ] Add confirmation for inline cell editing
-- [ ] Add transaction support for inline edits
-- [ ] Add validation for UPDATE operations
+- [ ] Add confirmation for inline cell editing - NOT STARTED
+- [ ] Add transaction support for inline edits - NOT STARTED
+- [ ] Add validation for UPDATE operations - NOT STARTED
 
-### 6.0.5 Audit & Logging Security
+### 6.0.5 Audit & Logging Security - NOT STARTED
 - [ ] Add query execution logging
 - [ ] Add connection audit trail
 - [ ] Add error reporting with privacy
 
-### 6.0.6 User Education & Warnings
+### 6.0.6 User Education & Warnings - NOT STARTED
 - [ ] Add security warnings in UI
 - [ ] Add security tips in Settings or Help menu
 - [ ] Add connection security indicator
 
-### 6.0.7 Testing Security Features
+### 6.0.7 Testing Security Features - NOT STARTED
 - [ ] Add security-focused tests
 - [ ] Test password not saved in UserDefaults
 - [ ] Test password not in notebook file encoding
@@ -413,7 +415,7 @@
 
 ---
 
-## Phase 7: Testing Suite 🚨 (IN PROGRESS)
+## Phase 7: Testing Suite 🚨 (MOSTLY COMPLETE - 4 of 13 complete, rest partial/not started)
 
 ### 7.1 Test Target Setup ✅
 - [x] Create Unit Test target (`SQLNotebookTests`)
@@ -425,12 +427,12 @@
 ### 7.2 Unit Tests - Data Models ✅
 - [x] `SQLNotebook` encoding/decoding
 - [x] `NotebookCell` encoding/decoding
-- [ ] `CellResult` encoding/decoding with error cases
+- [ ] `CellResult` encoding/decoding with error cases - NOT STARTED
 - [x] `CellValue` enum encoding/decoding (all cases)
 - [x] `ConnectionConfig` encoding/decoding
 - [x] `NotebookMetadata` encoding/decoding
 - [x] `NotebookSettings` encoding/decoding
-- [ ] `DatabaseSchema` models encoding/decoding
+- [ ] `DatabaseSchema` models encoding/decoding - NOT STARTED
 
 ### 7.3 Unit Tests - Utilities ✅
 - [x] `SQLSyntaxHighlighter` tokenizer correctness
@@ -446,7 +448,7 @@
   - [x] `fullString` property for all types
   - [x] `isNull` and `isJSON` computed properties
 
-### 7.4 Unit Tests - Document Operations
+### 7.4 Unit Tests - Document Operations - NOT STARTED
 - [ ] `SQLNotebookDocument.read()` with valid JSON
 - [ ] `SQLNotebookDocument.read()` with invalid JSON
 - [ ] `SQLNotebookDocument.write()` creates valid JSON
@@ -461,10 +463,10 @@
 - [x] `NotebookViewModel.moveCell()` for cell reordering
 - [x] `NotebookViewModel.selectCell()` selection state
 - [x] `NotebookViewModel.clearAllOutputs()` clear results
-- [ ] Cell execution count increment
+- [ ] Cell execution count increment - NOT STARTED
 - [x] Cell running state management
 
-### 7.6 Integration Tests - Database Connection
+### 7.6 Integration Tests - Database Connection - NOT STARTED
 - [ ] `DatabaseConnectionManager.connect()` with valid config
 - [ ] `DatabaseConnectionManager.connect()` with invalid config
 - [ ] `DatabaseConnectionManager.testConnection()` success
@@ -474,29 +476,29 @@
 - [ ] SSL/TLS connection modes
 - [ ] Connection string parsing and validation
 
-### 7.7 Integration Tests - Query Execution
+### 7.7 Integration Tests - Query Execution - PARTIAL
 - [ ] Execute SELECT query and parse results
 - [ ] Execute INSERT/UPDATE/DELETE with affected rows
 - [ ] Execute DDL statements (CREATE TABLE, etc.)
 - [ ] Execute multiple statements sequentially
 - [ ] Error handling for invalid SQL syntax
 - [ ] Error handling for database errors
-- [ ] Type mapping from PostgreSQL types → CellValue
-  - [ ] VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN
-  - [ ] JSON/JSONB types
-  - [ ] DATE, TIMESTAMP types
-  - [ ] NULL values
+- [x] Type mapping from PostgreSQL types → CellValue (NUMERIC, VARCHAR, etc. tested)
+  - [x] VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN
+  - [ ] JSON/JSONB types - NOT STARTED
+  - [ ] DATE, TIMESTAMP types - NOT STARTED
+  - [x] NULL values
 - [x] Result row limiting (max fetch rows)
-- [ ] Execution time measurement accuracy
+- [ ] Execution time measurement accuracy - NOT STARTED
 
-### 7.8 Integration Tests - Schema Loading
+### 7.8 Integration Tests - Schema Loading - NOT STARTED
 - [ ] `fetchTables()` returns correct table list
 - [ ] `fetchColumns()` returns correct column info
 - [ ] Schema loading with empty database
 - [ ] Schema loading error handling
 - [ ] Table row count calculation
 
-### 7.9 UI Tests - Basic Flows
+### 7.9 UI Tests - Basic Flows - NOT STARTED
 - [ ] Create new notebook (`Cmd+N`)
 - [ ] Open existing notebook (`Cmd+O`)
 - [ ] Save notebook (`Cmd+S`)
@@ -507,7 +509,7 @@
 - [ ] Run all cells (`Cmd+Shift+Enter`)
 - [ ] Toggle sidebars (`Cmd+Shift+R`, `Cmd+Shift+L`)
 
-### 7.10 UI Tests - Query Execution Flow
+### 7.10 UI Tests - Query Execution Flow - NOT STARTED
 - [ ] Enter SQL query in cell
 - [ ] Execute query and verify results display
 - [ ] Verify result table columns and rows
@@ -516,7 +518,7 @@
 - [ ] Test with empty result set
 - [ ] Test with large result set (scrolling)
 
-### 7.11 UI Tests - Connection Flow
+### 7.11 UI Tests - Connection Flow - NOT STARTED
 - [ ] Open connection sheet
 - [ ] Enter connection details
 - [ ] Test connection button
@@ -525,35 +527,37 @@
 - [ ] Verify schema loads in left sidebar
 - [ ] Disconnect from database
 
-### 7.12 UI Tests - Document Persistence
+### 7.12 UI Tests - Document Persistence - NOT STARTED
 - [ ] Save notebook with cells and results
 - [ ] Close and reopen notebook
 - [ ] Verify cells content preserved
 - [ ] Verify results preserved (if settings allow)
 - [ ] Verify connection config preserved
 
-### 7.13 Test Infrastructure
-- [ ] Create mock `DatabaseConnectionManager`
-- [ ] Create test database setup/teardown helpers
-- [ ] Create sample notebook files
-- [ ] Setup dedicated PostgreSQL test database
-- [ ] Create Docker Compose file for test database
-- [ ] Create SQL script for test database initialization
-- [ ] Update integration tests for test database
-- [ ] Add documentation for setting up test database
-- [ ] Setup GitHub Actions CI/CD workflow ✅
-  - [x] Create `.github/workflows/ci.yml`
+### 7.13 Test Infrastructure - PARTIAL
+- [ ] Create mock `DatabaseConnectionManager` - NOT STARTED
+- [ ] Create test database setup/teardown helpers - PARTIAL (integration tests have helpers)
+- [ ] Create sample notebook files - PARTIAL (some test files exist)
+- [x] Setup dedicated PostgreSQL test database (Docker available)
+- [x] Create Docker Compose file for test database
+- [x] Create SQL script for test database initialization
+- [x] Update integration tests for test database
+- [x] Add documentation for setting up test database
+- [x] Setup GitHub Actions CI/CD workflow - COMPLETE
+  - [x] Create `.github/workflows/ci.yml` - Complete ([ci.yml](.github/workflows/ci.yml))
   - [x] Configure workflow for push and pull requests
-  - [x] Set up macOS runner
-  - [x] Install Xcode and dependencies
-  - [x] Run unit tests
+  - [x] Set up macOS runner (macos-15)
+  - [x] Resolve Xcode and dependencies
+  - [x] Run unit tests with SKIP_INTEGRATION_TESTS and SKIP_UI_TESTS
   - [x] Build app verification
   - [x] Use SKIP_INTEGRATION_TESTS for CI environment
-  - [x] Add workflow status badge to README
+  - [x] Add workflow status badge to README (already present in README)
 
 ---
 
 ## Phase 8: Editor Mode 🎯 (NOT STARTED - LAST PHASE)
+
+**Status:** Not yet implemented. This is the final phase for an alternative SQL editor mode.
 
 ### 8.1 Core Editor Mode Implementation
 - [ ] Add `ViewMode` enum (`.notebook`, `.editor`)
@@ -631,54 +635,92 @@
 
 ---
 
-## Next Priorities
+## Next Priorities (Last Updated: 2026-01-01)
 
-### HIGH PRIORITY: Phase 6 - Security & Safety (IN PROGRESS)
-**Completed:** Credentials security (passwords in Keychain)
+### COMPLETED: GitHub Actions CI/CD (Phase 7.13) ✅
+**Status:** Workflow file fully implemented and operational.
+- [x] Create `.github/workflows/ci.yml` - Complete
+- [x] Configure for macOS runners (macos-15)
+- [x] Set SKIP_INTEGRATION_TESTS=true for CI environment
+- [x] Run unit tests and build verification
 
-**Critical issues to address:**
-1. Query Execution Security - Confirmation dialogs for destructive operations
-2. Read-only Mode - Prevent accidental modifications
-3. Transaction Management - Wrap modifications with auto-rollback
-4. SQL Injection Protection - Review and improve sanitization
-5. Connection Security - Fix certificate verification warning
-6. Inline Edit Safety - Add confirmation for UPDATE operations
+**Impact:** Continuous integration now enabled for all PRs
 
-### CURRENT TOP PRIORITY: Phase 7 - Testing Suite (IN PROGRESS)
-**Completed:**
-- Test targets setup
-- Data Models tests
-- Utilities tests
-- ViewModel tests
-- Query LIMIT handling tests
+---
 
-**Remaining:**
-- GitHub Actions CI/CD workflow
-- Document Operations tests
-- Integration Tests (database, query, schema)
-- UI Tests (basic flows, execution, connection, persistence)
-- Test Infrastructure improvements
+### NEXT PRIORITY: Complete Phase 4 Polish (Medium Effort)
+These UI enhancements improve user experience:
 
-### After Testing: Phase 4 Completion
-1. Theme Toggle (4.13)
-2. Result Show/Hide (4.8)
-3. Context Menu Copy (4.5)
-4. Comment/Uncomment (4.6)
-5. Drag and Drop (4.4)
-6. Save Prompt (4.7)
-7. File Optimization (4.11)
-8. Logging System (4.12)
+1. **Theme Toggle (4.13)** - Allow dark/light mode preference
+   - Add preference to AppSettings
+   - Update DesignSystem colors for light mode
+   - Toggle control in Settings panel
 
-### Then: Phase 5 Advanced Features
-1. Schema Visualizer (5.7)
-2. AI-Powered Natural Language Query (5.6)
-3. Tabs Support (5.5)
-4. Query History (5.1)
-5. Export Results (5.2)
-6. Multiple Database Support (5.3)
+2. **Result Show/Hide (4.8)** - Collapse/expand result visibility per cell
+   - Toggle button in cell sidebar
+   - Persist per-cell visibility state
 
-### Finally: Phase 8 - Editor Mode (LAST PHASE)
-Traditional SQL editor mode with single editor and result panel.
+3. **Comment/Uncomment (4.6)** - `Cmd+/` keyboard shortcut
+   - Parse SQL to find line start
+   - Toggle SQL comment prefix
+
+4. **Drag and Drop (4.4)** - Reorder cells with drag handle
+   - Add drag handle to cell sidebar
+   - Implement onMove modifier
+
+5. **Save Prompt (4.7)** - Warn before closing unsaved document
+   - AppDelegate.applicationShouldTerminateAfterLastWindowClosed
+
+6. **File Optimization (4.11)** - Reduce file sizes
+   - Detect files > 10MB
+   - Option to remove old results
+
+7. **Logging System (4.12)** - Structured logging
+   - Create AppLogger utility
+   - Replace print() calls
+
+---
+
+### THEN: Complete Phase 6 Security (High Priority - Ongoing)
+Security is never "done" but critical features to add:
+
+1. **Confirmation Dialogs (6.0.3)** - Warn before destructive operations
+   - Confirmation for DELETE/UPDATE
+   - Display affected row count
+
+2. **Read-Only Mode** - Prevent accidental modifications
+   - Toggle in Settings
+   - Disable play button for modification queries
+
+3. **Transaction Management (6.0.4)** - Safe inline cell editing
+   - ROLLBACK on errors
+   - COMMIT after success
+
+---
+
+### THEN: Phase 7 Integration & UI Tests (High Effort)
+Complete remaining test coverage:
+
+1. **Document Operations Tests (7.4)** - Serialization round-trip tests
+2. **Database Integration Tests (7.6-7.8)** - Connection, queries, schema
+3. **UI Tests (7.9-7.12)** - User flows and persistence
+
+---
+
+### LATER: Phase 5 Advanced Features (Lower Priority)
+When core is solid and tested:
+
+1. **Schema Visualizer (5.7)** - Graph-based view of relationships
+2. **AI Natural Language Query (5.6)** - Local LLM integration
+3. **Tabs Support (5.5)** - Multiple database connections
+4. **Query History (5.1)** - Recent queries panel
+5. **Export to CSV (5.2)** - Export results
+6. **Multiple DB Support (5.3)** - Add MySQL, SQLite
+
+---
+
+### FINALLY: Phase 8 Editor Mode (Last Phase)
+Traditional SQL editor with single editor and result panel below.
 
 ---
 
