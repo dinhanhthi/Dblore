@@ -1,9 +1,9 @@
 name: CI
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main, develop ]
+  workflow_dispatch: # run manually
+  # push:
+  #   branches: [ main, develop ]
   #   paths:
   #     - '**.swift'
   #     - '.github/workflows/**'
