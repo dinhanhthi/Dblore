@@ -113,7 +113,7 @@ SQLNotebook/
 - **Models**: `<EntityName>.swift`
 - **Extensions**: `<Type>+<Category>.swift`
 - **Utilities**: `<Purpose>Helper.swift` or `<Type>Extensions.swift`
-- **Previews**: Preview code should be in the same main implementation file so developers can modify and see Canvas preview simultaneously
+- **Previews**: **ALWAYS** include `#Preview` blocks in the same file as their corresponding implementation - NEVER create separate preview files. This ensures Xcode Canvas and code are visible in the same window for efficient development
 
 ### File Size Guidelines
 - **Maximum**: 400 lines (STRICT)
@@ -123,17 +123,35 @@ SQLNotebook/
 
 ## Architecture Patterns to Enforce
 
-### 1. MVVM Separation
+### 1. SwiftUI Previews Placement (CRITICAL)
+```swift
+// ✅ CORRECT: Preview in the same file as the View implementation
+struct MyCustomView: View {
+    var body: some View {
+        Text("Hello")
+    }
+}
+
+#Preview {
+    MyCustomView()
+}
+
+// ❌ WRONG: Never create separate preview files like MyCustomView+Preview.swift
+```
+
+**Why this matters**: Xcode Canvas shows previews alongside code in the same editor window for instant feedback during development.
+
+### 2. MVVM Separation
 - Models: Data structures only
 - ViewModels: Business logic, state management
 - Views: UI presentation only
 - ❌ Never: View logic in ViewModel
 
-### 2. Single Responsibility
+### 3. Single Responsibility
 - Each file should have one clear purpose
 - ❌ Never: Multiple unrelated responsibilities
 
-### 3. Dependency Injection
+### 4. Dependency Injection
 - Dependencies should be injected, not hard-coded
 - ❌ Never: `private let manager = Manager()` in ViewModel
 
@@ -152,10 +170,12 @@ SQLNotebook/
 **Problem**: `ContentView.swift` có 500 lines
 
 **Solution**:
-1. Extract header → `Views/Components/HeaderView.swift`
-2. Extract footer → `Views/Components/FooterView.swift`
-3. Extract sidebar → `Views/Components/SidebarView.swift`
-4. Keep layout logic trong ContentView
+1. Extract header → `Views/Components/HeaderView.swift` (with its own `#Preview`)
+2. Extract footer → `Views/Components/FooterView.swift` (with its own `#Preview`)
+3. Extract sidebar → `Views/Components/SidebarView.swift` (with its own `#Preview`)
+4. Keep layout logic trong ContentView (with its own `#Preview`)
+
+**IMPORTANT**: Each extracted View file must include its own `#Preview` block at the bottom
 
 ### Scenario 3: Model với nhiều computed properties
 **Problem**: `SQLNotebook.swift` có 450 lines
@@ -169,23 +189,24 @@ SQLNotebook/
 ## Best Practices
 
 ### ✅ Always Do
-1. **Check line counts** sau mỗi file change
-2. **Plan splits** trước khi refactor
-3. **Test thoroughly** sau khi split files
-4. **Update imports** trong affected files
-5. **Maintain git history** với clear commit messages
-6. **Group related code** trong extensions
-7. **Use meaningful file names** cho split files
-8. **Keep previews in main file** - Preview code should be in the same implementation file so developers can modify and see Canvas preview simultaneously
+1. **Keep `#Preview` blocks in the same file** as the View/Component implementation (CRITICAL for Xcode Canvas workflow)
+2. **Check line counts** sau mỗi file change
+3. **Plan splits** trước khi refactor
+4. **Test thoroughly** sau khi split files
+5. **Update imports** trong affected files
+6. **Maintain git history** với clear commit messages
+7. **Group related code** trong extensions
+8. **Use meaningful file names** cho split files
 
 ### ❌ Never Do
-1. **Split arbitrarily** - follow logical boundaries
-2. **Create tiny files** - minimum 50 lines
-3. **Break functionality** - ensure code still works
-4. **Ignore dependencies** - update all imports
-5. **Skip testing** - verify after refactoring
-6. **Mix concerns** - keep single responsibility
-7. **Forget documentation** - update comments và docs
+1. **Create separate preview files** (e.g., `MyView+Preview.swift` or `MyViewPreviews.swift`) - This breaks Xcode Canvas integration
+2. **Split arbitrarily** - follow logical boundaries
+3. **Create tiny files** - minimum 50 lines
+4. **Break functionality** - ensure code still works
+5. **Ignore dependencies** - update all imports
+6. **Skip testing** - verify after refactoring
+7. **Mix concerns** - keep single responsibility
+8. **Forget documentation** - update comments và docs
 
 ## Example Workflows
 
@@ -220,7 +241,7 @@ SQLNotebook/
 1. Determine correct folder (`Views/Components/` or `Views/`)
 2. Create file with proper naming (`SettingsView.swift`)
 3. Include proper SwiftUI structure
-4. Add preview in the same file
+4. **Add `#Preview` block in the same file** (CRITICAL - never create separate preview file)
 5. Follow MVVM pattern if needed
 6. Ensure file starts under 400 lines
 
@@ -266,10 +287,13 @@ When reporting structure analysis:
 
 Maintain a **clean, organized, and scalable** project structure với:
 - Maximum 400 lines per file (STRICT enforcement)
+- **`#Preview` blocks always in the same file as their View implementation** (STRICT enforcement for Xcode Canvas workflow)
 - Proper folder organization
 - Clear architectural boundaries
 - Easy to navigate và understand
 - Prepared for future growth
 
 Prioritize **code quality over quantity** và **clarity over cleverness**.
+
+**Remember**: When splitting Views to meet the 400-line limit, each extracted View file must include its own `#Preview` block at the bottom of the file.
 
