@@ -7,7 +7,7 @@
 - ✅ **Phase 3: Database Integration** - COMPLETE (All 3.1-3.5 items done)
 - ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (9 of 13 sections complete, 4 pending)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
-- 🔒 **Phase 6: Security & Safety** - PARTIAL (1 complete, 4 in progress/not started)
+- 🔒 **Phase 6: Security & Safety** - PARTIAL (1 complete, 6 in progress/not started)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (4 complete: 7.1, 7.2, 7.3, 7.13 with CI/CD; rest partial/not started)
 - 🎯 **Phase 8: Editor Mode** - NOT STARTED (LAST PHASE)
 
@@ -361,7 +361,7 @@
 
 ---
 
-## Phase 6: Security & Safety Features 🔒 (IN PROGRESS)
+## Phase 6: Security & Safety Features 🔒 (PARTIAL - 2 of 7 complete, 1 in progress)
 
 ### 6.0.1 Credentials Security ✅
 - [x] Store passwords in macOS Keychain
@@ -392,6 +392,22 @@
 - [ ] Add confirmation for inline cell editing - NOT STARTED
 - [ ] Add transaction support for inline edits - NOT STARTED
 - [ ] Add validation for UPDATE operations - NOT STARTED
+- [ ] **Value Format Validation in Right Sidebar** - NOT STARTED
+  - [ ] Check modified value format matches cell type when in edit mode
+  - [ ] Display validation error/warning in footer sidebar
+  - [ ] Disable "save" button when validation fails
+  - [ ] Support validation for all cell types: integer, bigint, boolean, uuid, jsonb, json, date, timestamp, etc.
+- [x] **Boolean Toggle UI for Value Editing** - COMPLETE ✅
+  - [x] Show toggle slider (true/false) when editing boolean values
+  - [x] User clicks toggle instead of typing "true"/"false"
+  - [x] Integrate with sidebar value editing flow
+  - [x] Toggle is smaller (scale 0.8) matching connection sidebar pattern
+  - [x] Toggle appears immediately when sidebar opens (no edit mode needed)
+  - [x] Toggle positioned on LEFT of label "true"/"false"
+  - [x] Save button only appears when value changes
+  - [x] Save button disappears after saving
+  - [x] Hide edit button for boolean values
+  - [x] Added 8 comprehensive Xcode Canvas previews for all cell value types
 
 ### 6.0.5 Audit & Logging Security - NOT STARTED
 - [ ] Add query execution logging
@@ -614,6 +630,17 @@
 
 ## Recent Completions
 
+### Boolean Toggle UI for Value Editing ✅ (Phase 6.0.4)
+- ✅ Implemented toggle slider for boolean value editing in right sidebar
+- ✅ User clicks toggle instead of typing "true"/"false"
+- ✅ Toggle automatically appears when sidebar opens (no edit mode needed)
+- ✅ Toggle scaled 0.8 to match connection sidebar pattern
+- ✅ Save button only appears when value changes
+- ✅ Save button disappears after saving
+- ✅ Edit button hidden for boolean values
+- ✅ Added 8 comprehensive Xcode Canvas previews for all cell value types
+- ✅ Implementation file: [CellInfoContent.swift](SQLNotebook/Views/Sidebars/CellInfoContent.swift)
+
 ### Left Sidebar - Database Structure ✅
 - ✅ Implemented `LeftSidebarView` with tree view
 - ✅ Added expand/collapse functionality
@@ -635,16 +662,17 @@
 
 ---
 
-## Next Priorities (Last Updated: 2026-01-01)
+## Next Priorities (Last Updated: 2026-01-02)
 
-### COMPLETED: GitHub Actions CI/CD (Phase 7.13) ✅
-**Status:** Workflow file fully implemented and operational.
-- [x] Create `.github/workflows/ci.yml` - Complete
-- [x] Configure for macOS runners (macos-15)
-- [x] Set SKIP_INTEGRATION_TESTS=true for CI environment
-- [x] Run unit tests and build verification
+### COMPLETED: Boolean Toggle UI for Value Editing (Phase 6.0.4) ✅
+**Status:** Feature fully implemented with 8 comprehensive Canvas previews.
+- [x] Toggle slider for boolean values in right sidebar
+- [x] No edit mode needed - toggle always visible
+- [x] Save button appears only when value changes
+- [x] All previews for different cell value types
+- [x] Implementation file: [CellInfoContent.swift](SQLNotebook/Views/Sidebars/CellInfoContent.swift:114-129)
 
-**Impact:** Continuous integration now enabled for all PRs
+**Impact:** Safe boolean data modification with improved UX
 
 ---
 
@@ -684,15 +712,20 @@ These UI enhancements improve user experience:
 ### THEN: Complete Phase 6 Security (High Priority - Ongoing)
 Security is never "done" but critical features to add:
 
-1. **Confirmation Dialogs (6.0.3)** - Warn before destructive operations
+1. **Value Format Validation & Boolean Toggle (6.0.4)** - Safe data modification
+   - Validate format of modified values before saving (integer, uuid, jsonb, etc.)
+   - Show validation errors in sidebar footer
+   - Boolean toggle UI instead of manual typing true/false
+
+2. **Confirmation Dialogs (6.0.3)** - Warn before destructive operations
    - Confirmation for DELETE/UPDATE
    - Display affected row count
 
-2. **Read-Only Mode** - Prevent accidental modifications
+3. **Read-Only Mode** - Prevent accidental modifications
    - Toggle in Settings
    - Disable play button for modification queries
 
-3. **Transaction Management (6.0.4)** - Safe inline cell editing
+4. **Transaction Management (6.0.4)** - Safe inline cell editing
    - ROLLBACK on errors
    - COMMIT after success
 
