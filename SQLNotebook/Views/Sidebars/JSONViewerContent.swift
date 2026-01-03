@@ -106,7 +106,8 @@ struct JSONViewerContent: View {
       guard let data = json.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data),
         let prettyData = try? JSONSerialization.data(
-          withJSONObject: object, options: .prettyPrinted),
+          withJSONObject: object, options: .prettyPrinted
+        ),
         let prettyString = String(data: prettyData, encoding: .utf8)
       else {
         return json
@@ -201,7 +202,8 @@ struct JSONViewerContent: View {
       "cpu" : "Intel i7"
     }
     """
-  viewModel.rightSidebarContent = .jsonViewer(json: jsonData, path: "Row 1, Column 'specifications'")
+  viewModel.rightSidebarContent = .jsonViewer(
+    json: jsonData, path: "Row 1, Column 'specifications'")
 
   return HStack {
     Spacer()

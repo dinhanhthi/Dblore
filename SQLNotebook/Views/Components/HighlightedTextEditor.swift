@@ -105,7 +105,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Only update text from external source if different
     // Don't update if textView is first responder (user is typing)
-    if textView.string != text && textView.window?.firstResponder != textView {
+    if textView.string != text, textView.window?.firstResponder != textView {
       // Apply syntax highlighting when updating from external source
       context.coordinator.applyHighlighting(to: textView, text: text)
 

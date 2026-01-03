@@ -19,6 +19,7 @@ struct SQLNotebookDocument: FileDocument {
   nonisolated static var readableContentTypes: [UTType] {
     [.sqlNotebook, .json]
   }
+
   nonisolated static var writableContentTypes: [UTType] {
     [.sqlNotebook]
   }
@@ -32,10 +33,10 @@ struct SQLNotebookDocument: FileDocument {
       throw CocoaError(.fileReadCorruptFile)
     }
 
-    self.notebook = try DocumentCoder.decode(from: data)
+    notebook = try DocumentCoder.decode(from: data)
   }
 
-  nonisolated func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+  nonisolated func fileWrapper(configuration _: WriteConfiguration) throws -> FileWrapper {
     var notebookToSave = notebook
     notebookToSave.metadata.modifiedAt = Date()
 
@@ -109,10 +110,13 @@ private enum DocumentCoder {
       }
     }
 
-    return SQLNotebook(id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig, settings: settings)
+    return SQLNotebook(
+      id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig,
+      settings: settings)
   }
 
-  nonisolated static func encode(_ notebook: SQLNotebook, includeResultsOnSave: Bool) throws -> Data {
+  nonisolated static func encode(_ notebook: SQLNotebook, includeResultsOnSave: Bool) throws -> Data
+  {
     let dateFormatter = ISO8601DateFormatter()
 
     var json: [String: Any] = [
@@ -157,7 +161,7 @@ private enum DocumentCoder {
 
   // MARK: - Result Encoding/Decoding Helpers
 
-  nonisolated private static func decodeResult(
+  private nonisolated static func decodeResult(
     from dict: [String: Any], dateFormatter: ISO8601DateFormatter
   ) -> CellResult? {
     // Decode columns
@@ -204,7 +208,7 @@ private enum DocumentCoder {
     )
   }
 
-  nonisolated private static func encodeResult(
+  private nonisolated static func encodeResult(
     _ result: CellResult, dateFormatter: ISO8601DateFormatter
   ) -> [String: Any] {
     var dict: [String: Any] = [
@@ -240,7 +244,7 @@ private enum DocumentCoder {
     return dict
   }
 
-  nonisolated private static func decodeCellValue(
+  private nonisolated static func decodeCellValue(
     from dict: [String: Any], dateFormatter: ISO8601DateFormatter
   ) -> CellValue? {
     guard let type = dict["type"] as? String else { return nil }
@@ -287,7 +291,7 @@ private enum DocumentCoder {
     return nil
   }
 
-  nonisolated private static func encodeCellValue(
+  private nonisolated static func encodeCellValue(
     _ value: CellValue, dateFormatter: ISO8601DateFormatter
   ) -> [String: Any] {
     switch value {

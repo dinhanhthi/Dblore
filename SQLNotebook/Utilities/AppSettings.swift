@@ -34,7 +34,7 @@ class AppSettings {
 
   // MARK: - UserDefaults Keys
 
-  nonisolated private enum Keys {
+  private nonisolated enum Keys {
     static let maxResultHeight = "app.settings.maxResultHeight"
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
     static let maxRowLimit = "app.settings.maxRowLimit"
@@ -93,7 +93,7 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
       return UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
     }
-    return true // default value
+    return true  // default value
   }
 
   // MARK: - Initialization
@@ -102,30 +102,30 @@ class AppSettings {
     // Load from UserDefaults or use defaults
     let savedHeight = UserDefaults.standard.double(forKey: Keys.maxResultHeight)
     if savedHeight > 0 {
-      self.maxResultHeight = CGFloat(savedHeight)
+      maxResultHeight = CGFloat(savedHeight)
     }
 
     // Check if key exists, otherwise use default
     if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
-      self.includeResultsOnSave = UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+      includeResultsOnSave = UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
     }
 
     let savedLimit = UserDefaults.standard.integer(forKey: Keys.maxRowLimit)
     if savedLimit > 0 {
       // Clamp between 1 and 200
-      self.maxRowLimit = min(max(savedLimit, 1), 200)
+      maxRowLimit = min(max(savedLimit, 1), 200)
     }
 
     // Load left sidebar visibility state
     if UserDefaults.standard.object(forKey: Keys.isLeftSidebarVisible) != nil {
-      self.isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
+      isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
     }
 
     // Load theme preference
     if let themeString = UserDefaults.standard.string(forKey: Keys.themePreference),
       let theme = ThemePreference(rawValue: themeString)
     {
-      self.themePreference = theme
+      themePreference = theme
     }
   }
 

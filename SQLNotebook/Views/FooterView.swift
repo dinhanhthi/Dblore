@@ -39,7 +39,6 @@ struct FooterView: View {
           .font(.caption)
           .foregroundColor(.foregroundSubtle)
       }
-
     }
     .padding(.horizontal, Spacing.lg)
     .frame(height: ComponentSize.footerHeight)

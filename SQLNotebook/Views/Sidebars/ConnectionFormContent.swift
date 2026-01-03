@@ -276,26 +276,29 @@ struct ConnectionFormContent: View {
   private func connectionStringFields() -> some View {
     FormField(label: "Connection String") {
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        TextField("postgresql://username:password@localhost:5432/database", text: $connectionString, axis: .vertical)
-          .textFieldStyle(.plain)
-          .font(.system(.body, design: .monospaced))
-          .lineLimit(3...6)
-          .padding(Spacing.sm)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .fill(Color.inputBackground)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .stroke(Color.border, lineWidth: 1)
-          )
-          .onChange(of: connectionString) { _, newValue in
-            parseError = nil
-            testResult = nil
-            if !newValue.isEmpty {
-              parseConnectionString(newValue)
-            }
+        TextField(
+          "postgresql://username:password@localhost:5432/database", text: $connectionString,
+          axis: .vertical
+        )
+        .textFieldStyle(.plain)
+        .font(.system(.body, design: .monospaced))
+        .lineLimit(3...6)
+        .padding(Spacing.sm)
+        .background(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .fill(Color.inputBackground)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .stroke(Color.border, lineWidth: 1)
+        )
+        .onChange(of: connectionString) { _, newValue in
+          parseError = nil
+          testResult = nil
+          if !newValue.isEmpty {
+            parseConnectionString(newValue)
           }
+        }
 
         Text("Example: postgresql://username:password@localhost:5432/database?sslmode=require")
           .font(.caption)

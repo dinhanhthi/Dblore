@@ -119,10 +119,14 @@ struct RightSidebarView: View {
     // Using explicit switch to help type inference
     switch content {
     case .jsonViewer(let json, let path):
-      JSONViewerContent(json: json, path: path, onSave: { newJSON in
-        viewModel.handleJSONEdit(newJSON: newJSON, originalPath: path)
-      })
-    case .cellInfo(let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns, let rowIdentifier, let cellId):
+      JSONViewerContent(
+        json: json, path: path,
+        onSave: { newJSON in
+          viewModel.handleJSONEdit(newJSON: newJSON, originalPath: path)
+        })
+    case .cellInfo(
+      let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns,
+      let rowIdentifier, let cellId):
       CellInfoContent(
         columnName: columnName,
         columnType: columnType,

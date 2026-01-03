@@ -3,15 +3,15 @@
 //  SQLNotebook
 //
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 /// Global manager to handle appearance at the application level
 @MainActor
 class AppearanceManager {
   static let shared = AppearanceManager()
 
-  var currentScheme: ColorScheme? = nil
+  var currentScheme: ColorScheme?
 
   private init() {}
 

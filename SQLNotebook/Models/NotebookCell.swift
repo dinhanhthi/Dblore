@@ -94,7 +94,9 @@ struct CellResult: Codable, Sendable {
   }
 
   /// Creates an error result
-  nonisolated static func errorResult(_ message: String, executionTime: TimeInterval = 0)
+  nonisolated static func errorResult(
+    _ message: String, executionTime: TimeInterval = 0
+  )
     -> CellResult
   {
     CellResult(

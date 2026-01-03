@@ -33,7 +33,8 @@ extension NotebookSettings {
 
   nonisolated init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.keyboardShortcuts = try container.decodeIfPresent([String: String].self, forKey: .keyboardShortcuts) ?? [:]
+    keyboardShortcuts =
+      try container.decodeIfPresent([String: String].self, forKey: .keyboardShortcuts) ?? [:]
 
     // Ignore legacy settings (they're now in AppSettings)
     // Keep them in CodingKeys for backward compatibility when reading old files
@@ -45,4 +46,3 @@ extension NotebookSettings {
     // Don't encode legacy settings
   }
 }
-

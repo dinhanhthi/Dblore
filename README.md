@@ -56,6 +56,34 @@ Or build via CLI:
 xcodebuild -scheme SQLNotebook build SWIFT_STRICT_CONCURRENCY=complete
 ```
 
+### Code Formatting
+
+This project uses `swift-format` (Apple's official Swift formatter) to maintain consistent code style.
+
+**Install swift-format:**
+```bash
+# Via Homebrew
+brew install swift-format
+```
+
+**Format all Swift files:**
+```bash
+# Format entire project in-place
+swift-format -i -r SQLNotebook/
+
+# Check formatting without modifying files (lint mode)
+swift-format lint -r SQLNotebook/
+```
+
+**Format specific directories:**
+```bash
+swift-format -i -r SQLNotebook/Views/
+swift-format -i -r SQLNotebook/ViewModels/
+swift-format -i -r SQLNotebook/Models/
+```
+
+Configuration is defined in `.swift-format` at the project root.
+
 ### Package Dependencies
 
 Swift Package Manager will automatically fetch dependencies:

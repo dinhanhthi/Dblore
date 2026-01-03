@@ -28,7 +28,7 @@ class SessionManager {
 
     // Save config to UserDefaults (without password)
     var configToSave = config
-    configToSave.password = "" // Don't save password in UserDefaults
+    configToSave.password = ""  // Don't save password in UserDefaults
 
     if let encoded = try? JSONEncoder().encode(configToSave) {
       UserDefaults.standard.set(encoded, forKey: sessionKey)
@@ -39,7 +39,8 @@ class SessionManager {
   /// - Returns: The saved connection config, or nil if none exists
   static func loadSession() -> ConnectionConfig? {
     guard let data = UserDefaults.standard.data(forKey: sessionKey),
-          var config = try? JSONDecoder().decode(ConnectionConfig.self, from: data) else {
+      var config = try? JSONDecoder().decode(ConnectionConfig.self, from: data)
+    else {
       return nil
     }
 
@@ -86,7 +87,7 @@ class SessionManager {
       kSecAttrService as String: keychainService,
       kSecAttrAccount as String: key,
       kSecValueData as String: passwordData,
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
     ]
 
     SecItemAdd(query as CFDictionary, nil)
@@ -98,15 +99,16 @@ class SessionManager {
       kSecAttrService as String: keychainService,
       kSecAttrAccount as String: key,
       kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne
+      kSecMatchLimit as String: kSecMatchLimitOne,
     ]
 
     var result: AnyObject?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
 
     guard status == errSecSuccess,
-          let passwordData = result as? Data,
-          let password = String(data: passwordData, encoding: .utf8) else {
+      let passwordData = result as? Data,
+      let password = String(data: passwordData, encoding: .utf8)
+    else {
       return nil
     }
 
@@ -117,7 +119,7 @@ class SessionManager {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: keychainService,
-      kSecAttrAccount as String: key
+      kSecAttrAccount as String: key,
     ]
 
     SecItemDelete(query as CFDictionary)

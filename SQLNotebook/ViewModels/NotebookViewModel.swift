@@ -59,7 +59,7 @@ class NotebookViewModel {
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
-    self.editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
+    editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
 
     // Load sidebar visibility from settings after init
     Task {

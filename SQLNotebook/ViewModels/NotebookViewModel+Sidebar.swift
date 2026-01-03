@@ -188,8 +188,9 @@ extension NotebookViewModel {
     if resolvedTableName == nil || resolvedTableName?.isEmpty == true {
       // Try to get the source query from the cell result
       if let cellId = cellId,
-         let cellIndex = notebook.cells.firstIndex(where: { $0.id == cellId }),
-         let result = notebook.cells[cellIndex].result {
+        let cellIndex = notebook.cells.firstIndex(where: { $0.id == cellId }),
+        let result = notebook.cells[cellIndex].result
+      {
         // Try to get sourceQuery from result, or fallback to cell content
         let queryToExtract = result.sourceQuery ?? notebook.cells[cellIndex].content
         resolvedTableName = extractTableName(from: queryToExtract)
@@ -265,7 +266,8 @@ extension NotebookViewModel {
           // Fetch primary key columns if we don't have them yet
           var pkColumns = resolvedPrimaryKeyColumns
           if pkColumns.isEmpty {
-            pkColumns = (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+            pkColumns =
+              (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
           }
 
           let rowsAffected = try await connectionManager.updateCellValue(
@@ -277,7 +279,9 @@ extension NotebookViewModel {
             rowIdentifier: rowIdentifier
           )
 
-          print("Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)")
+          print(
+            "Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)"
+          )
 
           // Re-run the cell to refresh the table view with updated data
           if let cellId = cellId {

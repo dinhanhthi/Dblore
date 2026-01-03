@@ -17,9 +17,9 @@ struct ContentView: View {
   @Bindable private var appSettings = AppSettings.shared
 
   init(document: Binding<SQLNotebookDocument>) {
-    self._document = document
+    _document = document
     let vm = NotebookViewModel(notebook: document.wrappedValue.notebook)
-    self._viewModel = State(initialValue: vm)
+    _viewModel = State(initialValue: vm)
   }
 
   var body: some View {
@@ -431,7 +431,7 @@ private struct ContentViewForPreview: View {
   }
 
   private var mainContent: some View {
-    ScrollViewReader { proxy in
+    ScrollViewReader { _ in
       ScrollView {
         LazyVStack(spacing: Spacing.md) {
           ForEach($viewModel.notebook.cells) { $cell in
@@ -455,6 +455,7 @@ private struct ContentViewForPreview: View {
 }
 
 // MARK: - Notification Handler Modifier
+
 // Extracted to reduce type complexity in ContentView body
 
 private struct NotificationHandlerModifier: ViewModifier {

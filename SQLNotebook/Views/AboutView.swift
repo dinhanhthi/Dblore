@@ -33,7 +33,8 @@ struct AboutView: View {
       HStack {
         Link(
           "Anh-Thi Dinh",
-          destination: URL(string: "https://dinhanhthi.com")!)
+          destination: URL(string: "https://dinhanhthi.com")!
+        )
 
         Text(
           "© \(currentYear)"

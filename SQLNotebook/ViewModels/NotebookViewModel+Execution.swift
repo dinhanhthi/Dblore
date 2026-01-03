@@ -48,7 +48,8 @@ extension NotebookViewModel {
       // Fetch primary key columns if we have a table name
       var primaryKeyColumns: [String] = []
       if let tableName = tableName {
-        primaryKeyColumns = (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+        primaryKeyColumns =
+          (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
       }
 
       // Convert QueryResult to CellResult
@@ -219,7 +220,7 @@ extension NotebookViewModel {
     // Define SQL keywords that indicate end of table name
     let endKeywords = [
       "where", "order", "group", "having", "limit", "offset",
-      "union", "intersect", "except", "window", "for"
+      "union", "intersect", "except", "window", "for",
     ]
 
     // Find the position of the first keyword or separator
@@ -252,7 +253,8 @@ extension NotebookViewModel {
     }
 
     // Handle quoted identifiers (strip quotes)
-    let cleanedTableName = tableName
+    let cleanedTableName =
+      tableName
       .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
 
     return cleanedTableName.isEmpty ? nil : cleanedTableName

@@ -26,13 +26,17 @@ struct SettingsContent: View {
                   appSettings.themePreference = theme
                 }) {
                   HStack(spacing: Spacing.xs) {
-                    Image(systemName: appSettings.themePreference == theme ? "circle.fill" : "circle")
-                      .font(.system(size: 12))
-                      .foregroundColor(appSettings.themePreference == theme ? .accent : .foregroundMuted)
+                    Image(
+                      systemName: appSettings.themePreference == theme ? "circle.fill" : "circle"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(
+                      appSettings.themePreference == theme ? .accent : .foregroundMuted)
 
                     Text(theme.rawValue)
                       .font(.bodyText)
-                      .foregroundColor(appSettings.themePreference == theme ? .foreground : .foregroundMuted)
+                      .foregroundColor(
+                        appSettings.themePreference == theme ? .foreground : .foregroundMuted)
                   }
                   .padding(.vertical, Spacing.sm)
                 }
@@ -124,21 +128,23 @@ struct SettingsContent: View {
           .foregroundColor(.foreground)
           .tint(.accent)
 
-          Text("When enabled, query results are saved with the notebook. Disable to reduce file size.")
-            .font(.caption)
-            .foregroundColor(.foregroundSubtle)
+          Text(
+            "When enabled, query results are saved with the notebook. Disable to reduce file size."
+          )
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
         }
       }
-      
+
       Divider()
-      
+
       // Keyboard Shortcuts (placeholder for future expansion)
       settingsSection(title: "Keyboard Shortcuts") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Text("Custom keyboard shortcuts will be available in a future update.")
             .font(.caption)
             .foregroundColor(.foregroundSubtle)
-          
+
           // Placeholder for future keyboard shortcut customization UI
           keyboardShortcutsList
         }
@@ -146,7 +152,7 @@ struct SettingsContent: View {
     }
     .padding(Spacing.md)
   }
-  
+
   @ViewBuilder
   private func settingsSection<Content: View>(
     title: String,
@@ -199,4 +205,3 @@ struct SettingsContent: View {
     .background(Color.cardBackground)
     .preferredColorScheme(.dark)
 }
-
