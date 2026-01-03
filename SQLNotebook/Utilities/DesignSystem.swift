@@ -335,6 +335,7 @@ struct GhostButtonStyle: ButtonStyle {
 
 struct ToolbarButtonStyle: ButtonStyle {
   var isActive: Bool = false
+  var iconOnly: Bool = false
   @State private var isHovering = false
   @Environment(\.isEnabled) private var isEnabled
 
@@ -344,7 +345,7 @@ struct ToolbarButtonStyle: ButtonStyle {
       .foregroundColor(
         isActive ? .accent : (configuration.isPressed ? .foreground : .foregroundMuted)
       )
-      .padding(.horizontal, Spacing.sm)
+      .padding(.horizontal, iconOnly ? Spacing.xs : Spacing.sm)
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.md)
