@@ -14,6 +14,7 @@ struct ContentView: View {
   @State private var focusedTextView: NSTextView?
   @State private var isCellValueEditing = false
   @State private var showRunAllConfirmation = false
+  @Bindable private var appSettings = AppSettings.shared
 
   init(document: Binding<SQLNotebookDocument>) {
     self._document = document
@@ -68,6 +69,7 @@ struct ContentView: View {
       }
     }
     .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
+    .windowAppearance(appSettings.themePreference.colorScheme)
     .modifier(
       NotificationHandlerModifier(
         viewModel: viewModel,
@@ -325,6 +327,69 @@ struct ContentView: View {
 
   return PreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
     .frame(width: 820, height: 600)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Full Layout with Both Sidebars") {
+  // Create 2 cells: SQL with content and SQL empty
+  var sqlCellWithContent = NotebookCell(
+    cellType: .sql,
+    content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
+    executionCount: 1
+  )
+
+  // Add example result table
+  sqlCellWithContent.result = CellResult(
+    columns: [
+      ColumnInfo(name: "id", type: "INTEGER"),
+      ColumnInfo(name: "name", type: "VARCHAR"),
+      ColumnInfo(name: "email", type: "VARCHAR"),
+    ],
+    rows: [
+      [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
+      [.int(2), .string("Bob Smith"), .string("bob@example.com")],
+      [.int(3), .string("Charlie Davis"), .string("charlie@example.com")],
+      [.int(4), .string("Diana Wilson"), .string("diana@example.com")],
+      [.int(5), .string("Eve Martinez"), .string("eve@example.com")],
+    ],
+    executionTime: 0.045,
+    rowCount: 5,
+    timestamp: Date()
+  )
+
+  let sqlCellEmpty = NotebookCell(
+    cellType: .sql,
+    content: ""
+  )
+
+  let notebook = SQLNotebook(
+    cells: [sqlCellWithContent, sqlCellEmpty],
+    metadata: NotebookMetadata(title: "Full Layout Preview")
+  )
+
+  struct FullLayoutPreviewContainer: View {
+    @State var document: SQLNotebookDocument
+    @State var viewModel: NotebookViewModel
+
+    init(notebook: SQLNotebook, selectedCellId: UUID) {
+      let doc = SQLNotebookDocument(notebook: notebook)
+      self._document = State(initialValue: doc)
+
+      let vm = NotebookViewModel(notebook: notebook)
+      vm.selectedCellId = selectedCellId
+      // Enable both sidebars for full layout preview
+      vm.isLeftSidebarVisible = true
+      vm.isRightSidebarVisible = true
+      self._viewModel = State(initialValue: vm)
+    }
+
+    var body: some View {
+      ContentViewForPreview(document: $document, viewModel: viewModel)
+    }
+  }
+
+  return FullLayoutPreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
+    .frame(width: 1200, height: 800)
     .preferredColorScheme(.dark)
 }
 

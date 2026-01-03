@@ -18,7 +18,6 @@ struct SQLNotebookApp: App {
     DocumentGroup(newDocument: SQLNotebookDocument()) { file in
       ContentView(document: file.$document)
         .frame(minWidth: 800, minHeight: 600)
-        .preferredColorScheme(.dark)
     }
     .commands {
       NotebookCommands()
