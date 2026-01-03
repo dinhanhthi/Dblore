@@ -13,6 +13,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var executionCount: Int?
   var result: CellResult?
   var isRunning: Bool
+  var isResultVisible: Bool
 
   nonisolated init(
     id: UUID = UUID(),
@@ -20,7 +21,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     content: String = "",
     executionCount: Int? = nil,
     result: CellResult? = nil,
-    isRunning: Bool = false
+    isRunning: Bool = false,
+    isResultVisible: Bool = true
   ) {
     self.id = id
     self.cellType = cellType
@@ -28,6 +30,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.executionCount = executionCount
     self.result = result
     self.isRunning = isRunning
+    self.isResultVisible = isResultVisible
   }
 }
 

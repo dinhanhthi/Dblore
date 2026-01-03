@@ -265,4 +265,27 @@ extension NotebookViewModel {
 
     selectedCellId = notebook.cells[index - 1].id
   }
+
+  /// Toggle result visibility for a cell
+  func toggleResultVisibility(cellId: UUID) {
+    guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+    notebook.cells[index].isResultVisible.toggle()
+    onDocumentChanged?()
+  }
+
+  /// Hide all results
+  func hideAllResults() {
+    for index in notebook.cells.indices where notebook.cells[index].result != nil {
+      notebook.cells[index].isResultVisible = false
+    }
+    onDocumentChanged?()
+  }
+
+  /// Show all results
+  func showAllResults() {
+    for index in notebook.cells.indices where notebook.cells[index].result != nil {
+      notebook.cells[index].isResultVisible = true
+    }
+    onDocumentChanged?()
+  }
 }
