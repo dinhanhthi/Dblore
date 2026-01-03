@@ -13,6 +13,14 @@ struct FooterView: View {
     HStack(spacing: Spacing.lg) {
       //      Left side
       HStack(spacing: Spacing.sm) {
+        // App version
+        Text("v\(appVersion)")
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+          .padding(.horizontal, Spacing.sm)
+          .padding(.vertical, Spacing.xs + 2)
+          .background(Color.cardHeaderBackground)
+
         // Connection status
         connectionStatusIcon
         Text(connectionStatusText)
@@ -40,7 +48,8 @@ struct FooterView: View {
           .foregroundColor(.foregroundSubtle)
       }
     }
-    .padding(.horizontal, Spacing.lg)
+    .padding(.trailing, Spacing.lg)
+    .padding(.leading, 0)
     .frame(height: ComponentSize.footerHeight)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
