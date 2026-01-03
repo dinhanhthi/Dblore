@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (9 of 13 sections)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (10 of 13 sections - Theme Toggle now complete)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - 🔒 **Phase 6: Security & Safety** - PARTIAL (Some key features complete, some in-progress)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -13,7 +13,7 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE)
+## Phase 4: Polish (MOSTLY COMPLETE - 10 of 13 sections)
 
 ### 4.2 Header Actions - PARTIAL
 - [x] Wire up "+ Code" button
@@ -65,14 +65,13 @@
 - [ ] Add log levels (debug, info, warning, error)
 - [ ] Implement log capture and export system
 
-### 4.13 Theme Toggle (Dark/Light Mode) - IN PROGRESS
-- [x] Add theme preference to `AppSettings` (not yet - currently hardcoded to dark)
-- [ ] Store theme preference in UserDefaults
-- [ ] Update `DesignSystem.swift` for light/dark modes
-- [ ] Create light mode color variants
-- [x] Use `@Environment(\.colorScheme)` for dynamic colors (app is currently hardcoded to `.dark`)
-  - Note: App forces `.preferredColorScheme(.dark)` in `SQLNotebookApp.swift`, `ContentView.swift`, and multiple sidebar components
-- [ ] Add theme toggle control to Settings panel
+### 4.13 Theme Toggle (Dark/Light Mode) - COMPLETE
+- [x] Add theme preference to `AppSettings` (ThemePreference enum with System/Light/Dark options)
+- [x] Store theme preference in UserDefaults (AppSettings.swift:42-86)
+- [x] Update `DesignSystem.swift` for light/dark modes (color system supports both schemes)
+- [x] Create light mode color variants (SwiftUI .light/.dark ColorScheme support)
+- [x] Use `@Environment(\.colorScheme)` for dynamic colors via AppearanceModifier
+- [x] Add theme toggle control to Settings panel (SettingsContent.swift:14-51 with radio buttons)
 
 ---
 
@@ -249,14 +248,16 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 ## Next Priorities
 
 ### CURRENT: Complete Phase 4 Polish (Medium Effort)
-Priority UI enhancements:
+Priority UI enhancements (5 of 6 remaining):
 
-1. **Theme Toggle (4.13)** - Dark/light mode preference
-2. **Result Show/Hide (4.8)** - Collapse/expand results per cell
-3. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
-4. **Drag and Drop (4.4)** - Reorder cells
-5. **Save Prompt (4.7)** - Warn before closing unsaved
-6. **Cell Execution Queue (4.2)** - Visual queue for batch execution
+1. **Result Show/Hide (4.8)** - Collapse/expand results per cell
+2. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
+3. **Drag and Drop (4.4)** - Reorder cells
+4. **Save Prompt (4.7)** - Warn before closing unsaved
+5. **Cell Execution Queue (4.2)** - Visual queue for batch execution
+
+### COMPLETED: Phase 4.13 Theme Toggle
+- Dark/Light/System mode preference now fully implemented and working
 
 ### THEN: Complete Phase 6 Security (High Priority)
 1. **Value Format Validation (6.0.4)** - Validate integer, uuid, jsonb, etc.
@@ -274,7 +275,9 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 
 ## Verification Report (Latest Scan)
 
-**Date:** 2026-01-02
+**Date:** 2026-01-03
+**Verified By:** Claude Code - TODO Manager Agent
+**Key Change:** Phase 4.13 Theme Toggle confirmed complete
 
 ### Verified Complete Features
 
@@ -293,7 +296,8 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Global keyboard shortcuts: Cmd+Enter, Shift+Enter, Option+Enter, Cmd+Shift+Enter, Cmd+D, Cmd+Delete, Cmd+B, Cmd+Shift+R
 - Settings panel with keyboard shortcut reference
 - Auto-save functionality (tracks unsaved state with `lastSaved` indicator)
-- Footer showing connection status and save time
+- Footer showing connection status, version, and save time
+- Theme Toggle: System/Light/Dark mode preference with NSAppearance application
 
 **Phase 6 Completed Tasks**
 - SSL/TLS connection modes (all 6 PostgreSQL modes supported)
@@ -324,7 +328,6 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Save on close prompt: Not implemented
 - File optimization (compression, large file handling): Not implemented
 - Logging system (AppLogger): Not implemented
-- Theme toggle: Partially implemented (hardcoded to dark mode)
 
 **Phase 6 - Incomplete**
 - Value format validation: Not implemented
