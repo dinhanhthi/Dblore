@@ -32,6 +32,7 @@ struct JSONViewerContent: View {
           if !isEditing {
             Toggle("Pretty Print", isOn: $isPrettyPrinted)
               .toggleStyle(.switch)
+              .tint(.accent)
               .controlSize(.mini)
           }
 
