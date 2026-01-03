@@ -127,6 +127,8 @@ struct CellInfoContent: View {
             .font(.mono)
             .foregroundColor(.foreground)
         }
+        .padding(Spacing.sm)
+        .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       } else if isEditing {
         // Text editor for other types (only in edit mode)
@@ -134,8 +136,10 @@ struct CellInfoContent: View {
           .font(.mono)
           .foregroundColor(.foreground)
           .scrollContentBackground(.hidden)
-          .padding(Spacing.sm)
-          .background(Color.cellBackground)
+          .padding(.vertical, Spacing.sm)
+          .padding(.leading, Spacing.xs)
+          .padding(.trailing, 0)
+          .background(Color.inputBackground)
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)
           .focused($isTextEditorFocused)
@@ -151,7 +155,7 @@ struct CellInfoContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Spacing.sm)
         }
-        .background(Color.cellBackground)
+        .background(Color.tableHeaderBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         .frame(maxHeight: .infinity)
       }
