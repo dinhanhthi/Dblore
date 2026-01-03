@@ -393,10 +393,17 @@ struct FloatingActionButtonStyle: ButtonStyle {
 
 struct FloatingPanelButtonStyle: ButtonStyle {
   @State private var isHovering = false
+  @Environment(\.colorScheme) private var colorScheme
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .foregroundColor(.foregroundMuted)
+      .foregroundColor(
+        // Light theme: violet when hovering, muted otherwise
+        // Dark theme: always muted
+        colorScheme == .light && isHovering
+          ? Color.accent
+          : .foregroundMuted
+      )
       .frame(width: 26, height: 26)
       .background(
         ZStack {
@@ -404,8 +411,8 @@ struct FloatingPanelButtonStyle: ButtonStyle {
           Circle()
             .fill(Color.cellBackgroundHover)
 
-          // Hover/press overlay with accent color
-          if isHovering || configuration.isPressed {
+          // Hover/press overlay with accent color (only in dark theme)
+          if colorScheme == .dark && (isHovering || configuration.isPressed) {
             Circle()
               .fill(Color.accent.opacity(0.15))
           }
