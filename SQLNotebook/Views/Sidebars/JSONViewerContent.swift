@@ -80,7 +80,7 @@ struct JSONViewerContent: View {
           .foregroundColor(.foreground)
           .scrollContentBackground(.hidden)
           .padding(Spacing.sm)
-          .background(Color.cellBackground)
+          .background(Color.inputBackground)
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)
       } else {
@@ -94,7 +94,7 @@ struct JSONViewerContent: View {
                 alignment: .topLeading
               )
           }
-          .background(Color.cellBackground)
+          .background(Color.inputBackground)
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         }
       }
