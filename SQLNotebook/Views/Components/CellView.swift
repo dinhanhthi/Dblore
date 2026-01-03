@@ -132,6 +132,7 @@ struct CellView: View {
       Button(action: onRun) {
         if cell.isRunning {
           ProgressView()
+            .tint(.accent)
             .scaleEffect(0.7)
             .frame(width: 26, height: 26)
         } else {

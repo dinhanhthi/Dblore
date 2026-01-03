@@ -86,7 +86,7 @@ struct ToastView: View {
   private var iconColor: Color {
     switch toast.type {
     case .info:
-      return .accentColor
+      return .accent
     case .warning:
       return .warning
     case .error:

@@ -79,6 +79,7 @@ struct ConnectionFormContent: View {
             HStack(spacing: Spacing.sm) {
               if isTesting {
                 ProgressView()
+                  .tint(.accent)
                   .scaleEffect(0.7)
                   .frame(width: 14, height: 14)
               }
@@ -93,6 +94,7 @@ struct ConnectionFormContent: View {
             HStack(spacing: Spacing.sm) {
               if isConnecting {
                 ProgressView()
+                  .tint(.accent)
                   .scaleEffect(0.7)
                   .frame(width: 14, height: 14)
               }
@@ -138,7 +140,7 @@ struct ConnectionFormContent: View {
         ZStack(alignment: .leading) {
           // Sliding indicator
           RoundedRectangle(cornerRadius: CornerRadius.md - 2)
-            .fill(Color.accentColor)
+            .fill(Color.accent)
             .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
             .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: inputMode)
@@ -265,6 +267,7 @@ struct ConnectionFormContent: View {
       Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
         .labelsHidden()
         .toggleStyle(.switch)
+        .tint(.accent)
         .scaleEffect(0.8)
     }
   }
@@ -333,6 +336,7 @@ struct ConnectionFormContent: View {
       Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
         .labelsHidden()
         .toggleStyle(.switch)
+        .tint(.accent)
         .scaleEffect(0.8)
     }
   }

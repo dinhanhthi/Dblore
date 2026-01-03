@@ -28,29 +28,13 @@ struct SettingsContent: View {
                   HStack(spacing: Spacing.xs) {
                     Image(systemName: appSettings.themePreference == theme ? "circle.fill" : "circle")
                       .font(.system(size: 12))
-                      .foregroundColor(appSettings.themePreference == theme ? .accentColor : .foregroundMuted)
+                      .foregroundColor(appSettings.themePreference == theme ? .accent : .foregroundMuted)
 
                     Text(theme.rawValue)
                       .font(.bodyText)
                       .foregroundColor(appSettings.themePreference == theme ? .foreground : .foregroundMuted)
                   }
-                  // .padding(.horizontal, Spacing.md)
                   .padding(.vertical, Spacing.sm)
-                  // .background(
-                  //   appSettings.themePreference == theme
-                  //     ? Color.accentColor.opacity(0.1)
-                  //     : Color.clear
-                  // )
-                  // .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-                  // .overlay(
-                  //   RoundedRectangle(cornerRadius: CornerRadius.sm)
-                  //     .stroke(
-                  //       appSettings.themePreference == theme
-                  //         ? Color.accentColor.opacity(0.3)
-                  //         : Color.border,
-                  //       lineWidth: 1
-                  //     )
-                  // )
                 }
                 .buttonStyle(.plain)
               }
@@ -87,6 +71,7 @@ struct SettingsContent: View {
               in: 200...1000,
               step: 50
             )
+            .tint(.accent)
 
             Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
               .font(.caption)
@@ -117,6 +102,7 @@ struct SettingsContent: View {
               in: 10...200,
               step: 10
             )
+            .tint(.accent)
 
             Text("Maximum rows to fetch from database. Values between 10-200 rows.")
               .font(.caption)
@@ -136,6 +122,7 @@ struct SettingsContent: View {
           )
           .font(.bodyText)
           .foregroundColor(.foreground)
+          .tint(.accent)
 
           Text("When enabled, query results are saved with the notebook. Disable to reduce file size.")
             .font(.caption)
