@@ -43,7 +43,11 @@ struct CellView: View {
 
           // Result area (if exists)
           if let result = cell.result {
-            resultArea(result)
+            if cell.isResultVisible {
+              resultArea(result)
+            } else {
+              hiddenResultPlaceholder
+            }
           }
         }
         .cellStyle(isSelected: isSelected, isHovered: !isSelected && isCellHovered)
@@ -195,7 +199,23 @@ struct CellView: View {
           }
         )
       } else {
-        // Normal buttons (delete and copy)
+        // Normal buttons (toggle visibility, delete, and copy)
+
+        // Toggle visibility button (only show if cell has result)
+        if cell.result != nil {
+          FloatingPanelButton(
+            icon: cell.isResultVisible ? "eye.slash" : "eye",
+            helpText: cell.isResultVisible ? "Hide Result" : "Show Result",
+            action: {
+              viewModel.toggleResultVisibility(cellId: cell.id)
+            }
+          )
+          .customTooltip(
+            cell.isResultVisible ? "Hide Result" : "Show Result",
+            delay: 0.2
+          )
+        }
+
         FloatingPanelButton(
           icon: "trash",
           helpText: "Delete Cell",
@@ -256,6 +276,31 @@ struct CellView: View {
   }
 
   // MARK: - Result Area
+
+  @ViewBuilder
+  private var hiddenResultPlaceholder: some View {
+    HStack(alignment: .top, spacing: 0) {
+      // Fake sidebar to align with cell sidebar
+      Color.clear
+        .frame(width: ComponentSize.cellSidebarWidth)
+
+      HStack(spacing: Spacing.sm) {
+        Image(systemName: "eye.slash")
+          .foregroundColor(.foregroundSubtle)
+        Text("Result is hidden")
+          .foregroundColor(.foregroundSubtle)
+      }
+      .font(.system(size: 13))
+      .frame(maxWidth: .infinity)
+      .padding(.top, 0)
+      .padding(.bottom, Spacing.xs)
+      .padding(.horizontal, Spacing.md)
+      .background(Color.cellBackground.opacity(0.5))
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .padding(.trailing, Spacing.md)
+    }
+    .padding(.bottom, Spacing.md)
+  }
 
   @ViewBuilder
   private func resultArea(_ result: CellResult) -> some View {
@@ -399,6 +444,14 @@ struct CellView: View {
     }
 
     Divider()
+
+    Button(action: { viewModel.toggleResultVisibility(cellId: cell.id) }) {
+      Label(
+        cell.isResultVisible ? "Hide Result" : "Show Result",
+        systemImage: cell.isResultVisible ? "eye.slash" : "eye"
+      )
+    }
+    .disabled(cell.result == nil)
 
     Button(action: { viewModel.clearCellOutput(id: cell.id) }) {
       Label("Clear Output", systemImage: "trash")
@@ -662,6 +715,50 @@ struct CellView: View {
   }
   .frame(width: 600)
   .frame(maxHeight: .infinity)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Hidden Result") {
+  @Previewable @State var cellWithHiddenResult = {
+    let mockResult = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "INTEGER"),
+        ColumnInfo(name: "name", type: "VARCHAR"),
+        ColumnInfo(name: "email", type: "VARCHAR"),
+      ],
+      rows: [
+        [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
+        [.int(2), .string("Bob Williams"), .string("bob@example.com")],
+        [.int(3), .string("Charlie Brown"), .string("charlie@example.com")],
+      ],
+      executionTime: 0.045,
+      rowCount: 3,
+      timestamp: Date()
+    )
+
+    var cell = NotebookCell(
+      cellType: .sql,
+      content: "SELECT id, name, email\nFROM users\nLIMIT 3;",
+      isResultVisible: false  // Result is hidden
+    )
+    cell.result = mockResult
+    cell.executionCount = 2
+    return cell
+  }()
+
+  ScrollView {
+    VStack(spacing: 0) {
+      CellView(
+        viewModel: NotebookViewModel(),
+        cell: $cellWithHiddenResult,
+        isSelected: true,
+        onRun: {}
+      )
+    }
+    .padding()
+  }
+  .frame(width: 600, height: 300)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }

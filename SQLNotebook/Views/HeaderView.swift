@@ -8,6 +8,7 @@ import SwiftUI
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
   @State private var showRunAllConfirmation = false
+  @State private var showResultVisibilityMenu = false
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -51,6 +52,23 @@ struct HeaderView: View {
           Label("Clear All Outputs", systemImage: "trash")
         }
         .buttonStyle(ToolbarButtonStyle())
+
+        Divider()
+          .frame(height: 20)
+
+        Menu {
+          Button(action: { viewModel.hideAllResults() }) {
+            Label("Hide All Results", systemImage: "eye.slash")
+          }
+
+          Button(action: { viewModel.showAllResults() }) {
+            Label("Show All Results", systemImage: "eye")
+          }
+        } label: {
+          Label("Results", systemImage: "eye")
+        }
+        .buttonStyle(ToolbarButtonStyle())
+        .customTooltip("Show or hide result tables", delay: 0.05)
       }
 
       Spacer()
@@ -77,6 +95,7 @@ struct HeaderView: View {
             iconOnly: true
           )
         )
+        .customTooltip("Settings", delay: 0.2)
 
         Divider()
           .frame(height: 20)
