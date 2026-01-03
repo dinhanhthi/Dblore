@@ -17,7 +17,7 @@ struct HeaderView: View {
         Button(action: { viewModel.toggleLeftSidebar() }) {
           Image(systemName: "sidebar.left")
         }
-        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible))
+        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
 
         Divider()
           .frame(height: 20)
@@ -73,7 +73,8 @@ struct HeaderView: View {
         .buttonStyle(
           ToolbarButtonStyle(
             isActive: viewModel.isRightSidebarVisible
-              && (viewModel.rightSidebarContent == .settings))
+              && (viewModel.rightSidebarContent == .settings),
+            iconOnly: true)
         )
 
         Divider()
@@ -156,7 +157,7 @@ struct ConnectionButton: View {
         Button(action: onShowDetails) {
           Image(systemName: "info.circle")
         }
-        .buttonStyle(ToolbarButtonStyle())
+        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
         .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
         .onHover { hovering in
           isHoveringInfo = hovering
