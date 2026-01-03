@@ -6,6 +6,24 @@
 import Foundation
 import SwiftUI
 
+/// Theme preference enum
+enum ThemePreference: String, CaseIterable {
+  case system = "System"
+  case light = "Light"
+  case dark = "Dark"
+
+  var colorScheme: ColorScheme? {
+    switch self {
+    case .system:
+      return nil
+    case .light:
+      return .light
+    case .dark:
+      return .dark
+    }
+  }
+}
+
 /// Global app settings using UserDefaults
 /// These settings apply to the entire app, not per-notebook
 @MainActor
@@ -21,6 +39,7 @@ class AppSettings {
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
     static let maxRowLimit = "app.settings.maxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
+    static let themePreference = "app.settings.themePreference"
   }
 
   // MARK: - Settings Properties
@@ -59,6 +78,13 @@ class AppSettings {
     }
   }
 
+  /// Theme preference (system, light, or dark)
+  var themePreference: ThemePreference = .dark {
+    didSet {
+      UserDefaults.standard.set(themePreference.rawValue, forKey: Keys.themePreference)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -94,6 +120,13 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.isLeftSidebarVisible) != nil {
       self.isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
     }
+
+    // Load theme preference
+    if let themeString = UserDefaults.standard.string(forKey: Keys.themePreference),
+      let theme = ThemePreference(rawValue: themeString)
+    {
+      self.themePreference = theme
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -104,5 +137,6 @@ class AppSettings {
     includeResultsOnSave = true
     maxRowLimit = 50
     isLeftSidebarVisible = false
+    themePreference = .dark
   }
 }

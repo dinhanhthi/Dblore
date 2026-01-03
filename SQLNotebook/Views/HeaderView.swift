@@ -107,7 +107,7 @@ struct HeaderView: View {
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardBackground)
+    .background(Color.appBackground)
     .overlay(alignment: .bottom) {
       Divider()
     }

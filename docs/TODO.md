@@ -65,12 +65,13 @@
 - [ ] Add log levels (debug, info, warning, error)
 - [ ] Implement log capture and export system
 
-### 4.13 Theme Toggle (Dark/Light Mode) - NOT STARTED
-- [ ] Add theme preference to `AppSettings`
+### 4.13 Theme Toggle (Dark/Light Mode) - IN PROGRESS
+- [x] Add theme preference to `AppSettings` (not yet - currently hardcoded to dark)
 - [ ] Store theme preference in UserDefaults
 - [ ] Update `DesignSystem.swift` for light/dark modes
 - [ ] Create light mode color variants
-- [ ] Use `@Environment(\.colorScheme)` for dynamic colors
+- [x] Use `@Environment(\.colorScheme)` for dynamic colors (app is currently hardcoded to `.dark`)
+  - Note: App forces `.preferredColorScheme(.dark)` in `SQLNotebookApp.swift`, `ContentView.swift`, and multiple sidebar components
 - [ ] Add theme toggle control to Settings panel
 
 ---
@@ -208,6 +209,30 @@ A traditional SQL editor mode with single editor and result panel below.
 
 ---
 
+## Code-Level TODOs Found
+
+Items marked as `// TODO:` or `// NOTE:` in the codebase that should be tracked:
+
+### To Implement
+1. **Keychain Storage for Passwords** (`DataModelTests.swift:301`)
+   - Passwords should not be stored in .sqlnb JSON files
+   - Should use Keychain for secure storage
+
+2. **Schema Primary Key Detection** (`DatabaseConnectionManager+Schema.swift:101`)
+   - Currently sets primary keys to false
+   - Should detect primary keys from database constraints
+
+3. **User Notifications for Value Editing** (`NotebookViewModel+Sidebar.swift:157, 169, 287, 290`)
+   - Show alert when cell value editing succeeds
+   - Show error alert when cell value editing fails
+   - Show success notification after value update
+
+4. **CommandTag from PostgresNIO** (`DatabaseConnectionManager+QueryExecution.swift:39, 350`)
+   - Waiting for PostgresNIO to expose commandTag via onMetadata callback
+   - Currently not exposed in version 1.30.1
+
+---
+
 ## Recent Completions
 
 ### Boolean Toggle UI for Value Editing ✅ (Phase 6.0.4)
@@ -244,6 +269,105 @@ Complete test coverage and implement the final editor mode phase.
 
 ### LATER: Phase 5 Advanced Features
 Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB support.
+
+---
+
+## Verification Report (Latest Scan)
+
+**Date:** 2026-01-02
+
+### Verified Complete Features
+
+**Phase 1-3 (Core Structure, Cell Editor, Database Integration)**
+- Cell-based SQL editor with syntax highlighting
+- Database connection management for PostgreSQL
+- SQL query execution with result table display
+- Schema browser in left sidebar
+- Connection management UI
+- Auto-save with debounce
+- Undo/redo support
+
+**Phase 4 Completed Tasks**
+- Header actions: "+ Code", "Run All", "Clear All Outputs" with icons
+- Confirmation dialog for "Run All"
+- Global keyboard shortcuts: Cmd+Enter, Shift+Enter, Option+Enter, Cmd+Shift+Enter, Cmd+D, Cmd+Delete, Cmd+B, Cmd+Shift+R
+- Settings panel with keyboard shortcut reference
+- Auto-save functionality (tracks unsaved state with `lastSaved` indicator)
+- Footer showing connection status and save time
+
+**Phase 6 Completed Tasks**
+- SSL/TLS connection modes (all 6 PostgreSQL modes supported)
+- Smart cloud database detection (Supabase, AWS, Azure, GCP)
+- Row limit enforcement to prevent memory exhaustion
+- Query modification detection (SELECT vs UPDATE/DELETE/INSERT)
+- Primary key column tracking for UPDATE operations
+- PostgreSQL ctid row identification
+- Boolean toggle UI for value editing
+- Database schema loading with column info
+
+**Phase 7 Completed Tasks**
+- Unit test infrastructure
+- UI test infrastructure
+- GitHub Actions CI/CD workflow
+- Docker PostgreSQL test database setup
+- Data model serialization tests
+- SQL syntax highlighter tests
+- ViewModel logic tests
+
+### Verified Incomplete Features
+
+**Phase 4 - Not Started/In Progress**
+- Cell execution queue system: Not implemented
+- Drag and drop reordering: Not implemented
+- Comment/uncomment (Cmd+/): Not implemented
+- Result show/hide toggle: Not implemented
+- Save on close prompt: Not implemented
+- File optimization (compression, large file handling): Not implemented
+- Logging system (AppLogger): Not implemented
+- Theme toggle: Partially implemented (hardcoded to dark mode)
+
+**Phase 6 - Incomplete**
+- Value format validation: Not implemented
+- Confirmation dialogs for destructive operations: Not implemented
+- Read-only mode: Not implemented
+- Connection retry logic: Not implemented
+- Certificate verification fix for `.require` mode: Not completed
+- Connection timeout configuration: Not implemented
+
+**Phase 7 - Incomplete**
+- Document operations tests (round-trip): Not implemented
+- CellResult and DatabaseSchema model tests: Not implemented
+- DatabaseConnectionManager connection tests: Not implemented
+- Query execution integration tests: Not implemented
+- Schema loading tests: Not implemented
+- Type mapping tests: Not implemented
+- UI workflow tests: Not implemented
+
+**Phase 8 - Not Started**
+- Editor mode (non-notebook SQL editor view): Not started
+
+### Key Implementation Details Verified
+
+- Swift 6 concurrency with async/await
+- @Observable macro for state management (not ObservableObject)
+- Actor-based DatabaseConnectionManager for thread safety
+- AppSettings for global preferences stored in UserDefaults
+- Left sidebar: Database schema tree view
+- Right sidebar: Connection details, settings, JSON viewer, cell info
+- Cell execution: Individual cell run or run all
+- Value editing: Boolean toggle, text editing for other types
+- Results: Paginated display with row limit enforcement
+- Syntax highlighting: SQL and JSON support
+- Dark mode: Forced app-wide (`.preferredColorScheme(.dark)`)
+
+### Architecture Observations
+
+- Layout: Header → Main (left sidebar + center content + right sidebar) → Footer
+- Result display: Integrated below each cell with full result table
+- Connection management: Form-based UI with connection testing
+- Error handling: Inline error display below cells
+- Notifications: Toast notifications for user feedback
+- File format: .sqlnb files as JSON (Codable-based)
 
 ---
 

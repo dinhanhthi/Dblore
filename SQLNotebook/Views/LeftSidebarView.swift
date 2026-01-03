@@ -63,7 +63,7 @@ struct LeftSidebarView: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cellBackground)
+    .background(Color.cardHeaderBackground)
   }
 
   private var emptyState: some View {

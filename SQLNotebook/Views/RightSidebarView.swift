@@ -77,7 +77,7 @@ struct RightSidebarView: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cellBackground)
+    .background(Color.cardHeaderBackground)
   }
 
   private var headerTitle: String {
@@ -108,7 +108,7 @@ struct RightSidebarView: View {
     case .connectionForm:
       return 360
     case .settings:
-      return 420  // Wider for settings
+      return 400  // Wider for settings
     default:
       return ComponentSize.sidebarWidth
     }

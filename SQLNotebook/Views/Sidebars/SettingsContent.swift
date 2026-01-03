@@ -11,6 +11,32 @@ struct SettingsContent: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      // Appearance Settings
+      settingsSection(title: "Appearance") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          // Theme Picker
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("Theme")
+              .font(.subheading)
+              .foregroundColor(.foreground)
+
+            Picker("Theme", selection: $appSettings.themePreference) {
+              ForEach(ThemePreference.allCases, id: \.self) { theme in
+                Text(theme.rawValue).tag(theme)
+              }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Text("Choose between Light, Dark, or System theme. System follows macOS appearance.")
+              .font(.caption)
+              .foregroundColor(.foregroundSubtle)
+          }
+        }
+      }
+
+      Divider()
+
       // Result Table Settings
       settingsSection(title: "Result Table") {
         VStack(alignment: .leading, spacing: Spacing.md) {
