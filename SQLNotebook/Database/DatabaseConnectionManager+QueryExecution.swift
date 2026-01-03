@@ -16,7 +16,8 @@ extension DatabaseConnectionManager {
   /// - Parameters:
   ///   - query: The SQL query to execute
   ///   - maxRows: Maximum number of rows to fetch (defaults to defaultMaxFetchRows)
-  func executeQuery(_ query: String, maxRows: Int = defaultMaxFetchRows) async throws -> QueryResult {
+  func executeQuery(_ query: String, maxRows: Int = defaultMaxFetchRows) async throws -> QueryResult
+  {
     guard let connection = _connection else {
       throw DatabaseError.notConnected
     }
@@ -82,11 +83,12 @@ extension DatabaseConnectionManager {
     // For SELECT queries, proceed with normal logic
     // Check if user specified a LIMIT that exceeds maxRows
     let userRequestedLimit = extractLimitValue(query)
-    let userLimitExceeded = if let userLimit = userRequestedLimit {
-      userLimit > maxRows
-    } else {
-      false
-    }
+    let userLimitExceeded =
+      if let userLimit = userRequestedLimit {
+        userLimit > maxRows
+      } else {
+        false
+      }
 
     // Step 1: Wrap query with LIMIT to enforce maxRows
     // This prevents database from processing too many rows
@@ -332,7 +334,9 @@ extension DatabaseConnectionManager {
     let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
 
     // For UPDATE, DELETE, and INSERT, we can use RETURNING to get affected rows
-    if upperQuery.hasPrefix("UPDATE") || upperQuery.hasPrefix("DELETE") || upperQuery.hasPrefix("INSERT") {
+    if upperQuery.hasPrefix("UPDATE") || upperQuery.hasPrefix("DELETE")
+      || upperQuery.hasPrefix("INSERT")
+    {
       // Wrap with CTE and count
       return """
         WITH affected AS (
@@ -374,15 +378,17 @@ extension DatabaseConnectionManager {
   /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
   private func extractLimitValue(_ query: String) -> Int? {
     // Remove semicolons and trim
-    let cleaned = query.replacingOccurrences(of: ";", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let cleaned = query.replacingOccurrences(of: ";", with: "").trimmingCharacters(
+      in: .whitespacesAndNewlines)
     let normalized = cleaned.lowercased()
 
     // Pattern: LIMIT <number> (may have whitespace, semicolon, or end of string after)
     let pattern = "\\blimit\\s+(\\d+)"
     guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-          let match = regex.firstMatch(in: normalized, options: [], range: NSRange(normalized.startIndex..., in: normalized)),
-          match.numberOfRanges > 1,
-          let numberRange = Range(match.range(at: 1), in: normalized)
+      let match = regex.firstMatch(
+        in: normalized, options: [], range: NSRange(normalized.startIndex..., in: normalized)),
+      match.numberOfRanges > 1,
+      let numberRange = Range(match.range(at: 1), in: normalized)
     else {
       return nil
     }
@@ -513,7 +519,7 @@ extension DatabaseConnectionManager {
         }
 
         guard let columnName = try? cellValues[0].decode(String.self, context: .default),
-              let dataType = try? cellValues[1].decode(String.self, context: .default)
+          let dataType = try? cellValues[1].decode(String.self, context: .default)
         else {
           continue
         }
@@ -566,7 +572,8 @@ extension DatabaseConnectionManager {
   /// Extract table name from a simple SELECT query (SELECT ... FROM table_name ...)
   /// Returns nil if query is complex (joins, subqueries, etc.)
   private func extractSingleTableName(_ query: String) -> String? {
-    let normalized = query
+    let normalized =
+      query
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
@@ -575,13 +582,13 @@ extension DatabaseConnectionManager {
     let pattern = "(?i)SELECT\\s+.+?\\s+FROM\\s+([a-zA-Z_][a-zA-Z0-9_]*)"
 
     guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-          let match = regex.firstMatch(
-            in: normalized,
-            options: [],
-            range: NSRange(normalized.startIndex..., in: normalized)
-          ),
-          match.numberOfRanges > 1,
-          let tableRange = Range(match.range(at: 1), in: normalized)
+      let match = regex.firstMatch(
+        in: normalized,
+        options: [],
+        range: NSRange(normalized.startIndex..., in: normalized)
+      ),
+      match.numberOfRanges > 1,
+      let tableRange = Range(match.range(at: 1), in: normalized)
     else {
       return nil
     }

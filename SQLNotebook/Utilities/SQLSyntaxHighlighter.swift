@@ -8,7 +8,6 @@ import SwiftUI
 
 /// SQL syntax highlighter with token-based coloring
 enum SQLSyntaxHighlighter {
-
   // MARK: - Token Types
 
   enum TokenType {

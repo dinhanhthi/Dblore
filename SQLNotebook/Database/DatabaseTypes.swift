@@ -306,8 +306,8 @@ extension DatabaseConnectionManager {
 
       // Add position if available (where in the query the error occurred)
       if let positionStr = serverInfo[.position],
-         let position = Int(positionStr) {
-
+        let position = Int(positionStr)
+      {
         // If we have the query text, extract the problematic keyword/text
         if let query = query, position > 0 && position <= query.count {
           let errorContext = extractErrorContext(from: query, at: position)
@@ -371,9 +371,12 @@ extension DatabaseConnectionManager {
 
     // If word is empty or very short, provide more context (5 chars before and after)
     if word.count < 2 {
-      let contextStart = query.index(stringIndex, offsetBy: -5, limitedBy: query.startIndex) ?? query.startIndex
-      let contextEnd = query.index(stringIndex, offsetBy: 5, limitedBy: query.endIndex) ?? query.endIndex
-      let context = String(query[contextStart..<contextEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+      let contextStart =
+        query.index(stringIndex, offsetBy: -5, limitedBy: query.startIndex) ?? query.startIndex
+      let contextEnd =
+        query.index(stringIndex, offsetBy: 5, limitedBy: query.endIndex) ?? query.endIndex
+      let context = String(query[contextStart..<contextEnd]).trimmingCharacters(
+        in: .whitespacesAndNewlines)
       return context.isEmpty ? "..." : context
     }
 

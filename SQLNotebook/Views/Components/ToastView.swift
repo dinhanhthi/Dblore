@@ -62,7 +62,7 @@ struct ToastView: View {
     )
     .shadow(color: borderColor.opacity(0.2), radius: 8, x: 0, y: 0)  // Glow effect
     .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 4)  // Deep shadow
-    .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)   // Close shadow
+    .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)  // Close shadow
     .onHover { hovering in
       isHovered = hovering
       viewModel.setToastHovered(hovering)

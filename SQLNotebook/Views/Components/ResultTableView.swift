@@ -202,7 +202,8 @@ struct ResultTableView: View {
       }
 
       // Get row identifier (ctid) for this row if available
-      let rowIdentifier: CellValue? = rowIndex < result.rowIdentifiers.count
+      let rowIdentifier: CellValue? =
+        rowIndex < result.rowIdentifiers.count
         ? result.rowIdentifiers[rowIndex]
         : nil
 
@@ -263,6 +264,7 @@ struct ResultTableView: View {
 }
 
 // MARK: - Cell Content View
+
 // Extracted to reduce type complexity in ResultTableView
 
 private struct CellContentView: View {
@@ -372,12 +374,12 @@ private struct ResizeHandle: View {
 private struct ScrollerConfigurator: NSViewRepresentable {
   let needsVerticalScroller: Bool
 
-  func makeNSView(context: Context) -> NSView {
+  func makeNSView(context _: Context) -> NSView {
     let view = NSView()
     return view
   }
 
-  func updateNSView(_ nsView: NSView, context: Context) {
+  func updateNSView(_ nsView: NSView, context _: Context) {
     DispatchQueue.main.async {
       guard let scrollView = nsView.enclosingScrollView else { return }
 
@@ -449,25 +451,28 @@ struct ResultMetadataBar: View {
 }
 
 #Preview("Long Text Values") {
-  let longText = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
+  let longText =
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
 
   let mockResult = CellResult(
     columns: [
       ColumnInfo(name: "id", type: "INTEGER"),
-      ColumnInfo(name: "description", type: "TEXT")
+      ColumnInfo(name: "description", type: "TEXT"),
     ],
     rows: [
       [
         .int(1),
-        .string(longText)
+        .string(longText),
       ],
       [
         .int(2),
-        .string("Short text")
+        .string("Short text"),
       ],
       [
         .int(3),
-        .string("The quick brown fox jumps over the lazy dog. This sentence is repeated multiple times to create a very long text value. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.")
+        .string(
+          "The quick brown fox jumps over the lazy dog. This sentence is repeated multiple times to create a very long text value. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog."
+        ),
       ],
     ],
     executionTime: 0.021,

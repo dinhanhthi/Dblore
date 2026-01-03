@@ -54,7 +54,8 @@ extension NotebookViewModel {
     Task { @MainActor [weak self] in
       guard let self else { return }
       guard SessionManager.hasSession(),
-            let savedConfig = SessionManager.loadSession() else {
+        let savedConfig = SessionManager.loadSession()
+      else {
         return
       }
 

@@ -150,23 +150,25 @@ extension Color {
   /// Initialize an adaptive color with separate light and dark mode values
   init(light: Color, dark: Color) {
     #if os(macOS)
-      self.init(nsColor: NSColor(name: nil) { appearance in
-        switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
-        case .darkAqua:
-          return NSColor(dark)
-        default:
-          return NSColor(light)
-        }
-      })
+      self.init(
+        nsColor: NSColor(name: nil) { appearance in
+          switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
+          case .darkAqua:
+            return NSColor(dark)
+          default:
+            return NSColor(light)
+          }
+        })
     #else
-      self.init(uiColor: UIColor { traitCollection in
-        switch traitCollection.userInterfaceStyle {
-        case .dark:
-          return UIColor(dark)
-        default:
-          return UIColor(light)
-        }
-      })
+      self.init(
+        uiColor: UIColor { traitCollection in
+          switch traitCollection.userInterfaceStyle {
+          case .dark:
+            return UIColor(dark)
+          default:
+            return UIColor(light)
+          }
+        })
     #endif
   }
 
@@ -485,8 +487,7 @@ struct RoundedLeftBorder: Shape {
 
 extension View {
   func cardStyle() -> some View {
-    self
-      .background(Color.cardBackground)
+    background(Color.cardBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.lg)
@@ -495,8 +496,7 @@ extension View {
   }
 
   func cellStyle(isSelected: Bool = false, isHovered: Bool = false) -> some View {
-    self
-      .background(Color.cellBackground)
+    background(Color.cellBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.lg)
@@ -509,8 +509,7 @@ extension View {
   }
 
   func inputStyle() -> some View {
-    self
-      .padding(Spacing.sm)
+    padding(Spacing.sm)
       .background(Color.inputBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       .overlay(

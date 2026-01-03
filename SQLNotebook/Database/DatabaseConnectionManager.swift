@@ -36,7 +36,7 @@ actor DatabaseConnectionManager {
 
     // Create event loop group
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    self.eventLoopGroup = group
+    eventLoopGroup = group
 
     // Configure PostgreSQL connection
     let tlsConfig: PostgresConnection.Configuration.TLS
@@ -74,7 +74,7 @@ actor DatabaseConnectionManager {
         id: 1,
         logger: Logger(label: "sqlnotebook.connection")
       )
-      self.connection = conn
+      connection = conn
     } catch let error as PSQLError {
       // Cleanup on failure
       try? await group.shutdownGracefully()
@@ -84,7 +84,7 @@ actor DatabaseConnectionManager {
     } catch {
       // Cleanup on failure
       try? await group.shutdownGracefully()
-      self.eventLoopGroup = nil
+      eventLoopGroup = nil
       throw DatabaseError.connectionFailed(error.localizedDescription)
     }
   }
@@ -165,15 +165,15 @@ actor DatabaseConnectionManager {
   func disconnect() async {
     if let conn = connection {
       try? await conn.close()
-      self.connection = nil
+      connection = nil
     }
 
     if let group = eventLoopGroup {
       try? await group.shutdownGracefully()
-      self.eventLoopGroup = nil
+      eventLoopGroup = nil
     }
 
-    self.config = nil
+    config = nil
   }
 
   /// Check if currently connected
@@ -184,7 +184,7 @@ actor DatabaseConnectionManager {
   // MARK: - Internal Access
 
   /// Access to internal connection for extensions
-  internal var _connection: PostgresConnection? {
+  var _connection: PostgresConnection? {
     connection
   }
 }

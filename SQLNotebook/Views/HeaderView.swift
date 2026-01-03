@@ -74,7 +74,8 @@ struct HeaderView: View {
           ToolbarButtonStyle(
             isActive: viewModel.isRightSidebarVisible
               && (viewModel.rightSidebarContent == .settings),
-            iconOnly: true)
+            iconOnly: true
+          )
         )
 
         Divider()
@@ -223,6 +224,7 @@ struct ConnectionButton: View {
 }
 
 // MARK: - Connection Icon View
+
 // Extracted to reduce type complexity in ConnectionButton
 
 private struct ConnectionIconView: View {

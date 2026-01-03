@@ -40,9 +40,9 @@ extension DatabaseConnectionManager {
         let randomAccess = row.makeRandomAccess()
 
         guard let schemaCell = randomAccess.first,
-              let nameCell = randomAccess.dropFirst().first,
-              let schema = try? schemaCell.decode(String.self, context: .default),
-              let name = try? nameCell.decode(String.self, context: .default)
+          let nameCell = randomAccess.dropFirst().first,
+          let schema = try? schemaCell.decode(String.self, context: .default),
+          let name = try? nameCell.decode(String.self, context: .default)
         else {
           continue
         }
@@ -90,8 +90,8 @@ extension DatabaseConnectionManager {
         guard cells.count >= 3 else { continue }
 
         guard let columnName = try? cells[0].decode(String.self, context: .default),
-              let dataType = try? cells[1].decode(String.self, context: .default),
-              let isNullableStr = try? cells[2].decode(String.self, context: .default)
+          let dataType = try? cells[1].decode(String.self, context: .default),
+          let isNullableStr = try? cells[2].decode(String.self, context: .default)
         else {
           continue
         }
@@ -142,7 +142,8 @@ extension DatabaseConnectionManager {
         let randomAccess = row.makeRandomAccess()
 
         if let countCell = randomAccess.first,
-           let count = try? countCell.decode(Int.self, context: .default) {
+          let count = try? countCell.decode(Int.self, context: .default)
+        {
           return count
         }
       }

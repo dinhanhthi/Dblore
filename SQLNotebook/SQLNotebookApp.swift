@@ -3,9 +3,9 @@
 //  SQLNotebook
 //
 
+import AppKit
 @preconcurrency import SQLite3
 import SwiftUI
-import AppKit
 
 @main
 struct SQLNotebookApp: App {

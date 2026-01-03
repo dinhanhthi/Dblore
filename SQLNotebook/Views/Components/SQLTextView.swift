@@ -24,7 +24,7 @@ class SQLTextView: NSTextView {
 
   override func resignFirstResponder() -> Bool {
     // Capture the string before calling super to avoid accessing potentially deallocated state
-    let currentText = self.string
+    let currentText = string
     let result = super.resignFirstResponder()
     if result {
       // Update binding when losing focus
@@ -106,8 +106,8 @@ class SQLTextView: NSTextView {
       return false
     }
 
-    let text = self.string
-    let cursorPosition = self.selectedRange().location
+    let text = string
+    let cursorPosition = selectedRange().location
 
     if isUpArrow {
       // Navigate to previous cell only if cursor is at the first line

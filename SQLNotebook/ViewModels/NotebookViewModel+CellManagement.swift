@@ -32,7 +32,8 @@ extension NotebookViewModel {
       undoManager.registerUndo(withTarget: self) { target in
         MainActor.assumeIsolated {
           target.removeCellForUndo(
-            id: newCell.id, restoreSelection: previousSelection, registerUndo: true)
+            id: newCell.id, restoreSelection: previousSelection, registerUndo: true
+          )
         }
       }
       undoManager.setActionName("Add Cell")
@@ -108,7 +109,7 @@ extension NotebookViewModel {
     cell: NotebookCell,
     at index: Int,
     restoreSelection: UUID?,
-    currentSelection: UUID?,
+    currentSelection _: UUID?,
     registerUndo: Bool
   ) {
     notebook.cells.insert(cell, at: index)
@@ -145,7 +146,8 @@ extension NotebookViewModel {
       undoManager.registerUndo(withTarget: self) { target in
         MainActor.assumeIsolated {
           target.removeCellForUndo(
-            id: duplicate.id, restoreSelection: previousSelection, registerUndo: true)
+            id: duplicate.id, restoreSelection: previousSelection, registerUndo: true
+          )
         }
       }
       undoManager.setActionName("Duplicate Cell")

@@ -77,7 +77,7 @@ struct CellView: View {
     .contextMenu {
       cellContextMenu
     }
-    .onChange(of: isSelected) { oldValue, newValue in
+    .onChange(of: isSelected) { _, newValue in
       // Clear focus when cell becomes unselected
       if !newValue {
         isEditorFocused = false
@@ -96,9 +96,9 @@ struct CellView: View {
     .onReceive(NotificationCenter.default.publisher(for: .insertTextIntoCell)) { notification in
       // Only insert if this cell is selected
       guard isSelected,
-            let userInfo = notification.userInfo,
-            let text = userInfo["text"] as? String,
-            let textView = textViewRef
+        let userInfo = notification.userInfo,
+        let text = userInfo["text"] as? String,
+        let textView = textViewRef
       else { return }
 
       // Insert text at current cursor position

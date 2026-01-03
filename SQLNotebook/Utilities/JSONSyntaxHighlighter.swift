@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-struct JSONSyntaxHighlighter {
+enum JSONSyntaxHighlighter {
   enum TokenType {
     case key
     case string
@@ -54,7 +54,9 @@ struct JSONSyntaxHighlighter {
         var whitespace = String(char)
         currentIndex = json.index(after: currentIndex)
 
-        while currentIndex < json.endIndex && (json[currentIndex].isWhitespace || json[currentIndex].isNewline) {
+        while currentIndex < json.endIndex,
+          json[currentIndex].isWhitespace || json[currentIndex].isNewline
+        {
           whitespace.append(json[currentIndex])
           currentIndex = json.index(after: currentIndex)
         }
@@ -99,12 +101,14 @@ struct JSONSyntaxHighlighter {
         var lookAheadIndex = currentIndex
 
         // Skip whitespace
-        while lookAheadIndex < json.endIndex && (json[lookAheadIndex].isWhitespace || json[lookAheadIndex].isNewline) {
+        while lookAheadIndex < json.endIndex,
+          json[lookAheadIndex].isWhitespace || json[lookAheadIndex].isNewline
+        {
           lookAheadIndex = json.index(after: lookAheadIndex)
         }
 
         // If next non-whitespace character is ":", this is a key
-        if lookAheadIndex < json.endIndex && json[lookAheadIndex] == ":" {
+        if lookAheadIndex < json.endIndex, json[lookAheadIndex] == ":" {
           isKey = true
         }
 
@@ -122,25 +126,25 @@ struct JSONSyntaxHighlighter {
         }
 
         // Integer part
-        while currentIndex < json.endIndex && json[currentIndex].isNumber {
+        while currentIndex < json.endIndex, json[currentIndex].isNumber {
           currentIndex = json.index(after: currentIndex)
         }
 
         // Decimal part
-        if currentIndex < json.endIndex && json[currentIndex] == "." {
+        if currentIndex < json.endIndex, json[currentIndex] == "." {
           currentIndex = json.index(after: currentIndex)
-          while currentIndex < json.endIndex && json[currentIndex].isNumber {
+          while currentIndex < json.endIndex, json[currentIndex].isNumber {
             currentIndex = json.index(after: currentIndex)
           }
         }
 
         // Exponent part
-        if currentIndex < json.endIndex && (json[currentIndex] == "e" || json[currentIndex] == "E") {
+        if currentIndex < json.endIndex, json[currentIndex] == "e" || json[currentIndex] == "E" {
           currentIndex = json.index(after: currentIndex)
-          if currentIndex < json.endIndex && (json[currentIndex] == "+" || json[currentIndex] == "-") {
+          if currentIndex < json.endIndex, json[currentIndex] == "+" || json[currentIndex] == "-" {
             currentIndex = json.index(after: currentIndex)
           }
-          while currentIndex < json.endIndex && json[currentIndex].isNumber {
+          while currentIndex < json.endIndex, json[currentIndex].isNumber {
             currentIndex = json.index(after: currentIndex)
           }
         }
@@ -185,7 +189,7 @@ struct HighlightedJSONText: View {
   let tokens: [JSONSyntaxHighlighter.Token]
 
   init(json: String) {
-    self.tokens = JSONSyntaxHighlighter.tokenize(json)
+    tokens = JSONSyntaxHighlighter.tokenize(json)
   }
 
   var body: some View {
