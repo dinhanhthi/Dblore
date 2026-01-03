@@ -20,13 +20,41 @@ struct SettingsContent: View {
               .font(.subheading)
               .foregroundColor(.foreground)
 
-            Picker("Theme", selection: $appSettings.themePreference) {
+            HStack(spacing: Spacing.md) {
               ForEach(ThemePreference.allCases, id: \.self) { theme in
-                Text(theme.rawValue).tag(theme)
+                Button(action: {
+                  appSettings.themePreference = theme
+                }) {
+                  HStack(spacing: Spacing.xs) {
+                    Image(systemName: appSettings.themePreference == theme ? "circle.fill" : "circle")
+                      .font(.system(size: 12))
+                      .foregroundColor(appSettings.themePreference == theme ? .accentColor : .foregroundMuted)
+
+                    Text(theme.rawValue)
+                      .font(.bodyText)
+                      .foregroundColor(appSettings.themePreference == theme ? .foreground : .foregroundMuted)
+                  }
+                  // .padding(.horizontal, Spacing.md)
+                  .padding(.vertical, Spacing.sm)
+                  // .background(
+                  //   appSettings.themePreference == theme
+                  //     ? Color.accentColor.opacity(0.1)
+                  //     : Color.clear
+                  // )
+                  // .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+                  // .overlay(
+                  //   RoundedRectangle(cornerRadius: CornerRadius.sm)
+                  //     .stroke(
+                  //       appSettings.themePreference == theme
+                  //         ? Color.accentColor.opacity(0.3)
+                  //         : Color.border,
+                  //       lineWidth: 1
+                  //     )
+                  // )
+                }
+                .buttonStyle(.plain)
               }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             Text("Choose between Light, Dark, or System theme. System follows macOS appearance.")
               .font(.caption)
