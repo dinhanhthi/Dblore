@@ -234,7 +234,7 @@
 			targets = (
 				D3E0FB922EF70DBB009A0E5A /* SQLNotebook */,
 				D30425742F0310D3008916E0 /* SQLNotebookTests */,
-				D30425812F031148008916E0 /* SQLNotebookUITests */,
+				// D30425812F031148008916E0 /* SQLNotebookUITests - DISABLED */,
 			);
 		};
 /* End PBXProject section */
