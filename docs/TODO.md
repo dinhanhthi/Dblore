@@ -5,9 +5,9 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (11 of 13 sections - Result Display & Theme Toggle complete)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (11 of 14 sections - Result Display, Theme Toggle, Search & Filter added)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
-- 🔒 **Phase 6: Security & Safety** - PARTIAL (Some key features complete, some in-progress)
+- 🔒 **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.4 Data Modification Safety complete including Value Format Validation)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
 - 🎯 **Phase 8: Editor Mode** - NOT STARTED (Last phase)
 
@@ -54,6 +54,14 @@
 - [x] Header menu: "Show All Results" and "Hide All Results" buttons
 - [x] View model methods: toggleResultVisibility, hideAllResults, showAllResults
 
+### 4.9 Result Table Search & Filter - NOT STARTED
+- [ ] Add toolbar to ResultTableView with search input field
+- [ ] Implement global search across all columns (search in all cell values)
+- [ ] Add column-specific filter dropdowns for each column header
+- [ ] Filter rows based on column value matches
+- [ ] Show filtered row count vs total row count
+- [ ] Clear search/filter button
+
 ### 4.11 File Optimization - NOT STARTED
 - [ ] Detect large file size (> 10MB)
 - [ ] Implement compression option
@@ -76,6 +84,10 @@
 - [x] Add theme toggle control to Settings panel (SettingsContent.swift:14-51 with radio buttons)
 
 ---
+
+## Phase 4: Polish (MOSTLY COMPLETE - 11 of 13 sections)
+
+**Note:** Section 4.9 (Result Table Search & Filter) added as new feature request.
 
 ## Phase 5: Advanced Features (NOT STARTED)
 
@@ -139,10 +151,10 @@
 - [x] Use ctid (PostgreSQL) for row identification
 - [x] Boolean toggle UI for value editing ✅
 - [x] User Notifications for Value Editing ✅ - JSON edit validation alerts, database update feedback toast alerts
-- [ ] **Value Format Validation** - Validate integer, uuid, jsonb, date, timestamp types
-  - [ ] Check modified value format matches cell type when in edit mode
-  - [ ] Display validation error/warning in footer sidebar
-  - [ ] Disable "save" button when validation fails
+- [x] **Value Format Validation** ✅ - Validate integer, uuid, jsonb, date, timestamp types
+  - [x] Check modified value format matches cell type when in edit mode (CellValueValidator.swift, CellInfoContent.swift:288)
+  - [x] Display validation error/warning in UI (CellInfoContent.swift:159-171)
+  - [x] Disable "save" button when validation fails (CellInfoContent.swift:77)
 - [ ] Add confirmation for inline cell editing
 - [ ] Add transaction support for inline edits
 
@@ -265,13 +277,7 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 ### CURRENT: Complete Phase 6 Security (High Priority)
 Security and data safety enhancements (completing Phase 6.0.4):
 
-1. **Value Format Validation (6.0.4)** - Validate integer, uuid, jsonb, date, timestamp types
-   - Check modified value format matches cell type when in edit mode
-   - Display validation error/warning in UI
-   - Disable "save" button when validation fails
-   - Effort: MEDIUM (requires type checking logic)
-
-2. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
+1. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
    - Modal dialog showing query and row count affected
    - Warn users of destructive operations
    - Effort: MEDIUM (UI + state management)
@@ -289,14 +295,23 @@ Security and data safety enhancements (completing Phase 6.0.4):
 ### RECENTLY COMPLETED PHASE 6.0.4 ITEMS:
 - Boolean toggle UI for value editing
 - User Notifications (Toast alerts for JSON edit, database update, clipboard copy)
+- Value Format Validation (CellValueValidator.swift with full type validation, error display, and save button disable)
 
 ### THEN: Complete Phase 4 Polish (Medium Effort)
-Priority UI enhancements (4 of 6 remaining):
+Priority UI enhancements (5 of 7 remaining):
 
-1. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
-2. **Drag and Drop (4.4)** - Reorder cells via UI
-3. **Save Prompt (4.7)** - Warn before closing unsaved
-4. **Cell Execution Queue (4.2)** - Visual queue for batch execution
+1. **Result Table Search & Filter (4.9)** - NEW FEATURE REQUEST
+   - Add toolbar with search input to ResultTableView
+   - Global search across all columns
+   - Column-specific filter dropdowns
+   - Filter rows based on column values
+   - Show filtered vs total row count
+   - Effort: MEDIUM (requires filtering logic and UI components)
+
+2. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
+3. **Drag and Drop (4.4)** - Reorder cells via UI
+4. **Save Prompt (4.7)** - Warn before closing unsaved
+5. **Cell Execution Queue (4.2)** - Visual queue for batch execution
 
 ### THEN: Phase 7 Integration Tests & Phase 8 Editor Mode
 Complete test coverage and implement the final editor mode phase.
@@ -311,12 +326,30 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 **Date:** 2026-01-04
 **Verified By:** Claude Code - TODO Manager Agent
 **Key Changes:**
-- Phase 6.0.4 User Notifications for Value Editing VERIFIED COMPLETE (ToastView.swift, NotebookViewModel.showToast())
-- Toast system shows error/success/info/warning types with proper icons and colors
-- All 5 notification points verified: JSON validation error, JSON success, DB update success/error, clipboard info
-- Phase 4.8 Result Display Controls confirmed COMPLETE (isResultVisible property, menu buttons)
-- Phase 4.13 Theme Toggle remains COMPLETE
-- Recent commits: refactoring (removed CustomTooltip), optimizations (scaleEffect → controlSize)
+- ✅ **Phase 6.0.4 Value Format Validation VERIFIED COMPLETE**
+  - CellValueValidator.swift implements full validation for all types (int, double, json, date, boolean, null, binary data)
+  - Integrated in CellInfoContent.swift:288 with `CellValueValidator.validate(input, for: value)`
+  - Validation error displayed in UI (CellInfoContent.swift:159-171) with red border and error message
+  - Save button disabled when validation fails (CellInfoContent.swift:77)
+  - Status updated from incomplete to COMPLETE ✅
+
+- ✅ Phase 6.0.4 User Notifications remains COMPLETE (ToastView.swift, NotebookViewModel.showToast())
+- ✅ Phase 4.8 Result Display Controls confirmed COMPLETE (isResultVisible property, menu buttons)
+- ✅ Phase 4.13 Theme Toggle remains COMPLETE
+
+- 📝 **NEW FEATURE REQUEST ADDED: Phase 4.9 Result Table Search & Filter**
+  - User requested: toolbar with search feature and column-based filters for ResultTableView
+  - Added to Phase 4 Polish section
+  - Status: NOT STARTED
+  - Requirements: global search, column filters, filtered row count display
+
+- ❌ Verified incomplete items remain accurate:
+  - Cmd+/ comment/uncomment: Not implemented
+  - Drag and drop: Not implemented (only column resize drag exists)
+  - Save on close prompt: Not implemented
+  - Cell execution queue: Not implemented (runAllCells is sequential, no queue UI)
+  - Confirmation dialogs for destructive operations: Not implemented
+  - Read-only mode: Not implemented
 
 ### Verified Complete Features
 
@@ -350,6 +383,7 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - User Notifications for Value Editing (ToastView.swift with error/success/info types)
 - Database schema loading with column info
 - Toast notification system: JSON edit validation alerts, database update feedback (ToastMessage enum, NotebookViewModel.showToast() method)
+- Value Format Validation (CellValueValidator.swift with validation for integer, double, json, date, boolean, null, binary data types; integrated in CellInfoContent.swift:288 with error display and save button disable)
 
 **Phase 7 Completed Tasks**
 - Unit test infrastructure
@@ -362,7 +396,8 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 
 ### Verified Incomplete Features
 
-**Phase 4 - Not Started/In Progress** (4 of 6 remaining)
+**Phase 4 - Not Started/In Progress** (5 of 7 remaining)
+- Result Table Search & Filter (4.9): Not implemented (new feature request)
 - Drag and drop reordering: Not implemented (moveCell exists but no UI for drag handles)
 - Comment/uncomment (Cmd+/): Not implemented
 - Save on close prompt: Not implemented
@@ -371,12 +406,13 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Logging system (AppLogger): Not implemented
 
 **Phase 6 - Incomplete**
-- Value format validation: Not implemented
 - Confirmation dialogs for destructive operations: Not implemented
 - Read-only mode: Not implemented
 - Connection retry logic: Not implemented
 - Certificate verification fix for `.require` mode: Not completed
 - Connection timeout configuration: Not implemented
+- Confirmation for inline cell editing: Not implemented
+- Transaction support for inline edits: Not implemented
 
 **Phase 7 - Incomplete**
 - Document operations tests (round-trip): Not implemented
