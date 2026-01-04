@@ -12,11 +12,18 @@ Specialized command for fixing Swift compilation errors, build errors, runtime c
 
 ## Problem-Solving Approach
 
-1. **Analyze Error**: Read the full error message and context
-2. **Locate Root Cause**: Identify the file and line causing issues
-3. **Understand Intent**: Read surrounding code to understand what should happen
-4. **Fix Precisely**: Make minimal, targeted changes
-5. **Verify**: Build and test the fix
+**IMPORTANT - Use Internet Search First:**
+- **ALWAYS** search for latest solutions, package versions, and best practices BEFORE attempting fixes
+- Search for error messages, deprecation warnings, and known issues with Swift 6.2+ and macOS 15+
+- Look for official Apple documentation, Swift Evolution proposals, and community solutions
+- Verify package versions and compatibility with latest Swift/macOS versions
+
+1. **Search for Solutions**: Use web search to find latest information about the error/issue
+2. **Analyze Error**: Read the full error message and context
+3. **Locate Root Cause**: Identify the file and line causing issues
+4. **Understand Intent**: Read surrounding code to understand what should happen
+5. **Fix Precisely**: Make minimal, targeted changes using latest best practices
+6. **Verify**: Build and test the fix
 
 ## Common Issues You Handle
 

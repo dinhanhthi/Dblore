@@ -2,6 +2,12 @@
 
 Manages project structure and architecture - organizes files, enforces 400-line limit, ensures proper folder placement, and maintains clean code organization.
 
+**IMPORTANT - Use Internet Search First:**
+- **ALWAYS** search for latest Swift architecture patterns and best practices
+- Look for modern MVVM patterns with SwiftUI and @Observable macro
+- Search for latest SwiftUI project organization and file structure recommendations
+- Verify latest Swift 6.2+ architectural patterns for concurrency and actors
+
 ## How to Use This Command
 
 When user requests architecture work (check structure, analyze files, refactor, organize, split files), follow this workflow:

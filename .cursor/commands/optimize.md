@@ -4,6 +4,13 @@ Optimizes app performance - reduces CPU/RAM usage, prevents crashes, handles lar
 
 ## How to Use This Command
 
+**IMPORTANT - Use Internet Search First:**
+- **ALWAYS** search for latest Swift performance optimization techniques
+- Look for latest SwiftUI performance best practices and benchmarks
+- Search for modern memory management patterns with Swift 6.2+ and strict concurrency
+- Verify latest profiling tools and Instruments techniques for macOS apps
+- Find latest database optimization strategies for PostgresNIO and async/await
+
 When user requests performance optimization (check performance, optimize code, reduce memory usage, prevent crashes, handle large datasets), follow this workflow:
 
 ### Step 1: Identify Performance Issues
