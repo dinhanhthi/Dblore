@@ -234,37 +234,52 @@ struct ContentView: View {
 
   private var mainContent: some View {
     ScrollViewReader { proxy in
-      ScrollView {
-        LazyVStack(spacing: Spacing.lg) {
-          ForEach($viewModel.notebook.cells) { $cell in
-            CellView(
-              viewModel: viewModel,
-              cell: $cell,
-              isSelected: viewModel.selectedCellId == cell.id,
-              onRun: {
-                Task { @MainActor [viewModel] in
-                  await viewModel.runCell(id: cell.id)
-                  syncDocument()
-                }
+      List {
+        ForEach(viewModel.notebook.cells) { cell in
+          CellView(
+            viewModel: viewModel,
+            cell: binding(for: cell.id),
+            isSelected: viewModel.selectedCellId == cell.id,
+            onRun: {
+              Task { @MainActor [viewModel] in
+                await viewModel.runCell(id: cell.id)
+                syncDocument()
               }
-            )
-            .id(cell.id)
-            .onChange(of: cell.content) { _, _ in
-              syncDocument()
             }
-          }
+          )
+          .id(cell.id)
+          .listRowSeparator(.hidden)
+          .listRowBackground(Color.clear)
+          .listRowInsets(EdgeInsets(top: Spacing.md, leading: Spacing.lg, bottom: Spacing.md, trailing: Spacing.lg))
         }
-        .padding(Spacing.lg)
       }
+      .listStyle(.plain)
+      .scrollContentBackground(.hidden)
       .onChange(of: viewModel.selectedCellId) { _, newId in
         if let id = newId {
-          withAnimation {
-            // Only scroll if the cell is not visible (no anchor means minimal scroll to make visible)
+          withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(id, anchor: nil)
           }
         }
       }
     }
+  }
+
+  // MARK: - Helper for Safe Binding
+
+  /// Creates a safe binding for a cell by ID to avoid mutation conflicts in LazyVStack
+  private func binding(for cellId: UUID) -> Binding<NotebookCell> {
+    Binding(
+      get: {
+        self.viewModel.notebook.cells.first(where: { $0.id == cellId }) ?? NotebookCell()
+      },
+      set: { newValue in
+        if let index = self.viewModel.notebook.cells.firstIndex(where: { $0.id == cellId }) {
+          self.viewModel.notebook.cells[index] = newValue
+          self.syncDocument()
+        }
+      }
+    )
   }
 }
 
@@ -434,10 +449,10 @@ private struct ContentViewForPreview: View {
     ScrollViewReader { _ in
       ScrollView {
         LazyVStack(spacing: Spacing.md) {
-          ForEach($viewModel.notebook.cells) { $cell in
+          ForEach(viewModel.notebook.cells) { cell in
             CellView(
               viewModel: viewModel,
-              cell: $cell,
+              cell: previewBinding(for: cell.id),
               isSelected: viewModel.selectedCellId == cell.id,
               onRun: {
                 Task { @MainActor [viewModel] in
@@ -451,6 +466,19 @@ private struct ContentViewForPreview: View {
         .padding(Spacing.lg)
       }
     }
+  }
+
+  private func previewBinding(for cellId: UUID) -> Binding<NotebookCell> {
+    Binding(
+      get: {
+        self.viewModel.notebook.cells.first(where: { $0.id == cellId }) ?? NotebookCell()
+      },
+      set: { newValue in
+        if let index = self.viewModel.notebook.cells.firstIndex(where: { $0.id == cellId }) {
+          self.viewModel.notebook.cells[index] = newValue
+        }
+      }
+    )
   }
 }
 

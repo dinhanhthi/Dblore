@@ -115,6 +115,21 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     }
   }
 
+  static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+    // Cleanup when view is removed (e.g., cell scrolls off-screen)
+    guard let textView = scrollView.documentView as? SQLTextView else { return }
+
+    // Clear delegate to prevent retain cycles
+    textView.delegate = nil
+
+    // Clear callbacks
+    textView.onFocus = nil
+    textView.onBlur = nil
+
+    // Clear text storage to free memory
+    textView.textStorage?.setAttributedString(NSAttributedString())
+  }
+
   func makeCoordinator() -> Coordinator {
     Coordinator(text: $text, height: $height, isEmpty: $isEmpty)
   }
