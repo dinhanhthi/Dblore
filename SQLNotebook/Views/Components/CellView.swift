@@ -12,8 +12,7 @@ struct CellView: View {
   let isSelected: Bool
   let onRun: () -> Void
 
-  @State private var isHovered = false  // For run button visibility
-  @State private var isCellHovered = false  // For cell border hover effect
+  @State private var isHovered = false  // Combined hover state for all hover zones
   @State private var isBottomEdgeHovered = false  // For floating action panel
   @State private var isTopRightPanelHovered = false  // For top-right panel hover
   @State private var isCopied = false  // For copy button feedback
@@ -50,10 +49,9 @@ struct CellView: View {
             }
           }
         }
-        .cellStyle(isSelected: isSelected, isHovered: !isSelected && isCellHovered)
+        .cellStyle(isSelected: isSelected, isHovered: !isSelected && isHovered)
         .onHover { hovering in
           isHovered = hovering
-          isCellHovered = hovering
         }
 
         // Bottom edge hover zone (invisible, just for hover detection)
@@ -319,6 +317,7 @@ struct CellView: View {
         } else {
           // Result table
           ResultTableView(result: result, viewModel: viewModel, cellId: cell.id)
+            .id("\(cell.id)-result")  // Force recreation when result changes
 
           // Result metadata
           resultMetadata(result)
@@ -414,11 +413,17 @@ struct CellView: View {
     .foregroundColor(.foregroundSubtle)
   }
 
-  private func formatTimestamp(_ date: Date) -> String {
+  // MARK: - Static Date Formatter (cached for performance)
+
+  private static let timestampFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .short
     formatter.timeStyle = .medium
-    return formatter.string(from: date)
+    return formatter
+  }()
+
+  private func formatTimestamp(_ date: Date) -> String {
+    Self.timestampFormatter.string(from: date)
   }
 
   // MARK: - Context Menu

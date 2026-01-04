@@ -20,10 +20,20 @@ struct ResultTableView: View {
   private let maxColumnWidth: CGFloat = 500  // Maximum width when resizing
   private let rowHeight: CGFloat = 32  // Approximate row height
   private let headerHeight: CGFloat = 48  // Approximate header height
+  private let maxRowsToRender: Int = 500  // Reduced from 1000 to prevent scroll conflicts with VStack
+
+  // Limit rows to render for performance
+  private var displayedRows: ArraySlice<[CellValue]> {
+    result.rows.prefix(maxRowsToRender)
+  }
+
+  private var hasMoreRows: Bool {
+    result.rows.count > maxRowsToRender
+  }
 
   // Estimate if vertical scrolling is needed
   private var estimatedContentHeight: CGFloat {
-    headerHeight + (CGFloat(result.rows.count) * rowHeight)
+    headerHeight + (CGFloat(min(result.rows.count, maxRowsToRender)) * rowHeight)
   }
 
   private var needsVerticalScroll: Bool {
@@ -38,15 +48,20 @@ struct ResultTableView: View {
     VStack(alignment: .leading, spacing: 0) {
       // Header and data rows
       ScrollView(scrollAxes) {
-        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-          Section {
-            // Data rows
-            ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
-              dataRow(row: row, rowIndex: rowIndex)
-            }
-          } header: {
-            // Header row (pinned at top)
-            headerRow
+        // Use VStack instead of LazyVStack to avoid nested scroll conflicts
+        VStack(alignment: .leading, spacing: 0) {
+          // Header row (sticky at top)
+          headerRow
+            .zIndex(1)
+
+          // Data rows - limited to maxRowsToRender
+          ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
+            dataRow(row: row, rowIndex: rowIndex)
+          }
+
+          // Show warning if rows are truncated
+          if hasMoreRows {
+            truncationWarning
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -61,6 +76,20 @@ struct ResultTableView: View {
     .onAppear {
       calculateInitialColumnWidths()
     }
+  }
+
+  private var truncationWarning: some View {
+    HStack {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.warning)
+      Text("Showing first \(maxRowsToRender) of \(result.rows.count) rows to maintain performance")
+        .font(.caption)
+        .foregroundColor(.foregroundSubtle)
+    }
+    .padding(.horizontal, Spacing.lg)
+    .padding(.vertical, Spacing.md)
+    .frame(maxWidth: .infinity)
+    .background(Color.warning.opacity(0.1))
   }
 
   // MARK: - Header Row
@@ -151,11 +180,11 @@ struct ResultTableView: View {
   // MARK: - Helpers
 
   private func calculateInitialColumnWidths() {
+    // Only calculate widths if not already set
+    // Use a keyed approach to avoid recalculation
+    guard columnWidths.isEmpty else { return }
+
     for column in result.columns {
-      // Skip if already set (e.g., from manual resize)
-      if columnWidths[column.name] != nil {
-        continue
-      }
       // Set default width for all columns
       columnWidths[column.name] = defaultColumnWidth
     }
@@ -222,29 +251,36 @@ struct ResultTableView: View {
 
   // MARK: - Auto Resize
 
+  // Cached fonts for performance (avoid recreating on every resize)
+  private nonisolated(unsafe) static let headerNameFont = NSFont.systemFont(
+    ofSize: NSFont.systemFontSize, weight: .semibold)
+  private nonisolated(unsafe) static let headerTypeFont = NSFont.systemFont(
+    ofSize: NSFont.smallSystemFontSize)
+  private nonisolated(unsafe) static let dataFont = NSFont.monospacedSystemFont(
+    ofSize: NSFont.systemFontSize, weight: .regular)
+
   private func autoResizeColumn(column: ColumnInfo) {
     let columnIndex = result.columns.firstIndex(where: { $0.name == column.name })
     guard let columnIndex = columnIndex else { return }
 
     // Calculate width needed for header (both name and type should fit)
-    let headerNameFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-    let headerTypeFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-
-    let headerNameWidth = estimateTextWidth(text: column.name, nsFont: headerNameFont)
-    let headerTypeWidth = estimateTextWidth(text: column.type, nsFont: headerTypeFont)
+    let headerNameWidth = estimateTextWidth(text: column.name, nsFont: Self.headerNameFont)
+    let headerTypeWidth = estimateTextWidth(text: column.type, nsFont: Self.headerTypeFont)
     // Both texts are stacked vertically, so we need the wider of the two
     let headerTextWidth = max(headerNameWidth, headerTypeWidth)
     // Add horizontal padding (lg on both sides), resize handle width (4pt), and extra buffer (8pt)
     let headerWidth = headerTextWidth + (Spacing.lg * 2) + 4 + 8
 
-    // Calculate width needed for data cells
-    let dataFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    // Calculate width needed for data cells (sample first 100 rows for performance)
     var maxDataWidth: CGFloat = 0
-    for row in result.rows {
+    // Use displayedRows instead of result.rows to match what's actually rendered
+    let sampleSize = min(100, displayedRows.count)  // Only sample first 100 rows
+    for rowIndex in 0..<sampleSize {
+      let row = displayedRows[displayedRows.startIndex + rowIndex]
       guard columnIndex < row.count else { continue }
       let value = row[columnIndex]
       let displayText = value.displayString
-      let textWidth = estimateTextWidth(text: displayText, nsFont: dataFont)
+      let textWidth = estimateTextWidth(text: displayText, nsFont: Self.dataFont)
       // Add horizontal padding (sm on both sides), cell border (Spacing.md on right), and extra buffer
       maxDataWidth = max(maxDataWidth, textWidth + (Spacing.sm * 2) + Spacing.md + 8)
     }

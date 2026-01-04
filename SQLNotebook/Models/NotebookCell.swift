@@ -128,8 +128,19 @@ enum CellValue: Codable, Equatable, Sendable {
   case date(Date)
   case data(Data)
 
+  // Cached date formatters for performance
+  // Note: DateFormatter is thread-safe for reading after initialization
+  private static let displayDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .medium
+    return formatter
+  }()
+
+  private static let iso8601Formatter = ISO8601DateFormatter()
+
   /// Display string for the value
-  nonisolated var displayString: String {
+  var displayString: String {
     switch self {
     case .string(let value):
       return value
@@ -150,17 +161,14 @@ enum CellValue: Codable, Equatable, Sendable {
       }
       return value
     case .date(let value):
-      let formatter = DateFormatter()
-      formatter.dateStyle = .medium
-      formatter.timeStyle = .medium
-      return formatter.string(from: value)
+      return Self.displayDateFormatter.string(from: value)
     case .data(let value):
       return "<\(value.count) bytes>"
     }
   }
 
   /// Full string representation (not truncated)
-  nonisolated var fullString: String {
+  var fullString: String {
     switch self {
     case .string(let value):
       return value
@@ -175,7 +183,7 @@ enum CellValue: Codable, Equatable, Sendable {
     case .json(let value):
       return value
     case .date(let value):
-      return ISO8601DateFormatter().string(from: value)
+      return Self.iso8601Formatter.string(from: value)
     case .data(let value):
       return value.base64EncodedString()
     }
