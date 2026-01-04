@@ -68,7 +68,6 @@ struct HeaderView: View {
           Label("Results", systemImage: "eye")
         }
         .buttonStyle(ToolbarButtonStyle())
-        .customTooltip("Show or hide result tables", delay: 0.05)
       }
 
       Spacer()
@@ -95,7 +94,6 @@ struct HeaderView: View {
             iconOnly: true
           )
         )
-        .customTooltip("Settings", delay: 0.2)
 
         Divider()
           .frame(height: 20)

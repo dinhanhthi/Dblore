@@ -208,10 +208,6 @@ struct CellView: View {
               viewModel.toggleResultVisibility(cellId: cell.id)
             }
           )
-          .customTooltip(
-            cell.isResultVisible ? "Hide Result" : "Show Result",
-            delay: 0.2
-          )
         }
 
         FloatingPanelButton(
