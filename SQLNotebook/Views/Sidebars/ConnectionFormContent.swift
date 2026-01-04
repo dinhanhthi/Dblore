@@ -79,8 +79,8 @@ struct ConnectionFormContent: View {
             HStack(spacing: Spacing.sm) {
               if isTesting {
                 ProgressView()
+                  .controlSize(.mini)
                   .tint(.accent)
-                  .scaleEffect(0.7)
                   .frame(width: 14, height: 14)
               }
               Text("Test Connection")
@@ -94,8 +94,8 @@ struct ConnectionFormContent: View {
             HStack(spacing: Spacing.sm) {
               if isConnecting {
                 ProgressView()
+                  .controlSize(.mini)
                   .tint(.accent)
-                  .scaleEffect(0.7)
                   .frame(width: 14, height: 14)
               }
               Text("Connect")

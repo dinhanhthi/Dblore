@@ -84,8 +84,8 @@ struct LeftSidebarView: View {
   private var loadingState: some View {
     VStack(spacing: Spacing.md) {
       ProgressView()
+        .controlSize(.regular)
         .tint(.accent)
-        .scaleEffect(1.2)
 
       Text("Loading schema...")
         .font(.caption)
