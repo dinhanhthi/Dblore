@@ -273,6 +273,160 @@ docker compose down -v && docker compose up -d
 
 ---
 
+## 🧪 Integration Test Database
+
+Separate PostgreSQL instance for running integration tests in isolation.
+
+### Test Database Setup
+
+**Start Test Database:**
+```bash
+cd docker/postgresql
+docker compose -f docker-compose.test.yml up -d
+```
+
+**Test Database Configuration:**
+| Setting | Value |
+|---------|-------|
+| Host | localhost |
+| Port | 5435 |
+| Database | sqlnotebook_test |
+| Username | sqlnotebook_test |
+| Password | sqlnotebook123 |
+
+> ⚠️ **Note:** Port 5435 is used to avoid conflicts with:
+> - Development database (port 5433)
+> - Local PostgreSQL instances (typically port 5432)
+
+### Running Integration Tests
+
+**Option 1: Command Line**
+
+```bash
+# Set environment variables for test database
+export TEST_DB_HOST=localhost
+export TEST_DB_PORT=5435
+export TEST_DB_NAME=sqlnotebook_test
+export TEST_DB_USER=sqlnotebook_test
+export TEST_DB_PASSWORD=sqlnotebook123
+
+# Run all tests
+xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
+
+# Run only integration tests
+xcodebuild test -scheme SQLNotebook -destination 'platform=macOS' -only-testing:SQLNotebookTests/DatabaseIntegrationTests
+```
+
+**Option 2: Xcode (Recommended)**
+
+1. **Start test database:**
+   ```bash
+   cd docker/postgresql
+   docker compose -f docker-compose.test.yml up -d
+   ```
+
+2. **Configure Xcode scheme:**
+   - In Xcode, select menu: **Product → Scheme → Edit Scheme...**
+   - Select **Test** in the left sidebar
+   - Click the **+** button under **Environment Variables**
+   - Add the following environment variables:
+     - Name: `TEST_DB_HOST`, Value: `localhost`
+     - Name: `TEST_DB_PORT`, Value: `5435`
+     - Name: `TEST_DB_NAME`, Value: `sqlnotebook_test`
+     - Name: `TEST_DB_USER`, Value: `sqlnotebook_test`
+     - Name: `TEST_DB_PASSWORD`, Value: `sqlnotebook123`
+
+3. **Run tests:**
+   - Press **Cmd+U** to run all tests
+   - Or use **Test Navigator** (Cmd+6) to run specific tests
+
+**Option 3: Skip Integration Tests**
+
+If test database is not running, integration tests can be skipped:
+
+```bash
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
+```
+
+### Test Database vs Development Database
+
+| Feature | Development DB | Test DB |
+|---------|----------------|---------|
+| **Port** | 5433 | 5435 |
+| **Purpose** | Manual testing, development | Automated integration tests |
+| **Sample Data** | ✅ Pre-loaded with schemas and data | ❌ Blank (tests create/drop tables) |
+| **Initialization** | Runs `init/` scripts on first start | No initialization scripts |
+| **Use Case** | Interactive testing in SQLNotebook app | CI/CD, automated testing |
+| **Data Persistence** | ✅ Persistent across restarts | ✅ Persistent (but tests clean up) |
+
+### Managing Test Database
+
+```bash
+cd docker/postgresql
+
+# Start test database
+docker compose -f docker-compose.test.yml up -d
+
+# View logs
+docker compose -f docker-compose.test.yml logs -f
+
+# Stop test database
+docker compose -f docker-compose.test.yml down
+
+# Check status
+docker compose -f docker-compose.test.yml ps
+
+# Connect to test database (for debugging)
+PGPASSWORD=sqlnotebook123 psql -h localhost -p 5435 -U sqlnotebook_test -d sqlnotebook_test
+
+# Reset test database (delete all data)
+docker compose -f docker-compose.test.yml down -v
+docker compose -f docker-compose.test.yml up -d
+```
+
+### Integration Test Details
+
+The integration tests (`SQLNotebookTests/DatabaseIntegrationTests.swift`) verify:
+
+- ✅ **NUMERIC type decoding** - PostgreSQL NUMERIC columns correctly decode to Swift Double
+- ✅ **NULL value handling** - NULL values decode to `CellValue.null`
+- ✅ **Column type enrichment** - Column metadata includes precision, scale, length
+- ✅ **Negative numbers** - Negative NUMERIC values decode correctly
+- ✅ **Zero values** - Zero values decode accurately
+- ✅ **Large numbers** - Very large NUMERIC values (up to 30 digits)
+- ✅ **TIMESTAMP columns** - Time zone information preserved
+- ✅ **Complex queries** - JOIN queries handle gracefully
+
+Tests create temporary tables, run queries, then clean up automatically.
+
+### Troubleshooting Test Database
+
+**Tests failing with connection errors:**
+```bash
+# Verify test database is running
+docker ps | grep sqlnotebook-postgres-test
+
+# Check container is healthy (should show "healthy")
+docker ps | grep sqlnotebook-postgres-test
+
+# View logs for errors
+docker compose -f docker-compose.test.yml logs postgres-test
+```
+
+**Port 5435 already in use:**
+```bash
+# Find what's using the port
+lsof -i :5435
+
+# Stop the conflicting service, or edit docker-compose.test.yml to use different port
+```
+
+**Tests timeout:**
+- Ensure test database is healthy: `docker ps` should show `(healthy)` not `(health: starting)`
+- Check network connectivity: `PGPASSWORD=sqlnotebook123 psql -h localhost -p 5435 -U sqlnotebook_test -d sqlnotebook_test -c "SELECT 1;"`
+
+---
+
 ## 🔮 Coming Soon
 
 - **MySQL:** Similar Docker setup
@@ -282,6 +436,8 @@ docker compose down -v && docker compose up -d
 
 ## 📝 Notes
 
+- Development DB: Port 5433, pre-loaded with sample data
+- Test DB: Port 5435, blank database for automated tests
 - Data stored in Docker volumes (persists across restarts)
 - Default credentials for **development only**
 - Optimized for development, not production
