@@ -134,8 +134,8 @@ struct CellView: View {
       Button(action: onRun) {
         if cell.isRunning {
           ProgressView()
+            .controlSize(.small)
             .tint(.accent)
-            .scaleEffect(0.7)
             .frame(width: 26, height: 26)
         } else {
           Image(systemName: "play.fill")
