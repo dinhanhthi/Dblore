@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (10 of 13 sections - Theme Toggle now complete)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (11 of 13 sections - Result Display & Theme Toggle complete)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - 🔒 **Phase 6: Security & Safety** - PARTIAL (Some key features complete, some in-progress)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -13,7 +13,7 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 10 of 13 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 11 of 13 sections)
 
 ### 4.2 Header Actions - PARTIAL
 - [x] Wire up "+ Code" button
@@ -46,11 +46,13 @@
 - [x] Show unsaved indicator in footer
 - [ ] Prompt to save on close if unsaved
 
-### 4.8 Result Display Controls - NOT STARTED
-- [ ] Add show/hide toggle button in cell sidebar
-- [ ] Implement collapse/expand animation
-- [ ] Persist result visibility state per cell
-- [ ] Visual indicator (chevron icon) for collapsed state
+### 4.8 Result Display Controls - COMPLETE
+- [x] Add show/hide toggle button in cell sidebar
+- [x] Implement collapse/expand animation
+- [x] Persist result visibility state per cell (isResultVisible in NotebookCell.swift)
+- [x] Visual indicator (chevron icon) for collapsed state
+- [x] Header menu: "Show All Results" and "Hide All Results" buttons
+- [x] View model methods: toggleResultVisibility, hideAllResults, showAllResults
 
 ### 4.11 File Optimization - NOT STARTED
 - [ ] Detect large file size (> 10MB)
@@ -210,25 +212,31 @@ A traditional SQL editor mode with single editor and result panel below.
 
 ## Code-Level TODOs Found
 
-Items marked as `// TODO:` or `// NOTE:` in the codebase that should be tracked:
+Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
-### To Implement
-1. **Keychain Storage for Passwords** (`DataModelTests.swift:301`)
+### Active Code TODOs (6 items found)
+
+1. **User Notifications for Value Editing (3 instances)** - HIGH PRIORITY
+   - `NotebookViewModel+Sidebar.swift:157` - Show alert when JSON edit fails
+   - `NotebookViewModel+Sidebar.swift:291` - Show success toast after cell value update
+   - `NotebookViewModel+Sidebar.swift:294` - Show error alert if value edit fails
+   - Status: Related to Phase 6.0.4 validation and user feedback
+
+2. **Future JSON Value Update** - LOW PRIORITY
+   - `NotebookViewModel+Sidebar.swift:169` - In the future, update actual database with JSON edits
+   - Status: Currently only copies to clipboard
+
+3. **Keychain Storage for Passwords** - SECURITY ISSUE
+   - `DataModelTests.swift:301`
    - Passwords should not be stored in .sqlnb JSON files
    - Should use Keychain for secure storage
+   - Status: Part of Phase 6 Security
 
-2. **Schema Primary Key Detection** (`DatabaseConnectionManager+Schema.swift:101`)
+4. **Schema Primary Key Detection** - DATA ACCURACY
+   - `DatabaseConnectionManager+Schema.swift:101`
    - Currently sets primary keys to false
    - Should detect primary keys from database constraints
-
-3. **User Notifications for Value Editing** (`NotebookViewModel+Sidebar.swift:157, 169, 287, 290`)
-   - Show alert when cell value editing succeeds
-   - Show error alert when cell value editing fails
-   - Show success notification after value update
-
-4. **CommandTag from PostgresNIO** (`DatabaseConnectionManager+QueryExecution.swift:39, 350`)
-   - Waiting for PostgresNIO to expose commandTag via onMetadata callback
-   - Currently not exposed in version 1.30.1
+   - Status: Related to Phase 6.0.4 row identification
 
 ---
 
@@ -248,22 +256,24 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 ## Next Priorities
 
 ### CURRENT: Complete Phase 4 Polish (Medium Effort)
-Priority UI enhancements (5 of 6 remaining):
+Priority UI enhancements (4 of 6 remaining):
 
-1. **Result Show/Hide (4.8)** - Collapse/expand results per cell
-2. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
-3. **Drag and Drop (4.4)** - Reorder cells
-4. **Save Prompt (4.7)** - Warn before closing unsaved
-5. **Cell Execution Queue (4.2)** - Visual queue for batch execution
+1. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
+2. **Drag and Drop (4.4)** - Reorder cells via UI
+3. **Save Prompt (4.7)** - Warn before closing unsaved
+4. **Cell Execution Queue (4.2)** - Visual queue for batch execution
 
-### COMPLETED: Phase 4.13 Theme Toggle
-- Dark/Light/System mode preference now fully implemented and working
+### RECENTLY COMPLETED: Phase 4.8 Result Show/Hide & Phase 4.13 Theme Toggle
+- Result visibility toggle now fully implemented with isResultVisible property
+- Show/Hide All Results menu buttons in header
+- Dark/Light/System mode preference fully implemented and working
 
 ### THEN: Complete Phase 6 Security (High Priority)
 1. **Value Format Validation (6.0.4)** - Validate integer, uuid, jsonb, etc.
 2. **Confirmation Dialogs (6.0.3)** - Warn before DELETE/UPDATE
-3. **Read-Only Mode** - Prevent accidental modifications
-4. **Connection Retry Logic (6.0.2)** - Exponential backoff
+3. **User Notifications (6.0.4)** - Toast for cell value edits
+4. **Read-Only Mode** - Prevent accidental modifications
+5. **Connection Retry Logic (6.0.2)** - Exponential backoff
 
 ### THEN: Phase 7 Integration Tests & Phase 8 Editor Mode
 Complete test coverage and implement the final editor mode phase.
@@ -275,9 +285,12 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 
 ## Verification Report (Latest Scan)
 
-**Date:** 2026-01-03
+**Date:** 2026-01-04
 **Verified By:** Claude Code - TODO Manager Agent
-**Key Change:** Phase 4.13 Theme Toggle confirmed complete
+**Key Changes:**
+- Phase 4.8 Result Display Controls confirmed COMPLETE (isResultVisible property, menu buttons)
+- Phase 4.13 Theme Toggle remains COMPLETE
+- Recent commits: refactoring (removed CustomTooltip), optimizations (scaleEffect → controlSize)
 
 ### Verified Complete Features
 
@@ -297,7 +310,8 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Settings panel with keyboard shortcut reference
 - Auto-save functionality (tracks unsaved state with `lastSaved` indicator)
 - Footer showing connection status, version, and save time
-- Theme Toggle: System/Light/Dark mode preference with NSAppearance application
+- Theme Toggle: System/Light/Dark mode preference (AppSettings.swift:82-86, AppearanceModifier.swift)
+- Result Display Controls: isResultVisible property in NotebookCell, Show/Hide All menu buttons (HeaderView.swift:59-70), toggle/show/hide methods in NotebookViewModel+CellManagement.swift
 
 **Phase 6 Completed Tasks**
 - SSL/TLS connection modes (all 6 PostgreSQL modes supported)
@@ -320,12 +334,11 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 
 ### Verified Incomplete Features
 
-**Phase 4 - Not Started/In Progress**
-- Cell execution queue system: Not implemented
-- Drag and drop reordering: Not implemented
+**Phase 4 - Not Started/In Progress** (4 of 6 remaining)
+- Drag and drop reordering: Not implemented (moveCell exists but no UI for drag handles)
 - Comment/uncomment (Cmd+/): Not implemented
-- Result show/hide toggle: Not implemented
 - Save on close prompt: Not implemented
+- Cell execution queue system: Not implemented (no visual queue UI)
 - File optimization (compression, large file handling): Not implemented
 - Logging system (AppLogger): Not implemented
 
