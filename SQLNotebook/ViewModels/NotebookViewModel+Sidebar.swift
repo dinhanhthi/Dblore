@@ -153,8 +153,7 @@ extension NotebookViewModel {
       (try? JSONSerialization.jsonObject(with: data)) != nil
     else {
       // Show error - invalid JSON
-      print("Invalid JSON format")
-      // TODO: Show alert to user
+      showToast("Invalid JSON format. Please check your syntax.", type: .error)
       return
     }
 
@@ -165,7 +164,8 @@ extension NotebookViewModel {
     // Update the sidebar content with the new JSON value
     rightSidebarContent = .jsonViewer(json: newJSON, path: originalPath)
 
-    print("JSON edited and copied to clipboard")
+    // Show success message
+    showToast("JSON copied to clipboard", type: .success)
     // TODO: In the future, this could update the actual database value
   }
 
@@ -261,7 +261,7 @@ extension NotebookViewModel {
 
     // If we have table name and row data, attempt to update database (use resolved values)
     if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty {
-      Task { @MainActor [connectionManager] in
+      Task { @MainActor [connectionManager, weak self] in
         do {
           // Fetch primary key columns if we don't have them yet
           var pkColumns = resolvedPrimaryKeyColumns
@@ -279,25 +279,27 @@ extension NotebookViewModel {
             rowIdentifier: rowIdentifier
           )
 
-          print(
-            "Successfully updated '\(columnName)' in table '\(tableName)'. Rows affected: \(rowsAffected)"
+          // Show success notification
+          self?.showToast(
+            "Updated '\(columnName)' in '\(tableName)' (\(rowsAffected) row\(rowsAffected == 1 ? "" : "s"))",
+            type: .success
           )
 
           // Re-run the cell to refresh the table view with updated data
           if let cellId = cellId {
-            await runCell(id: cellId)
+            await self?.runCell(id: cellId)
           }
-
-          // TODO: Show success notification to user
         } catch {
-          print("Failed to update database: \(error.localizedDescription)")
-          // TODO: Show error alert to user
+          // Show error notification
+          self?.showToast(
+            "Failed to update '\(columnName)': \(error.localizedDescription)",
+            type: .error
+          )
         }
       }
     } else {
-      print(
-        "Cell value for '\(columnName)' edited and copied to clipboard (no database update - missing table info)"
-      )
+      // Show info message when only copying to clipboard
+      showToast("Value copied to clipboard", type: .info)
     }
   }
 }
