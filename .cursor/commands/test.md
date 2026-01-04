@@ -4,6 +4,12 @@ Manages testing aspects for SQLNotebook - creates test targets, writes test case
 
 ## Testing Framework Strategy
 
+**IMPORTANT - Use Internet Search First:**
+- **ALWAYS** search for latest Swift Testing framework features and best practices
+- Look for latest XCTest patterns and macOS UI testing techniques
+- Verify compatibility between Swift Testing framework versions and Swift 6.2+
+- Search for latest testing patterns for async/await, actors, and concurrency
+
 **IMPORTANT**: This project uses TWO testing frameworks:
 
 1. **Swift Testing** (primary for unit & integration tests)

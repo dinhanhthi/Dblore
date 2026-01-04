@@ -1,7 +1,7 @@
 ---
 name: summarizer
 description: Summarizes chat conversations about problems and solutions into concise, meaningful summaries for quick reference. Only activate when explicitly requested by the user.
-tools: Read, Write, Edit, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, WebSearch
 model: haiku
 ---
 

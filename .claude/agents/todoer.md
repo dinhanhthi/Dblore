@@ -1,7 +1,7 @@
 ---
 name: todoer
 description: Verifies implementation status and updates TODO.md - DOES NOT implement features, only tracks completion
-tools: Read, Write, Edit, Glob, Grep, TodoWrite
+tools: Read, Write, Edit, Glob, Grep, TodoWrite, WebSearch
 model: haiku
 ---
 
