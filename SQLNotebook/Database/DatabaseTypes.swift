@@ -141,7 +141,8 @@ extension DatabaseConnectionManager {
   /// Parse a cell value from PostgresCell
   func parseCellValue(from cell: PostgresCell) -> CellValue {
     // Check for NULL first
-    guard cell.bytes != nil else {
+    // PostgresNIO represents NULL as nil bytes
+    guard let bytes = cell.bytes, bytes.readableBytes > 0 else {
       return .null
     }
 
@@ -179,8 +180,14 @@ extension DatabaseConnectionManager {
 
     case .numeric:
       // PostgresNIO returns NUMERIC as Decimal (Foundation.Decimal) in binary format
-      // Decode as Decimal first, then convert to Double for display
+      // NOTE: cell.bytes != nil check above already handles NULL cases
+      // So we only reach here if there's actual data to decode
       if let decimalValue = try? cell.decode(Decimal.self, context: .default) {
+        // Check for NaN - this can happen with special values or edge cases
+        // PostgreSQL NUMERIC type doesn't support NaN, but we check anyway
+        if decimalValue.isNaN {
+          return .null
+        }
         // Convert Decimal to Double
         return .double(Double(truncating: decimalValue as NSDecimalNumber))
       }
@@ -191,6 +198,9 @@ extension DatabaseConnectionManager {
         }
         return .string(value)
       }
+      // If decode fails and we reach here, it might be NULL
+      // (though this should have been caught by bytes check above)
+      return .null
 
     case .money:
       // Money type should be decoded as String first, then parsed

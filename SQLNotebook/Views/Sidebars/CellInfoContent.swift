@@ -18,6 +18,7 @@ struct CellInfoContent: View {
   @State private var editedValue: String = ""
   @State private var editedBoolValue: Bool = false
   @State private var originalBoolValue: Bool = false
+  @State private var validationError: String?
   @FocusState private var isTextEditorFocused: Bool
 
   var body: some View {
@@ -73,6 +74,7 @@ struct CellInfoContent: View {
               useSymbolEffect: false,
               action: saveEdit
             )
+            .disabled(validationError != nil)
           } else if isBooleanValue {
             // For boolean: only show Save button if value changed
             if hasBooleanValueChanged {
@@ -132,18 +134,42 @@ struct CellInfoContent: View {
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       } else if isEditing {
         // Text editor for other types (only in edit mode)
-        TextEditor(text: $editedValue)
-          .font(.mono)
-          .foregroundColor(.foreground)
-          .scrollContentBackground(.hidden)
-          .padding(.vertical, Spacing.sm)
-          .padding(.leading, Spacing.xs)
-          .padding(.trailing, 0)
-          .background(Color.inputBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-          .frame(maxHeight: .infinity)
-          .focused($isTextEditorFocused)
-          .focusedValue(\.isCellValueEditing, isEditing)
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          TextEditor(text: $editedValue)
+            .font(.mono)
+            .foregroundColor(.foreground)
+            .scrollContentBackground(.hidden)
+            .padding(.vertical, Spacing.sm)
+            .padding(.leading, Spacing.xs)
+            .padding(.trailing, 0)
+            .background(Color.inputBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+            .overlay(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .stroke(validationError != nil ? Color.destructive : Color.border, lineWidth: 1)
+            )
+            .frame(maxHeight: .infinity)
+            .focused($isTextEditorFocused)
+            .focusedValue(\.isCellValueEditing, isEditing)
+            .onChange(of: editedValue) { _, newValue in
+              validateInput(newValue)
+            }
+
+          // Validation error message
+          if let error = validationError {
+            HStack(spacing: Spacing.xs) {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.destructive)
+
+              Text(error)
+                .font(.caption)
+                .foregroundColor(.destructive)
+            }
+            .padding(.top, Spacing.sm)
+            .padding(.horizontal, Spacing.xs)
+          }
+        }
       } else {
         // Read-only view for non-boolean types
         ScrollView {
@@ -204,6 +230,11 @@ struct CellInfoContent: View {
     editedValue = value.fullString
     isEditing = true
     isTextEditorFocused = true
+    validationError = nil  // Reset validation error
+
+    // Validate the initial value to catch any issues
+    validateInput(editedValue)
+
     NotificationCenter.default.post(name: .cellValueEditingStarted, object: nil)
   }
 
@@ -218,10 +249,14 @@ struct CellInfoContent: View {
     isEditing = false
     isTextEditorFocused = false
     editedValue = ""
+    validationError = nil
     NotificationCenter.default.post(name: .cellValueEditingEnded, object: nil)
   }
 
   private func saveEdit() {
+    // Don't save if validation fails
+    guard validationError == nil else { return }
+
     // For boolean values, convert toggle state to string
     let valueToSave = isBooleanValue ? String(editedBoolValue) : editedValue
 
@@ -229,6 +264,7 @@ struct CellInfoContent: View {
     isEditing = false
     isTextEditorFocused = false
     editedValue = ""
+    validationError = nil
     NotificationCenter.default.post(name: .cellValueEditingEnded, object: nil)
   }
 
@@ -243,6 +279,14 @@ struct CellInfoContent: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
       isCopied = false
     }
+  }
+
+  // MARK: - Validation
+
+  private func validateInput(_ input: String) {
+    // Use CellValueValidator helper
+    let result = CellValueValidator.validate(input, for: value)
+    validationError = result.errorMessage
   }
 }
 
