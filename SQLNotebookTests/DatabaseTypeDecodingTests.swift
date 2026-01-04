@@ -8,6 +8,7 @@ import Foundation
 import PostgresNIO
 
 @Suite("Database Type Decoding Tests")
+@MainActor
 struct DatabaseTypeDecodingTests {
 
     // MARK: - NUMERIC Value Decoding Tests

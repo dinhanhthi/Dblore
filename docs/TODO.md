@@ -138,6 +138,7 @@
 - [x] Use primary key columns for UPDATE WHERE clause
 - [x] Use ctid (PostgreSQL) for row identification
 - [x] Boolean toggle UI for value editing ✅
+- [x] User Notifications for Value Editing ✅ - JSON edit validation alerts, database update feedback toast alerts
 - [ ] **Value Format Validation** - Validate integer, uuid, jsonb, date, timestamp types
   - [ ] Check modified value format matches cell type when in edit mode
   - [ ] Display validation error/warning in footer sidebar
@@ -214,13 +215,16 @@ A traditional SQL editor mode with single editor and result panel below.
 
 Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
-### Active Code TODOs (6 items found)
+### Active Code TODOs (5 items found)
 
-1. **User Notifications for Value Editing (3 instances)** - HIGH PRIORITY
-   - `NotebookViewModel+Sidebar.swift:157` - Show alert when JSON edit fails
-   - `NotebookViewModel+Sidebar.swift:291` - Show success toast after cell value update
-   - `NotebookViewModel+Sidebar.swift:294` - Show error alert if value edit fails
-   - Status: Related to Phase 6.0.4 validation and user feedback
+1. **User Notifications for Value Editing** - COMPLETE ✅
+   - [NotebookViewModel+Sidebar.swift:156](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L156) - JSON edit validation alert (error)
+   - [NotebookViewModel+Sidebar.swift:168](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L168) - JSON edit success toast
+   - [NotebookViewModel+Sidebar.swift:283-286](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L283) - Cell value update success toast
+   - [NotebookViewModel+Sidebar.swift:294-296](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L294) - Cell value update error toast
+   - [NotebookViewModel+Sidebar.swift:302](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L302) - Clipboard copy info toast
+   - Implementation Details: ToastView.swift (ToastMessage with success/error/info/warning types), NotebookViewModel.showToast() method with auto-dismiss timer
+   - Status: VERIFIED COMPLETE - Part of Phase 6.0.4 validation and user feedback
 
 2. **Future JSON Value Update** - LOW PRIORITY
    - `NotebookViewModel+Sidebar.swift:169` - In the future, update actual database with JSON edits
@@ -242,6 +246,9 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
 ## Recent Completions
 
+### User Notifications for Value Editing ✅ (Phase 6.0.4) - NEWLY VERIFIED
+Toast notifications for JSON edit validation (error), JSON edit success, database update success/error, and clipboard copy (info). Implemented with ToastView.swift (ToastMessage enum), NotebookViewModel.showToast() method with 4-second auto-dismiss timer. Shows in bottom-right with colored icons (checkmark=success, xmark=error, info=info circle) and borders.
+
 ### Boolean Toggle UI for Value Editing ✅ (Phase 6.0.4)
 Toggle slider for boolean value editing in right sidebar. User clicks toggle instead of typing "true"/"false". Implemented in [CellInfoContent.swift](SQLNotebook/Views/Sidebars/CellInfoContent.swift).
 
@@ -255,25 +262,41 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 
 ## Next Priorities
 
-### CURRENT: Complete Phase 4 Polish (Medium Effort)
+### CURRENT: Complete Phase 6 Security (High Priority)
+Security and data safety enhancements (completing Phase 6.0.4):
+
+1. **Value Format Validation (6.0.4)** - Validate integer, uuid, jsonb, date, timestamp types
+   - Check modified value format matches cell type when in edit mode
+   - Display validation error/warning in UI
+   - Disable "save" button when validation fails
+   - Effort: MEDIUM (requires type checking logic)
+
+2. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
+   - Modal dialog showing query and row count affected
+   - Warn users of destructive operations
+   - Effort: MEDIUM (UI + state management)
+
+3. **Read-Only Mode (6.0.3)** - Prevent accidental modifications
+   - Add read-only toggle in connection settings
+   - Disable edit/delete functionality in read-only mode
+   - Effort: MEDIUM (requires permission checks across views)
+
+4. **Connection Retry Logic (6.0.2)** - Exponential backoff for failed connections
+   - Auto-retry with delays (1s, 2s, 4s, 8s, 16s max)
+   - User notification on retry attempts
+   - Effort: SMALL (connection manager enhancement)
+
+### RECENTLY COMPLETED PHASE 6.0.4 ITEMS:
+- Boolean toggle UI for value editing
+- User Notifications (Toast alerts for JSON edit, database update, clipboard copy)
+
+### THEN: Complete Phase 4 Polish (Medium Effort)
 Priority UI enhancements (4 of 6 remaining):
 
 1. **Comment/Uncomment (4.6)** - `Cmd+/` shortcut
 2. **Drag and Drop (4.4)** - Reorder cells via UI
 3. **Save Prompt (4.7)** - Warn before closing unsaved
 4. **Cell Execution Queue (4.2)** - Visual queue for batch execution
-
-### RECENTLY COMPLETED: Phase 4.8 Result Show/Hide & Phase 4.13 Theme Toggle
-- Result visibility toggle now fully implemented with isResultVisible property
-- Show/Hide All Results menu buttons in header
-- Dark/Light/System mode preference fully implemented and working
-
-### THEN: Complete Phase 6 Security (High Priority)
-1. **Value Format Validation (6.0.4)** - Validate integer, uuid, jsonb, etc.
-2. **Confirmation Dialogs (6.0.3)** - Warn before DELETE/UPDATE
-3. **User Notifications (6.0.4)** - Toast for cell value edits
-4. **Read-Only Mode** - Prevent accidental modifications
-5. **Connection Retry Logic (6.0.2)** - Exponential backoff
 
 ### THEN: Phase 7 Integration Tests & Phase 8 Editor Mode
 Complete test coverage and implement the final editor mode phase.
@@ -288,6 +311,9 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 **Date:** 2026-01-04
 **Verified By:** Claude Code - TODO Manager Agent
 **Key Changes:**
+- Phase 6.0.4 User Notifications for Value Editing VERIFIED COMPLETE (ToastView.swift, NotebookViewModel.showToast())
+- Toast system shows error/success/info/warning types with proper icons and colors
+- All 5 notification points verified: JSON validation error, JSON success, DB update success/error, clipboard info
 - Phase 4.8 Result Display Controls confirmed COMPLETE (isResultVisible property, menu buttons)
 - Phase 4.13 Theme Toggle remains COMPLETE
 - Recent commits: refactoring (removed CustomTooltip), optimizations (scaleEffect → controlSize)
@@ -320,8 +346,10 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Query modification detection (SELECT vs UPDATE/DELETE/INSERT)
 - Primary key column tracking for UPDATE operations
 - PostgreSQL ctid row identification
-- Boolean toggle UI for value editing
+- Boolean toggle UI for value editing (CellInfoContent.swift)
+- User Notifications for Value Editing (ToastView.swift with error/success/info types)
 - Database schema loading with column info
+- Toast notification system: JSON edit validation alerts, database update feedback (ToastMessage enum, NotebookViewModel.showToast() method)
 
 **Phase 7 Completed Tasks**
 - Unit test infrastructure

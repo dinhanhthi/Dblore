@@ -7,6 +7,7 @@ import Testing
 import Foundation
 
 @Suite("Database Query Execution Tests")
+@MainActor
 struct DatabaseQueryExecutionTests {
 
     // MARK: - LIMIT Value Replacement Tests

@@ -10,6 +10,7 @@ import Testing
 import PostgresNIO
 
 @Suite("PostgresNIO Integration")
+@MainActor
 struct SQLNotebookTests {
 
     @Test("PostgresNIO dependency is available")
