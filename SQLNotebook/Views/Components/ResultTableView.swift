@@ -14,6 +14,10 @@ struct ResultTableView: View {
   @State private var hoveredRow: Int?
   @State private var resizingColumn: String?
   @State private var resizeStartWidth: CGFloat = 0
+  @State private var headerScrollPosition: ScrollPosition = ScrollPosition()
+  @State private var contentScrollPosition: ScrollPosition = ScrollPosition()
+  @State private var isContentScrolledByUser: Bool = false
+  @State private var isHeaderScrolledByUser: Bool = false
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -46,16 +50,36 @@ struct ResultTableView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Single ScrollView with dynamic axes
-      // Using VStack instead of LazyVStack to prevent nested scroll crashes
-      // See SCROLL_CRASH_FIX.md for details
-      ScrollView(scrollAxes) {
-        VStack(alignment: .leading, spacing: 0) {
-          // Header row (stays at top)
-          headerRow
-            .zIndex(1)
-            .background(Color.tableHeaderBackground)
+      // Custom header pinning solution (Option B)
+      // Header in separate ScrollView that syncs with content via onScrollGeometryChange
+      ScrollView(.horizontal, showsIndicators: false) {
+        headerRow
+          .background(Color.tableHeaderBackground)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .frame(height: headerHeight)
+      .scrollPosition($headerScrollPosition)
+      .onScrollGeometryChange(for: CGFloat.self) { geometry in
+        // Track header horizontal scroll offset
+        geometry.contentOffset.x + geometry.contentInsets.leading
+      } action: { oldValue, newValue in
+        // Sync content when header scrolls
+        guard oldValue != newValue else { return }
+        if !isHeaderScrolledByUser {
+          return  // Avoid feedback loop
+        }
+        contentScrollPosition.scrollTo(x: newValue)
+      }
+      .onScrollPhaseChange { _, newPhase in
+        // Track when user is actively scrolling header
+        isHeaderScrolledByUser = newPhase.isScrolling
+      }
 
+      // Content ScrollView
+      // Using VStack instead of LazyVStack to prevent nested scroll crashes
+      // See SCROLL_CRASH_FIX.md and RESULT_VISIBILITY_CRASH_FIX.md for details
+      ScrollView(scrollAxes, showsIndicators: true) {
+        VStack(alignment: .leading, spacing: 0) {
           // Data rows - limited to maxRowsToRender
           ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
             dataRow(row: row, rowIndex: rowIndex)
@@ -69,8 +93,24 @@ struct ResultTableView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .scrollBounceBehavior(.basedOnSize)
+      .scrollPosition($contentScrollPosition)
+      .onScrollGeometryChange(for: CGFloat.self) { geometry in
+        // Track horizontal scroll offset
+        geometry.contentOffset.x + geometry.contentInsets.leading
+      } action: { oldValue, newValue in
+        // Sync header scroll when content scrolls
+        guard oldValue != newValue else { return }
+        if !isContentScrolledByUser {
+          return  // Avoid feedback loop
+        }
+        headerScrollPosition.scrollTo(x: newValue)
+      }
+      .onScrollPhaseChange { _, newPhase in
+        // Track when user is actively scrolling content
+        isContentScrolledByUser = newPhase.isScrolling
+      }
       .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
-      .frame(maxHeight: AppSettings.shared.maxResultHeight)
+      .frame(maxHeight: AppSettings.shared.maxResultHeight - headerHeight)
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
