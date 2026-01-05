@@ -351,11 +351,27 @@ Complete test coverage and implement the final editor mode phase.
 
 ## Verification Report (Latest Scan)
 
-**Date:** 2026-01-04 (Final Comprehensive Scan)
+**Date:** 2026-01-05 (Updated Comprehensive Scan)
 **Verified By:** Claude Code - TODO Manager Agent
-**Git HEAD:** b92637f - "fix test and trigger again on push github action"
+**Git HEAD:** 1aef037 - "fix: primary key is not saved in .sqlnb file" (current main)
 
 ### Verification Results Summary
+
+**RECENT COMPLETIONS (Latest Session - 2026-01-05):**
+- ✅ **Primary Key Persistence in .sqlnb Files** - Git commit 1aef037
+  - `primaryKeyColumns: [String]` property in CellResult (NotebookCell.swift:57)
+  - Stored in Codable JSON when saving .sqlnb files
+  - Properly loaded when opening saved notebooks
+
+- ✅ **Crash Fix: Header Preservation in Result Table** - Git commit 844adb9
+  - Changed from LazyVStack to VStack in ResultTableView (ResultTableView.swift:79)
+  - Prevents nested scroll crashes
+  - Column header now correctly fixed when scrolling
+
+- ✅ **Type Enrichment for Columns in Left Sidebar** - Git commit 8003795
+  - Column type displayed next to column name (LeftSidebarView.swift:260)
+  - Primary key indicator (key icon) shown for PK columns (LeftSidebarView.swift:246-248)
+  - Type displayed as uppercase (e.g., "INTEGER", "VARCHAR", "TEXT")
 
 **FULLY VERIFIED COMPLETE (Implementation confirmed in codebase):**
 - ✅ Phase 4.8 Result Display Controls
