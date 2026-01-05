@@ -2,107 +2,534 @@
   "cells" : [
     {
       "cellType" : "sql",
-      "content" : "select * from document ORDER BY id limit 10;",
-      "executionCount" : 9,
-      "id" : "FEB11389-E756-4DD0-A667-EC293FD9A1A0",
+      "content" : "select * from orders limit 100;",
+      "executionCount" : 1,
+      "id" : "1BEE5C97-4BC6-4A95-965D-868E95F3667F",
       "result" : {
         "columns" : [
           {
-            "name" : "id",
-            "type" : "INTEGER"
+            "name" : "order_id",
+            "type" : "INTEGER(32,0)"
           },
           {
-            "name" : "text",
-            "type" : "TEXT"
+            "name" : "customer_id",
+            "type" : "INTEGER(32,0)"
           },
           {
-            "name" : "bot",
-            "type" : "VARCHAR"
+            "name" : "order_date",
+            "type" : "TIMESTAMP(6) W\/O TZ"
           },
           {
-            "name" : "create_time",
-            "type" : "TIMESTAMP"
-          },
-          {
-            "name" : "name",
-            "type" : "VARCHAR"
+            "name" : "total_amount",
+            "type" : "NUMERIC(10,2)"
           },
           {
             "name" : "status",
-            "type" : "VARCHAR"
+            "type" : "CHARACTER VARYING(20)"
           },
           {
-            "name" : "hash",
-            "type" : "VARCHAR"
+            "name" : "shipping_address",
+            "type" : "JSONB"
           },
           {
-            "name" : "error",
-            "type" : "VARCHAR"
-          },
-          {
-            "name" : "productreference",
-            "type" : "VARCHAR"
-          },
-          {
-            "name" : "sourcetype",
-            "type" : "VARCHAR"
-          },
-          {
-            "name" : "metadata",
-            "type" : "VARCHAR"
-          },
-          {
-            "name" : "priority",
-            "type" : "DOUBLE PRECISION"
+            "name" : "notes",
+            "type" : "TEXT"
           }
         ],
-        "executionTime" : 0.0025269985198974609,
-        "rowCount" : 10,
+        "executionTime" : 0.012016057968139648,
+        "rowCount" : 30,
         "rows" : [
+          [
+            {
+              "type" : "int",
+              "value" : 1
+            },
+            {
+              "type" : "int",
+              "value" : 1
+            },
+            {
+              "type" : "date",
+              "value" : "2024-01-15T10:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 1329.98
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"10001\", \"city\": \"New York\", \"state\": \"NY\", \"street\": \"123 Main St\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 3
+            },
+            {
+              "type" : "int",
+              "value" : 2
+            },
+            {
+              "type" : "date",
+              "value" : "2024-01-18T09:45:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 429.98000000000002
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"90001\", \"city\": \"Los Angeles\", \"state\": \"CA\", \"street\": \"456 Oak Ave\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 4
+            },
+            {
+              "type" : "int",
+              "value" : 3
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-05T16:20:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 1699.97
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"60601\", \"city\": \"Chicago\", \"state\": \"IL\", \"street\": \"789 Pine Rd\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 5
+            },
+            {
+              "type" : "int",
+              "value" : 4
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-10T11:00:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 79.97999999999999
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"77001\", \"city\": \"Houston\", \"state\": \"TX\", \"street\": \"321 Elm St\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 6
+            },
+            {
+              "type" : "int",
+              "value" : 5
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-15T13:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 299.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"85001\", \"city\": \"Phoenix\", \"state\": \"AZ\", \"street\": \"654 Maple Dr\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 7
+            },
+            {
+              "type" : "int",
+              "value" : 6
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-18T10:15:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 249.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"19101\", \"city\": \"Philadelphia\", \"state\": \"PA\", \"street\": \"987 Birch Ln\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 8
+            },
+            {
+              "type" : "int",
+              "value" : 7
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-22T15:45:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 159.97
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"78201\", \"city\": \"San Antonio\", \"state\": \"TX\", \"street\": \"147 Cedar Ct\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 9
+            },
+            {
+              "type" : "int",
+              "value" : 8
+            },
+            {
+              "type" : "date",
+              "value" : "2024-02-25T09:00:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 1949.9599999999998
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"92101\", \"city\": \"San Diego\", \"state\": \"CA\", \"street\": \"258 Spruce Way\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 10
+            },
+            {
+              "type" : "int",
+              "value" : 9
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-01T12:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 549.97000000000003
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"75201\", \"city\": \"Dallas\", \"state\": \"TX\", \"street\": \"369 Willow Pl\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 11
+            },
+            {
+              "type" : "int",
+              "value" : 10
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-05T14:00:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 89.97999999999999
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"95101\", \"city\": \"San Jose\", \"state\": \"CA\", \"street\": \"741 Ash Blvd\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 12
+            },
+            {
+              "type" : "int",
+              "value" : 2
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-08T11:20:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 299.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"90001\", \"city\": \"Los Angeles\", \"state\": \"CA\", \"street\": \"456 Oak Ave\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 13
+            },
+            {
+              "type" : "int",
+              "value" : 3
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-10T16:45:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 149.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"60601\", \"city\": \"Chicago\", \"state\": \"IL\", \"street\": \"789 Pine Rd\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 14
+            },
+            {
+              "type" : "int",
+              "value" : 1
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-12T10:00:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 699.98000000000002
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"10001\", \"city\": \"New York\", \"state\": \"NY\", \"street\": \"123 Main St\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 15
+            },
+            {
+              "type" : "int",
+              "value" : 5
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-15T13:15:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 199.97999999999999
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"85001\", \"city\": \"Phoenix\", \"state\": \"AZ\", \"street\": \"654 Maple Dr\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 16
+            },
+            {
+              "type" : "int",
+              "value" : 11
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-16T09:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 179.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"78701\", \"city\": \"Austin\", \"state\": \"TX\", \"street\": \"111 Tech Blvd\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 17
+            },
+            {
+              "type" : "int",
+              "value" : 12
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-17T14:20:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 2079.9499999999998
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"98101\", \"city\": \"Seattle\", \"state\": \"WA\", \"street\": \"222 Innovation Dr\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
           [
             {
               "type" : "int",
               "value" : 18
             },
             {
-              "type" : "string",
-              "value" : "Question: What is the pricing?\nAnswer: xxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-NzS26OzQHWCtbpFaond"
+              "type" : "int",
+              "value" : 13
             },
             {
               "type" : "date",
-              "value" : "2024-06-03T09:42:15Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-18T10:15:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.20000000000000001
+              "value" : 89.969999999999999
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"80201\", \"city\": \"Denver\", \"state\": \"CO\", \"street\": \"333 Startup Ave\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
@@ -111,445 +538,692 @@
               "value" : 19
             },
             {
-              "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: xxxxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "-NzS26OzQHWCtbpFaond"
+              "type" : "int",
+              "value" : 14
             },
             {
               "type" : "date",
-              "value" : "2024-06-03T09:42:15Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-19T16:45:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.20000000000000001
+              "value" : 449.98000000000002
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"97201\", \"city\": \"Portland\", \"state\": \"OR\", \"street\": \"444 Valley Rd\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 33
+              "value" : 20
             },
             {
-              "type" : "string",
-              "value" : "thu nghiem"
-            },
-            {
-              "type" : "string",
-              "value" : "-NzTKBbHn17p_zXomZfY"
+              "type" : "int",
+              "value" : 15
             },
             {
               "type" : "date",
-              "value" : "2024-06-03T15:43:28Z"
-            },
-            {
-              "type" : "string",
-              "value" : "xxx"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-20T11:00:00Z"
             },
             {
               "type" : "double",
+              "value" : 159.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"84101\", \"city\": \"Salt Lake City\", \"state\": \"UT\", \"street\": \"555 Mountain Way\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 21
+            },
+            {
+              "type" : "int",
+              "value" : 16
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-21T13:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 679.96000000000004
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"55401\", \"city\": \"Minneapolis\", \"state\": \"MN\", \"street\": \"666 Lake St\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 22
+            },
+            {
+              "type" : "int",
+              "value" : 17
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-22T09:45:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 299.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"37201\", \"city\": \"Nashville\", \"state\": \"TN\", \"street\": \"777 River Rd\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 23
+            },
+            {
+              "type" : "int",
+              "value" : 18
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-23T15:20:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 1679.97
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"02101\", \"city\": \"Boston\", \"state\": \"MA\", \"street\": \"888 Harbor Ln\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 24
+            },
+            {
+              "type" : "int",
+              "value" : 19
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-24T10:30:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 234.95999999999998
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"33101\", \"city\": \"Miami\", \"state\": \"FL\", \"street\": \"999 Bridge St\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 25
+            },
+            {
+              "type" : "int",
+              "value" : 20
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-25T14:15:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 539.98000000000002
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"30301\", \"city\": \"Atlanta\", \"state\": \"GA\", \"street\": \"1010 Park Ave\"}"
+            },
+            {
+              "type" : "null"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 26
+            },
+            {
+              "type" : "int",
               "value" : 1
+            },
+            {
+              "type" : "date",
+              "value" : "2024-03-26T11:20:00Z"
+            },
+            {
+              "type" : "double",
+              "value" : 199.97999999999999
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"10001\", \"city\": \"New York\", \"state\": \"NY\", \"street\": \"123 Main St\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 621
+              "value" : 27
             },
             {
-              "type" : "string",
-              "value" : "Sample PDFThis is a simple PDF ﬁle. Fun fun fun.Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Phasellus facilisis odio sed mi. Curabitur suscipit. Nullam vel nisi. Etiam semper ipsum ut lectus. Proin aliquam, erat eget pharetra commodo, eros mi condimentum quam, sed commodo justo quam ut velit. Integer a erat. Cras laoreet ligula cursus enim. Aenean scelerisque velit et tellus. Vestibulum dictum aliquet sem. Nulla facilisi. Vestibulum accumsan ante vitae elit. Nulla erat dolor, blandit in, rutrum quis, semper pulvinar, enim. Nullam varius congue risus. Vivamus sollicitudin, metus ut interdum eleifend, nisi tellus pellentesque elit, tristique accumsan eros quam et risus. Suspendisse libero odio, mattis sit amet, aliquet eget, hendrerit vel, nulla. Sed vitae augue. Aliquam erat volutpat. Aliquam feugiat vulputate nisl. Suspendisse quis nulla pretium ante pretium mollis. Proin velit ligula, sagittis at, egestas a, pulvinar quis, nisl.Pellentesque sit amet lectus. Praesent pulvinar, nunc quis iaculis sagittis, justo quam lobortis tortor, sed vestibulum dui metus venenatis est. Nunc cursus ligula. Nulla facilisi. Phasellus ullamcorper consectetuer ante. Duis tincidunt, urna id condimentum luctus, nibh ante vulputate sapien, id sagittis massa orci ut enim. Pellentesque vestibulum convallis sem. Nulla consequat quam ut nisl. Nullam est. Curabitur tincidunt dapibus lorem. Proin velit turpis, scelerisque sit amet, iaculis nec, rhoncus ac, ipsum. Phasellus lorem arcu, feugiat eu, gravida eu, consequat molestie, ipsum. Nullam vel est ut ipsum volutpat feugiat. Aenean pellentesque.In mauris. Pellentesque dui nisi, iaculis eu, rhoncus in, venenatis ac, ante. Ut odio justo, scelerisque vel, facilisis non, commodo a, pede. Cras nec massa sit amet tortor volutpat varius. Donec lacinia, neque a luctus aliquet, pede massa imperdiet ante, at varius lorem pede sed sapien. Fusce erat nibh, aliquet in, eleifend eget, commodo eget, erat. Fusce consectetuer. Cras risus tortor, porttitor nec, tristique sed, convallis semper, eros. Fusce vulputate ipsum a mauris. Phasellus mollis. Curabitur sed urna. Aliquam nec sapien non nibh pulvinar convallis. Vivamus facilisis augue quis quam. Proin cursus aliquet metus. Suspendisse lacinia. Nulla at tellus ac turpis eleifend scelerisque. Maecenas a pede vitae enim commodo interdum. Donec odio. Sed sollicitudin dui vitae justo.Morbi elit nunc, facilisis a, mollis a, molestie at, lectus. Suspendisse eget mauris eu tellus molestie cursus. Duis ut magna at justo dignissim condimentum. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Vivamus varius. Ut sit amet diam suscipit mauris ornare aliquam. Sed varius. Duis arcu. Etiam tristique massa eget dui. Phasellus congue. Aenean est erat, tincidunt eget, venenatis quis, commodo at, quam."
-            },
-            {
-              "type" : "string",
-              "value" : "-Nzctb3UcI7jPUakm8xb"
+              "type" : "int",
+              "value" : 2
             },
             {
               "type" : "date",
-              "value" : "2024-06-05T16:56:10Z"
-            },
-            {
-              "type" : "string",
-              "value" : "sample.pdf"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "added"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-27T16:30:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.20000000000000001
+              "value" : 1869.9599999999998
+            },
+            {
+              "type" : "string",
+              "value" : "processing"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"90001\", \"city\": \"Los Angeles\", \"state\": \"CA\", \"street\": \"456 Oak Ave\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 622
+              "value" : 28
             },
             {
-              "type" : "string",
-              "value" : "custom file"
-            },
-            {
-              "type" : "string",
-              "value" : "-Nzctb3UcI7jPUakm8xb"
+              "type" : "int",
+              "value" : 3
             },
             {
               "type" : "date",
-              "value" : "2024-06-05T16:56:10Z"
-            },
-            {
-              "type" : "string",
-              "value" : "custom file"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-28T09:15:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.20000000000000001
+              "value" : 359.98000000000002
+            },
+            {
+              "type" : "string",
+              "value" : "shipped"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"60601\", \"city\": \"Chicago\", \"state\": \"IL\", \"street\": \"789 Pine Rd\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 623
+              "value" : 29
             },
             {
-              "type" : "string",
-              "value" : "Test edited!"
-            },
-            {
-              "type" : "string",
-              "value" : "-Nzctb3UcI7jPUakm8xb"
+              "type" : "int",
+              "value" : 11
             },
             {
               "type" : "date",
-              "value" : "2024-06-05T16:58:29Z"
-            },
-            {
-              "type" : "string",
-              "value" : "xxxzsasss"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-29T13:45:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.90000000000000002
+              "value" : 129.99000000000001
+            },
+            {
+              "type" : "string",
+              "value" : "pending"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"78701\", \"city\": \"Austin\", \"state\": \"TX\", \"street\": \"111 Tech Blvd\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 624
+              "value" : 30
             },
             {
-              "type" : "string",
-              "value" : "xxxxx testing"
-            },
-            {
-              "type" : "string",
-              "value" : "-Nzctb3UcI7jPUakm8xb"
+              "type" : "int",
+              "value" : 12
             },
             {
               "type" : "date",
-              "value" : "2024-06-05T16:58:29Z"
-            },
-            {
-              "type" : "string",
-              "value" : "xxx"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-03-30T10:00:00Z"
             },
             {
               "type" : "double",
-              "value" : 0.90000000000000002
+              "value" : 449.96999999999997
+            },
+            {
+              "type" : "string",
+              "value" : "delivered"
+            },
+            {
+              "type" : "json",
+              "value" : "{\"zip\": \"98101\", \"city\": \"Seattle\", \"state\": \"WA\", \"street\": \"222 Innovation Dr\"}"
+            },
+            {
+              "type" : "null"
             }
           ],
           [
             {
               "type" : "int",
-              "value" : 641
+              "value" : 31
             },
-            {
-              "type" : "string",
-              "value" : "111111"
-            },
-            {
-              "type" : "string",
-              "value" : "-NzhW3ByqZIZb8g7VGiM"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-06-06T14:27:01Z"
-            },
-            {
-              "type" : "string",
-              "value" : "cxxx"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "created"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 1
-            }
-          ],
-          [
             {
               "type" : "int",
-              "value" : 688
-            },
-            {
-              "type" : "string",
-              "value" : "Please visit pricing page."
-            },
-            {
-              "type" : "string",
-              "value" : "-O-1TqC-JS22QRx1S1-0"
+              "value" : 4
             },
             {
               "type" : "date",
-              "value" : "2024-06-10T16:09:22Z"
-            },
-            {
-              "type" : "string",
-              "value" : "What is the pricing?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
+              "value" : "2024-04-01T14:30:00Z"
             },
             {
               "type" : "double",
-              "value" : 1
-            }
-          ],
-          [
-            {
-              "type" : "int",
-              "value" : 689
+              "value" : 279.98000000000002
             },
             {
               "type" : "string",
-              "value" : "Question: How do I cancel my subscription?\nAnswer: Please visit subscription page."
+              "value" : "processing"
             },
             {
-              "type" : "string",
-              "value" : "-O-1TqC-JS22QRx1S1-0"
-            },
-            {
-              "type" : "date",
-              "value" : "2024-06-10T16:09:22Z"
-            },
-            {
-              "type" : "string",
-              "value" : "How do I cancel my subscription?"
-            },
-            {
-              "type" : "string",
-              "value" : "trained"
+              "type" : "json",
+              "value" : "{\"zip\": \"77001\", \"city\": \"Houston\", \"state\": \"TX\", \"street\": \"321 Elm St\"}"
             },
             {
               "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "string",
-              "value" : "faq"
-            },
-            {
-              "type" : "null"
-            },
-            {
-              "type" : "double",
-              "value" : 1
             }
           ]
         ],
-        "timestamp" : "2025-12-28T02:53:41Z",
+        "timestamp" : "2026-01-05T23:41:09Z",
         "wasLimited" : false
       }
     },
     {
       "cellType" : "sql",
-      "content" : "sdsad",
-      "id" : "F833A60C-CF04-445B-ADAC-0E8D07C5F634"
-    },
-    {
-      "cellType" : "sql",
       "content" : "",
-      "id" : "A895D5E9-E0BD-446C-95E7-8711950BBF29"
+      "id" : "5A92AC8E-7331-4B0D-A486-7045644D02E6"
     },
     {
       "cellType" : "sql",
-      "content" : "select * from bot limit 2;",
-      "executionCount" : 8,
-      "id" : "8E49C877-2726-4731-8114-B463FF0E447B",
+      "content" : "select * from products limit 5;",
+      "executionCount" : 3,
+      "id" : "16935B73-AC9D-460B-9131-B6E236ADFE69",
       "result" : {
+        "columns" : [
+          {
+            "name" : "product_id",
+            "type" : "INTEGER(32,0)"
+          },
+          {
+            "name" : "name",
+            "type" : "CHARACTER VARYING(100)"
+          },
+          {
+            "name" : "description",
+            "type" : "TEXT"
+          },
+          {
+            "name" : "category",
+            "type" : "CHARACTER VARYING(50)"
+          },
+          {
+            "name" : "price",
+            "type" : "NUMERIC(10,2)"
+          },
+          {
+            "name" : "stock_quantity",
+            "type" : "INTEGER(32,0)"
+          },
+          {
+            "name" : "is_active",
+            "type" : "BOOLEAN"
+          },
+          {
+            "name" : "specifications",
+            "type" : "JSONB"
+          },
+          {
+            "name" : "created_at",
+            "type" : "TIMESTAMP(6) WITHOUT TIME ZONE"
+          },
+          {
+            "name" : "updated_at",
+            "type" : "TIMESTAMP(6) WITHOUT TIME ZONE"
+          }
+        ],
+        "executionTime" : 0.00362396240234375,
+        "rowCount" : 5,
+        "rows" : [
+          [
+            {
+              "type" : "int",
+              "value" : 2
+            },
+            {
+              "type" : "string",
+              "value" : "Wireless Mouse"
+            },
+            {
+              "type" : "string",
+              "value" : "Ergonomic wireless mouse with 6 buttons"
+            },
+            {
+              "type" : "string",
+              "value" : "Accessories"
+            },
+            {
+              "type" : "double",
+              "value" : 29.989999999999998
+            },
+            {
+              "type" : "int",
+              "value" : 150
+            },
+            {
+              "type" : "bool",
+              "value" : true
+            },
+            {
+              "type" : "json",
+              "value" : "{\"dpi\": 1600, \"battery\": \"AA\", \"connectivity\": \"Bluetooth\"}"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 4
+            },
+            {
+              "type" : "string",
+              "value" : "Mechanical Keyboard"
+            },
+            {
+              "type" : "string",
+              "value" : "RGB mechanical keyboard with Cherry MX switches"
+            },
+            {
+              "type" : "string",
+              "value" : "Accessories"
+            },
+            {
+              "type" : "double",
+              "value" : 129.99000000000001
+            },
+            {
+              "type" : "int",
+              "value" : 60
+            },
+            {
+              "type" : "bool",
+              "value" : true
+            },
+            {
+              "type" : "json",
+              "value" : "{\"rgb\": true, \"switches\": \"Cherry MX Red\", \"wireless\": false}"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 5
+            },
+            {
+              "type" : "string",
+              "value" : "27\" Monitor"
+            },
+            {
+              "type" : "string",
+              "value" : "4K UHD monitor with HDR support"
+            },
+            {
+              "type" : "string",
+              "value" : "Electronics"
+            },
+            {
+              "type" : "double",
+              "value" : 399.99000000000001
+            },
+            {
+              "type" : "int",
+              "value" : 30
+            },
+            {
+              "type" : "bool",
+              "value" : true
+            },
+            {
+              "type" : "json",
+              "value" : "{\"panel\": \"IPS\", \"resolution\": \"3840x2160\", \"refresh_rate\": \"60Hz\"}"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 6
+            },
+            {
+              "type" : "string",
+              "value" : "Laptop Stand"
+            },
+            {
+              "type" : "string",
+              "value" : "Adjustable aluminum laptop stand"
+            },
+            {
+              "type" : "string",
+              "value" : "Accessories"
+            },
+            {
+              "type" : "double",
+              "value" : 39.989999999999995
+            },
+            {
+              "type" : "int",
+              "value" : 120
+            },
+            {
+              "type" : "bool",
+              "value" : true
+            },
+            {
+              "type" : "json",
+              "value" : "{\"color\": \"Silver\", \"material\": \"Aluminum\", \"adjustable\": true}"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            }
+          ],
+          [
+            {
+              "type" : "int",
+              "value" : 7
+            },
+            {
+              "type" : "string",
+              "value" : "Webcam HD"
+            },
+            {
+              "type" : "string",
+              "value" : "1080p webcam with built-in microphone"
+            },
+            {
+              "type" : "string",
+              "value" : "Electronics"
+            },
+            {
+              "type" : "double",
+              "value" : 79.989999999999995
+            },
+            {
+              "type" : "int",
+              "value" : 75
+            },
+            {
+              "type" : "bool",
+              "value" : true
+            },
+            {
+              "type" : "json",
+              "value" : "{\"fps\": 30, \"microphone\": true, \"resolution\": \"1920x1080\"}"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            },
+            {
+              "type" : "date",
+              "value" : "2025-12-31T04:07:15Z"
+            }
+          ]
+        ],
+        "timestamp" : "2026-01-05T03:13:57Z",
+        "wasLimited" : false
+      }
+    },
+    {
+      "cellType" : "sql",
+      "content" : "update document set text='22**2' where id=641;",
+      "executionCount" : 1,
+      "id" : "49D86547-75AD-4191-B711-C8A1DD8544E7",
+      "result" : {
+        "affectedRows" : 1,
         "columns" : [
 
         ],
-        "error" : "Not connected to database",
-        "executionTime" : 0,
+        "executionTime" : 0.0040210485458374023,
         "rowCount" : 0,
         "rows" : [
 
         ],
-        "timestamp" : "2025-12-26T02:33:07Z",
+        "timestamp" : "2025-12-29T17:49:14Z",
+        "wasLimited" : false
+      }
+    },
+    {
+      "cellType" : "sql",
+      "content" : "",
+      "id" : "D2E4CE9D-DDFE-423A-A2CC-7D9A7B8EB707"
+    },
+    {
+      "cellType" : "sql",
+      "content" : "select * from document ORDER BY id2 limit 10;",
+      "id" : "F833A60C-CF04-445B-ADAC-0E8D07C5F634",
+      "result" : {
+        "columns" : [
+
+        ],
+        "error" : "Query failed: column \"id2\" does not exist\n\nHint: Perhaps you meant to reference the column \"document.id\".\n\nPosition: 54",
+        "executionTime" : 0.0030330419540405265,
+        "rowCount" : 0,
+        "rows" : [
+
+        ],
+        "timestamp" : "2025-12-29T17:54:51Z",
         "wasLimited" : false
       }
     }
@@ -557,15 +1231,13 @@
   "id" : "3532119E-CDD9-45F6-9101-550A053F90F4",
   "metadata" : {
     "createdAt" : "2025-12-21T17:00:53Z",
-    "modifiedAt" : "2025-12-28T02:53:42Z",
+    "modifiedAt" : "2026-01-05T23:41:12Z",
     "title" : "Untitled Notebook"
   },
   "settings" : {
-    "includeResultsOnSave" : true,
     "keyboardShortcuts" : {
 
-    },
-    "maxResultHeight" : 450
+    }
   },
   "version" : "1.0"
 }

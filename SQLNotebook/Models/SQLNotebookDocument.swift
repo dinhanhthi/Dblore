@@ -196,6 +196,23 @@ private enum DocumentCoder {
     let wasLimited = dict["wasLimited"] as? Bool ?? false
     let affectedRows = dict["affectedRows"] as? Int
 
+    // Decode new fields added for inline editing and metadata
+    let sourceQuery = dict["sourceQuery"] as? String
+    let tableName = dict["tableName"] as? String
+    let primaryKeyColumns = dict["primaryKeyColumns"] as? [String] ?? []
+    let userLimitExceeded = dict["userLimitExceeded"] as? Bool ?? false
+    let userRequestedLimit = dict["userRequestedLimit"] as? Int
+
+    // Decode rowIdentifiers
+    var rowIdentifiers: [CellValue] = []
+    if let rowIdentifiersArray = dict["rowIdentifiers"] as? [[String: Any]] {
+      for cellDict in rowIdentifiersArray {
+        if let cellValue = decodeCellValue(from: cellDict, dateFormatter: dateFormatter) {
+          rowIdentifiers.append(cellValue)
+        }
+      }
+    }
+
     return CellResult(
       columns: columns,
       rows: rows,
@@ -204,6 +221,12 @@ private enum DocumentCoder {
       timestamp: timestamp,
       error: error,
       wasLimited: wasLimited,
+      sourceQuery: sourceQuery,
+      tableName: tableName,
+      primaryKeyColumns: primaryKeyColumns,
+      rowIdentifiers: rowIdentifiers,
+      userLimitExceeded: userLimitExceeded,
+      userRequestedLimit: userRequestedLimit,
       affectedRows: affectedRows
     )
   }
@@ -239,6 +262,34 @@ private enum DocumentCoder {
     // Encode affectedRows for modification queries
     if let affectedRows = result.affectedRows {
       dict["affectedRows"] = affectedRows
+    }
+
+    // Encode new fields added for inline editing and metadata
+    if let sourceQuery = result.sourceQuery {
+      dict["sourceQuery"] = sourceQuery
+    }
+
+    if let tableName = result.tableName {
+      dict["tableName"] = tableName
+    }
+
+    if !result.primaryKeyColumns.isEmpty {
+      dict["primaryKeyColumns"] = result.primaryKeyColumns
+    }
+
+    if !result.rowIdentifiers.isEmpty {
+      let rowIdentifiersArray = result.rowIdentifiers.map { cellValue in
+        encodeCellValue(cellValue, dateFormatter: dateFormatter)
+      }
+      dict["rowIdentifiers"] = rowIdentifiersArray
+    }
+
+    if result.userLimitExceeded {
+      dict["userLimitExceeded"] = result.userLimitExceeded
+    }
+
+    if let userRequestedLimit = result.userRequestedLimit {
+      dict["userRequestedLimit"] = userRequestedLimit
     }
 
     return dict
