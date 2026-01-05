@@ -62,6 +62,9 @@ extension DatabaseConnectionManager {
       throw DatabaseError.notConnected
     }
 
+    // First, fetch primary key columns for this table
+    let primaryKeyColumns = try await fetchPrimaryKeyColumns(tableName: "\(tableSchema).\(tableName)")
+
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
     let query = """
       SELECT
@@ -98,8 +101,8 @@ extension DatabaseConnectionManager {
 
         let isNullable = isNullableStr.uppercased() == "YES"
 
-        // TODO: Detect primary keys from constraints (for now, set to false)
-        let isPrimaryKey = false
+        // Check if this column is a primary key
+        let isPrimaryKey = primaryKeyColumns.contains(columnName)
 
         columns.append(
           DatabaseColumn(
