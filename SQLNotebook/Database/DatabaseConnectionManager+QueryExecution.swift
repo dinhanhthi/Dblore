@@ -544,9 +544,9 @@ extension DatabaseConnectionManager {
           // For timestamp types, check if it's WITH/WITHOUT TIME ZONE
           if dataType.uppercased().contains("TIMESTAMP") {
             if dataType.uppercased().contains("WITH TIME ZONE") {
-              detailedType = "TIMESTAMP(\(datetimePrecision)) WITH TIME ZONE"
+              detailedType = "TIMESTAMP(\(datetimePrecision)) W TZ"
             } else {
-              detailedType = "TIMESTAMP(\(datetimePrecision)) WITHOUT TIME ZONE"
+              detailedType = "TIMESTAMP(\(datetimePrecision)) W/O TZ"
             }
           }
         }

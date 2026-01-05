@@ -66,12 +66,17 @@ extension DatabaseConnectionManager {
     let primaryKeyColumns = try await fetchPrimaryKeyColumns(tableName: "\(tableSchema).\(tableName)")
 
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
+    // Include additional columns for type enrichment
     let query = """
       SELECT
         column_name,
         data_type,
         is_nullable,
-        column_default
+        column_default,
+        character_maximum_length,
+        numeric_precision,
+        numeric_scale,
+        datetime_precision
       FROM information_schema.columns
       WHERE table_schema = '\(tableSchema)'
         AND table_name = '\(tableName)'
@@ -104,10 +109,41 @@ extension DatabaseConnectionManager {
         // Check if this column is a primary key
         let isPrimaryKey = primaryKeyColumns.contains(columnName)
 
+        // Build enriched type string with precision/scale/length
+        var enrichedType = dataType.uppercased()
+
+        // Add length for character types (VARCHAR, CHAR)
+        if cells.count > 4, let maxLength = try? cells[4].decode(Int.self, context: .default) {
+          enrichedType += "(\(maxLength))"
+        }
+        // Add precision and scale for numeric types
+        else if cells.count > 6,
+          let precision = try? cells[5].decode(Int.self, context: .default)
+        {
+          if let scale = try? cells[6].decode(Int.self, context: .default) {
+            enrichedType += "(\(precision),\(scale))"
+          } else {
+            enrichedType += "(\(precision))"
+          }
+        }
+        // Add precision for datetime types
+        else if cells.count > 7,
+          let datetimePrecision = try? cells[7].decode(Int.self, context: .default)
+        {
+          // For timestamp types, check if it's WITH/WITHOUT TIME ZONE
+          if dataType.uppercased().contains("TIMESTAMP") {
+            if dataType.uppercased().contains("WITH TIME ZONE") {
+              enrichedType = "TIMESTAMP(\(datetimePrecision)) W TZ"
+            } else {
+              enrichedType = "TIMESTAMP(\(datetimePrecision)) W/O TZ"
+            }
+          }
+        }
+
         columns.append(
           DatabaseColumn(
             name: columnName,
-            type: dataType,
+            type: enrichedType,
             isNullable: isNullable,
             isPrimaryKey: isPrimaryKey
           )
