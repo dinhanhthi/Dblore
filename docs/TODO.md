@@ -109,12 +109,18 @@
 - [ ] Implement autocomplete popup for table/column names
 - [ ] Implement SQL keyword autocomplete
 
-### 5.5 Tabs Support - Multiple Database Connections
-- [ ] Create tab management system
+### 5.5 Tabs Support - Multiple Notebooks with Separate Connections
+- [ ] Create tab management system (each tab = separate notebook)
 - [ ] Implement tab bar UI component
-- [ ] Add "New Tab" button
+- [ ] Add "New Tab" button (creates new notebook with separate connection)
+- [ ] Each tab maintains its own:
+  - [ ] Notebook document (cells, metadata, settings)
+  - [ ] Database connection (ConnectionConfig per tab)
+  - [ ] Connection state (connected/disconnected per tab)
+  - [ ] Database schema (schema loaded per connection)
 - [ ] Handle tab switching and persistence
-- [ ] Add keyboard shortcuts: `Cmd+T`, `Cmd+W`, `Cmd+1-9`
+- [ ] Add keyboard shortcuts: `Cmd+T` (new tab), `Cmd+W` (close tab), `Cmd+1-9` (switch to tab)
+- [ ] Save/load multiple notebooks when closing/opening tabs
 
 ### 5.6 AI-Powered Natural Language Query (Local Model Only)
 - [ ] Select local LLM framework
@@ -132,12 +138,16 @@
 
 ## Phase 6: Security & Safety Features (PARTIAL)
 
-### 6.0.2 Connection Security - PARTIAL
+### 6.0.2 Connection Security - MOSTLY COMPLETE
 - [x] Support SSL/TLS connection modes (all 6 PostgreSQL modes)
 - [x] Smart cloud database detection
+- [x] **Add connection retry logic with exponential backoff** ✅
+  - [x] Retry configuration: maxRetries = 3, delays = [1s, 2s, 4s] (DatabaseConnectionManager.swift:22-24)
+  - [x] Implemented attemptConnection() helper method with recursive retry logic (DatabaseConnectionManager.swift:33-67)
+  - [x] Updated connect() method to use retry logic (DatabaseConnectionManager.swift:111)
+  - [x] Updated testConnection() method to use retry logic (DatabaseConnectionManager.swift:161)
 - [ ] Fix certificate verification for `.require` mode
 - [ ] Add connection timeout configuration
-- [ ] Add connection retry logic with exponential backoff
 
 ### 6.0.3 Query Execution Security - PARTIAL
 - [x] Enforce row limits to prevent memory exhaustion
@@ -258,7 +268,10 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
 ## Recent Completions
 
-### User Notifications for Value Editing ✅ (Phase 6.0.4) - NEWLY VERIFIED
+### Connection Retry Logic with Exponential Backoff ✅ (Phase 6.0.2) - NEWLY VERIFIED
+Automatic retry with exponential backoff delays for failed database connections. Retry configuration: maxRetries = 3, delays = [1s, 2s, 4s] in nanoseconds. Implemented attemptConnection() helper method with recursive retry logic that gracefully falls back through delays before throwing error. Both connect() and testConnection() methods now use retry logic to handle transient connection failures. Located in DatabaseConnectionManager.swift:22-67, 111, 161.
+
+### User Notifications for Value Editing ✅ (Phase 6.0.4)
 Toast notifications for JSON edit validation (error), JSON edit success, database update success/error, and clipboard copy (info). Implemented with ToastView.swift (ToastMessage enum), NotebookViewModel.showToast() method with 4-second auto-dismiss timer. Shows in bottom-right with colored icons (checkmark=success, xmark=error, info=info circle) and borders.
 
 ### Boolean Toggle UI for Value Editing ✅ (Phase 6.0.4)
@@ -275,9 +288,15 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 ## Next Priorities
 
 ### CURRENT: Complete Phase 6 Security (High Priority)
-Security and data safety enhancements (completing Phase 6.0.4):
+Security and data safety enhancements:
 
-1. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
+1. **Connection Timeout Configuration (6.0.2)** - Add configurable connection timeouts
+   - Add timeout parameter to ConnectionConfig
+   - Implement timeout in attemptConnection() with Task.withTimeoutError
+   - Add timeout UI field in connection form
+   - Effort: SMALL-MEDIUM (config extension + UI component)
+
+2. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
    - Modal dialog showing query and row count affected
    - Warn users of destructive operations
    - Effort: MEDIUM (UI + state management)
@@ -286,11 +305,6 @@ Security and data safety enhancements (completing Phase 6.0.4):
    - Add read-only toggle in connection settings
    - Disable edit/delete functionality in read-only mode
    - Effort: MEDIUM (requires permission checks across views)
-
-4. **Connection Retry Logic (6.0.2)** - Exponential backoff for failed connections
-   - Auto-retry with delays (1s, 2s, 4s, 8s, 16s max)
-   - User notification on retry attempts
-   - Effort: SMALL (connection manager enhancement)
 
 ### RECENTLY COMPLETED PHASE 6.0.4 ITEMS:
 - Boolean toggle UI for value editing
@@ -317,39 +331,88 @@ Priority UI enhancements (5 of 7 remaining):
 Complete test coverage and implement the final editor mode phase.
 
 ### LATER: Phase 5 Advanced Features
-Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB support.
+- **Tabs Support (5.5)** - Multiple notebooks with separate connections (NEW FEATURE REQUEST)
+  - Each tab = separate notebook document
+  - Each tab = separate database connection
+  - Tab management UI with keyboard shortcuts
+  - Effort: LARGE (requires major architecture changes to support multiple notebooks/connections)
+- Schema visualizer, AI queries, query history, export to CSV, multiple DB support.
 
 ---
 
 ## Verification Report (Latest Scan)
 
-**Date:** 2026-01-04
+**Date:** 2026-01-04 (Final Comprehensive Scan)
 **Verified By:** Claude Code - TODO Manager Agent
-**Key Changes:**
-- ✅ **Phase 6.0.4 Value Format Validation VERIFIED COMPLETE**
-  - CellValueValidator.swift implements full validation for all types (int, double, json, date, boolean, null, binary data)
-  - Integrated in CellInfoContent.swift:288 with `CellValueValidator.validate(input, for: value)`
-  - Validation error displayed in UI (CellInfoContent.swift:159-171) with red border and error message
-  - Save button disabled when validation fails (CellInfoContent.swift:77)
-  - Status updated from incomplete to COMPLETE ✅
+**Git HEAD:** b92637f - "fix test and trigger again on push github action"
 
-- ✅ Phase 6.0.4 User Notifications remains COMPLETE (ToastView.swift, NotebookViewModel.showToast())
-- ✅ Phase 4.8 Result Display Controls confirmed COMPLETE (isResultVisible property, menu buttons)
-- ✅ Phase 4.13 Theme Toggle remains COMPLETE
+### Verification Results Summary
 
-- 📝 **NEW FEATURE REQUEST ADDED: Phase 4.9 Result Table Search & Filter**
-  - User requested: toolbar with search feature and column-based filters for ResultTableView
-  - Added to Phase 4 Polish section
-  - Status: NOT STARTED
-  - Requirements: global search, column filters, filtered row count display
+**FULLY VERIFIED COMPLETE (Implementation confirmed in codebase):**
+- ✅ Phase 4.8 Result Display Controls
+  - isResultVisible property in NotebookCell.swift
+  - Show/Hide All Results menu buttons in HeaderView.swift
+  - Toggle functionality in NotebookViewModel+CellManagement.swift
 
-- ❌ Verified incomplete items remain accurate:
-  - Cmd+/ comment/uncomment: Not implemented
-  - Drag and drop: Not implemented (only column resize drag exists)
-  - Save on close prompt: Not implemented
-  - Cell execution queue: Not implemented (runAllCells is sequential, no queue UI)
-  - Confirmation dialogs for destructive operations: Not implemented
-  - Read-only mode: Not implemented
+- ✅ Phase 4.13 Theme Toggle (Dark/Light Mode)
+  - AppSettings.swift with ThemePreference enum
+  - AppearanceModifier.swift applying colorScheme
+  - SettingsContent.swift with radio button selector
+
+- ✅ Phase 6.0.4 Value Format Validation
+  - CellValueValidator.swift with full type validation (int, double, json, date, boolean, null, binary)
+  - Integrated in CellInfoContent.swift:288
+  - Error display with red border and disabled save button
+
+- ✅ Phase 6.0.4 User Notifications
+  - ToastView.swift with success/error/info/warning types
+  - NotebookViewModel.showToast() with 4-second auto-dismiss
+  - All feedback notifications working
+
+**VERIFIED NOT IMPLEMENTED (Codebase scan found zero evidence):**
+- ❌ Phase 4.2 Cell Execution Queue System
+  - No executionQueue property in ViewModel
+  - runAllCells() at NotebookViewModel+Execution.swift:99-103 runs sequentially
+  - No UI visual queue indicators
+
+- ❌ Phase 4.4 Drag and Drop Reordering
+  - moveCell() exists in NotebookViewModel+CellManagement.swift:159
+  - NO .onMove modifier in ContentView.swift List (lines 237-254)
+  - No drag handle UI components
+
+- ❌ Phase 4.6 Cmd+/ Comment/Uncomment
+  - ContentView.swift keyboard handler (lines 129-223) has no keyCode 44 detection
+  - No comment/uncomment text manipulation logic
+
+- ❌ Phase 4.7 Save on Close Prompt
+  - SQLNotebookDocument.swift has no beforeClosing or shouldClose implementation
+  - No confirmation dialog for unsaved changes
+
+- ❌ Phase 4.9 Result Table Search & Filter (NEW FEATURE REQUEST)
+  - ResultTableView.swift has no search input field
+  - No filter dropdown implementation
+  - No filtered row count tracking
+
+- ❌ Phase 6.0.2 Certificate Verification Fix for .require Mode
+  - DatabaseConnectionManager.swift:87, 93, 137, 144, 147 still use try! force unwrap
+  - Needs proper error handling for SSL/TLS configuration
+
+- ❌ Phase 6.0.2 Connection Timeout Configuration
+  - No timeout parameter in ConnectionConfig
+  - No timeout handling in attemptConnection() or PostgresConnection.Configuration
+  - No UI field for timeout configuration in connection form
+
+- ❌ Phase 6.0.3 Confirmation Dialogs for Destructive Operations
+  - No confirmationDialog in query execution flow
+  - DELETE/UPDATE/INSERT queries execute without user confirmation
+
+- ❌ Phase 6.0.3 Read-Only Mode
+  - No readOnly or isReadOnly property in ConnectionConfig
+  - No permission checks in edit operations
+
+**NEW FEATURE REQUESTS:**
+- 📝 Phase 4.9 Result Table Search & Filter (added to Phase 4 Polish)
+- 📝 Phase 5.5 Tabs Support (added to Phase 5 Advanced Features)
 
 ### Verified Complete Features
 
@@ -375,6 +438,7 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 **Phase 6 Completed Tasks**
 - SSL/TLS connection modes (all 6 PostgreSQL modes supported)
 - Smart cloud database detection (Supabase, AWS, Azure, GCP)
+- Connection retry logic with exponential backoff (1s, 2s, 4s delays, max 3 retries)
 - Row limit enforcement to prevent memory exhaustion
 - Query modification detection (SELECT vs UPDATE/DELETE/INSERT)
 - Primary key column tracking for UPDATE operations
@@ -406,11 +470,10 @@ Schema visualizer, AI queries, tabs, query history, export to CSV, multiple DB s
 - Logging system (AppLogger): Not implemented
 
 **Phase 6 - Incomplete**
+- Connection timeout configuration: Not implemented
 - Confirmation dialogs for destructive operations: Not implemented
 - Read-only mode: Not implemented
-- Connection retry logic: Not implemented
-- Certificate verification fix for `.require` mode: Not completed
-- Connection timeout configuration: Not implemented
+- Certificate verification fix for `.require` mode: Not completed (still using try! force unwrap)
 - Confirmation for inline cell editing: Not implemented
 - Transaction support for inline edits: Not implemented
 
