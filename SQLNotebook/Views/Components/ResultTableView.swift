@@ -107,11 +107,20 @@ struct ResultTableView: View {
   private func headerCell(column: ColumnInfo) -> some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Spacing.xxs) {
-        Text(column.name)
-          .font(.system(.body, weight: .semibold))
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-          .truncationMode(.tail)
+        HStack(spacing: Spacing.xs) {
+          // Primary key indicator
+          if result.primaryKeyColumns.contains(column.name) {
+            Image(systemName: "key")
+              .font(.system(size: 10))
+              .foregroundColor(.warning)
+          }
+
+          Text(column.name)
+            .font(.system(.body, weight: .semibold))
+            .foregroundColor(.foreground)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
 
         Text(column.type)
           .font(.small)

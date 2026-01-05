@@ -243,7 +243,7 @@ struct ColumnRowView: View {
     Button(action: onClick) {
       HStack(spacing: Spacing.xs) {
         // Column icon
-        Image(systemName: column.isPrimaryKey ? "key.fill" : "textformat.123")
+        Image(systemName: column.isPrimaryKey ? "key" : "textformat.123")
           .font(.system(size: 10))
           .foregroundColor(column.isPrimaryKey ? .warning : .foregroundSubtle)
           .frame(width: 12)
