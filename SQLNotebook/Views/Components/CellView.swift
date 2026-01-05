@@ -312,8 +312,8 @@ struct CellView: View {
           successView(affectedRows: affectedRows, executionTime: result.executionTime)
         } else {
           // Result table
+          // Removed .id() to avoid forced recreation on visibility toggle
           ResultTableView(result: result, viewModel: viewModel, cellId: cell.id)
-            .id("\(cell.id)-result")  // Force recreation when result changes
 
           // Result metadata
           resultMetadata(result)
