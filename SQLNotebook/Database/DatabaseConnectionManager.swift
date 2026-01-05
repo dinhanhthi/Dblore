@@ -19,12 +19,52 @@ actor DatabaseConnectionManager {
   /// This is overridden by the notebook's maxRowLimit setting
   static let defaultMaxFetchRows = 100
 
+  /// Retry configuration for connection attempts
+  private static let maxRetries = 3
+  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000] // 1s, 2s, 4s in nanoseconds
+
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {
     config?.databaseType
   }
 
   // MARK: - Connection Management
+
+  /// Helper method to perform connection with retry logic
+  /// Implements exponential backoff: 1s, 2s, 4s delays
+  /// - Parameters:
+  ///   - group: EventLoopGroup for the connection
+  ///   - config: PostgreSQL connection configuration
+  ///   - attempt: Current attempt number (0-indexed)
+  /// - Returns: Connected PostgresConnection
+  /// - Throws: DatabaseError after max retries (3) exhausted
+  private func attemptConnection(
+    group: EventLoopGroup,
+    config: PostgresConnection.Configuration,
+    attempt: Int = 0
+  ) async throws -> PostgresConnection {
+    do {
+      let conn = try await PostgresConnection.connect(
+        on: group.next(),
+        configuration: config,
+        id: 1,
+        logger: Logger(label: "sqlnotebook.connection")
+      )
+      return conn
+    } catch {
+      // If we've exhausted retries, throw the error
+      if attempt >= Self.maxRetries {
+        throw error
+      }
+
+      // Wait with exponential backoff before retry
+      let delay = Self.retryDelays[min(attempt, Self.retryDelays.count - 1)]
+      try await Task.sleep(nanoseconds: delay)
+
+      // Retry with incremented attempt counter
+      return try await attemptConnection(group: group, config: config, attempt: attempt + 1)
+    }
+  }
 
   /// Connect to PostgreSQL database
   func connect(config: ConnectionConfig) async throws {
@@ -66,14 +106,9 @@ actor DatabaseConnectionManager {
       tls: tlsConfig
     )
 
-    // Establish connection
+    // Establish connection with retry logic
     do {
-      let conn = try await PostgresConnection.connect(
-        on: group.next(),
-        configuration: postgresConfig,
-        id: 1,
-        logger: Logger(label: "sqlnotebook.connection")
-      )
+      let conn = try await attemptConnection(group: group, config: postgresConfig)
       connection = conn
     } catch let error as PSQLError {
       // Cleanup on failure
@@ -123,12 +158,7 @@ actor DatabaseConnectionManager {
     )
 
     do {
-      let conn = try await PostgresConnection.connect(
-        on: group.next(),
-        configuration: postgresConfig,
-        id: 1,
-        logger: Logger(label: "sqlnotebook.testconnection")
-      )
+      let conn = try await attemptConnection(group: group, config: postgresConfig)
 
       // Execute a test query to verify the connection actually works
       // This ensures credentials are valid and we have proper permissions
