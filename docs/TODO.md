@@ -146,7 +146,13 @@
   - [x] Implemented attemptConnection() helper method with recursive retry logic (DatabaseConnectionManager.swift:33-67)
   - [x] Updated connect() method to use retry logic (DatabaseConnectionManager.swift:111)
   - [x] Updated testConnection() method to use retry logic (DatabaseConnectionManager.swift:161)
-- [ ] Fix certificate verification for `.require` mode
+- [x] **Fix certificate verification for `.require` mode** ✅
+  - [x] Created configureTLS(for:) helper method to centralize TLS configuration (DatabaseConnectionManager.swift:205-249)
+  - [x] Replaced all `try!` force unwraps with proper error handling using do-catch blocks
+  - [x] Fixed `.require` mode to use full certificate verification (removed `.none` security vulnerability)
+  - [x] Updated connect() and testConnection() methods to use new TLS configuration (DatabaseConnectionManager.swift:81-90, 124-131)
+  - [x] Added proper cleanup (shutdown event loop group) on TLS configuration failures
+  - [x] Documented self-signed certificate handling (use `.allow`/`.prefer` or add CA to system trust store)
 - [ ] Add connection timeout configuration
 
 ### 6.0.3 Query Execution Security - PARTIAL
@@ -267,6 +273,9 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 ---
 
 ## Recent Completions
+
+### Certificate Verification Fix ✅ (Phase 6.0.2) - NEWLY COMPLETED
+Fixed SSL/TLS certificate verification security vulnerability and unsafe force unwrapping. Created centralized configureTLS(for:) helper method (DatabaseConnectionManager.swift:205-249) that properly handles all 6 SSL modes with do-catch error handling. Fixed `.require` mode to use full certificate verification instead of `.none` (security fix). Replaced all 6 instances of `try!` force unwraps with proper error handling. Added cleanup logic to shutdown event loop group on TLS configuration failures. Updated connect() and testConnection() methods to use new TLS configuration with proper error propagation.
 
 ### Connection Retry Logic with Exponential Backoff ✅ (Phase 6.0.2) - NEWLY VERIFIED
 Automatic retry with exponential backoff delays for failed database connections. Retry configuration: maxRetries = 3, delays = [1s, 2s, 4s] in nanoseconds. Implemented attemptConnection() helper method with recursive retry logic that gracefully falls back through delays before throwing error. Both connect() and testConnection() methods now use retry logic to handle transient connection failures. Located in DatabaseConnectionManager.swift:22-67, 111, 161.
@@ -393,9 +402,10 @@ Complete test coverage and implement the final editor mode phase.
   - No filter dropdown implementation
   - No filtered row count tracking
 
-- ❌ Phase 6.0.2 Certificate Verification Fix for .require Mode
-  - DatabaseConnectionManager.swift:87, 93, 137, 144, 147 still use try! force unwrap
-  - Needs proper error handling for SSL/TLS configuration
+- ✅ Phase 6.0.2 Certificate Verification Fix for .require Mode
+  - Replaced all try! force unwraps with proper do-catch error handling
+  - Created configureTLS(for:) helper method for centralized TLS configuration
+  - Fixed .require mode to use full certificate verification (security fix)
 
 - ❌ Phase 6.0.2 Connection Timeout Configuration
   - No timeout parameter in ConnectionConfig
@@ -438,6 +448,7 @@ Complete test coverage and implement the final editor mode phase.
 **Phase 6 Completed Tasks**
 - SSL/TLS connection modes (all 6 PostgreSQL modes supported)
 - Smart cloud database detection (Supabase, AWS, Azure, GCP)
+- Certificate verification fix for `.require` mode (configureTLS helper, proper error handling, removed security vulnerability)
 - Connection retry logic with exponential backoff (1s, 2s, 4s delays, max 3 retries)
 - Row limit enforcement to prevent memory exhaustion
 - Query modification detection (SELECT vs UPDATE/DELETE/INSERT)
@@ -473,7 +484,6 @@ Complete test coverage and implement the final editor mode phase.
 - Connection timeout configuration: Not implemented
 - Confirmation dialogs for destructive operations: Not implemented
 - Read-only mode: Not implemented
-- Certificate verification fix for `.require` mode: Not completed (still using try! force unwrap)
 - Confirmation for inline cell editing: Not implemented
 - Transaction support for inline edits: Not implemented
 
