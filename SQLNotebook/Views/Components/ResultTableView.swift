@@ -46,23 +46,24 @@ struct ResultTableView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Single ScrollView with dynamic axes and pinned header
+      // Single ScrollView with dynamic axes
+      // Using VStack instead of LazyVStack to prevent nested scroll crashes
+      // See SCROLL_CRASH_FIX.md for details
       ScrollView(scrollAxes) {
-        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-          Section {
-            // Data rows - limited to maxRowsToRender
-            ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
-              dataRow(row: row, rowIndex: rowIndex)
-            }
+        VStack(alignment: .leading, spacing: 0) {
+          // Header row (stays at top)
+          headerRow
+            .zIndex(1)
+            .background(Color.tableHeaderBackground)
 
-            // Show warning if rows are truncated
-            if hasMoreRows {
-              truncationWarning
-            }
-          } header: {
-            // Header row (pinned at top)
-            headerRow
-              .background(Color.tableHeaderBackground)
+          // Data rows - limited to maxRowsToRender
+          ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
+            dataRow(row: row, rowIndex: rowIndex)
+          }
+
+          // Show warning if rows are truncated
+          if hasMoreRows {
+            truncationWarning
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
