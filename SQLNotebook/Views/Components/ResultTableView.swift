@@ -14,8 +14,6 @@ struct ResultTableView: View {
   @State private var hoveredRow: Int?
   @State private var resizingColumn: String?
   @State private var resizeStartWidth: CGFloat = 0
-  @State private var headerScrollOffset: CGFloat = 0
-  @State private var contentScrollOffset: CGFloat = 0
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -48,48 +46,30 @@ struct ResultTableView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Fixed header row with horizontal scrolling
-      ScrollView(.horizontal, showsIndicators: false) {
-        headerRow
-          .background(Color.tableHeaderBackground)
-          .offset(x: -headerScrollOffset)
-      }
-      .scrollDisabled(true)  // Disable direct scrolling, controlled programmatically
-      .frame(height: headerHeight)
-      .clipped()
+      // Single ScrollView with dynamic axes and pinned header
+      ScrollView(scrollAxes) {
+        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+          Section {
+            // Data rows - limited to maxRowsToRender
+            ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
+              dataRow(row: row, rowIndex: rowIndex)
+            }
 
-      // Data rows with scrolling
-      ScrollView([.horizontal, .vertical]) {
-        VStack(alignment: .leading, spacing: 0) {
-          // Data rows - limited to maxRowsToRender
-          ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
-            dataRow(row: row, rowIndex: rowIndex)
-          }
-
-          // Show warning if rows are truncated
-          if hasMoreRows {
-            truncationWarning
+            // Show warning if rows are truncated
+            if hasMoreRows {
+              truncationWarning
+            }
+          } header: {
+            // Header row (pinned at top)
+            headerRow
+              .background(Color.tableHeaderBackground)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-          GeometryReader { geometry in
-            Color.clear.preference(
-              key: ScrollOffsetPreferenceKey.self,
-              value: [geometry.frame(in: .named("scrollView")).minX]
-            )
-          }
-        )
       }
       .scrollBounceBehavior(.basedOnSize)
       .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
-      .frame(maxHeight: AppSettings.shared.maxResultHeight - headerHeight)
-      .coordinateSpace(name: "scrollView")
-      .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offsets in
-        if let offset = offsets.first {
-          headerScrollOffset = offset
-        }
-      }
+      .frame(maxHeight: AppSettings.shared.maxResultHeight)
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
@@ -422,16 +402,6 @@ private struct ResizeHandle: View {
             columnWidths[columnName] = newWidth
           }
       )
-  }
-}
-
-// MARK: - Scroll Offset Preference Key
-
-private struct ScrollOffsetPreferenceKey: PreferenceKey {
-  static var defaultValue: [CGFloat] = []
-
-  static func reduce(value: inout [CGFloat], nextValue: () -> [CGFloat]) {
-    value.append(contentsOf: nextValue())
   }
 }
 
