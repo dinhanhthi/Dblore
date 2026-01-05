@@ -78,23 +78,15 @@ actor DatabaseConnectionManager {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     eventLoopGroup = group
 
-    // Configure PostgreSQL connection
+    // Configure PostgreSQL connection with TLS
     let tlsConfig: PostgresConnection.Configuration.TLS
-    switch config.sslMode {
-    case .disable:
-      tlsConfig = .disable
-    case .allow, .prefer:
-      tlsConfig = .prefer(try! NIOSSLContext(configuration: .makeClientConfiguration()))
-    case .require:
-      // Use .require for cloud databases with valid certificates
-      // Note: Certificate verification is set to .none to allow self-signed or cloud provider certs
-      var sslConfig = TLSConfiguration.makeClientConfiguration()
-      sslConfig.certificateVerification = .none
-      tlsConfig = .require(try! NIOSSLContext(configuration: sslConfig))
-    case .verifyCa, .verifyFull:
-      var sslConfig = TLSConfiguration.makeClientConfiguration()
-      sslConfig.certificateVerification = .fullVerification
-      tlsConfig = .require(try! NIOSSLContext(configuration: sslConfig))
+    do {
+      tlsConfig = try configureTLS(for: config.sslMode)
+    } catch {
+      // Cleanup on TLS configuration failure
+      try? await group.shutdownGracefully()
+      eventLoopGroup = nil
+      throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
     }
 
     let postgresConfig = PostgresConnection.Configuration(
@@ -129,23 +121,13 @@ actor DatabaseConnectionManager {
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
+    // Configure TLS
     let tlsConfig: PostgresConnection.Configuration.TLS
-    switch config.sslMode {
-    case .disable:
-      tlsConfig = .disable
-    case .allow, .prefer:
-      tlsConfig = .prefer(try! NIOSSLContext(configuration: .makeClientConfiguration()))
-    case .require:
-      // Use .require for cloud databases with certificate verification disabled
-      // This allows connection to cloud providers like Supabase that use valid certs
-      // but may not be in the system trust store
-      var sslConfig = TLSConfiguration.makeClientConfiguration()
-      sslConfig.certificateVerification = .none
-      tlsConfig = .require(try! NIOSSLContext(configuration: sslConfig))
-    case .verifyCa, .verifyFull:
-      var sslConfig = TLSConfiguration.makeClientConfiguration()
-      sslConfig.certificateVerification = .fullVerification
-      tlsConfig = .require(try! NIOSSLContext(configuration: sslConfig))
+    do {
+      tlsConfig = try configureTLS(for: config.sslMode)
+    } catch {
+      try? await group.shutdownGracefully()
+      throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
     }
 
     let postgresConfig = PostgresConnection.Configuration(
@@ -216,5 +198,53 @@ actor DatabaseConnectionManager {
   /// Access to internal connection for extensions
   var _connection: PostgresConnection? {
     connection
+  }
+
+  // MARK: - TLS Configuration
+
+  /// Configure TLS settings based on SSL mode
+  /// - Parameter sslMode: The SSL mode from connection configuration
+  /// - Returns: PostgreSQL TLS configuration
+  /// - Throws: Error if TLS configuration fails
+  private func configureTLS(for sslMode: SSLMode) throws -> PostgresConnection.Configuration.TLS {
+    switch sslMode {
+    case .disable:
+      return .disable
+
+    case .allow, .prefer:
+      // For .allow/.prefer modes, try to use TLS but fall back to unencrypted if unavailable
+      // Use default client configuration with full verification
+      do {
+        let context = try NIOSSLContext(configuration: .makeClientConfiguration())
+        return .prefer(context)
+      } catch {
+        throw DatabaseError.connectionFailed("Failed to create TLS context for prefer mode: \(error.localizedDescription)")
+      }
+
+    case .require:
+      // For .require mode, use full certificate verification
+      // This is the PostgreSQL standard behavior - verify certificates if possible
+      // Note: If you need to connect to servers with self-signed certificates,
+      // you should add the CA certificate to the system trust store or use .allow/.prefer modes
+      do {
+        let sslConfig = TLSConfiguration.makeClientConfiguration()
+        let context = try NIOSSLContext(configuration: sslConfig)
+        return .require(context)
+      } catch {
+        throw DatabaseError.connectionFailed("Failed to create TLS context for require mode: \(error.localizedDescription)")
+      }
+
+    case .verifyCa, .verifyFull:
+      // For .verifyCa/.verifyFull modes, enforce full certificate verification
+      // These modes provide the highest security by validating the server certificate
+      do {
+        var sslConfig = TLSConfiguration.makeClientConfiguration()
+        sslConfig.certificateVerification = .fullVerification
+        let context = try NIOSSLContext(configuration: sslConfig)
+        return .require(context)
+      } catch {
+        throw DatabaseError.connectionFailed("Failed to create TLS context for verify mode: \(error.localizedDescription)")
+      }
+    }
   }
 }
