@@ -2,18 +2,18 @@ name: CI
 
 on:
   workflow_dispatch: # run manually
-  # push:
-  #   branches: [ main, develop ]
-  #   paths:
-  #     - '**.swift'
-  #     - '.github/workflows/**'
-  #     - '!docs/**'
-  #     - '!examples/**'
-  #     - '!.claude/**'
-  #     - '!.vscode/**'
-  #     - '!.cursor/**'
-  #     - '!.gitignore'
-  #     - '!.gitignore'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**.swift'
+      - '.github/workflows/**'
+      - '!docs/**'
+      - '!examples/**'
+      - '!.claude/**'
+      - '!.vscode/**'
+      - '!.cursor/**'
+      - '!.gitignore'
+      - '!.gitignore'
   pull_request:
     branches: [ main, develop ]
 

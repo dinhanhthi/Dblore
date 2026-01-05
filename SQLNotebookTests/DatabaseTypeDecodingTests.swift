@@ -15,9 +15,6 @@ struct DatabaseTypeDecodingTests {
 
     @Test("NUMERIC value decodes correctly to Double - NUMERIC(10,2)")
     func numericValueDecodesToDouble() async throws {
-        // Arrange
-        let manager = DatabaseConnectionManager()
-
         // Note: This test requires actual PostgreSQL connection to test parseCellValue
         // For now, we'll test the logic conceptually
         // In a real test, we would:
