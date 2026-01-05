@@ -17,7 +17,7 @@ struct FooterView: View {
         Text("v\(appVersion)")
           .font(.caption)
           .foregroundColor(.foregroundSubtle)
-          .padding(.horizontal, Spacing.sm)
+          .padding(.horizontal, Spacing.md)
           .padding(.vertical, Spacing.xs + 2)
           .background(Color.cardHeaderBackground)
 

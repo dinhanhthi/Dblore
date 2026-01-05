@@ -41,25 +41,28 @@ struct LeftSidebarView: View {
 
       Spacer()
 
-      // Refresh button
-      if viewModel.connectionState.isConnected {
-        Button(action: {
-          Task { @MainActor [viewModel] in
-            await viewModel.refreshDatabaseSchema()
+      HStack(spacing: Spacing.lg) {
+        // Refresh button
+        if viewModel.connectionState.isConnected {
+          Button(action: {
+            Task { @MainActor [viewModel] in
+              await viewModel.refreshDatabaseSchema()
+            }
+          }) {
+            Image(systemName: "arrow.clockwise")
+              .foregroundColor(.foregroundMuted)
           }
-        }) {
-          Image(systemName: "arrow.clockwise")
+          .buttonStyle(GhostButtonStyle())
+          .disabled(viewModel.isLoadingSchema)
+        }
+
+        // Close button
+        Button(action: { viewModel.toggleLeftSidebar() }) {
+          Image(systemName: "xmark")
             .foregroundColor(.foregroundMuted)
         }
         .buttonStyle(GhostButtonStyle())
-        .disabled(viewModel.isLoadingSchema)
       }
-
-      Button(action: { viewModel.toggleLeftSidebar() }) {
-        Image(systemName: "xmark")
-          .foregroundColor(.foregroundMuted)
-      }
-      .buttonStyle(GhostButtonStyle())
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
