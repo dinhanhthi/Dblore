@@ -468,21 +468,41 @@ extension DatabaseConnectionManager {
   private func wrapQueryWithCtid(_ query: String) -> String {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // Simple approach: Try to detect "SELECT * FROM" and add ctid
-    // This is a best-effort approach and won't work for all queries
-    if trimmed.uppercased().hasPrefix("SELECT * FROM") {
-      // Replace "SELECT *" with "SELECT *, ctid AS _sqlnb_ctid"
-      return trimmed.replacingOccurrences(
-        of: "SELECT *",
-        with: "SELECT *, ctid AS _sqlnb_ctid",
-        options: [.caseInsensitive],
-        range: trimmed.startIndex..<trimmed.index(trimmed.startIndex, offsetBy: 8)
-      )
+    // Only process if query starts with "SELECT * FROM"
+    guard trimmed.uppercased().hasPrefix("SELECT * FROM") else {
+      return query
     }
 
-    // For other SELECT queries, return as-is
-    // ctid won't be available for complex queries
-    return query
+    let upperQuery = trimmed.uppercased()
+
+    // Skip queries with JOINs - ctid would be ambiguous (which table's ctid?)
+    if upperQuery.contains(" JOIN ") || upperQuery.contains(" INNER JOIN ")
+      || upperQuery.contains(" LEFT JOIN ") || upperQuery.contains(" RIGHT JOIN ")
+      || upperQuery.contains(" FULL JOIN ") || upperQuery.contains(" CROSS JOIN ")
+    {
+      return query
+    }
+
+    // Skip queries with subqueries - ctid cannot be used with subquery aliases
+    // Check for subquery patterns: (SELECT ... FROM ...) AS alias
+    if upperQuery.contains("(SELECT") {
+      return query
+    }
+
+    // Skip queries with UNION/INTERSECT/EXCEPT - ctid not meaningful for set operations
+    if upperQuery.contains(" UNION ") || upperQuery.contains(" INTERSECT ")
+      || upperQuery.contains(" EXCEPT ")
+    {
+      return query
+    }
+
+    // Safe to add ctid for simple SELECT * FROM table queries
+    return trimmed.replacingOccurrences(
+      of: "SELECT *",
+      with: "SELECT *, ctid AS _sqlnb_ctid",
+      options: [.caseInsensitive],
+      range: trimmed.startIndex..<trimmed.index(trimmed.startIndex, offsetBy: 8)
+    )
   }
 
   /// Enrich column type information with modifiers (precision, scale, length)
