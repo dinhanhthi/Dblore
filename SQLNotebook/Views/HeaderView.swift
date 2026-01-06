@@ -8,6 +8,7 @@ import SwiftUI
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
   @State private var showRunAllConfirmation = false
+  @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
 
   var body: some View {
@@ -48,10 +49,24 @@ struct HeaderView: View {
           Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
         }
 
-        Button(action: { viewModel.clearAllOutputs() }) {
+        Button(action: {
+          showClearAllOutputsConfirmation = true
+        }) {
           Label("Clear All Outputs", systemImage: "trash")
         }
         .buttonStyle(ToolbarButtonStyle())
+        .confirmationDialog(
+          "Clear all outputs?",
+          isPresented: $showClearAllOutputsConfirmation,
+          titleVisibility: .visible
+        ) {
+          Button("Clear All Outputs", role: .destructive) {
+            viewModel.clearAllOutputs()
+          }
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("This will remove all query results from all cells. This action can be undone.")
+        }
 
         Divider()
           .frame(height: 20)
