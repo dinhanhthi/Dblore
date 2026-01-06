@@ -30,7 +30,8 @@ struct DatabaseIntegrationTests {
         database: ProcessInfo.processInfo.environment["TEST_DB_NAME"] ?? "postgres",
         username: ProcessInfo.processInfo.environment["TEST_DB_USER"] ?? "postgres",
         password: ProcessInfo.processInfo.environment["TEST_DB_PASSWORD"] ?? "",
-        sslMode: .disable
+        sslMode: .disable,
+        timeoutSeconds: 30
     )
 
     // MARK: - Setup and Teardown Helpers

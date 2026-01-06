@@ -252,6 +252,17 @@ struct ConnectionFormContent: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // Timeout
+    FormField(label: "Timeout (seconds)") {
+      TextField(
+        "30", value: $viewModel.editingConnectionConfig.timeoutSeconds,
+        format: .number.grouping(.never)
+      )
+      .textFieldStyle(.plain)
+      .inputStyle()
+      .frame(width: 80)
+    }
+
     // Remember Connection Toggle
     HStack {
       VStack(alignment: .leading, spacing: 2) {

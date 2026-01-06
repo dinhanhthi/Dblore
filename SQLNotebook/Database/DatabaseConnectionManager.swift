@@ -9,6 +9,43 @@ import NIOCore
 import NIOSSL
 import PostgresNIO
 
+/// Error thrown when a task exceeds its timeout
+struct TimeoutError: Error {
+  let message: String
+}
+
+/// Execute an async operation with a timeout
+/// - Parameters:
+///   - duration: Maximum duration before timing out
+///   - operation: The async operation to execute
+/// - Returns: Result from the operation
+/// - Throws: TimeoutError if operation exceeds duration, or any error from the operation
+private func withTimeout<T: Sendable>(
+  of duration: Duration,
+  operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+  try await withThrowingTaskGroup(of: T.self) { group in
+    // Add the main operation task
+    group.addTask {
+      try await operation()
+    }
+
+    // Add the timeout task
+    group.addTask {
+      try await Task.sleep(for: duration)
+      throw TimeoutError(message: "Operation timed out after \(duration)")
+    }
+
+    // Wait for first task to complete (either operation or timeout)
+    if let result = try await group.next() {
+      group.cancelAll()
+      return result
+    }
+
+    throw TimeoutError(message: "Unexpected task group completion")
+  }
+}
+
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
   private var connection: PostgresConnection?
@@ -21,7 +58,7 @@ actor DatabaseConnectionManager {
 
   /// Retry configuration for connection attempts
   private static let maxRetries = 3
-  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000] // 1s, 2s, 4s in nanoseconds
+  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]  // 1s, 2s, 4s in nanoseconds
 
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {
@@ -35,22 +72,31 @@ actor DatabaseConnectionManager {
   /// - Parameters:
   ///   - group: EventLoopGroup for the connection
   ///   - config: PostgreSQL connection configuration
+  ///   - timeoutSeconds: Connection timeout in seconds
   ///   - attempt: Current attempt number (0-indexed)
   /// - Returns: Connected PostgresConnection
-  /// - Throws: DatabaseError after max retries (3) exhausted
+  /// - Throws: DatabaseError after max retries (3) exhausted or timeout
   private func attemptConnection(
     group: EventLoopGroup,
     config: PostgresConnection.Configuration,
+    timeoutSeconds: Int,
     attempt: Int = 0
   ) async throws -> PostgresConnection {
     do {
-      let conn = try await PostgresConnection.connect(
-        on: group.next(),
-        configuration: config,
-        id: 1,
-        logger: Logger(label: "sqlnotebook.connection")
-      )
+      // Create a task with timeout
+      let timeoutDuration = Duration.seconds(timeoutSeconds)
+      let conn = try await withTimeout(of: timeoutDuration) {
+        try await PostgresConnection.connect(
+          on: group.next(),
+          configuration: config,
+          id: 1,
+          logger: Logger(label: "sqlnotebook.connection")
+        )
+      }
       return conn
+    } catch is TimeoutError {
+      // If timeout occurs, throw immediately without retry
+      throw DatabaseError.connectionFailed("Connection timeout after \(timeoutSeconds) seconds")
     } catch {
       // If we've exhausted retries, throw the error
       if attempt >= Self.maxRetries {
@@ -62,7 +108,8 @@ actor DatabaseConnectionManager {
       try await Task.sleep(nanoseconds: delay)
 
       // Retry with incremented attempt counter
-      return try await attemptConnection(group: group, config: config, attempt: attempt + 1)
+      return try await attemptConnection(
+        group: group, config: config, timeoutSeconds: timeoutSeconds, attempt: attempt + 1)
     }
   }
 
@@ -100,7 +147,8 @@ actor DatabaseConnectionManager {
 
     // Establish connection with retry logic
     do {
-      let conn = try await attemptConnection(group: group, config: postgresConfig)
+      let conn = try await attemptConnection(
+        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
       connection = conn
     } catch let error as PSQLError {
       // Cleanup on failure
@@ -140,7 +188,8 @@ actor DatabaseConnectionManager {
     )
 
     do {
-      let conn = try await attemptConnection(group: group, config: postgresConfig)
+      let conn = try await attemptConnection(
+        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
 
       // Execute a test query to verify the connection actually works
       // This ensures credentials are valid and we have proper permissions
@@ -218,7 +267,8 @@ actor DatabaseConnectionManager {
         let context = try NIOSSLContext(configuration: .makeClientConfiguration())
         return .prefer(context)
       } catch {
-        throw DatabaseError.connectionFailed("Failed to create TLS context for prefer mode: \(error.localizedDescription)")
+        throw DatabaseError.connectionFailed(
+          "Failed to create TLS context for prefer mode: \(error.localizedDescription)")
       }
 
     case .require:
@@ -231,7 +281,8 @@ actor DatabaseConnectionManager {
         let context = try NIOSSLContext(configuration: sslConfig)
         return .require(context)
       } catch {
-        throw DatabaseError.connectionFailed("Failed to create TLS context for require mode: \(error.localizedDescription)")
+        throw DatabaseError.connectionFailed(
+          "Failed to create TLS context for require mode: \(error.localizedDescription)")
       }
 
     case .verifyCa, .verifyFull:
@@ -243,7 +294,8 @@ actor DatabaseConnectionManager {
         let context = try NIOSSLContext(configuration: sslConfig)
         return .require(context)
       } catch {
-        throw DatabaseError.connectionFailed("Failed to create TLS context for verify mode: \(error.localizedDescription)")
+        throw DatabaseError.connectionFailed(
+          "Failed to create TLS context for verify mode: \(error.localizedDescription)")
       }
     }
   }
