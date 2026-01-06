@@ -2,6 +2,12 @@
 //  CellView.swift
 //  SQLNotebook
 //
+//  Main cell view component. Split into multiple files to maintain 400-line limit:
+//  - CellView.swift (this file) — Main view struct, body, and all previews
+//  - CellComponents.swift — Extracted subview components
+//  - CellResultViews.swift — Result display views
+//  - CellView+ContextMenu.swift — Context menu extension
+//
 
 import AppKit
 import SwiftUI
@@ -27,11 +33,22 @@ struct CellView: View {
           // Main cell content
           HStack(alignment: .top, spacing: 0) {
             // Left sidebar with controls
-            cellSidebar
+            CellSidebarView(
+              cell: cell,
+              isHovered: isHovered,
+              isSelected: isSelected,
+              viewModel: viewModel,
+              onRun: onRun
+            )
 
             // Editor area
             VStack(alignment: .leading, spacing: 0) {
               editorArea
+
+              // Executed query display (shown below editor, above result)
+              if let result = cell.result, let sourceQuery = result.sourceQuery {
+                ExecutedQueryDisplayView(query: sourceQuery)
+              }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
           }
@@ -43,9 +60,9 @@ struct CellView: View {
           // Result area (if exists)
           if let result = cell.result {
             if cell.isResultVisible {
-              resultArea(result)
+              ResultAreaView(result: result, viewModel: viewModel, cellId: cell.id)
             } else {
-              hiddenResultPlaceholder
+              HiddenResultPlaceholderView()
             }
           }
         }
@@ -61,14 +78,25 @@ struct CellView: View {
 
         // Floating action panel (shown on hover near bottom edge)
         if isBottomEdgeHovered {
-          floatingActionPanel
-            .offset(y: 12)
+          FloatingActionPanelView(
+            viewModel: viewModel,
+            cellId: cell.id,
+            isBottomEdgeHovered: $isBottomEdgeHovered
+          )
+          .offset(y: 12)
         }
       }
 
       // Top-right floating panel (shown when cell is hovered or selected)
       if isHovered || isSelected || isTopRightPanelHovered {
-        topRightFloatingPanel.offset(x: -10, y: -15)
+        TopRightFloatingPanelView(
+          cell: cell,
+          viewModel: viewModel,
+          isDeleteConfirming: $isDeleteConfirming,
+          isTopRightPanelHovered: $isTopRightPanelHovered,
+          isCopied: $isCopied
+        )
+        .offset(x: -10, y: -15)
       }
     }
     .onTapGesture {
@@ -125,152 +153,6 @@ struct CellView: View {
       }
   }
 
-  // MARK: - Cell Sidebar
-
-  @ViewBuilder
-  private var cellSidebar: some View {
-    VStack(spacing: Spacing.sm) {
-      // Run button
-      Button(action: onRun) {
-        if cell.isRunning {
-          ProgressView()
-            .controlSize(.small)
-            .tint(.accent)
-            .frame(width: 26, height: 26)
-        } else if let position = viewModel.executionQueue.queuePosition(for: cell.id) {
-          // Show queue position
-          Text("\(position)")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.accentColor)
-            .frame(width: 26, height: 26)
-        } else {
-          Image(systemName: "play.fill")
-            .font(.system(size: 12))
-            .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
-            .frame(width: 26, height: 26)
-        }
-      }
-      .buttonStyle(GhostButtonStyle())
-      .disabled(cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id))
-
-      // Execution count
-      if let count = cell.executionCount {
-        Text("[\(count)]")
-          .font(.monoSmall)
-          .foregroundColor(.foregroundSubtle)
-      }
-    }
-    .frame(width: ComponentSize.cellSidebarWidth)
-    .padding(.top, Spacing.xs)
-  }
-
-  // MARK: - Floating Action Panel
-
-  private var floatingActionPanel: some View {
-    FloatingPanelButton(
-      icon: "plus.square",
-      helpText: "Add Code Cell Below",
-      action: {
-        viewModel.addCell(type: .sql, after: cell.id)
-      }
-    )
-    .onHover { hovering in
-      // Keep panel visible when hovering over the button itself
-      isBottomEdgeHovered = hovering
-    }
-  }
-
-  // MARK: - Top-Right Floating Panel
-
-  private var topRightFloatingPanel: some View {
-    HStack(spacing: Spacing.sm) {
-      if isDeleteConfirming {
-        // Confirmation buttons (check and cross)
-        FloatingPanelButton(
-          icon: "checkmark",
-          helpText: "Confirm Delete",
-          action: {
-            viewModel.deleteCell(id: cell.id)
-            isDeleteConfirming = false
-          }
-        )
-
-        FloatingPanelButton(
-          icon: "xmark",
-          helpText: "Cancel Delete",
-          action: {
-            isDeleteConfirming = false
-          }
-        )
-      } else {
-        // Normal buttons (toggle visibility, delete, copy, and cancel)
-
-        // Cancel button (only show if cell is executing or in queue)
-        if cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id) {
-          FloatingPanelButton(
-            icon: "stop.fill",
-            helpText: "Cancel Execution",
-            action: {
-              viewModel.cancelCell(id: cell.id)
-            }
-          )
-        }
-
-        // Toggle visibility button (only show if cell has result)
-        if cell.result != nil {
-          FloatingPanelButton(
-            icon: cell.isResultVisible ? "eye.slash" : "eye",
-            helpText: cell.isResultVisible ? "Hide Result" : "Show Result",
-            action: {
-              viewModel.toggleResultVisibility(cellId: cell.id)
-            }
-          )
-        }
-
-        FloatingPanelButton(
-          icon: "trash",
-          helpText: "Delete Cell",
-          action: {
-            isDeleteConfirming = true
-          }
-        )
-      }
-
-      FloatingPanelButton(
-        icon: isCopied ? "checkmark" : "doc.on.doc",
-        helpText: "Copy Cell Content",
-        useSymbolEffect: true,
-        action: copyCellContent
-      )
-    }
-    .padding(.top, Spacing.xs)
-    .padding(.trailing, Spacing.xs)
-    .onHover { hovering in
-      // Keep panel visible when hovering over the buttons
-      isTopRightPanelHovered = hovering
-      // Reset confirmation state when mouse leaves the panel
-      if !hovering && isDeleteConfirming {
-        isDeleteConfirming = false
-      }
-    }
-  }
-
-  // MARK: - Helper Functions
-
-  private func copyCellContent() {
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(cell.content, forType: .string)
-
-    // Show checkmark feedback
-    isCopied = true
-
-    // Reset back to copy icon after 500ms
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-      isCopied = false
-    }
-  }
-
   // MARK: - Editor Area
 
   @ViewBuilder
@@ -285,385 +167,56 @@ struct CellView: View {
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage
   }
-
-  // MARK: - Result Area
-
-  @ViewBuilder
-  private var hiddenResultPlaceholder: some View {
-    HStack(alignment: .top, spacing: 0) {
-      // Fake sidebar to align with cell sidebar
-      Color.clear
-        .frame(width: ComponentSize.cellSidebarWidth)
-
-      HStack(spacing: Spacing.sm) {
-        Image(systemName: "eye.slash")
-          .foregroundColor(.foregroundSubtle)
-        Text("Result is hidden")
-          .foregroundColor(.foregroundSubtle)
-      }
-      .font(.system(size: 13))
-      .frame(maxWidth: .infinity)
-      .padding(.top, 0)
-      .padding(.bottom, Spacing.xs)
-      .padding(.horizontal, Spacing.md)
-      .background(Color.cellBackground.opacity(0.5))
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-      .padding(.trailing, Spacing.md)
-    }
-    .padding(.bottom, Spacing.md)
-  }
-
-  @ViewBuilder
-  private func resultArea(_ result: CellResult) -> some View {
-    HStack(alignment: .top, spacing: 0) {
-      // Fake sidebar to align with cell sidebar
-      Color.clear
-        .frame(width: ComponentSize.cellSidebarWidth)
-
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        if let error = result.error {
-          // Error display
-          errorView(error)
-        } else if let affectedRows = result.affectedRows {
-          // Success message for UPDATE/DELETE/INSERT
-          successView(affectedRows: affectedRows, executionTime: result.executionTime)
-        } else {
-          // Result table
-          // Removed .id() to avoid forced recreation on visibility toggle
-          ResultTableView(result: result, viewModel: viewModel, cellId: cell.id)
-
-          // Result metadata
-          resultMetadata(result)
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.top, 0)
-      .padding(.bottom, 0)
-      .padding(.trailing, Spacing.md)
-    }
-    .padding(.bottom, Spacing.md)
-  }
-
-  private func successView(affectedRows: Int, executionTime: TimeInterval) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .top, spacing: Spacing.sm) {
-        Image(systemName: "checkmark.circle.fill")
-          .foregroundColor(.green)
-
-        Text("Success")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundColor(.green)
-      }
-      .padding(.bottom, Spacing.md)
-
-      HStack(spacing: Spacing.md) {
-        Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
-          .font(.mono)
-          .foregroundColor(.foreground)
-
-        Text("|")
-          .foregroundColor(.foregroundSubtle)
-
-        Text(String(format: "Execution time: %.3fs", executionTime))
-          .font(.mono)
-          .foregroundColor(.foregroundSubtle)
-      }
-    }
-    .padding(Spacing.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.green.opacity(0.1))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-  }
-
-  private func errorView(_ error: String) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .top, spacing: Spacing.sm) {
-        Image(systemName: "exclamationmark.triangle.fill")
-          .foregroundColor(.destructive)
-
-        Text("Error")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundColor(.destructive)
-      }
-      .padding(.bottom, Spacing.md)
-
-      Text(error)
-        .font(.mono)
-        .foregroundColor(.destructive)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .padding(Spacing.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.destructive.opacity(0.1))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-  }
-
-  private func resultMetadata(_ result: CellResult) -> some View {
-    HStack(spacing: Spacing.md) {
-      Text("Rows: \(result.rowCount)")
-
-      // Show warning if limited (either auto-limited or user LIMIT exceeded)
-      if result.wasLimited || result.userLimitExceeded {
-        HStack(spacing: Spacing.xs) {
-          Text("(")
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundColor(.foregroundSubtle)
-          Text("limited to \(AppSettings.shared.maxRowLimit) rows")
-            .foregroundColor(.foregroundSubtle)
-          Text(")")
-        }.font(.caption2)
-      }
-
-      Text("|")
-        .foregroundColor(.foregroundSubtle)
-      Text(String(format: "Execution time: %.3fs", result.executionTime))
-      Text("|")
-        .foregroundColor(.foregroundSubtle)
-      Text(formatTimestamp(result.timestamp))
-    }
-    .font(.caption)
-    .foregroundColor(.foregroundSubtle)
-  }
-
-  // MARK: - Static Date Formatter (cached for performance)
-
-  private static let timestampFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-  }()
-
-  private func formatTimestamp(_ date: Date) -> String {
-    Self.timestampFormatter.string(from: date)
-  }
-
-  // MARK: - Context Menu
-
-  @ViewBuilder
-  private var cellContextMenu: some View {
-    if cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id) {
-      Button(action: { viewModel.cancelCell(id: cell.id) }) {
-        Label("Cancel Execution", systemImage: "stop.fill")
-      }
-    } else {
-      Button(action: onRun) {
-        Label("Run", systemImage: "play.fill")
-      }
-    }
-
-    Divider()
-
-    Button(action: { viewModel.duplicateCell(id: cell.id) }) {
-      Label("Duplicate", systemImage: "doc.on.doc")
-    }
-
-    Button(action: { viewModel.moveSelectedCellUp() }) {
-      Label("Move Up", systemImage: "arrow.up")
-    }
-
-    Button(action: { viewModel.moveSelectedCellDown() }) {
-      Label("Move Down", systemImage: "arrow.down")
-    }
-
-    Divider()
-
-    Button(action: { viewModel.toggleResultVisibility(cellId: cell.id) }) {
-      Label(
-        cell.isResultVisible ? "Hide Result" : "Show Result",
-        systemImage: cell.isResultVisible ? "eye.slash" : "eye"
-      )
-    }
-    .disabled(cell.result == nil)
-
-    Button(action: { viewModel.clearCellOutput(id: cell.id) }) {
-      Label("Clear Output", systemImage: "trash")
-    }
-    .disabled(cell.result == nil)
-
-    Button(role: .destructive, action: { viewModel.deleteCell(id: cell.id) }) {
-      Label("Delete", systemImage: "trash.fill")
-    }
-  }
 }
 
-// MARK: - Previews
+// MARK: - Previews (CRITICAL: Must be in same file as CellView implementation)
 
-#Preview("Empty Cells") {
-  ScrollView {
-    VStack(spacing: 0) {
-      CellView(
-        viewModel: NotebookViewModel(),
-        cell: .constant(NotebookCell(cellType: .sql, content: "")),
-        isSelected: false,
-        onRun: {}
-      )
-    }
-    .padding()
-  }
+#Preview("Empty") {
+  CellView(
+    viewModel: NotebookViewModel(),
+    cell: .constant(NotebookCell(cellType: .sql, content: "")),
+    isSelected: false,
+    onRun: {}
+  )
+  .padding()
   .frame(width: 700, height: 150)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
 
-#Preview("Long Results") {
-  @Previewable @State var cellWithResult = {
-    let mockResult = CellResult(
-      columns: [
-        ColumnInfo(name: "id", type: "INTEGER"),
-        ColumnInfo(name: "name", type: "VARCHAR"),
-        ColumnInfo(name: "email", type: "VARCHAR"),
-        ColumnInfo(name: "description", type: "TEXT"),
-        ColumnInfo(name: "age", type: "INTEGER"),
-        ColumnInfo(name: "active", type: "BOOLEAN"),
-        ColumnInfo(name: "metadata", type: "JSONB"),
-      ],
-      rows: [
-        [
-          .int(1), .string("Alice Johnson"), .string("alice@example.com"),
-          .string(
-            "Senior Software Engineer with expertise in iOS development, SwiftUI, and system architecture. Passionate about creating elegant user interfaces and scalable solutions."
-          ), .int(28), .bool(true), .json("{\"role\": \"admin\", \"dept\": \"IT\"}"),
-        ],
-        [
-          .int(2), .string("Bob Williams"), .string("bob@example.com"),
-          .string(
-            "Sales Manager responsible for the entire West Coast region, managing a team of 15 sales representatives and achieving consistent quarterly growth."
-          ), .int(35), .bool(true), .json("{\"role\": \"user\", \"dept\": \"Sales\"}"),
-        ],
-        [
-          .int(3), .string("Charlie Brown"), .string("charlie@example.com"),
-          .string(
-            "Product Designer specializing in user experience research and interface design. Led design initiatives for multiple successful product launches."
-          ), .int(42), .bool(false), .null,
-        ],
-        [
-          .int(4), .string("Diana Prince"), .string("diana@example.com"),
-          .string(
-            "Engineering Manager overseeing backend infrastructure team. Expert in distributed systems, microservices architecture, and cloud technologies."
-          ), .int(31), .bool(true), .json("{\"role\": \"manager\"}"),
-        ],
-        [
-          .int(5), .string("Eve Anderson"), .string("eve@example.com"),
-          .string(
-            "Data Scientist with focus on machine learning and predictive analytics. Published researcher in AI and natural language processing."
-          ), .int(29), .bool(false), .null,
-        ],
-        [
-          .int(6), .string("Frank Martinez"), .string("frank@example.com"),
-          .string(
-            "DevOps Engineer maintaining CI/CD pipelines and cloud infrastructure. Certified in AWS, Azure, and Kubernetes administration."
-          ), .int(33), .bool(true), .json("{\"role\": \"user\", \"dept\": \"IT\"}"),
-        ],
-        [
-          .int(7), .string("Grace Lee"), .string("grace@example.com"),
-          .string(
-            "Marketing Director developing comprehensive marketing strategies across digital and traditional channels with proven ROI improvement."
-          ), .int(38), .bool(true), .json("{\"role\": \"manager\", \"dept\": \"Marketing\"}"),
-        ],
-        [
-          .int(8), .string("Henry Taylor"), .string("henry@example.com"),
-          .string(
-            "Quality Assurance Lead ensuring product quality through automated testing frameworks and comprehensive test coverage strategies."
-          ), .int(30), .bool(true), .json("{\"role\": \"user\", \"dept\": \"QA\"}"),
-        ],
-        [
-          .int(9), .string("Iris Chen"), .string("iris@example.com"),
-          .string(
-            "Full-stack Developer building scalable web applications using modern frameworks and best practices in software engineering."
-          ), .int(27), .bool(true), .json("{\"role\": \"user\", \"dept\": \"IT\"}"),
-        ],
-        [
-          .int(10), .string("Jack Wilson"), .string("jack@example.com"),
-          .string(
-            "Security Analyst responsible for identifying vulnerabilities, implementing security protocols, and ensuring compliance with industry standards."
-          ), .int(36), .bool(false), .json("{\"role\": \"user\", \"dept\": \"Security\"}"),
-        ],
-        [
-          .int(11), .string("Kate Brown"), .string("kate@example.com"),
-          .string(
-            "Technical Writer creating comprehensive documentation, API references, and user guides for complex software systems and platforms."
-          ), .int(32), .bool(true), .json("{\"role\": \"user\", \"dept\": \"Documentation\"}"),
-        ],
-        [
-          .int(12), .string("Liam Davis"), .string("liam@example.com"),
-          .string(
-            "Mobile Developer specializing in cross-platform development with React Native and Flutter for iOS and Android applications."
-          ), .int(28), .bool(true), .json("{\"role\": \"user\", \"dept\": \"Mobile\"}"),
-        ],
-        [
-          .int(13), .string("Maya Patel"), .string("maya@example.com"),
-          .string(
-            "Business Analyst bridging technical and business stakeholders, defining requirements, and ensuring project alignment with business objectives."
-          ), .int(34), .bool(true), .json("{\"role\": \"analyst\", \"dept\": \"Business\"}"),
-        ],
-        [
-          .int(14), .string("Noah Garcia"), .string("noah@example.com"),
-          .string(
-            "System Administrator managing server infrastructure, network security, and ensuring high availability of critical business systems."
-          ), .int(40), .bool(false), .null,
-        ],
-        [
-          .int(15), .string("Olivia Smith"), .string("olivia@example.com"),
-          .string(
-            "Project Manager coordinating cross-functional teams, managing timelines and budgets, and delivering complex projects on schedule."
-          ), .int(37), .bool(true), .json("{\"role\": \"manager\", \"dept\": \"PMO\"}"),
-        ],
-        [
-          .int(16), .string("Paul Johnson"), .string("paul@example.com"),
-          .string(
-            "Database Administrator optimizing database performance, managing backups, and ensuring data integrity across multiple systems."
-          ), .int(39), .bool(true), .json("{\"role\": \"user\", \"dept\": \"IT\"}"),
-        ],
-        [
-          .int(17), .string("Quinn Roberts"), .string("quinn@example.com"),
-          .string(
-            "UX Researcher conducting user studies, analyzing behavior patterns, and providing insights to improve product usability and satisfaction."
-          ), .int(31), .bool(true), .json("{\"role\": \"researcher\", \"dept\": \"Design\"}"),
-        ],
-        [
-          .int(18), .string("Rachel Green"), .string("rachel@example.com"),
-          .string(
-            "Content Strategist developing content plans, managing editorial calendars, and ensuring consistent brand voice across all platforms."
-          ), .int(33), .bool(false), .json("{\"role\": \"user\", \"dept\": \"Marketing\"}"),
-        ],
-      ],
-      executionTime: 0.087,
-      rowCount: 18,
-      timestamp: Date(),
-      wasLimited: true
-    )
-
-    var cell = NotebookCell(
-      cellType: .sql,
-      content:
-        "SELECT id, name, email, description, age, active, metadata\nFROM users\nWHERE active = true\nORDER BY id;"
-    )
-    cell.result = mockResult
-    cell.executionCount = 3
-    return cell
-  }()
-
-  ScrollView {
-    VStack(spacing: 0) {
-      CellView(
-        viewModel: NotebookViewModel(),
-        cell: $cellWithResult,
-        isSelected: true,
-        onRun: {}
-      )
-    }
+#Preview("With Result") {
+  @Previewable @State var cell = PreviewData.cellWithShortResult
+  CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: true, onRun: {})
     .padding()
-  }
-  .frame(width: 800, height: 700)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
+    .frame(width: 600, height: 400)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
 }
 
-#Preview("Short Results") {
-  @Previewable @State var cellWithResult = {
-    let mockResult = CellResult(
+#Preview("Error State") {
+  @Previewable @State var cell = PreviewData.cellWithError
+  CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: false, onRun: {})
+    .padding()
+    .frame(width: 600)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Hidden Result") {
+  @Previewable @State var cell = PreviewData.cellWithHiddenResult
+  CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: true, onRun: {})
+    .padding()
+    .frame(width: 600, height: 300)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+// MARK: - Preview Data (kept in same file to maintain preview/implementation co-location)
+
+private enum PreviewData {
+  static var cellWithShortResult: NotebookCell {
+    var cell = NotebookCell(cellType: .sql, content: "SELECT id, name, status\nFROM users\nLIMIT 4;")
+    cell.result = CellResult(
       columns: [
         ColumnInfo(name: "id", type: "INTEGER"),
         ColumnInfo(name: "name", type: "VARCHAR"),
@@ -677,75 +230,30 @@ struct CellView: View {
       ],
       executionTime: 0.012,
       rowCount: 4,
-      timestamp: Date()
+      timestamp: Date(),
+      sourceQuery: "SELECT id, name, status FROM users LIMIT 4"
     )
-
-    var cell = NotebookCell(
-      cellType: .sql,
-      content: "SELECT id, name, status\nFROM users\nLIMIT 4;"
-    )
-    cell.result = mockResult
     cell.executionCount = 1
     return cell
-  }()
-
-  ScrollView {
-    VStack(spacing: 0) {
-      CellView(
-        viewModel: NotebookViewModel(),
-        cell: $cellWithResult,
-        isSelected: true,
-        onRun: {}
-      )
-    }
-    .padding()
   }
-  .frame(width: 600, height: 400)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
 
-#Preview("Error State") {
-  @Previewable @State var cellWithError = {
-    let errorResult = CellResult(
-      columns: [],
-      rows: [],
-      executionTime: 0.003,
-      rowCount: 0,
-      timestamp: Date(),
+  static var cellWithError: NotebookCell {
+    var cell = NotebookCell(cellType: .sql, content: "SELECT invalid_column FROM users;")
+    cell.result = CellResult(
+      columns: [], rows: [], executionTime: 0.003, rowCount: 0, timestamp: Date(),
       error:
-        "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^"
+        "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
+      sourceQuery: "SELECT invalid_column FROM users"
     )
-
-    var cell = NotebookCell(
-      cellType: .sql,
-      content: "SELECT invalid_column FROM users;"
-    )
-    cell.result = errorResult
     cell.executionCount = 5
     return cell
-  }()
-
-  ScrollView {
-    VStack(spacing: 0) {
-      CellView(
-        viewModel: NotebookViewModel(),
-        cell: $cellWithError,
-        isSelected: false,
-        onRun: {}
-      )
-    }
-    .padding()
   }
-  .frame(width: 600)
-  .frame(maxHeight: .infinity)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
 
-#Preview("Hidden Result") {
-  @Previewable @State var cellWithHiddenResult = {
-    let mockResult = CellResult(
+  static var cellWithHiddenResult: NotebookCell {
+    var cell = NotebookCell(
+      cellType: .sql, content: "SELECT id, name, email\nFROM users\nLIMIT 3;",
+      isResultVisible: false)
+    cell.result = CellResult(
       columns: [
         ColumnInfo(name: "id", type: "INTEGER"),
         ColumnInfo(name: "name", type: "VARCHAR"),
@@ -756,33 +264,10 @@ struct CellView: View {
         [.int(2), .string("Bob Williams"), .string("bob@example.com")],
         [.int(3), .string("Charlie Brown"), .string("charlie@example.com")],
       ],
-      executionTime: 0.045,
-      rowCount: 3,
-      timestamp: Date()
+      executionTime: 0.045, rowCount: 3, timestamp: Date(),
+      sourceQuery: "SELECT id, name, email FROM users LIMIT 3"
     )
-
-    var cell = NotebookCell(
-      cellType: .sql,
-      content: "SELECT id, name, email\nFROM users\nLIMIT 3;",
-      isResultVisible: false  // Result is hidden
-    )
-    cell.result = mockResult
     cell.executionCount = 2
     return cell
-  }()
-
-  ScrollView {
-    VStack(spacing: 0) {
-      CellView(
-        viewModel: NotebookViewModel(),
-        cell: $cellWithHiddenResult,
-        isSelected: true,
-        onRun: {}
-      )
-    }
-    .padding()
   }
-  .frame(width: 600, height: 300)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
 }
