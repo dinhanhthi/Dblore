@@ -53,4 +53,71 @@ struct DatabaseColumn: Identifiable, Sendable {
     self.isNullable = isNullable
     self.isPrimaryKey = isPrimaryKey
   }
+
+  /// Returns the appropriate SF Symbol icon name for this column's data type
+  var typeIcon: String {
+    if isPrimaryKey {
+      return "key"
+    }
+
+    let lowercasedType = type.lowercased()
+
+    // Numeric types
+    if lowercasedType.contains("int") || lowercasedType.contains("serial")
+      || lowercasedType.contains("bigserial") || lowercasedType.contains("smallserial")
+    {
+      return "textformat.123"
+    }
+
+    if lowercasedType.contains("numeric") || lowercasedType.contains("decimal")
+      || lowercasedType.contains("float") || lowercasedType.contains("double")
+      || lowercasedType.contains("real") || lowercasedType.contains("money")
+    {
+      return "number"
+    }
+
+    // Text types
+    if lowercasedType.contains("char") || lowercasedType.contains("text")
+      || lowercasedType.contains("varchar") || lowercasedType.contains("string")
+    {
+      return "textformat"
+    }
+
+    // Boolean
+    if lowercasedType.contains("bool") {
+      return "checklist"
+    }
+
+    // Date/Time types
+    if lowercasedType.contains("date") || lowercasedType.contains("time")
+      || lowercasedType.contains("timestamp")
+    {
+      return "calendar"
+    }
+
+    // JSON types
+    if lowercasedType.contains("json") {
+      return "curlybraces"
+    }
+
+    // Binary types
+    if lowercasedType.contains("byte") || lowercasedType.contains("blob")
+      || lowercasedType.contains("binary")
+    {
+      return "01.square"
+    }
+
+    // UUID
+    if lowercasedType.contains("uuid") {
+      return "number.square"
+    }
+
+    // Array types
+    if lowercasedType.contains("array") || lowercasedType.contains("[]") {
+      return "list.bullet"
+    }
+
+    // Default fallback
+    return "questionmark.circle"
+  }
 }
