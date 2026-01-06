@@ -21,13 +21,16 @@
 - [x] Implement "Clear All Outputs"
 - [x] Button icons using SF Symbols
 - [x] Add confirmation dialog for Run All
-- [ ] **Implement cell execution queue system**
-  - [ ] Queue management for multiple cells
-  - [ ] Visual indicator for queued cells
-  - [ ] Queue state for cells
-  - [ ] Queue position indicator
-  - [ ] Add individual cells to queue
-  - [ ] Cancel queued cells
+- [x] **Implement cell execution queue system**
+  - [x] Queue management for multiple cells
+  - [x] Visual indicator for queued cells
+  - [x] Queue state for cells
+  - [x] Queue position indicator
+  - [x] Add individual cells to queue
+  - [x] Cancel button for executing/queued cells
+  - [x] Context menu integration
+  - [x] Tests for execution queue
+  - [x] Cancel queued cells
 
 ### 4.4 Drag and Drop - NOT STARTED
 - [ ] Add drag handle to cell left sidebar
@@ -133,6 +136,30 @@
 - [ ] Build relationship graph
 - [ ] Create visual graph component
 - [ ] Implement pan and zoom functionality
+
+### 5.8 Multi-SQL Command Execution
+- [ ] Allow multiple SQL commands in single cell editor
+  - [ ] Support semicolon (`;`) as command separator
+  - [ ] Support line breaks as optional separators
+  - [ ] Similar behavior to pgAdmin/DBeaver editors
+- [ ] Execute all commands in sequence
+  - [ ] Run all commands in order (first to last)
+  - [ ] Catch errors and continue with remaining commands
+  - [ ] Collect execution results for each command
+- [ ] Result Display
+  - [ ] Display result of LAST query only in table view
+  - [ ] Previous commands (CREATE, INSERT, UPDATE, DELETE) execute silently
+  - [ ] Show execution status for all commands (success/error)
+  - [ ] Store individual results for each command internally
+- [ ] UI/UX
+  - [ ] Add visual separator in editor showing command boundaries
+  - [ ] Show command count indicator (e.g., "3 commands")
+  - [ ] Display execution order in cell header
+  - [ ] Show which command's result is being displayed
+- [ ] Error Handling
+  - [ ] If a command fails, continue with remaining commands
+  - [ ] Show error message for failed commands
+  - [ ] Allow selective re-execution of failed commands
 
 ---
 
