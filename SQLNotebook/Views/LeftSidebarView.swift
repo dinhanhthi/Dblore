@@ -243,7 +243,7 @@ struct ColumnRowView: View {
     Button(action: onClick) {
       HStack(spacing: Spacing.xs) {
         // Column icon
-        Image(systemName: column.isPrimaryKey ? "key" : "textformat.123")
+        Image(systemName: column.typeIcon)
           .font(.system(size: 10))
           .foregroundColor(column.isPrimaryKey ? .warning : .foregroundSubtle)
           .frame(width: 12)
@@ -320,15 +320,21 @@ struct ColumnRowView: View {
   let viewModel = NotebookViewModel()
   viewModel.connectionState = .connected
 
-  // Create sample tables
+  // Create sample tables with various data types
   let usersTable = DatabaseTable(
     schema: "public",
     name: "users",
     columns: [
       DatabaseColumn(name: "id", type: "integer", isNullable: false, isPrimaryKey: true),
+      DatabaseColumn(name: "uuid", type: "uuid", isNullable: false),
       DatabaseColumn(name: "email", type: "varchar", isNullable: false),
       DatabaseColumn(name: "name", type: "varchar", isNullable: true),
+      DatabaseColumn(name: "age", type: "integer", isNullable: true),
+      DatabaseColumn(name: "balance", type: "decimal", isNullable: true),
+      DatabaseColumn(name: "is_active", type: "boolean", isNullable: false),
       DatabaseColumn(name: "created_at", type: "timestamp", isNullable: false),
+      DatabaseColumn(name: "metadata", type: "jsonb", isNullable: true),
+      DatabaseColumn(name: "tags", type: "text[]", isNullable: true),
     ],
     isExpanded: true,
     rowCount: 1234
@@ -338,11 +344,13 @@ struct ColumnRowView: View {
     schema: "public",
     name: "posts",
     columns: [
-      DatabaseColumn(name: "id", type: "integer", isNullable: false, isPrimaryKey: true),
+      DatabaseColumn(name: "id", type: "bigserial", isNullable: false, isPrimaryKey: true),
       DatabaseColumn(name: "user_id", type: "integer", isNullable: false),
       DatabaseColumn(name: "title", type: "varchar", isNullable: false),
       DatabaseColumn(name: "content", type: "text", isNullable: true),
       DatabaseColumn(name: "published", type: "boolean", isNullable: false),
+      DatabaseColumn(name: "views", type: "bigint", isNullable: true),
+      DatabaseColumn(name: "rating", type: "float", isNullable: true),
     ],
     isExpanded: false,
     rowCount: 5678
