@@ -42,15 +42,8 @@ struct CellView: View {
             )
 
             // Editor area
-            VStack(alignment: .leading, spacing: 0) {
-              editorArea
-
-              // Executed query display (shown below editor, above result)
-              if let result = cell.result, let sourceQuery = result.sourceQuery {
-                ExecutedQueryDisplayView(query: sourceQuery)
-              }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            editorArea
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
           .padding(.top, Spacing.md)
           .padding(.bottom, Spacing.md)

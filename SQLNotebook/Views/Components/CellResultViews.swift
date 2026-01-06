@@ -21,6 +21,11 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.md) {
+        // Show executed query at top of result area if available
+        if let sourceQuery = result.sourceQuery {
+          ExecutedQueryDisplayView(query: sourceQuery)
+        }
+
         if let error = result.error {
           // Error display
           ErrorResultView(error: error)
