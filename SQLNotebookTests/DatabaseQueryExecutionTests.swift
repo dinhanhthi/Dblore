@@ -275,6 +275,82 @@ struct DatabaseQueryExecutionTests {
         #expect(result.contains("OFFSET 10"), "Should preserve OFFSET clause")
         #expect(!result.contains("LIMIT 50"), "Should not keep original LIMIT 50")
     }
+
+    // MARK: - SELECT without FROM clause Tests
+
+    @Test("SELECT pg_sleep should not get LIMIT appended")
+    func selectPgSleepNoLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT pg_sleep(3)"
+        let maxRows = 30
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result == "SELECT pg_sleep(3)", "Should not append LIMIT to SELECT pg_sleep(3)")
+        #expect(!result.contains("LIMIT"), "pg_sleep query should not have LIMIT clause")
+    }
+
+    @Test("SELECT now() should not get LIMIT appended")
+    func selectNowNoLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT now()"
+        let maxRows = 30
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result == "SELECT now()", "Should not append LIMIT to SELECT now()")
+        #expect(!result.contains("LIMIT"), "now() query should not have LIMIT clause")
+    }
+
+    @Test("SELECT version() should not get LIMIT appended")
+    func selectVersionNoLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT version()"
+        let maxRows = 30
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result == "SELECT version()", "Should not append LIMIT to SELECT version()")
+        #expect(!result.contains("LIMIT"), "version() query should not have LIMIT clause")
+    }
+
+    @Test("SELECT with multiple functions should not get LIMIT")
+    func selectMultipleFunctionsNoLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT now(), version(), pg_sleep(1)"
+        let maxRows = 30
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result == "SELECT now(), version(), pg_sleep(1)", "Should not append LIMIT to function-only SELECT")
+        #expect(!result.contains("LIMIT"), "Function-only query should not have LIMIT clause")
+    }
+
+    @Test("SELECT with FROM clause should get LIMIT appended")
+    func selectWithFromGetsLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT * FROM customers"
+        let maxRows = 30
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result.contains("LIMIT 30"), "Should append LIMIT 30 to SELECT with FROM clause")
+    }
 }
 
 // MARK: - Test Helper Extension
@@ -294,6 +370,12 @@ extension DatabaseConnectionManager {
             return trimmed
         }
 
+        // Don't wrap if it's a SELECT without FROM clause (e.g., SELECT pg_sleep(3), SELECT now())
+        // These queries call functions and don't return table data
+        if !hasFromClausePublic(trimmed) {
+            return trimmed
+        }
+
         // Check for existing LIMIT
         if hasLimitClausePublic(trimmed) {
             return replaceLimitValuePublic(trimmed, maxRows: maxRows)
@@ -307,6 +389,12 @@ extension DatabaseConnectionManager {
     func hasLimitClausePublic(_ query: String) -> Bool {
         let normalized = query.lowercased()
         return normalized.range(of: "\\blimit\\b", options: .regularExpression) != nil
+    }
+
+    /// Public wrapper for private hasFromClause method
+    func hasFromClausePublic(_ query: String) -> Bool {
+        let normalized = query.lowercased()
+        return normalized.range(of: "\\bfrom\\b", options: .regularExpression) != nil
     }
 
     /// Public wrapper for private replaceLimitValue method

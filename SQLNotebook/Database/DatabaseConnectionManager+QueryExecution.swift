@@ -170,8 +170,9 @@ extension DatabaseConnectionManager {
       // Check if result was limited:
       // - If we got exactly maxRows AND the original query didn't have LIMIT
       // - This indicates there might be more rows available
+      // - Only for queries with FROM clause (table queries, not function calls)
       let hadNoLimit = !hasLimitClause(query)
-      if resultRows.count == maxRows && hadNoLimit && isSelectQuery(query) {
+      if resultRows.count == maxRows && hadNoLimit && isSelectQuery(query) && hasFromClause(query) {
         wasLimited = true
       }
 
@@ -375,6 +376,14 @@ extension DatabaseConnectionManager {
     return normalized.range(of: "\\blimit\\b", options: .regularExpression) != nil
   }
 
+  /// Check if a query has a FROM clause
+  /// Queries without FROM clause are typically function calls like SELECT pg_sleep(3), SELECT now()
+  private func hasFromClause(_ query: String) -> Bool {
+    let normalized = query.lowercased()
+    // Use regex to find FROM as a separate word (not part of another word)
+    return normalized.range(of: "\\bfrom\\b", options: .regularExpression) != nil
+  }
+
   /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
   private func extractLimitValue(_ query: String) -> Int? {
     // Remove semicolons and trim
@@ -404,6 +413,12 @@ extension DatabaseConnectionManager {
 
     // Don't wrap if it's not a SELECT query
     if !isSelectQuery(trimmed) {
+      return trimmed
+    }
+
+    // Don't wrap if it's a SELECT without FROM clause (e.g., SELECT pg_sleep(3), SELECT now())
+    // These queries call functions and don't return table data
+    if !hasFromClause(trimmed) {
       return trimmed
     }
 
