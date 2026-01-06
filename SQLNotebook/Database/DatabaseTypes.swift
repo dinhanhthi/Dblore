@@ -286,6 +286,35 @@ extension DatabaseConnectionManager {
 
   // MARK: - Error Formatting
 
+  /// Convert error code to user-friendly message
+  /// - Parameter errorCode: The error code string
+  /// - Returns: Human-readable error message
+  private func humanReadableErrorMessage(for errorCode: String) -> String? {
+    // Map common error codes to friendly messages
+    switch errorCode {
+    case "sslUnsupported":
+      return "SSL is not supported by the server"
+    case "invalidAuthorizationSpecification":
+      return "Invalid username or password"
+    case "invalidPassword":
+      return "Invalid password"
+    case "connectionException":
+      return "Failed to connect to the database server"
+    case "connectionDoesNotExist":
+      return "Connection does not exist"
+    case "connectionFailure":
+      return "Connection failed"
+    case "clientCannotConnect":
+      return "Cannot connect to the database server"
+    case "serverNotListening":
+      return "Database server is not listening"
+    case "serverNotReady":
+      return "Database server is not ready"
+    default:
+      return nil
+    }
+  }
+
   /// Format a PostgreSQL error with detailed information
   /// - Parameters:
   ///   - error: The PostgreSQL error
@@ -299,9 +328,15 @@ extension DatabaseConnectionManager {
       if let errorMessage = serverInfo[.message] {
         message = errorMessage
       } else if let severity = serverInfo[.severity] {
-        message = "\(severity): \(error.code.description)"
+        // Try to get human-readable message first
+        if let friendlyMessage = humanReadableErrorMessage(for: error.code.description) {
+          message = "\(severity): \(friendlyMessage)"
+        } else {
+          message = "\(severity): \(error.code.description)"
+        }
       } else {
-        message = error.code.description
+        // Try to get human-readable message first
+        message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
       }
 
       // Add detail if available
@@ -328,8 +363,8 @@ extension DatabaseConnectionManager {
         }
       }
     } else {
-      // Fallback to basic error description
-      message = error.code.description
+      // Fallback to human-readable message or basic error description
+      message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
     }
 
     return message
