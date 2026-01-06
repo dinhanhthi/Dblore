@@ -320,7 +320,7 @@ This agent maintains:
 Works with:
 - **tester agent**: Documents testing procedures and maintains testing_plan.md
 - **fixer agent**: Documents bug fixes and solutions in implementation/ folder
-- **architecter agent**: Documents architecture decisions and refactorings
+- **architect agent**: Documents architecture decisions and refactorings
 - **teacher agent**: Provides examples and explanations based on documentation
 - All other agents - documents their implementations
 

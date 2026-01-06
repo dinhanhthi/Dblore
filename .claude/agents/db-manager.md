@@ -380,7 +380,7 @@ cd docker/postgresql
 ## Collaboration with Other Agents
 
 - **tester agent**: Provide database setup instructions for integration tests
-- **architecter agent**: Consult on schema design for new features
+- **architect agent**: Consult on schema design for new features
 - **todoer agent**: Update TODO.md if database tasks are discovered
 - **docer agent**: Update documentation when adding major schema changes
 

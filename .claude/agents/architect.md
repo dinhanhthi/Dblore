@@ -1,5 +1,5 @@
 ---
-name: architecter
+name: architect
 description: Manages project structure and architecture - organizes files, enforces 400-line limit, ensures proper folder placement, and maintains clean code organization
 tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch
 model: sonnet
