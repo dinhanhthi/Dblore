@@ -49,10 +49,15 @@ jobs:
 
     - name: Run Unit Tests
       run: |
+        # Workaround for Swift Testing framework issues on GitHub Actions
+        # See: https://github.com/actions/runner-images/issues/11874
+        # Disable parallel testing to avoid test runner crashes
         env SKIP_INTEGRATION_TESTS=true SKIP_UI_TESTS=true xcodebuild test \
           -project SQLNotebook.xcodeproj \
           -scheme SQLNotebook \
           -destination 'platform=macOS' \
+          -parallel-testing-enabled NO \
+          -retry-tests-on-failure \
           CODE_SIGNING_ALLOWED=YES \
           CODE_SIGN_IDENTITY="-" \
           CODE_SIGNING_REQUIRED=NO
