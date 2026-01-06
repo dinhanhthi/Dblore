@@ -8,12 +8,17 @@ import Foundation
 // MARK: - Cell Execution
 
 extension NotebookViewModel {
-  /// Run a specific cell
+  /// Run a specific cell by adding it to the execution queue
   func runCell(id: UUID) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     guard notebook.cells[index].cellType == .sql else { return }
     guard connectionState.isConnected else {
       notebook.cells[index].result = .errorResult("Not connected to database")
+      return
+    }
+
+    // Check if cell is already in queue
+    if executionQueue.isInQueue(cellId: id) {
       return
     }
 
@@ -25,25 +30,57 @@ extension NotebookViewModel {
     // This ensures cell.content is up-to-date before we execute the query
     try? await Task.sleep(for: .milliseconds(50))
 
-    notebook.cells[index].isRunning = true
-
     let query = notebook.cells[index].content
 
+    // Enqueue the cell execution
+    executionQueue.enqueue(cellId: id, query: query)
+  }
+
+  /// Cancel execution for a specific cell
+  func cancelCell(id: UUID) {
+    executionQueue.cancel(cellId: id)
+
+    // Update UI state
+    if let index = notebook.cells.firstIndex(where: { $0.id == id }) {
+      notebook.cells[index].isRunning = false
+    }
+  }
+
+  /// Cancel all pending and executing cells
+  func cancelAllCells() {
+    executionQueue.cancelAll()
+
+    // Update UI state for all cells
+    for index in notebook.cells.indices {
+      notebook.cells[index].isRunning = false
+    }
+  }
+
+  /// Internal method to execute a task (called by ExecutionQueue)
+  func executeTask(_ task: ExecutionTask) async -> CellResult? {
+    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+      return nil
+    }
+
+    notebook.cells[index].isRunning = true
+
     // DEBUG: Log the query being executed
-    print("🔍 [NotebookViewModel] Executing query from cell \(id): `\(query)`")
+    print("🔍 [NotebookViewModel] Executing query from cell \(task.cellId): `\(task.query)`")
+
+    var result: CellResult?
 
     do {
       // Execute query using DatabaseConnectionManager
       // Use app's maxRowLimit setting
       let queryResult = try await connectionManager.executeQuery(
-        query,
+        task.query,
         maxRows: AppSettings.shared.maxRowLimit
       )
 
       executionCounter += 1
 
       // Extract table name from query (simple SELECT parsing)
-      let tableName = extractTableName(from: query)
+      let tableName = extractTableName(from: task.query)
 
       // Fetch primary key columns if we have a table name
       var primaryKeyColumns: [String] = []
@@ -53,14 +90,14 @@ extension NotebookViewModel {
       }
 
       // Convert QueryResult to CellResult
-      let result = CellResult(
+      result = CellResult(
         columns: queryResult.columns,
         rows: queryResult.rows,
         executionTime: queryResult.executionTime,
         rowCount: queryResult.rowCount,
         timestamp: Date(),
         wasLimited: queryResult.wasLimited,
-        sourceQuery: query,
+        sourceQuery: task.query,
         tableName: tableName,
         primaryKeyColumns: primaryKeyColumns,
         rowIdentifiers: queryResult.rowIdentifiers,
@@ -83,22 +120,33 @@ extension NotebookViewModel {
     } catch let error as DatabaseError {
       // Handle database-specific errors
       let executionTime = error.executionTime ?? 0
-      notebook.cells[index].result = .errorResult(
+      result = .errorResult(
         error.localizedDescription,
         executionTime: executionTime
       )
+      notebook.cells[index].result = result
     } catch {
       // Handle general errors
-      notebook.cells[index].result = .errorResult(error.localizedDescription)
+      result = .errorResult(error.localizedDescription)
+      notebook.cells[index].result = result
     }
 
     notebook.cells[index].isRunning = false
+
+    return result
   }
 
-  /// Run all SQL cells sequentially
+  /// Run all SQL cells sequentially by adding them to the queue
   func runAllCells() async {
+    // Force blur to ensure text content is saved
+    NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+    try? await Task.sleep(for: .milliseconds(50))
+
+    // Enqueue all SQL cells
     for cell in notebook.cells where cell.cellType == .sql {
-      await runCell(id: cell.id)
+      if !executionQueue.isInQueue(cellId: cell.id) {
+        executionQueue.enqueue(cellId: cell.id, query: cell.content)
+      }
     }
   }
 

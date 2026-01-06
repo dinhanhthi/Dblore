@@ -46,6 +46,9 @@ class NotebookViewModel {
   // Database connection manager
   let connectionManager = DatabaseConnectionManager()
 
+  // Execution queue for managing cell executions
+  private(set) var executionQueue: ExecutionQueue!
+
   // Undo/Redo manager
   let undoManager = UndoManager()
 
@@ -60,6 +63,11 @@ class NotebookViewModel {
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
+
+    // Initialize execution queue with execution handler
+    executionQueue = ExecutionQueue { [weak self] task in
+      await self?.executeTask(task)
+    }
 
     // Load sidebar visibility from settings after init
     Task {

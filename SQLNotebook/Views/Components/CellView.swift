@@ -137,6 +137,12 @@ struct CellView: View {
             .controlSize(.small)
             .tint(.accent)
             .frame(width: 26, height: 26)
+        } else if let position = viewModel.executionQueue.queuePosition(for: cell.id) {
+          // Show queue position
+          Text("\(position)")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.accentColor)
+            .frame(width: 26, height: 26)
         } else {
           Image(systemName: "play.fill")
             .font(.system(size: 12))
@@ -145,7 +151,7 @@ struct CellView: View {
         }
       }
       .buttonStyle(GhostButtonStyle())
-      .disabled(cell.isRunning)
+      .disabled(cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id))
 
       // Execution count
       if let count = cell.executionCount {
@@ -197,7 +203,18 @@ struct CellView: View {
           }
         )
       } else {
-        // Normal buttons (toggle visibility, delete, and copy)
+        // Normal buttons (toggle visibility, delete, copy, and cancel)
+
+        // Cancel button (only show if cell is executing or in queue)
+        if cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id) {
+          FloatingPanelButton(
+            icon: "stop.fill",
+            helpText: "Cancel Execution",
+            action: {
+              viewModel.cancelCell(id: cell.id)
+            }
+          )
+        }
 
         // Toggle visibility button (only show if cell has result)
         if cell.result != nil {
@@ -426,8 +443,14 @@ struct CellView: View {
 
   @ViewBuilder
   private var cellContextMenu: some View {
-    Button(action: onRun) {
-      Label("Run", systemImage: "play.fill")
+    if cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id) {
+      Button(action: { viewModel.cancelCell(id: cell.id) }) {
+        Label("Cancel Execution", systemImage: "stop.fill")
+      }
+    } else {
+      Button(action: onRun) {
+        Label("Run", systemImage: "play.fill")
+      }
     }
 
     Divider()
