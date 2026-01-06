@@ -143,9 +143,6 @@ import ApplicationServices
 
 ## Database Setup
 
-### PostgreSQL
-See [docs/POSTGRESQL_SETUP.md](docs/POSTGRESQL_SETUP.md) for setup instructions.
-
 ### SQLite
 Point to any `.sqlite` or `.db` file on your system.
 
