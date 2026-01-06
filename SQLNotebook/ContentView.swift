@@ -250,7 +250,9 @@ struct ContentView: View {
           .id(cell.id)
           .listRowSeparator(.hidden)
           .listRowBackground(Color.clear)
-          .listRowInsets(EdgeInsets(top: Spacing.md, leading: Spacing.lg, bottom: Spacing.md, trailing: Spacing.lg))
+          .listRowInsets(
+            EdgeInsets(
+              top: Spacing.md, leading: Spacing.lg, bottom: Spacing.md, trailing: Spacing.lg))
         }
       }
       .listStyle(.plain)

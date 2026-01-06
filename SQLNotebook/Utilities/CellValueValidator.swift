@@ -112,7 +112,8 @@ struct CellValueValidator: Sendable {
 
     // Try to parse the input as JSON
     guard let data = input.data(using: .utf8),
-          let _ = try? JSONSerialization.jsonObject(with: data, options: [.allowFragments]) else {
+      (try? JSONSerialization.jsonObject(with: data, options: [.allowFragments])) != nil
+    else {
       return .invalid("Invalid JSON syntax")
     }
 

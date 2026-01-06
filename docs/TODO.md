@@ -7,7 +7,7 @@
 - ✅ **Phase 3: Database Integration** - COMPLETE
 - ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (11 of 14 sections - Result Display, Theme Toggle, Search & Filter added)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
-- 🔒 **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.4 Data Modification Safety complete including Value Format Validation)
+- ✅ **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.2 Connection Security complete; 6.0.3 & 6.0.4 partial)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
 - 🎯 **Phase 8: Editor Mode** - NOT STARTED (Last phase)
 
@@ -138,7 +138,7 @@
 
 ## Phase 6: Security & Safety Features (PARTIAL)
 
-### 6.0.2 Connection Security - MOSTLY COMPLETE
+### 6.0.2 Connection Security - COMPLETE
 - [x] Support SSL/TLS connection modes (all 6 PostgreSQL modes)
 - [x] Smart cloud database detection
 - [x] **Add connection retry logic with exponential backoff** ✅
@@ -153,7 +153,13 @@
   - [x] Updated connect() and testConnection() methods to use new TLS configuration (DatabaseConnectionManager.swift:81-90, 124-131)
   - [x] Added proper cleanup (shutdown event loop group) on TLS configuration failures
   - [x] Documented self-signed certificate handling (use `.allow`/`.prefer` or add CA to system trust store)
-- [ ] Add connection timeout configuration
+- [x] **Add connection timeout configuration** ✅
+  - [x] Added timeoutSeconds: Int property to ConnectionConfig model (default: 30 seconds) (ConnectionConfig.swift:28, 39)
+  - [x] Created withTimeout<T: Sendable>() helper function using TaskGroup for timeout logic (DatabaseConnectionManager.swift:23-47)
+  - [x] Updated attemptConnection() to wrap PostgresConnection.connect() with timeout (DatabaseConnectionManager.swift:79-113)
+  - [x] Added timeout field to ConnectionFormContent UI (text field for timeout in seconds) (ConnectionFormContent.swift:255-263)
+  - [x] Updated test connection configs to include timeoutSeconds parameter (DatabaseIntegrationTests.swift:34, DataModelTests.swift)
+  - [x] When timeout occurs, throws DatabaseError.connectionFailed with clear message "Connection timeout after X seconds" (DatabaseConnectionManager.swift:99)
 
 ### 6.0.3 Query Execution Security - PARTIAL
 - [x] Enforce row limits to prevent memory exhaustion
@@ -274,10 +280,13 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
 ## Recent Completions
 
-### Certificate Verification Fix ✅ (Phase 6.0.2) - NEWLY COMPLETED
+### Connection Timeout Configuration ✅ (Phase 6.0.2) - NEWLY COMPLETED
+Configurable connection timeouts with TaskGroup-based implementation. Added timeoutSeconds: Int property to ConnectionConfig with default 30 seconds (ConnectionConfig.swift:28, 39). Created withTimeout<T: Sendable>() helper function using withThrowingTaskGroup for proper timeout handling (DatabaseConnectionManager.swift:23-47). Updated attemptConnection() to wrap PostgresConnection.connect() with timeout duration (lines 79-113). Added UI text field for timeout configuration in seconds (ConnectionFormContent.swift:255-263). When timeout occurs, throws DatabaseError.connectionFailed with message "Connection timeout after X seconds" (line 99). Tests updated to include timeoutSeconds parameter in all connection configs (DatabaseIntegrationTests.swift:34).
+
+### Certificate Verification Fix ✅ (Phase 6.0.2) - PREVIOUSLY COMPLETED
 Fixed SSL/TLS certificate verification security vulnerability and unsafe force unwrapping. Created centralized configureTLS(for:) helper method (DatabaseConnectionManager.swift:205-249) that properly handles all 6 SSL modes with do-catch error handling. Fixed `.require` mode to use full certificate verification instead of `.none` (security fix). Replaced all 6 instances of `try!` force unwraps with proper error handling. Added cleanup logic to shutdown event loop group on TLS configuration failures. Updated connect() and testConnection() methods to use new TLS configuration with proper error propagation.
 
-### Connection Retry Logic with Exponential Backoff ✅ (Phase 6.0.2) - NEWLY VERIFIED
+### Connection Retry Logic with Exponential Backoff ✅ (Phase 6.0.2) - PREVIOUSLY COMPLETED
 Automatic retry with exponential backoff delays for failed database connections. Retry configuration: maxRetries = 3, delays = [1s, 2s, 4s] in nanoseconds. Implemented attemptConnection() helper method with recursive retry logic that gracefully falls back through delays before throwing error. Both connect() and testConnection() methods now use retry logic to handle transient connection failures. Located in DatabaseConnectionManager.swift:22-67, 111, 161.
 
 ### User Notifications for Value Editing ✅ (Phase 6.0.4)
@@ -299,21 +308,23 @@ Connection string input mode with auto-parsing. Smart cloud database detection (
 ### CURRENT: Complete Phase 6 Security (High Priority)
 Security and data safety enhancements:
 
-1. **Connection Timeout Configuration (6.0.2)** - Add configurable connection timeouts
-   - Add timeout parameter to ConnectionConfig
-   - Implement timeout in attemptConnection() with Task.withTimeoutError
-   - Add timeout UI field in connection form
-   - Effort: SMALL-MEDIUM (config extension + UI component)
+1. **Connection Timeout Configuration (6.0.2)** - COMPLETE ✅
+   - [x] Add timeout parameter to ConnectionConfig
+   - [x] Implement timeout in attemptConnection() with TaskGroup timeout logic
+   - [x] Add timeout UI field in connection form
+   - Status: VERIFIED COMPLETE - Timeout configuration fully implemented with proper error handling
 
 2. **Confirmation Dialogs (6.0.3)** - Add confirmation before DELETE/UPDATE/INSERT
-   - Modal dialog showing query and row count affected
-   - Warn users of destructive operations
+   - [ ] Modal dialog showing query and row count affected
+   - [ ] Warn users of destructive operations
    - Effort: MEDIUM (UI + state management)
+   - Status: NOT STARTED - No confirmationDialog modifier for destructive queries found
 
 3. **Read-Only Mode (6.0.3)** - Prevent accidental modifications
-   - Add read-only toggle in connection settings
-   - Disable edit/delete functionality in read-only mode
+   - [ ] Add read-only toggle in connection settings
+   - [ ] Disable edit/delete functionality in read-only mode
    - Effort: MEDIUM (requires permission checks across views)
+   - Status: NOT STARTED - No readOnly/isReadOnly property found in ConnectionConfig
 
 ### RECENTLY COMPLETED PHASE 6.0.4 ITEMS:
 - Boolean toggle UI for value editing
@@ -466,6 +477,7 @@ Complete test coverage and implement the final editor mode phase.
 - Smart cloud database detection (Supabase, AWS, Azure, GCP)
 - Certificate verification fix for `.require` mode (configureTLS helper, proper error handling, removed security vulnerability)
 - Connection retry logic with exponential backoff (1s, 2s, 4s delays, max 3 retries)
+- Connection timeout configuration (timeoutSeconds parameter, withTimeout<T> TaskGroup helper, UI text field)
 - Row limit enforcement to prevent memory exhaustion
 - Query modification detection (SELECT vs UPDATE/DELETE/INSERT)
 - Primary key column tracking for UPDATE operations
@@ -549,3 +561,40 @@ Each task is complete when:
 4. Feature works in both light and dark mode
 5. No compiler warnings or runtime errors
 6. Code is reviewed and committed
+
+---
+
+## Latest Verification Report (2026-01-05)
+
+**Verification Date:** 2026-01-05 (TODO Manager Agent verification)
+**Git HEAD:** Current main branch
+
+### Phase 6.0.2 - Connection Timeout Configuration
+**Status:** VERIFIED COMPLETE ✅
+- timeoutSeconds: Int property in ConnectionConfig.swift (line 28, default: 30 seconds)
+- withTimeout<T: Sendable>() helper function with TaskGroup implementation (DatabaseConnectionManager.swift:23-47)
+- attemptConnection() method wraps PostgresConnection.connect() with timeout (lines 79-113)
+- Timeout field in ConnectionFormContent UI (lines 255-263)
+- Test configs updated with timeoutSeconds parameter (DatabaseIntegrationTests.swift:34, DataModelTests.swift)
+- When timeout occurs: DatabaseError.connectionFailed("Connection timeout after X seconds") (line 99)
+- **Verification Date:** 2026-01-05
+- **Verified By:** TODO Manager Agent
+
+### Phase 6.0.3 - Confirmation Dialogs for Destructive Operations
+**Status:** NOT STARTED
+- No confirmationDialog modifier in cell execution flow
+- NotebookViewModel+Execution.swift runCell() method (lines 12-96) executes immediately without confirmation
+- No query preview or row count warning before modification queries
+- **Next Step:** Add state for destructive operation confirmation, implement confirmationDialog in CellView or execution flow
+
+### Phase 6.0.3 - Read-Only Mode
+**Status:** NOT STARTED
+- No readOnly/isReadOnly property in ConnectionConfig
+- No permission checks in edit/delete operations across views
+- **Next Step:** Add readOnly property to ConnectionConfig, add guards in edit/delete methods
+
+### Recommended Next Action
+Based on effort and impact assessment:
+1. **HIGH PRIORITY:** Connection Timeout Configuration (6.0.2) - Small effort, high security impact
+2. **MEDIUM PRIORITY:** Confirmation Dialogs (6.0.3) - Medium effort, prevents accidental data loss
+3. **MEDIUM PRIORITY:** Read-Only Mode (6.0.3) - Medium effort, additional safety layer

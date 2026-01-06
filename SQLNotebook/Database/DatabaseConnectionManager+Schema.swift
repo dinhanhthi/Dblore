@@ -63,7 +63,8 @@ extension DatabaseConnectionManager {
     }
 
     // First, fetch primary key columns for this table
-    let primaryKeyColumns = try await fetchPrimaryKeyColumns(tableName: "\(tableSchema).\(tableName)")
+    let primaryKeyColumns = try await fetchPrimaryKeyColumns(
+      tableName: "\(tableSchema).\(tableName)")
 
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
     // Include additional columns for type enrichment
