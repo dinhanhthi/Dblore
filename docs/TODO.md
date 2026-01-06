@@ -109,8 +109,8 @@
 - [ ] Add MySQL support (optional)
 
 ### 5.4 Query Autocomplete (Optional)
-- [ ] Implement autocomplete popup for table/column names
-- [ ] Implement SQL keyword autocomplete
+- [x] Implement autocomplete popup for table/column names
+- [x] Implement SQL keyword autocomplete
 
 ### 5.5 Tabs Support - Multiple Notebooks with Separate Connections
 - [ ] Create tab management system (each tab = separate notebook)
@@ -306,6 +306,18 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 ---
 
 ## Recent Completions
+
+### Query Autocomplete System ✅ (Phase 5.4) - NEWLY COMPLETED
+Full autocomplete implementation for SQL queries with popup suggestions. Includes:
+- **SQLAutocompleteProvider.swift** - Core provider with SQL keyword database (95+ keywords including DML, DDL, DCL, transaction control, data types, constraints, window functions, CTEs, PostgreSQL-specific keywords, string/date functions)
+- **AutocompletePopupView.swift** - Visual popup with suggestion rows, icons, and descriptions
+- **HighlightedTextEditor.swift** - Integration with editor showing popup below text input
+- **SQLTextView.swift** - NSTextView integration with cursor tracking and suggestion updates
+- **Suggestion Types** - Keyword (blue), Table (green), Column (orange) with contextual matching
+- **Context-aware Suggestions** - Different suggestions based on SQL context (FROM/JOIN for tables, SELECT/WHERE for columns)
+- **Token Extraction** - Smart word boundary detection for partial matching
+- **Schema Integration** - Fetches database tables and columns from DatabaseConnectionManager for dynamic suggestions
+- **Keyboard Navigation** - Support for Up/Down arrow navigation and Enter to select (lines 18, 64 in HighlightedTextEditor)
 
 ### Connection Timeout Configuration ✅ (Phase 6.0.2) - NEWLY COMPLETED
 Configurable connection timeouts with TaskGroup-based implementation. Added timeoutSeconds: Int property to ConnectionConfig with default 30 seconds (ConnectionConfig.swift:28, 39). Created withTimeout<T: Sendable>() helper function using withThrowingTaskGroup for proper timeout handling (DatabaseConnectionManager.swift:23-47). Updated attemptConnection() to wrap PostgresConnection.connect() with timeout duration (lines 79-113). Added UI text field for timeout configuration in seconds (ConnectionFormContent.swift:255-263). When timeout occurs, throws DatabaseError.connectionFailed with message "Connection timeout after X seconds" (line 99). Tests updated to include timeoutSeconds parameter in all connection configs (DatabaseIntegrationTests.swift:34).

@@ -155,7 +155,8 @@ struct CellView: View {
       isSelected: isSelected,
       isFocused: isEditorFocused,
       onFocus: { viewModel.selectedCellId = cell.id },
-      textViewRef: $textViewRef
+      textViewRef: $textViewRef,
+      autocompleteProvider: viewModel.autocompleteProvider
     )
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage
@@ -168,11 +169,11 @@ struct CellView: View {
   CellView(
     viewModel: NotebookViewModel(),
     cell: .constant(NotebookCell(cellType: .sql, content: "")),
-    isSelected: false,
+    isSelected: true,
     onRun: {}
   )
   .padding()
-  .frame(width: 700, height: 150)
+  .frame(width: 700, height: 500, alignment: .top)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }

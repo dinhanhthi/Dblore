@@ -22,6 +22,9 @@ extension NotebookViewModel {
 
       // Auto-load database schema after successful connection
       await loadDatabaseSchema()
+
+      // Refresh autocomplete schema
+      await autocompleteProvider.refreshSchema()
     } catch {
       // Set to disconnected instead of error state
       // Error message will be shown in the connection form, not in the header
@@ -41,6 +44,9 @@ extension NotebookViewModel {
 
       // Clear database schema when disconnected
       databaseTables = []
+
+      // Clear autocomplete schema
+      await autocompleteProvider.refreshSchema()
     }
   }
 

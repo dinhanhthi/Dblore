@@ -46,6 +46,9 @@ class NotebookViewModel {
   // Database connection manager
   let connectionManager = DatabaseConnectionManager()
 
+  // Autocomplete provider
+  let autocompleteProvider = SQLAutocompleteProvider()
+
   // Execution queue for managing cell executions
   private(set) var executionQueue: ExecutionQueue!
 
@@ -68,6 +71,9 @@ class NotebookViewModel {
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
     }
+
+    // Set connection manager for autocomplete provider
+    autocompleteProvider.setConnectionManager(connectionManager)
 
     // Load sidebar visibility from settings after init
     Task {

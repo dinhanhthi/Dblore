@@ -15,6 +15,8 @@ struct SQLEditorView: View {
   @Binding var textViewRef: SQLTextView?
   @State private var isTextEmpty: Bool = true
 
+  var autocompleteProvider: SQLAutocompleteProvider?
+
   var body: some View {
     ZStack(alignment: .topLeading) {
       // Placeholder - use isTextEmpty state for immediate reactivity
@@ -31,7 +33,8 @@ struct SQLEditorView: View {
         text: $content,
         onFocus: onFocus,
         textViewRef: $textViewRef,
-        isEmpty: $isTextEmpty
+        isEmpty: $isTextEmpty,
+        autocompleteProvider: autocompleteProvider
       )
     }
     .padding(Spacing.sm)
