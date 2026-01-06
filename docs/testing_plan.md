@@ -448,6 +448,54 @@ List of all test cases to implement for SQLNotebook project, organized by catego
 - [x] LIMIT with OFFSET preserves user LIMIT — DatabaseQueryExecutionTests: `limitWithOffsetPreservesUserLimit()`
 - [x] LIMIT with OFFSET - user LIMIT exceeds maxRows — DatabaseQueryExecutionTests: `limitWithOffsetUserLimitExceedsMaxRows()`
 
+### Query Wrapping Functions (Unit Tests)
+
+#### wrapQueryWithLimit Edge Cases
+- [x] SELECT without FROM (function calls) not wrapped — DatabaseQueryExecutionTests: `selectPgSleepNoLimit()`, `selectNowNoLimit()`, `selectVersionNoLimit()`
+- [x] SELECT with multiple functions not wrapped — DatabaseQueryExecutionTests: `selectMultipleFunctionsNoLimit()`
+- [x] SELECT with FROM clause gets LIMIT — DatabaseQueryExecutionTests: `selectWithFromGetsLimit()`
+- [x] CTE (WITH clause) query NOT wrapped (known limitation) — DatabaseQueryWrappingTests: `selectWithCTEDoesNotGetLimit()`
+- [x] Subquery with inner LIMIT NOT wrapped (known limitation) — DatabaseQueryWrappingTests: `selectWithSubqueryContainingLimitDoesNotGetLimit()`
+- [x] UNION query gets LIMIT — DatabaseQueryWrappingTests: `selectUnionGetsLimit()`
+- [x] INTERSECT query gets LIMIT — DatabaseQueryWrappingTests: `selectIntersectGetsLimit()`
+- [x] EXCEPT query gets LIMIT — DatabaseQueryWrappingTests: `selectExceptGetsLimit()`
+- [x] Window function query gets LIMIT — DatabaseQueryWrappingTests: `selectWithWindowFunctionGetsLimit()`
+- [x] JOIN query gets LIMIT — DatabaseQueryWrappingTests: `selectWithJoinGetsLimit()`
+- [x] WHERE IN subquery gets LIMIT — DatabaseQueryWrappingTests: `selectWithWhereInSubqueryGetsLimit()`
+- [x] String containing SQL keywords handled — DatabaseQueryWrappingTests: `selectWithStringContainingSQLKeywordsGetsLimit()`
+- [x] CASE expression query gets LIMIT — DatabaseQueryWrappingTests: `selectWithCaseExpressionGetsLimit()`
+- [x] Expression-only SELECT not wrapped — DatabaseQueryWrappingTests: `selectExpressionNoLimit()`
+- [x] String concatenation SELECT not wrapped — DatabaseQueryWrappingTests: `selectStringConcatenationNoLimit()`
+- [x] Multi-line query starting with comment NOT wrapped (known limitation) — DatabaseQueryWrappingTests: `multiLineQueryWithCommentsDoesNotGetLimit()`
+- [x] Multiple FROM clauses (comma join) gets LIMIT — DatabaseQueryWrappingTests: `queryWithMultipleFromClausesGetsLimit()`
+
+#### wrapQueryWithCtid Edge Cases
+- [x] Simple SELECT * FROM adds ctid — DatabaseQueryWrappingTests: `selectStarSimpleQueryAddsCtid()`
+- [x] SELECT * FROM with WHERE adds ctid — DatabaseQueryWrappingTests: `selectStarWithWhereAddsCtid()`
+- [x] SELECT * FROM with LIMIT adds ctid — DatabaseQueryWrappingTests: `selectStarWithLimitAddsCtid()`
+- [x] SELECT specific columns does NOT add ctid — DatabaseQueryWrappingTests: `selectSpecificColumnsNoCtid()`
+- [x] SELECT * with JOIN adds ctid (potential issue) — DatabaseQueryWrappingTests: `selectStarWithJoinAddsCtid()`
+- [x] SELECT * with subquery adds ctid (CAUSES ERROR) — DatabaseQueryWrappingTests: `selectStarWithSubqueryAddsCtid()`
+- [x] Non-SELECT query does NOT add ctid — DatabaseQueryWrappingTests: `nonSelectQueryNoCtid()`
+- [x] SELECT * case insensitive adds ctid — DatabaseQueryWrappingTests: `selectStarCaseInsensitiveAddsCtid()`
+
+#### wrapModificationQueryForCount Edge Cases
+- [x] UPDATE wrapped with CTE — DatabaseQueryWrappingTests: `updateQueryWrappedWithCTE()`
+- [x] UPDATE with WHERE wrapped — DatabaseQueryWrappingTests: `updateWithWhereWrappedWithCTE()`
+- [x] UPDATE with subquery in WHERE wrapped — DatabaseQueryWrappingTests: `updateWithSubqueryInWhereWrappedCorrectly()`
+- [x] UPDATE with FROM clause wrapped — DatabaseQueryWrappingTests: `updateWithFromClauseWrappedCorrectly()`
+- [x] DELETE wrapped with CTE — DatabaseQueryWrappingTests: `deleteQueryWrappedWithCTE()`
+- [x] DELETE with USING clause wrapped — DatabaseQueryWrappingTests: `deleteWithJoinWrappedCorrectly()`
+- [x] INSERT single row wrapped — DatabaseQueryWrappingTests: `insertSingleRowWrappedWithCTE()`
+- [x] INSERT with RETURNING wrapped — DatabaseQueryWrappingTests: `insertWithReturningWrappedCorrectly()`
+- [x] INSERT with SELECT wrapped — DatabaseQueryWrappingTests: `insertWithSelectWrappedCorrectly()`
+- [x] INSERT multiple rows wrapped — DatabaseQueryWrappingTests: `insertMultipleRowsWrappedCorrectly()`
+- [x] INSERT with ON CONFLICT wrapped — DatabaseQueryWrappingTests: `insertWithOnConflictWrappedCorrectly()`
+- [x] UPDATE with trailing semicolon wrapped — DatabaseQueryWrappingTests: `updateWithSemicolonWrappedCorrectly()`
+- [x] DELETE with trailing semicolon wrapped — DatabaseQueryWrappingTests: `deleteWithSemicolonWrappedCorrectly()`
+- [x] INSERT multiline wrapped — DatabaseQueryWrappingTests: `insertMultilineWrappedCorrectly()`
+- [x] Non-modification query NOT wrapped — DatabaseQueryWrappingTests: `nonModificationQueryNotWrapped()`
+
 ---
 
 ## Schema Loading (Integration Tests)
