@@ -11,6 +11,12 @@ import SwiftUI
 class SQLTextView: NSTextView {
   var onFocus: (() -> Void)?
   var onBlur: ((String) -> Void)?  // Callback with current text when losing focus
+  var autocompleteProvider: SQLAutocompleteProvider?
+
+  // Autocomplete state
+  private var autocompleteSuggestions: [AutocompleteSuggestion] = []
+  private var autocompleteSelectedIndex: Int = 0
+  private var autocompletePopover: NSPopover?
 
   override func becomeFirstResponder() -> Bool {
     let result = super.becomeFirstResponder()
@@ -31,11 +37,18 @@ class SQLTextView: NSTextView {
       onBlur?(currentText)
       // Notify that this editor is no longer focused
       NotificationCenter.default.post(name: .editorUnfocused, object: self)
+      // Hide autocomplete
+      hideAutocomplete()
     }
     return result
   }
 
   override func keyDown(with event: NSEvent) {
+    // Check autocomplete navigation first (if popup is visible)
+    if !autocompleteSuggestions.isEmpty, handleAutocompleteNavigation(with: event) {
+      return  // Handled, don't pass to super
+    }
+
     if handleCellShortcut(with: event) {
       return  // Handled, don't pass to super
     }
@@ -43,6 +56,12 @@ class SQLTextView: NSTextView {
       return  // Handled, don't pass to super
     }
     super.keyDown(with: event)
+  }
+
+  override func didChangeText() {
+    super.didChangeText()
+    // Update autocomplete suggestions when text changes
+    updateAutocompleteSuggestions()
   }
 
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -130,5 +149,299 @@ class SQLTextView: NSTextView {
     }
 
     return false
+  }
+
+  // MARK: - Autocomplete Methods
+
+  /// Update autocomplete suggestions based on current cursor position
+  private func updateAutocompleteSuggestions() {
+    guard let provider = autocompleteProvider else {
+      hideAutocomplete()
+      return
+    }
+
+    // Early check: if text is empty, hide autocomplete
+    if string.isEmpty {
+      hideAutocomplete()
+      return
+    }
+
+    let cursorPosition = selectedRange().location
+    let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
+
+    if suggestions.isEmpty {
+      hideAutocomplete()
+    } else {
+      autocompleteSuggestions = suggestions
+      autocompleteSelectedIndex = 0
+
+      // Show NSPopover at cursor position
+      showAutocompletePopover()
+    }
+  }
+
+  /// Hide autocomplete popup
+  private func hideAutocomplete() {
+    autocompleteSuggestions = []
+    autocompleteSelectedIndex = 0
+    autocompletePopover?.close()
+    autocompletePopover = nil
+  }
+
+  /// Show NSPopover with autocomplete suggestions at cursor position
+  private func showAutocompletePopover() {
+    guard !autocompleteSuggestions.isEmpty else { return }
+    guard let layoutManager = self.layoutManager,
+          let textContainer = self.textContainer else { return }
+
+    // Get cursor position
+    let cursorPosition = selectedRange().location
+
+    // IMPORTANT: Force layout manager to update layout for current text
+    // Without this, glyph rects may be stale after text changes
+    layoutManager.ensureLayout(for: textContainer)
+
+    // Get rect for cursor in text view's local coordinate system
+    var localRect: CGRect
+
+    if cursorPosition == 0 || string.isEmpty {
+      // Special case: cursor at start of text or empty text
+      localRect = CGRect(x: textContainerInset.width, y: textContainerInset.height, width: 1, height: 20)
+    } else {
+      // Get the glyph index for the character BEFORE cursor (to position popup after typed text)
+      let glyphIndex = layoutManager.glyphIndexForCharacter(at: max(0, cursorPosition - 1))
+
+      // Get bounding rect for the glyph in text container coordinates
+      let glyphRect = layoutManager.boundingRect(
+        forGlyphRange: NSRange(location: glyphIndex, length: 1),
+        in: textContainer
+      )
+
+      // Position popup at the END of the character (right side)
+      localRect = CGRect(
+        x: glyphRect.maxX + textContainerInset.width,
+        y: glyphRect.origin.y + textContainerInset.height,
+        width: 1,  // Thin cursor line
+        height: glyphRect.height > 0 ? glyphRect.height : 20  // Use line height or default
+      )
+    }
+
+    // If popover is already shown, just update position (more efficient)
+    if let popover = autocompletePopover, popover.isShown {
+      // Update content first
+      let contentView = AutocompletePopupView(
+        suggestions: Array(autocompleteSuggestions.prefix(20)),
+        selectedIndex: autocompleteSelectedIndex,
+        onSelect: { _ in }
+      )
+      let hostingController = NSHostingController(rootView: contentView)
+      hostingController.view.wantsLayer = true
+
+      let itemHeight: CGFloat = 28
+      let maxHeight: CGFloat = 400
+      let calculatedHeight = min(CGFloat(autocompleteSuggestions.count) * itemHeight + 4, maxHeight)
+      hostingController.view.frame = NSRect(x: 0, y: 0, width: 400, height: calculatedHeight)
+
+      popover.contentViewController = hostingController
+
+      // Reposition popover
+      popover.show(relativeTo: localRect, of: self, preferredEdge: .maxY)
+      return
+    }
+
+    // Create new popover
+    let popover = NSPopover()
+    popover.behavior = .semitransient
+    autocompletePopover = popover
+
+    // Create SwiftUI content view with suggestions
+    let contentView = AutocompletePopupView(
+      suggestions: Array(autocompleteSuggestions.prefix(20)), // Limit to 20 items
+      selectedIndex: autocompleteSelectedIndex,
+      onSelect: { _ in
+        // Selection handled by keyboard events
+      }
+    )
+
+    let hostingController = NSHostingController(rootView: contentView)
+    hostingController.view.wantsLayer = true
+
+    // Calculate size based on number of suggestions
+    let itemHeight: CGFloat = 28
+    let maxHeight: CGFloat = 400
+    let calculatedHeight = min(CGFloat(autocompleteSuggestions.count) * itemHeight + 4, maxHeight)
+    hostingController.view.frame = NSRect(x: 0, y: 0, width: 400, height: calculatedHeight)
+
+    popover.contentViewController = hostingController
+
+    // Show popover below cursor
+    popover.show(relativeTo: localRect, of: self, preferredEdge: .maxY)
+  }
+
+  /// Handle keyboard navigation in autocomplete popup
+  /// Returns true if the event was handled
+  private func handleAutocompleteNavigation(with event: NSEvent) -> Bool {
+    let isUpArrow = event.keyCode == 126
+    let isDownArrow = event.keyCode == 125
+    let isTab = event.keyCode == 48
+    let isEnter = event.keyCode == 36
+    let isEscape = event.keyCode == 53
+
+    // Check for modifiers
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let hasModifiers = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+      || flags.contains(.shift)
+
+    // Escape -> hide autocomplete
+    if isEscape {
+      hideAutocomplete()
+      return true
+    }
+
+    // Tab or Enter (without modifiers) -> accept selected suggestion
+    if (isTab || isEnter) && !hasModifiers {
+      acceptSelectedSuggestion()
+      return true
+    }
+
+    // Up arrow -> select previous suggestion (with circular navigation)
+    if isUpArrow && !hasModifiers {
+      if autocompleteSelectedIndex == 0 {
+        // Wrap around to last item
+        autocompleteSelectedIndex = autocompleteSuggestions.count - 1
+      } else {
+        autocompleteSelectedIndex -= 1
+      }
+      // Update popover to show new selection
+      updatePopoverSelection()
+      return true
+    }
+
+    // Down arrow -> select next suggestion (with circular navigation)
+    if isDownArrow && !hasModifiers {
+      if autocompleteSelectedIndex == autocompleteSuggestions.count - 1 {
+        // Wrap around to first item
+        autocompleteSelectedIndex = 0
+      } else {
+        autocompleteSelectedIndex += 1
+      }
+      // Update popover to show new selection
+      updatePopoverSelection()
+      return true
+    }
+
+    return false
+  }
+
+  /// Accept the currently selected suggestion
+  private func acceptSelectedSuggestion() {
+    guard autocompleteSelectedIndex >= 0 && autocompleteSelectedIndex < autocompleteSuggestions.count
+    else {
+      hideAutocomplete()
+      return
+    }
+
+    let suggestion = autocompleteSuggestions[autocompleteSelectedIndex]
+
+    // Find the token being completed
+    let cursorPosition = selectedRange().location
+
+    // Replace token with suggestion
+    if let tokenRange = findTokenRange(in: string, at: cursorPosition) {
+      setSelectedRange(tokenRange)
+      insertText(suggestion.text, replacementRange: tokenRange)
+    }
+
+    // Hide autocomplete after accepting
+    hideAutocomplete()
+  }
+
+  /// Extract the current token being typed at cursor position
+  private func extractCurrentToken(from text: String, at position: Int) -> String {
+    guard position > 0, position <= text.count else { return "" }
+
+    let beforeCursor = String(text.prefix(position))
+    let afterCursor = String(text.suffix(text.count - position))
+
+    // Find start of token (word boundary) - search backwards in beforeCursor
+    var tokenStart = 0
+    for (index, char) in beforeCursor.enumerated().reversed() {
+      if char.isWhitespace || "(),;".contains(char) {
+        tokenStart = index + 1
+        break
+      }
+    }
+
+    // Find end of token in afterCursor
+    var tokenEndInAfter = afterCursor.count
+    for (index, char) in afterCursor.enumerated() {
+      if char.isWhitespace || "(),;".contains(char) {
+        tokenEndInAfter = index
+        break
+      }
+    }
+
+    let tokenInBefore = String(beforeCursor.suffix(beforeCursor.count - tokenStart))
+    let tokenInAfter = String(afterCursor.prefix(tokenEndInAfter))
+
+    let token = tokenInBefore + tokenInAfter
+    return token.trimmingCharacters(in: CharacterSet.whitespaces)
+  }
+
+  /// Find the NSRange of the current token at cursor position
+  private func findTokenRange(in text: String, at position: Int) -> NSRange? {
+    guard position > 0, position <= text.count else { return nil }
+
+    let nsText = text as NSString
+    let beforeCursor = String(text.prefix(position))
+
+    // Find start of token - search backwards
+    var tokenStart = 0
+    for (index, char) in beforeCursor.enumerated().reversed() {
+      if char.isWhitespace || "(),;".contains(char) {
+        tokenStart = index + 1
+        break
+      }
+    }
+
+    // Find end of token - search forwards from tokenStart
+    var tokenEnd = position
+    for index in position..<nsText.length {
+      let char = Character(UnicodeScalar(nsText.character(at: index))!)
+      if char.isWhitespace || "(),;".contains(char) {
+        tokenEnd = index
+        break
+      }
+      tokenEnd = index + 1
+    }
+
+    return NSRange(location: tokenStart, length: tokenEnd - tokenStart)
+  }
+
+  /// Update NSPopover content to reflect new selection
+  private func updatePopoverSelection() {
+    guard let popover = autocompletePopover,
+          popover.isShown,
+          !autocompleteSuggestions.isEmpty else { return }
+
+    // Create new content view with updated selection
+    let contentView = AutocompletePopupView(
+      suggestions: Array(autocompleteSuggestions.prefix(20)),
+      selectedIndex: autocompleteSelectedIndex,
+      onSelect: { _ in
+        // Selection handled by keyboard events
+      }
+    )
+
+    let hostingController = NSHostingController(rootView: contentView)
+    hostingController.view.wantsLayer = true
+
+    // Keep same size
+    let itemHeight: CGFloat = 28
+    let maxHeight: CGFloat = 400
+    let calculatedHeight = min(CGFloat(autocompleteSuggestions.count) * itemHeight + 4, maxHeight)
+    hostingController.view.frame = NSRect(x: 0, y: 0, width: 400, height: calculatedHeight)
+
+    popover.contentViewController = hostingController
   }
 }

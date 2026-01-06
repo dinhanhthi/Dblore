@@ -15,13 +15,16 @@ struct HighlightedTextEditor: View {
   @Binding var isEmpty: Bool
   @State private var height: CGFloat = 40
 
+  var autocompleteProvider: SQLAutocompleteProvider?
+
   var body: some View {
     HighlightedTextEditorRepresentable(
       text: $text,
       height: $height,
       isEmpty: $isEmpty,
       onFocus: onFocus,
-      textViewRef: $textViewRef
+      textViewRef: $textViewRef,
+      autocompleteProvider: autocompleteProvider
     )
     .frame(height: height)
   }
@@ -33,6 +36,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var isEmpty: Bool
   var onFocus: (() -> Void)?
   @Binding var textViewRef: SQLTextView?
+  var autocompleteProvider: SQLAutocompleteProvider?
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
@@ -45,6 +49,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.onBlur = { [weak coordinator = context.coordinator] newText in
       coordinator?.text.wrappedValue = newText
     }
+
+    // Setup autocomplete
+    textView.autocompleteProvider = autocompleteProvider
 
     // Store reference to textView
     DispatchQueue.main.async {
@@ -103,6 +110,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       coordinator?.text.wrappedValue = newText
     }
 
+    // Update autocomplete provider
+    textView.autocompleteProvider = autocompleteProvider
+
     // Only update text from external source if different
     // Don't update if textView is first responder (user is typing)
     if textView.string != text, textView.window?.firstResponder != textView {
@@ -131,7 +141,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   }
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(text: $text, height: $height, isEmpty: $isEmpty)
+    Coordinator(
+      text: $text, height: $height, isEmpty: $isEmpty
+    )
   }
 
   class Coordinator: NSObject, NSTextViewDelegate {
@@ -139,7 +151,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     var height: Binding<CGFloat>
     var isEmpty: Binding<Bool>
 
-    init(text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>) {
+    init(
+      text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>
+    ) {
       self.text = text
       self.height = height
       self.isEmpty = isEmpty
