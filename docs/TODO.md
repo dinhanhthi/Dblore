@@ -378,6 +378,13 @@ Priority UI enhancements (5 of 7 remaining):
 Complete test coverage and implement the final editor mode phase.
 
 ### LATER: Phase 5 Advanced Features
+- **Multi-SQL Command Execution (5.8)** - NEW FEATURE REQUEST
+  - Execute multiple SQL commands in single cell separated by semicolons or line breaks
+  - Display result of LAST query only in table view
+  - Previous commands (CREATE, INSERT, UPDATE, DELETE) execute silently
+  - Show execution status for each command
+  - Similar behavior to pgAdmin/DBeaver editors
+  - Effort: MEDIUM (requires query parsing, sequential execution, multi-result storage)
 - **Tabs Support (5.5)** - Multiple notebooks with separate connections (NEW FEATURE REQUEST)
   - Each tab = separate notebook document
   - Each tab = separate database connection
@@ -477,6 +484,7 @@ Complete test coverage and implement the final editor mode phase.
 **NEW FEATURE REQUESTS:**
 - 📝 Phase 4.9 Result Table Search & Filter (added to Phase 4 Polish)
 - 📝 Phase 5.5 Tabs Support (added to Phase 5 Advanced Features)
+- 📝 Phase 5.8 Multi-SQL Command Execution (added to Phase 5 Advanced Features) - NEWLY ADDED
 
 ### Verified Complete Features
 
