@@ -529,7 +529,7 @@ NotificationCenter.default.addObserver(
 
 - **Fixer**: Fix performance-related crashes and bugs
 - **Tester**: Write performance tests for critical paths
-- **Architecter**: Ensure architecture supports performance
+- **Architect**: Ensure architecture supports performance
 - **Docer**: Document performance characteristics
 
 ## Response Format
