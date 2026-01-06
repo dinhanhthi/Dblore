@@ -1,233 +1,270 @@
-# CLAUDE.md
+# Claude Code Guide for SQLNotebook
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**Common Documentation:** See [docs/AI_GUIDE.md](docs/AI_GUIDE.md) for complete project overview, architecture, and development guidelines.
+
+---
+
+## Claude-Specific Instructions
 
 **IMPORTANT**: Answer me in Vietnamese, keep terminologies in English. Don't automatically open the app, I do it myself with XCode.
 
 ---
 
-## 📋 Project Overview
+## Communication Style
 
-**SQLNotebook** là một native macOS application được xây dựng bằng Swift và SwiftUI, hoạt động như một interactive SQL notebook (tương tự Jupyter Notebook nhưng chuyên cho SQL queries). App cho phép users viết, thực thi và lưu trữ SQL queries trong cell-based interface với persistent results.
+When working with this codebase:
 
-### Key Features
-- Cell-based interface với SQL cells
-- Execute SQL queries với syntax highlighting
-- Save notebooks dưới dạng `.sqlnb` files (JSON format)
-- Display query results trong table format
-- Integrated JSON viewer cho JSON/JSONB data
-- Database connectivity: PostgreSQL (via PostgresNIO) và SQLite (native)
+1. **Language**: Answer in Vietnamese, keep technical terms in English
+   - ✅ "Tôi sẽ sử dụng `async/await` để execute query này"
+   - ❌ "I will use async/await to execute this query"
 
----
+2. **Technical Explanations**: Explain Swift/SwiftUI concepts in detail when needed
+   - Provide examples and code snippets
 
-## 🏗️ Architecture & Structure
-
-### Tech Stack
-- **Language:** Swift 6+
-- **UI Framework:** SwiftUI (latest)
-- **Target:** macOS 15.0+ (Sequoia)
-- **Architecture:** MVVM với Observable macro
-- **Database Connectivity:** PostgresNIO (PostgreSQL), native Swift APIs (SQLite)
-- **Persistence:** Codable documents saved as `.sqlnb` JSON files
-
-### Project Structure
-
-```
-SQLNotebook/
-├── Database/
-│   └── DatabaseConnectionManager.swift    # Actor quản lý database connections
-├── Models/
-│   ├── ConnectionConfig.swift            # Database connection configuration
-│   ├── NotebookCell.swift                # Cell model (SQL only)
-│   ├── SQLNotebook.swift                 # Main notebook model
-│   └── SQLNotebookDocument.swift         # FileDocument implementation
-├── ViewModels/
-│   └── NotebookViewModel.swift           # @Observable ViewModel
-├── Views/
-│   ├── Components/
-│   │   ├── CellView.swift                # Individual cell rendering
-│   │   └── ResultTableView.swift         # Query result table
-│   ├── ConnectionSheet.swift             # Database connection UI
-│   ├── FooterView.swift                  # Footer bar
-│   ├── HeaderView.swift                  # Header toolbar
-│   └── RightSidebarView.swift            # Collapsible sidebar
-├── Utilities/
-│   ├── DesignSystem.swift                # Shadcn-inspired design tokens
-│   └── SQLSyntaxHighlighter.swift        # SQL syntax highlighting
-└── ContentView.swift                      # Main view container
-```
+3. **Workflow**: Don't automatically open app, user opens with XCode
+   - ✅ "Code đã được cập nhật, bạn có thể build bằng XCode"
+   - ❌ [Automatically run Bash command to open XCode]
 
 ---
 
-## 💾 Data Models
+## Key Architectural Patterns
 
-### Core Models
-- **SQLNotebook**: Main document model với cells, metadata, connection config
-- **NotebookCell**: Individual SQL cell với content và results
-- **CellResult**: Execution results với columns, rows, timing info
-- **ConnectionConfig**: Database connection parameters
-- **CellValue**: Enum cho các data types (string, int, double, bool, null, json, date, data)
-
-### State Management
-- **NotebookViewModel**: @Observable class quản lý notebook state
-- **ConnectionState**: Enum tracking connection status
-- **SidebarContent**: Enum cho right sidebar content modes
-
----
-
-## 🎨 UI Layout & Design System
-
-### Layout Structure
-```
-┌─────────────────────────────────────────────────┐
-│ HEADER BAR (44pt)                               │
-├──────────────────────────────┬──────────────────┤
-│                              │                  │
-│  MAIN CONTENT (scrollable)   │ RIGHT SIDEBAR    │
-│  - LazyVStack of Cells       │ (collapsible)    │
-│                              │ 320pt width      │
-├──────────────────────────────┴──────────────────┤
-│ FOOTER BAR (24pt)                               │
-└─────────────────────────────────────────────────┘
-```
-
-### Design System (Shadcn-inspired)
-- **Colors**: Semantic colors adapting to light/dark mode
-- **Typography**: SF Mono/Menlo cho code, system fonts cho UI
-- **Components**: Buttons, Cards, Inputs, Tables với consistent styling
-- **Spacing**: 8pt grid system
-- **Border Radius**: 6-8pt cho cards và inputs
-
-### SQL Syntax Highlighting
-Token categories:
-- Keywords (SELECT, FROM, WHERE) - Blue
-- Functions (COUNT, SUM) - Purple  
-- Strings ('text') - Green
-- Numbers (123, 45.67) - Orange
-- Comments (-- comment) - Gray
-
----
-
-## 🔧 Development Guidelines
-
-### Code Conventions
-1. **Swift 6 Concurrency**: Sử dụng async/await, actors cho database operations
-2. **Observable Macro**: Dùng @Observable thay vì ObservableObject
-3. **Type Safety**: Leverage Swift's strong type system, avoid force unwrapping
-4. **Error Handling**: Proper error propagation với try/catch và Result types
-5. **SwiftUI Best Practices**: 
-   - Prefer composition over inheritance
-   - Keep views small và focused
-   - Extract reusable components
-
-### Key Implementation Notes
-1. **Performance**: 
-   - Dùng LazyVStack cho cell list
-   - Virtual scrolling cho large result sets
-   - Debounce user inputs
-2. **Memory Management**:
-   - Pagination cho large queries
-   - Clean up connections properly
-3. **Security**:
-   - Store passwords trong Keychain (NOT in `.sqlnb` files)
-   - Validate user inputs
-4. **Persistence**:
-   - Document-based app architecture
-   - Auto-save với undo/redo support
-5. **Database**:
-   - Actor-based connection manager
-   - Connection pooling nếu cần
-   - Proper query cancellation
-
----
-
-## 🔌 Database Connectivity
-
-### DatabaseConnectionManager (Actor)
-- Manages PostgreSQL connections via PostgresNIO
-- Thread-safe operations với actor isolation
-- Methods: connect, disconnect, execute, testConnection
-
-### Supported Operations
-- SELECT queries → return result sets
-- INSERT/UPDATE/DELETE → return affected row counts
-- DDL statements → success/failure status
-- Multiple statements → execute sequentially
-
-### Error Handling
-Display SQL errors inline below cells với:
-- Error message from database
-- Query position if available
-- User-friendly suggestions
-
----
-
-## ⌨️ Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+N` | New notebook |
-| `Cmd+O` | Open notebook |
-| `Cmd+S` | Save notebook |
-| `Cmd+Enter` | Run selected cell |
-| `Shift+Enter` | Run cell and move to next |
-| `Cmd+Shift+Enter` | Run all cells |
-| `Cmd+B` | Add code cell below |
-| `Cmd+Backspace` | Delete selected cell |
-| `Cmd+D` | Duplicate cell |
-| `Cmd+Shift+R` | Toggle right sidebar |
-
----
-
-## 📦 Dependencies
-
-### Swift Package Manager
-- **PostgresNIO**: PostgreSQL async client library
-- Các dependencies khác được fetch tự động
-
----
-
-## 📄 File Format
-
-`.sqlnb` files are JSON with structure:
-```json
-{
-  "version": "1.0",
-  "id": "uuid",
-  "metadata": {...},
-  "connectionConfig": {...},
-  "cells": [...]
+### Observable Macro Pattern
+```swift
+@MainActor
+@Observable
+class NotebookViewModel {
+    var notebook: SQLNotebook
+    var connectionState: ConnectionState
 }
 ```
 
-**Note**: Passwords KHÔNG được lưu trong file, chỉ lưu trong Keychain.
+**Key Points:**
+- `@Observable` is Swift 6's new macro, replacing the old `ObservableObject` pattern
+- `@MainActor` ensures all state updates happen on the main thread (UI thread)
+- SwiftUI automatically tracks dependencies and re-renders views when properties change
+
+### Actor Pattern for Database
+```swift
+actor DatabaseConnectionManager {
+    private var connection: PostgresConnection?
+
+    func execute(query: String) async throws -> QueryResult {
+        // Thread-safe operations
+    }
+}
+```
+
+**Key Points:**
+- `actor` is a reference type that's thread-safe by default
+- All actor methods are implicitly async
+- Only one task can access actor state at a time
+- Similar to mutex/locks in other languages but compiler-enforced
+
+### Extension-based Organization
+ViewModel is split into focused extensions:
+- `NotebookViewModel+Connection.swift` — Database connection logic
+- `NotebookViewModel+Execution.swift` — Query execution
+- `NotebookViewModel+CellManagement.swift` — Cell CRUD operations
+- `NotebookViewModel+Sidebar.swift` — Sidebar state management
+
+**Benefits:**
+- Clearer code organization
+- Easier to navigate and maintain
+- Avoids overly long files (400-line limit per file recommended)
 
 ---
 
-## 🧪 Testing Strategy
+## Common Workflows
 
-- Unit tests cho data models và serialization
-- Unit tests cho SQL syntax tokenizer
-- Integration tests cho database operations
-- UI tests cho critical user flows
+### Adding a New Feature to Cell
+
+1. **Update Model** (`NotebookCell.swift`):
+```swift
+struct NotebookCell: Codable, Sendable {
+    let id: UUID
+    var content: String
+    var newProperty: String? // Add new property
+}
+```
+
+2. **Update ViewModel Extension**:
+```swift
+// In NotebookViewModel+CellManagement.swift
+extension NotebookViewModel {
+    func updateNewProperty(cellId: UUID, value: String) {
+        guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+        notebook.cells[index].newProperty = value
+    }
+}
+```
+
+3. **Update View** (`CellView.swift`):
+```swift
+struct CellView: View {
+    let cell: NotebookCell
+
+    var body: some View {
+        VStack {
+            // Existing code...
+            if let newValue = cell.newProperty {
+                Text(newValue)
+            }
+        }
+    }
+}
+```
+
+### Adding a New Database Operation
+
+1. **Update DatabaseConnectionManager**:
+```swift
+// In DatabaseConnectionManager+QueryExecution.swift or new file
+extension DatabaseConnectionManager {
+    func newOperation() async throws -> Result {
+        guard let connection = self.connection else {
+            throw DatabaseError.notConnected
+        }
+        // Implementation...
+    }
+}
+```
+
+2. **Call from ViewModel**:
+```swift
+// In NotebookViewModel+Execution.swift
+func performNewOperation() async {
+    do {
+        let result = try await connectionManager.newOperation()
+        // Update UI on main actor
+        await MainActor.run {
+            self.showToast("Operation successful", type: .success)
+        }
+    } catch {
+        await MainActor.run {
+            self.showToast("Error: \(error.localizedDescription)", type: .error)
+        }
+    }
+}
+```
 
 ---
 
-## 📚 Additional Documentation
+## Testing Guidelines
 
-- Detailed specifications: `docs/project.md`
-- Task breakdown: `docs/TODO.md`
-- PostgreSQL setup: `docs/POSTGRESQL_SETUP.md`
+### Unit Tests
+Create new test file in `SQLNotebookTests/`:
+```swift
+import Testing
+@testable import SQLNotebook
+
+struct MyFeatureTests {
+    @Test("Test case description")
+    func testMyFeature() async throws {
+        // Arrange
+        let model = NotebookCell(...)
+
+        // Act
+        let result = model.someMethod()
+
+        // Assert
+        #expect(result == expectedValue)
+    }
+}
+```
+
+**Notes:**
+- Use Swift Testing framework (not XCTest)
+- Use `@Test` macro instead of `func testXXX()`
+- Use `#expect()` instead of `XCTAssertEqual()`
+
+### Integration Tests with Database
+```swift
+@Test("Database connection test")
+func testDatabaseConnection() async throws {
+    let manager = DatabaseConnectionManager()
+    let config = ConnectionConfig(
+        host: "localhost",
+        port: 5433,
+        database: "test_db",
+        username: "test_user",
+        password: "test_pass",
+        sslMode: .disable,
+        databaseType: .postgresql
+    )
+
+    try await manager.connect(config: config)
+    #expect(manager.isConnected)
+}
+```
 
 ---
 
-## 🎯 When Working on This Codebase
+## Build & Development Commands
 
-1. **Always check**: Existing design system trong `DesignSystem.swift` trước khi tạo new styles
-2. **Follow MVVM**: ViewModels handle business logic, Views chỉ render UI
-3. **Async operations**: Database calls phải async, update UI trên main actor
-4. **Type safety**: Leverage CellValue enum cho different data types
-5. **Error handling**: Show user-friendly errors, log detailed info cho debugging
-6. **Performance**: Test với large notebooks (100+ cells) và large result sets (1000+ rows)
-7. **Accessibility**: Ensure proper labels và keyboard navigation
-8. **Documentation**: Update docs khi thay đổi architecture hoặc add major features
+### Build with strict concurrency checking
+```bash
+# Local build with same strict settings as GitHub Actions
+./scripts/build-strict.sh
+```
+
+### Format code
+```bash
+# Install swift-format if not already installed
+brew install swift-format
+
+# Format all files
+swift-format -i -r SQLNotebook/
+
+# Check only (don't modify files)
+swift-format lint -r SQLNotebook/
+```
+
+### Run tests
+```bash
+# All tests
+xcodebuild test -scheme SQLNotebook
+
+# Only unit tests (skip integration tests that need database)
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
+
+# Specific test class
+xcodebuild test -scheme SQLNotebook -only-testing SQLNotebookTests/DataModelTests
+```
+
+---
+
+## Important Reminders
+
+1. **Concurrency Safety:**
+   - Always use `async/await` for database operations
+   - Update UI only on `@MainActor`
+   - Use `actor` for shared mutable state
+
+2. **Error Handling:**
+   - Don't use force unwrap (`!`) or force try (`try!`)
+   - Use `if let` or `guard let` for optional unwrapping
+   - Display user-friendly errors in UI, log technical details
+
+3. **Performance:**
+   - Test with large notebooks (100+ cells)
+   - Test with large result sets (1000+ rows)
+   - Use `LazyVStack` instead of `VStack` for long lists
+
+4. **Security:**
+   - **NOT IMPLEMENTED:** Passwords should be stored in Keychain, not in `.sqlnb` files
+   - Validate user inputs before executing queries
+   - Use SSL/TLS for production connections
+
+5. **Design System:**
+   - Check `DesignSystem.swift` before creating custom styles
+   - Use semantic colors (e.g., `Color.appBackground`) instead of hardcoded hex
+   - Follow 8pt spacing grid
+
+---
+
+## Quick Reference Links
+
+- 📖 [Complete AI Guide](docs/AI_GUIDE.md) — Full documentation
+- 📋 [Project Spec](docs/project.md) — Technical specifications
+- ✅ [TODO](docs/TODO.md) — Task breakdown
