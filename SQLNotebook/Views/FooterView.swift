@@ -154,9 +154,11 @@ struct FooterView: View {
 
   private var fileSizeTooltip: String {
     if viewModel.isFileSizeLarge {
-      return "File size is very large (> \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold))). Consider creating a new notebook or removing old results."
+      return
+        "File size is very large (> \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold))). Consider creating a new notebook or removing old results."
     } else if viewModel.isFileSizeWarning {
-      return "File size is approaching the recommended limit (> \(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))"
+      return
+        "File size is approaching the recommended limit (> \(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))"
     } else {
       return "Current file size"
     }

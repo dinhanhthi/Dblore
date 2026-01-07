@@ -44,8 +44,9 @@ struct SQLNotebookDocument: FileDocument {
     let includeResults = AppSettings.getIncludeResultsOnSave()
 
     // Use compact format for large files
-    let estimatedSize = (try? FileOptimizationService.calculateNotebookSize(
-      notebookToSave, includeResults: includeResults)) ?? 0
+    let estimatedSize =
+      (try? FileOptimizationService.calculateNotebookSize(
+        notebookToSave, includeResults: includeResults)) ?? 0
     let useCompactFormat = estimatedSize > FileOptimizationService.warningSizeThreshold
 
     let data = try DocumentCoder.encode(
@@ -169,9 +170,12 @@ private enum DocumentCoder {
     json["cells"] = cellsArray
 
     // Use compact format for large files, pretty print for normal files
-    let options: JSONSerialization.WritingOptions = useCompactFormat ? [.sortedKeys] : [
-      .prettyPrinted, .sortedKeys,
-    ]
+    let options: JSONSerialization.WritingOptions =
+      useCompactFormat
+      ? [.sortedKeys]
+      : [
+        .prettyPrinted, .sortedKeys,
+      ]
     return try JSONSerialization.data(withJSONObject: json, options: options)
   }
 

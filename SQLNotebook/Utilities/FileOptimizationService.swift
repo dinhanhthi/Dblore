@@ -95,7 +95,7 @@ enum FileOptimizationService {
     for cell in notebook.cells {
       if let result = cell.result {
         // Approximate size: each row * columns * average bytes per value
-        let avgBytesPerValue = 50 // Conservative estimate
+        let avgBytesPerValue = 50  // Conservative estimate
         let rowSize = result.columns.count * avgBytesPerValue
         resultDataSize += Int64(result.rows.count * rowSize)
       }
@@ -165,9 +165,12 @@ extension FileOptimizationService {
       json["cells"] = cellsArray
 
       // Use compact format for large files, pretty print for normal files
-      let options: JSONSerialization.WritingOptions = useCompactFormat ? [.sortedKeys] : [
-        .prettyPrinted, .sortedKeys,
-      ]
+      let options: JSONSerialization.WritingOptions =
+        useCompactFormat
+        ? [.sortedKeys]
+        : [
+          .prettyPrinted, .sortedKeys,
+        ]
       return try JSONSerialization.data(withJSONObject: json, options: options)
     }
 

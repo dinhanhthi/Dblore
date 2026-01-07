@@ -317,7 +317,9 @@ class SQLAutocompleteProvider {
     // We'll use a simple regex-like approach
 
     // Find all FROM and JOIN positions
-    let keywords = ["FROM", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN"]
+    let keywords = [
+      "FROM", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN",
+    ]
 
     for keyword in keywords {
       var searchRange = upperText.startIndex..<upperText.endIndex
@@ -329,20 +331,26 @@ class SQLAutocompleteProvider {
 
         // Extract the table reference (format: "table_name" or "table_name alias")
         // Stop at next SQL keyword or comma
-        let stopKeywords = ["WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON", "GROUP", "ORDER", "LIMIT", "UNION", "EXCEPT", "INTERSECT"]
+        let stopKeywords = [
+          "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON", "GROUP", "ORDER",
+          "LIMIT", "UNION", "EXCEPT", "INTERSECT",
+        ]
         var endIndex = afterKeywordString.endIndex
 
         for stopKeyword in stopKeywords {
           if let stopRange = afterKeywordString.range(of: stopKeyword) {
-            let currentEnd = afterKeywordString.distance(from: afterKeywordString.startIndex, to: stopRange.lowerBound)
-            let proposedEnd = afterKeywordString.distance(from: afterKeywordString.startIndex, to: endIndex)
+            let currentEnd = afterKeywordString.distance(
+              from: afterKeywordString.startIndex, to: stopRange.lowerBound)
+            let proposedEnd = afterKeywordString.distance(
+              from: afterKeywordString.startIndex, to: endIndex)
             if currentEnd < proposedEnd {
               endIndex = stopRange.lowerBound
             }
           }
         }
 
-        let tableRef = String(afterKeywordString[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let tableRef = String(afterKeywordString[..<endIndex]).trimmingCharacters(
+          in: .whitespacesAndNewlines)
 
         // Parse "table_name" or "table_name alias"
         // Split by whitespace, first part is table name, second part (if exists) is alias
