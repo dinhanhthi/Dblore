@@ -66,7 +66,7 @@ struct CellView: View {
               .frame(maxWidth: .infinity, alignment: .leading)
           }
           .padding(.top, Spacing.md)
-          .padding(.bottom, Spacing.md)
+          .padding(.bottom, Spacing.sm)
           .padding(.leading, 0)
           .padding(.trailing, Spacing.md)
 
