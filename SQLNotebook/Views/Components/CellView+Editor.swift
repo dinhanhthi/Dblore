@@ -16,6 +16,7 @@ struct SQLEditorView: View {
   @State private var isTextEmpty: Bool = true
 
   var autocompleteProvider: SQLAutocompleteProvider?
+  var cellId: UUID? // For search highlighting
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -34,7 +35,8 @@ struct SQLEditorView: View {
         onFocus: onFocus,
         textViewRef: $textViewRef,
         isEmpty: $isTextEmpty,
-        autocompleteProvider: autocompleteProvider
+        autocompleteProvider: autocompleteProvider,
+        cellId: cellId
       )
     }
     .padding(Spacing.sm)

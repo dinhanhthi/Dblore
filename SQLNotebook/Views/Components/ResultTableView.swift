@@ -18,6 +18,7 @@ struct ResultTableView: View {
   @State private var contentScrollPosition: ScrollPosition = ScrollPosition()
   @State private var isContentScrolledByUser: Bool = false
   @State private var isHeaderScrolledByUser: Bool = false
+  @State private var currentMatchId: UUID?
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -118,6 +119,15 @@ struct ResultTableView: View {
     .onAppear {
       calculateInitialColumnWidths()
     }
+    .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      if let match = notification.userInfo?["match"] as? SearchMatch,
+         match.cellId == cellId {
+        currentMatchId = match.id
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
+      currentMatchId = nil
+    }
   }
 
   private var truncationWarning: some View {
@@ -155,11 +165,34 @@ struct ResultTableView: View {
               .foregroundColor(.warning)
           }
 
-          Text(column.name)
+          // Highlight column name if search query matches
+          if !viewModel.searchState.query.isEmpty {
+            // Find the match for this column name
+            let columnMatch = viewModel.searchState.matches.first {
+              $0.cellId == cellId &&
+              ($0.matchType == .columnName(column.name))
+            }
+            let isCurrentMatch = columnMatch?.id == currentMatchId
+            let matchRange: Range<String.Index>? = isCurrentMatch
+              ? column.name.range(of: viewModel.searchState.query, options: viewModel.searchState.isCaseSensitive ? [] : .caseInsensitive)
+              : nil
+
+            SearchHighlightText(
+              text: column.name,
+              query: viewModel.searchState.query,
+              caseSensitive: viewModel.searchState.isCaseSensitive,
+              currentMatchRange: matchRange
+            )
             .font(.system(.body, weight: .semibold))
-            .foregroundColor(.foreground)
             .lineLimit(1)
             .truncationMode(.tail)
+          } else {
+            Text(column.name)
+              .font(.system(.body, weight: .semibold))
+              .foregroundColor(.foreground)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
         }
 
         Text(column.type)
@@ -207,7 +240,7 @@ struct ResultTableView: View {
 
   private func dataCell(value: CellValue, column: ColumnInfo, rowIndex: Int) -> some View {
     HStack(spacing: 0) {
-      cellContent(value: value)
+      cellContent(value: value, rowIndex: rowIndex, columnName: column.name)
         .frame(width: columnWidth(for: column.name) - Spacing.md, alignment: alignment(for: value))
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, Spacing.sm)
@@ -223,8 +256,20 @@ struct ResultTableView: View {
     .frame(width: columnWidth(for: column.name))
   }
 
-  private func cellContent(value: CellValue) -> CellContentView {
-    CellContentView(value: value)
+  private func cellContent(value: CellValue, rowIndex: Int, columnName: String) -> CellContentView {
+    // Find the match for this specific cell (row + column)
+    let cellMatch = viewModel.searchState.matches.first {
+      $0.cellId == cellId &&
+      ($0.matchType == .tableData(rowIndex: rowIndex, columnName: columnName))
+    }
+    let isCurrentMatch = cellMatch?.id == currentMatchId
+
+    return CellContentView(
+      value: value,
+      searchQuery: viewModel.searchState.query,
+      isCaseSensitive: viewModel.searchState.isCaseSensitive,
+      isCurrentMatch: isCurrentMatch
+    )
   }
 
   // MARK: - Helpers
@@ -355,62 +400,156 @@ struct ResultTableView: View {
 
 private struct CellContentView: View {
   let value: CellValue
+  let searchQuery: String
+  let isCaseSensitive: Bool
+  let isCurrentMatch: Bool
 
   var body: some View {
-    switch value {
-    case .null:
-      Text("NULL")
-        .font(.mono)
-        .foregroundColor(.foregroundSubtle)
-        .italic()
-        .lineLimit(1)
+    let displayString = value.displayString
 
-    case .json:
-      HStack(spacing: Spacing.xs) {
-        Text(value.displayString)
+    // Calculate current match range if this cell is the current match
+    let currentMatchRange: Range<String.Index>? = isCurrentMatch
+      ? displayString.range(of: searchQuery, options: isCaseSensitive ? [] : .caseInsensitive)
+      : nil
+
+    // Use highlighted text if there's a search query and value is searchable
+    if !searchQuery.isEmpty && !displayString.isEmpty {
+      switch value {
+      case .null:
+        Text("NULL")
           .font(.mono)
-          .foregroundColor(.syntaxFunction)
+          .foregroundColor(.foregroundSubtle)
+          .italic()
+          .lineLimit(1)
+
+      case .json:
+        HStack(spacing: Spacing.xs) {
+          SearchHighlightText(
+            text: displayString,
+            query: searchQuery,
+            caseSensitive: isCaseSensitive,
+            currentMatchRange: currentMatchRange
+          )
+          .font(.mono)
           .lineLimit(1)
           .truncationMode(.tail)
 
-        Image(systemName: "chevron.right")
-          .font(.caption2)
-          .foregroundColor(.foregroundSubtle)
-      }
+          Image(systemName: "chevron.right")
+            .font(.caption2)
+            .foregroundColor(.foregroundSubtle)
+        }
 
-    case .bool(let boolValue):
-      Text(boolValue ? "true" : "false")
+      case .bool(let boolValue):
+        SearchHighlightText(
+          text: boolValue ? "true" : "false",
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(boolValue ? .success : .foregroundMuted)
         .lineLimit(1)
 
-    case .int, .double:
-      Text(value.displayString)
+      case .int, .double:
+        SearchHighlightText(
+          text: displayString,
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(.syntaxNumber)
         .lineLimit(1)
 
-    case .date:
-      Text(value.displayString)
+      case .date:
+        SearchHighlightText(
+          text: displayString,
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(.foreground)
         .lineLimit(1)
         .truncationMode(.tail)
 
-    case .string(let str):
-      Text(str)
+      case .string:
+        SearchHighlightText(
+          text: displayString,
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(.foreground)
         .lineLimit(1)
         .truncationMode(.tail)
 
-    case .data:
-      Text(value.displayString)
+      case .data:
+        SearchHighlightText(
+          text: displayString,
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(.foregroundMuted)
         .italic()
         .lineLimit(1)
         .truncationMode(.tail)
+      }
+    } else {
+      // No search query - render normally
+      switch value {
+      case .null:
+        Text("NULL")
+          .font(.mono)
+          .foregroundColor(.foregroundSubtle)
+          .italic()
+          .lineLimit(1)
+
+      case .json:
+        HStack(spacing: Spacing.xs) {
+          Text(value.displayString)
+            .font(.mono)
+            .foregroundColor(.syntaxFunction)
+            .lineLimit(1)
+            .truncationMode(.tail)
+
+          Image(systemName: "chevron.right")
+            .font(.caption2)
+            .foregroundColor(.foregroundSubtle)
+        }
+
+      case .bool(let boolValue):
+        Text(boolValue ? "true" : "false")
+          .font(.mono)
+          .foregroundColor(boolValue ? .success : .foregroundMuted)
+          .lineLimit(1)
+
+      case .int, .double:
+        Text(value.displayString)
+          .font(.mono)
+          .foregroundColor(.syntaxNumber)
+          .lineLimit(1)
+
+      case .date:
+        Text(value.displayString)
+          .font(.mono)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+          .truncationMode(.tail)
+
+      case .string(let str):
+        Text(str)
+          .font(.mono)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+          .truncationMode(.tail)
+
+      case .data:
+        Text(value.displayString)
+          .font(.mono)
+          .foregroundColor(.foregroundMuted)
+          .italic()
+          .lineLimit(1)
+          .truncationMode(.tail)
+      }
     }
   }
 }

@@ -27,8 +27,13 @@ struct ResultAreaView: View {
         }
 
         if let error = result.error {
-          // Error display
-          ErrorResultView(error: error)
+          // Error display with search highlighting
+          ErrorResultView(
+            error: error,
+            searchQuery: viewModel.searchState.query,
+            isCaseSensitive: viewModel.searchState.isCaseSensitive,
+            cellId: cellId
+          )
         } else if let affectedRows = result.affectedRows {
           // Success message for UPDATE/DELETE/INSERT
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
@@ -91,6 +96,10 @@ struct SuccessResultView: View {
 
 struct ErrorResultView: View {
   let error: String
+  let searchQuery: String
+  let isCaseSensitive: Bool
+  let cellId: UUID
+  @State private var currentMatchRange: Range<String.Index>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -104,16 +113,43 @@ struct ErrorResultView: View {
       }
       .padding(.bottom, Spacing.md)
 
-      Text(error)
+      // Use SearchHighlightText if there's a search query
+      if !searchQuery.isEmpty {
+        SearchHighlightText(
+          text: error,
+          query: searchQuery,
+          caseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
         .font(.mono)
-        .foregroundColor(.destructive)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        Text(error)
+          .font(.mono)
+          .foregroundColor(.destructive)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.destructive.opacity(0.1))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+    .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      if let match = notification.userInfo?["match"] as? SearchMatch,
+         case .errorMessage = match.matchType,
+         match.cellId == cellId {
+        // This cell has the current match - highlight specific range
+        currentMatchRange = match.matchRange
+      } else {
+        // Clear current match highlight (but keep all yellow highlights from query)
+        currentMatchRange = nil
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
+      currentMatchRange = nil
+    }
   }
 }
 
@@ -179,7 +215,10 @@ enum CellResultViews {
 #Preview("Error Result") {
   ErrorResultView(
     error:
-      "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^"
+      "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
+    searchQuery: "",
+    isCaseSensitive: false,
+    cellId: UUID()
   )
   .padding()
   .frame(width: 600)
