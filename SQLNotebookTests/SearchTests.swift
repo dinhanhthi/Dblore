@@ -23,7 +23,7 @@ struct SearchTests {
       text: text,
       query: query,
       caseSensitive: false,
-      isCurrentMatch: false
+      currentMatchRange: nil
     )
 
     // Assert
@@ -41,7 +41,7 @@ struct SearchTests {
       text: text,
       query: query,
       caseSensitive: true,
-      isCurrentMatch: false
+      currentMatchRange: nil
     )
 
     // Assert - should NOT highlight because case doesn't match
@@ -60,7 +60,7 @@ struct SearchTests {
       text: text,
       query: query,
       caseSensitive: false,
-      isCurrentMatch: false
+      currentMatchRange: nil
     )
 
     // Assert - should find multiple instances
@@ -78,7 +78,7 @@ struct SearchTests {
       text: text,
       query: query,
       caseSensitive: false,
-      isCurrentMatch: false
+      currentMatchRange: nil
     )
 
     // Assert - AttributedString.description includes formatting info, so just check it contains the text

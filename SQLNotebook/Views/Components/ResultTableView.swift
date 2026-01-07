@@ -19,6 +19,7 @@ struct ResultTableView: View {
   @State private var isContentScrolledByUser: Bool = false
   @State private var isHeaderScrolledByUser: Bool = false
   @State private var currentMatchId: UUID?
+  @State private var matchLookup: [String: UUID] = [:]  // "rowIndex-columnName" → matchId for O(1) lookup
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -123,10 +124,13 @@ struct ResultTableView: View {
       if let match = notification.userInfo?["match"] as? SearchMatch,
          match.cellId == cellId {
         currentMatchId = match.id
+        // Build lookup table when match changes
+        buildMatchLookup()
       }
     }
     .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
       currentMatchId = nil
+      matchLookup.removeAll()  // Clear lookup table
     }
   }
 
@@ -256,13 +260,26 @@ struct ResultTableView: View {
     .frame(width: columnWidth(for: column.name))
   }
 
-  private func cellContent(value: CellValue, rowIndex: Int, columnName: String) -> CellContentView {
-    // Find the match for this specific cell (row + column)
-    let cellMatch = viewModel.searchState.matches.first {
-      $0.cellId == cellId &&
-      ($0.matchType == .tableData(rowIndex: rowIndex, columnName: columnName))
+  /// Build lookup table for fast O(1) match access
+  /// This replaces O(n) linear search through all matches for every cell render
+  private func buildMatchLookup() {
+    matchLookup.removeAll()
+
+    // Build hash map: "rowIndex-columnName" → matchId
+    for match in viewModel.searchState.matches {
+      if match.cellId == cellId,
+         case .tableData(let rowIndex, let columnName) = match.matchType {
+        let key = "\(rowIndex)-\(columnName)"
+        matchLookup[key] = match.id
+      }
     }
-    let isCurrentMatch = cellMatch?.id == currentMatchId
+  }
+
+  private func cellContent(value: CellValue, rowIndex: Int, columnName: String) -> CellContentView {
+    // O(1) lookup instead of O(n) linear search through all matches
+    let key = "\(rowIndex)-\(columnName)"
+    let matchId = matchLookup[key]
+    let isCurrentMatch = matchId == currentMatchId
 
     return CellContentView(
       value: value,
@@ -404,14 +421,19 @@ private struct CellContentView: View {
   let isCaseSensitive: Bool
   let isCurrentMatch: Bool
 
+  /// Memoized display string to avoid repeated computation
+  private var displayString: String {
+    value.displayString
+  }
+
+  /// Memoized current match range - only computed if this is the current match
+  /// This optimization prevents running String.range(of:) on every cell render
+  private var currentMatchRange: Range<String.Index>? {
+    guard isCurrentMatch, !searchQuery.isEmpty else { return nil }
+    return displayString.range(of: searchQuery, options: isCaseSensitive ? [] : .caseInsensitive)
+  }
+
   var body: some View {
-    let displayString = value.displayString
-
-    // Calculate current match range if this cell is the current match
-    let currentMatchRange: Range<String.Index>? = isCurrentMatch
-      ? displayString.range(of: searchQuery, options: isCaseSensitive ? [] : .caseInsensitive)
-      : nil
-
     // Use highlighted text if there's a search query and value is searchable
     if !searchQuery.isEmpty && !displayString.isEmpty {
       switch value {

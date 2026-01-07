@@ -13,6 +13,12 @@ extension NotebookViewModel {
   /// Perform global search across all cells
   @MainActor
   func performSearch(query: String, caseSensitive: Bool) async {
+    // Cancel previous search if still running
+    searchTask?.cancel()
+
+    // Clear AttributedString cache when search query changes for better memory usage
+    SearchHighlighter.clearCache()
+
     searchState.isSearching = true
     searchState.query = query
     searchState.isCaseSensitive = caseSensitive
@@ -27,42 +33,105 @@ extension NotebookViewModel {
     }
 
     // Build search index and find matches (async on background)
-    let matches = await buildSearchMatches(query: query, caseSensitive: caseSensitive)
+    // Performance tracking
+    let start = CFAbsoluteTimeGetCurrent()
 
-    await MainActor.run {
-      searchState.matches = matches
-      searchState.isSearching = false
+    searchTask = Task {
+      let matches = await buildSearchMatches(query: query, caseSensitive: caseSensitive)
 
-      // Auto-navigate to first match
-      if !matches.isEmpty {
-        navigateToMatch(at: 0)
-      } else {
-        // Clear highlights when no matches found
-        NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
+      // Check if search was cancelled
+      guard !Task.isCancelled else {
+        await AppLogger.shared.log("Search cancelled", level: .debug, category: "Search")
+        return
+      }
+
+      let duration = CFAbsoluteTimeGetCurrent() - start
+      await AppLogger.shared.log("Search completed in \(String(format: "%.3f", duration))s, found \(matches.count) matches", level: .info, category: "Performance")
+
+      await MainActor.run {
+        searchState.matches = matches
+        searchState.isSearching = false
+
+        // Auto-navigate to first match
+        if !matches.isEmpty {
+          navigateToMatch(at: 0)
+        } else {
+          // Clear highlights when no matches found
+          NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
+        }
       }
     }
+
+    await searchTask?.value
   }
 
   /// Build search matches from all cells (async for performance)
+  /// Optimized with limits to prevent performance issues with large notebooks
   private func buildSearchMatches(query: String, caseSensitive: Bool) async -> [SearchMatch] {
     var allMatches: [SearchMatch] = []
+    let maxMatchesPerCell = 50  // Limit matches per cell for performance
+    let maxTotalMatches = 1000  // Stop after 1000 total matches
 
     for cell in notebook.cells {
-      // 1. Search in SQL content
-      allMatches.append(contentsOf: searchInSQLContent(cell: cell, query: query, caseSensitive: caseSensitive))
+      // Check cancellation frequently
+      if Task.isCancelled { break }
+
+      // 1. Search in SQL content (with limit)
+      let sqlMatches = searchInSQLContent(
+        cell: cell,
+        query: query,
+        caseSensitive: caseSensitive,
+        maxMatches: maxMatchesPerCell
+      )
+      allMatches.append(contentsOf: sqlMatches)
 
       // 2. Search in result data
       if let result = cell.result {
-        // Search in column names
-        allMatches.append(contentsOf: searchInColumnNames(cell: cell, result: result, query: query, caseSensitive: caseSensitive))
+        if Task.isCancelled { break }
 
-        // Search in table data
-        allMatches.append(contentsOf: searchInTableData(cell: cell, result: result, query: query, caseSensitive: caseSensitive))
+        // Search in column names
+        allMatches.append(contentsOf: searchInColumnNames(
+          cell: cell,
+          result: result,
+          query: query,
+          caseSensitive: caseSensitive
+        ))
+
+        // Search in table data (limit rows for performance)
+        // Only search first maxRowLimit rows to avoid scanning huge result sets
+        let limitedRows = Array(result.rows.prefix(await MainActor.run { AppSettings.shared.maxRowLimit }))
+        let limitedResult = CellResult(
+          columns: result.columns,
+          rows: limitedRows,
+          executionTime: result.executionTime,
+          rowCount: result.rowCount,
+          timestamp: result.timestamp
+        )
+
+        allMatches.append(contentsOf: searchInTableData(
+          cell: cell,
+          result: limitedResult,
+          query: query,
+          caseSensitive: caseSensitive,
+          maxMatches: maxMatchesPerCell
+        ))
 
         // Search in error messages
         if let error = result.error {
-          allMatches.append(contentsOf: searchInErrorMessage(cell: cell, error: error, query: query, caseSensitive: caseSensitive))
+          allMatches.append(contentsOf: searchInErrorMessage(
+            cell: cell,
+            error: error,
+            query: query,
+            caseSensitive: caseSensitive,
+            maxMatches: maxMatchesPerCell
+          ))
         }
+      }
+
+      // Early exit if we have enough matches
+      if allMatches.count >= maxTotalMatches {
+        // Stop search to prevent performance issues
+        break
       }
     }
 
@@ -125,6 +194,9 @@ extension NotebookViewModel {
     isSearchPanelVisible = false
     searchState = SearchState()
 
+    // Clear AttributedString cache to free memory
+    SearchHighlighter.clearCache()
+
     // Clear all highlights
     NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
   }
@@ -143,18 +215,30 @@ extension NotebookViewModel {
   // MARK: - Helper Methods for Searching
 
   /// Search in SQL content của cell
-  private func searchInSQLContent(cell: NotebookCell, query: String, caseSensitive: Bool) -> [SearchMatch] {
+  /// Optimized with match limit and shorter context for better performance
+  private func searchInSQLContent(
+    cell: NotebookCell,
+    query: String,
+    caseSensitive: Bool,
+    maxMatches: Int = 50
+  ) -> [SearchMatch] {
     var matches: [SearchMatch] = []
     let content = caseSensitive ? cell.content : cell.content.lowercased()
     let searchQuery = caseSensitive ? query : query.lowercased()
 
     var searchStartIndex = content.startIndex
     while let range = content.range(of: searchQuery, range: searchStartIndex..<content.endIndex) {
+      // Early exit if we have enough matches for this cell
+      if matches.count >= maxMatches {
+        // Note: Logging inside hot loop can be expensive, skip for now
+        break
+      }
+
       // Calculate line number
       let lineNumber = content[..<range.lowerBound].reduce(0) { $0 + ($1 == "\n" ? 1 : 0) } + 1
 
-      // Extract context (50 chars before + match + 50 chars after)
-      let contextText = extractContext(from: content, around: range, maxLength: 50)
+      // Extract shorter context (25 chars instead of 50) for better memory usage
+      let contextText = extractContext(from: content, around: range, maxLength: 25)
 
       matches.append(SearchMatch(
         cellId: cell.id,
@@ -193,11 +277,23 @@ extension NotebookViewModel {
   }
 
   /// Search in table data
-  private func searchInTableData(cell: NotebookCell, result: CellResult, query: String, caseSensitive: Bool) -> [SearchMatch] {
+  /// Optimized with match limit to prevent scanning huge datasets
+  private func searchInTableData(
+    cell: NotebookCell,
+    result: CellResult,
+    query: String,
+    caseSensitive: Bool,
+    maxMatches: Int = 50
+  ) -> [SearchMatch] {
     var matches: [SearchMatch] = []
 
     for (rowIndex, row) in result.rows.enumerated() {
       for (columnIndex, cellValue) in row.enumerated() {
+        // Early exit if we have enough matches
+        if matches.count >= maxMatches {
+          return matches
+        }
+
         let columnName = result.columns[columnIndex].name
         let valueText = cellValue.displayString
         let searchText = caseSensitive ? valueText : valueText.lowercased()
@@ -219,14 +315,27 @@ extension NotebookViewModel {
   }
 
   /// Search in error message
-  private func searchInErrorMessage(cell: NotebookCell, error: String, query: String, caseSensitive: Bool) -> [SearchMatch] {
+  /// Optimized with match limit and shorter context
+  private func searchInErrorMessage(
+    cell: NotebookCell,
+    error: String,
+    query: String,
+    caseSensitive: Bool,
+    maxMatches: Int = 50
+  ) -> [SearchMatch] {
     var matches: [SearchMatch] = []
     let errorText = caseSensitive ? error : error.lowercased()
     let searchQuery = caseSensitive ? query : query.lowercased()
 
     var searchStartIndex = errorText.startIndex
     while let range = errorText.range(of: searchQuery, range: searchStartIndex..<errorText.endIndex) {
-      let contextText = extractContext(from: errorText, around: range, maxLength: 100)
+      // Early exit if we have enough matches
+      if matches.count >= maxMatches {
+        break
+      }
+
+      // Use shorter context (50 chars instead of 100) for better memory
+      let contextText = extractContext(from: errorText, around: range, maxLength: 50)
 
       matches.append(SearchMatch(
         cellId: cell.id,
