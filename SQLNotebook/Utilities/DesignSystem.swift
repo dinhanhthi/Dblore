@@ -100,7 +100,7 @@ extension Color {
 
   static let destructive = Color(
     light: Color(hex: "dc2626"),  // Red 600
-    dark: Color(hex: "ef4444")  // Red 500
+    dark: Color(hex: "FF7457")
   )
 
   // Table colors

@@ -72,6 +72,12 @@ class NotebookViewModel {
   var isToastHovered = false
   private var toastDismissTask: Task<Void, Never>?
 
+  // File size warning tracking
+  var showFileSizeWarningDialog = false
+  var showFileSizeLargeDialog = false
+  var hasShownWarningDialog = false
+  var hasShownLargeDialog = false
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
@@ -129,5 +135,26 @@ class NotebookViewModel {
 
   var executedCellCount: Int {
     notebook.cells.filter { $0.executionCount != nil }.count
+  }
+
+  /// Calculate current file size (with results if enabled in settings)
+  var estimatedFileSize: Int64 {
+    let includeResults = AppSettings.getIncludeResultsOnSave()
+    return (try? FileOptimizationService.calculateNotebookSize(notebook, includeResults: includeResults)) ?? 0
+  }
+
+  /// Get formatted file size string
+  var formattedFileSize: String {
+    FileOptimizationService.formatFileSize(estimatedFileSize)
+  }
+
+  /// Check if file size is large
+  var isFileSizeLarge: Bool {
+    estimatedFileSize > FileOptimizationService.largeSizeThreshold
+  }
+
+  /// Check if file size is approaching warning threshold
+  var isFileSizeWarning: Bool {
+    estimatedFileSize > FileOptimizationService.warningSizeThreshold
   }
 }

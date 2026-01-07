@@ -24,10 +24,21 @@ struct HeaderView: View {
         Divider()
           .frame(height: 20)
 
-        Button(action: { viewModel.addCell(type: .sql) }) {
+        Button(action: {
+          if viewModel.isFileSizeLarge {
+            viewModel.showToast(
+              "File size limit exceeded. Please create a new notebook or remove old results to continue adding cells.",
+              type: .error
+            )
+          } else {
+            viewModel.addCell(type: .sql)
+          }
+        }) {
           Label("New", systemImage: "plus")
         }
         .buttonStyle(ToolbarButtonStyle())
+        .disabled(viewModel.isFileSizeLarge)
+        .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
 
         Button(action: {
           showRunAllConfirmation = true

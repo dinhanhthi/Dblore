@@ -43,7 +43,16 @@ struct SQLNotebookDocument: FileDocument {
     // Access AppSettings in a thread-safe way
     let includeResults = AppSettings.getIncludeResultsOnSave()
 
-    let data = try DocumentCoder.encode(notebookToSave, includeResultsOnSave: includeResults)
+    // Use compact format for large files
+    let estimatedSize = (try? FileOptimizationService.calculateNotebookSize(
+      notebookToSave, includeResults: includeResults)) ?? 0
+    let useCompactFormat = estimatedSize > FileOptimizationService.warningSizeThreshold
+
+    let data = try DocumentCoder.encode(
+      notebookToSave,
+      includeResultsOnSave: includeResults,
+      useCompactFormat: useCompactFormat
+    )
     return FileWrapper(regularFileWithContents: data)
   }
 }
@@ -115,8 +124,11 @@ private enum DocumentCoder {
       settings: settings)
   }
 
-  nonisolated static func encode(_ notebook: SQLNotebook, includeResultsOnSave: Bool) throws -> Data
-  {
+  nonisolated static func encode(
+    _ notebook: SQLNotebook,
+    includeResultsOnSave: Bool,
+    useCompactFormat: Bool = false
+  ) throws -> Data {
     let dateFormatter = ISO8601DateFormatter()
 
     var json: [String: Any] = [
@@ -156,7 +168,11 @@ private enum DocumentCoder {
     }
     json["cells"] = cellsArray
 
-    return try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+    // Use compact format for large files, pretty print for normal files
+    let options: JSONSerialization.WritingOptions = useCompactFormat ? [.sortedKeys] : [
+      .prettyPrinted, .sortedKeys,
+    ]
+    return try JSONSerialization.data(withJSONObject: json, options: options)
   }
 
   // MARK: - Result Encoding/Decoding Helpers

@@ -133,6 +133,9 @@ extension NotebookViewModel {
 
     notebook.cells[index].isRunning = false
 
+    // Check file size after execution and show warning if needed
+    checkFileSizeAfterExecution()
+
     return result
   }
 
@@ -238,6 +241,26 @@ extension NotebookViewModel {
           target.clearAllOutputs(registerUndo: true)
         }
       }
+    }
+  }
+
+  // MARK: - File Size Monitoring
+
+  /// Check file size after cell execution and show warning dialogs if needed
+  func checkFileSizeAfterExecution() {
+    let fileSize = estimatedFileSize
+
+    // Check if we exceeded large threshold (and haven't shown dialog yet)
+    if fileSize > FileOptimizationService.largeSizeThreshold && !hasShownLargeDialog {
+      hasShownLargeDialog = true
+      showFileSizeLargeDialog = true
+      return  // Don't show warning dialog if we're already showing large dialog
+    }
+
+    // Check if we exceeded warning threshold (and haven't shown dialog yet)
+    if fileSize > FileOptimizationService.warningSizeThreshold && !hasShownWarningDialog {
+      hasShownWarningDialog = true
+      showFileSizeWarningDialog = true
     }
   }
 

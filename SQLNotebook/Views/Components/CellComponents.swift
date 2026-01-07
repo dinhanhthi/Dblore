@@ -104,7 +104,7 @@ struct DragHandleButton: View {
 
   var body: some View {
     Button(action: {}) {
-      Image(systemName: "line.3.horizontal")
+      Image(systemName: "arrow.up.and.down")
         .font(.system(size: 12))
     }
     .buttonStyle(FloatingPanelButtonStyle())
