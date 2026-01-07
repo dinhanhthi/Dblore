@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (11 of 14 sections - Result Display, Theme Toggle, Search & Filter added)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (12 of 14 sections - Result Display, Theme Toggle, Drag and Drop added)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - ✅ **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.2 Connection Security complete; 6.0.3 & 6.0.4 partial)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -32,11 +32,11 @@
   - [x] Tests for execution queue
   - [x] Cancel queued cells
 
-### 4.4 Drag and Drop - NOT STARTED
-- [ ] Add drag handle to cell left sidebar
-- [ ] Implement `onMove` modifier for cell reordering
-- [ ] Add visual feedback during drag
-- [ ] Update cell order in notebook model
+### 4.4 Drag and Drop - COMPLETE
+- [x] Add drag handle to cell left sidebar
+- [x] Implement `onMove` modifier for cell reordering
+- [x] Add visual feedback during drag
+- [x] Update cell order in notebook model
 
 ### 4.6 Global Keyboard Shortcuts - PARTIAL
 - [x] All basic shortcuts implemented (`Cmd+N`, `Cmd+O`, `Cmd+S`, `Cmd+Shift+Enter`, etc.)
@@ -88,7 +88,7 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 11 of 13 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 12 of 13 sections)
 
 **Note:** Section 4.9 (Result Table Search & Filter) added as new feature request.
 
@@ -307,6 +307,15 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
 ## Recent Completions
 
+### Drag and Drop Cell Reordering ✅ (Phase 4.4) - NEWLY COMPLETED
+Complete drag and drop implementation for cell reordering with visual feedback and undo/redo support. Includes:
+- **Drag Handle UI** - Three horizontal lines icon (line.3.horizontal) displayed in CellSidebarView (CellComponents.swift:21-27) when cell is hovered or selected
+- **List Integration** - Added .onMove modifier to ForEach in ContentView.swift (lines 257-260) for native SwiftUI drag and drop
+- **Model Update** - Uses existing moveCell() method in NotebookViewModel+CellManagement.swift:159-180 with full undo/redo support
+- **Visual Feedback** - SwiftUI List automatically provides highlighted cell, drop zone indicators, and smooth animations during drag
+- **Undo/Redo** - Full support for undoing/redoing cell moves with proper action naming ("Move Cell")
+- **Document Sync** - Automatically triggers syncDocument() after cell reordering to mark file as modified
+
 ### Query Autocomplete System ✅ (Phase 5.4) - NEWLY COMPLETED
 Full autocomplete implementation for SQL queries with popup suggestions. Includes:
 - **SQLAutocompleteProvider.swift** - Core provider with SQL keyword database (95+ keywords including DML, DDL, DCL, transaction control, data types, constraints, window functions, CTEs, PostgreSQL-specific keywords, string/date functions)
@@ -431,6 +440,12 @@ Complete test coverage and implement the final editor mode phase.
   - Type displayed as uppercase (e.g., "INTEGER", "VARCHAR", "TEXT")
 
 **FULLY VERIFIED COMPLETE (Implementation confirmed in codebase):**
+- ✅ Phase 4.4 Drag and Drop Reordering
+  - Drag handle icon (line.3.horizontal) in CellComponents.swift:23-27 (shown on hover/selection)
+  - .onMove modifier in ContentView.swift:257-260
+  - moveCell() method in NotebookViewModel+CellManagement.swift:159-180 with undo/redo support
+  - Visual feedback provided by SwiftUI List automatically
+
 - ✅ Phase 4.8 Result Display Controls
   - isResultVisible property in NotebookCell.swift
   - Show/Hide All Results menu buttons in HeaderView.swift
@@ -456,11 +471,6 @@ Complete test coverage and implement the final editor mode phase.
   - No executionQueue property in ViewModel
   - runAllCells() at NotebookViewModel+Execution.swift:99-103 runs sequentially
   - No UI visual queue indicators
-
-- ❌ Phase 4.4 Drag and Drop Reordering
-  - moveCell() exists in NotebookViewModel+CellManagement.swift:159
-  - NO .onMove modifier in ContentView.swift List (lines 237-254)
-  - No drag handle UI components
 
 - ❌ Phase 4.6 Cmd+/ Comment/Uncomment
   - ContentView.swift keyboard handler (lines 129-223) has no keyCode 44 detection
@@ -546,9 +556,8 @@ Complete test coverage and implement the final editor mode phase.
 
 ### Verified Incomplete Features
 
-**Phase 4 - Not Started/In Progress** (5 of 7 remaining)
+**Phase 4 - Not Started/In Progress** (4 of 7 remaining)
 - Result Table Search & Filter (4.9): Not implemented (new feature request)
-- Drag and drop reordering: Not implemented (moveCell exists but no UI for drag handles)
 - Comment/uncomment (Cmd+/): Not implemented
 - Save on close prompt: Not implemented
 - Cell execution queue system: Not implemented (no visual queue UI)

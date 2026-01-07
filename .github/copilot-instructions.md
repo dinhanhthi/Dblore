@@ -1,70 +1,79 @@
-# GitHub Copilot Instructions for SQLNotebook
+# SQLNotebook - GitHub Copilot Instructions
 
-**Common Documentation:** See [docs/AI_GUIDE.md](../docs/AI_GUIDE.md) for complete project overview, architecture, and development guidelines.
+## Project Overview
 
----
+SQLNotebook is a native macOS application for interactive SQL development in a cell-based interface (similar to Jupyter Notebook). Supports PostgreSQL and SQLite with persistent `.sqlnb` JSON files, syntax highlighting, and result visualization.
 
-## Copilot-Specific Instructions
+**Stack:** Swift 6.2 • SwiftUI • PostgresNIO • Swift Concurrency • Swift Testing
 
-This document provides GitHub Copilot-specific guidance optimized for inline code completion and chat suggestions.
-
----
-
-## Quick Project Context
-
-**SQLNotebook** is a native macOS SQL notebook application (Swift 6, SwiftUI) enabling users to write, execute, and persist SQL queries in a cell-based interface. Supports PostgreSQL and SQLite with persistent `.sqlnb` JSON files, syntax highlighting, and result visualization.
+**Target:** macOS 16.0+ • Xcode 16.0+
 
 ---
 
-## Code Completion Guidelines
+## Architecture Patterns
 
-### MVVM + Actors Pattern
-- **ViewModels**: `NotebookViewModel` (marked `@MainActor @Observable`) is the single source of truth
-- **Extensions**: Organized into focused extensions:
-  - `NotebookViewModel+Connection.swift` — database connection logic
-  - `NotebookViewModel+Execution.swift` — query execution
-  - `NotebookViewModel+CellManagement.swift` — cell CRUD operations
-  - `NotebookViewModel+Sidebar.swift` — sidebar state management
-- **Database Layer**: `DatabaseConnectionManager` is an `actor` for thread-safe PostgreSQL operations
-- **Models**: Use `Sendable` protocol with `nonisolated` init decorators
+### MVVM + Observable + Actor
 
-### Swift 6 Concurrency (CRITICAL)
-- All database calls MUST be `async`/`await`
-- Use actors for shared mutable state
-- Use `@MainActor` for ViewModels
-- Dispatch to `@MainActor` when updating UI from background tasks
-- Build with `SWIFT_STRICT_CONCURRENCY=complete`
-- Avoid force unwraps; prefer `if let` or `guard` statements
+```swift
+// ViewModels (UI layer)
+@MainActor
+@Observable
+class NotebookViewModel {
+    var notebook: SQLNotebook
+    var connectionState: ConnectionState
+}
+
+// Database layer (thread-safe)
+actor DatabaseConnectionManager {
+    private var connection: PostgresConnection?
+
+    func execute(query: String) async throws -> QueryResult {
+        // Thread-safe operations
+    }
+}
+
+// Models (data layer)
+struct NotebookCell: Codable, Sendable {
+    let id: UUID
+    var content: String
+    var result: CellResult?
+}
+```
+
+### Extension-based Organization
+
+ViewModels are split into focused extensions:
+- `NotebookViewModel+Connection.swift` — Database connections
+- `NotebookViewModel+Execution.swift` — Query execution
+- `NotebookViewModel+CellManagement.swift` — Cell CRUD
+- `NotebookViewModel+Sidebar.swift` — Sidebar state
+- Keep files under 400 lines
 
 ### Data Flow
+
 ```
-Document (.sqlnb file)
-  → SQLNotebookDocument
-  → SQLNotebook model
-  → NotebookViewModel
-  → SwiftUI Views
+.sqlnb file → SQLNotebookDocument → SQLNotebook → NotebookViewModel → SwiftUI Views
 ```
 
 ---
 
-## Common Patterns
+## Code Patterns
 
-### Adding ViewModel Methods
+### ViewModel Methods (Always Async)
+
 ```swift
-// In appropriate NotebookViewModel+*.swift extension
 extension NotebookViewModel {
-    func newMethod() async {
-        // Database operations
+    func executeQuery(cellId: UUID) async {
         do {
-            let result = try await connectionManager.execute(...)
+            let result = try await connectionManager.execute(query)
 
             // Update UI on main actor
             await MainActor.run {
-                self.someProperty = result
+                updateCell(cellId, result: result)
             }
         } catch {
             await MainActor.run {
-                self.showToast("Error: \(error.localizedDescription)", type: .error)
+                showToast("Error: \(error.localizedDescription)", type: .error)
             }
         }
     }
@@ -72,168 +81,212 @@ extension NotebookViewModel {
 ```
 
 ### Database Operations
+
 ```swift
-// In DatabaseConnectionManager extension
 extension DatabaseConnectionManager {
-    func newOperation() async throws -> Result {
+    func fetchSchema() async throws -> [SchemaTable] {
         guard let connection = self.connection else {
             throw DatabaseError.notConnected
         }
-        // Implementation using PostgresNIO
+
+        let rows = try await connection.query("""
+            SELECT table_name, column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+        """)
+
+        return parseSchemaRows(rows)
     }
 }
 ```
 
-### SwiftUI Views
+### SwiftUI Views (Use Design System)
+
 ```swift
-struct MyView: View {
-    let data: SomeModel
+struct CellView: View {
+    let cell: NotebookCell
 
     var body: some View {
-        VStack(spacing: DesignSystem.Spacing.small) {
-            // Use semantic colors from DesignSystem
-            Text(data.title)
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.small) {
+            Text(cell.content)
                 .foregroundColor(.appText)
+                .padding(DesignSystem.Spacing.medium)
+                .background(Color.appBackground)
+                .cornerRadius(DesignSystem.BorderRadius.small)
         }
-        .padding(DesignSystem.Spacing.medium)
     }
 }
 ```
 
 ---
 
+## Swift 6 Concurrency Rules (CRITICAL)
+
+### Required Patterns
+
+```swift
+// ✅ Async database operations
+let result = try await connectionManager.execute(query)
+
+// ✅ Update UI on main actor
+await MainActor.run {
+    self.cells.append(newCell)
+}
+
+// ✅ Safe optional unwrapping
+guard let index = cells.firstIndex(where: { $0.id == cellId }) else { return }
+
+// ❌ NEVER do this
+let result = try! connectionManager.execute(query)  // NO force try
+let index = cells.firstIndex(where: { $0.id == cellId })!  // NO force unwrap
+```
+
+### Actor Isolation
+
+- All database operations are `async` (via `actor`)
+- All UI updates run on `@MainActor`
+- Build with `SWIFT_STRICT_CONCURRENCY=complete`
+
+---
+
 ## Design System
 
-### Always Use Semantic Colors
+### Semantic Colors (Always Use These)
+
 ```swift
 // ✅ Correct
 .foregroundColor(.appText)
 .background(Color.appBackground)
 .border(Color.appBorder)
 
-// ❌ Incorrect
+// ❌ Wrong
 .foregroundColor(.black)
 .background(Color(hex: "#FFFFFF"))
 ```
 
-### Spacing (8pt grid)
+### Spacing (8pt Grid)
+
 ```swift
 DesignSystem.Spacing.small    // 8pt
 DesignSystem.Spacing.medium   // 16pt
 DesignSystem.Spacing.large    // 24pt
+DesignSystem.Spacing.xlarge   // 32pt
 ```
 
 ### Border Radius
+
 ```swift
-DesignSystem.BorderRadius.small  // 6pt
-DesignSystem.BorderRadius.medium // 8pt
+DesignSystem.BorderRadius.small   // 6pt
+DesignSystem.BorderRadius.medium  // 8pt
 ```
 
 ---
 
-## Testing Patterns
+## Testing (Swift Testing Framework)
 
-### Swift Testing Framework (NOT XCTest)
+### Unit Tests
+
 ```swift
 import Testing
 @testable import SQLNotebook
 
-struct MyFeatureTests {
-    @Test("Description of test case")
-    func testMyFeature() async throws {
-        // Arrange
-        let model = SomeModel(...)
+struct CellTests {
+    @Test("Cell creation with query")
+    func testCellCreation() {
+        let cell = NotebookCell(content: "SELECT * FROM users")
+        #expect(cell.content == "SELECT * FROM users")
+        #expect(cell.result == nil)
+    }
 
-        // Act
-        let result = model.someMethod()
+    @Test("Async database connection")
+    func testConnection() async throws {
+        let manager = DatabaseConnectionManager()
+        let config = ConnectionConfig(
+            host: "localhost",
+            port: 5433,
+            database: "test_db",
+            username: "test_user",
+            password: "test_pass",
+            sslMode: .disable,
+            databaseType: .postgresql
+        )
 
-        // Assert
-        #expect(result == expectedValue)
+        try await manager.connect(config: config)
+        #expect(manager.isConnected)
     }
 }
 ```
 
-**Key Differences:**
-- Use `@Test` macro instead of `func testXXX()`
-- Use `#expect()` instead of `XCTAssertEqual()`
-- Use `struct` instead of `class`
+**Key Points:**
+- Use `@Test` macro (not `func testXXX()`)
+- Use `#expect()` (not `XCTAssertEqual()`)
+- Use `struct` (not `class`)
 
 ---
 
-## Common File Locations
+## File Structure
 
-### Models
-- `SQLNotebook/Models/NotebookCell.swift` — Cell data model
-- `SQLNotebook/Models/SQLNotebook.swift` — Notebook data model
-- `SQLNotebook/Models/ConnectionConfig.swift` — Connection configuration
-- `SQLNotebook/Models/AppSettings.swift` — Global app settings
-
-### ViewModels
-- `SQLNotebook/ViewModels/NotebookViewModel.swift` — Main ViewModel
-- Extensions in same directory with `+` suffix
-
-### Views
-- `SQLNotebook/Views/ContentView.swift` — Main container
-- `SQLNotebook/Views/Components/*` — Reusable components
-- `SQLNotebook/Views/Sidebars/*` — Sidebar content views
-
-### Database
-- `SQLNotebook/Database/DatabaseConnectionManager.swift` — Main actor
-- Extensions in same directory
-
-### Utilities
-- `SQLNotebook/Utilities/DesignSystem.swift` — Design tokens
-- `SQLNotebook/Utilities/SQLSyntaxHighlighter.swift` — Syntax highlighting
-- `SQLNotebook/Utilities/CellValueValidator.swift` — Value validation
+```
+SQLNotebook/
+├── SQLNotebookApp.swift
+├── Models/
+│   ├── NotebookCell.swift           # Cell model (query + results)
+│   ├── SQLNotebook.swift            # Notebook model (array of cells)
+│   ├── ConnectionConfig.swift       # DB connection config
+│   └── AppSettings.swift            # Global settings
+├── ViewModels/
+│   ├── NotebookViewModel.swift      # Main ViewModel
+│   ├── NotebookViewModel+Connection.swift
+│   ├── NotebookViewModel+Execution.swift
+│   ├── NotebookViewModel+CellManagement.swift
+│   └── NotebookViewModel+Sidebar.swift
+├── Views/
+│   ├── ContentView.swift            # Main UI container
+│   ├── Components/                  # Reusable components
+│   └── Sidebars/                    # Left/Right sidebars
+├── Database/
+│   └── DatabaseConnectionManager.swift  # Database actor
+└── Utilities/
+    ├── DesignSystem.swift           # Design tokens
+    ├── SQLSyntaxHighlighter.swift   # Syntax highlighting
+    └── CellValueValidator.swift     # Value validation
+```
 
 ---
 
-## Code Style
+## Important Rules
 
-### Formatting
-- Install: `brew install swift-format`
-- Format: `swift-format -i -r SQLNotebook/`
-- Uses `.swift-format` config at project root
+1. **Concurrency:** Always `async/await` for DB ops, update UI on `@MainActor`
+2. **Safety:** No force unwrap (`!`), no force try (`try!`)
+3. **Design System:** Use semantic colors/spacing from `DesignSystem.swift`
+4. **Testing:** Use Swift Testing framework (not XCTest)
+5. **Extensions:** Keep files under 400 lines, split into extensions
+6. **Documentation:** Never read files in `docs/implementation/` unless you are asked for
 
-### Important Rules
-1. **Concurrency**: Always `async`/`await` for DB operations
-2. **Error Handling**: No force unwrap (`!`) or force try (`try!`)
-3. **Optional Unwrapping**: Use `if let` or `guard let`
-4. **UI Updates**: Always on `@MainActor`
-5. **Design System**: Use semantic colors and spacing constants
+---
+
+## Common Gotchas
+
+1. **Passwords:** Currently in `.sqlnb` files (NOT SECURE - TODO: use Keychain)
+2. **Result Limits:** Default max 50 rows (configurable 1-200)
+3. **Row IDs:** PostgreSQL uses `ctid`, SQLite uses `rowid`
+4. **MainActor:** All UI updates must run on main actor
+5. **Format Code:** Run `swift-format -i -r SQLNotebook/` before committing
 
 ---
 
 ## Build Commands
 
 ```bash
-# Local build with strict concurrency
+# Build with strict concurrency (matches CI)
 ./scripts/build-strict.sh
 
 # Run all tests
 xcodebuild test -scheme SQLNotebook
 
-# Skip integration tests (no database needed)
+# Skip integration tests (no DB required)
 SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
 
 # Format code
 swift-format -i -r SQLNotebook/
 ```
-
----
-
-## Important Gotchas
-
-1. **Password Security**: Passwords should NOT be in `.sqlnb` files (TODO: use Keychain)
-2. **Result Limits**: Default max rows = 50 (configurable 1-200)
-3. **MainActor Dispatch**: UI updates must be on main actor
-4. **Row Identification**: PostgreSQL uses `ctid`, SQLite uses `rowid`
-5. **Primary Keys**: Currently hardcoded to false in schema (TODO: detect from DB)
-
----
-
-## Quick Reference Links
-
-- 📖 [Complete AI Guide](../docs/AI_GUIDE.md) — Full documentation
-- 📋 [Project Spec](../docs/project.md) — Technical specifications
-- ✅ [TODO](../docs/TODO.md) — Task breakdown
