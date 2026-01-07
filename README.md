@@ -1,32 +1,45 @@
 # SQLNotebook
 
-A native macOS application for writing and executing SQL queries in a cell-based interface similar to Jupyter Notebook. Supports PostgreSQL and SQLite with persistent query results.
+A native macOS application for interactive SQL development. Write, execute, and save SQL queries in a notebook-style interface, similar to Jupyter Notebook but designed specifically for SQL workflows.
 
 ## ✨ Features
 
-- 📝 Cell-based interface with SQL and Markdown cells
-- 🚀 Execute queries with syntax highlighting
-- 💾 Save notebooks as `.sqlnb` files (JSON format)
-- 📊 Display results in table format with integrated JSON viewer
-- 🔌 Connect to PostgreSQL and SQLite
-- ⚡ Native macOS app with SwiftUI
+- 📓 **Cell-based Interface** - Jupyter-style cells for writing and executing SQL queries
+- 🔍 **Global Search & Navigation** - Search across all cells with match highlighting and case-sensitive options
+- 💡 **Autocomplete** - Smart SQL autocomplete with keywords, table names, and column suggestions
+- ▶️ **Execute Queries** - Run individual cells, multiple cells, or all cells with execution tracking
+- 📊 **Result Visualization** - Interactive table view with column resizing and JSON data viewer
+- 🗂️ **Database Schema Browser** - Left sidebar showing tables, columns, and row counts
+- 🔌 **Multiple Database Support** - PostgreSQL and SQLite connectivity
+- 💾 **Persistent Notebooks** - Save work as `.sqlnb` files (JSON format) with full query history
+- 🎨 **Syntax Highlighting** - SQL and JSON syntax highlighting with dark/light theme support
+- ↩️ **Undo/Redo** - Context-aware history (editor-level and cell-level operations)
+- ⌨️ **Keyboard Shortcuts** - Efficient navigation and execution shortcuts (Jupyter-like workflow)
+- 📝 **Application Logging** - Built-in log system with export capabilities for debugging
+- ✏️ **Inline Result Editing** - Edit result data directly in table views
+- 🔀 **Drag & Drop** - Reorder cells by dragging
+- 🚦 **Row Limits** - Automatic row limiting to prevent memory issues with large result sets
+- 📈 **Affected Rows Tracking** - Display row counts for INSERT, UPDATE, DELETE operations
 
 ## 🛠️ Tech Stack
 
-- **Language:** Swift 6+
-- **UI Framework:** SwiftUI
-- **Target:** macOS 15.0+
-- **Architecture:** MVVM with Observable macro
-- **Database:** PostgreSQL (PostgresNIO), SQLite (native)
-- **Persistence:** Codable + JSON (`.sqlnb` files)
+- 🚀 **Language:** Swift 6+ with strict concurrency checking
+- 🎨 **UI Framework:** SwiftUI with native macOS integration
+- 🗄️ **Database Clients:**
+  - PostgreSQL: [PostgresNIO](https://github.com/vapor/postgres-nio) with SSL/TLS support
+  - SQLite: Native SQLite3 library
+- 🏗️ **Architecture:** MVVM with `@Observable` macro
+- 🔒 **State Management:** Observable pattern with Actor-based thread safety
+- 💾 **Persistence:** Codable models with JSON-based `.sqlnb` file format
+- ⚡ **Execution:** Swift async/await with queued execution model
 
-## 🚀 Development
+## Getting Started
 
 ### Requirements
 
-- macOS 16.0+
-- Xcode 16.0+
-- Swift 6.0+
+- macOS 16.0 or later
+- Xcode 16.0 or later
+- Swift 6.0 or later
 
 ### Installation
 
@@ -35,61 +48,57 @@ A native macOS application for writing and executing SQL queries in a cell-based
 git clone https://github.com/yourusername/SQLNotebook.git
 cd SQLNotebook
 
-# Open project in Xcode
+# Open in Xcode
 open SQLNotebook.xcodeproj
 
 # Build and run (Cmd+R)
 ```
 
-### Xcode Build Settings
+### Build Settings
 
-**Important:** To catch concurrency errors before CI/CD:
+**Important:** Enable strict concurrency checking to match CI/CD:
 
 1. Select project → Target "SQLNotebook" → Build Settings
-2. Search for `"Strict Concurrency Checking"`
-3. Set to `Complete` (matches GitHub Actions)
+2. Search for "Strict Concurrency Checking"
+3. Set to `Complete`
 
-Or build via CLI:
+Or build via command line:
 ```bash
 xcodebuild -scheme SQLNotebook build SWIFT_STRICT_CONCURRENCY=complete
 ```
 
+## Development
+
 ### Code Formatting
 
-This project uses `swift-format` (Apple's official Swift formatter) to maintain consistent code style.
+Format code with `swift-format`:
 
-**Install swift-format:**
 ```bash
-# Via Homebrew
+# Install
 brew install swift-format
-```
 
-**Format all Swift files:**
-```bash
-# Format entire project in-place
+# Format entire project
 swift-format -i -r SQLNotebook/
 
-# Check formatting without modifying files (lint mode)
+# Check formatting (lint mode)
 swift-format lint -r SQLNotebook/
 ```
 
-**Format specific directories:**
+### Testing
+
+Run tests with Swift Testing framework:
+
 ```bash
-swift-format -i -r SQLNotebook/Views/
-swift-format -i -r SQLNotebook/ViewModels/
-swift-format -i -r SQLNotebook/Models/
+# Run all tests
+xcodebuild test -scheme SQLNotebook
+
+# Skip integration tests (no database required)
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
 ```
 
-Configuration is defined in `.swift-format` at the project root.
+### Database Setup
 
-### Package Dependencies
-
-Swift Package Manager will automatically fetch dependencies:
-- [PostgresNIO](https://github.com/vapor/postgres-nio) - PostgreSQL client
-
-### Docker Development Database
-
-For quick development and testing, we provide a PostgreSQL Docker setup with sample data:
+For development and testing, use Docker:
 
 ```bash
 cd docker/postgresql
@@ -97,36 +106,61 @@ cp .env.example .env
 docker compose up -d
 ```
 
-**Connection info:**
+**Connection Details:**
 - Host: `localhost`
 - Port: `5432`
 - Database: `sqlnotebook`
 - User: `sqlnotebook`
 - Password: `sqlnotebook123`
 
-The database includes sample tables (customers, products, orders, employees, analytics) with realistic data and JSONB columns for testing. See [docker/README.md](docker/README.md) for details and example queries.
+The database includes sample tables (customers, products, orders, employees, analytics) with realistic data for testing.
 
-### Testing Environment Setup
+## Keyboard Shortcuts
 
-1. Open Project in Xcode → Wait for indexing to complete
-2. Go to File → New → Target... then select macOS → search “Unit Testing Bundle” → Next → SQLNotebookTests → … → Finish
-3. The same as 2 but choose “UI Testing Bundle” → name SQLNotebookUITests → … → Finish.
-4. Verify that there are new folders in the project: SQLNotebook (main app), SQLNotebookTests, SQLNotebookUITests. Normally, they are already integrated in this repository.
-5. Product → Scheme → Edit Scheme → in the left, choose Test/Test, we should see Test Plans “SQLNotebook” (2 test targets)
-6. Don't add any dependency for test target. Otherwise, we get a building error with PostgresNIO.
+### Cell Execution
+- `Ctrl+Enter` - Run current cell
+- `Shift+Enter` - Run cell and move to next (Jupyter-like)
+- `Option+Enter` - Run cell and insert new cell below
+- `Cmd+Shift+Enter` - Run all cells
 
-## 📁 File Format
+### Cell Management
+- `Cmd+B` - Add new cell
+- `Cmd+D` - Duplicate cell
+- `Cmd+Delete` - Delete cell
 
-Notebooks are saved as `.sqlnb` files (JSON):
-- Contains cells (SQL/Markdown)
-- Stores execution results
-- Connection configuration
-- Metadata (timestamps, execution counts)
+### Navigation
+- `↑` / `↓` - Navigate between cells (when not in editor)
+- `Enter` - Focus editor
+- `Esc` - Exit editor
 
-## 📚 Documentation
+### Editing
+- `Cmd+Z` - Undo (context-aware)
+- `Cmd+Shift+Z` - Redo
+- `Cmd+F` - Open search panel
 
-See [docs/project.md](docs/project.md) for detailed information, [docs/TODO.md] for TODO.
+### View
+- `Cmd+Shift+L` - Toggle left sidebar (schema browser)
+- `Cmd+Shift+R` - Toggle right sidebar (connection info)
 
-## 📝 License
+See [docs/keyboard_shortcuts.md](docs/keyboard_shortcuts.md) for complete reference.
 
-MIT
+## File Format
+
+Notebooks are saved as `.sqlnb` JSON files containing:
+- SQL cells with execution history
+- Query results and metadata
+- Database connection configuration
+- Execution counts and timestamps
+
+## Documentation
+
+- [Project Architecture](docs/project.md) - Technical overview and design decisions
+- [Keyboard Shortcuts](docs/keyboard_shortcuts.md) - Complete shortcuts reference
+- [Testing Plan](docs/testing_plan.md) - Testing strategy and setup
+- [Dependencies](docs/dependencies.md) - SPM packages and version information
+- [Task Tracking](docs/TODO.md) - Roadmap and pending features
+- [Implementation Details](docs/implementation/) - Feature documentation and solutions
+
+## License
+
+MIT License - see LICENSE file for details
