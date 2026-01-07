@@ -71,10 +71,10 @@ extension NotebookViewModel {
       // Attempt to connect automatically
       do {
         try await self.connect()
-        print("Auto-connected to saved session: \(savedConfig.displayString)")
+        await AppLogger.shared.info("Auto-connected to saved session: \(savedConfig.safeDisplayString)", category: "Connection")
       } catch {
         // If auto-connect fails, just log it and let user manually connect
-        print("Auto-connect failed: \(error.localizedDescription)")
+        await AppLogger.shared.warning("Auto-connect failed: \(error.localizedDescription)", category: "Connection")
         connectionState = .disconnected
       }
     }

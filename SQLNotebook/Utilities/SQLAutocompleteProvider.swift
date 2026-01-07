@@ -134,13 +134,13 @@ class SQLAutocompleteProvider {
           newColumnsCache[key] = columns
         } catch {
           // Skip tables we can't fetch columns for
-          print("Failed to fetch columns for \(table.schema).\(table.name): \(error)")
+          await AppLogger.shared.warning("Failed to fetch columns for \(table.schema).\(table.name): \(error)", category: "Autocomplete")
         }
       }
       columnsByTable = newColumnsCache
 
     } catch {
-      print("Failed to refresh schema: \(error)")
+      await AppLogger.shared.error("Failed to refresh schema: \(error)", category: "Autocomplete")
     }
   }
 
