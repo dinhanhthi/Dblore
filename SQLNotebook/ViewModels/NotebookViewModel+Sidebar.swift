@@ -109,13 +109,13 @@ extension NotebookViewModel {
           tables[index].rowCount = rowCount
         } catch {
           // If fetching columns fails, continue with other tables
-          print("Failed to fetch columns for \(table.qualifiedName): \(error)")
+          await AppLogger.shared.warning("Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
         }
       }
 
       databaseTables = tables
     } catch {
-      print("Failed to load database schema: \(error)")
+      await AppLogger.shared.error("Failed to load database schema: \(error)", category: "Schema")
       databaseTables = []
     }
 

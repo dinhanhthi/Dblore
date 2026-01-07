@@ -4,11 +4,13 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsContent: View {
   @Bindable var viewModel: NotebookViewModel
   @Bindable var appSettings = AppSettings.shared
   @State private var showRemoveResultsConfirmation = false
+  @State private var isExportingLogs = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -223,6 +225,36 @@ struct SettingsContent: View {
 
       Divider()
 
+      // Developer Logs
+      settingsSection(title: "Developer") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          // Export logs button
+          Button(action: {
+            exportLogs()
+          }) {
+            HStack {
+              Image(systemName: "square.and.arrow.up")
+              Text("Export Application Logs")
+            }
+            .font(.bodyText)
+            .foregroundColor(.accent)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Spacing.sm)
+            .background(Color.accent.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+          }
+          .buttonStyle(.plain)
+
+          Text(
+            "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
+          )
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+        }
+      }
+
+      Divider()
+
       // Keyboard Shortcuts (placeholder for future expansion)
       settingsSection(title: "Keyboard Shortcuts") {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -236,6 +268,24 @@ struct SettingsContent: View {
       }
     }
     .padding(Spacing.md)
+    .fileExporter(
+      isPresented: $isExportingLogs,
+      document: LogDocument(),
+      contentType: .plainText,
+      defaultFilename: "sqlnotebook-logs-\(formattedDate).txt"
+    ) { result in
+      // Export completed, no action needed
+    }
+  }
+
+  private var formattedDate: String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd-HHmm"
+    return formatter.string(from: Date())
+  }
+
+  private func exportLogs() {
+    isExportingLogs = true
   }
 
   @ViewBuilder
@@ -281,6 +331,23 @@ struct SettingsContent: View {
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
     }
+  }
+}
+
+// MARK: - Log Document for Export
+
+struct LogDocument: FileDocument {
+  static var readableContentTypes: [UTType] { [.plainText] }
+
+  init() {}
+
+  init(configuration: ReadConfiguration) throws {}
+
+  func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+    // Get logs from file (synchronous operation)
+    let logContent = AppLogger.shared.getAllLogsText()
+    let data = logContent.data(using: .utf8) ?? Data()
+    return FileWrapper(regularFileWithContents: data)
   }
 }
 

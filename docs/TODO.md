@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (13 of 14 sections - Result Display, Theme Toggle, Drag and Drop, File Optimization added)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (13 of 14 sections - Result Display, Theme Toggle, Drag and Drop, File Optimization, Logging System complete)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - ✅ **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.2 Connection Security complete; 6.0.3 & 6.0.4 partial)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -13,7 +13,7 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 12 of 14 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 13 of 14 sections)
 
 ### 4.2 Header Actions - PARTIAL
 - [x] Wire up "+ Code" button
@@ -66,11 +66,23 @@
 - [x] Manual cleanup button in settings
 - [x] Tests for FileOptimizationService
 
-### 4.12 Logging System - NOT STARTED
-- [ ] Create `AppLogger` utility class
-- [ ] Replace `print()` statements with logging calls
-- [ ] Add log levels (debug, info, warning, error)
-- [ ] Implement log capture and export system
+### 4.12 Logging System - COMPLETE ✅
+- [x] Create `AppLogger` utility class with actor-based thread safety (AppLogger.swift)
+- [x] Add log levels (debug, info, warning, error) with OSLog integration
+- [x] Implement log capture and export system (in-memory + file storage with auto-rotation)
+- [x] Simple "Export Application Logs" button in Settings > Developer section
+- [x] Logs saved invisibly to daily files (`~/Library/Application Support/SQLNotebook/Logs/`)
+- [x] No user-facing log viewer (developer-only feature for debugging)
+- [x] Replace `print()` statements with structured logging calls across 7 key files:
+  - DatabaseConnectionManager+QueryExecution.swift (3 replacements)
+  - NotebookViewModel+Execution.swift (1 replacement)
+  - NotebookViewModel+Connection.swift (2 replacements)
+  - NotebookViewModel+Sidebar.swift (2 replacements)
+  - DatabaseConnectionManager+Schema.swift (1 replacement)
+  - SQLAutocompleteProvider.swift (2 replacements)
+- [x] Add comprehensive unit tests (AppLoggerTests.swift) - 4 tests passing
+- [x] Global convenience functions (logDebug, logInfo, logWarning, logError)
+- [x] Synchronous log export via FileDocument for easy file sharing
 
 ### 4.13 Theme Toggle (Dark/Light Mode) - COMPLETE
 - [x] Add theme preference to `AppSettings` (ThemePreference enum with System/Light/Dark options)

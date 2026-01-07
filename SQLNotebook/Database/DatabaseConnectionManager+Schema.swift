@@ -191,7 +191,7 @@ extension DatabaseConnectionManager {
       return 0
     } catch {
       // If fetching row count fails, return 0 instead of throwing
-      print("Failed to fetch row count for \(tableSchema).\(tableName): \(error)")
+      await AppLogger.shared.warning("Failed to fetch row count for \(tableSchema).\(tableName): \(error)", category: "Schema")
       return 0
     }
   }

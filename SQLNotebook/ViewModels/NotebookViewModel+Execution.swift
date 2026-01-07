@@ -64,8 +64,9 @@ extension NotebookViewModel {
 
     notebook.cells[index].isRunning = true
 
-    // DEBUG: Log the query being executed
-    print("🔍 [NotebookViewModel] Executing query from cell \(task.cellId): `\(task.query)`")
+    // INFO: Log sanitized query being executed (redact sensitive data)
+    let sanitizedQuery = AppLogger.shared.sanitizeQuery(task.query)
+    await AppLogger.shared.info("Executing query from cell \(task.cellId): `\(sanitizedQuery)`", category: "Execution")
 
     var result: CellResult?
 

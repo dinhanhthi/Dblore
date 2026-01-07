@@ -53,6 +53,51 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var displayString: String {
     "\(database)@\(host):\(port)"
   }
+
+  /// Safe display string for logging (redacts sensitive host information)
+  /// Examples:
+  /// - "mydb@db.example.com:5432" -> "mydb@db.*****.com:5432"
+  /// - "mydb@192.168.1.100:5432" -> "mydb@192.168.***.***:5432"
+  /// - "mydb@localhost:5432" -> "mydb@localhost:5432" (localhost is safe)
+  nonisolated var safeDisplayString: String {
+    let maskedHost = redactHost(host)
+    return "\(database)@\(maskedHost):\(port)"
+  }
+
+  /// Redact host/IP address for security (private helper)
+  private nonisolated func redactHost(_ host: String) -> String {
+    // Don't redact localhost (safe for debugging)
+    if host.lowercased() == "localhost" || host == "127.0.0.1" {
+      return host
+    }
+
+    // Redact IP addresses (e.g., 192.168.1.100 -> 192.168.***.***)
+    if host.contains(".") && host.split(separator: ".").count == 4 {
+      let parts = host.split(separator: ".")
+      if parts.count == 4 && parts.allSatisfy({ Int($0) != nil }) {
+        return "\(parts[0]).\(parts[1]).***. ***"
+      }
+    }
+
+    // Redact domain names (keep first and last part, e.g., db.example.com -> db.*****.com)
+    if host.contains(".") {
+      let parts = host.split(separator: ".")
+      if parts.count >= 2 {
+        let first = parts.first!
+        let last = parts.last!
+        return "\(first).*****.\(last)"
+      }
+    }
+
+    // Fallback: redact middle characters for short strings
+    if host.count > 4 {
+      let prefix = String(host.prefix(2))
+      let suffix = String(host.suffix(2))
+      return "\(prefix)***\(suffix)"
+    }
+
+    return "****"
+  }
 }
 
 /// SSL mode for database connections

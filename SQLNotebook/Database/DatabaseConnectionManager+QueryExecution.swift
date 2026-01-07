@@ -26,8 +26,9 @@ extension DatabaseConnectionManager {
       throw DatabaseError.emptyQuery
     }
 
-    // DEBUG: Log the full query before execution
-    print("🗄️ [DatabaseConnectionManager] About to execute query: `\(query)` (maxRows: \(maxRows))")
+    // DEBUG: Log sanitized query before execution (redact sensitive data)
+    let sanitizedQuery = AppLogger.shared.sanitizeQuery(query)
+    await AppLogger.shared.debug("About to execute query: `\(sanitizedQuery)` (maxRows: \(maxRows))", category: "Database")
 
     let startTime = Date()
 
@@ -98,8 +99,9 @@ extension DatabaseConnectionManager {
     let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(limitedQuery)
     let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(limitedQuery) : limitedQuery
 
-    // DEBUG: Log the final query that will be sent to database
-    print("🚀 [DatabaseConnectionManager] Final query to be sent to database: `\(executionQuery)`")
+    // DEBUG: Log sanitized final query (redact sensitive data)
+    let sanitizedExecutionQuery = AppLogger.shared.sanitizeQuery(executionQuery)
+    await AppLogger.shared.debug("Final query to be sent to database: `\(sanitizedExecutionQuery)`", category: "Database")
 
     do {
       // Execute query and collect rows
@@ -599,7 +601,7 @@ extension DatabaseConnectionManager {
 
     } catch {
       // If enrichment fails, return original columns
-      print("⚠️ Failed to enrich column types: \(error)")
+      await AppLogger.shared.warning("Failed to enrich column types: \(error)", category: "Database")
       return columns
     }
   }
