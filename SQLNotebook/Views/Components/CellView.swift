@@ -11,6 +11,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CellView: View {
   @Bindable var viewModel: NotebookViewModel
@@ -27,7 +28,26 @@ struct CellView: View {
   @State private var textViewRef: SQLTextView?  // Reference to text view for text insertion
 
   var body: some View {
-    ZStack(alignment: .topTrailing) {
+    ZStack {
+      // Drop indicator above cell (if this is the drop target and position is above)
+      if viewModel.dropTargetCellId == cell.id && viewModel.dropPosition == .above {
+        VStack {
+          DropIndicatorView(position: .above)
+          Spacer()
+        }
+        .zIndex(100)  // Ensure indicator is on top
+      }
+
+      // Drop indicator below cell (if this is the drop target and position is below)
+      if viewModel.dropTargetCellId == cell.id && viewModel.dropPosition == .below {
+        VStack {
+          Spacer()
+          DropIndicatorView(position: .below)
+        }
+        .zIndex(100)  // Ensure indicator is on top
+      }
+
+      // Main content and bottom panel
       ZStack(alignment: .bottom) {
         VStack(spacing: 0) {
           // Main cell content
@@ -82,16 +102,26 @@ struct CellView: View {
 
       // Top-right floating panel (shown when cell is hovered or selected)
       if isHovered || isSelected || isTopRightPanelHovered {
-        TopRightFloatingPanelView(
-          cell: cell,
-          viewModel: viewModel,
-          isDeleteConfirming: $isDeleteConfirming,
-          isTopRightPanelHovered: $isTopRightPanelHovered,
-          isCopied: $isCopied
-        )
+        VStack {
+          HStack {
+            Spacer()
+            TopRightFloatingPanelView(
+              cell: cell,
+              viewModel: viewModel,
+              isDeleteConfirming: $isDeleteConfirming,
+              isTopRightPanelHovered: $isTopRightPanelHovered,
+              isCopied: $isCopied
+            )
+          }
+          Spacer()
+        }
         .offset(x: -10, y: -15)
       }
     }
+    .onDrop(of: [.text], delegate: CellDropDelegate(
+      cell: cell,
+      viewModel: viewModel
+    ))
     .onTapGesture {
       viewModel.selectedCellId = cell.id
       // Clear editor focus when clicking outside editor
@@ -160,6 +190,101 @@ struct CellView: View {
     )
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage
+  }
+}
+
+// MARK: - Drop Delegate for Cell Reordering
+
+struct CellDropDelegate: DropDelegate {
+  let cell: NotebookCell
+  let viewModel: NotebookViewModel
+
+  func validateDrop(info: DropInfo) -> Bool {
+    return info.hasItemsConforming(to: [.text])
+  }
+
+  func dropEntered(info: DropInfo) {
+    // Set this cell as the drop target
+    viewModel.dropTargetCellId = cell.id
+
+    // Calculate drop position based on mouse Y position
+    // Blue indicator semantics:
+    // - Indicator at TOP of cell → drop ABOVE this cell
+    // - Indicator at BOTTOM of cell → drop BELOW this cell
+    // This ensures indicator between A and B always means "between A and B"
+    let dropLocation = info.location.y
+    viewModel.dropPosition = dropLocation < 60 ? .above : .below
+  }
+
+  func dropUpdated(info: DropInfo) -> DropProposal? {
+    // Update drop position as mouse moves
+    let dropLocation = info.location.y
+    viewModel.dropPosition = dropLocation < 60 ? .above : .below
+    return DropProposal(operation: .move)
+  }
+
+  func dropExited(info: DropInfo) {
+    // Clear drop indicator when leaving cell
+    if viewModel.dropTargetCellId == cell.id {
+      viewModel.dropTargetCellId = nil
+      viewModel.dropPosition = nil
+    }
+  }
+
+  func performDrop(info: DropInfo) -> Bool {
+    // Capture the drop position NOW before it gets cleared
+    let capturedDropPosition = viewModel.dropPosition
+
+    // Clear drop indicator and dragging state when drop completes
+    defer {
+      viewModel.draggingCellId = nil
+      viewModel.dropTargetCellId = nil
+      viewModel.dropPosition = nil
+    }
+
+    // Get dragged cell ID from pasteboard
+    guard let item = info.itemProviders(for: [.text]).first else {
+      return false
+    }
+
+    item.loadItem(forTypeIdentifier: "public.text", options: nil) { (data, error) in
+      guard let data = data as? Data,
+        let draggedCellIdString = String(data: data, encoding: .utf8),
+        let draggedCellId = UUID(uuidString: draggedCellIdString)
+      else {
+        return
+      }
+
+      // Find indices of dragged cell and target cell
+      Task { @MainActor in
+        guard let fromIndex = viewModel.notebook.cells.firstIndex(where: { $0.id == draggedCellId }),
+          let toIndex = viewModel.notebook.cells.firstIndex(where: { $0.id == cell.id })
+        else {
+          return
+        }
+
+        // Don't do anything if dropping on itself
+        guard fromIndex != toIndex else { return }
+
+        // Calculate destination index for moveCell
+        // Note: moveCell already adjusts for moving down (subtracts 1), so we need to
+        // provide the "raw" destination before that adjustment
+        let destination: Int
+        if capturedDropPosition == .below {
+          // Drop below target: destination is after the target cell
+          destination = toIndex + 1
+        } else {
+          // Drop above target: destination is at the target cell's position
+          destination = toIndex
+        }
+
+        // Move cell using IndexSet
+        // moveCell will handle the index adjustment based on move direction
+        viewModel.moveCell(from: IndexSet([fromIndex]), to: destination)
+      }
+    }
+
+    return true
   }
 }
 

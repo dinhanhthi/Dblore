@@ -96,6 +96,39 @@ struct FloatingActionPanelView: View {
   }
 }
 
+// MARK: - Drag Handle Button
+
+struct DragHandleButton: View {
+  let cellId: UUID
+  let viewModel: NotebookViewModel
+
+  var body: some View {
+    Button(action: {}) {
+      Image(systemName: "line.3.horizontal")
+        .font(.system(size: 12))
+    }
+    .buttonStyle(FloatingPanelButtonStyle())
+    .help("Drag to Reorder Cell")
+    .onDrag {
+      // Set global dragging state
+      viewModel.draggingCellId = cellId
+
+      // Return NSItemProvider with cell ID for drag operation
+      let provider = NSItemProvider(object: cellId.uuidString as NSString)
+
+      // Fallback: Reset dragging state after reasonable timeout
+      // This handles cancelled drags or drops outside valid zones
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+        if viewModel.draggingCellId == cellId {
+          viewModel.draggingCellId = nil
+        }
+      }
+
+      return provider
+    }
+  }
+}
+
 // MARK: - Top-Right Floating Panel
 
 struct TopRightFloatingPanelView: View {
@@ -167,6 +200,9 @@ struct TopRightFloatingPanelView: View {
           copyCellContent()
         }
       )
+
+      // Drag handle button
+      DragHandleButton(cellId: cell.id, viewModel: viewModel)
     }
     .padding(.top, Spacing.xs)
     .padding(.trailing, Spacing.xs)
@@ -230,6 +266,19 @@ struct ExecutedQueryDisplayView: View {
   .frame(width: 600)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
+}
+
+// MARK: - Drop Indicator
+
+struct DropIndicatorView: View {
+  let position: DropPosition
+
+  var body: some View {
+    Rectangle()
+      .fill(Color.accentColor)
+      .frame(height: 2)
+      .padding(.horizontal, Spacing.md)
+  }
 }
 
 // MARK: - Hidden Result Placeholder

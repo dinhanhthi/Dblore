@@ -6,6 +6,12 @@
 import Observation
 import SwiftUI
 
+/// Drop position for drag and drop
+enum DropPosition {
+  case above
+  case below
+}
+
 /// Content types for the right sidebar
 enum SidebarContent: Equatable {
   case jsonViewer(json: String, path: String)
@@ -34,6 +40,9 @@ class NotebookViewModel {
   var rightSidebarContent: SidebarContent?
   var isRightSidebarVisible: Bool = false
   var executionCounter: Int = 0
+  var draggingCellId: UUID? = nil  // Track which cell is currently being dragged
+  var dropTargetCellId: UUID? = nil  // Track which cell is the drop target (for blue indicator)
+  var dropPosition: DropPosition? = nil  // Track drop position (above or below target)
 
   // Left sidebar state
   var isLeftSidebarVisible: Bool = false

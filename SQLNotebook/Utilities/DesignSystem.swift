@@ -253,7 +253,6 @@ enum ComponentSize {
 
 struct PrimaryButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
-  @State private var isHovering = false
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
@@ -266,20 +265,12 @@ struct PrimaryButtonStyle: ButtonStyle {
           .fill(configuration.isPressed ? Color.accentMuted : Color.accent)
       )
       .opacity(isEnabled ? 1 : 0.5)
-      .onHover { hovering in
-        isHovering = hovering
-        if hovering && isEnabled {
-          NSCursor.pointingHand.push()
-        } else if !hovering && isEnabled {
-          NSCursor.pop()
-        }
-      }
+      .cursor(.pointingHand)
   }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) private var isEnabled
-  @State private var isHovering = false
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
@@ -296,14 +287,7 @@ struct SecondaryButtonStyle: ButtonStyle {
           )
       )
       .opacity(isEnabled ? 1 : 0.5)
-      .onHover { hovering in
-        isHovering = hovering
-        if hovering && isEnabled {
-          NSCursor.pointingHand.push()
-        } else if !hovering && isEnabled {
-          NSCursor.pop()
-        }
-      }
+      .cursor(.pointingHand)
   }
 }
 
@@ -326,12 +310,8 @@ struct GhostButtonStyle: ButtonStyle {
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
-        if hovering {
-          NSCursor.pointingHand.push()
-        } else {
-          NSCursor.pop()
-        }
       }
+      .cursor(.pointingHand)
   }
 }
 
@@ -362,18 +342,12 @@ struct ToolbarButtonStyle: ButtonStyle {
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
-        if hovering && isEnabled {
-          NSCursor.pointingHand.push()
-        } else if !hovering && isEnabled {
-          NSCursor.pop()
-        }
       }
+      .cursor(.pointingHand)
   }
 }
 
 struct FloatingActionButtonStyle: ButtonStyle {
-  @State private var isHovering = false
-
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .padding(Spacing.xs)
@@ -382,14 +356,7 @@ struct FloatingActionButtonStyle: ButtonStyle {
           .fill(configuration.isPressed ? Color.accent.opacity(0.2) : Color.clear)
       )
       .contentShape(Circle())
-      .onHover { hovering in
-        isHovering = hovering
-        if hovering {
-          NSCursor.pointingHand.push()
-        } else {
-          NSCursor.pop()
-        }
-      }
+      .cursor(.pointingHand)
   }
 }
 
@@ -430,12 +397,8 @@ struct FloatingPanelButtonStyle: ButtonStyle {
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
-        if hovering {
-          NSCursor.pointingHand.push()
-        } else {
-          NSCursor.pop()
-        }
       }
+      .cursor(.pointingHand)
   }
 }
 
@@ -524,6 +487,18 @@ extension View {
       transform(self)
     } else {
       self
+    }
+  }
+
+  /// Set cursor for the view
+  func cursor(_ cursor: NSCursor) -> some View {
+    self.onContinuousHover { phase in
+      switch phase {
+      case .active:
+        cursor.push()
+      case .ended:
+        NSCursor.pop()
+      }
     }
   }
 }
