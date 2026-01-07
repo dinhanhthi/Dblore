@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (12 of 14 sections - Result Display, Theme Toggle, Drag and Drop added)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (12 of 14 sections - Result Display, Theme Toggle, Drag and Drop, Global Search added)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - ✅ **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.2 Connection Security complete; 6.0.3 & 6.0.4 partial)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -13,7 +13,7 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 11 of 13 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 12 of 14 sections)
 
 ### 4.2 Header Actions - PARTIAL
 - [x] Wire up "+ Code" button
@@ -41,13 +41,13 @@
 ### 4.6 Global Keyboard Shortcuts - PARTIAL
 - [x] All basic shortcuts implemented (`Cmd+N`, `Cmd+O`, `Cmd+S`, `Cmd+Shift+Enter`, etc.)
 - [x] Settings panel with keyboard shortcuts
-- [ ] `Cmd+/` for comment/uncomment SQL line
+- [x] `Cmd+/` for comment/uncomment SQL line
 
 ### 4.7 Auto-save & Document State - PARTIAL
 - [x] Implement auto-save on changes (debounced)
 - [x] Track document dirty state
 - [x] Show unsaved indicator in footer
-- [ ] Prompt to save on close if unsaved
+- [x] Prompt to save on close if unsaved -- default behavior of macos, no need to implement
 
 ### 4.8 Result Display Controls - COMPLETE
 - [x] Add show/hide toggle button in cell sidebar
@@ -56,14 +56,6 @@
 - [x] Visual indicator (chevron icon) for collapsed state
 - [x] Header menu: "Show All Results" and "Hide All Results" buttons
 - [x] View model methods: toggleResultVisibility, hideAllResults, showAllResults
-
-### 4.9 Result Table Search & Filter - NOT STARTED
-- [ ] Add toolbar to ResultTableView with search input field
-- [ ] Implement global search across all columns (search in all cell values)
-- [ ] Add column-specific filter dropdowns for each column header
-- [ ] Filter rows based on column value matches
-- [ ] Show filtered row count vs total row count
-- [ ] Clear search/filter button
 
 ### 4.11 File Optimization - NOT STARTED
 - [ ] Detect large file size (> 10MB)
@@ -86,11 +78,27 @@
 - [x] Use `@Environment(\.colorScheme)` for dynamic colors via AppearanceModifier
 - [x] Add theme toggle control to Settings panel (SettingsContent.swift:14-51 with radio buttons)
 
+### 4.14 Global Search (Cmd+F) - NOT STARTED
+- [ ] Implement global keyboard shortcut handler for Cmd+F
+- [ ] Create floating search panel UI component (positioned top-right of app)
+- [ ] Search across all text content:
+  - [ ] Cell query content (SQL code)
+  - [ ] Query results (table data values)
+  - [ ] Error messages and warnings
+  - [ ] All visible and overflowed content
+- [ ] Add up/down navigation buttons to jump between search results
+- [ ] Highlight matching text in search results
+- [ ] Display result count (e.g., "3 of 15 matches")
+- [ ] Research macOS search APIs (NSTextFinder, NSSearchableTextOperations)
+- [ ] Close search panel with Escape key
+- [ ] Search field receives focus automatically when Cmd+F pressed
+- [ ] Implement efficient indexing for large notebooks with many cells
+
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 12 of 13 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 12 of 14 sections)
 
-**Note:** Section 4.9 (Result Table Search & Filter) added as new feature request.
+**Note:** Section 4.9 (Result Table Search & Filter) and Section 4.14 (Global Search) added as new feature requests.
 
 ## Phase 5: Advanced Features (NOT STARTED)
 
