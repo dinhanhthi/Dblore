@@ -1,171 +1,287 @@
-# Gemini Guide for SQLNotebook
+# SQLNotebook - Gemini Guide
 
-**Common Documentation:** See [docs/AI_GUIDE.md](docs/AI_GUIDE.md) for complete project overview, architecture, and development guidelines.
+## Project Overview
 
----
+SQLNotebook is a native macOS application for interactive SQL development in a cell-based interface, similar to Jupyter Notebook. Supports PostgreSQL and SQLite with persistent query results and a rich SwiftUI interface.
 
-## Gemini-Specific Instructions
+**Stack:** Swift 6.2 • SwiftUI • PostgresNIO • Swift Concurrency • Swift Testing
 
-This document provides Gemini-specific guidance for working with the SQLNotebook codebase.
-
----
-
-## Project Quick Overview
-
-**SQLNotebook** is a native macOS application for writing and executing SQL queries in a cell-based interface, similar to Jupyter Notebook. It supports PostgreSQL and SQLite, offering persistent query results and a rich user interface built with SwiftUI.
-
-**Key Technologies:**
-- **Language:** Swift 6.0+
-- **UI Framework:** SwiftUI
-- **Architecture:** MVVM (Model-View-ViewModel) with `@Observable`
-- **Database:** PostgresNIO (SwiftNIO based driver)
-- **Persistence:** Codable structs serialized to JSON (`.sqlnb` files)
-- **Target Platform:** macOS 16.0+
+**Target:** macOS 16.0+ • Xcode 16.0+
 
 ---
 
-## Key Files & Structure
+## Architecture
 
-**Entry Point:**
-- `SQLNotebookApp.swift` — The main entry point of the application
+### Core Patterns
 
-**Database Layer:**
-- `Database/DatabaseConnectionManager.swift` — An actor responsible for managing database connections (PostgreSQL via PostgresNIO) and executing queries
-- Handles connection lifecycle, SSL/TLS, and type mapping
+**1. MVVM with Observable (Swift 6)**
+```swift
+@MainActor
+@Observable
+class NotebookViewModel {
+    var notebook: SQLNotebook
+    var connectionState: ConnectionState
+}
+```
+- `@Observable` replaces old `ObservableObject` pattern
+- `@MainActor` ensures UI updates on main thread
+- SwiftUI auto-tracks dependencies
 
-**Data Models:**
-- `Models/NotebookCell.swift` — Defines the data model for a single notebook cell (`NotebookCell`), including its type (SQL/Markdown), content, and execution results (`CellResult`)
-- `Models/SQLNotebookDocument.swift` — Manages the document-based application logic for `.sqlnb` files
-- `Models/ConnectionConfig.swift` — Database connection configuration
-- `Models/SQLNotebook.swift` — Main notebook model
+**2. Actor Pattern for Database**
+```swift
+actor DatabaseConnectionManager {
+    private var connection: PostgresConnection?
 
-**ViewModels:**
-- `ViewModels/NotebookViewModel.swift` — The main ViewModel driving the notebook UI
-- `ViewModels/NotebookViewModel+Connection.swift` — Database connection logic
-- `ViewModels/NotebookViewModel+Execution.swift` — Query execution logic
-- `ViewModels/NotebookViewModel+CellManagement.swift` — Cell CRUD operations
-- `ViewModels/NotebookViewModel+Sidebar.swift` — Sidebar state management
+    func execute(query: String) async throws -> QueryResult {
+        // Thread-safe by design
+    }
+}
+```
+- Compiler-enforced thread safety
+- All methods implicitly `async`
+- Single-access guarantee (like mutex but safer)
 
-**Views:**
-- `Views/ContentView.swift` — Main view container
-- `Views/Components/CellView.swift` — Individual cell rendering
-- `Views/Components/ResultTableView.swift` — Query result table
-- `Views/Sidebars/LeftSidebarView.swift` — Database schema browser
-- `Views/Sidebars/RightSidebarView.swift` — Connection/settings/JSON viewer sidebar
+**3. Extension-based Organization**
+- `NotebookViewModel+Connection.swift` — Database connections
+- `NotebookViewModel+Execution.swift` — Query execution
+- `NotebookViewModel+CellManagement.swift` — Cell CRUD
+- `NotebookViewModel+Sidebar.swift` — Sidebar state
+- Keep files under 400 lines
 
----
+### Project Structure
 
-## Development Requirements
-
-**System Requirements:**
-- macOS 16.0+
-- Xcode 16.0+
-- Swift 6.0+
-
-**Building & Running:**
-1. Open `SQLNotebook.xcodeproj` in Xcode
-2. Wait for Swift Package Manager to resolve dependencies (e.g., `PostgresNIO`)
-3. Build and Run (Cmd+R)
-
----
-
-## Code Conventions
-
-**Concurrency:**
-- Heavy usage of Swift Concurrency (`async`/`await`, `actor` for database management)
-- All database operations are asynchronous
-- `@MainActor` is used for ViewModels to ensure UI updates happen on the main thread
-
-**UI:**
-- SwiftUI views using `@Observable` objects for state (not `ObservableObject`)
-- MVVM architecture with clear separation of concerns
-
-**Error Handling:**
-- Custom `DatabaseError` enum for standardized error reporting in database operations
-- Proper error propagation with `try`/`catch` blocks
-
-**Type Safety:**
-- Strong typing for SQL results using `CellValue` enum to handle various database types:
-  - `String`, `Int`, `Double`, `Bool`, `null`, `json`, `date`, `data`
+```
+SQLNotebook/
+├── SQLNotebookApp.swift        # App entry point
+├── Models/
+│   ├── NotebookCell.swift      # Cell model (query + results)
+│   ├── SQLNotebook.swift       # Notebook model
+│   ├── ConnectionConfig.swift  # DB connection config
+│   └── SQLNotebookDocument.swift
+├── ViewModels/
+│   └── NotebookViewModel*.swift # Main ViewModel (split into extensions)
+├── Views/
+│   ├── ContentView.swift       # Main UI
+│   ├── Components/             # Cell, Result table
+│   └── Sidebars/               # Left/Right sidebars
+├── Database/
+│   └── DatabaseConnectionManager.swift # Database actor
+└── Utils/                      # Helpers, extensions
+```
 
 ---
 
-## Important Implementation Details
+## Key Implementation Details
 
-**Database Connection:**
-- Actor-based `DatabaseConnectionManager` for thread-safe operations
-- SSL/TLS support with 6 different PostgreSQL modes
-- Connection retry logic with exponential backoff
-- Smart cloud database detection (Supabase, AWS, Azure, GCP)
+### Database Layer
 
-**Query Execution:**
-- SELECT queries return result sets with column metadata
-- INSERT/UPDATE/DELETE return affected row counts
-- Row limit enforcement (configurable 1-200 rows) to prevent memory issues
+**DatabaseConnectionManager (Actor)**
+- Thread-safe PostgreSQL/SQLite operations
+- SSL/TLS support (6 modes: disable, allow, prefer, require, verify-ca, verify-full)
+- Connection retry with exponential backoff
+- Cloud database detection (Supabase, AWS, Azure, GCP)
+
+**Query Execution**
+- SELECT → result sets with column metadata
+- INSERT/UPDATE/DELETE → affected row counts
+- Row limit enforcement (1-200 rows, configurable)
 - Query modification detection for safety
 
-**UI Features:**
+**Type System**
+```swift
+enum CellValue: Codable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case null
+    case json(String)
+    case date(Date)
+    case data(Data)
+}
+```
+
+### UI Features
+
 - Cell-based interface with SQL syntax highlighting
-- Collapsible left sidebar for database schema browsing
-- Collapsible right sidebar for connection details, settings, JSON viewer, and cell info
+- Collapsible sidebars (schema browser, connection settings)
 - Inline result editing with UPDATE query execution
-- Toast notifications for user feedback
-- Theme support: System/Light/Dark mode
+- Toast notifications for feedback
+- Theme support: System/Light/Dark
+- Keyboard shortcuts for common operations
 
-**Persistence:**
-- Document-based app using SwiftUI's `DocumentGroup`
-- `.sqlnb` files are JSON format with Codable serialization
+### Persistence
+
+- Document-based app (`.sqlnb` files)
+- JSON format with Codable serialization
 - Auto-save with debouncing
-- Undo/Redo support via `UndoManager`
+- Undo/Redo via `UndoManager`
 
-**Security:**
-- ⚠️ **TODO:** Passwords should be stored in Keychain (currently in document files - NOT SECURE)
-- SSL/TLS support for secure connections
-- Value format validation before UPDATE queries
+---
+
+## Development Guidelines
+
+### Concurrency (Critical)
+```swift
+// ✅ Correct: async database ops
+let result = try await connectionManager.execute(query)
+
+// ✅ Update UI on main actor
+await MainActor.run {
+    self.showToast("Success", type: .success)
+}
+
+// ❌ Wrong: blocking UI thread
+let result = try connectionManager.execute(query) // Compiler error
+```
+
+### Error Handling
+```swift
+// ✅ Custom error enum
+enum DatabaseError: Error {
+    case notConnected
+    case queryFailed(String)
+    case invalidResult
+}
+
+// ✅ Proper propagation
+do {
+    let result = try await manager.execute(query)
+} catch let error as DatabaseError {
+    // Handle specific errors
+} catch {
+    // Handle unexpected errors
+}
+
+// ❌ Never use force unwrap/try
+let result = try! manager.execute(query) // NO
+```
+
+### Type Safety
+- Use `CellValue` enum for database values
+- Validate types before UPDATE queries
+- Strong typing throughout the stack
+
+### Adding New Features
+
+**Example: Add query timeout**
+
+1. Update ConnectionConfig:
+```swift
+struct ConnectionConfig: Codable {
+    var host: String
+    var port: Int
+    var timeout: TimeInterval? // New property
+}
+```
+
+2. Update DatabaseConnectionManager:
+```swift
+extension DatabaseConnectionManager {
+    func connect(config: ConnectionConfig) async throws {
+        let timeout = config.timeout ?? 30.0
+        // Use timeout in connection logic
+    }
+}
+```
+
+3. Update UI:
+```swift
+TextField("Timeout (seconds)", value: $config.timeout, format: .number)
+```
 
 ---
 
 ## Testing
 
-**Test Targets:**
-- `SQLNotebookTests` — Unit tests for data models, syntax highlighting, ViewModels
-- `SQLNotebookUITests` — UI tests for critical user flows
+### Unit Tests (Swift Testing Framework)
+```swift
+import Testing
+@testable import SQLNotebook
 
-**Running Tests:**
-```bash
-# All tests
-xcodebuild test -scheme SQLNotebook
+struct DatabaseTests {
+    @Test("Connection to PostgreSQL")
+    func testConnection() async throws {
+        let manager = DatabaseConnectionManager()
+        let config = ConnectionConfig(
+            host: "localhost",
+            port: 5433,
+            database: "test_db",
+            username: "test_user",
+            password: "test_pass",
+            sslMode: .disable,
+            databaseType: .postgresql
+        )
 
-# Specific test class
-xcodebuild test -scheme SQLNotebook -only-testing SQLNotebookTests/DataModelTests
+        try await manager.connect(config: config)
+        #expect(manager.isConnected)
+    }
+}
 ```
 
+**Notes:**
+- Use `@Test` macro (not XCTest)
+- Use `#expect()` (not `XCTAssertEqual`)
+- Tests run in parallel by default
+
+### Integration Tests
+
 **Docker Test Database:**
-- PostgreSQL test database in `docker/postgresql/`
-- Run: `cd docker/postgresql && docker compose up -d`
+```bash
+# Start PostgreSQL test database
+cd docker/postgresql && docker compose up -d
+
+# Run all tests
+xcodebuild test -scheme SQLNotebook
+
+# Skip integration tests (no DB required)
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
+```
 
 ---
 
-## Current Status
+## Important Rules
 
-**Completed:**
-- ✅ Core notebook functionality (Phases 1-3)
-- ✅ Most polish features (Phase 4): keyboard shortcuts, auto-save, theme toggle, result controls
-- ✅ Partial security features (Phase 6): SSL/TLS, connection retry, value validation, inline editing
-
-**In Progress:**
-- ⏳ Phase 4 remaining: Cell execution queue, drag-and-drop, comment/uncomment, result search/filter
-- ⏳ Phase 6 remaining: Keychain password storage, connection timeout, confirmation dialogs, read-only mode
-- ⏳ Phase 7: Integration tests and UI tests
-
-**Not Started:**
-- Phase 5: Advanced features (query history, CSV export, multiple DB support, autocomplete, tabs, AI queries, schema visualizer)
-- Phase 8: Editor mode (traditional SQL editor with single panel)
+1. **Concurrency:** Always use `async/await` for DB ops, update UI on `@MainActor`
+2. **Safety:** No force unwrap (`!`), no force try (`try!`)
+3. **Performance:** Use `LazyVStack` for long lists, test with 100+ cells/rows
+4. **Security:** Validate inputs, use SSL for production (Keychain not yet implemented ⚠️)
+5. **Design:** Check `DesignSystem.swift` for colors/spacing (8pt grid)
+6. **Documentation:** Never read files in `docs/implementation/` unless you are asked for
 
 ---
 
-## Quick Reference Links
+## Build Commands
 
-- 📖 [Complete AI Guide](docs/AI_GUIDE.md) — Full documentation for all AI assistants
-- 📋 [Project Spec](docs/project.md) — Detailed technical specifications
-- ✅ [TODO](docs/TODO.md) — Task breakdown and verification
+```bash
+# Build with strict concurrency checking (matches CI)
+./scripts/build-strict.sh
+
+# Format code
+swift-format -i -r SQLNotebook/
+
+# Run tests
+xcodebuild test -scheme SQLNotebook
+```
+
+---
+
+## Current Implementation Status
+
+**Core Features:** ✅ Complete
+- Cell-based notebook interface
+- PostgreSQL/SQLite support
+- Query execution with result display
+- Document persistence (`.sqlnb` files)
+- Undo/Redo support
+
+**Polish Features:** ✅ Mostly complete
+- Keyboard shortcuts, auto-save, theme toggle, result controls
+- ⏳ TODO: Cell execution queue, drag-and-drop reordering
+
+**Security:** ⚠️ Partial
+- ✅ SSL/TLS support, connection retry, value validation
+- ⏳ TODO: Keychain password storage (currently stored in files - NOT SECURE)
+
+**Advanced Features:** ⏳ Not started
+- Query history, CSV export, autocomplete, multiple connections, tabs

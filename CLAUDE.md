@@ -1,35 +1,29 @@
-# Claude Code Guide for SQLNotebook
+# SQLNotebook - Claude Code Guide
 
-**Common Documentation:** See [docs/AI_GUIDE.md](docs/AI_GUIDE.md) for complete project overview, architecture, and development guidelines.
+## Project Overview
 
----
+SQLNotebook is a macOS application for interactive SQL development, similar to Jupyter notebooks but for SQL queries. Built with Swift 6, SwiftUI, and PostgreSQL.
 
-## Claude-Specific Instructions
-
-**IMPORTANT**: Answer me in Vietnamese, keep terminologies in English. Don't automatically open the app, I do it myself with XCode.
+**Stack:** Swift 6.2 • SwiftUI • PostgreSQL • Swift Concurrency • Swift Testing
 
 ---
 
-## Communication Style
+## Communication Rules
 
-When working with this codebase:
+**IMPORTANT:** Answer in Vietnamese, keep technical terms in English. Don't automatically open the app (user opens with XCode).
 
-1. **Language**: Answer in Vietnamese, keep technical terms in English
-   - ✅ "Tôi sẽ sử dụng `async/await` để execute query này"
-   - ❌ "I will use async/await to execute this query"
-
-2. **Technical Explanations**: Explain Swift/SwiftUI concepts in detail when needed
-   - Provide examples and code snippets
-
-3. **Workflow**: Don't automatically open app, user opens with XCode
-   - ✅ "Code đã được cập nhật, bạn có thể build bằng XCode"
-   - ❌ [Automatically run Bash command to open XCode]
+Examples:
+- ✅ "Tôi sẽ sử dụng `async/await` để execute query này"
+- ✅ "Code đã được cập nhật, bạn có thể build bằng XCode"
+- ❌ "I will use async/await to execute this query"
 
 ---
 
-## Key Architectural Patterns
+## Architecture
 
-### Observable Macro Pattern
+### Core Patterns
+
+**1. Observable Pattern (Swift 6)**
 ```swift
 @MainActor
 @Observable
@@ -38,150 +32,138 @@ class NotebookViewModel {
     var connectionState: ConnectionState
 }
 ```
+- `@Observable` replaces old `ObservableObject` pattern
+- `@MainActor` ensures UI updates on main thread
+- SwiftUI auto-tracks dependencies
 
-**Key Points:**
-- `@Observable` is Swift 6's new macro, replacing the old `ObservableObject` pattern
-- `@MainActor` ensures all state updates happen on the main thread (UI thread)
-- SwiftUI automatically tracks dependencies and re-renders views when properties change
-
-### Actor Pattern for Database
+**2. Actor Pattern for Thread Safety**
 ```swift
 actor DatabaseConnectionManager {
     private var connection: PostgresConnection?
 
     func execute(query: String) async throws -> QueryResult {
-        // Thread-safe operations
+        // Thread-safe by design
     }
 }
 ```
+- `actor` provides compiler-enforced thread safety
+- All methods are implicitly `async`
+- Single-access guarantee (like mutex but better)
 
-**Key Points:**
-- `actor` is a reference type that's thread-safe by default
-- All actor methods are implicitly async
-- Only one task can access actor state at a time
-- Similar to mutex/locks in other languages but compiler-enforced
-
-### Extension-based Organization
-ViewModel is split into focused extensions:
-- `NotebookViewModel+Connection.swift` — Database connection logic
+**3. Extension-based Organization**
+- `NotebookViewModel+Connection.swift` — Database connections
 - `NotebookViewModel+Execution.swift` — Query execution
-- `NotebookViewModel+CellManagement.swift` — Cell CRUD operations
-- `NotebookViewModel+Sidebar.swift` — Sidebar state management
+- `NotebookViewModel+CellManagement.swift` — Cell CRUD
+- Keep files under 400 lines
 
-**Benefits:**
-- Clearer code organization
-- Easier to navigate and maintain
-- Avoids overly long files (400-line limit per file recommended)
+### Project Structure
+
+```
+SQLNotebook/
+├── Models/              # Data models (Codable, Sendable)
+├── ViewModels/          # @Observable view models (split into extensions)
+├── Views/               # SwiftUI views
+├── Database/            # DatabaseConnectionManager (actor)
+└── Utils/               # Helpers, extensions
+```
 
 ---
 
-## Common Workflows
+## Key Files
 
-### Adding a New Feature to Cell
+- **NotebookCell.swift** — Cell model (query + results)
+- **SQLNotebook.swift** — Notebook model (array of cells)
+- **NotebookViewModel.swift** — Main view model
+- **DatabaseConnectionManager.swift** — Database actor
+- **ContentView.swift** — Main UI
 
-1. **Update Model** (`NotebookCell.swift`):
+---
+
+## Development Guidelines
+
+### Concurrency (Critical)
+```swift
+// ✅ Correct: async database ops
+let result = try await connectionManager.execute(query)
+
+// ✅ Update UI on main actor
+await MainActor.run {
+    self.showToast("Success", type: .success)
+}
+
+// ❌ Wrong: blocking UI thread
+let result = try connectionManager.execute(query) // Compiler error
+```
+
+### Error Handling
+```swift
+// ✅ Safe unwrapping
+guard let index = cells.firstIndex(where: { $0.id == cellId }) else { return }
+
+// ❌ Never use force unwrap/try
+let index = cells.firstIndex(where: { $0.id == cellId })! // NO
+```
+
+### Adding New Features
+
+**Example: Add cell metadata**
+
+1. Update model:
 ```swift
 struct NotebookCell: Codable, Sendable {
     let id: UUID
     var content: String
-    var newProperty: String? // Add new property
+    var metadata: [String: String]? // New property
 }
 ```
 
-2. **Update ViewModel Extension**:
+2. Update ViewModel extension:
 ```swift
-// In NotebookViewModel+CellManagement.swift
 extension NotebookViewModel {
-    func updateNewProperty(cellId: UUID, value: String) {
+    func updateMetadata(cellId: UUID, key: String, value: String) {
         guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
-        notebook.cells[index].newProperty = value
+        notebook.cells[index].metadata?[key] = value
+        syncDocument()
     }
 }
 ```
 
-3. **Update View** (`CellView.swift`):
+3. Update View:
 ```swift
-struct CellView: View {
-    let cell: NotebookCell
-
-    var body: some View {
-        VStack {
-            // Existing code...
-            if let newValue = cell.newProperty {
-                Text(newValue)
-            }
-        }
-    }
-}
-```
-
-### Adding a New Database Operation
-
-1. **Update DatabaseConnectionManager**:
-```swift
-// In DatabaseConnectionManager+QueryExecution.swift or new file
-extension DatabaseConnectionManager {
-    func newOperation() async throws -> Result {
-        guard let connection = self.connection else {
-            throw DatabaseError.notConnected
-        }
-        // Implementation...
-    }
-}
-```
-
-2. **Call from ViewModel**:
-```swift
-// In NotebookViewModel+Execution.swift
-func performNewOperation() async {
-    do {
-        let result = try await connectionManager.newOperation()
-        // Update UI on main actor
-        await MainActor.run {
-            self.showToast("Operation successful", type: .success)
-        }
-    } catch {
-        await MainActor.run {
-            self.showToast("Error: \(error.localizedDescription)", type: .error)
-        }
+if let metadata = cell.metadata {
+    ForEach(metadata.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+        Text("\(key): \(value)")
     }
 }
 ```
 
 ---
 
-## Testing Guidelines
+## Testing
 
-### Unit Tests
-Create new test file in `SQLNotebookTests/`:
+### Unit Tests (Swift Testing Framework)
 ```swift
 import Testing
 @testable import SQLNotebook
 
-struct MyFeatureTests {
-    @Test("Test case description")
-    func testMyFeature() async throws {
-        // Arrange
-        let model = NotebookCell(...)
-
-        // Act
-        let result = model.someMethod()
-
-        // Assert
-        #expect(result == expectedValue)
+struct CellTests {
+    @Test("Cell creation")
+    func testCellCreation() {
+        let cell = NotebookCell(content: "SELECT 1")
+        #expect(cell.content == "SELECT 1")
+        #expect(cell.result == nil)
     }
 }
 ```
 
 **Notes:**
-- Use Swift Testing framework (not XCTest)
-- Use `@Test` macro instead of `func testXXX()`
-- Use `#expect()` instead of `XCTAssertEqual()`
+- Use `@Test` macro (not XCTest)
+- Use `#expect()` (not `XCTAssertEqual`)
 
-### Integration Tests with Database
+### Integration Tests
 ```swift
-@Test("Database connection test")
-func testDatabaseConnection() async throws {
+@Test("Database connection")
+func testConnection() async throws {
     let manager = DatabaseConnectionManager()
     let config = ConnectionConfig(
         host: "localhost",
@@ -198,73 +180,34 @@ func testDatabaseConnection() async throws {
 }
 ```
 
----
-
-## Build & Development Commands
-
-### Build with strict concurrency checking
-```bash
-# Local build with same strict settings as GitHub Actions
-./scripts/build-strict.sh
-```
-
-### Format code
-```bash
-# Install swift-format if not already installed
-brew install swift-format
-
-# Format all files
-swift-format -i -r SQLNotebook/
-
-# Check only (don't modify files)
-swift-format lint -r SQLNotebook/
-```
-
-### Run tests
+### Run Tests
 ```bash
 # All tests
 xcodebuild test -scheme SQLNotebook
 
-# Only unit tests (skip integration tests that need database)
+# Skip integration tests (no DB required)
 SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
-
-# Specific test class
-xcodebuild test -scheme SQLNotebook -only-testing SQLNotebookTests/DataModelTests
 ```
 
 ---
 
-## Important Reminders
+## Important Rules
 
-1. **Concurrency Safety:**
-   - Always use `async/await` for database operations
-   - Update UI only on `@MainActor`
-   - Use `actor` for shared mutable state
-
-2. **Error Handling:**
-   - Don't use force unwrap (`!`) or force try (`try!`)
-   - Use `if let` or `guard let` for optional unwrapping
-   - Display user-friendly errors in UI, log technical details
-
-3. **Performance:**
-   - Test with large notebooks (100+ cells)
-   - Test with large result sets (1000+ rows)
-   - Use `LazyVStack` instead of `VStack` for long lists
-
-4. **Security:**
-   - **NOT IMPLEMENTED:** Passwords should be stored in Keychain, not in `.sqlnb` files
-   - Validate user inputs before executing queries
-   - Use SSL/TLS for production connections
-
-5. **Design System:**
-   - Check `DesignSystem.swift` before creating custom styles
-   - Use semantic colors (e.g., `Color.appBackground`) instead of hardcoded hex
-   - Follow 8pt spacing grid
+1. **Concurrency:** Always use `async/await` for DB ops, update UI on `@MainActor`
+2. **Safety:** No force unwrap (`!`), no force try (`try!`)
+3. **Performance:** Use `LazyVStack` for long lists, test with 100+ cells
+4. **Design:** Check `DesignSystem.swift` for colors/spacing (8pt grid)
+5. **Security:** Validate inputs, use SSL for production (Keychain not yet implemented)
+6. **Documentation:** Never read files in `docs/implementation/` unless you are asked for
 
 ---
 
-## Quick Reference Links
+## Build Commands
 
-- 📖 [Complete AI Guide](docs/AI_GUIDE.md) — Full documentation
-- 📋 [Project Spec](docs/project.md) — Technical specifications
-- ✅ [TODO](docs/TODO.md) — Task breakdown
+```bash
+# Strict build (matches CI)
+./scripts/build-strict.sh
+
+# Format code
+swift-format -i -r SQLNotebook/
+```
