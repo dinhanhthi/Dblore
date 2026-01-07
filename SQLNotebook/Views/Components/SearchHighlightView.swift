@@ -14,12 +14,28 @@ enum SearchHighlighter {
   static let highlightColor = Color(red: 1.0, green: 0.973, blue: 0.769) // #FFF9C4 (light yellow)
   static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0) // #FFD500 (orange-yellow)
 
+  // MARK: - Caching
+
+  /// LRU cache for AttributedString results to avoid regeneration
+  private static var cache: [String: AttributedString] = [:]
+  private static let maxCacheSize = 100
+  private static var cacheOrder: [String] = []  // Track insertion order for LRU
+
+  /// Clear the AttributedString cache
+  /// Call this when search query changes to free memory
+  static func clearCache() {
+    cache.removeAll()
+    cacheOrder.removeAll()
+    // Cache cleared - no logging needed as this happens frequently
+  }
+
   /// Create AttributedString với highlighted search matches
   /// - Parameters:
   ///   - text: The text to highlight
   ///   - query: The search query
   ///   - caseSensitive: Whether search is case sensitive
   ///   - currentMatchRange: Optional range of the current match (highlighted in orange)
+  /// - Returns: Cached or newly created AttributedString with highlights
   static func highlight(
     text: String,
     query: String,
@@ -30,6 +46,20 @@ enum SearchHighlighter {
       return AttributedString(text)
     }
 
+    // Create cache key from all parameters
+    let cacheKey = "\(text)|\(query)|\(caseSensitive)|\(currentMatchRange?.description ?? "")"
+
+    // Check cache first (O(1) lookup)
+    if let cached = cache[cacheKey] {
+      // Move to end of LRU order (most recently used)
+      if let index = cacheOrder.firstIndex(of: cacheKey) {
+        cacheOrder.remove(at: index)
+        cacheOrder.append(cacheKey)
+      }
+      return cached
+    }
+
+    // Not in cache, compute the AttributedString
     var attributedString = AttributedString(text)
     let searchText = caseSensitive ? text : text.lowercased()
     let searchQuery = caseSensitive ? query : query.lowercased()
@@ -54,6 +84,18 @@ enum SearchHighlighter {
 
       searchStartIndex = range.upperBound
     }
+
+    // Store in cache with LRU eviction
+    if cache.count >= maxCacheSize {
+      // Remove oldest entry (first in order)
+      if let oldestKey = cacheOrder.first {
+        cache.removeValue(forKey: oldestKey)
+        cacheOrder.removeFirst()
+      }
+    }
+
+    cache[cacheKey] = attributedString
+    cacheOrder.append(cacheKey)
 
     return attributedString
   }
@@ -83,6 +125,7 @@ enum SearchHighlighter {
 // MARK: - Search Highlight Text View
 
 /// SwiftUI Text view với search highlighting
+/// Optimized with memoization to avoid regenerating AttributedString on every render
 struct SearchHighlightText: View {
   let text: String
   let query: String
@@ -101,13 +144,19 @@ struct SearchHighlightText: View {
     self.currentMatchRange = currentMatchRange
   }
 
-  var body: some View {
-    Text(SearchHighlighter.highlight(
+  /// Memoized highlighted text - computed once per unique input combination
+  /// The SearchHighlighter.highlight() method uses internal caching for efficiency
+  private var highlightedText: AttributedString {
+    SearchHighlighter.highlight(
       text: text,
       query: query,
       caseSensitive: caseSensitive,
       currentMatchRange: currentMatchRange
-    ))
+    )
+  }
+
+  var body: some View {
+    Text(highlightedText)  // Use memoized value instead of inline computation
   }
 }
 

@@ -82,6 +82,7 @@ class NotebookViewModel {
   var isSearchPanelVisible: Bool = false
   var searchState: SearchState = SearchState()
   var searchFocusTrigger: UUID = UUID() // Trigger to force re-focus search field
+  var searchTask: Task<Void, Never>? // Task for cancellation support
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
