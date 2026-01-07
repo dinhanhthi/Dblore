@@ -161,7 +161,8 @@ class SQLTextView: NSTextView {
     let isSlash = event.keyCode == 44
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     let hasCommand = flags.contains(.command)
-    let hasNoOtherModifiers = !flags.contains(.shift) && !flags.contains(.control) && !flags.contains(.option)
+    let hasNoOtherModifiers =
+      !flags.contains(.shift) && !flags.contains(.control) && !flags.contains(.option)
 
     if isSlash && hasCommand && hasNoOtherModifiers {
       toggleComment()
@@ -190,9 +191,11 @@ class SQLTextView: NSTextView {
     // Determine if we should comment or uncomment
     // If ALL non-empty lines start with "--", we uncomment; otherwise we comment
     let nonEmptyLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-    let shouldUncomment = !nonEmptyLines.isEmpty && nonEmptyLines.allSatisfy { line in
-      line.trimmingCharacters(in: .whitespaces).hasPrefix("--")
-    }
+    let shouldUncomment =
+      !nonEmptyLines.isEmpty
+      && nonEmptyLines.allSatisfy { line in
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("--")
+      }
 
     // Process each line
     var newLines: [String] = []
@@ -285,7 +288,8 @@ class SQLTextView: NSTextView {
   private func showAutocompletePopover() {
     guard !autocompleteSuggestions.isEmpty else { return }
     guard let layoutManager = self.layoutManager,
-          let textContainer = self.textContainer else { return }
+      let textContainer = self.textContainer
+    else { return }
 
     // Get cursor position
     let cursorPosition = selectedRange().location
@@ -299,7 +303,8 @@ class SQLTextView: NSTextView {
 
     if cursorPosition == 0 || string.isEmpty {
       // Special case: cursor at start of text or empty text
-      localRect = CGRect(x: textContainerInset.width, y: textContainerInset.height, width: 1, height: 20)
+      localRect = CGRect(
+        x: textContainerInset.width, y: textContainerInset.height, width: 1, height: 20)
     } else {
       // Get the glyph index for the character BEFORE cursor (to position popup after typed text)
       let glyphIndex = layoutManager.glyphIndexForCharacter(at: max(0, cursorPosition - 1))
@@ -349,7 +354,7 @@ class SQLTextView: NSTextView {
 
     // Create SwiftUI content view with suggestions
     let contentView = AutocompletePopupView(
-      suggestions: Array(autocompleteSuggestions.prefix(20)), // Limit to 20 items
+      suggestions: Array(autocompleteSuggestions.prefix(20)),  // Limit to 20 items
       selectedIndex: autocompleteSelectedIndex,
       onSelect: { _ in
         // Selection handled by keyboard events
@@ -382,7 +387,8 @@ class SQLTextView: NSTextView {
 
     // Check for modifiers
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let hasModifiers = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+    let hasModifiers =
+      flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
       || flags.contains(.shift)
 
     // Escape -> hide autocomplete
@@ -428,7 +434,8 @@ class SQLTextView: NSTextView {
 
   /// Accept the currently selected suggestion
   private func acceptSelectedSuggestion() {
-    guard autocompleteSelectedIndex >= 0 && autocompleteSelectedIndex < autocompleteSuggestions.count
+    guard
+      autocompleteSelectedIndex >= 0 && autocompleteSelectedIndex < autocompleteSuggestions.count
     else {
       hideAutocomplete()
       return
@@ -514,8 +521,9 @@ class SQLTextView: NSTextView {
   /// Update NSPopover content to reflect new selection
   private func updatePopoverSelection() {
     guard let popover = autocompletePopover,
-          popover.isShown,
-          !autocompleteSuggestions.isEmpty else { return }
+      popover.isShown,
+      !autocompleteSuggestions.isEmpty
+    else { return }
 
     // Create new content view with updated selection
     let contentView = AutocompletePopupView(

@@ -598,6 +598,10 @@ private struct NotificationHandlerModifier: ViewModifier {
       .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
         viewModel.selectPreviousCell()
       }
+      .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+        viewModel.rightSidebarContent = .settings
+        viewModel.isRightSidebarVisible = true
+      }
   }
 }
 

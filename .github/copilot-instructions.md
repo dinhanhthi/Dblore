@@ -10,6 +10,17 @@ SQLNotebook is a native macOS application for interactive SQL development in a c
 
 ---
 
+## Communication Rules
+
+**IMPORTANT:** Answer in Vietnamese, keep technical terms in English. Don't automatically open the app (user opens with XCode).
+
+Examples:
+- ✅ "Tôi sẽ sử dụng `async/await` để execute query này"
+- ✅ "Code đã được cập nhật, bạn có thể build bằng XCode"
+- ❌ "I will use async/await to execute this query"
+
+---
+
 ## Architecture Patterns
 
 ### MVVM + Observable + Actor

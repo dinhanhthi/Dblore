@@ -46,18 +46,23 @@ struct NotebookCommands: Commands {
       Button("About SQLNotebook") {
         showAboutWindow()
       }
-    }
-    // Cell commands
-    CommandGroup(after: .newItem) {
+
       Divider()
 
-      Button("Add Code Cell") {
-        NotificationCenter.default.post(name: .addCodeCell, object: nil)
+      Button("Settings") {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
       }
+      .keyboardShortcut(",", modifiers: .command)
     }
 
-    // Run commands
+    // Cell commands
     CommandMenu("Cell") {
+      Button("Add New") {
+        NotificationCenter.default.post(name: .addCodeCell, object: nil)
+      }
+      .keyboardShortcut("n", modifiers: .command)
+
+      Divider()
       Button("Run Cell") {
         NotificationCenter.default.post(name: .runCell, object: nil)
       }
@@ -160,4 +165,5 @@ extension Notification.Name {
   static let insertTextIntoCell = Notification.Name("insertTextIntoCell")
   static let cellValueEditingStarted = Notification.Name("cellValueEditingStarted")
   static let cellValueEditingEnded = Notification.Name("cellValueEditingEnded")
+  static let openSettings = Notification.Name("openSettings")
 }

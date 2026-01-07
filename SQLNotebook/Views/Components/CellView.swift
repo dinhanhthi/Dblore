@@ -118,10 +118,13 @@ struct CellView: View {
         .offset(x: -10, y: -15)
       }
     }
-    .onDrop(of: [.text], delegate: CellDropDelegate(
-      cell: cell,
-      viewModel: viewModel
-    ))
+    .onDrop(
+      of: [.text],
+      delegate: CellDropDelegate(
+        cell: cell,
+        viewModel: viewModel
+      )
+    )
     .onTapGesture {
       viewModel.selectedCellId = cell.id
       // Clear editor focus when clicking outside editor
@@ -257,7 +260,8 @@ struct CellDropDelegate: DropDelegate {
 
       // Find indices of dragged cell and target cell
       Task { @MainActor in
-        guard let fromIndex = viewModel.notebook.cells.firstIndex(where: { $0.id == draggedCellId }),
+        guard
+          let fromIndex = viewModel.notebook.cells.firstIndex(where: { $0.id == draggedCellId }),
           let toIndex = viewModel.notebook.cells.firstIndex(where: { $0.id == cell.id })
         else {
           return
@@ -334,7 +338,8 @@ struct CellDropDelegate: DropDelegate {
 
 private enum PreviewData {
   static var cellWithShortResult: NotebookCell {
-    var cell = NotebookCell(cellType: .sql, content: "SELECT id, name, status\nFROM users\nLIMIT 4;")
+    var cell = NotebookCell(
+      cellType: .sql, content: "SELECT id, name, status\nFROM users\nLIMIT 4;")
     cell.result = CellResult(
       columns: [
         ColumnInfo(name: "id", type: "INTEGER"),

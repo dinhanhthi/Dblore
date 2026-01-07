@@ -140,7 +140,9 @@ class NotebookViewModel {
   /// Calculate current file size (with results if enabled in settings)
   var estimatedFileSize: Int64 {
     let includeResults = AppSettings.getIncludeResultsOnSave()
-    return (try? FileOptimizationService.calculateNotebookSize(notebook, includeResults: includeResults)) ?? 0
+    return
+      (try? FileOptimizationService.calculateNotebookSize(notebook, includeResults: includeResults))
+      ?? 0
   }
 
   /// Get formatted file size string
