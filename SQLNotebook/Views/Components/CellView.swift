@@ -189,7 +189,8 @@ struct CellView: View {
       isFocused: isEditorFocused,
       onFocus: { viewModel.selectedCellId = cell.id },
       textViewRef: $textViewRef,
-      autocompleteProvider: viewModel.autocompleteProvider
+      autocompleteProvider: viewModel.autocompleteProvider,
+      cellId: cell.id
     )
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage

@@ -123,6 +123,26 @@ struct NotebookCommands: Commands {
       .keyboardShortcut("r", modifiers: [.command, .shift])
     }
 
+    // Edit commands
+    CommandMenu("Edit") {
+      Button("Find in Notebook") {
+        NotificationCenter.default.post(name: .openSearch, object: nil)
+      }
+      .keyboardShortcut("f", modifiers: .command)
+
+      Divider()
+
+      Button("Find Next") {
+        NotificationCenter.default.post(name: .findNext, object: nil)
+      }
+      .keyboardShortcut("g", modifiers: .command)
+
+      Button("Find Previous") {
+        NotificationCenter.default.post(name: .findPrevious, object: nil)
+      }
+      .keyboardShortcut("g", modifiers: [.command, .shift])
+    }
+
     // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
     // Custom undo/redo handling is done via key event monitoring in ContentView
   }
@@ -166,4 +186,11 @@ extension Notification.Name {
   static let cellValueEditingStarted = Notification.Name("cellValueEditingStarted")
   static let cellValueEditingEnded = Notification.Name("cellValueEditingEnded")
   static let openSettings = Notification.Name("openSettings")
+
+  // Search notifications
+  static let openSearch = Notification.Name("openSearch")
+  static let findNext = Notification.Name("findNext")
+  static let findPrevious = Notification.Name("findPrevious")
+  static let highlightSearchMatch = Notification.Name("highlightSearchMatch")
+  static let clearSearchHighlights = Notification.Name("clearSearchHighlights")
 }

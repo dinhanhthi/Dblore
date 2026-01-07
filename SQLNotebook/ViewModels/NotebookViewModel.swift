@@ -78,6 +78,11 @@ class NotebookViewModel {
   var hasShownWarningDialog = false
   var hasShownLargeDialog = false
 
+  // MARK: - Search State
+  var isSearchPanelVisible: Bool = false
+  var searchState: SearchState = SearchState()
+  var searchFocusTrigger: UUID = UUID() // Trigger to force re-focus search field
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()

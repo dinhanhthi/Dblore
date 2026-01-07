@@ -173,6 +173,51 @@ enum SQLSyntaxHighlighter {
     return result
   }
 
+  /// Highlight text with both syntax highlighting and search matches
+  static func highlightWithSearch(
+    _ text: String,
+    searchQuery: String,
+    isCaseSensitive: Bool,
+    currentMatchRange: NSRange?
+  ) -> NSAttributedString {
+    // First apply syntax highlighting
+    let result = NSMutableAttributedString(attributedString: highlight(text))
+
+    // Then apply search highlighting on top
+    guard !searchQuery.isEmpty else { return result }
+
+    // Find all search matches
+    let searchText = isCaseSensitive ? text : text.lowercased()
+    let query = isCaseSensitive ? searchQuery : searchQuery.lowercased()
+
+    var searchStartIndex = searchText.startIndex
+    while let range = searchText.range(of: query, range: searchStartIndex..<searchText.endIndex) {
+      let nsRange = NSRange(range, in: text)
+
+      // Determine if this is the current match
+      let isCurrentMatch = currentMatchRange != nil && nsRange == currentMatchRange
+
+      // Apply search highlight background color
+      let backgroundColor: NSColor
+      if isCurrentMatch {
+        // Orange-yellow for current match
+        backgroundColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0) // #FFD500
+      } else {
+        // Light yellow for other matches
+        backgroundColor = NSColor(red: 1.0, green: 0.976, blue: 0.769, alpha: 1.0) // #FFF9C4
+      }
+
+      result.addAttribute(.backgroundColor, value: backgroundColor, range: nsRange)
+
+      // Use black text for better contrast on yellow background
+      result.addAttribute(.foregroundColor, value: NSColor.black, range: nsRange)
+
+      searchStartIndex = range.upperBound
+    }
+
+    return result
+  }
+
   // MARK: - Token Highlighting
 
   private static func highlightComments(in attributed: NSMutableAttributedString, text: String) {

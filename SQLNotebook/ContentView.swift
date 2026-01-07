@@ -67,8 +67,23 @@ struct ContentView: View {
           }
         }
       }
+
+      // Search panel (floating top-right)
+      if viewModel.isSearchPanelVisible {
+        VStack {
+          HStack {
+            Spacer()
+            SearchPanelView(viewModel: viewModel)
+              .padding(.horizontal, Spacing.lg)
+              .padding(.top, Spacing.lg)
+          }
+          Spacer()
+        }
+        .transition(.identity)  // No animation - instant appear/disappear
+      }
     }
     .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
+    .animation(nil, value: viewModel.isSearchPanelVisible)  // Disable animation for search panel
     .windowAppearance(appSettings.themePreference.colorScheme)
     .modifier(
       NotificationHandlerModifier(
@@ -77,6 +92,7 @@ struct ContentView: View {
         showRunAllConfirmation: $showRunAllConfirmation
       )
     )
+    .modifier(SearchNotificationHandlerModifier(viewModel: viewModel))
     .confirmationDialog(
       "Run all cells?",
       isPresented: $showRunAllConfirmation,
@@ -177,6 +193,14 @@ struct ContentView: View {
       // Handle ESC key
       let isEscape = event.keyCode == 53
       if isEscape {
+        // Priority 0: If search panel is open, close it first
+        if self.viewModel.isSearchPanelVisible {
+          Task { @MainActor [viewModel] in
+            viewModel.closeSearch()
+          }
+          return nil  // Event consumed
+        }
+
         // Priority 1: If text editor is focused, unfocus it
         if textViewIsFocused {
           NotificationCenter.default.post(name: .unfocusEditor, object: nil)
@@ -601,6 +625,25 @@ private struct NotificationHandlerModifier: ViewModifier {
       .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
         viewModel.rightSidebarContent = .settings
         viewModel.isRightSidebarVisible = true
+      }
+  }
+}
+
+// MARK: - Search Notification Handler Modifier
+
+private struct SearchNotificationHandlerModifier: ViewModifier {
+  let viewModel: NotebookViewModel
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .openSearch)) { _ in
+        viewModel.openSearch()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .findNext)) { _ in
+        viewModel.navigateToNextMatch()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .findPrevious)) { _ in
+        viewModel.navigateToPreviousMatch()
       }
   }
 }
