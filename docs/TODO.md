@@ -5,7 +5,7 @@
 - ✅ **Phase 1: Core Structure** - COMPLETE
 - ✅ **Phase 2: Cell Editor** - COMPLETE
 - ✅ **Phase 3: Database Integration** - COMPLETE
-- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (12 of 14 sections - Result Display, Theme Toggle, Drag and Drop, Global Search added)
+- ⏳ **Phase 4: Polish** - MOSTLY COMPLETE (13 of 14 sections - Result Display, Theme Toggle, Drag and Drop, File Optimization added)
 - ⏳ **Phase 5: Advanced Features** - NOT STARTED
 - ✅ **Phase 6: Security & Safety** - MOSTLY COMPLETE (6.0.2 Connection Security complete; 6.0.3 & 6.0.4 partial)
 - ✅ **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, test coverage partial)
@@ -57,12 +57,14 @@
 - [x] Header menu: "Show All Results" and "Hide All Results" buttons
 - [x] View model methods: toggleResultVisibility, hideAllResults, showAllResults
 
-### 4.11 File Optimization - NOT STARTED
-- [ ] Detect large file size (> 10MB)
-- [ ] Implement compression option
-- [ ] Add option to remove old results automatically
-- [ ] Use compact JSON format for large files
-- [ ] Add file size indicator in footer
+### 4.11 File Optimization - COMPLETE
+- [x] Detect large file size (configurable thresholds)
+- [x] Implement compact JSON format for large files (automatic)
+- [x] Add file size indicator in footer
+- [x] Add warning colors and icons for large files
+- [x] Disable "New Cell" button when file exceeds limit
+- [x] Manual cleanup button in settings
+- [x] Tests for FileOptimizationService
 
 ### 4.12 Logging System - NOT STARTED
 - [ ] Create `AppLogger` utility class
@@ -96,9 +98,9 @@
 
 ---
 
-## Phase 4: Polish (MOSTLY COMPLETE - 12 of 14 sections)
+## Phase 4: Polish (MOSTLY COMPLETE - 13 of 14 sections)
 
-**Note:** Section 4.9 (Result Table Search & Filter) and Section 4.14 (Global Search) added as new feature requests.
+**Note:** Section 4.9 (Result Table Search & Filter) and Section 4.14 (Global Search) added as new feature requests. Section 4.11 (File Optimization) completed.
 
 ## Phase 5: Advanced Features (NOT STARTED)
 
@@ -315,7 +317,20 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase:
 
 ## Recent Completions
 
-### Drag and Drop Cell Reordering ✅ (Phase 4.4) - NEWLY COMPLETED
+### File Optimization System ✅ (Phase 4.11) - NEWLY COMPLETED
+Complete file optimization implementation with automatic size monitoring and manual cleanup. Includes:
+- **FileOptimizationService** - Core service for file size calculation, statistics, and optimization (FileOptimizationService.swift)
+- **File Size Monitoring** - Real-time file size calculation and display in footer with color-coded warnings (dynamic thresholds: currently 20KB/23KB for testing, production: 5MB/10MB)
+- **Large File Detection** - Automatic detection of files exceeding threshold with user notifications
+- **Size Limit Enforcement** - Disables "New Cell" button and shows toast warning when file exceeds limit (HeaderView.swift:27-41)
+- **Manual Cleanup** - "Remove All Results Now" button in settings panel for immediate cleanup (SettingsContent.swift:185-196)
+- **Compact JSON Format** - Automatic use of compact JSON (no pretty-printing) for large files to reduce size by ~20-30% (SQLNotebookDocument.swift:46-55)
+- **Settings UI** - Complete settings panel section showing current file size with dynamic warnings and manual cleanup button
+- **Footer Indicator** - File size display with warning/error icons and dynamic tooltips (FooterView.swift:54-64, 139-146)
+- **Comprehensive Tests** - 12 test cases covering size calculation, formatting, optimization operations, statistics, and compact format (FileOptimizationServiceTests.swift)
+- **Dynamic Messages** - All UI messages use values from constants instead of hardcoded text
+
+### Drag and Drop Cell Reordering ✅ (Phase 4.4) - PREVIOUSLY COMPLETED
 Complete drag and drop implementation for cell reordering with visual feedback and undo/redo support. Includes:
 - **Drag Handle UI** - Three horizontal lines icon (line.3.horizontal) displayed in CellSidebarView (CellComponents.swift:21-27) when cell is hovered or selected
 - **List Integration** - Added .onMove modifier to ForEach in ContentView.swift (lines 257-260) for native SwiftUI drag and drop

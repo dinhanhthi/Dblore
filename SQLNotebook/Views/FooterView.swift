@@ -46,6 +46,22 @@ struct FooterView: View {
         Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
           .font(.caption)
           .foregroundColor(.foregroundSubtle)
+
+        Text("|")
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+
+        // File size indicator
+        HStack(spacing: 4) {
+          Image(systemName: fileSizeIcon)
+            .font(.caption)
+            .foregroundColor(fileSizeColor)
+
+          Text(viewModel.formattedFileSize)
+            .font(.caption)
+            .foregroundColor(fileSizeColor)
+        }
+        .help(fileSizeTooltip)
       }
     }
     .padding(.trailing, Spacing.lg)
@@ -112,6 +128,38 @@ struct FooterView: View {
 
   private var appVersion: String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+  }
+
+  // MARK: - File Size Helpers
+
+  private var fileSizeIcon: String {
+    if viewModel.isFileSizeLarge {
+      return "exclamationmark.triangle.fill"
+    } else if viewModel.isFileSizeWarning {
+      return "exclamationmark.circle.fill"
+    } else {
+      return "doc.text"
+    }
+  }
+
+  private var fileSizeColor: Color {
+    if viewModel.isFileSizeLarge {
+      return .destructive
+    } else if viewModel.isFileSizeWarning {
+      return .warning
+    } else {
+      return .foregroundSubtle
+    }
+  }
+
+  private var fileSizeTooltip: String {
+    if viewModel.isFileSizeLarge {
+      return "File size is very large (> \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold))). Consider creating a new notebook or removing old results."
+    } else if viewModel.isFileSizeWarning {
+      return "File size is approaching the recommended limit (> \(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))"
+    } else {
+      return "Current file size"
+    }
   }
 }
 

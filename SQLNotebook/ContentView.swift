@@ -92,6 +92,42 @@ struct ContentView: View {
     } message: {
       Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
     }
+    .alert(
+      "File Size Warning",
+      isPresented: $viewModel.showFileSizeWarningDialog,
+      actions: {
+        Button("OK", role: .cancel) {}
+        Button("Open Settings") {
+          viewModel.rightSidebarContent = .settings
+          viewModel.isRightSidebarVisible = true
+        }
+      },
+      message: {
+        Text(
+          "Your notebook file size is approaching the recommended limit (\(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold))). Consider removing old results or creating a new notebook to maintain optimal performance."
+        )
+      }
+    )
+    .alert(
+      "File Size Limit Exceeded",
+      isPresented: $viewModel.showFileSizeLargeDialog,
+      actions: {
+        Button("OK", role: .cancel) {}
+        Button("Remove All Results") {
+          viewModel.clearAllOutputs()
+          syncDocument()
+        }
+        Button("Open Settings") {
+          viewModel.rightSidebarContent = .settings
+          viewModel.isRightSidebarVisible = true
+        }
+      },
+      message: {
+        Text(
+          "Your notebook file size has exceeded the limit (\(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold))). You cannot add new cells until you reduce the file size. Consider removing old results or creating a new notebook."
+        )
+      }
+    )
     .modifier(
       UndoRedoHandlerModifier(
         viewModel: viewModel,
