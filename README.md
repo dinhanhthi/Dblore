@@ -1,7 +1,5 @@
 # SQLNotebook
 
-[![CI](https://github.com/dinhanhthi/SQLNoteBook/actions/workflows/ci.yml/badge.svg)](https://github.com/dinhanhthi/SQLNoteBook/actions/workflows/ci.yml)
-
 A native macOS application for writing and executing SQL queries in a cell-based interface similar to Jupyter Notebook. Supports PostgreSQL and SQLite with persistent query results.
 
 ## ✨ Features
