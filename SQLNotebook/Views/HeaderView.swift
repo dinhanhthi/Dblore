@@ -98,6 +98,36 @@ struct HeaderView: View {
 
       Spacer()
 
+      // Center group - View mode toggle
+      HStack(spacing: Spacing.xxs) {
+        ForEach(ViewMode.allCases, id: \.self) { mode in
+          Button(action: {
+            if viewModel.viewMode != mode {
+              viewModel.toggleViewMode()
+            }
+          }) {
+            HStack(spacing: Spacing.xxs) {
+              Image(systemName: mode.icon)
+                .font(.system(size: 11))
+              Text(mode.displayName)
+                .font(.system(size: 12))
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xxs)
+            .background(viewModel.viewMode == mode ? Color.accentColor.opacity(0.2) : Color.clear)
+            .foregroundColor(viewModel.viewMode == mode ? .accentColor : .foregroundSubtle)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xxs)
+      .background(Color.inputBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+
+      Spacer()
+
       // Trailing group - Settings and Connection
       HStack(spacing: Spacing.xs) {
         // Settings button

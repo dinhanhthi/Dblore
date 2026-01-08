@@ -89,6 +89,11 @@ class NotebookViewModel {
   var pendingQueryCellId: UUID?
   var pendingQuery: String = ""
 
+  // MARK: - View Mode State
+  var viewMode: ViewMode = .notebook
+  var editorContent: String = ""  // Content for editor mode
+  var editorResult: CellResult?  // Result for editor mode
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
@@ -217,12 +222,17 @@ class NotebookViewModel {
 
   /// Execute the pending query after user confirmation
   func executePendingQuery() async {
-    guard let cellId = pendingQueryCellId else { return }
-    await runCell(id: cellId)
+    // Check if it's editor mode or notebook mode
+    if viewMode == .editor {
+      await executeConfirmedEditorQuery()
+    } else {
+      guard let cellId = pendingQueryCellId else { return }
+      await runCell(id: cellId)
 
-    // Clear pending state
-    pendingQueryCellId = nil
-    pendingQuery = ""
+      // Clear pending state
+      pendingQueryCellId = nil
+      pendingQuery = ""
+    }
   }
 
   /// Cancel the pending query execution
