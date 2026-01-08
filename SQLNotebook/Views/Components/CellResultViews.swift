@@ -20,7 +20,7 @@ struct ResultAreaView: View {
       Color.clear
         .frame(width: ComponentSize.cellSidebarWidth)
 
-      VStack(alignment: .leading, spacing: Spacing.md) {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
         // Show executed query at top of result area if available
         if let sourceQuery = result.sourceQuery {
           ExecutedQueryDisplayView(query: sourceQuery)
@@ -171,7 +171,7 @@ struct ResultMetadataView: View {
           Text("limited to \(AppSettings.shared.maxRowLimit) rows")
             .foregroundColor(.foregroundSubtle)
           Text(")")
-        }.font(.caption2)
+        }.font(.labelText)
       }
 
       Text("|")
@@ -181,7 +181,7 @@ struct ResultMetadataView: View {
         .foregroundColor(.foregroundSubtle)
       Text(CellResultViews.formatTimestamp(result.timestamp))
     }
-    .font(.caption)
+    .font(.labelText)
     .foregroundColor(.foregroundSubtle)
   }
 }

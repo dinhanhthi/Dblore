@@ -239,19 +239,16 @@ struct ExecutedQueryDisplayView: View {
   var body: some View {
     HStack(alignment: .top, spacing: Spacing.xs) {
       Text("Run with query:")
-        .font(.system(size: 11, weight: .medium))
+        .font(.labelText)
         .foregroundColor(.foregroundSubtle)
 
       Text(query)
-        .font(.system(size: 11, design: .monospaced))
+        .font(.monoMedium)
         .foregroundColor(.accent.opacity(0.7))
         .lineLimit(2)
         .textSelection(.enabled)
     }
-    .padding(.vertical, 0)
-    .padding(.trailing, Spacing.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.cellBackground.opacity(0.6))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
   }
 }
