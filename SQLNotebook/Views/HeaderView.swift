@@ -98,38 +98,14 @@ struct HeaderView: View {
 
       Spacer()
 
-      // Center group - View mode toggle
-      HStack(spacing: Spacing.xxs) {
-        ForEach(ViewMode.allCases, id: \.self) { mode in
-          Button(action: {
-            if viewModel.viewMode != mode {
-              viewModel.toggleViewMode()
-            }
-          }) {
-            HStack(spacing: Spacing.xxs) {
-              Image(systemName: mode.icon)
-                .font(.system(size: 11))
-              Text(mode.displayName)
-                .font(.system(size: 12))
-            }
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xxs)
-            .background(viewModel.viewMode == mode ? Color.accentColor.opacity(0.2) : Color.clear)
-            .foregroundColor(viewModel.viewMode == mode ? .accentColor : .foregroundSubtle)
-            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-          }
-          .buttonStyle(.plain)
-        }
-      }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xxs)
-      .background(Color.inputBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-
-      Spacer()
-
-      // Trailing group - Settings and Connection
+      // Trailing group - View mode toggle, Settings and Connection
       HStack(spacing: Spacing.xs) {
+        // View mode toggle
+        viewModeToggle()
+
+        Divider()
+          .frame(height: 20)
+
         // Settings button
         Button(action: {
           // Toggle sidebar if already showing settings
@@ -186,6 +162,70 @@ struct HeaderView: View {
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+
+  @ViewBuilder
+  private func viewModeToggle() -> some View {
+    let selectedIndex = ViewMode.allCases.firstIndex(of: viewModel.viewMode) ?? 0
+
+    ZStack {
+      // Background
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .fill(Color.inputBackground)
+        .overlay(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .stroke(Color.border, lineWidth: 1)
+        )
+
+      // Content with padding
+      GeometryReader { geometry in
+        let inset: CGFloat = 3
+        let availableWidth = geometry.size.width - (inset * 2)
+        let tabWidth = availableWidth / CGFloat(ViewMode.allCases.count)
+
+        ZStack(alignment: .leading) {
+          // Sliding indicator
+          RoundedRectangle(cornerRadius: CornerRadius.md - 2)
+            .fill(Color.accent)
+            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
+            .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: viewModel.viewMode)
+
+          // Tab buttons
+          HStack(spacing: 0) {
+            ForEach(ViewMode.allCases, id: \.self) { mode in
+              Button(action: {
+                withAnimation {
+                  if viewModel.viewMode != mode {
+                    viewModel.toggleViewMode()
+                  }
+                }
+              }) {
+                HStack(spacing: Spacing.xxs) {
+                  Image(systemName: mode.icon)
+                    .font(.system(size: 11))
+                  Text(mode.displayName)
+                    .font(.system(size: 12))
+                }
+                .fontWeight(viewModel.viewMode == mode ? .semibold : .regular)
+                .foregroundColor(viewModel.viewMode == mode ? .white : .foreground)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+              }
+              .buttonStyle(PlainButtonStyle())
+              .onHover { hovering in
+                if hovering {
+                  NSCursor.pointingHand.push()
+                } else {
+                  NSCursor.pop()
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    .frame(width: 180, height: 25)
   }
 }
 
@@ -319,7 +359,7 @@ private struct ConnectionIconView: View {
 
 #Preview("Connect") {
   HeaderView(viewModel: NotebookViewModel())
-    .frame(width: 700)
+    .frame(width: 850)
     .preferredColorScheme(.dark)
 }
 
@@ -328,6 +368,6 @@ private struct ConnectionIconView: View {
   viewModel.connectionState = .connected
 
   return HeaderView(viewModel: viewModel)
-    .frame(width: 700)
+    .frame(width: 850)
     .preferredColorScheme(.dark)
 }
