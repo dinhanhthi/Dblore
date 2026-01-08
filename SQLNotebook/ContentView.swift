@@ -144,6 +144,31 @@ struct ContentView: View {
         )
       }
     )
+    .confirmationDialog(
+      "Confirm Destructive Query",
+      isPresented: $viewModel.showQueryConfirmationDialog,
+      titleVisibility: .visible
+    ) {
+      Button("Execute Query", role: .destructive) {
+        Task { @MainActor [viewModel] in
+          await viewModel.executePendingQuery()
+          syncDocument()
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        viewModel.cancelPendingQuery()
+      }
+    } message: {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("This query will modify data in your database:")
+          .font(.body)
+        Text(viewModel.pendingQuery)
+          .font(.system(.body, design: .monospaced))
+          .lineLimit(5)
+        Text("Are you sure you want to proceed?")
+          .font(.body)
+      }
+    }
     .modifier(
       UndoRedoHandlerModifier(
         viewModel: viewModel,
@@ -301,10 +326,9 @@ struct ContentView: View {
             cell: binding(for: cell.id),
             isSelected: viewModel.selectedCellId == cell.id,
             onRun: {
-              Task { @MainActor [viewModel] in
-                await viewModel.runCell(id: cell.id)
-                syncDocument()
-              }
+              // Use confirmAndRunCell to check for destructive queries
+              viewModel.confirmAndRunCell(id: cell.id)
+              syncDocument()
             }
           )
           .id(cell.id)
@@ -517,9 +541,7 @@ private struct ContentViewForPreview: View {
               cell: previewBinding(for: cell.id),
               isSelected: viewModel.selectedCellId == cell.id,
               onRun: {
-                Task { @MainActor [viewModel] in
-                  await viewModel.runCell(id: cell.id)
-                }
+                viewModel.confirmAndRunCell(id: cell.id)
               }
             )
             .id(cell.id)
@@ -561,28 +583,26 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
         if let id = viewModel.selectedCellId {
-          Task { @MainActor [viewModel] in
-            await viewModel.runCell(id: id)
-            syncDocument()
-          }
+          viewModel.confirmAndRunCell(id: id)
+          syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
         if let id = viewModel.selectedCellId {
-          Task { @MainActor [viewModel] in
-            await viewModel.runCell(id: id)
-            viewModel.selectNextCell(createIfNeeded: true)
-            syncDocument()
-          }
+          // For keyboard shortcuts that select next, we need to run cell first
+          // Use confirmAndRunCell for confirmation
+          viewModel.confirmAndRunCell(id: id)
+          viewModel.selectNextCell(createIfNeeded: true)
+          syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
         if let id = viewModel.selectedCellId {
-          Task { @MainActor [viewModel] in
-            await viewModel.runCell(id: id)
-            viewModel.insertCellBelow(type: .sql)
-            syncDocument()
-          }
+          // For keyboard shortcuts that insert below, we need to run cell first
+          // Use confirmAndRunCell for confirmation
+          viewModel.confirmAndRunCell(id: id)
+          viewModel.insertCellBelow(type: .sql)
+          syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in

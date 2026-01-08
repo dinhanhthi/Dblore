@@ -84,6 +84,11 @@ class NotebookViewModel {
   var searchFocusTrigger: UUID = UUID() // Trigger to force re-focus search field
   var searchTask: Task<Void, Never>? // Task for cancellation support
 
+  // MARK: - Query Confirmation State
+  var showQueryConfirmationDialog = false
+  var pendingQueryCellId: UUID?
+  var pendingQuery: String = ""
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
@@ -164,5 +169,57 @@ class NotebookViewModel {
   /// Check if file size is approaching warning threshold
   var isFileSizeWarning: Bool {
     estimatedFileSize > FileOptimizationService.warningSizeThreshold
+  }
+
+  // MARK: - Query Confirmation
+
+  /// Check if a query is a destructive modification statement (UPDATE, DELETE, INSERT)
+  func isModificationQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT")
+  }
+
+  /// Show confirmation dialog before executing a destructive query
+  func confirmAndRunCell(id: UUID) {
+    guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
+    let query = notebook.cells[index].content
+
+    // Check if query is a modification query
+    if isModificationQuery(query) {
+      // Check if user wants to bypass confirmation
+      if AppSettings.shared.bypassDestructiveQueryConfirmation {
+        // Execute directly if bypass is enabled
+        Task {
+          await runCell(id: id)
+        }
+      } else {
+        // Show confirmation dialog
+        pendingQueryCellId = id
+        pendingQuery = query
+        showQueryConfirmationDialog = true
+      }
+    } else {
+      // Execute directly if not a modification query
+      Task {
+        await runCell(id: id)
+      }
+    }
+  }
+
+  /// Execute the pending query after user confirmation
+  func executePendingQuery() async {
+    guard let cellId = pendingQueryCellId else { return }
+    await runCell(id: cellId)
+
+    // Clear pending state
+    pendingQueryCellId = nil
+    pendingQuery = ""
+  }
+
+  /// Cancel the pending query execution
+  func cancelPendingQuery() {
+    pendingQueryCellId = nil
+    pendingQuery = ""
+    showQueryConfirmationDialog = false
   }
 }

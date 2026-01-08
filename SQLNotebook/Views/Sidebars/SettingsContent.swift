@@ -141,6 +141,27 @@ struct SettingsContent: View {
 
       Divider()
 
+      // Security Settings
+      settingsSection(title: "Security") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          Toggle(
+            "Bypass Destructive Query Confirmation",
+            isOn: $appSettings.bypassDestructiveQueryConfirmation
+          )
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          .tint(.accent)
+
+          Text(
+            "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases."
+          )
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+        }
+      }
+
+      Divider()
+
       // File Optimization Settings
       settingsSection(title: "File Optimization") {
         VStack(alignment: .leading, spacing: Spacing.md) {
