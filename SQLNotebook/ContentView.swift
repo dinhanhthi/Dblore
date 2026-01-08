@@ -318,6 +318,16 @@ struct ContentView: View {
   // MARK: - Main Content
 
   private var mainContent: some View {
+    Group {
+      if viewModel.viewMode == .notebook {
+        notebookModeContent
+      } else {
+        EditorModeView(viewModel: viewModel)
+      }
+    }
+  }
+
+  private var notebookModeContent: some View {
     ScrollViewReader { proxy in
       List {
         ForEach(viewModel.notebook.cells) { cell in

@@ -16,8 +16,7 @@ import Testing
 @testable import SQLNotebook
 import Foundation
 
-@Suite("Database Integration Tests (Requires PostgreSQL)",
-       .disabled("Integration tests temporarily disabled - enable by removing .disabled()"))
+@Suite("Database Integration Tests (Requires PostgreSQL)")
 @MainActor
 struct DatabaseIntegrationTests {
 
@@ -37,9 +36,10 @@ struct DatabaseIntegrationTests {
     // MARK: - Setup and Teardown Helpers
 
     /// Create test table with NUMERIC columns
-    func createNumericTestTable(manager: DatabaseConnectionManager) async throws {
+    /// Uses a unique table name to avoid conflicts between concurrent tests
+    func createNumericTestTable(manager: DatabaseConnectionManager, tableName: String = "test_numeric_values") async throws {
         let createTableSQL = """
-        CREATE TABLE IF NOT EXISTS test_numeric_values (
+        CREATE TEMPORARY TABLE \(tableName) (
             id SERIAL PRIMARY KEY,
             price NUMERIC(10,2),
             quantity NUMERIC(15,4),
@@ -53,9 +53,9 @@ struct DatabaseIntegrationTests {
     }
 
     /// Insert test data into NUMERIC test table
-    func insertNumericTestData(manager: DatabaseConnectionManager) async throws {
+    func insertNumericTestData(manager: DatabaseConnectionManager, tableName: String = "test_numeric_values") async throws {
         let insertSQL = """
-        INSERT INTO test_numeric_values (price, quantity, percentage, large_number, negative_value)
+        INSERT INTO \(tableName) (price, quantity, percentage, large_number, negative_value)
         VALUES
             (1329.98, 123456789.1234, 99.99, 99999999999999.99, -1329.98),
             (49.99, 0.0001, 0.01, 1234567890.12, -49.99),
@@ -66,16 +66,19 @@ struct DatabaseIntegrationTests {
         _ = try await manager.executeQuery(insertSQL)
     }
 
-    /// Drop test table
-    func dropNumericTestTable(manager: DatabaseConnectionManager) async throws {
-        let dropTableSQL = "DROP TABLE IF EXISTS test_numeric_values;"
+    /// Drop test table (not needed for TEMPORARY tables, but kept for compatibility)
+    func dropNumericTestTable(manager: DatabaseConnectionManager, tableName: String = "test_numeric_values") async throws {
+        let dropTableSQL = "DROP TABLE IF EXISTS \(tableName);"
         _ = try await manager.executeQuery(dropTableSQL)
     }
 
     /// Create test table with various column types for enrichment testing
-    func createColumnTypeTestTable(manager: DatabaseConnectionManager) async throws {
+    func createColumnTypeTestTable(manager: DatabaseConnectionManager, tableName: String = "test_column_types") async throws {
+        // Drop table first to ensure clean state
+        try? await dropColumnTypeTestTable(manager: manager, tableName: tableName)
+
         let createTableSQL = """
-        CREATE TABLE IF NOT EXISTS test_column_types (
+        CREATE TABLE \(tableName) (
             id SERIAL PRIMARY KEY,
             name VARCHAR(255),
             code CHAR(10),
@@ -88,12 +91,306 @@ struct DatabaseIntegrationTests {
         """
 
         _ = try await manager.executeQuery(createTableSQL)
+
+        // Insert sample data to ensure table has at least one row
+        // This is required for column metadata extraction in tests
+        let insertSQL = """
+        INSERT INTO \(tableName) (name, code, price, amount, created_at, updated_at, description)
+        VALUES ('Test Product', 'ABC123', 99.99, 1234.5678, NOW(), NOW(), 'Sample description');
+        """
+
+        _ = try await manager.executeQuery(insertSQL)
     }
 
     /// Drop column type test table
-    func dropColumnTypeTestTable(manager: DatabaseConnectionManager) async throws {
-        let dropTableSQL = "DROP TABLE IF EXISTS test_column_types;"
+    func dropColumnTypeTestTable(manager: DatabaseConnectionManager, tableName: String = "test_column_types") async throws {
+        let dropTableSQL = "DROP TABLE IF EXISTS \(tableName);"
         _ = try await manager.executeQuery(dropTableSQL)
+    }
+
+    // MARK: - Connection Lifecycle Tests
+
+    @Test("Connect to PostgreSQL database successfully")
+    func connectToDatabaseSuccessfully() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            try await manager.connect(config: Self.testConfig)
+            #expect(await manager.isConnected, "Should be connected after successful connect()")
+            await manager.disconnect()
+            #expect(await !manager.isConnected, "Should be disconnected after disconnect()")
+        } catch {
+            Issue.record("Connection test failed: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("Test connection without actually connecting")
+    func testConnectionWithoutConnecting() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            // testConnection should not leave manager in connected state
+            _ = try await manager.testConnection(config: Self.testConfig)
+            #expect(await !manager.isConnected, "testConnection() should not leave manager connected")
+        } catch {
+            Issue.record("Test connection failed: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("Reconnect to database after disconnect")
+    func reconnectAfterDisconnect() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            // First connection
+            try await manager.connect(config: Self.testConfig)
+            #expect(await manager.isConnected, "Should be connected")
+
+            // Disconnect
+            await manager.disconnect()
+            #expect(await !manager.isConnected, "Should be disconnected")
+
+            // Reconnect
+            try await manager.connect(config: Self.testConfig)
+            #expect(await manager.isConnected, "Should be connected again")
+
+            await manager.disconnect()
+        } catch {
+            await manager.disconnect()
+            Issue.record("Reconnect test failed: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("Connect with invalid credentials fails")
+    func connectWithInvalidCredentialsFails() async throws {
+        let manager = DatabaseConnectionManager()
+        let invalidConfig = ConnectionConfig(
+            host: "localhost",
+            port: 5432,
+            database: "nonexistent_db",
+            username: "invalid_user",
+            password: "wrong_password",
+            sslMode: .disable,
+            timeoutSeconds: 5
+        )
+
+        do {
+            try await manager.connect(config: invalidConfig)
+            Issue.record("Should have failed with invalid credentials")
+        } catch {
+            // Expected to fail
+            #expect(await !manager.isConnected, "Should not be connected after failed attempt")
+        }
+    }
+
+    // MARK: - Query Execution Tests
+
+    @Test("Execute SELECT query successfully")
+    func executeSelectQuerySuccessfully() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            try await manager.connect(config: Self.testConfig)
+
+            let result = try await manager.executeQuery("SELECT 1 AS num, 'test' AS str")
+
+            #expect(result.rows.count == 1, "Should return 1 row")
+            #expect(result.columns.count == 2, "Should have 2 columns")
+            #expect(result.columns[0].name == "num", "First column should be 'num'")
+            #expect(result.columns[1].name == "str", "Second column should be 'str'")
+
+            if let firstRow = result.rows.first {
+                #expect(firstRow.count == 2, "Row should have 2 values")
+            }
+
+            await manager.disconnect()
+        } catch {
+            await manager.disconnect()
+            Issue.record("SELECT query test failed: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("Execute INSERT, UPDATE, DELETE queries")
+    func executeModificationQueries() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            try await manager.connect(config: Self.testConfig)
+
+            // Create test table
+            let createTable = """
+            CREATE TEMPORARY TABLE test_modifications (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100),
+                value INTEGER
+            )
+            """
+            _ = try await manager.executeQuery(createTable)
+
+            // INSERT
+            let insertSQL = "INSERT INTO test_modifications (name, value) VALUES ('test1', 100), ('test2', 200)"
+            let insertResult = try await manager.executeQuery(insertSQL)
+            #expect(insertResult.rows.isEmpty, "INSERT should return no rows")
+
+            // SELECT to verify INSERT
+            let selectResult = try await manager.executeQuery("SELECT COUNT(*) FROM test_modifications")
+            if let firstRow = selectResult.rows.first,
+               let firstValue = firstRow.first,
+               case .int(let count) = firstValue {
+                #expect(count == 2, "Should have inserted 2 rows")
+            } else {
+                Issue.record("Failed to verify INSERT")
+            }
+
+            // UPDATE
+            let updateSQL = "UPDATE test_modifications SET value = 150 WHERE name = 'test1'"
+            _ = try await manager.executeQuery(updateSQL)
+
+            // SELECT to verify UPDATE
+            let verifyUpdate = try await manager.executeQuery("SELECT value FROM test_modifications WHERE name = 'test1'")
+            if let firstRow = verifyUpdate.rows.first,
+               let firstValue = firstRow.first,
+               case .int(let value) = firstValue {
+                #expect(value == 150, "Value should be updated to 150")
+            } else {
+                Issue.record("Failed to verify UPDATE")
+            }
+
+            // DELETE
+            let deleteSQL = "DELETE FROM test_modifications WHERE name = 'test2'"
+            _ = try await manager.executeQuery(deleteSQL)
+
+            // SELECT to verify DELETE
+            let verifyDelete = try await manager.executeQuery("SELECT COUNT(*) FROM test_modifications")
+            if let firstRow = verifyDelete.rows.first,
+               let firstValue = firstRow.first,
+               case .int(let count) = firstValue {
+                #expect(count == 1, "Should have 1 row remaining after DELETE")
+            } else {
+                Issue.record("Failed to verify DELETE")
+            }
+
+            await manager.disconnect()
+        } catch {
+            await manager.disconnect()
+            Issue.record("Modification queries test failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Schema Loading Tests
+    // Note: Schema loading is handled through NotebookViewModel, not directly through DatabaseConnectionManager
+    // These tests are commented out as there's no public loadSchema() method on DatabaseConnectionManager
+
+    // TODO: Add schema loading tests when public API is available
+
+    // MARK: - JSON/JSONB Type Mapping Tests
+
+    @Test("JSONB values decode correctly")
+    func jsonbValuesDecodeCorrectly() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            try await manager.connect(config: Self.testConfig)
+
+            // Create test table with JSONB
+            let createTable = """
+            CREATE TEMPORARY TABLE test_jsonb (
+                id SERIAL PRIMARY KEY,
+                data JSONB
+            )
+            """
+            _ = try await manager.executeQuery(createTable)
+
+            // Insert JSONB data
+            let insertSQL = """
+            INSERT INTO test_jsonb (data) VALUES
+                ('{"name": "John", "age": 30}'::jsonb),
+                ('["apple", "banana", "cherry"]'::jsonb),
+                ('{"nested": {"key": "value"}}'::jsonb)
+            """
+            _ = try await manager.executeQuery(insertSQL)
+
+            // Query JSONB data
+            let result = try await manager.executeQuery("SELECT data FROM test_jsonb ORDER BY id")
+
+            #expect(result.rows.count == 3, "Should return 3 rows")
+
+            // Verify first row (JSON object) - JSONB is decoded as .json type
+            if let firstRow = result.rows.first,
+               let jsonValue = firstRow.first,
+               case .json(let jsonString) = jsonValue {
+                #expect(jsonString.contains("John"), "JSON should contain 'John'")
+                #expect(jsonString.contains("age"), "JSON should contain 'age' key")
+            } else {
+                Issue.record("Failed to decode JSONB object")
+            }
+
+            // Verify second row (JSON array) - JSONB is decoded as .json type
+            if result.rows.count > 1,
+               let secondValue = result.rows[1].first,
+               case .json(let jsonString) = secondValue {
+                #expect(jsonString.contains("apple"), "JSON array should contain 'apple'")
+            } else {
+                Issue.record("Failed to decode JSONB array")
+            }
+
+            await manager.disconnect()
+        } catch {
+            await manager.disconnect()
+            Issue.record("JSONB test failed: \(error.localizedDescription)")
+        }
+    }
+
+    @Test("DATE and TIMESTAMP types decode correctly")
+    func dateAndTimestampTypesDecodeCorrectly() async throws {
+        let manager = DatabaseConnectionManager()
+
+        do {
+            try await manager.connect(config: Self.testConfig)
+
+            // Create test table with date/time types
+            let createTable = """
+            CREATE TEMPORARY TABLE test_datetime (
+                id SERIAL PRIMARY KEY,
+                date_col DATE,
+                timestamp_col TIMESTAMP,
+                timestamptz_col TIMESTAMPTZ
+            )
+            """
+            _ = try await manager.executeQuery(createTable)
+
+            // Insert date/time data
+            let insertSQL = """
+            INSERT INTO test_datetime (date_col, timestamp_col, timestamptz_col) VALUES
+                ('2024-01-15', '2024-01-15 14:30:00', '2024-01-15 14:30:00+00')
+            """
+            _ = try await manager.executeQuery(insertSQL)
+
+            // Query date/time data
+            let result = try await manager.executeQuery("SELECT date_col, timestamp_col, timestamptz_col FROM test_datetime")
+
+            #expect(result.rows.count == 1, "Should return 1 row")
+            #expect(result.columns.count == 3, "Should have 3 columns")
+
+            if let firstRow = result.rows.first {
+                #expect(firstRow.count == 3, "Row should have 3 values")
+
+                // All date/time values are decoded as .date type (Date objects)
+                for value in firstRow {
+                    if case .date(let dateValue) = value {
+                        // Verify it's a valid Date object
+                        #expect(dateValue.timeIntervalSince1970 > 0, "Date should be valid")
+                    } else {
+                        Issue.record("Date/time value should be decoded as .date type, got: \(value)")
+                    }
+                }
+            }
+
+            await manager.disconnect()
+        } catch {
+            await manager.disconnect()
+            Issue.record("DATE/TIMESTAMP test failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - NUMERIC Decoding Integration Tests
@@ -104,17 +401,18 @@ struct DatabaseIntegrationTests {
 
         // Arrange
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_decimal_\(UUID().uuidString.prefix(8))"
 
         do {
             // Connect to test database
             try await manager.connect(config: Self.testConfig)
 
             // Setup test data
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT price FROM test_numeric_values WHERE id = 1")
+            let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 1")
 
             // Assert
             // Capture values into local variables to avoid actor isolation issues
@@ -132,11 +430,11 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
             // Ensure cleanup even on error
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -145,14 +443,15 @@ struct DatabaseIntegrationTests {
     @Test("NUMERIC(15,4) high precision values decode correctly - Integration Test")
     func numericHighPrecisionDecodesToDoubleIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_precision_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT quantity FROM test_numeric_values WHERE id = 1")
+            let result = try await manager.executeQuery("SELECT quantity FROM \(tableName) WHERE id = 1")
 
             // Assert
             let rowsCount = result.rows.count
@@ -167,10 +466,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -179,14 +478,15 @@ struct DatabaseIntegrationTests {
     @Test("NUMERIC NULL values decode to CellValue.null - Integration Test")
     func numericNullDecodesToNullIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_null_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act - Query the row with NULL values
-            let result = try await manager.executeQuery("SELECT price FROM test_numeric_values WHERE id = 4")
+            let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 4")
 
             // Assert
             let rowsCount = result.rows.count
@@ -207,10 +507,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -219,14 +519,15 @@ struct DatabaseIntegrationTests {
     @Test("Negative NUMERIC values decode correctly - Integration Test")
     func negativeNumericDecodesToDoubleIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_negative_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT negative_value FROM test_numeric_values WHERE id = 1")
+            let result = try await manager.executeQuery("SELECT negative_value FROM \(tableName) WHERE id = 1")
 
             // Assert
             let rowsCount = result.rows.count
@@ -242,10 +543,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -254,14 +555,15 @@ struct DatabaseIntegrationTests {
     @Test("Zero NUMERIC value decodes to 0.0 - Integration Test")
     func zeroNumericDecodesToZeroIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_zero_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT price FROM test_numeric_values WHERE id = 3")
+            let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 3")
 
             // Assert
             let rowsCount = result.rows.count
@@ -276,10 +578,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -288,14 +590,15 @@ struct DatabaseIntegrationTests {
     @Test("Very large NUMERIC values decode correctly - Integration Test")
     func veryLargeNumericDecodesToDoubleIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_large_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT large_number FROM test_numeric_values WHERE id = 1")
+            let result = try await manager.executeQuery("SELECT large_number FROM \(tableName) WHERE id = 1")
 
             // Assert
             let rowsCount = result.rows.count
@@ -313,10 +616,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -327,13 +630,14 @@ struct DatabaseIntegrationTests {
     @Test("VARCHAR column enriched with length - Integration Test")
     func varcharColumnEnrichedWithLengthIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_column_types_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createColumnTypeTestTable(manager: manager)
+            try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT name FROM test_column_types LIMIT 1")
+            let result = try await manager.executeQuery("SELECT name FROM \(tableName) LIMIT 1")
 
             // Assert
             let columnsCount = result.columns.count
@@ -356,10 +660,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropColumnTypeTestTable(manager: manager)
+            try await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropColumnTypeTestTable(manager: manager)
+            try? await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -368,13 +672,14 @@ struct DatabaseIntegrationTests {
     @Test("NUMERIC column enriched with precision and scale - Integration Test")
     func numericColumnEnrichedWithPrecisionScaleIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_column_types_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createColumnTypeTestTable(manager: manager)
+            try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT price FROM test_column_types LIMIT 1")
+            let result = try await manager.executeQuery("SELECT price FROM \(tableName) LIMIT 1")
 
             // Assert
             let columnsCount = result.columns.count
@@ -396,10 +701,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropColumnTypeTestTable(manager: manager)
+            try await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropColumnTypeTestTable(manager: manager)
+            try? await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -408,13 +713,14 @@ struct DatabaseIntegrationTests {
     @Test("TIMESTAMP column enriched with precision and time zone - Integration Test")
     func timestampColumnEnrichedWithPrecisionTimeZoneIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_column_types_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createColumnTypeTestTable(manager: manager)
+            try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
             // Act
-            let result = try await manager.executeQuery("SELECT created_at, updated_at FROM test_column_types LIMIT 1")
+            let result = try await manager.executeQuery("SELECT created_at, updated_at FROM \(tableName) LIMIT 1")
 
             // Assert
             let columnsCount = result.columns.count
@@ -452,10 +758,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropColumnTypeTestTable(manager: manager)
+            try await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropColumnTypeTestTable(manager: manager)
+            try? await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -464,16 +770,17 @@ struct DatabaseIntegrationTests {
     @Test("Column type enrichment fails gracefully for complex queries - Integration Test")
     func columnTypeEnrichmentFailsGracefullyForComplexQueriesIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_column_types_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
 
         do {
             try await manager.connect(config: Self.testConfig)
 
             // Create test table with sample data
-            try await createColumnTypeTestTable(manager: manager)
+            try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
             // Insert at least one row so the query returns data
             let insertSQL = """
-            INSERT INTO test_column_types (name, code, price, amount, created_at, updated_at, description)
+            INSERT INTO \(tableName) (name, code, price, amount, created_at, updated_at, description)
             VALUES ('Test', 'ABC123', 99.99, 123.4567, NOW(), NOW(), 'Test description')
             """
             _ = try await manager.executeQuery(insertSQL)
@@ -481,8 +788,8 @@ struct DatabaseIntegrationTests {
             // Complex query with JOIN (enrichment should not happen)
             let complexQuery = """
             SELECT t1.id, t2.name
-            FROM test_column_types t1
-            JOIN test_column_types t2 ON t1.id = t2.id
+            FROM \(tableName) t1
+            JOIN \(tableName) t2 ON t1.id = t2.id
             LIMIT 1
             """
 
@@ -501,10 +808,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropColumnTypeTestTable(manager: manager)
+            try await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropColumnTypeTestTable(manager: manager)
+            try? await dropColumnTypeTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }
@@ -515,15 +822,16 @@ struct DatabaseIntegrationTests {
     @Test("NUMERIC values decode correctly AND column types are enriched - Integration Test")
     func numericDecodingAndTypeEnrichmentIntegration() async throws {
         let manager = DatabaseConnectionManager()
+        let tableName = "test_numeric_enrich_\(UUID().uuidString.prefix(8))"
 
         do {
             try await manager.connect(config: Self.testConfig)
-            try await createNumericTestTable(manager: manager)
-            try await insertNumericTestData(manager: manager)
+            try await createNumericTestTable(manager: manager, tableName: tableName)
+            try await insertNumericTestData(manager: manager, tableName: tableName)
 
             // Act - Query with NUMERIC columns
             let result = try await manager.executeQuery(
-                "SELECT price, quantity FROM test_numeric_values WHERE id = 1"
+                "SELECT price, quantity FROM \(tableName) WHERE id = 1"
             )
 
             // Assert - Check decoding
@@ -578,10 +886,10 @@ struct DatabaseIntegrationTests {
             }
 
             // Cleanup
-            try await dropNumericTestTable(manager: manager)
+            try await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
         } catch {
-            try? await dropNumericTestTable(manager: manager)
+            try? await dropNumericTestTable(manager: manager, tableName: tableName)
             await manager.disconnect()
             Issue.record("Integration test failed: \(error.localizedDescription)")
         }

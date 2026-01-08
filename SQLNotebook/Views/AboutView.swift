@@ -19,14 +19,14 @@ struct AboutView: View {
           .fontWeight(.semibold)
 
         Text("Version \(appVersion)")
-          .font(.subheadline)
+          .font(.subheading)
           .foregroundColor(.foregroundSubtle)
 
         Link(
           "github.com/dinhanhthi/SQLNotebook",
           destination: URL(string: "https://github.com/dinhanhthi/SQLNotebook")!
         )
-        .fontWeight(.medium)
+        .font(.bodyText)
       }
 
       // Copyright
@@ -35,11 +35,12 @@ struct AboutView: View {
           "Anh-Thi Dinh",
           destination: URL(string: "https://dinhanhthi.com")!
         )
+        .font(.labelText)
 
         Text(
           "© \(currentYear)"
         )
-        .font(.caption)
+        .font(.labelText)
         .foregroundColor(.foregroundMuted)
       }
     }
