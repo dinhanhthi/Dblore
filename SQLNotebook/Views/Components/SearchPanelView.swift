@@ -2,7 +2,6 @@
 //  SearchPanelView.swift
 //  SQLNotebook
 //
-//  Created by Claude Code on 2026-01-07.
 //
 
 import SwiftUI
