@@ -15,7 +15,7 @@ struct SettingsContent: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
       // Appearance Settings
-      settingsSection(title: "Appearance") {
+      settingsSection(title: "Appearance", icon: "paintbrush.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           // Theme Picker
           VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -57,7 +57,7 @@ struct SettingsContent: View {
       Divider()
 
       // Result Table Settings
-      settingsSection(title: "Result Table") {
+      settingsSection(title: "Result Table", icon: "tablecells.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           // Max Height
           VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -121,7 +121,7 @@ struct SettingsContent: View {
       Divider()
 
       // Save Settings
-      settingsSection(title: "Save Options") {
+      settingsSection(title: "Save Options", icon: "square.and.arrow.down.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Toggle(
             "Include Results When Saving",
@@ -142,7 +142,7 @@ struct SettingsContent: View {
       Divider()
 
       // Security Settings
-      settingsSection(title: "Security") {
+      settingsSection(title: "Security", icon: "lock.shield.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Toggle(
             "Bypass Destructive Query Confirmation",
@@ -163,7 +163,7 @@ struct SettingsContent: View {
       Divider()
 
       // File Optimization Settings
-      settingsSection(title: "File Optimization") {
+      settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           // Current file size display
           HStack {
@@ -247,7 +247,7 @@ struct SettingsContent: View {
       Divider()
 
       // Developer Logs
-      settingsSection(title: "Developer") {
+      settingsSection(title: "Developer", icon: "hammer.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           // Export logs button
           Button(action: {
@@ -277,7 +277,7 @@ struct SettingsContent: View {
       Divider()
 
       // Keyboard Shortcuts (placeholder for future expansion)
-      settingsSection(title: "Keyboard Shortcuts") {
+      settingsSection(title: "Keyboard Shortcuts", icon: "command") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Text("Custom keyboard shortcuts will be available in a future update.")
             .font(.caption)
@@ -312,12 +312,19 @@ struct SettingsContent: View {
   @ViewBuilder
   private func settingsSection<Content: View>(
     title: String,
+    icon: String,
     @ViewBuilder content: () -> Content
   ) -> some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
-      Text(title)
-        .font(.heading)
-        .foregroundColor(.foreground)
+      HStack(spacing: Spacing.sm) {
+        Image(systemName: icon)
+          .font(.system(size: 16, weight: .semibold))
+          .foregroundColor(.foreground)
+
+        Text(title)
+          .font(.heading)
+          .foregroundColor(.foreground)
+      }
 
       content()
     }
