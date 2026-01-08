@@ -305,7 +305,7 @@ struct SearchTests {
   func notebookViewModelNavigateNext() async {
     // Arrange
     let viewModel = NotebookViewModel()
-    var cell = NotebookCell(cellType: .sql, content: "SELECT SELECT SELECT")
+    let cell = NotebookCell(cellType: .sql, content: "SELECT SELECT SELECT")
     viewModel.notebook.cells = [cell]
 
     await viewModel.performSearch(query: "SELECT", caseSensitive: false)
@@ -324,7 +324,7 @@ struct SearchTests {
   func notebookViewModelNavigatePrevious() async {
     // Arrange
     let viewModel = NotebookViewModel()
-    var cell = NotebookCell(cellType: .sql, content: "SELECT SELECT SELECT")
+    let cell = NotebookCell(cellType: .sql, content: "SELECT SELECT SELECT")
     viewModel.notebook.cells = [cell]
 
     await viewModel.performSearch(query: "SELECT", caseSensitive: false)
@@ -345,7 +345,7 @@ struct SearchTests {
   func notebookViewModelCloseSearch() async {
     // Arrange
     let viewModel = NotebookViewModel()
-    var cell = NotebookCell(cellType: .sql, content: "SELECT * FROM users")
+    let cell = NotebookCell(cellType: .sql, content: "SELECT * FROM users")
     viewModel.notebook.cells = [cell]
 
     await viewModel.performSearch(query: "SELECT", caseSensitive: false)
