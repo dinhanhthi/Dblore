@@ -281,6 +281,25 @@ struct ConnectionFormContent: View {
         .tint(.accent)
         .scaleEffect(0.8)
     }
+
+    // Read-Only Mode Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Read-only mode")
+          .font(.body)
+        Text("Prevent accidental data modifications (UPDATE/DELETE/INSERT)")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.readOnly)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
   }
 
   @ViewBuilder
@@ -348,6 +367,25 @@ struct ConnectionFormContent: View {
       Spacer()
 
       Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
+
+    // Read-Only Mode Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Read-only mode")
+          .font(.body)
+        Text("Prevent accidental data modifications (UPDATE/DELETE/INSERT)")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.readOnly)
         .labelsHidden()
         .toggleStyle(.switch)
         .tint(.accent)

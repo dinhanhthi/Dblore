@@ -113,7 +113,11 @@ docker compose up -d
 - User: `sqlnotebook`
 - Password: `sqlnotebook123`
 
+Connection string: `postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlnotebook`
+
 The database includes sample tables (customers, products, orders, employees, analytics) with realistic data for testing.
+
+**Database for testing**: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
 
 ## Keyboard Shortcuts
 
