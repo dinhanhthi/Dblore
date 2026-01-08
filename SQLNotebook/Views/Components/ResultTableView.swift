@@ -139,7 +139,7 @@ struct ResultTableView: View {
       Image(systemName: "exclamationmark.triangle.fill")
         .foregroundColor(.warning)
       Text("Showing first \(maxRowsToRender) of \(result.rows.count) rows to maintain performance")
-        .font(.caption)
+        .font(.labelText)
         .foregroundColor(.foregroundSubtle)
     }
     .padding(.horizontal, Spacing.lg)
@@ -655,7 +655,7 @@ struct ResultMetadataBar: View {
 
       Text("Rows: \(result.rowCount)")
     }
-    .font(.caption)
+    .font(.labelText)
     .foregroundColor(.foregroundSubtle)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.xs)

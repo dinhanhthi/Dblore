@@ -17,9 +17,7 @@ extension Color {
   )
 
   static let cardBackground = Color(
-    // light: Color(hex: "f7f7f7"),
     light: Color(hex: "ffffff"),
-    // dark: Color(hex: "0c0c0e")  // Dark zinc
     dark: Color(hex: "18181b")  // Zinc 900
   )
 
@@ -203,16 +201,17 @@ extension Color {
 // MARK: - Typography
 
 extension Font {
-  static let mono = Font.system(.body, design: .monospaced)  // 17pt
-  static let monoSmall = Font.system(.footnote, design: .monospaced)  // 13pt
+  static let mono = Font.system(.body, design: .monospaced)  // 13pt
+  static let monoMedium = Font.system(.callout, design: .monospaced)  // 12pt
+  static let monoSmall = Font.system(.footnote, design: .monospaced)  // 10pt
   static let monoLarge = Font.system(.title3, design: .monospaced)  // 20pt
 
-  static let heading = Font.system(.title2, weight: .semibold)  // 22pt
-  static let subheading = Font.system(.headline, weight: .medium)  // 17pt
-  static let bodyText = Font.system(.body)  // 17pt
-  static let caption = Font.system(.subheadline)  // 15pt
-  static let small = Font.system(.footnote)  // 13pt
-  static let smallest = Font.system(.caption)  // 12pt
+  static let heading = Font.system(.title2, weight: .semibold)  // 17pt
+  static let subheading = Font.system(.title3, weight: .medium)  // 15pt
+  static let bodyText = Font.system(.body)  // 13pt
+  static let labelText = Font.system(.callout)  // 12pt
+  static let small = Font.system(.subheadline)  // 11pt
+  static let smallest = Font.system(.caption)  // 10pt
 }
 
 // MARK: - Spacing

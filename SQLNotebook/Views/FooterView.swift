@@ -15,7 +15,7 @@ struct FooterView: View {
       HStack(spacing: Spacing.sm) {
         // App version
         Text("v\(appVersion)")
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.md)
           .padding(.vertical, Spacing.xs + 2)
@@ -24,7 +24,7 @@ struct FooterView: View {
         // Connection status
         connectionStatusIcon
         Text(connectionStatusText)
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundMuted)
       }
 
@@ -34,31 +34,31 @@ struct FooterView: View {
         // Last saved
         if let lastSaved {
           Text(lastSavedText(lastSaved))
-            .font(.caption)
+            .font(.small)
             .foregroundColor(.foregroundSubtle)
 
           Text("|")
-            .font(.caption)
+            .font(.small)
             .foregroundColor(.foregroundSubtle)
         }
 
         // Notebook stats
         Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
 
         Text("|")
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
 
         // File size indicator
         HStack(spacing: 4) {
           Image(systemName: fileSizeIcon)
-            .font(.caption)
+            .font(.small)
             .foregroundColor(fileSizeColor)
 
           Text(viewModel.formattedFileSize)
-            .font(.caption)
+            .font(.small)
             .foregroundColor(fileSizeColor)
         }
         .help(fileSizeTooltip)

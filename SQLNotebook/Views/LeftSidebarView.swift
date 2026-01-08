@@ -169,12 +169,12 @@ struct TableRowView: View {
         // Table name
         HStack(spacing: Spacing.xs) {
           Text(table.name)
-            .font(.system(.caption, design: .monospaced))
+            .font(.monoMedium)
             .foregroundColor(.foreground)
 
           if !table.schema.isEmpty && table.schema != "public" {
             Text("(\(table.schema))")
-              .font(.system(.caption2, design: .monospaced))
+              .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)
           }
 
@@ -250,7 +250,7 @@ struct ColumnRowView: View {
 
         // Column name
         Text(column.name)
-          .font(.system(.caption, design: .monospaced))
+          .font(.monoSmall)
           .foregroundColor(.foregroundMuted)
 
         Spacer()
@@ -258,12 +258,12 @@ struct ColumnRowView: View {
         // Type and nullable indicator
         HStack(spacing: 2) {
           Text(column.type.uppercased())
-            .font(.system(.caption2))
+            .font(.monoSmall)
             .foregroundColor(.foregroundSubtle)
 
           if column.isNullable {
             Text("?")
-              .font(.system(.caption2, weight: .bold))
+              .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)
           }
         }
