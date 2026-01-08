@@ -709,4 +709,132 @@ struct ViewModelTests {
         // Assert
         #expect(AppSettings.shared.bypassDestructiveQueryConfirmation == false)
     }
+
+    // MARK: - Read-Only Mode Tests
+
+    @Test("Read-only mode blocks UPDATE query")
+    func readOnlyModeBlocksUpdateQuery() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+        // Set connection config with read-only mode enabled
+        viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Should show toast error, not dialog
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.currentToast?.type == .error)
+    }
+
+    @Test("Read-only mode blocks DELETE query")
+    func readOnlyModeBlocksDeleteQuery() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
+
+        // Set connection config with read-only mode enabled
+        viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Should show toast error, not dialog
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.currentToast?.type == .error)
+    }
+
+    @Test("Read-only mode blocks INSERT query")
+    func readOnlyModeBlocksInsertQuery() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
+
+        // Set connection config with read-only mode enabled
+        viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Should show toast error, not dialog
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.currentToast?.type == .error)
+    }
+
+    @Test("Read-only mode allows SELECT query")
+    func readOnlyModeAllowsSelectQuery() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "SELECT * FROM users"
+
+        // Set connection config with read-only mode enabled
+        viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Should not show error toast or confirmation dialog for SELECT
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        // Note: Toast may not be set to error (it could be nil or info)
+        if let toast = viewModel.currentToast {
+            #expect(toast.type != .error)
+        }
+    }
+
+    @Test("Read-only mode disabled allows UPDATE query")
+    func readOnlyModeDisabledAllowsUpdateQuery() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+        // Set connection config with read-only mode disabled
+        viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: false)
+
+        // Disable bypass confirmation to ensure dialog is shown
+        AppSettings.shared.bypassDestructiveQueryConfirmation = false
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Should show confirmation dialog (not error)
+        #expect(viewModel.showQueryConfirmationDialog == true)
+        #expect(viewModel.pendingQueryCellId == cellId)
+
+        // Cleanup
+        viewModel.cancelPendingQuery()
+    }
+
+    @Test("ConnectionConfig readOnly property defaults to false")
+    func connectionConfigReadOnlyDefaultsToFalse() {
+        // Arrange & Act
+        let config = ConnectionConfig()
+
+        // Assert
+        #expect(config.readOnly == false)
+    }
+
+    @Test("ConnectionConfig readOnly property can be set to true")
+    func connectionConfigReadOnlyCanBeSetToTrue() {
+        // Arrange & Act
+        let config = ConnectionConfig(readOnly: true)
+
+        // Assert
+        #expect(config.readOnly == true)
+    }
 }

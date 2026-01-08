@@ -48,7 +48,7 @@ struct SettingsContent: View {
             }
 
             Text("Choose between Light, Dark, or System theme. System follows macOS appearance.")
-              .font(.caption)
+              .font(.small)
               .foregroundColor(.foregroundSubtle)
           }
         }
@@ -81,7 +81,7 @@ struct SettingsContent: View {
             .tint(.accent)
 
             Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
-              .font(.caption)
+              .font(.small)
               .foregroundColor(.foregroundSubtle)
           }
 
@@ -112,7 +112,7 @@ struct SettingsContent: View {
             .tint(.accent)
 
             Text("Maximum rows to fetch from database. Values between 10-200 rows.")
-              .font(.caption)
+              .font(.small)
               .foregroundColor(.foregroundSubtle)
           }
         }
@@ -134,7 +134,7 @@ struct SettingsContent: View {
           Text(
             "When enabled, query results are saved with the notebook. Disable to reduce file size."
           )
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
         }
       }
@@ -151,12 +151,25 @@ struct SettingsContent: View {
           .font(.bodyText)
           .foregroundColor(.foreground)
           .tint(.accent)
+          .disabled(viewModel.editingConnectionConfig.readOnly)
 
-          Text(
-            "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases."
-          )
-          .font(.caption)
-          .foregroundColor(.foregroundSubtle)
+          if viewModel.editingConnectionConfig.readOnly {
+            HStack(spacing: Spacing.xs) {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .font(.small)
+              Text(
+                "This option is disabled because connection is in read-only mode."
+              )
+            }
+            .font(.small)
+            .foregroundColor(.warning)
+          } else {
+            Text(
+              "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
         }
       }
 
@@ -201,7 +214,7 @@ struct SettingsContent: View {
                 ? "File size exceeds \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold)) limit. Consider removing old results or creating a new notebook."
                 : "File size is approaching the recommended limit (\(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))."
             )
-            .font(.caption)
+            .font(.small)
             .foregroundColor(viewModel.isFileSizeLarge ? .destructive : .warning)
           }
 
@@ -239,7 +252,7 @@ struct SettingsContent: View {
           Text(
             "Removing results will significantly reduce file size but you'll need to re-run queries."
           )
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
         }
       }
@@ -269,7 +282,7 @@ struct SettingsContent: View {
           Text(
             "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
           )
-          .font(.caption)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
         }
       }
@@ -280,7 +293,7 @@ struct SettingsContent: View {
       settingsSection(title: "Keyboard Shortcuts", icon: "command") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           Text("Custom keyboard shortcuts will be available in a future update.")
-            .font(.caption)
+            .font(.small)
             .foregroundColor(.foregroundSubtle)
 
           // Placeholder for future keyboard shortcut customization UI

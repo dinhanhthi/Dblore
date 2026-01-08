@@ -184,6 +184,15 @@ class NotebookViewModel {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     let query = notebook.cells[index].content
 
+    // Check if connection is in read-only mode
+    if let config = notebook.connectionConfig, config.readOnly {
+      // Block modification queries in read-only mode
+      if isModificationQuery(query) {
+        showToast("Cannot execute modification queries in read-only mode", type: .error)
+        return
+      }
+    }
+
     // Check if query is a modification query
     if isModificationQuery(query) {
       // Check if user wants to bypass confirmation

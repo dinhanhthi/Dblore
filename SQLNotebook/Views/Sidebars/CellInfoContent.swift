@@ -12,6 +12,7 @@ struct CellInfoContent: View {
   let columnType: String
   let value: CellValue
   let onSave: ((String) -> Void)?
+  let isReadOnly: Bool
 
   @State private var isCopied = false
   @State private var isEditing = false
@@ -76,8 +77,8 @@ struct CellInfoContent: View {
             )
             .disabled(validationError != nil)
           } else if isBooleanValue {
-            // For boolean: only show Save button if value changed
-            if hasBooleanValueChanged {
+            // For boolean: only show Save button if value changed (and not in read-only mode)
+            if hasBooleanValueChanged && !isReadOnly {
               FloatingPanelButton(
                 icon: "checkmark",
                 helpText: "Save",
@@ -94,12 +95,14 @@ struct CellInfoContent: View {
             )
           } else {
             // Edit and Copy buttons (for non-boolean types)
-            FloatingPanelButton(
-              icon: "pencil",
-              helpText: "Edit Value",
-              useSymbolEffect: false,
-              action: startEdit
-            )
+            if !isReadOnly {
+              FloatingPanelButton(
+                icon: "pencil",
+                helpText: "Edit Value",
+                useSymbolEffect: false,
+                action: startEdit
+              )
+            }
 
             FloatingPanelButton(
               icon: isCopied ? "checkmark" : "doc.on.doc",
@@ -121,6 +124,7 @@ struct CellInfoContent: View {
             .toggleStyle(.switch)
             .tint(.accent)
             .scaleEffect(0.8)
+            .disabled(isReadOnly)
             .onChange(of: editedBoolValue) { _, _ in
               // Trigger UI update when toggle changes
             }

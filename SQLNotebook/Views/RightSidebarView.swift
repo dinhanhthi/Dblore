@@ -143,7 +143,8 @@ struct RightSidebarView: View {
             rowIdentifier: rowIdentifier,
             cellId: cellId
           )
-        }
+        },
+        isReadOnly: viewModel.notebook.connectionConfig?.readOnly ?? false
       )
     case .connectionDetails:
       ConnectionInfoContent(config: viewModel.notebook.connectionConfig)

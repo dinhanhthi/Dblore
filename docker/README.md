@@ -294,6 +294,8 @@ docker compose -f docker-compose.test.yml up -d
 | Username | sqlnotebook_test |
 | Password | sqlnotebook123 |
 
+Connection string: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
+
 > ⚠️ **Note:** Port 5435 is used to avoid conflicts with:
 > - Development database (port 5433)
 > - Local PostgreSQL instances (typically port 5432)

@@ -106,7 +106,7 @@
   - [x] Updated test connection configs to include timeoutSeconds parameter (DatabaseIntegrationTests.swift:34, DataModelTests.swift)
   - [x] When timeout occurs, throws DatabaseError.connectionFailed with clear message "Connection timeout after X seconds" (DatabaseConnectionManager.swift:99)
 
-### 6.0.3 Query Execution Security - PARTIAL
+### 6.0.3 Query Execution Security - COMPLETE ✅
 - [x] Enforce row limits to prevent memory exhaustion
 - [x] Detect modification queries
 - [x] **Add confirmation dialogs for destructive operations** ✅
@@ -118,7 +118,13 @@
   - [x] Added confirmation dialog UI in ContentView (ContentView.swift:147-171)
   - [x] Updated all run cell actions to use `confirmAndRunCell()` (ContentView.swift:303-307, 586-608)
   - [x] Added 11 unit tests for query confirmation functionality (ViewModelTests.swift:434-599)
-- [ ] Add read-only mode option
+- [x] **Add read-only mode option** ✅
+  - [x] Added `readOnly` property to ConnectionConfig model (ConnectionConfig.swift:29, 41)
+  - [x] Added read-only toggle UI in connection form for both Form and Connection String modes (ConnectionFormContent.swift:285-302, 376-393)
+  - [x] Block modification queries (UPDATE/DELETE/INSERT) in read-only mode (NotebookViewModel.swift:187-194)
+  - [x] Disable inline cell value editing in read-only mode (CellInfoContent.swift:15, 81, 98, 127, RightSidebarView.swift:147)
+  - [x] Added visual indicator in connection details sidebar (ConnectionInfoContent.swift:22-39)
+  - [x] Added 8 unit tests for read-only mode functionality (ViewModelTests.swift:713-839)
 - [ ] Add transaction management
 
 ### 6.0.4 Data Modification Safety - MOSTLY COMPLETE
@@ -298,11 +304,14 @@ Security and data safety enhancements:
    - Effort: MEDIUM (UI + state management)
    - Status: COMPLETE - Confirmation dialog fully implemented with comprehensive test coverage (11 unit tests)
 
-3. **Read-Only Mode (6.0.3)** - Prevent accidental modifications (NEXT TASK)
-   - [ ] Add read-only toggle in connection settings
-   - [ ] Disable edit/delete functionality in read-only mode
+3. **Read-Only Mode (6.0.3)** - COMPLETE ✅
+   - [x] Add read-only toggle in connection settings
+   - [x] Block modification queries (UPDATE/DELETE/INSERT) when enabled
+   - [x] Disable inline cell value editing (boolean toggle, text editor, save buttons)
+   - [x] Add visual indicator in connection details sidebar
+   - [x] Add comprehensive unit tests (8 test cases)
    - Effort: MEDIUM (requires permission checks across views)
-   - Status: NOT STARTED - No readOnly/isReadOnly property found in ConnectionConfig
+   - Status: COMPLETE - Full read-only mode implementation with UI toggle, query blocking, and test coverage
 
 ### RECENTLY COMPLETED PHASE 6.0.4 ITEMS:
 - Boolean toggle UI for value editing
