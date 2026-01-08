@@ -40,6 +40,7 @@ class AppSettings {
     static let maxRowLimit = "app.settings.maxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
     static let themePreference = "app.settings.themePreference"
+    static let bypassDestructiveQueryConfirmation = "app.settings.bypassDestructiveQueryConfirmation"
   }
 
   // MARK: - Settings Properties
@@ -85,6 +86,15 @@ class AppSettings {
     }
   }
 
+  /// Bypass confirmation dialog for destructive queries (UPDATE/DELETE/INSERT)
+  /// Default: false (show confirmation)
+  var bypassDestructiveQueryConfirmation: Bool = false {
+    didSet {
+      UserDefaults.standard.set(
+        bypassDestructiveQueryConfirmation, forKey: Keys.bypassDestructiveQueryConfirmation)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -127,6 +137,12 @@ class AppSettings {
     {
       themePreference = theme
     }
+
+    // Load bypass destructive query confirmation setting
+    if UserDefaults.standard.object(forKey: Keys.bypassDestructiveQueryConfirmation) != nil {
+      bypassDestructiveQueryConfirmation = UserDefaults.standard.bool(
+        forKey: Keys.bypassDestructiveQueryConfirmation)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -138,5 +154,6 @@ class AppSettings {
     maxRowLimit = 50
     isLeftSidebarVisible = false
     themePreference = .dark
+    bypassDestructiveQueryConfirmation = false
   }
 }

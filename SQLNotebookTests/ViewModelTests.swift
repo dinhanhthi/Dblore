@@ -430,4 +430,283 @@ struct ViewModelTests {
             viewModel.deleteCell(id: cellId)
         }
     }
+
+    // MARK: - Query Confirmation Tests (Phase 6.0.3)
+
+    @Test("Detect UPDATE query as modification")
+    func detectUpdateQueryAsModification() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+
+        // Act & Assert
+        #expect(viewModel.isModificationQuery("UPDATE users SET name = 'John' WHERE id = 1"))
+        #expect(viewModel.isModificationQuery("  UPDATE users SET name = 'John'  "))
+        #expect(viewModel.isModificationQuery("update users SET name = 'John'"))
+    }
+
+    @Test("Detect DELETE query as modification")
+    func detectDeleteQueryAsModification() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+
+        // Act & Assert
+        #expect(viewModel.isModificationQuery("DELETE FROM users WHERE id = 1"))
+        #expect(viewModel.isModificationQuery("  DELETE FROM users  "))
+        #expect(viewModel.isModificationQuery("delete from users"))
+    }
+
+    @Test("Detect INSERT query as modification")
+    func detectInsertQueryAsModification() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+
+        // Act & Assert
+        #expect(viewModel.isModificationQuery("INSERT INTO users (name) VALUES ('John')"))
+        #expect(viewModel.isModificationQuery("  INSERT INTO users VALUES (1, 'John')  "))
+        #expect(viewModel.isModificationQuery("insert into users (name) values ('John')"))
+    }
+
+    @Test("SELECT query is not a modification")
+    func selectQueryIsNotModification() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+
+        // Act & Assert
+        #expect(!viewModel.isModificationQuery("SELECT * FROM users"))
+        #expect(!viewModel.isModificationQuery("  SELECT id, name FROM users WHERE id = 1  "))
+        #expect(!viewModel.isModificationQuery("select * from users"))
+    }
+
+    @Test("Other queries are not modifications")
+    func otherQueriesAreNotModifications() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+
+        // Act & Assert
+        #expect(!viewModel.isModificationQuery("CREATE TABLE users (id INT)"))
+        #expect(!viewModel.isModificationQuery("DROP TABLE users"))
+        #expect(!viewModel.isModificationQuery("ALTER TABLE users ADD COLUMN age INT"))
+        #expect(!viewModel.isModificationQuery("TRUNCATE TABLE users"))
+    }
+
+    @Test("Confirm and run shows dialog for UPDATE query")
+    func confirmAndRunShowsDialogForUpdate() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert
+        #expect(viewModel.showQueryConfirmationDialog == true)
+        #expect(viewModel.pendingQueryCellId == cellId)
+        #expect(viewModel.pendingQuery == "UPDATE users SET name = 'John'")
+    }
+
+    @Test("Confirm and run shows dialog for DELETE query")
+    func confirmAndRunShowsDialogForDelete() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert
+        #expect(viewModel.showQueryConfirmationDialog == true)
+        #expect(viewModel.pendingQueryCellId == cellId)
+        #expect(viewModel.pendingQuery == "DELETE FROM users WHERE id = 1")
+    }
+
+    @Test("Confirm and run shows dialog for INSERT query")
+    func confirmAndRunShowsDialogForInsert() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert
+        #expect(viewModel.showQueryConfirmationDialog == true)
+        #expect(viewModel.pendingQueryCellId == cellId)
+        #expect(viewModel.pendingQuery == "INSERT INTO users (name) VALUES ('John')")
+    }
+
+    @Test("Confirm and run executes directly for SELECT query")
+    func confirmAndRunExecutesDirectlyForSelect() async {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "SELECT * FROM users"
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - No dialog should be shown for SELECT
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+    }
+
+    @Test("Cancel pending query clears state")
+    func cancelPendingQueryClearsState() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "DELETE FROM users"
+        viewModel.confirmAndRunCell(id: cellId)
+        #expect(viewModel.showQueryConfirmationDialog == true)
+
+        // Act
+        viewModel.cancelPendingQuery()
+
+        // Assert
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+    }
+
+    @Test("Confirm and run with non-existent cell does nothing")
+    func confirmAndRunWithNonExistentCell() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let nonExistentId = UUID()
+
+        // Act
+        viewModel.confirmAndRunCell(id: nonExistentId)
+
+        // Assert - Nothing should happen
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+    }
+
+    // MARK: - Bypass Confirmation Setting Tests
+
+    @Test("Bypass confirmation setting defaults to false")
+    func bypassConfirmationDefaultsToFalse() {
+        // Arrange & Assert
+        #expect(AppSettings.shared.bypassDestructiveQueryConfirmation == false)
+    }
+
+    @Test("Bypass confirmation when enabled executes UPDATE directly")
+    func bypassConfirmationExecutesUpdateDirectly() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+        // Enable bypass
+        AppSettings.shared.bypassDestructiveQueryConfirmation = true
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - No dialog should be shown
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+
+        // Cleanup
+        AppSettings.shared.bypassDestructiveQueryConfirmation = false
+    }
+
+    @Test("Bypass confirmation when enabled executes DELETE directly")
+    func bypassConfirmationExecutesDeleteDirectly() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
+
+        // Enable bypass
+        AppSettings.shared.bypassDestructiveQueryConfirmation = true
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - No dialog should be shown
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+
+        // Cleanup
+        AppSettings.shared.bypassDestructiveQueryConfirmation = false
+    }
+
+    @Test("Bypass confirmation when enabled executes INSERT directly")
+    func bypassConfirmationExecutesInsertDirectly() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
+
+        // Enable bypass
+        AppSettings.shared.bypassDestructiveQueryConfirmation = true
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - No dialog should be shown
+        #expect(viewModel.showQueryConfirmationDialog == false)
+        #expect(viewModel.pendingQueryCellId == nil)
+        #expect(viewModel.pendingQuery == "")
+
+        // Cleanup
+        AppSettings.shared.bypassDestructiveQueryConfirmation = false
+    }
+
+    @Test("Bypass confirmation when disabled shows dialog for UPDATE")
+    func bypassConfirmationDisabledShowsDialogForUpdate() {
+        // Arrange
+        let notebook = createTestNotebook()
+        let viewModel = NotebookViewModel(notebook: notebook)
+        let cellId = viewModel.notebook.cells[0].id
+        viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+        // Ensure bypass is disabled
+        AppSettings.shared.bypassDestructiveQueryConfirmation = false
+
+        // Act
+        viewModel.confirmAndRunCell(id: cellId)
+
+        // Assert - Dialog should be shown
+        #expect(viewModel.showQueryConfirmationDialog == true)
+        #expect(viewModel.pendingQueryCellId == cellId)
+        #expect(viewModel.pendingQuery == "UPDATE users SET name = 'John'")
+
+        // Cleanup
+        viewModel.cancelPendingQuery()
+    }
+
+    @Test("Reset settings resets bypass confirmation to false")
+    func resetSettingsResetsBypassConfirmation() {
+        // Arrange
+        AppSettings.shared.bypassDestructiveQueryConfirmation = true
+        #expect(AppSettings.shared.bypassDestructiveQueryConfirmation == true)
+
+        // Act
+        AppSettings.shared.resetToDefaults()
+
+        // Assert
+        #expect(AppSettings.shared.bypassDestructiveQueryConfirmation == false)
+    }
 }
