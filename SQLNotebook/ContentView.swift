@@ -653,8 +653,13 @@ private struct NotificationHandlerModifier: ViewModifier {
         viewModel.selectPreviousCell()
       }
       .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-        viewModel.rightSidebarContent = .settings
-        viewModel.isRightSidebarVisible = true
+        // Toggle settings sidebar: if already showing settings, close it; otherwise show settings
+        if viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .settings {
+          viewModel.isRightSidebarVisible = false
+        } else {
+          viewModel.rightSidebarContent = .settings
+          viewModel.isRightSidebarVisible = true
+        }
       }
   }
 }
