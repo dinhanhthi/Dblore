@@ -3,6 +3,7 @@
 //  SQLNotebook
 //
 
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,17 +11,21 @@ extension UTType {
   nonisolated static var sqlNotebook: UTType {
     UTType(exportedAs: "com.sqlnotebook.document")
   }
+
+  nonisolated static var sql: UTType {
+    UTType(importedAs: "public.sql")
+  }
 }
 
-/// Document wrapper for SQL Notebook files
-struct SQLNotebookDocument: FileDocument {
-  var notebook: SQLNotebook
+/// Document wrapper for SQL Notebook files (.sqlnb)
+final class SQLNotebookDocument: ReferenceFileDocument, ObservableObject, @unchecked Sendable {
+  @Published var notebook: SQLNotebook
 
   nonisolated static var readableContentTypes: [UTType] {
     [.sqlNotebook, .json]
   }
 
-  nonisolated static var writableContentTypes: [UTType] {
+  var writableContentTypes: [UTType] {
     [.sqlNotebook]
   }
 
@@ -33,13 +38,23 @@ struct SQLNotebookDocument: FileDocument {
       throw CocoaError(.fileReadCorruptFile)
     }
 
+    // JSON format (.sqlnb)
     notebook = try DocumentCoder.decode(from: data)
+    // Ensure documentType is .notebook
+    notebook.documentType = .notebook
   }
 
-  nonisolated func fileWrapper(configuration _: WriteConfiguration) throws -> FileWrapper {
-    var notebookToSave = notebook
-    notebookToSave.metadata.modifiedAt = Date()
+  // Create snapshot for saving
+  func snapshot(contentType: UTType) throws -> SQLNotebook {
+    var notebookSnapshot = notebook
+    notebookSnapshot.metadata.modifiedAt = Date()
+    return notebookSnapshot
+  }
 
+  nonisolated func fileWrapper(snapshot: SQLNotebook, configuration: WriteConfiguration) throws -> FileWrapper {
+    let notebookToSave = snapshot
+
+    // Save as JSON .sqlnb file
     // Access AppSettings in a thread-safe way
     let includeResults = AppSettings.getIncludeResultsOnSave()
 
@@ -120,9 +135,13 @@ private enum DocumentCoder {
       }
     }
 
+    // Decode documentType (default to .notebook for backward compatibility)
+    let documentTypeRaw = json["documentType"] as? String
+    let documentType = documentTypeRaw.flatMap { DocumentType(rawValue: $0) } ?? .notebook
+
     return SQLNotebook(
       id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig,
-      settings: settings)
+      settings: settings, documentType: documentType)
   }
 
   nonisolated static func encode(
@@ -135,6 +154,7 @@ private enum DocumentCoder {
     var json: [String: Any] = [
       "version": "1.0",
       "id": notebook.id.uuidString,
+      "documentType": notebook.documentType.rawValue,
       "metadata": [
         "createdAt": dateFormatter.string(from: notebook.metadata.createdAt),
         "modifiedAt": dateFormatter.string(from: notebook.metadata.modifiedAt),

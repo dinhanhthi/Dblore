@@ -1,12 +1,13 @@
 //
-//  ContentView.swift
+//  NotebookContentView.swift
 //  SQLNotebook
 //
 
 import SwiftUI
 
-struct ContentView: View {
-  @Binding var document: SQLNotebookDocument
+/// Content view for Notebook mode (.sqlnb files)
+struct NotebookContentView: View {
+  @ObservedObject var document: SQLNotebookDocument
   @State private var viewModel: NotebookViewModel
   @State private var lastSaved: Date?
 
@@ -16,9 +17,11 @@ struct ContentView: View {
   @State private var showRunAllConfirmation = false
   @Bindable private var appSettings = AppSettings.shared
 
-  init(document: Binding<SQLNotebookDocument>) {
-    _document = document
-    let vm = NotebookViewModel(notebook: document.wrappedValue.notebook)
+  init(document: SQLNotebookDocument) {
+    self.document = document
+    let vm = NotebookViewModel(notebook: document.notebook)
+    // Force notebook mode
+    vm.viewMode = .notebook
     _viewModel = State(initialValue: vm)
   }
 
@@ -39,7 +42,7 @@ struct ContentView: View {
               .transition(.move(edge: .leading))
           }
 
-          // Main scrollable content
+          // Main scrollable content (notebook mode)
           mainContent
             .frame(maxWidth: .infinity)
 
@@ -86,7 +89,7 @@ struct ContentView: View {
     .animation(nil, value: viewModel.isSearchPanelVisible)  // Disable animation for search panel
     .windowAppearance(appSettings.themePreference.colorScheme)
     .modifier(
-      NotificationHandlerModifier(
+      NotebookNotificationHandlerModifier(
         viewModel: viewModel,
         syncDocument: syncDocument,
         showRunAllConfirmation: $showRunAllConfirmation
@@ -177,6 +180,7 @@ struct ContentView: View {
         isCellValueEditing: $isCellValueEditing
       )
     )
+    .focusedSceneValue(\.documentMode, .notebook)
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
@@ -185,12 +189,18 @@ struct ContentView: View {
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
+
       // Auto-connect to saved session if available
       viewModel.autoConnectIfNeeded()
     }
     .onDisappear {
       removeKeyEventMonitor()
       viewModel.onDocumentChanged = nil
+
+      // Disconnect from database when window closes to prevent connection leaks
+      Task {
+        await viewModel.connectionManager.disconnect()
+      }
     }
   }
 
@@ -318,16 +328,6 @@ struct ContentView: View {
   // MARK: - Main Content
 
   private var mainContent: some View {
-    Group {
-      if viewModel.viewMode == .notebook {
-        notebookModeContent
-      } else {
-        EditorModeView(viewModel: viewModel)
-      }
-    }
-  }
-
-  private var notebookModeContent: some View {
     ScrollViewReader { proxy in
       List {
         ForEach(viewModel.notebook.cells) { cell in
@@ -379,208 +379,9 @@ struct ContentView: View {
   }
 }
 
-// MARK: - Preview
-
-#Preview {
-  // Create 2 cells: SQL with content and SQL empty
-  var sqlCellWithContent = NotebookCell(
-    cellType: .sql,
-    content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
-    executionCount: 1
-  )
-
-  // Add example result table
-  sqlCellWithContent.result = CellResult(
-    columns: [
-      ColumnInfo(name: "id", type: "INTEGER"),
-      ColumnInfo(name: "name", type: "VARCHAR"),
-      ColumnInfo(name: "email", type: "VARCHAR"),
-    ],
-    rows: [
-      [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
-      [.int(2), .string("Bob Smith"), .string("bob@example.com")],
-      [.int(3), .string("Charlie Davis"), .string("charlie@example.com")],
-      [.int(4), .string("Diana Wilson"), .string("diana@example.com")],
-      [.int(5), .string("Eve Martinez"), .string("eve@example.com")],
-    ],
-    executionTime: 0.045,
-    rowCount: 5,
-    timestamp: Date()
-  )
-
-  let sqlCellEmpty = NotebookCell(
-    cellType: .sql,
-    content: ""
-  )
-
-  let notebook = SQLNotebook(
-    cells: [sqlCellWithContent, sqlCellEmpty],
-    metadata: NotebookMetadata(title: "Preview Notebook")
-  )
-
-  struct PreviewContainer: View {
-    @State var document: SQLNotebookDocument
-    @State var viewModel: NotebookViewModel
-
-    init(notebook: SQLNotebook, selectedCellId: UUID) {
-      let doc = SQLNotebookDocument(notebook: notebook)
-      self._document = State(initialValue: doc)
-
-      let vm = NotebookViewModel(notebook: notebook)
-      vm.selectedCellId = selectedCellId
-      self._viewModel = State(initialValue: vm)
-    }
-
-    var body: some View {
-      ContentViewForPreview(document: $document, viewModel: viewModel)
-    }
-  }
-
-  return PreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
-    .frame(width: 820, height: 600)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("Full Layout with Both Sidebars") {
-  // Create 2 cells: SQL with content and SQL empty
-  var sqlCellWithContent = NotebookCell(
-    cellType: .sql,
-    content: "SELECT id, name, email\nFROM users\nWHERE created_at > '2024-01-01'\nORDER BY name;",
-    executionCount: 1
-  )
-
-  // Add example result table
-  sqlCellWithContent.result = CellResult(
-    columns: [
-      ColumnInfo(name: "id", type: "INTEGER"),
-      ColumnInfo(name: "name", type: "VARCHAR"),
-      ColumnInfo(name: "email", type: "VARCHAR"),
-    ],
-    rows: [
-      [.int(1), .string("Alice Johnson"), .string("alice@example.com")],
-      [.int(2), .string("Bob Smith"), .string("bob@example.com")],
-      [.int(3), .string("Charlie Davis"), .string("charlie@example.com")],
-      [.int(4), .string("Diana Wilson"), .string("diana@example.com")],
-      [.int(5), .string("Eve Martinez"), .string("eve@example.com")],
-    ],
-    executionTime: 0.045,
-    rowCount: 5,
-    timestamp: Date()
-  )
-
-  let sqlCellEmpty = NotebookCell(
-    cellType: .sql,
-    content: ""
-  )
-
-  let notebook = SQLNotebook(
-    cells: [sqlCellWithContent, sqlCellEmpty],
-    metadata: NotebookMetadata(title: "Full Layout Preview")
-  )
-
-  struct FullLayoutPreviewContainer: View {
-    @State var document: SQLNotebookDocument
-    @State var viewModel: NotebookViewModel
-
-    init(notebook: SQLNotebook, selectedCellId: UUID) {
-      let doc = SQLNotebookDocument(notebook: notebook)
-      self._document = State(initialValue: doc)
-
-      let vm = NotebookViewModel(notebook: notebook)
-      vm.selectedCellId = selectedCellId
-      // Enable both sidebars for full layout preview
-      vm.isLeftSidebarVisible = true
-      vm.isRightSidebarVisible = true
-      self._viewModel = State(initialValue: vm)
-    }
-
-    var body: some View {
-      ContentViewForPreview(document: $document, viewModel: viewModel)
-    }
-  }
-
-  return FullLayoutPreviewContainer(notebook: notebook, selectedCellId: sqlCellWithContent.id)
-    .frame(width: 1200, height: 800)
-    .preferredColorScheme(.dark)
-}
-
-// Preview version of ContentView with injectable viewModel
-private struct ContentViewForPreview: View {
-  @Binding var document: SQLNotebookDocument
-  @State var viewModel: NotebookViewModel
-  @State private var lastSaved: Date?
-
-  var body: some View {
-    ZStack {
-      Color.appBackground
-        .ignoresSafeArea()
-
-      VStack(spacing: 0) {
-        HeaderView(viewModel: viewModel)
-
-        HStack(spacing: 0) {
-          // Left sidebar (conditionally shown)
-          if viewModel.isLeftSidebarVisible {
-            LeftSidebarView(viewModel: viewModel)
-              .transition(.move(edge: .leading))
-          }
-
-          mainContent
-            .frame(maxWidth: .infinity)
-
-          if viewModel.isRightSidebarVisible {
-            RightSidebarView(viewModel: viewModel)
-              .transition(.move(edge: .trailing))
-          }
-        }
-
-        FooterView(viewModel: viewModel, lastSaved: lastSaved)
-      }
-    }
-    .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
-    .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
-  }
-
-  private var mainContent: some View {
-    ScrollViewReader { _ in
-      ScrollView {
-        LazyVStack(spacing: Spacing.md) {
-          ForEach(viewModel.notebook.cells) { cell in
-            CellView(
-              viewModel: viewModel,
-              cell: previewBinding(for: cell.id),
-              isSelected: viewModel.selectedCellId == cell.id,
-              onRun: {
-                viewModel.confirmAndRunCell(id: cell.id)
-              }
-            )
-            .id(cell.id)
-          }
-        }
-        .padding(Spacing.lg)
-      }
-    }
-  }
-
-  private func previewBinding(for cellId: UUID) -> Binding<NotebookCell> {
-    Binding(
-      get: {
-        self.viewModel.notebook.cells.first(where: { $0.id == cellId }) ?? NotebookCell()
-      },
-      set: { newValue in
-        if let index = self.viewModel.notebook.cells.firstIndex(where: { $0.id == cellId }) {
-          self.viewModel.notebook.cells[index] = newValue
-        }
-      }
-    )
-  }
-}
-
 // MARK: - Notification Handler Modifier
 
-// Extracted to reduce type complexity in ContentView body
-
-private struct NotificationHandlerModifier: ViewModifier {
+private struct NotebookNotificationHandlerModifier: ViewModifier {
   let viewModel: NotebookViewModel
   let syncDocument: () -> Void
   @Binding var showRunAllConfirmation: Bool
@@ -599,8 +400,6 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
         if let id = viewModel.selectedCellId {
-          // For keyboard shortcuts that select next, we need to run cell first
-          // Use confirmAndRunCell for confirmation
           viewModel.confirmAndRunCell(id: id)
           viewModel.selectNextCell(createIfNeeded: true)
           syncDocument()
@@ -608,8 +407,6 @@ private struct NotificationHandlerModifier: ViewModifier {
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
         if let id = viewModel.selectedCellId {
-          // For keyboard shortcuts that insert below, we need to run cell first
-          // Use confirmAndRunCell for confirmation
           viewModel.confirmAndRunCell(id: id)
           viewModel.insertCellBelow(type: .sql)
           syncDocument()
@@ -716,9 +513,6 @@ private struct UndoRedoHandlerModifier: ViewModifier {
   }
 
   private func handleUndo() {
-    // Note: Cell value editing is handled by key event monitor
-    // If we reach here, it's either cell content editing or cell-level operations
-
     if let textView = focusedTextView, let undoManager = textView.undoManager {
       // Editor is focused - use editor's undo manager
       undoManager.undo()
@@ -730,9 +524,6 @@ private struct UndoRedoHandlerModifier: ViewModifier {
   }
 
   private func handleRedo() {
-    // Note: Cell value editing is handled by key event monitor
-    // If we reach here, it's either cell content editing or cell-level operations
-
     if let textView = focusedTextView, let undoManager = textView.undoManager {
       // Editor is focused - use editor's undo manager
       undoManager.redo()

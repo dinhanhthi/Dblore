@@ -15,97 +15,94 @@ struct HeaderView: View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
       HStack(spacing: Spacing.xs) {
-        // Left sidebar toggle
+        // Left sidebar toggle (common to both modes)
         Button(action: { viewModel.toggleLeftSidebar() }) {
           Image(systemName: "sidebar.left")
         }
         .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
 
-        Divider()
-          .frame(height: 20)
+        // Notebook-specific buttons
+        if viewModel.viewMode == .notebook {
+          Divider()
+            .frame(height: 20)
 
-        Button(action: {
-          if viewModel.isFileSizeLarge {
-            viewModel.showToast(
-              "File size limit exceeded. Please create a new notebook or remove old results to continue adding cells.",
-              type: .error
-            )
-          } else {
-            viewModel.addCell(type: .sql)
+          Button(action: {
+            if viewModel.isFileSizeLarge {
+              viewModel.showToast(
+                "File size limit exceeded. Please create a new notebook or remove old results to continue adding cells.",
+                type: .error
+              )
+            } else {
+              viewModel.addCell(type: .sql)
+            }
+          }) {
+            Label("New", systemImage: "plus")
           }
-        }) {
-          Label("New", systemImage: "plus")
-        }
-        .buttonStyle(ToolbarButtonStyle())
-        .disabled(viewModel.isFileSizeLarge)
-        .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
+          .buttonStyle(ToolbarButtonStyle())
+          .disabled(viewModel.isFileSizeLarge)
+          .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
 
-        Button(action: {
-          showRunAllConfirmation = true
-        }) {
-          Label("Run All", systemImage: "play.fill")
-        }
-        .buttonStyle(ToolbarButtonStyle())
-        .disabled(!viewModel.connectionState.isConnected)
-        .confirmationDialog(
-          "Run all cells?",
-          isPresented: $showRunAllConfirmation,
-          titleVisibility: .visible
-        ) {
-          Button("Run All Cells", role: .none) {
-            Task { @MainActor [viewModel] in await viewModel.runAllCells() }
+          Button(action: {
+            showRunAllConfirmation = true
+          }) {
+            Label("Run All", systemImage: "play.fill")
           }
-          Button("Cancel", role: .cancel) {}
-        } message: {
-          Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
-        }
-
-        Button(action: {
-          showClearAllOutputsConfirmation = true
-        }) {
-          Label("Clear All Outputs", systemImage: "trash")
-        }
-        .buttonStyle(ToolbarButtonStyle())
-        .confirmationDialog(
-          "Clear all outputs?",
-          isPresented: $showClearAllOutputsConfirmation,
-          titleVisibility: .visible
-        ) {
-          Button("Clear All Outputs", role: .destructive) {
-            viewModel.clearAllOutputs()
-          }
-          Button("Cancel", role: .cancel) {}
-        } message: {
-          Text("This will remove all query results from all cells. This action can be undone.")
-        }
-
-        Divider()
-          .frame(height: 20)
-
-        Menu {
-          Button(action: { viewModel.hideAllResults() }) {
-            Label("Hide All Results", systemImage: "eye.slash")
+          .buttonStyle(ToolbarButtonStyle())
+          .disabled(!viewModel.connectionState.isConnected)
+          .confirmationDialog(
+            "Run all cells?",
+            isPresented: $showRunAllConfirmation,
+            titleVisibility: .visible
+          ) {
+            Button("Run All Cells", role: .none) {
+              Task { @MainActor [viewModel] in await viewModel.runAllCells() }
+            }
+            Button("Cancel", role: .cancel) {}
+          } message: {
+            Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
           }
 
-          Button(action: { viewModel.showAllResults() }) {
-            Label("Show All Results", systemImage: "eye")
+          Button(action: {
+            showClearAllOutputsConfirmation = true
+          }) {
+            Label("Clear All Outputs", systemImage: "trash")
           }
-        } label: {
-          Label("Results", systemImage: "eye")
+          .buttonStyle(ToolbarButtonStyle())
+          .confirmationDialog(
+            "Clear all outputs?",
+            isPresented: $showClearAllOutputsConfirmation,
+            titleVisibility: .visible
+          ) {
+            Button("Clear All Outputs", role: .destructive) {
+              viewModel.clearAllOutputs()
+            }
+            Button("Cancel", role: .cancel) {}
+          } message: {
+            Text("This will remove all query results from all cells. This action can be undone.")
+          }
+
+          Divider()
+            .frame(height: 20)
+
+          Menu {
+            Button(action: { viewModel.hideAllResults() }) {
+              Label("Hide All Results", systemImage: "eye.slash")
+            }
+
+            Button(action: { viewModel.showAllResults() }) {
+              Label("Show All Results", systemImage: "eye")
+            }
+          } label: {
+            Label("Results", systemImage: "eye")
+          }
+          .buttonStyle(ToolbarButtonStyle())
         }
-        .buttonStyle(ToolbarButtonStyle())
       }
 
       Spacer()
 
-      // Trailing group - View mode toggle, Settings and Connection
+      // Trailing group - Settings and Connection (common to both modes)
       HStack(spacing: Spacing.xs) {
-        // View mode toggle
-        viewModeToggle()
-
-        Divider()
-          .frame(height: 20)
-
         // Settings button
         Button(action: {
           // Toggle sidebar if already showing settings
@@ -164,69 +161,6 @@ struct HeaderView: View {
     }
   }
 
-  @ViewBuilder
-  private func viewModeToggle() -> some View {
-    let selectedIndex = ViewMode.allCases.firstIndex(of: viewModel.viewMode) ?? 0
-
-    ZStack {
-      // Background
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(Color.inputBackground)
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-
-      // Content with padding
-      GeometryReader { geometry in
-        let inset: CGFloat = 3
-        let availableWidth = geometry.size.width - (inset * 2)
-        let tabWidth = availableWidth / CGFloat(ViewMode.allCases.count)
-
-        ZStack(alignment: .leading) {
-          // Sliding indicator
-          RoundedRectangle(cornerRadius: CornerRadius.md - 2)
-            .fill(Color.accent)
-            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
-            .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: viewModel.viewMode)
-
-          // Tab buttons
-          HStack(spacing: 0) {
-            ForEach(ViewMode.allCases, id: \.self) { mode in
-              Button(action: {
-                withAnimation {
-                  if viewModel.viewMode != mode {
-                    viewModel.toggleViewMode()
-                  }
-                }
-              }) {
-                HStack(spacing: Spacing.xxs) {
-                  Image(systemName: mode.icon)
-                    .font(.system(size: 11))
-                  Text(mode.displayName)
-                    .font(.system(size: 12))
-                }
-                .fontWeight(viewModel.viewMode == mode ? .semibold : .regular)
-                .foregroundColor(viewModel.viewMode == mode ? .white : .foreground)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-              }
-              .buttonStyle(PlainButtonStyle())
-              .onHover { hovering in
-                if hovering {
-                  NSCursor.pointingHand.push()
-                } else {
-                  NSCursor.pop()
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    .frame(width: 180, height: 25)
-  }
 }
 
 struct ConnectionButton: View {

@@ -254,3 +254,16 @@ struct RightSidebarView: View {
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }
+
+#Preview("Settings") {
+  let viewModel = NotebookViewModel()
+  viewModel.rightSidebarContent = .settings
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 800)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}

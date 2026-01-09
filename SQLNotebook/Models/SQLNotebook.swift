@@ -5,6 +5,12 @@
 
 import Foundation
 
+/// Document type for SQL files
+enum DocumentType: String, Codable, Sendable {
+  case notebook  // .sqlnb - JSON format with multiple cells
+  case script    // .sql - Plain text format for editor mode
+}
+
 /// Core document model representing a SQL notebook
 struct SQLNotebook: Codable, Identifiable, Sendable {
   let id: UUID
@@ -12,19 +18,22 @@ struct SQLNotebook: Codable, Identifiable, Sendable {
   var metadata: NotebookMetadata
   var connectionConfig: ConnectionConfig?
   var settings: NotebookSettings
+  var documentType: DocumentType  // Track document type for save format
 
   nonisolated init(
     id: UUID = UUID(),
     cells: [NotebookCell] = [],
     metadata: NotebookMetadata = NotebookMetadata(),
     connectionConfig: ConnectionConfig? = nil,
-    settings: NotebookSettings = NotebookSettings()
+    settings: NotebookSettings = NotebookSettings(),
+    documentType: DocumentType = .notebook
   ) {
     self.id = id
     self.cells = cells
     self.metadata = metadata
     self.connectionConfig = connectionConfig
     self.settings = settings
+    self.documentType = documentType
   }
 
   /// Creates a new notebook with a default empty SQL cell

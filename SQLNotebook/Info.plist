@@ -24,6 +24,26 @@
 			<key>NSDocumentClass</key>
 			<string>SQLNotebookDocument</string>
 		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sql</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string></string>
+			<key>CFBundleTypeName</key>
+			<string>SQL File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.sql</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>SQLEditorDocument</string>
+		</dict>
 	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
@@ -34,7 +54,7 @@
 				<string>public.content</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>SQL Notebook Document</string>
+			<string>SQL Notebook</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.sqlnotebook.document</string>
 			<key>UTTypeTagSpecification</key>
@@ -42,6 +62,27 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>sqlnb</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>public.text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQL Script</string>
+			<key>UTTypeIdentifier</key>
+			<string>public.sql</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sql</string>
 				</array>
 			</dict>
 		</dict>

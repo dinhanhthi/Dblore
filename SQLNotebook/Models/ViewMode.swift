@@ -5,12 +5,12 @@
 
 import Foundation
 
-/// View mode for the application
-enum ViewMode: String, Codable, CaseIterable, Sendable {
-  /// Notebook mode: Multiple cells with inline results
+/// Application mode - defines the entire UI and behavior
+enum AppMode: String, Codable, CaseIterable, Sendable {
+  /// Notebook mode: Multiple cells with inline results (.sqlnb files)
   case notebook
 
-  /// Editor mode: Single SQL editor with result panel below
+  /// Editor mode: Single SQL editor with result panel below (.sql files)
   case editor
 
   var displayName: String {
@@ -30,4 +30,25 @@ enum ViewMode: String, Codable, CaseIterable, Sendable {
       return "rectangle.split.2x1"
     }
   }
+
+  var fileExtension: String {
+    switch self {
+    case .notebook:
+      return "sqlnb"
+    case .editor:
+      return "sql"
+    }
+  }
+
+  var description: String {
+    switch self {
+    case .notebook:
+      return "Cells with inline results"
+    case .editor:
+      return "Single editor with result panel"
+    }
+  }
 }
+
+// Keep ViewMode as a typealias for backward compatibility during refactor
+typealias ViewMode = AppMode
