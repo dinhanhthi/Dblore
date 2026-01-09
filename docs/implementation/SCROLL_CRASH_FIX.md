@@ -392,3 +392,96 @@ ScrollView(scrollAxes) {
 ✅ Fast scrolling transitions between inner/outer scroll - stable
 ✅ Memory usage remains acceptable with 500-row limit
 ✅ No performance degradation during normal use
+
+---
+
+## Update: Scrollbar Visibility Issue (2026-01-08)
+
+### Known Issue: Intermittent Scrollbar Disappearance
+
+**Status**: ⚠️ KNOWN LIMITATION - Accepted as minor cosmetic bug
+
+### Symptoms
+- Vertical scrollbar sometimes hidden on List in notebook mode
+- Scrollbar reappears when toggling left/right sidebar
+- No functional impact - scrolling still works perfectly
+- Purely visual/cosmetic issue
+
+### Root Cause
+SwiftUI List scrollbar rendering bug when sidebar state changes trigger layout recalculation. The scrollbar indicator is not consistently refreshed when the List's parent view geometry changes.
+
+### Attempted Fixes
+
+#### Attempt 1: Force List Recreation with `.id()` ❌
+```swift
+List { ... }
+  .id("\(viewModel.isLeftSidebarVisible)-\(viewModel.isRightSidebarVisible)")
+```
+
+**Result**:
+- ❌ **CAUSES CRASH** - Reintroduces the LazyVStack memory issues
+- ❌ Forces complete List rebuild (200-500ms lag with 100 cells)
+- ❌ All NSTextView instances recreated
+- ❌ Violates the core fix documented in this report
+
+**Why it fails**: The `.id()` modifier forces SwiftUI to treat List as completely new view, triggering the same view lifecycle issues that caused the original crash.
+
+#### Attempt 2: Lightweight Overlay Trigger ❌
+```swift
+List { ... }
+  .overlay(
+    Color.clear
+      .frame(width: 0, height: 0)
+      .id("\(viewModel.isLeftSidebarVisible)-\(viewModel.isRightSidebarVisible)")
+  )
+```
+
+**Result**:
+- ❌ **DOES NOT FIX** - Scrollbar still intermittently hidden
+- ✅ No performance impact
+- ✅ No crashes
+
+**Why it fails**: Recreating an overlay does not trigger List's internal scrollbar rendering refresh. The scrollbar visibility is controlled by deeper AppKit/UIKit layers that SwiftUI doesn't properly notify.
+
+### Decision: Accept as Minor Bug
+
+After attempting multiple fixes, we've decided to **accept this as a known limitation** for the following reasons:
+
+1. **Crash Prevention is Priority #1**
+   - Any fix that risks reintroducing crashes is unacceptable
+   - Stable scrolling > perfect scrollbar visibility
+
+2. **Minimal User Impact**
+   - Scrollbar reappears when user toggles sidebar
+   - Scrolling functionality is completely unaffected
+   - Users can still see scroll position via content movement
+   - Most users scroll with trackpad gestures (scrollbar rarely needed)
+
+3. **SwiftUI Framework Limitation**
+   - This appears to be a SwiftUI List rendering bug
+   - No safe workaround exists that doesn't risk stability
+   - Apple may fix this in future macOS updates
+
+4. **Performance Trade-off**
+   - All attempted fixes either crash or have zero effect
+   - No middle ground exists for this specific issue
+
+### Workaround for Users
+If scrollbar disappears:
+1. Toggle left sidebar (Cmd+Shift+L) or right sidebar (Cmd+Shift+R)
+2. Scrollbar will reappear immediately
+3. No data loss or functionality impact
+
+### Future Monitoring
+- Monitor for SwiftUI updates that may fix scrollbar rendering
+- Re-evaluate if Apple releases scrollbar-specific APIs
+- Consider filing feedback with Apple (FB number: TBD)
+
+### Related Research
+- [SwiftUI List scrollbar visibility](https://developer.apple.com/forums/thread/128568)
+- [Scrollbar indicators in nested scroll views](https://www.hackingwithswift.com/forums/swiftui/fixing-an-annoying-bug/11715)
+
+### Code Location
+- **File**: `/Users/thi/git/SQLNotebook/SQLNotebook/ContentView.swift`
+- **Function**: `notebookModeContent` (lines 330-368)
+- **Current implementation**: List with plain style, no scrollbar fixes applied
