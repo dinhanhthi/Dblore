@@ -15,12 +15,29 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    DocumentGroup(newDocument: SQLNotebookDocument()) { file in
-      ContentView(document: file.$document)
+    // Scene 1: Notebook documents (.sqlnb)
+    DocumentGroup(newDocument: { SQLNotebookDocument() }) { file in
+      NotebookContentView(document: file.document)
         .frame(minWidth: 800, minHeight: 600)
     }
     .commands {
+      // Shared commands (About, Settings) - chỉ add ở scene đầu tiên
+      SharedCommands()
+      // New Document commands (File > New...) - chỉ add ở scene đầu tiên
+      NewDocumentCommands()
+      // Notebook-specific commands (Cell menu, sidebars, search)
       NotebookCommands()
+    }
+    .defaultSize(width: 1200, height: 800)
+
+    // Scene 2: SQL Editor documents (.sql)
+    DocumentGroup(newDocument: { SQLEditorDocument() }) { file in
+      EditorContentView(document: file.document)
+        .frame(minWidth: 800, minHeight: 600)
+    }
+    .commands {
+      // Editor-specific commands (chỉ có sidebar toggle)
+      EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
   }
@@ -35,11 +52,27 @@ struct SQLNotebookApp: App {
   }
 }
 
-// MARK: - Menu Commands
+// MARK: - FocusedValues Extension
 
-struct NotebookCommands: Commands {
-  @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
+enum DocumentMode {
+  case notebook
+  case editor
+}
 
+struct DocumentModeFocusedValueKey: FocusedValueKey {
+  typealias Value = DocumentMode
+}
+
+extension FocusedValues {
+  var documentMode: DocumentMode? {
+    get { self[DocumentModeFocusedValueKey.self] }
+    set { self[DocumentModeFocusedValueKey.self] = newValue }
+  }
+}
+
+// MARK: - Shared Commands (cho cả Notebook và Editor)
+
+struct SharedCommands: Commands {
   var body: some Commands {
     // About command
     CommandGroup(replacing: .appInfo) {
@@ -54,97 +87,6 @@ struct NotebookCommands: Commands {
       }
       .keyboardShortcut(",", modifiers: .command)
     }
-
-    // Cell commands
-    CommandMenu("Cell") {
-      Button("Add New") {
-        NotificationCenter.default.post(name: .addCodeCell, object: nil)
-      }
-      .keyboardShortcut("n", modifiers: .command)
-
-      Divider()
-      Button("Run Cell") {
-        NotificationCenter.default.post(name: .runCell, object: nil)
-      }
-      .keyboardShortcut(.return, modifiers: .control)
-
-      Button("Run Cell and Select Next") {
-        NotificationCenter.default.post(name: .runCellAndSelectNext, object: nil)
-      }
-      .keyboardShortcut(.return, modifiers: .shift)
-
-      Button("Run Cell and Insert Below") {
-        NotificationCenter.default.post(name: .runCellAndInsertBelow, object: nil)
-      }
-      .keyboardShortcut(.return, modifiers: .option)
-
-      Button("Run All Cells") {
-        NotificationCenter.default.post(name: .runAllCells, object: nil)
-      }
-      .keyboardShortcut(.return, modifiers: [.command, .shift])
-
-      Divider()
-
-      Button("Clear Cell Output") {
-        NotificationCenter.default.post(name: .clearCellOutput, object: nil)
-      }
-
-      Button("Clear All Outputs") {
-        NotificationCenter.default.post(name: .clearAllOutputs, object: nil)
-      }
-
-      Divider()
-
-      Button("Delete Cell") {
-        NotificationCenter.default.post(name: .deleteCell, object: nil)
-      }
-      .keyboardShortcut(.delete, modifiers: .command)
-
-      Button("Duplicate Cell") {
-        NotificationCenter.default.post(name: .duplicateCell, object: nil)
-      }
-      .keyboardShortcut("d", modifiers: .command)
-    }
-
-    // View commands
-    CommandGroup(after: .sidebar) {
-      Button {
-        NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
-      } label: {
-        Label("Toggle Left Sidebar", systemImage: "sidebar.left")
-      }
-      .keyboardShortcut("b", modifiers: .command)
-
-      Button {
-        NotificationCenter.default.post(name: .toggleSidebar, object: nil)
-      } label: {
-        Label("Toggle Right Sidebar", systemImage: "sidebar.right")
-      }
-      .keyboardShortcut("r", modifiers: [.command, .shift])
-    }
-
-    // Edit commands
-    CommandMenu("Edit") {
-      Button("Find in Notebook") {
-        NotificationCenter.default.post(name: .openSearch, object: nil)
-      }
-      .keyboardShortcut("f", modifiers: .command)
-
-      Divider()
-
-      Button("Find Next") {
-        NotificationCenter.default.post(name: .findNext, object: nil)
-      }
-      .keyboardShortcut("g", modifiers: .command)
-
-      Button("Find Previous") {
-        NotificationCenter.default.post(name: .findPrevious, object: nil)
-      }
-      .keyboardShortcut("g", modifiers: [.command, .shift])
-    }
-
-    // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
-    // Custom undo/redo handling is done via key event monitoring in ContentView
   }
 
   private func showAboutWindow() {
@@ -157,6 +99,179 @@ struct NotebookCommands: Commands {
     window.isReleasedWhenClosed = false
     window.center()
     window.makeKeyAndOrderFront(nil)
+  }
+}
+
+// MARK: - Notebook Commands (chỉ cho Notebook mode)
+
+struct NotebookCommands: Commands {
+  @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
+  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
+
+  var body: some Commands {
+    // Chỉ show Cell menu khi documentMode == .notebook
+    if documentMode == .notebook {
+      // Cell commands
+      CommandMenu("Cell") {
+        Button("Add New") {
+          NotificationCenter.default.post(name: .addCodeCell, object: nil)
+        }
+        .keyboardShortcut("n", modifiers: .command)
+
+        Divider()
+        Button("Run Cell") {
+          NotificationCenter.default.post(name: .runCell, object: nil)
+        }
+        .keyboardShortcut(.return, modifiers: .control)
+
+        Button("Run Cell and Select Next") {
+          NotificationCenter.default.post(name: .runCellAndSelectNext, object: nil)
+        }
+        .keyboardShortcut(.return, modifiers: .shift)
+
+        Button("Run Cell and Insert Below") {
+          NotificationCenter.default.post(name: .runCellAndInsertBelow, object: nil)
+        }
+        .keyboardShortcut(.return, modifiers: .option)
+
+        Button("Run All Cells") {
+          NotificationCenter.default.post(name: .runAllCells, object: nil)
+        }
+        .keyboardShortcut(.return, modifiers: [.command, .shift])
+
+        Divider()
+
+        Button("Clear Cell Output") {
+          NotificationCenter.default.post(name: .clearCellOutput, object: nil)
+        }
+
+        Button("Clear All Outputs") {
+          NotificationCenter.default.post(name: .clearAllOutputs, object: nil)
+        }
+
+        Divider()
+
+        Button("Delete Cell") {
+          NotificationCenter.default.post(name: .deleteCell, object: nil)
+        }
+        .keyboardShortcut(.delete, modifiers: .command)
+
+        Button("Duplicate Cell") {
+          NotificationCenter.default.post(name: .duplicateCell, object: nil)
+        }
+        .keyboardShortcut("d", modifiers: .command)
+      }
+
+      // View commands (notebook-specific)
+      CommandGroup(after: .sidebar) {
+        Button {
+          NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+        } label: {
+          Label("Toggle Left Sidebar", systemImage: "sidebar.left")
+        }
+        .keyboardShortcut("b", modifiers: .command)
+
+        Button {
+          NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+        } label: {
+          Label("Toggle Right Sidebar", systemImage: "sidebar.right")
+        }
+        .keyboardShortcut("r", modifiers: [.command, .shift])
+      }
+
+      // Edit commands (notebook-specific)
+      CommandMenu("Edit") {
+        Button("Find in Notebook") {
+          NotificationCenter.default.post(name: .openSearch, object: nil)
+        }
+        .keyboardShortcut("f", modifiers: .command)
+
+        Divider()
+
+        Button("Find Next") {
+          NotificationCenter.default.post(name: .findNext, object: nil)
+        }
+        .keyboardShortcut("g", modifiers: .command)
+
+        Button("Find Previous") {
+          NotificationCenter.default.post(name: .findPrevious, object: nil)
+        }
+        .keyboardShortcut("g", modifiers: [.command, .shift])
+      }
+    }
+
+    // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
+    // Custom undo/redo handling is done via key event monitoring in ContentView
+  }
+}
+
+// MARK: - Editor Commands (chỉ cho Editor mode)
+
+struct EditorCommands: Commands {
+  var body: some Commands {
+    // Editor mode không cần custom commands
+    // - Không có Cell menu (chỉ dành cho Notebook)
+    // - Không có sidebar toggles (Editor sử dụng native sidebar)
+    // - Không có custom Find (sử dụng native Cmd+F)
+
+    // All commands are handled by SharedCommands and native macOS menus
+    EmptyCommands()
+  }
+}
+
+// Helper struct for empty commands
+private struct EmptyCommands: Commands {
+  var body: some Commands {
+    // Intentionally empty - EditorCommands chỉ cần SharedCommands
+  }
+}
+
+// MARK: - New Document Commands
+
+struct NewDocumentCommands: Commands {
+  var body: some Commands {
+    CommandGroup(after: .newItem) {
+      Divider()
+
+      Button("New Notebook") {
+        // Default Cmd+N already creates notebook, but provide explicit command
+        NSDocumentController.shared.newDocument(nil)
+      }
+      .keyboardShortcut("n", modifiers: [.command, .shift])
+
+      Button("New SQL File") {
+        createNewSQLFile()
+      }
+      .keyboardShortcut("e", modifiers: [.command, .shift])
+    }
+  }
+
+  private func createNewSQLFile() {
+    // Create a new SQLEditorDocument and show save panel
+    let savePanel = NSSavePanel()
+    savePanel.allowedContentTypes = [.sql]
+    savePanel.nameFieldStringValue = "Untitled.sql"
+    savePanel.message = "Create a new SQL file"
+
+    savePanel.begin { response in
+      guard response == .OK, let url = savePanel.url else { return }
+
+      Task { @MainActor in
+        do {
+          // Create empty SQL file
+          try "".write(to: url, atomically: true, encoding: .utf8)
+
+          // Open the file
+          NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+            if let error = error {
+              print("Failed to open SQL file: \(error)")
+            }
+          }
+        } catch {
+          print("Failed to create SQL file: \(error)")
+        }
+      }
+    }
   }
 }
 

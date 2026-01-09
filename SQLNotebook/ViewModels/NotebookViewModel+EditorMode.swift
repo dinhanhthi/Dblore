@@ -84,24 +84,4 @@ extension NotebookViewModel {
     }
   }
 
-  /// Toggle view mode
-  func toggleViewMode() {
-    viewMode = viewMode == .notebook ? .editor : .notebook
-
-    // If switching to editor mode and there's content in cells, suggest copying
-    if viewMode == .editor && !notebook.cells.isEmpty && editorContent.isEmpty {
-      // Get first non-empty cell content
-      if let firstCell = notebook.cells.first(where: { !$0.content.isEmpty }) {
-        editorContent = firstCell.content
-      }
-    }
-
-    // If switching to notebook mode and editor has content, suggest creating cell
-    if viewMode == .notebook && !editorContent.isEmpty && notebook.cells.isEmpty {
-      // Create a new cell with editor content
-      let newCell = NotebookCell(content: editorContent)
-      notebook.cells.append(newCell)
-      selectedCellId = newCell.id
-    }
-  }
 }

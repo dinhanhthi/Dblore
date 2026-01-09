@@ -14,6 +14,9 @@ struct SettingsContent: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      // Mode Selection - Moved to File menu (File > Switch to Notebook/Editor)
+      // Use keyboard shortcuts: Cmd+Shift+1 (Notebook) / Cmd+Shift+2 (Editor)
+
       // Appearance Settings
       settingsSection(title: "Appearance", icon: "paintbrush.fill") {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -56,90 +59,94 @@ struct SettingsContent: View {
 
       Divider()
 
-      // Result Table Settings
-      settingsSection(title: "Result Table", icon: "tablecells.fill") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          // Max Height
-          VStack(alignment: .leading, spacing: Spacing.xs) {
-            HStack {
-              Text("Max Height")
-                .font(.subheading)
-                .foregroundColor(.foreground)
+      // Result Table Settings (Notebook Mode Only)
+      if viewModel.viewMode == .notebook {
+        settingsSection(title: "Result Table", icon: "tablecells.fill") {
+          VStack(alignment: .leading, spacing: Spacing.md) {
+            // Max Height
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+              HStack {
+                Text("Max Height")
+                  .font(.subheading)
+                  .foregroundColor(.foreground)
 
-              Spacer()
+                Spacer()
 
-              Text("\(Int(appSettings.maxResultHeight)) pt")
-                .font(.monoSmall)
-                .foregroundColor(.foregroundMuted)
+                Text("\(Int(appSettings.maxResultHeight)) pt")
+                  .font(.monoSmall)
+                  .foregroundColor(.foregroundMuted)
+              }
+
+              Slider(
+                value: $appSettings.maxResultHeight,
+                in: 200...1000,
+                step: 50
+              )
+              .tint(.accent)
+
+              Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
+                .font(.small)
+                .foregroundColor(.foregroundSubtle)
             }
 
-            Slider(
-              value: $appSettings.maxResultHeight,
-              in: 200...1000,
-              step: 50
-            )
-            .tint(.accent)
+            // Max Row Limit
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+              HStack {
+                Text("Max Rows")
+                  .font(.subheading)
+                  .foregroundColor(.foreground)
 
-            Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
+                Spacer()
 
-          // Max Row Limit
-          VStack(alignment: .leading, spacing: Spacing.xs) {
-            HStack {
-              Text("Max Rows")
-                .font(.subheading)
-                .foregroundColor(.foreground)
+                Text("\(appSettings.maxRowLimit) rows")
+                  .font(.monoSmall)
+                  .foregroundColor(.foregroundMuted)
+              }
 
-              Spacer()
+              Slider(
+                value: Binding(
+                  get: { Double(appSettings.maxRowLimit) },
+                  set: { newValue in
+                    appSettings.maxRowLimit = Int(newValue)
+                  }
+                ),
+                in: 10...200,
+                step: 10
+              )
+              .tint(.accent)
 
-              Text("\(appSettings.maxRowLimit) rows")
-                .font(.monoSmall)
-                .foregroundColor(.foregroundMuted)
+              Text("Maximum rows to fetch from database. Values between 10-200 rows.")
+                .font(.small)
+                .foregroundColor(.foregroundSubtle)
             }
-
-            Slider(
-              value: Binding(
-                get: { Double(appSettings.maxRowLimit) },
-                set: { newValue in
-                  appSettings.maxRowLimit = Int(newValue)
-                }
-              ),
-              in: 10...200,
-              step: 10
-            )
-            .tint(.accent)
-
-            Text("Maximum rows to fetch from database. Values between 10-200 rows.")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
           }
         }
+
+        Divider()
       }
 
-      Divider()
+      // Save Settings (Notebook Mode Only)
+      if viewModel.viewMode == .notebook {
+        settingsSection(title: "Save Options", icon: "square.and.arrow.down.fill") {
+          VStack(alignment: .leading, spacing: Spacing.md) {
+            Toggle(
+              "Include Results When Saving",
+              isOn: $appSettings.includeResultsOnSave
+            )
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+            .tint(.accent)
 
-      // Save Settings
-      settingsSection(title: "Save Options", icon: "square.and.arrow.down.fill") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Toggle(
-            "Include Results When Saving",
-            isOn: $appSettings.includeResultsOnSave
-          )
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-          .tint(.accent)
-
-          Text(
-            "When enabled, query results are saved with the notebook. Disable to reduce file size."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
+            Text(
+              "When enabled, query results are saved with the notebook. Disable to reduce file size."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
         }
-      }
 
-      Divider()
+        Divider()
+      }
 
       // Security Settings
       settingsSection(title: "Security", icon: "lock.shield.fill") {
@@ -175,89 +182,91 @@ struct SettingsContent: View {
 
       Divider()
 
-      // File Optimization Settings
-      settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          // Current file size display
-          HStack {
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-              Text("Current File Size")
-                .font(.subheading)
-                .foregroundColor(.foreground)
+      // File Optimization Settings (Notebook Mode Only)
+      if viewModel.viewMode == .notebook {
+        settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent") {
+          VStack(alignment: .leading, spacing: Spacing.md) {
+            // Current file size display
+            HStack {
+              VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text("Current File Size")
+                  .font(.subheading)
+                  .foregroundColor(.foreground)
 
-              Text(viewModel.formattedFileSize)
-                .font(.mono)
-                .foregroundColor(
-                  viewModel.isFileSizeLarge
-                    ? .destructive
-                    : (viewModel.isFileSizeWarning ? .warning : .accent)
-                )
+                Text(viewModel.formattedFileSize)
+                  .font(.mono)
+                  .foregroundColor(
+                    viewModel.isFileSizeLarge
+                      ? .destructive
+                      : (viewModel.isFileSizeWarning ? .warning : .accent)
+                  )
+              }
+
+              Spacer()
+
+              if viewModel.isFileSizeLarge {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .foregroundColor(.destructive)
+              } else if viewModel.isFileSizeWarning {
+                Image(systemName: "exclamationmark.circle.fill")
+                  .foregroundColor(.warning)
+              }
+            }
+            .padding(Spacing.md)
+            .background(Color.inputBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+
+            if viewModel.isFileSizeLarge || viewModel.isFileSizeWarning {
+              Text(
+                viewModel.isFileSizeLarge
+                  ? "File size exceeds \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold)) limit. Consider removing old results or creating a new notebook."
+                  : "File size is approaching the recommended limit (\(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))."
+              )
+              .font(.small)
+              .foregroundColor(viewModel.isFileSizeLarge ? .destructive : .warning)
             }
 
-            Spacer()
-
-            if viewModel.isFileSizeLarge {
-              Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.destructive)
-            } else if viewModel.isFileSizeWarning {
-              Image(systemName: "exclamationmark.circle.fill")
-                .foregroundColor(.warning)
+            // Manual cleanup button
+            Button(action: {
+              showRemoveResultsConfirmation = true
+            }) {
+              HStack {
+                Image(systemName: "trash")
+                Text("Remove All Results Now")
+              }
+              .font(.bodyText)
+              .foregroundColor(.destructive)
+              .frame(maxWidth: .infinity)
+              .padding(.vertical, Spacing.sm)
+              .background(Color.destructive.opacity(0.3))
+              .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
             }
-          }
-          .padding(Spacing.md)
-          .background(Color.inputBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+            .buttonStyle(.plain)
+            .confirmationDialog(
+              "Remove All Results?",
+              isPresented: $showRemoveResultsConfirmation,
+              titleVisibility: .visible
+            ) {
+              Button("Remove All Results", role: .destructive) {
+                viewModel.clearAllOutputs()
+              }
+              Button("Cancel", role: .cancel) {}
+            } message: {
+              Text(
+                "This will permanently remove all query results from the notebook. You'll need to re-run queries to see results again. This action cannot be undone."
+              )
+            }
 
-          if viewModel.isFileSizeLarge || viewModel.isFileSizeWarning {
             Text(
-              viewModel.isFileSizeLarge
-                ? "File size exceeds \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold)) limit. Consider removing old results or creating a new notebook."
-                : "File size is approaching the recommended limit (\(FileOptimizationService.formatFileSize(FileOptimizationService.warningSizeThreshold)))."
+              "Removing results will significantly reduce file size but you'll need to re-run queries."
             )
             .font(.small)
-            .foregroundColor(viewModel.isFileSizeLarge ? .destructive : .warning)
+            .foregroundColor(.foregroundSubtle)
           }
-
-          // Manual cleanup button
-          Button(action: {
-            showRemoveResultsConfirmation = true
-          }) {
-            HStack {
-              Image(systemName: "trash")
-              Text("Remove All Results Now")
-            }
-            .font(.bodyText)
-            .foregroundColor(.destructive)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Spacing.sm)
-            .background(Color.destructive.opacity(0.3))
-            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-          }
-          .buttonStyle(.plain)
-          .confirmationDialog(
-            "Remove All Results?",
-            isPresented: $showRemoveResultsConfirmation,
-            titleVisibility: .visible
-          ) {
-            Button("Remove All Results", role: .destructive) {
-              viewModel.clearAllOutputs()
-            }
-            Button("Cancel", role: .cancel) {}
-          } message: {
-            Text(
-              "This will permanently remove all query results from the notebook. You'll need to re-run queries to see results again. This action cannot be undone."
-            )
-          }
-
-          Text(
-            "Removing results will significantly reduce file size but you'll need to re-run queries."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
         }
-      }
 
-      Divider()
+        Divider()
+      }
 
       // Developer Logs
       settingsSection(title: "Developer", icon: "hammer.fill") {
@@ -289,15 +298,17 @@ struct SettingsContent: View {
 
       Divider()
 
-      // Keyboard Shortcuts (placeholder for future expansion)
-      settingsSection(title: "Keyboard Shortcuts", icon: "command") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Text("Custom keyboard shortcuts will be available in a future update.")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
+      // Keyboard Shortcuts (Notebook Mode Only - different shortcuts for each mode)
+      if viewModel.viewMode == .notebook {
+        settingsSection(title: "Keyboard Shortcuts", icon: "command") {
+          VStack(alignment: .leading, spacing: Spacing.md) {
+            Text("Custom keyboard shortcuts will be available in a future update.")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
 
-          // Placeholder for future keyboard shortcut customization UI
-          keyboardShortcutsList
+            // Placeholder for future keyboard shortcut customization UI
+            keyboardShortcutsList
+          }
         }
       }
     }

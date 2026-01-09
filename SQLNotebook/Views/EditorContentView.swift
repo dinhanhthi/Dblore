@@ -1,0 +1,257 @@
+//
+//  EditorContentView.swift
+//  SQLNotebook
+//
+
+import SwiftUI
+
+/// Content view for Editor mode (.sql files)
+struct EditorContentView: View {
+  @ObservedObject var document: SQLEditorDocument
+  @State private var viewModel: NotebookViewModel
+  @State private var lastSaved: Date?
+
+  @State private var keyEventMonitor: Any?
+  @Bindable private var appSettings = AppSettings.shared
+
+  init(document: SQLEditorDocument) {
+    self.document = document
+
+    // Create a notebook with single cell for editor mode
+    let cell = NotebookCell(cellType: .sql, content: document.content)
+    let notebook = SQLNotebook(
+      cells: [cell],
+      metadata: document.metadata,
+      connectionConfig: nil,
+      settings: NotebookSettings(),
+      documentType: .script
+    )
+
+    let vm = NotebookViewModel(notebook: notebook)
+    // Force editor mode
+    vm.viewMode = .editor
+    vm.editorContent = document.content
+    _viewModel = State(initialValue: vm)
+  }
+
+  var body: some View {
+    ZStack {
+      Color.appBackground
+        .ignoresSafeArea()
+
+      VStack(spacing: 0) {
+        // Header
+        HeaderView(viewModel: viewModel)
+
+        // Main content area
+        HStack(spacing: 0) {
+          // Left sidebar (conditionally shown)
+          if viewModel.isLeftSidebarVisible {
+            LeftSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .leading))
+          }
+
+          // Main editor content
+          EditorModeView(viewModel: viewModel)
+            .frame(maxWidth: .infinity)
+
+          // Right sidebar (conditionally shown)
+          if viewModel.isRightSidebarVisible {
+            RightSidebarView(viewModel: viewModel)
+              .transition(.move(edge: .trailing))
+          }
+        }
+
+        // Footer
+        FooterView(viewModel: viewModel, lastSaved: lastSaved)
+      }
+
+      // Toast notification (bottom-right corner)
+      if let toast = viewModel.currentToast {
+        VStack {
+          Spacer()
+          HStack {
+            Spacer()
+            ToastView(toast: toast, viewModel: viewModel)
+              .padding(.horizontal, Spacing.lg)
+              .padding(.vertical, Spacing.xxl)
+              .transition(.move(edge: .trailing).combined(with: .opacity))
+          }
+        }
+      }
+
+      // Search panel (floating top-right)
+      if viewModel.isSearchPanelVisible {
+        VStack {
+          HStack {
+            Spacer()
+            SearchPanelView(viewModel: viewModel)
+              .padding(.horizontal, Spacing.lg)
+              .padding(.top, Spacing.lg)
+          }
+          Spacer()
+        }
+        .transition(.identity)  // No animation - instant appear/disappear
+      }
+    }
+    .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
+    .animation(nil, value: viewModel.isSearchPanelVisible)
+    .windowAppearance(appSettings.themePreference.colorScheme)
+    .modifier(
+      EditorNotificationHandlerModifier(
+        viewModel: viewModel,
+        syncDocument: syncDocument
+      )
+    )
+    .modifier(EditorSearchNotificationHandlerModifier(viewModel: viewModel))
+    .confirmationDialog(
+      "Confirm Destructive Query",
+      isPresented: $viewModel.showQueryConfirmationDialog,
+      titleVisibility: .visible
+    ) {
+      Button("Execute Query", role: .destructive) {
+        Task { @MainActor [viewModel] in
+          await viewModel.executePendingQuery()
+          syncDocument()
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        viewModel.cancelPendingQuery()
+      }
+    } message: {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("This query will modify data in your database:")
+          .font(.body)
+        Text(viewModel.pendingQuery)
+          .font(.system(.body, design: .monospaced))
+          .lineLimit(5)
+        Text("Are you sure you want to proceed?")
+          .font(.body)
+      }
+    }
+    .focusedSceneValue(\.documentMode, .editor)
+    .onChange(of: viewModel.editorContent) { _, newContent in
+      syncDocument()
+    }
+    .onChange(of: viewModel.notebook.metadata.title) { _, _ in
+      syncDocument()
+    }
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+    .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
+    .onAppear {
+      setupKeyEventMonitor()
+      viewModel.onDocumentChanged = syncDocument
+
+      // Auto-connect to saved session if available
+      viewModel.autoConnectIfNeeded()
+    }
+    .onDisappear {
+      removeKeyEventMonitor()
+      viewModel.onDocumentChanged = nil
+
+      // Disconnect from database when window closes to prevent connection leaks
+      Task {
+        await viewModel.connectionManager.disconnect()
+      }
+    }
+  }
+
+  // MARK: - Document Sync
+
+  private func syncDocument() {
+    // Sync editorContent back to document
+    document.content = viewModel.editorContent
+    document.metadata = viewModel.notebook.metadata
+    lastSaved = nil  // Mark as unsaved
+  }
+
+  // MARK: - Keyboard Event Monitoring
+
+  private func setupKeyEventMonitor() {
+    keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Check if a NSTextView is currently first responder
+      let textViewIsFocused: Bool = {
+        guard let window = NSApplication.shared.keyWindow,
+          let firstResponder = window.firstResponder
+        else {
+          return false
+        }
+        return firstResponder is NSTextView
+      }()
+
+      // Handle ESC key
+      let isEscape = event.keyCode == 53
+      if isEscape {
+        // Priority 0: If search panel is open, close it first
+        if self.viewModel.isSearchPanelVisible {
+          Task { @MainActor [viewModel] in
+            viewModel.closeSearch()
+          }
+          return nil  // Event consumed
+        }
+
+        // Priority 1: If right sidebar is open, close it
+        if self.viewModel.isRightSidebarVisible {
+          Task { @MainActor [viewModel] in
+            viewModel.closeSidebar()
+          }
+          return nil  // Event consumed
+        }
+      }
+
+      return event
+    }
+  }
+
+  private func removeKeyEventMonitor() {
+    if let monitor = keyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+      keyEventMonitor = nil
+    }
+  }
+}
+
+// MARK: - Notification Handler Modifier
+
+private struct EditorNotificationHandlerModifier: ViewModifier {
+  let viewModel: NotebookViewModel
+  let syncDocument: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+        viewModel.toggleSidebar()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .toggleLeftSidebar)) { _ in
+        viewModel.toggleLeftSidebar()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+        // Toggle settings sidebar
+        if viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .settings {
+          viewModel.isRightSidebarVisible = false
+        } else {
+          viewModel.rightSidebarContent = .settings
+          viewModel.isRightSidebarVisible = true
+        }
+      }
+  }
+}
+
+// MARK: - Search Notification Handler Modifier
+
+private struct EditorSearchNotificationHandlerModifier: ViewModifier {
+  let viewModel: NotebookViewModel
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .openSearch)) { _ in
+        viewModel.openSearch()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .findNext)) { _ in
+        viewModel.navigateToNextMatch()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .findPrevious)) { _ in
+        viewModel.navigateToPreviousMatch()
+      }
+  }
+}
