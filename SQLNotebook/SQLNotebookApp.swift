@@ -265,17 +265,19 @@ struct EditorCommands: Commands {
 
 struct NewDocumentCommands: Commands {
   var body: some Commands {
-    CommandGroup(after: .newItem) {
-      Divider()
-
-      Button("New Notebook") {
+    CommandGroup(replacing: .newItem) {
+      Button {
         // Default Cmd+N already creates notebook, but provide explicit command
         NSDocumentController.shared.newDocument(nil)
+      } label: {
+        Label("New Notebook", systemImage: "doc.badge.plus")
       }
-      .keyboardShortcut("n", modifiers: [.command, .shift])
+      .keyboardShortcut("n", modifiers: .command)
 
-      Button("New SQL File") {
+      Button {
         createNewSQLFile()
+      } label: {
+        Label("New SQL File", systemImage: "doc.text")
       }
       .keyboardShortcut("e", modifiers: [.command, .shift])
     }
