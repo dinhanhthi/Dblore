@@ -17,6 +17,7 @@ struct SQLEditorView: View {
 
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID? // For search highlighting
+  var maxHeight: CGFloat? // Optional max height for scrollable editors (e.g., in editor mode)
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -36,7 +37,8 @@ struct SQLEditorView: View {
         textViewRef: $textViewRef,
         isEmpty: $isTextEmpty,
         autocompleteProvider: autocompleteProvider,
-        cellId: cellId
+        cellId: cellId,
+        maxHeight: maxHeight
       )
     }
     .padding(Spacing.sm)
