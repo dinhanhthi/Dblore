@@ -70,7 +70,7 @@ SELECT * FROM users LIMIT 1000
 
 ### Related Documentation
 
-See [ROW_LIMIT_FEATURE.md](./ROW_LIMIT_FEATURE.md) for user-facing documentation.
+See [row_limit_feature.md](./row_limit_feature.md) for user-facing documentation.
 
 ---
 
@@ -564,7 +564,7 @@ print("🚀 [DatabaseConnectionManager] Final query: \(executionQuery)")
 - `DatabaseQueryExecutionTests.swift` - Integration tests with real database
 
 ### Documentation
-- `ROW_LIMIT_FEATURE.md` - User-facing row limit documentation
+- `row_limit_feature.md` - User-facing row limit documentation
 - `AI_GUIDE.md` - Overall architecture guide
 
 ---

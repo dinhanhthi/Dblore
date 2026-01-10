@@ -335,8 +335,8 @@ Remove `-parallel-testing-enabled NO` and `-retry-tests-on-failure` when:
 
 ## Related Documents
 
-- [Testing Setup Guide](TESTING_SETUP_GUIDE.md) - How to run tests locally
-- [Swift Concurrency Fixes](SWIFT_CONCURRENCY_FIXES.md) - Other Swift 6 compatibility issues
+- [Testing Setup Guide](testing_setup_guide.md) - How to run tests locally
+- [Swift Concurrency Fixes](swift_concurrency_fixes.md) - Other Swift 6 compatibility issues
 
 ---
 

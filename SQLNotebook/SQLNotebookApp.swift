@@ -54,16 +54,37 @@ struct SQLNotebookApp: App {
 
 // MARK: - FocusedValues Extension
 
+/// Represents the document type/mode of the currently focused window.
+///
+/// Used to dynamically show/hide menu commands based on whether a Notebook (.sqlnb)
+/// or Editor (.sql) window is currently focused. When user switches between windows,
+/// this value automatically updates, causing menus to update without needing to
+/// re-render the entire app.
+///
+/// Example:
+/// ```
+/// // In NotebookContentView
+/// .focusedSceneValue(\.documentMode, .notebook)
+///
+/// // In NotebookCommands
+/// @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
+/// if documentMode == .notebook { ... }  // Show Cell menu only for notebook
+/// ```
 enum DocumentMode {
-  case notebook
-  case editor
+  case notebook  // Notebook mode (.sqlnb files) - has Cell menu, custom Find
+  case editor    // Editor mode (.sql files) - uses native macOS menus
 }
 
+/// FocusedValue key for tracking document mode across the app.
+/// See: https://developer.apple.com/documentation/swiftui/focusedvaluekey
 struct DocumentModeFocusedValueKey: FocusedValueKey {
   typealias Value = DocumentMode
 }
 
 extension FocusedValues {
+  /// Accessed by menu command structs to determine which commands to show.
+  /// Value is automatically set by NotebookContentView and EditorContentView
+  /// via `.focusedSceneValue(\.documentMode, ...)` modifier.
   var documentMode: DocumentMode? {
     get { self[DocumentModeFocusedValueKey.self] }
     set { self[DocumentModeFocusedValueKey.self] = newValue }
@@ -104,12 +125,19 @@ struct SharedCommands: Commands {
 
 // MARK: - Notebook Commands (chỉ cho Notebook mode)
 
+/// Menu commands that appear only when a Notebook window (.sqlnb) is focused.
+///
+/// Includes Cell menu, custom sidebar toggles, and search commands (Find in Notebook).
+/// These commands are hidden when an Editor window (.sql) is focused.
+///
+/// Key: Uses @FocusedValue to dynamically show/hide based on `documentMode`
 struct NotebookCommands: Commands {
   @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
+    // This conditional is the key to preventing duplicate menus in Editor mode
     if documentMode == .notebook {
       // Cell commands
       CommandMenu("Cell") {

@@ -33,7 +33,7 @@ Investigation by `optimizer` agent identified **4 primary issues**:
 
 **Location**: `ResultTableView.swift:51-67`
 
-**Issue**: LazyVStack was reintroduced into ResultTableView, violating the previous fix documented in `SCROLL_CRASH_FIX.md` (lines 335-395).
+**Issue**: LazyVStack was reintroduced into ResultTableView, violating the previous fix documented in `scroll_crash_fix.md` (lines 335-395).
 
 **Previous Fix**: LazyVStack had been replaced with VStack to fix nested scroll crashes, but this fix was reverted/lost at some point.
 
@@ -177,7 +177,7 @@ ScrollView(scrollAxes) {
 - ✅ Simpler scroll hierarchy
 - ✅ Better gesture coordination between outer List and inner ScrollView
 - ✅ 500 rows acceptable for eager rendering with simple table cells
-- ✅ **Already proven to work** (documented in SCROLL_CRASH_FIX.md:390)
+- ✅ **Already proven to work** (documented in scroll_crash_fix.md:390)
 
 **Trade-off**: VStack renders all 500 rows eagerly vs lazy loading, but this is acceptable performance-wise for table cells.
 

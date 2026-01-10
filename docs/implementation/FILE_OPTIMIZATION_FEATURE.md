@@ -611,7 +611,7 @@ nonisolated static let largeSizeThreshold: Int64 = 10 * 1024 * 1024
 
 ### Documentation
 - `docs/TODO.md` (Phase 4.11)
-- `docs/implementation/FILE_OPTIMIZATION_FEATURE.md` (this file)
+- `docs/implementation/file_optimization_feature.md` (this file)
 
 ## Troubleshooting
 
