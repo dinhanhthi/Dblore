@@ -17,6 +17,7 @@ struct HighlightedTextEditor: View {
 
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID? // For search highlighting
+  var maxHeight: CGFloat? // Optional max height - if set, enables scrolling
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -26,9 +27,10 @@ struct HighlightedTextEditor: View {
       onFocus: onFocus,
       textViewRef: $textViewRef,
       autocompleteProvider: autocompleteProvider,
-      cellId: cellId
+      cellId: cellId,
+      maxHeight: maxHeight
     )
-    .frame(height: height)
+    .frame(height: maxHeight ?? height)
   }
 }
 
@@ -40,6 +42,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var textViewRef: SQLTextView?
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?
+  var maxHeight: CGFloat?
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
@@ -91,7 +94,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.autoresizingMask = [.width]
 
     scrollView.documentView = textView
-    scrollView.hasVerticalScroller = false
+    // Enable scrolling when maxHeight is set (editor mode)
+    scrollView.hasVerticalScroller = maxHeight != nil
     scrollView.hasHorizontalScroller = false
     scrollView.drawsBackground = false
 
@@ -304,12 +308,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       let minHeight: CGFloat = 28
       let newHeight = max(requiredHeight, minHeight)
 
-      // Update SwiftUI binding to trigger view update
+      // Update SwiftUI binding to trigger view update (only when not using maxHeight)
+      // When maxHeight is set, the frame is fixed and we rely on scrolling
       if abs(height.wrappedValue - newHeight) > 1 {
         height.wrappedValue = newHeight
       }
 
-      // Update frame
+      // Update frame - textView can expand freely within scrollView
       var frame = textView.frame
       frame.size.height = newHeight
       textView.frame = frame

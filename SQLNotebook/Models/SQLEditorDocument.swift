@@ -16,7 +16,7 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
     [.sql, .plainText]
   }
 
-  var writableContentTypes: [UTType] {
+  nonisolated var writableContentTypes: [UTType] {
     [.sql]
   }
 
@@ -40,10 +40,7 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
   }
 
   func snapshot(contentType: UTType) throws -> String {
-    var updatedMetadata = metadata
-    updatedMetadata.modifiedAt = Date()
-    self.metadata = updatedMetadata
-
+    // Return current content for saving
     return content
   }
 

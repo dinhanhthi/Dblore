@@ -17,7 +17,6 @@ struct EditorModeView: View {
       let totalHeight = geometry.size.height
       let minPanelHeight: CGFloat = 150
       let maxEditorHeight = totalHeight - minPanelHeight
-      let maxResultHeight = totalHeight - minPanelHeight
 
       // Calculate actual heights based on divider position
       let editorHeight = max(minPanelHeight, min(maxEditorHeight, totalHeight * dividerPosition))
@@ -31,7 +30,8 @@ struct EditorModeView: View {
           isFocused: isFocused,
           onFocus: { isFocused = true },
           textViewRef: $textViewRef,
-          autocompleteProvider: viewModel.autocompleteProvider
+          autocompleteProvider: viewModel.autocompleteProvider,
+          maxHeight: editorHeight - Spacing.sm * 2  // Account for padding
         )
         .background(Color.inputBackground)
         .frame(width: geometry.size.width, height: editorHeight)
