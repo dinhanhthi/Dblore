@@ -169,16 +169,6 @@ struct EditorContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-      // Check if a NSTextView is currently first responder
-      let textViewIsFocused: Bool = {
-        guard let window = NSApplication.shared.keyWindow,
-          let firstResponder = window.firstResponder
-        else {
-          return false
-        }
-        return firstResponder is NSTextView
-      }()
-
       // Handle ESC key
       let isEscape = event.keyCode == 53
       if isEscape {
