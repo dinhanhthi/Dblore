@@ -236,21 +236,28 @@ struct NotebookCommands: Commands {
 // MARK: - Editor Commands (chỉ cho Editor mode)
 
 struct EditorCommands: Commands {
-  var body: some Commands {
-    // Editor mode không cần custom commands
-    // - Không có Cell menu (chỉ dành cho Notebook)
-    // - Không có sidebar toggles (Editor sử dụng native sidebar)
-    // - Không có custom Find (sử dụng native Cmd+F)
+  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
 
-    // All commands are handled by SharedCommands and native macOS menus
-    EmptyCommands()
-  }
-}
-
-// Helper struct for empty commands
-private struct EmptyCommands: Commands {
   var body: some Commands {
-    // Intentionally empty - EditorCommands chỉ cần SharedCommands
+    // Chỉ show sidebar toggles khi documentMode == .editor
+    if documentMode == .editor {
+      // View Menu - Sidebar toggles (giống như Notebook mode)
+      CommandGroup(after: .sidebar) {
+        Button {
+          NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+        } label: {
+          Label("Toggle Left Sidebar", systemImage: "sidebar.left")
+        }
+        .keyboardShortcut("b", modifiers: .command)
+
+        Button {
+          NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+        } label: {
+          Label("Toggle Right Sidebar", systemImage: "sidebar.right")
+        }
+        .keyboardShortcut("r", modifiers: [.command, .shift])
+      }
+    }
   }
 }
 
