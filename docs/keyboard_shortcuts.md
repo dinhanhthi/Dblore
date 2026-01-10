@@ -65,7 +65,7 @@ Document này liệt kê tất cả các keyboard shortcuts được hỗ trợ 
 | Shortcut | Action | Available In | Description |
 |----------|--------|------------|-------------|
 | `Cmd+B` | Toggle Left Sidebar | Notebook only | Hiện/ẩn left sidebar (cell outline) |
-| `Cmd+Shift+R` | Toggle Right Sidebar | Both | Hiện/ẩn right sidebar (connection info, schema, settings) |
+| `Cmd+,` | Toggle Right Sidebar | Both | Hiện/ẩn right sidebar (connection info, schema, settings) |
 
 ## Editing
 

@@ -363,7 +363,7 @@ struct SettingsContent: View {
       shortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       shortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
       shortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
-      shortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+R")
+      shortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
     }
   }
 

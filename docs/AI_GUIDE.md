@@ -221,7 +221,7 @@ Display SQL errors inline below cells:
 | `Cmd+B` | Add code cell below | ✅ |
 | `Cmd+Delete` | Delete selected cell | ✅ |
 | `Cmd+D` | Duplicate cell | ✅ |
-| `Cmd+Shift+R` | Toggle right sidebar | ✅ |
+| `Cmd+,` | Toggle right sidebar | ✅ |
 | `Cmd+/` | Comment/uncomment line in SQL | ⏳ TODO |
 | `Escape` | Deselect cell / Close sidebar | ✅ |
 | `Up/Down` | Navigate between cells | ✅ |

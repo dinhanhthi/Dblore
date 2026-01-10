@@ -150,8 +150,8 @@ The database includes sample tables (customers, products, orders, employees, ana
 - `Cmd+F` - Open search panel
 
 ### View
-- `Cmd+Shift+L` - Toggle left sidebar (schema browser)
-- `Cmd+Shift+R` - Toggle right sidebar (connection info)
+- `Cmd+B` - Toggle left sidebar (schema browser)
+- `Cmd+,` - Toggle right sidebar (connection info)
 
 See [docs/keyboard_shortcuts.md](docs/keyboard_shortcuts.md) for complete reference.
 

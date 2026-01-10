@@ -575,8 +575,8 @@ List of all test cases to implement for SQLNotebook project, organized by catego
 - [ ] Switch databases
 
 ### Sidebar Interactions
-- [ ] Toggle right sidebar (Cmd+Shift+R)
-- [ ] Toggle left sidebar (Cmd+Shift+L)
+- [ ] Toggle right sidebar (Cmd+,)
+- [ ] Toggle left sidebar (Cmd+B)
 - [ ] Browse schema tables
 - [ ] Click table to insert name
 - [ ] Resize sidebar width

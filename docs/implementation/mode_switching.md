@@ -345,7 +345,7 @@ struct NotebookCommands: Commands {
 
 **View Menu (Notebook-specific):**
 - Toggle Left Sidebar (Cmd+B)
-- Toggle Right Sidebar (Cmd+Shift+R)
+- Toggle Right Sidebar (Cmd+,)
 
 **Edit Menu (Notebook-specific):**
 - Find in Notebook (Cmd+F)
