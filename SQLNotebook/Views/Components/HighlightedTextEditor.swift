@@ -304,8 +304,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       let insets = textView.textContainerInset
       let requiredHeight = usedRect.height + insets.height * 2
 
-      // Set minimum height
-      let minHeight: CGFloat = 28
+      // Set minimum height - increased to allow more clickable area when empty
+      let minHeight: CGFloat = 40
       let newHeight = max(requiredHeight, minHeight)
 
       // Update SwiftUI binding to trigger view update (only when not using maxHeight)
