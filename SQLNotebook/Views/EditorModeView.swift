@@ -31,7 +31,8 @@ struct EditorModeView: View {
           onFocus: { isFocused = true },
           textViewRef: $textViewRef,
           autocompleteProvider: viewModel.autocompleteProvider,
-          maxHeight: editorHeight - Spacing.sm * 2  // Account for padding
+          maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
+          isEditorMode: true  // Remove border and focus effects
         )
         .background(Color.inputBackground)
         .frame(width: geometry.size.width, height: editorHeight)
