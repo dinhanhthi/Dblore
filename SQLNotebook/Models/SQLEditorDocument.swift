@@ -20,12 +20,12 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
     [.sql]
   }
 
-  init(content: String = "", metadata: NotebookMetadata = NotebookMetadata(title: "Untitled")) {
+  nonisolated init(content: String = "", metadata: NotebookMetadata = NotebookMetadata(title: "Untitled")) {
     self.content = content
     self.metadata = metadata
   }
 
-  init(configuration: ReadConfiguration) throws {
+  nonisolated init(configuration: ReadConfiguration) throws {
     guard let data = configuration.file.regularFileContents,
           let sqlContent = String(data: data, encoding: .utf8) else {
       throw CocoaError(.fileReadCorruptFile)
