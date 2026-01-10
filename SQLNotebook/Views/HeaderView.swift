@@ -21,7 +21,7 @@ struct HeaderView: View {
         }
         .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
 
-        // Notebook-specific buttons
+        // Mode-specific buttons
         if viewModel.viewMode == .notebook {
           Divider()
             .frame(height: 20)
@@ -96,6 +96,32 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .buttonStyle(ToolbarButtonStyle())
+        } else if viewModel.viewMode == .editor {
+          // Editor mode buttons
+          Divider()
+            .frame(height: 20)
+
+          Button(action: {
+            Task { @MainActor [viewModel] in
+              await viewModel.runEditorQuery()
+            }
+          }) {
+            Label("Run", systemImage: "play.fill")
+          }
+          .buttonStyle(ToolbarButtonStyle())
+          .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
+          .keyboardShortcut(.return, modifiers: [.command, .shift])
+
+          Button(action: {
+            // TODO: Implement run selection functionality
+            Task { @MainActor [viewModel] in
+              await viewModel.runEditorQuery()
+            }
+          }) {
+            Label("Run Selection", systemImage: "play.circle")
+          }
+          .buttonStyle(ToolbarButtonStyle())
+          .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
         }
       }
 

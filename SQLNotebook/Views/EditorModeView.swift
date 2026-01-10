@@ -10,15 +10,21 @@ struct EditorModeView: View {
   @Bindable var viewModel: NotebookViewModel
   @State private var textViewRef: SQLTextView?
   @State private var isFocused: Bool = false
+  @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
 
   var body: some View {
-    VSplitView {
-      // Top: SQL Editor
-      VStack(spacing: 0) {
-        // Editor toolbar
-        editorToolbar
+    GeometryReader { geometry in
+      let totalHeight = geometry.size.height
+      let minPanelHeight: CGFloat = 150
+      let maxEditorHeight = totalHeight - minPanelHeight
+      let maxResultHeight = totalHeight - minPanelHeight
 
-        // SQL Editor
+      // Calculate actual heights based on divider position
+      let editorHeight = max(minPanelHeight, min(maxEditorHeight, totalHeight * dividerPosition))
+      let resultHeight = totalHeight - editorHeight
+
+      VStack(spacing: 0) {
+        // Top: SQL Editor (with distinct background like cell editor)
         SQLEditorView(
           content: $viewModel.editorContent,
           isSelected: true,
@@ -27,92 +33,50 @@ struct EditorModeView: View {
           textViewRef: $textViewRef,
           autocompleteProvider: viewModel.autocompleteProvider
         )
-        .frame(minHeight: 200)
-      }
-      .frame(maxWidth: .infinity)
+        .background(Color.inputBackground)
+        .frame(width: geometry.size.width, height: editorHeight)
 
-      // Bottom: Result Panel
-      if let result = viewModel.editorResult {
-        VStack(spacing: 0) {
-          resultPanelHeader(result: result)
+        // Draggable divider
+        ResizableDivider(
+          position: $dividerPosition,
+          totalHeight: totalHeight,
+          minTopHeight: minPanelHeight,
+          minBottomHeight: minPanelHeight
+        )
 
-          // Result table or error
-          if let error = result.error {
-            errorView(error: error)
-          } else {
-            ResultTableView(
-              result: result,
-              viewModel: viewModel,
-              cellId: nil  // No cell ID in editor mode
-            )
+        // Bottom: Result Panel
+        if let result = viewModel.editorResult {
+          VStack(spacing: 0) {
+            resultPanelHeader(result: result)
+
+            // Result table or error
+            if let error = result.error {
+              errorView(error: error)
+            } else {
+              ResultTableView(
+                result: result,
+                viewModel: viewModel,
+                cellId: nil  // No cell ID in editor mode
+              )
+            }
           }
+          .frame(width: geometry.size.width, height: resultHeight)
+        } else {
+          // Empty state
+          VStack {
+            Spacer()
+            Text("No results yet")
+              .font(.system(size: 14))
+              .foregroundColor(.foregroundSubtle)
+            Text("Run a query to see results")
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundMuted)
+            Spacer()
+          }
+          .frame(width: geometry.size.width, height: resultHeight)
         }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 200)
-      } else {
-        // Empty state
-        VStack {
-          Spacer()
-          Text("No results yet")
-            .font(.system(size: 14))
-            .foregroundColor(.foregroundSubtle)
-          Text("Run a query to see results")
-            .font(.system(size: 12))
-            .foregroundColor(.foregroundMuted)
-          Spacer()
-        }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 100)
       }
     }
-    .padding(Spacing.md)
-  }
-
-  // MARK: - Toolbar
-
-  private var editorToolbar: some View {
-    HStack(spacing: Spacing.sm) {
-      // Run button
-      Button(action: runQuery) {
-        Label("Run", systemImage: "play.fill")
-          .font(.system(size: 12))
-      }
-      .buttonStyle(.borderedProminent)
-      .tint(.accentColor)
-      .keyboardShortcut(.return, modifiers: [.command, .shift])
-      .disabled(viewModel.editorContent.isEmpty || viewModel.connectionState != .connected)
-
-      // Run Selection button (placeholder for future)
-      Button(action: runSelection) {
-        Label("Run Selection", systemImage: "play.circle")
-          .font(.system(size: 12))
-      }
-      .buttonStyle(.bordered)
-      .disabled(viewModel.editorContent.isEmpty || viewModel.connectionState != .connected)
-
-      Spacer()
-
-      // Connection status
-      connectionStatusBadge
-    }
-    .padding(Spacing.sm)
-    .background(Color.appBackground)
-  }
-
-  private var connectionStatusBadge: some View {
-    HStack(spacing: Spacing.xxs) {
-      Circle()
-        .fill(viewModel.connectionState == .connected ? Color.green : Color.gray)
-        .frame(width: 6, height: 6)
-
-      Text(viewModel.connectionState == .connected ? "Connected" : "Not Connected")
-        .font(.system(size: 11))
-        .foregroundColor(.foregroundSubtle)
-    }
-    .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, Spacing.xxs)
-    .background(Color.inputBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
   }
 
   // MARK: - Result Panel Header
@@ -181,20 +145,65 @@ struct EditorModeView: View {
 
   // MARK: - Actions
 
-  private func runQuery() {
-    guard !viewModel.editorContent.isEmpty else { return }
-    Task { @MainActor in
-      await viewModel.runEditorQuery()
-    }
-  }
-
-  private func runSelection() {
-    // TODO: Implement run selection functionality
-    // For now, just run the full query
-    runQuery()
-  }
-
   private func clearResult() {
     viewModel.editorResult = nil
+  }
+}
+
+// MARK: - Resizable Divider
+
+/// A draggable horizontal divider for resizing panels
+struct ResizableDivider: View {
+  @Binding var position: CGFloat  // Position as ratio (0.0 to 1.0)
+  let totalHeight: CGFloat
+  let minTopHeight: CGFloat
+  let minBottomHeight: CGFloat
+
+  @State private var isDragging = false
+  @State private var isHovering = false
+
+  var body: some View {
+    Rectangle()
+      .fill(Color.border)
+      .frame(height: 1)
+      .overlay(
+        // Invisible hit area for better UX
+        Rectangle()
+          .fill(Color.clear)
+          .frame(height: 8)
+          .contentShape(Rectangle())
+      )
+      .background(
+        // Hover indicator
+        Rectangle()
+          .fill(isDragging ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear))
+          .frame(height: 8)
+      )
+      .cursor(NSCursor.resizeUpDown)
+      .onHover { hovering in
+        isHovering = hovering
+      }
+      .onTapGesture(count: 2) {
+        // Double-click to reset to 50/50
+        withAnimation(.easeInOut(duration: 0.2)) {
+          position = 0.5
+        }
+      }
+      .gesture(
+        DragGesture(minimumDistance: 0)
+          .onChanged { value in
+            isDragging = true
+            let newHeight = totalHeight * position + value.translation.height
+            let maxTop = totalHeight - minBottomHeight
+            let minTop = minTopHeight
+
+            // Clamp the new height
+            let clampedHeight = max(minTop, min(maxTop, newHeight))
+            position = clampedHeight / totalHeight
+          }
+          .onEnded { _ in
+            isDragging = false
+          }
+      )
   }
 }
