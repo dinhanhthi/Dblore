@@ -18,9 +18,23 @@ struct SQLEditorView: View {
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID? // For search highlighting
   var maxHeight: CGFloat? // Optional max height for scrollable editors (e.g., in editor mode)
+  var isEditorMode: Bool = false // True when used in Editor mode (removes border/focus effects)
 
   var body: some View {
-    ZStack(alignment: .topLeading) {
+    editorContent
+      .onAppear {
+        // Initialize isEmpty state based on content
+        isTextEmpty = content.isEmpty
+      }
+      .onChange(of: content) { _, newValue in
+        // Update isEmpty when content changes externally
+        isTextEmpty = newValue.isEmpty
+      }
+  }
+
+  @ViewBuilder
+  private var editorContent: some View {
+    let baseView = ZStack(alignment: .topLeading) {
       // Placeholder - use isTextEmpty state for immediate reactivity
       if isTextEmpty {
         Text("-- Write your SQL query here...")
@@ -43,18 +57,18 @@ struct SQLEditorView: View {
     }
     .padding(Spacing.sm)
     .background(Color.inputBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .stroke(isFocused ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
-    )
-    .onAppear {
-      // Initialize isEmpty state based on content
-      isTextEmpty = content.isEmpty
-    }
-    .onChange(of: content) { _, newValue in
-      // Update isEmpty when content changes externally
-      isTextEmpty = newValue.isEmpty
+
+    if isEditorMode {
+      // Editor mode: no border, no rounded corners
+      baseView
+    } else {
+      // Cell mode: rounded corners + focus border
+      baseView
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .overlay(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .stroke(isFocused ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
+        )
     }
   }
 }
