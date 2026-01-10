@@ -204,7 +204,7 @@ struct NotebookCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut("r", modifiers: [.command, .shift])
+        .keyboardShortcut(",", modifiers: [.command])
       }
 
       // Edit commands (notebook-specific)
@@ -255,7 +255,7 @@ struct EditorCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut("r", modifiers: [.command, .shift])
+        .keyboardShortcut(",", modifiers: [.command])
       }
     }
   }
