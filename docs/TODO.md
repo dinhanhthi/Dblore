@@ -50,12 +50,6 @@
   - Dynamic filtering based on user input
   - Integration with schema for table/column suggestions
 
-### 5.7 Schema Visualizer
-- [ ] Query foreign key relationships
-- [ ] Build relationship graph
-- [ ] Create visual graph component
-- [ ] Implement pan and zoom functionality
-
 ### 5.8 Multi-SQL Command Execution
 - [ ] Allow multiple SQL commands in single cell editor
   - [ ] Support semicolon (`;`) as command separator
@@ -224,6 +218,12 @@ A traditional SQL editor mode with single editor and result panel below.
 - [ ] Add MySQL support (optional)
 
 ---
+
+## Phase 9: Schema Visualizer (PENDING)
+- [ ] Query foreign key relationships
+- [ ] Build relationship graph
+- [ ] Create visual graph component
+- [ ] Implement pan and zoom functionality
 
 ## Code-Level TODOs Found
 
