@@ -78,6 +78,9 @@ struct EditorModeView: View {
         }
       }
     }
+    .onChange(of: textViewRef) { _, newValue in
+      viewModel.editorTextView = newValue
+    }
   }
 
   // MARK: - Result Panel Header

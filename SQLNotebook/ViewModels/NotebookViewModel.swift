@@ -93,6 +93,7 @@ class NotebookViewModel {
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
   var editorResult: CellResult?  // Result for editor mode
+  weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook

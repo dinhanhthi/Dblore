@@ -252,6 +252,12 @@ private struct EditorNotificationHandlerModifier: ViewModifier {
           viewModel.isRightSidebarVisible = true
         }
       }
+      .onReceive(NotificationCenter.default.publisher(for: .runEditorQuery)) { _ in
+        Task { @MainActor in
+          await viewModel.runEditorQuery()
+          syncDocument()
+        }
+      }
   }
 }
 

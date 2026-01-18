@@ -294,16 +294,17 @@ struct SettingsContent: View {
 
       Divider()
 
-      // Keyboard Shortcuts (Notebook Mode Only - different shortcuts for each mode)
-      if viewModel.viewMode == .notebook {
-        settingsSection(title: "Keyboard Shortcuts", icon: "command") {
-          VStack(alignment: .leading, spacing: Spacing.md) {
-            Text("Custom keyboard shortcuts will be available in a future update.")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
+      // Keyboard Shortcuts (different shortcuts for each mode)
+      settingsSection(title: "Keyboard Shortcuts", icon: "command") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          Text("Custom keyboard shortcuts will be available in a future update.")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
 
-            // Placeholder for future keyboard shortcut customization UI
-            keyboardShortcutsList
+          if viewModel.viewMode == .notebook {
+            notebookKeyboardShortcutsList
+          } else {
+            editorKeyboardShortcutsList
           }
         }
       }
@@ -350,7 +351,7 @@ struct SettingsContent: View {
     }
   }
 
-  private var keyboardShortcutsList: some View {
+  private var notebookKeyboardShortcutsList: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       shortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
       shortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
@@ -358,6 +359,18 @@ struct SettingsContent: View {
       shortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
       shortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       shortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
+      shortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
+      shortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
+    }
+  }
+
+  private var editorKeyboardShortcutsList: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      shortcutRow(action: "Run Query", shortcut: "Cmd+R")
+      shortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
+      shortcutRow(action: "Find", shortcut: "Cmd+F")
+      shortcutRow(action: "Find Next", shortcut: "Cmd+G")
+      shortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
       shortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       shortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
     }
