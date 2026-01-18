@@ -92,8 +92,10 @@ struct ResultTableView: View {
             truncationWarning
           }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .fixedSize(horizontal: false, vertical: true)  // Don't expand vertically to fill container
       }
+      .scrollContentBackground(.hidden)
       .scrollBounceBehavior(.basedOnSize)
       .scrollPosition($contentScrollPosition)
       .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -112,7 +114,7 @@ struct ResultTableView: View {
         isContentScrolledByUser = newPhase.isScrolling
       }
       .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
-      .frame(maxHeight: AppSettings.shared.maxResultHeight - headerHeight)
+      .frame(maxHeight: AppSettings.shared.maxResultHeight - headerHeight, alignment: .top)
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
