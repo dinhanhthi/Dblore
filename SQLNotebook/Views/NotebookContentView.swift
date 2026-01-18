@@ -534,3 +534,68 @@ private struct UndoRedoHandlerModifier: ViewModifier {
     }
   }
 }
+
+// MARK: - Previews
+
+#Preview("Notebook") {
+  NotebookContentView(document: NotebookPreviewData.documentWithCells)
+    .frame(width: 1000, height: 600)
+}
+
+#Preview("Notebook - Empty") {
+  NotebookContentView(document: SQLNotebookDocument())
+    .frame(width: 800, height: 600)
+}
+
+// MARK: - Preview Data
+
+private enum NotebookPreviewData {
+  static var documentWithCells: SQLNotebookDocument {
+    let cells = [
+      NotebookCell(
+        cellType: .sql,
+        content: "-- Welcome to SQLNotebook\nSELECT * FROM users LIMIT 10;"
+      ),
+      cellWithResult,
+      NotebookCell(
+        cellType: .sql,
+        content: "SELECT COUNT(*) as total FROM orders WHERE status = 'completed';"
+      ),
+    ]
+
+    let notebook = SQLNotebook(
+      cells: cells,
+      metadata: NotebookMetadata(title: "Sample Notebook"),
+      documentType: .notebook
+    )
+
+    return SQLNotebookDocument(notebook: notebook)
+  }
+
+  static var cellWithResult: NotebookCell {
+    var cell = NotebookCell(
+      cellType: .sql,
+      content: "SELECT id, name, email, created_at\nFROM users\nLIMIT 5;"
+    )
+    cell.result = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "INTEGER"),
+        ColumnInfo(name: "name", type: "VARCHAR"),
+        ColumnInfo(name: "email", type: "VARCHAR"),
+        ColumnInfo(name: "created_at", type: "TIMESTAMP"),
+      ],
+      rows: [
+        [.int(1), .string("Alice"), .string("alice@example.com"), .string("2024-01-15")],
+        [.int(2), .string("Bob"), .string("bob@example.com"), .string("2024-01-16")],
+        [.int(3), .string("Charlie"), .string("charlie@example.com"), .string("2024-01-17")],
+        [.int(4), .string("Diana"), .string("diana@example.com"), .string("2024-01-18")],
+        [.int(5), .string("Eve"), .string("eve@example.com"), .string("2024-01-19")],
+      ],
+      executionTime: 0.023,
+      rowCount: 5,
+      timestamp: Date()
+    )
+    cell.executionCount = 1
+    return cell
+  }
+}
