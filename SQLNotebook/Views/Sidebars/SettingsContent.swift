@@ -22,10 +22,6 @@ struct SettingsContent: View {
         VStack(alignment: .leading, spacing: Spacing.md) {
           // Theme Picker
           VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text("Theme")
-              .font(.subheading)
-              .foregroundColor(.foreground)
-
             HStack(spacing: Spacing.md) {
               ForEach(ThemePreference.allCases, id: \.self) { theme in
                 Button(action: {

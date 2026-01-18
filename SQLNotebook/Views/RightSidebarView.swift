@@ -108,7 +108,7 @@ struct RightSidebarView: View {
     case .connectionForm:
       return 360
     case .settings:
-      return 400  // Wider for settings
+      return 360
     default:
       return ComponentSize.sidebarWidth
     }
