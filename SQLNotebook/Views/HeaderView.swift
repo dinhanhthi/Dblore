@@ -110,7 +110,7 @@ struct HeaderView: View {
           }
           .buttonStyle(ToolbarButtonStyle())
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
-          .help("Run query (⌘R) - runs selection if any, otherwise runs all")
+          .help("Run query (⌘R / ⌘Enter) - runs selection if any, otherwise runs all")
         }
       }
 

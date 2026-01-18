@@ -197,6 +197,18 @@ struct EditorContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Handle Cmd+Enter to run query (alternative to Cmd+R)
+      let isReturn = event.keyCode == 36
+      let hasCommandModifier = event.modifierFlags.contains(.command)
+      let hasNoOtherModifiers = !event.modifierFlags.contains(.shift)
+        && !event.modifierFlags.contains(.option)
+        && !event.modifierFlags.contains(.control)
+
+      if isReturn && hasCommandModifier && hasNoOtherModifiers {
+        NotificationCenter.default.post(name: .runEditorQuery, object: nil)
+        return nil  // Event consumed
+      }
+
       // Handle ESC key
       let isEscape = event.keyCode == 53
       if isEscape {
