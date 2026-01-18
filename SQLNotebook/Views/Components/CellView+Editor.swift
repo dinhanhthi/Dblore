@@ -55,11 +55,12 @@ struct SQLEditorView: View {
         maxHeight: maxHeight
       )
     }
-    .padding(Spacing.sm)
+    .padding(isEditorMode ? .leading : .all, Spacing.sm)
+    .padding(isEditorMode ? .vertical : [], Spacing.sm)
     .background(Color.inputBackground)
 
     if isEditorMode {
-      // Editor mode: no border, no rounded corners
+      // Editor mode: no border, no rounded corners, no right padding for scrollbar
       baseView
     } else {
       // Cell mode: rounded corners + focus border
