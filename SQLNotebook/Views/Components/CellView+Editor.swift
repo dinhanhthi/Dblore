@@ -72,3 +72,19 @@ struct SQLEditorView: View {
     }
   }
 }
+
+// MARK: - Preview
+
+#Preview("SQL Editor") {
+  @Previewable @State var content = "SELECT * FROM users WHERE id = 1;"
+  @Previewable @State var textViewRef: SQLTextView? = nil
+
+  SQLEditorView(
+    content: $content,
+    isSelected: true,
+    isFocused: true,
+    textViewRef: $textViewRef
+  )
+  .frame(width: 400, height: 120)
+  .padding()
+}
