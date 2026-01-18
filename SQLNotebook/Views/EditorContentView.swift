@@ -13,6 +13,7 @@ struct EditorContentView: View {
 
   @State private var keyEventMonitor: Any?
   @Bindable private var appSettings = AppSettings.shared
+  @Environment(\.undoManager) private var undoManager
 
   init(document: SQLEditorDocument) {
     self.document = document
@@ -159,9 +160,36 @@ struct EditorContentView: View {
   // MARK: - Document Sync
 
   private func syncDocument() {
+    // Capture old values before changing
+    let oldContent = document.content
+    let oldMetadata = document.metadata
+
+    let newContent = viewModel.editorContent
+    let newMetadata = viewModel.notebook.metadata
+
+    // Only sync if there are actual changes
+    guard oldContent != newContent || oldMetadata.title != newMetadata.title else {
+      return
+    }
+
+    print("🔄 [EditorContentView] syncDocument() - content changed from \(oldContent.count) to \(newContent.count) chars")
+
     // Sync editorContent back to document
-    document.content = viewModel.editorContent
-    document.metadata = viewModel.notebook.metadata
+    document.content = newContent
+    document.metadata = newMetadata
+
+    // Register undo action to mark document as dirty
+    // This is critical for ReferenceFileDocument to know the document has changed
+    if let undoManager = undoManager {
+      print("📝 [EditorContentView] Registering undo action")
+      undoManager.registerUndo(withTarget: document) { [oldContent, oldMetadata] doc in
+        doc.content = oldContent
+        doc.metadata = oldMetadata
+      }
+    } else {
+      print("⚠️ [EditorContentView] No undoManager available!")
+    }
+
     lastSaved = nil  // Mark as unsaved
   }
 

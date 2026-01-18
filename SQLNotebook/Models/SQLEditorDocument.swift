@@ -41,14 +41,21 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
 
   func snapshot(contentType: UTType) throws -> String {
     // Return current content for saving
+    print("📸 [SQLEditorDocument] snapshot() called - content length: \(content.count)")
+    print("📸 [SQLEditorDocument] content preview: \(String(content.prefix(100)))")
     return content
   }
 
   nonisolated func fileWrapper(snapshot: String, configuration: WriteConfiguration) throws -> FileWrapper {
+    print("💾 [SQLEditorDocument] fileWrapper() called - snapshot length: \(snapshot.count)")
+    print("💾 [SQLEditorDocument] snapshot preview: \(String(snapshot.prefix(100)))")
+
     guard let data = snapshot.data(using: .utf8) else {
+      print("❌ [SQLEditorDocument] Failed to convert snapshot to UTF-8 data")
       throw CocoaError(.fileWriteUnknown)
     }
 
+    print("✅ [SQLEditorDocument] Successfully created FileWrapper with \(data.count) bytes")
     return FileWrapper(regularFileWithContents: data)
   }
 }

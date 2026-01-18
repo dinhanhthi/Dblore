@@ -210,8 +210,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       // Update isEmpty state for placeholder reactivity (this is safe and doesn't affect undo)
       isEmpty.wrappedValue = textView.string.isEmpty
 
-      // DO NOT update text binding here - it causes undo/redo issues!
-      // The text binding will be updated when editor loses focus (see onBlur callback in resignFirstResponder)
+      // Update text binding IMMEDIATELY for document persistence
+      // This is critical for ReferenceFileDocument to have the latest content when saving
+      text.wrappedValue = textView.string
     }
 
     @MainActor
