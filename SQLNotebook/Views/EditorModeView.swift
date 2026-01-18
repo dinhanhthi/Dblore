@@ -208,3 +208,62 @@ struct ResizableDivider: View {
       )
   }
 }
+
+// MARK: - Previews
+
+#Preview("Empty State") {
+  let viewModel = NotebookViewModel()
+  viewModel.viewMode = .editor
+  viewModel.editorContent = "SELECT * FROM users\nWHERE status = 'active'\nLIMIT 10;"
+  return EditorModeView(viewModel: viewModel)
+    .frame(width: 800, height: 600)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("With Result") {
+  let viewModel = NotebookViewModel()
+  viewModel.viewMode = .editor
+  viewModel.editorContent = "SELECT id, name, email, status\nFROM users\nLIMIT 4;"
+  viewModel.editorResult = CellResult(
+    columns: [
+      ColumnInfo(name: "id", type: "INTEGER"),
+      ColumnInfo(name: "name", type: "VARCHAR"),
+      ColumnInfo(name: "email", type: "VARCHAR"),
+      ColumnInfo(name: "status", type: "VARCHAR"),
+    ],
+    rows: [
+      [.int(1), .string("Alice"), .string("alice@example.com"), .string("Active")],
+      [.int(2), .string("Bob"), .string("bob@example.com"), .string("Inactive")],
+      [.int(3), .string("Charlie"), .string("charlie@example.com"), .string("Active")],
+      [.int(4), .string("Diana"), .string("diana@example.com"), .string("Active")],
+    ],
+    executionTime: 0.045,
+    rowCount: 4,
+    timestamp: Date(),
+    sourceQuery: "SELECT id, name, email, status FROM users LIMIT 4"
+  )
+  return EditorModeView(viewModel: viewModel)
+    .frame(width: 800, height: 600)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("With Error") {
+  let viewModel = NotebookViewModel()
+  viewModel.viewMode = .editor
+  viewModel.editorContent = "SELECT invalid_column FROM users;"
+  viewModel.editorResult = CellResult(
+    columns: [],
+    rows: [],
+    executionTime: 0.003,
+    rowCount: 0,
+    timestamp: Date(),
+    error: "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
+    sourceQuery: "SELECT invalid_column FROM users"
+  )
+  return EditorModeView(viewModel: viewModel)
+    .frame(width: 800, height: 600)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
