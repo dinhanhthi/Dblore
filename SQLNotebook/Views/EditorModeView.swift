@@ -47,7 +47,7 @@ struct EditorModeView: View {
 
         // Bottom: Result Panel
         if let result = viewModel.editorResult {
-          VStack(spacing: 0) {
+          VStack(alignment: .leading, spacing: 0) {
             resultPanelHeader(result: result)
 
             // Result table or error
@@ -60,6 +60,8 @@ struct EditorModeView: View {
                 cellId: nil  // No cell ID in editor mode
               )
             }
+
+            Spacer(minLength: 0)
           }
           .frame(width: geometry.size.width, height: resultHeight)
         } else {
