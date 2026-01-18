@@ -366,7 +366,7 @@ struct SettingsContent: View {
 
   private var editorKeyboardShortcutsList: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      shortcutRow(action: "Run Query", shortcut: "Cmd+R")
+      shortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
       shortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
       shortcutRow(action: "Find", shortcut: "Cmd+F")
       shortcutRow(action: "Find Next", shortcut: "Cmd+G")
