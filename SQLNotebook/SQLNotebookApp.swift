@@ -239,8 +239,16 @@ struct EditorCommands: Commands {
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
 
   var body: some Commands {
-    // Chỉ show sidebar toggles khi documentMode == .editor
+    // Chỉ show khi documentMode == .editor
     if documentMode == .editor {
+      // Query menu for editor mode
+      CommandMenu("Query") {
+        Button("Run") {
+          NotificationCenter.default.post(name: .runEditorQuery, object: nil)
+        }
+        .keyboardShortcut("r", modifiers: .command)
+      }
+
       // View Menu - Sidebar toggles (giống như Notebook mode)
       CommandGroup(after: .sidebar) {
         Button {
@@ -345,4 +353,7 @@ extension Notification.Name {
   static let findPrevious = Notification.Name("findPrevious")
   static let highlightSearchMatch = Notification.Name("highlightSearchMatch")
   static let clearSearchHighlights = Notification.Name("clearSearchHighlights")
+
+  // Editor mode notifications
+  static let runEditorQuery = Notification.Name("runEditorQuery")
 }

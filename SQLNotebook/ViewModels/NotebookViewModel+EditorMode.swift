@@ -3,20 +3,34 @@
 //  SQLNotebook
 //
 
+import AppKit
 import Foundation
 
 // MARK: - Editor Mode
 
 extension NotebookViewModel {
-  /// Run query in editor mode
+  /// Get selected text from editor, or entire content if no selection
+  func getEditorQueryText() -> String? {
+    // Try to get selected text from editor
+    if let textView = editorTextView {
+      let selectedRange = textView.selectedRange()
+      if selectedRange.length > 0, let textStorage = textView.textStorage {
+        let selectedText = textStorage.string as NSString
+        return selectedText.substring(with: selectedRange)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+    }
+    // No selection, return entire content
+    return editorContent.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Run query in editor mode (selection if any, otherwise all content)
   func runEditorQuery() async {
-    guard !editorContent.isEmpty else { return }
+    guard let query = getEditorQueryText(), !query.isEmpty else { return }
     guard connectionState == .connected else {
       showToast("Not connected to database", type: .error)
       return
     }
-
-    let query = editorContent.trimmingCharacters(in: .whitespacesAndNewlines)
 
     // Check for modification queries and show confirmation if needed
     let isModification = isModificationQuery(query)
@@ -65,13 +79,6 @@ extension NotebookViewModel {
         affectedRows: result.affectedRows
       )
 
-      // Show success toast
-      if let affectedRows = result.affectedRows {
-        showToast("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected", type: .success)
-      } else {
-        showToast("\(result.rows.count) row\(result.rows.count == 1 ? "" : "s") returned", type: .success)
-      }
-
     } catch {
       let executionTime = Date().timeIntervalSince(startTime)
 
@@ -79,8 +86,6 @@ extension NotebookViewModel {
         error.localizedDescription,
         executionTime: executionTime
       )
-
-      showToast("Query failed", type: .error)
     }
   }
 

@@ -110,18 +110,7 @@ struct HeaderView: View {
           }
           .buttonStyle(ToolbarButtonStyle())
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
-          .keyboardShortcut(.return, modifiers: [.command, .shift])
-
-          Button(action: {
-            // TODO: Implement run selection functionality
-            Task { @MainActor [viewModel] in
-              await viewModel.runEditorQuery()
-            }
-          }) {
-            Label("Run Selection", systemImage: "play.circle")
-          }
-          .buttonStyle(ToolbarButtonStyle())
-          .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
+          .help("Run query (⌘R) - runs selection if any, otherwise runs all")
         }
       }
 
