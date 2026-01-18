@@ -273,3 +273,48 @@ private struct EditorSearchNotificationHandlerModifier: ViewModifier {
       }
   }
 }
+
+// MARK: - Previews
+
+#Preview("Editor - Both Sidebars Open") {
+  EditorContentView(document: EditorPreviewData.documentWithContent)
+    .frame(width: 1000, height: 600)
+}
+
+#Preview("Editor - Empty") {
+  EditorContentView(document: SQLEditorDocument())
+    .frame(width: 1000, height: 600)
+}
+
+// MARK: - Preview Data
+
+private enum EditorPreviewData {
+  static var documentWithContent: SQLEditorDocument {
+    let sqlContent = """
+      -- Sample SQL Script
+      -- This demonstrates the Editor mode for .sql files
+
+      SELECT
+          u.id,
+          u.name,
+          u.email,
+          COUNT(o.id) as order_count,
+          SUM(o.total) as total_spent
+      FROM users u
+      LEFT JOIN orders o ON u.id = o.user_id
+      WHERE u.created_at >= '2024-01-01'
+      GROUP BY u.id, u.name, u.email
+      HAVING COUNT(o.id) > 0
+      ORDER BY total_spent DESC
+      LIMIT 100;
+
+      -- Another query
+      SELECT * FROM products WHERE stock < 10;
+      """
+
+    return SQLEditorDocument(
+      content: sqlContent,
+      metadata: NotebookMetadata(title: "Sample Query")
+    )
+  }
+}
