@@ -14,6 +14,7 @@ extension NotebookViewModel {
     guard notebook.cells[index].cellType == .sql else { return }
     guard connectionState.isConnected else {
       notebook.cells[index].result = .errorResult("Not connected to database")
+      onDocumentChanged?()
       return
     }
 
@@ -134,6 +135,9 @@ extension NotebookViewModel {
 
     notebook.cells[index].isRunning = false
 
+    // Notify document changed to trigger save
+    onDocumentChanged?()
+
     // Check file size after execution and show warning if needed
     checkFileSizeAfterExecution()
 
@@ -197,6 +201,7 @@ extension NotebookViewModel {
           target.clearCellOutput(id: id, registerUndo: true)
         }
       }
+      onDocumentChanged?()
     }
   }
 
@@ -242,6 +247,7 @@ extension NotebookViewModel {
           target.clearAllOutputs(registerUndo: true)
         }
       }
+      onDocumentChanged?()
     }
   }
 

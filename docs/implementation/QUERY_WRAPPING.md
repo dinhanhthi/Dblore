@@ -565,7 +565,6 @@ print("🚀 [DatabaseConnectionManager] Final query: \(executionQuery)")
 
 ### Documentation
 - `row_limit_feature.md` - User-facing row limit documentation
-- `AI_GUIDE.md` - Overall architecture guide
 
 ---
 

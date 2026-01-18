@@ -16,6 +16,7 @@ struct NotebookContentView: View {
   @State private var isCellValueEditing = false
   @State private var showRunAllConfirmation = false
   @Bindable private var appSettings = AppSettings.shared
+  @Environment(\.undoManager) private var undoManager
 
   init(document: SQLNotebookDocument) {
     self.document = document
@@ -207,7 +208,27 @@ struct NotebookContentView: View {
   // MARK: - Document Sync
 
   private func syncDocument() {
+    // Capture old value before changing
+    let oldNotebook = document.notebook
+
+    print(
+      "🔄 [NotebookContentView] syncDocument() - notebook changed (cells: \(viewModel.notebook.cells.count))"
+    )
+
+    // Sync notebook back to document
     document.notebook = viewModel.notebook
+
+    // Register undo action to mark document as dirty
+    // This is critical for ReferenceFileDocument to know the document has changed
+    if let undoManager = undoManager {
+      print("📝 [NotebookContentView] Registering undo action")
+      undoManager.registerUndo(withTarget: document) { [oldNotebook] doc in
+        doc.notebook = oldNotebook
+      }
+    } else {
+      print("⚠️ [NotebookContentView] No undoManager available!")
+    }
+
     lastSaved = nil  // Mark as unsaved
   }
 
