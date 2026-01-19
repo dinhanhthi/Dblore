@@ -251,11 +251,10 @@ struct NotebookContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-      // Only handle events for the key window that belongs to this view's document
-      // This prevents conflicts when multiple windows are open with different modes
+      // Only handle events for the key window
+      // The focusedSceneValue system ensures commands are routed to the right window
       guard let eventWindow = event.window,
-            eventWindow == NSApplication.shared.keyWindow,
-            eventWindow.windowController?.document === self.document
+            eventWindow == NSApplication.shared.keyWindow
       else {
         return event  // Not our window, pass through
       }
