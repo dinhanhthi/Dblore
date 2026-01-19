@@ -54,7 +54,7 @@ actor DatabaseConnectionManager {
 - `NotebookViewModel+Connection.swift` — Database connections
 - `NotebookViewModel+Execution.swift` — Query execution
 - `NotebookViewModel+CellManagement.swift` — Cell CRUD
-- Keep files under 400 lines
+- Follow file size guidelines (see Code Organization below)
 
 ### Project Structure
 
@@ -76,6 +76,83 @@ SQLNotebook/
 - **NotebookViewModel.swift** — Main view model
 - **DatabaseConnectionManager.swift** — Database actor
 - **ContentView.swift** — Main UI
+
+---
+
+## Code Organization
+
+### File Size Guidelines
+
+Use a **tiered approach** based on file type and complexity:
+
+| File Type | Max Lines | Strictness | Examples |
+|-----------|-----------|------------|----------|
+| **Logic files** | 400 | Strict | Models, ViewModels, Managers, Utilities |
+| **Simple Views** | 400 | Recommended | Small components, form fields, buttons |
+| **Complex Views** | 600 | Acceptable | Table views, editors, multi-section layouts |
+| **Test files** | 800 | Acceptable | Integration tests, comprehensive test suites |
+
+**Rationale:**
+- Logic code should be focused and single-responsibility (strict 400 lines)
+- Simple UI components should be small and reusable (400 lines recommended)
+- Complex Views naturally include more declarative code (600 lines acceptable)
+- Test files may be longer due to multiple test cases and setup code
+
+### When to Refactor Large Files
+
+**✅ Refactor when:**
+- Logic can be split into separate, focused modules
+- View can be decomposed into independent, reusable components
+- Helper components are used in multiple places
+- File exceeds limits AND can be simplified without adding complexity
+
+**❌ Don't refactor when:**
+- Splitting creates excessive parameter passing (10+ parameters)
+- Helper views/functions are only used once
+- Refactoring makes code harder to understand
+- View state (`@State`) needs to be shared across many components
+
+**Example - Good refactoring:**
+```swift
+// Before: ConnectionFormContent.swift (579 lines)
+// After: Split into reusable form sections
+- ConnectionFormContent.swift (250 lines) - Main layout
+- DatabaseFormFields.swift (150 lines) - Reusable form fields
+- SSLConfigSection.swift (120 lines) - SSL configuration UI
+```
+
+**Example - Bad refactoring:**
+```swift
+// DON'T: Splitting a complex table view with 15+ @State properties
+// Results in helper views needing 10+ @Binding parameters
+// Better: Keep in single file or move state to ViewModel
+```
+
+### Extension-based Split for Logic
+
+For logic files (ViewModels, Managers), use extensions to organize by feature:
+
+```swift
+// NotebookViewModel.swift (base) - 200 lines
+@MainActor
+@Observable
+class NotebookViewModel {
+    var cells: [NotebookCell] = []
+    var connectionState: ConnectionState = .disconnected
+}
+
+// NotebookViewModel+Connection.swift - 150 lines
+extension NotebookViewModel {
+    func connect(config: ConnectionConfig) async throws { ... }
+    func disconnect() async { ... }
+}
+
+// NotebookViewModel+Execution.swift - 180 lines
+extension NotebookViewModel {
+    func executeCell(_ cellId: UUID) async { ... }
+    func cancelExecution() { ... }
+}
+```
 
 ---
 
