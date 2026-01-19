@@ -137,6 +137,15 @@ struct EditorContentView: View {
     .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
       viewModel.toggleSidebar()
     }
+    .focusedSceneValue(\.openSearchAction) { [viewModel] in
+      viewModel.openSearch()
+    }
+    .focusedSceneValue(\.findNextAction) { [viewModel] in
+      viewModel.navigateToNextMatch()
+    }
+    .focusedSceneValue(\.findPreviousAction) { [viewModel] in
+      viewModel.navigateToPreviousMatch()
+    }
     .onChange(of: viewModel.editorContent) { _, newContent in
       syncDocument()
     }
@@ -203,6 +212,15 @@ struct EditorContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Only handle events for the key window that belongs to this view's document
+      // This prevents conflicts when multiple windows are open with different modes
+      guard let eventWindow = event.window,
+            eventWindow == NSApplication.shared.keyWindow,
+            eventWindow.windowController?.document === self.document
+      else {
+        return event  // Not our window, pass through
+      }
+
       // Handle Cmd+Enter to run query (alternative to Cmd+R)
       let isReturn = event.keyCode == 36
       let hasCommandModifier = event.modifierFlags.contains(.command)

@@ -113,6 +113,38 @@ struct ToggleRightSidebarActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// FocusedValue key for opening search panel.
+struct OpenSearchActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue key for find next match.
+struct FindNextActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue key for find previous match.
+struct FindPreviousActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+extension FocusedValues {
+  var openSearchAction: (() -> Void)? {
+    get { self[OpenSearchActionKey.self] }
+    set { self[OpenSearchActionKey.self] = newValue }
+  }
+
+  var findNextAction: (() -> Void)? {
+    get { self[FindNextActionKey.self] }
+    set { self[FindNextActionKey.self] = newValue }
+  }
+
+  var findPreviousAction: (() -> Void)? {
+    get { self[FindPreviousActionKey.self] }
+    set { self[FindPreviousActionKey.self] = newValue }
+  }
+}
+
 // MARK: - Shared Commands (cho cả Notebook và Editor)
 
 struct SharedCommands: Commands {
@@ -158,6 +190,9 @@ struct NotebookCommands: Commands {
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @FocusedValue(\.openSearchAction) private var openSearchAction
+  @FocusedValue(\.findNextAction) private var findNextAction
+  @FocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
@@ -231,22 +266,22 @@ struct NotebookCommands: Commands {
         .keyboardShortcut(",", modifiers: [.command])
       }
 
-      // Edit commands (notebook-specific)
+      // Edit commands (notebook-specific) - use focused actions for window-specific behavior
       CommandMenu("Edit") {
         Button("Find in Notebook") {
-          NotificationCenter.default.post(name: .openSearch, object: nil)
+          openSearchAction?()
         }
         .keyboardShortcut("f", modifiers: .command)
 
         Divider()
 
         Button("Find Next") {
-          NotificationCenter.default.post(name: .findNext, object: nil)
+          findNextAction?()
         }
         .keyboardShortcut("g", modifiers: .command)
 
         Button("Find Previous") {
-          NotificationCenter.default.post(name: .findPrevious, object: nil)
+          findPreviousAction?()
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
       }
@@ -263,6 +298,9 @@ struct EditorCommands: Commands {
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @FocusedValue(\.openSearchAction) private var openSearchAction
+  @FocusedValue(\.findNextAction) private var findNextAction
+  @FocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -275,22 +313,22 @@ struct EditorCommands: Commands {
         .keyboardShortcut("r", modifiers: .command)
       }
 
-      // Edit commands (editor-specific search)
+      // Edit commands (editor-specific search) - use focused actions for window-specific behavior
       CommandMenu("Edit") {
         Button("Find") {
-          NotificationCenter.default.post(name: .openSearch, object: nil)
+          openSearchAction?()
         }
         .keyboardShortcut("f", modifiers: .command)
 
         Divider()
 
         Button("Find Next") {
-          NotificationCenter.default.post(name: .findNext, object: nil)
+          findNextAction?()
         }
         .keyboardShortcut("g", modifiers: .command)
 
         Button("Find Previous") {
-          NotificationCenter.default.post(name: .findPrevious, object: nil)
+          findPreviousAction?()
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
       }
