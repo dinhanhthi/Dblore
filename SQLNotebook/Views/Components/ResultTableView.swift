@@ -55,11 +55,13 @@ struct ResultTableView: View {
     VStack(alignment: .leading, spacing: 0) {
       // Custom header pinning solution (Option B)
       // Header in separate ScrollView that syncs with content via onScrollGeometryChange
-      ScrollView(.horizontal, showsIndicators: false) {
+      // Use same scroll axes as body to ensure consistent centering behavior
+      ScrollView(scrollAxes, showsIndicators: false) {
         headerRow
+          .frame(width: totalColumnsWidth, alignment: .leading)
           .background(Color.tableHeaderBackground)
-          .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .scrollDisabled(true)  // Disable direct scrolling - synced via contentScrollPosition
       .frame(height: headerHeight)
       .scrollPosition($headerScrollPosition)
       .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -93,9 +95,10 @@ struct ResultTableView: View {
             truncationWarning
           }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(width: totalColumnsWidth, alignment: .leading)  // Match header width for alignment
         .fixedSize(horizontal: false, vertical: true)  // Don't expand vertically to fill container
       }
+      .defaultScrollAnchor(.topLeading)  // Align content to top-leading when smaller than container
       .scrollContentBackground(.hidden)
       .scrollBounceBehavior(.basedOnSize)
       .scrollPosition($contentScrollPosition)
@@ -307,6 +310,13 @@ struct ResultTableView: View {
 
   private func columnWidth(for columnName: String) -> CGFloat {
     columnWidths[columnName] ?? defaultColumnWidth
+  }
+
+  // Calculate total width of all columns for consistent alignment
+  private var totalColumnsWidth: CGFloat {
+    result.columns.reduce(0) { total, column in
+      total + columnWidth(for: column.name)
+    }
   }
 
   private func alignment(for value: CellValue) -> Alignment {
