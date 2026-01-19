@@ -89,6 +89,28 @@ extension FocusedValues {
     get { self[DocumentModeFocusedValueKey.self] }
     set { self[DocumentModeFocusedValueKey.self] = newValue }
   }
+
+  /// Action to toggle the left sidebar in the focused window.
+  var toggleLeftSidebarAction: (() -> Void)? {
+    get { self[ToggleLeftSidebarActionKey.self] }
+    set { self[ToggleLeftSidebarActionKey.self] = newValue }
+  }
+
+  /// Action to toggle the right sidebar in the focused window.
+  var toggleRightSidebarAction: (() -> Void)? {
+    get { self[ToggleRightSidebarActionKey.self] }
+    set { self[ToggleRightSidebarActionKey.self] = newValue }
+  }
+}
+
+/// FocusedValue key for left sidebar toggle action.
+struct ToggleLeftSidebarActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue key for right sidebar toggle action.
+struct ToggleRightSidebarActionKey: FocusedValueKey {
+  typealias Value = () -> Void
 }
 
 // MARK: - Shared Commands (cho cả Notebook và Editor)
@@ -134,6 +156,8 @@ struct SharedCommands: Commands {
 struct NotebookCommands: Commands {
   @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
@@ -190,17 +214,17 @@ struct NotebookCommands: Commands {
         .keyboardShortcut("d", modifiers: .command)
       }
 
-      // View commands (notebook-specific)
+      // View commands (notebook-specific) - use focused actions for window-specific behavior
       CommandGroup(after: .sidebar) {
         Button {
-          NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+          toggleLeftSidebarAction?()
         } label: {
           Label("Toggle Left Sidebar", systemImage: "sidebar.left")
         }
         .keyboardShortcut("b", modifiers: .command)
 
         Button {
-          NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+          toggleRightSidebarAction?()
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
@@ -237,6 +261,8 @@ struct NotebookCommands: Commands {
 
 struct EditorCommands: Commands {
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -249,17 +275,17 @@ struct EditorCommands: Commands {
         .keyboardShortcut("r", modifiers: .command)
       }
 
-      // View Menu - Sidebar toggles (giống như Notebook mode)
+      // View Menu - Sidebar toggles - use focused actions for window-specific behavior
       CommandGroup(after: .sidebar) {
         Button {
-          NotificationCenter.default.post(name: .toggleLeftSidebar, object: nil)
+          toggleLeftSidebarAction?()
         } label: {
           Label("Toggle Left Sidebar", systemImage: "sidebar.left")
         }
         .keyboardShortcut("b", modifiers: .command)
 
         Button {
-          NotificationCenter.default.post(name: .toggleSidebar, object: nil)
+          toggleRightSidebarAction?()
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }

@@ -131,6 +131,12 @@ struct EditorContentView: View {
       }
     }
     .focusedSceneValue(\.documentMode, .editor)
+    .focusedSceneValue(\.toggleLeftSidebarAction) { [viewModel] in
+      viewModel.toggleLeftSidebar()
+    }
+    .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
+      viewModel.toggleSidebar()
+    }
     .onChange(of: viewModel.editorContent) { _, newContent in
       syncDocument()
     }
@@ -249,12 +255,6 @@ private struct EditorNotificationHandlerModifier: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-        viewModel.toggleSidebar()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .toggleLeftSidebar)) { _ in
-        viewModel.toggleLeftSidebar()
-      }
       .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
         // Toggle settings sidebar
         if viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .settings {

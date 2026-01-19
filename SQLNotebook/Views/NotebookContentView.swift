@@ -182,6 +182,12 @@ struct NotebookContentView: View {
       )
     )
     .focusedSceneValue(\.documentMode, .notebook)
+    .focusedSceneValue(\.toggleLeftSidebarAction) { [viewModel] in
+      viewModel.toggleLeftSidebar()
+    }
+    .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
+      viewModel.toggleSidebar()
+    }
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
@@ -457,12 +463,6 @@ private struct NotebookNotificationHandlerModifier: ViewModifier {
           viewModel.duplicateCell(id: id)
           syncDocument()
         }
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-        viewModel.toggleSidebar()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .toggleLeftSidebar)) { _ in
-        viewModel.toggleLeftSidebar()
       }
       .onReceive(NotificationCenter.default.publisher(for: .selectNextCell)) { _ in
         viewModel.selectNextCell(createIfNeeded: false)
