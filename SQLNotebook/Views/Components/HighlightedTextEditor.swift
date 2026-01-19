@@ -358,13 +358,21 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           self.isCaseSensitive = caseSensitive
           self.isSearchActive = true
 
+          // In editor mode, cellId is nil - accept all SQL content matches
+          // In notebook mode, only accept matches for this cell
+          let isEditorMode = self.cellId == nil
+          let matchesThisCell = isEditorMode || matchCellId == self.cellId
+
           // Only set currentMatchRange for the cell with the current match (orange highlight)
-          if isSQLContent && matchCellId == self.cellId {
+          if isSQLContent && matchesThisCell {
             // This cell has the current match - highlight it orange
             guard let textView = self.textView else { return }
             let nsRange = NSRange(matchRange, in: textView.string)
             self.currentMatchId = matchId
             self.currentMatchRange = nsRange
+
+            // Scroll to make the match visible
+            textView.scrollRangeToVisible(nsRange)
           } else {
             // This cell doesn't have current match - clear orange highlight
             self.currentMatchId = nil

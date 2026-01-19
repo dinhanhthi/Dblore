@@ -71,7 +71,19 @@ extension NotebookViewModel {
     let maxMatchesPerCell = 50  // Limit matches per cell for performance
     let maxTotalMatches = 1000  // Stop after 1000 total matches
 
-    for cell in notebook.cells {
+    // In editor mode, search in editorContent instead of notebook.cells
+    // because editorContent is the live editing buffer
+    let cellsToSearch: [NotebookCell]
+    if viewMode == .editor, let firstCell = notebook.cells.first {
+      // Create a virtual cell with editorContent for searching
+      var editorCell = firstCell
+      editorCell.content = editorContent
+      cellsToSearch = [editorCell]
+    } else {
+      cellsToSearch = notebook.cells
+    }
+
+    for cell in cellsToSearch {
       // Check cancellation frequently
       if Task.isCancelled { break }
 
@@ -85,7 +97,9 @@ extension NotebookViewModel {
       allMatches.append(contentsOf: sqlMatches)
 
       // 2. Search in result data
-      if let result = cell.result {
+      // In editor mode, use editorResult instead of cell.result
+      let resultToSearch = viewMode == .editor ? editorResult : cell.result
+      if let result = resultToSearch {
         if Task.isCancelled { break }
 
         // Search in column names
