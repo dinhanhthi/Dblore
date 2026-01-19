@@ -84,19 +84,17 @@ struct JSONViewerContent: View {
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)
       } else {
-        GeometryReader { geometry in
-          ScrollView([.vertical, .horizontal], showsIndicators: true) {
+        // Nested ScrollViews for both axes to avoid centering issue
+        // Horizontal outside so scrollbar is always visible at bottom
+        ScrollView(.horizontal, showsIndicators: true) {
+          ScrollView(.vertical, showsIndicators: true) {
             HighlightedJSONText(json: formattedJSON)
               .padding(Spacing.sm)
-              .frame(
-                minWidth: geometry.size.width,
-                minHeight: geometry.size.height,
-                alignment: .topLeading
-              )
           }
-          .background(Color.inputBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color.inputBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
     }
   }

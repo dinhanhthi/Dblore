@@ -194,7 +194,7 @@ struct HighlightedJSONText: View {
 
   var body: some View {
     Text(attributedString)
-      .font(.monoSmall)
+      .font(.mono)
       .textSelection(.enabled)
   }
 

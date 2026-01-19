@@ -146,6 +146,7 @@ struct RightSidebarView: View {
         },
         isReadOnly: viewModel.notebook.connectionConfig?.readOnly ?? false
       )
+      .environment(viewModel)
     case .connectionDetails:
       ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
