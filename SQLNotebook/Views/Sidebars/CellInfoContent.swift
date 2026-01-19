@@ -20,7 +20,11 @@ struct CellInfoContent: View {
   @State private var editedBoolValue: Bool = false
   @State private var originalBoolValue: Bool = false
   @State private var validationError: String?
+  @State private var isBeautified = false
+  @State private var beautifiedJSON: String = ""
   @FocusState private var isTextEditorFocused: Bool
+  
+  @Environment(NotebookViewModel.self) private var viewModel
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -94,7 +98,25 @@ struct CellInfoContent: View {
               action: copyToClipboard
             )
           } else {
-            // Edit and Copy buttons (for non-boolean types)
+            // Beautify, Edit and Copy buttons (for non-boolean types)
+            
+            // Beautify button (only for string type)
+            if isStringValue && !isBeautified {
+              FloatingPanelButton(
+                icon: "curlybraces",
+                helpText: "Beautify JSON",
+                useSymbolEffect: false,
+                action: beautifyJSON
+              )
+            } else if isStringValue && isBeautified {
+              FloatingPanelButton(
+                icon: "arrow.counterclockwise",
+                helpText: "Show Original",
+                useSymbolEffect: false,
+                action: showOriginal
+              )
+            }
+            
             if !isReadOnly {
               FloatingPanelButton(
                 icon: "pencil",
@@ -176,18 +198,33 @@ struct CellInfoContent: View {
         }
       } else {
         // Read-only view for non-boolean types
-        ScrollView {
-          Text(value.fullString)
-            .font(.mono)
-            .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
-            .italic(value.isNull)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Spacing.sm)
+        if isBeautified {
+          // Nested ScrollViews for both axes to avoid centering issue
+          // Horizontal outside so scrollbar is always visible at bottom
+          ScrollView(.horizontal, showsIndicators: true) {
+            ScrollView(.vertical, showsIndicators: true) {
+              HighlightedJSONText(json: beautifiedJSON)
+                .padding(Spacing.sm)
+            }
+          }
+          .frame(maxHeight: .infinity, alignment: .top)
+          .background(Color.tableHeaderBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        } else {
+          ScrollView(.vertical, showsIndicators: true) {
+            Text(value.fullString)
+              .font(.mono)
+              .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
+              .italic(value.isNull)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+              .frame(maxWidth: .infinity, alignment: .topLeading)
+              .padding(Spacing.sm)
+          }
+          .frame(maxHeight: .infinity, alignment: .top)
+          .background(Color.tableHeaderBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         }
-        .background(Color.tableHeaderBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .frame(maxHeight: .infinity)
       }
     }
     .onAppear {
@@ -198,6 +235,10 @@ struct CellInfoContent: View {
       }
     }
     .onChange(of: value) { _, newValue in
+      // Reset beautified state when value changes
+      isBeautified = false
+      beautifiedJSON = ""
+      
       // Update boolean values when value changes
       if case .bool(let boolValue) = newValue {
         editedBoolValue = boolValue
@@ -221,6 +262,13 @@ struct CellInfoContent: View {
 
   private var isBooleanValue: Bool {
     if case .bool = value {
+      return true
+    }
+    return false
+  }
+  
+  private var isStringValue: Bool {
+    if case .string = value {
       return true
     }
     return false
@@ -291,6 +339,66 @@ struct CellInfoContent: View {
     // Use CellValueValidator helper
     let result = CellValueValidator.validate(input, for: value)
     validationError = result.errorMessage
+  }
+  
+  // MARK: - JSON Beautification
+  
+  private func beautifyJSON() {
+    guard case .string(let stringValue) = value else { return }
+
+    // Try to parse the string as JSON
+    guard let data = stringValue.data(using: .utf8) else {
+      viewModel.showToast("Cannot convert string to data.", type: .error)
+      return
+    }
+
+    // Try to parse and validate that entire string is consumed
+    let parsedObject: Any
+
+    do {
+      parsedObject = try JSONSerialization.jsonObject(
+        with: data,
+        options: .allowFragments
+      )
+
+      // Check if entire data was consumed by trying to parse again from start
+      // If there's trailing data, JSONSerialization will only parse the first valid object
+      let serializedData = try JSONSerialization.data(withJSONObject: parsedObject, options: [])
+
+      // Compare original data length with serialized length
+      // If original is significantly longer, there's likely trailing invalid JSON
+      if data.count > Int(Double(serializedData.count) * 1.5) {
+        viewModel.showToast(
+          "Warning: Only the first valid JSON object was beautified. The input contains multiple objects or invalid trailing data.",
+          type: .warning
+        )
+      }
+
+      // Generate pretty printed version
+      let prettyData = try JSONSerialization.data(
+        withJSONObject: parsedObject,
+        options: .prettyPrinted
+      )
+
+      guard let prettyString = String(data: prettyData, encoding: .utf8) else {
+        viewModel.showToast("Cannot convert beautified data to string.", type: .error)
+        return
+      }
+
+      // Set beautified state
+      beautifiedJSON = prettyString
+      isBeautified = true
+
+    } catch {
+      // Show error toast if not valid JSON
+      viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error)
+      return
+    }
+  }
+  
+  private func showOriginal() {
+    isBeautified = false
+    beautifiedJSON = ""
   }
 }
 
@@ -468,6 +576,32 @@ struct CellInfoContent: View {
     tableName: "articles",
     rowData: ["article_id": .int(1), "description": .string(longText)],
     primaryKeyColumns: ["article_id"],
+    rowIdentifier: .int(1),
+    cellId: nil
+  )
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 600)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("JSON String Value") {
+  @Previewable @State var viewModel = NotebookViewModel()
+  let jsonString = """
+    {"user":{"id":123,"name":"John Doe","email":"john@example.com","profile":{"bio":"Software developer","location":"San Francisco"},"tags":["developer","swift","ios"]}}
+    """
+
+  viewModel.rightSidebarContent = .cellInfo(
+    columnName: "metadata",
+    columnType: "varchar",
+    value: .string(jsonString),
+    tableName: "users",
+    rowData: ["user_id": .int(1), "metadata": .string(jsonString)],
+    primaryKeyColumns: ["user_id"],
     rowIdentifier: .int(1),
     cellId: nil
   )
