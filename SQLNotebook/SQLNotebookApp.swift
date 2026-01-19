@@ -275,6 +275,26 @@ struct EditorCommands: Commands {
         .keyboardShortcut("r", modifiers: .command)
       }
 
+      // Edit commands (editor-specific search)
+      CommandMenu("Edit") {
+        Button("Find") {
+          NotificationCenter.default.post(name: .openSearch, object: nil)
+        }
+        .keyboardShortcut("f", modifiers: .command)
+
+        Divider()
+
+        Button("Find Next") {
+          NotificationCenter.default.post(name: .findNext, object: nil)
+        }
+        .keyboardShortcut("g", modifiers: .command)
+
+        Button("Find Previous") {
+          NotificationCenter.default.post(name: .findPrevious, object: nil)
+        }
+        .keyboardShortcut("g", modifiers: [.command, .shift])
+      }
+
       // View Menu - Sidebar toggles - use focused actions for window-specific behavior
       CommandGroup(after: .sidebar) {
         Button {

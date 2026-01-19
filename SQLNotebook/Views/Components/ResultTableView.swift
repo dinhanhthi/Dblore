@@ -51,7 +51,15 @@ struct ResultTableView: View {
     needsVerticalScroll ? [.horizontal, .vertical] : .horizontal
   }
 
+  // Force SwiftUI to track searchState changes for re-rendering
+  private var searchQuery: String { viewModel.searchState.query }
+  private var searchCaseSensitive: Bool { viewModel.searchState.isCaseSensitive }
+
   var body: some View {
+    // Access search properties to establish SwiftUI dependency tracking
+    let _ = searchQuery
+    let _ = searchCaseSensitive
+
     VStack(alignment: .leading, spacing: 0) {
       // Custom header pinning solution (Option B)
       // Header in separate ScrollView that syncs with content via onScrollGeometryChange
@@ -127,16 +135,33 @@ struct ResultTableView: View {
       calculateInitialColumnWidths()
     }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
-      if let match = notification.userInfo?["match"] as? SearchMatch,
-         match.cellId == cellId {
-        currentMatchId = match.id
-        // Build lookup table when match changes
-        buildMatchLookup()
+      if let match = notification.userInfo?["match"] as? SearchMatch {
+        // In editor mode, cellId is nil - accept all matches
+        // In notebook mode, only accept matches for this cell
+        let isEditorMode = cellId == nil
+        let matchesThisCell = isEditorMode || match.cellId == cellId
+
+        if matchesThisCell {
+          currentMatchId = match.id
+          // Build lookup table when match changes
+          buildMatchLookup()
+
+          // Scroll to matched row if it's a table data match
+          if case .tableData(let rowIndex, _) = match.matchType {
+            // Calculate vertical position to scroll to
+            let yPosition = CGFloat(rowIndex) * rowHeight
+            contentScrollPosition.scrollTo(y: yPosition)
+          }
+        }
       }
     }
     .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
       currentMatchId = nil
       matchLookup.removeAll()  // Clear lookup table
+    }
+    .onChange(of: viewModel.searchState.matches.count) { _, _ in
+      // Rebuild lookup when search results change
+      buildMatchLookup()
     }
   }
 
@@ -176,21 +201,23 @@ struct ResultTableView: View {
           }
 
           // Highlight column name if search query matches
-          if !viewModel.searchState.query.isEmpty {
+          if !searchQuery.isEmpty {
             // Find the match for this column name
+            // In editor mode (cellId is nil), accept all matches
+            let isEditorMode = cellId == nil
             let columnMatch = viewModel.searchState.matches.first {
-              $0.cellId == cellId &&
+              (isEditorMode || $0.cellId == cellId) &&
               ($0.matchType == .columnName(column.name))
             }
             let isCurrentMatch = columnMatch?.id == currentMatchId
             let matchRange: Range<String.Index>? = isCurrentMatch
-              ? column.name.range(of: viewModel.searchState.query, options: viewModel.searchState.isCaseSensitive ? [] : .caseInsensitive)
+              ? column.name.range(of: searchQuery, options: searchCaseSensitive ? [] : .caseInsensitive)
               : nil
 
             SearchHighlightText(
               text: column.name,
-              query: viewModel.searchState.query,
-              caseSensitive: viewModel.searchState.isCaseSensitive,
+              query: searchQuery,
+              caseSensitive: searchCaseSensitive,
               currentMatchRange: matchRange
             )
             .font(.system(.body, weight: .semibold))
@@ -271,9 +298,14 @@ struct ResultTableView: View {
   private func buildMatchLookup() {
     matchLookup.removeAll()
 
+    // In editor mode, cellId is nil - accept all matches
+    // In notebook mode, only accept matches for this cell
+    let isEditorMode = cellId == nil
+
     // Build hash map: "rowIndex-columnName" → matchId
     for match in viewModel.searchState.matches {
-      if match.cellId == cellId,
+      let matchesThisCell = isEditorMode || match.cellId == cellId
+      if matchesThisCell,
          case .tableData(let rowIndex, let columnName) = match.matchType {
         let key = "\(rowIndex)-\(columnName)"
         matchLookup[key] = match.id
@@ -289,8 +321,8 @@ struct ResultTableView: View {
 
     return CellContentView(
       value: value,
-      searchQuery: viewModel.searchState.query,
-      isCaseSensitive: viewModel.searchState.isCaseSensitive,
+      searchQuery: searchQuery,
+      isCaseSensitive: searchCaseSensitive,
       isCurrentMatch: isCurrentMatch
     )
   }

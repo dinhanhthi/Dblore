@@ -23,6 +23,11 @@ struct SearchPanelView: View {
         .textFieldStyle(.plain)
         .font(.bodyText)
         .focused($isSearchFieldFocused)
+        .onKeyPress(.escape) {
+          // ESC key closes search panel
+          viewModel.closeSearch()
+          return .handled
+        }
         .onChange(of: viewModel.searchState.query) { _, newValue in
           // Debounce search
           Task {
