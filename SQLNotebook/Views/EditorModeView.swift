@@ -57,7 +57,8 @@ struct EditorModeView: View {
               ResultTableView(
                 result: result,
                 viewModel: viewModel,
-                cellId: nil  // No cell ID in editor mode
+                cellId: nil,  // No cell ID in editor mode
+                showBorderRadius: false  // No border radius in editor mode
               )
             }
 
