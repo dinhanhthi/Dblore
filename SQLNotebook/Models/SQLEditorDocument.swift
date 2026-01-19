@@ -20,14 +20,17 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
     [.sql]
   }
 
-  nonisolated init(content: String = "", metadata: NotebookMetadata = NotebookMetadata(title: "Untitled")) {
+  nonisolated init(
+    content: String = "", metadata: NotebookMetadata = NotebookMetadata(title: "Untitled")
+  ) {
     self.content = content
     self.metadata = metadata
   }
 
   nonisolated init(configuration: ReadConfiguration) throws {
     guard let data = configuration.file.regularFileContents,
-          let sqlContent = String(data: data, encoding: .utf8) else {
+      let sqlContent = String(data: data, encoding: .utf8)
+    else {
       throw CocoaError(.fileReadCorruptFile)
     }
 
@@ -46,7 +49,9 @@ final class SQLEditorDocument: ReferenceFileDocument, ObservableObject, @uncheck
     return content
   }
 
-  nonisolated func fileWrapper(snapshot: String, configuration: WriteConfiguration) throws -> FileWrapper {
+  nonisolated func fileWrapper(
+    snapshot: String, configuration: WriteConfiguration
+  ) throws -> FileWrapper {
     print("💾 [SQLEditorDocument] fileWrapper() called - snapshot length: \(snapshot.count)")
     print("💾 [SQLEditorDocument] snapshot preview: \(String(snapshot.prefix(100)))")
 

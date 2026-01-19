@@ -72,7 +72,7 @@ struct SQLNotebookApp: App {
 /// ```
 enum DocumentMode {
   case notebook  // Notebook mode (.sqlnb files) - has Cell menu, custom Find
-  case editor    // Editor mode (.sql files) - uses native macOS menus
+  case editor  // Editor mode (.sql files) - uses native macOS menus
 }
 
 /// FocusedValue key for tracking document mode across the app.
@@ -396,7 +396,8 @@ struct NewDocumentCommands: Commands {
           try "".write(to: url, atomically: true, encoding: .utf8)
 
           // Open the file
-          NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+          NSDocumentController.shared.openDocument(withContentsOf: url, display: true) {
+            _, _, error in
             if let error = error {
               print("Failed to open SQL file: \(error)")
             }

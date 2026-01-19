@@ -134,7 +134,8 @@ extension AppLogger {
     }
 
     // Filter and sort log files by creation date (newest first)
-    let logFiles = files
+    let logFiles =
+      files
       .filter { $0.pathExtension == "log" }
       .sorted { file1, file2 in
         guard
@@ -193,8 +194,9 @@ extension AppLogger {
   }
 
   /// Get statistics about all log files
-  func getLogStatistics() -> (fileCount: Int, totalSize: Int64, oldestDate: Date?, newestDate: Date?)
-  {
+  func getLogStatistics() -> (
+    fileCount: Int, totalSize: Int64, oldestDate: Date?, newestDate: Date?
+  ) {
     let fileManager = FileManager.default
     guard
       let appSupportURL = fileManager.urls(

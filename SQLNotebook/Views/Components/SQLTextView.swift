@@ -84,7 +84,9 @@ class SQLTextView: NSTextView {
     copyLine()
   }
 
-  override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+  override func writeSelection(
+    to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]
+  ) -> Bool {
     print("DEBUG: writeSelection(to:types:) called")
 
     // Manually handle copy through our copyLine logic
@@ -199,7 +201,6 @@ class SQLTextView: NSTextView {
     return false
   }
 
-
   /// Handle Cmd+/ shortcut for comment/uncomment
   /// Returns true if the event was handled
   private func handleCommentShortcut(with event: NSEvent) -> Bool {
@@ -302,7 +303,8 @@ class SQLTextView: NSTextView {
         let lineEnd = lineRange.location + lineRange.length
 
         // Check if current line ends with newline
-        let currentLineEndsWithNewline = lineEnd > 0 && lineEnd <= text.length
+        let currentLineEndsWithNewline =
+          lineEnd > 0 && lineEnd <= text.length
           && text.substring(with: NSRange(location: lineEnd - 1, length: 1)) == "\n"
 
         // Build text to insert:

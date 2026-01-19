@@ -45,7 +45,9 @@ extension NotebookViewModel {
       }
 
       let duration = CFAbsoluteTimeGetCurrent() - start
-      await AppLogger.shared.log("Search completed in \(String(format: "%.3f", duration))s, found \(matches.count) matches", level: .info, category: "Performance")
+      await AppLogger.shared.log(
+        "Search completed in \(String(format: "%.3f", duration))s, found \(matches.count) matches",
+        level: .info, category: "Performance")
 
       await MainActor.run {
         searchState.matches = matches
@@ -103,16 +105,18 @@ extension NotebookViewModel {
         if Task.isCancelled { break }
 
         // Search in column names
-        allMatches.append(contentsOf: searchInColumnNames(
-          cell: cell,
-          result: result,
-          query: query,
-          caseSensitive: caseSensitive
-        ))
+        allMatches.append(
+          contentsOf: searchInColumnNames(
+            cell: cell,
+            result: result,
+            query: query,
+            caseSensitive: caseSensitive
+          ))
 
         // Search in table data (limit rows for performance)
         // Only search first maxRowLimit rows to avoid scanning huge result sets
-        let limitedRows = Array(result.rows.prefix(await MainActor.run { AppSettings.shared.maxRowLimit }))
+        let limitedRows = Array(
+          result.rows.prefix(await MainActor.run { AppSettings.shared.maxRowLimit }))
         let limitedResult = CellResult(
           columns: result.columns,
           rows: limitedRows,
@@ -121,23 +125,25 @@ extension NotebookViewModel {
           timestamp: result.timestamp
         )
 
-        allMatches.append(contentsOf: searchInTableData(
-          cell: cell,
-          result: limitedResult,
-          query: query,
-          caseSensitive: caseSensitive,
-          maxMatches: maxMatchesPerCell
-        ))
-
-        // Search in error messages
-        if let error = result.error {
-          allMatches.append(contentsOf: searchInErrorMessage(
+        allMatches.append(
+          contentsOf: searchInTableData(
             cell: cell,
-            error: error,
+            result: limitedResult,
             query: query,
             caseSensitive: caseSensitive,
             maxMatches: maxMatchesPerCell
           ))
+
+        // Search in error messages
+        if let error = result.error {
+          allMatches.append(
+            contentsOf: searchInErrorMessage(
+              cell: cell,
+              error: error,
+              query: query,
+              caseSensitive: caseSensitive,
+              maxMatches: maxMatchesPerCell
+            ))
         }
       }
 
@@ -165,7 +171,8 @@ extension NotebookViewModel {
   func navigateToPreviousMatch() {
     guard !searchState.matches.isEmpty else { return }
 
-    let newIndex = searchState.currentMatchIndex == 0
+    let newIndex =
+      searchState.currentMatchIndex == 0
       ? searchState.matches.count - 1
       : searchState.currentMatchIndex - 1
     navigateToMatch(at: newIndex)
@@ -194,7 +201,7 @@ extension NotebookViewModel {
           userInfo: [
             "match": match,
             "query": searchState.query,
-            "caseSensitive": searchState.isCaseSensitive
+            "caseSensitive": searchState.isCaseSensitive,
           ]
         )
       }
@@ -253,13 +260,14 @@ extension NotebookViewModel {
       // Extract shorter context (25 chars instead of 50) for better memory usage
       let contextText = extractContext(from: content, around: range, maxLength: 25)
 
-      matches.append(SearchMatch(
-        cellId: cell.id,
-        matchType: .sqlContent,
-        matchRange: range,
-        contextText: contextText,
-        lineNumber: lineNumber
-      ))
+      matches.append(
+        SearchMatch(
+          cellId: cell.id,
+          matchType: .sqlContent,
+          matchRange: range,
+          contextText: contextText,
+          lineNumber: lineNumber
+        ))
 
       searchStartIndex = range.upperBound
     }
@@ -268,7 +276,9 @@ extension NotebookViewModel {
   }
 
   /// Search in column names
-  private func searchInColumnNames(cell: NotebookCell, result: CellResult, query: String, caseSensitive: Bool) -> [SearchMatch] {
+  private func searchInColumnNames(
+    cell: NotebookCell, result: CellResult, query: String, caseSensitive: Bool
+  ) -> [SearchMatch] {
     var matches: [SearchMatch] = []
 
     for column in result.columns {
@@ -276,13 +286,14 @@ extension NotebookViewModel {
       let searchQuery = caseSensitive ? query : query.lowercased()
 
       if let range = columnName.range(of: searchQuery) {
-        matches.append(SearchMatch(
-          cellId: cell.id,
-          matchType: .columnName(column.name),
-          matchRange: range,
-          contextText: column.name,
-          lineNumber: nil
-        ))
+        matches.append(
+          SearchMatch(
+            cellId: cell.id,
+            matchType: .columnName(column.name),
+            matchRange: range,
+            contextText: column.name,
+            lineNumber: nil
+          ))
       }
     }
 
@@ -313,13 +324,14 @@ extension NotebookViewModel {
         let searchQuery = caseSensitive ? query : query.lowercased()
 
         if let range = searchText.range(of: searchQuery) {
-          matches.append(SearchMatch(
-            cellId: cell.id,
-            matchType: .tableData(rowIndex: rowIndex, columnName: columnName),
-            matchRange: range,
-            contextText: valueText,
-            lineNumber: nil
-          ))
+          matches.append(
+            SearchMatch(
+              cellId: cell.id,
+              matchType: .tableData(rowIndex: rowIndex, columnName: columnName),
+              matchRange: range,
+              contextText: valueText,
+              lineNumber: nil
+            ))
         }
       }
     }
@@ -341,7 +353,8 @@ extension NotebookViewModel {
     let searchQuery = caseSensitive ? query : query.lowercased()
 
     var searchStartIndex = errorText.startIndex
-    while let range = errorText.range(of: searchQuery, range: searchStartIndex..<errorText.endIndex) {
+    while let range = errorText.range(of: searchQuery, range: searchStartIndex..<errorText.endIndex)
+    {
       // Early exit if we have enough matches
       if matches.count >= maxMatches {
         break
@@ -350,13 +363,14 @@ extension NotebookViewModel {
       // Use shorter context (50 chars instead of 100) for better memory
       let contextText = extractContext(from: errorText, around: range, maxLength: 50)
 
-      matches.append(SearchMatch(
-        cellId: cell.id,
-        matchType: .errorMessage,
-        matchRange: range,
-        contextText: contextText,
-        lineNumber: nil
-      ))
+      matches.append(
+        SearchMatch(
+          cellId: cell.id,
+          matchType: .errorMessage,
+          matchRange: range,
+          contextText: contextText,
+          lineNumber: nil
+        ))
 
       searchStartIndex = range.upperBound
     }
@@ -365,9 +379,12 @@ extension NotebookViewModel {
   }
 
   /// Extract context around a match (N chars before + match + N chars after)
-  private func extractContext(from text: String, around range: Range<String.Index>, maxLength: Int) -> String {
+  private func extractContext(
+    from text: String, around range: Range<String.Index>, maxLength: Int
+  ) -> String {
     let startOffset = max(0, text.distance(from: text.startIndex, to: range.lowerBound) - maxLength)
-    let endOffset = min(text.count, text.distance(from: text.startIndex, to: range.upperBound) + maxLength)
+    let endOffset = min(
+      text.count, text.distance(from: text.startIndex, to: range.upperBound) + maxLength)
 
     let startIndex = text.index(text.startIndex, offsetBy: startOffset)
     let endIndex = text.index(text.startIndex, offsetBy: endOffset)

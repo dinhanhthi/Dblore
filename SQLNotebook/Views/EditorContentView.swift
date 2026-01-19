@@ -187,7 +187,9 @@ struct EditorContentView: View {
       return
     }
 
-    print("🔄 [EditorContentView] syncDocument() - content changed from \(oldContent.count) to \(newContent.count) chars")
+    print(
+      "🔄 [EditorContentView] syncDocument() - content changed from \(oldContent.count) to \(newContent.count) chars"
+    )
 
     // Sync editorContent back to document
     document.content = newContent
@@ -215,7 +217,7 @@ struct EditorContentView: View {
       // Only handle events for the key window
       // The focusedSceneValue system ensures commands are routed to the right window
       guard let eventWindow = event.window,
-            eventWindow == NSApplication.shared.keyWindow
+        eventWindow == NSApplication.shared.keyWindow
       else {
         return event  // Not our window, pass through
       }
@@ -223,7 +225,8 @@ struct EditorContentView: View {
       // Handle Cmd+Enter to run query (alternative to Cmd+R)
       let isReturn = event.keyCode == 36
       let hasCommandModifier = event.modifierFlags.contains(.command)
-      let hasNoOtherModifiers = !event.modifierFlags.contains(.shift)
+      let hasNoOtherModifiers =
+        !event.modifierFlags.contains(.shift)
         && !event.modifierFlags.contains(.option)
         && !event.modifierFlags.contains(.control)
 

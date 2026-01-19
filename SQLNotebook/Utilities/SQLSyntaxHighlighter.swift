@@ -201,10 +201,10 @@ enum SQLSyntaxHighlighter {
       let backgroundColor: NSColor
       if isCurrentMatch {
         // Orange-yellow for current match
-        backgroundColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0) // #FFD500
+        backgroundColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)  // #FFD500
       } else {
         // Light yellow for other matches
-        backgroundColor = NSColor(red: 1.0, green: 0.976, blue: 0.769, alpha: 1.0) // #FFF9C4
+        backgroundColor = NSColor(red: 1.0, green: 0.976, blue: 0.769, alpha: 1.0)  // #FFF9C4
       }
 
       result.addAttribute(.backgroundColor, value: backgroundColor, range: nsRange)

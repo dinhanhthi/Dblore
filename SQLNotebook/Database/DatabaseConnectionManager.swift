@@ -116,7 +116,8 @@ actor DatabaseConnectionManager {
   /// Connect to PostgreSQL database
   func connect(config: ConnectionConfig) async throws {
     // Log connection attempt (with sanitized config)
-    await AppLogger.shared.info("Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
+    await AppLogger.shared.info(
+      "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
     // Disconnect if already connected
     await disconnect()
@@ -155,10 +156,12 @@ actor DatabaseConnectionManager {
       connection = conn
 
       // Log successful connection
-      await AppLogger.shared.info("Successfully connected to database: \(config.safeDisplayString)", category: "Database")
+      await AppLogger.shared.info(
+        "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
     } catch let error as PSQLError {
       // Log connection failure
-      await AppLogger.shared.error("Failed to connect to database: \(formatPostgresError(error))", category: "Database")
+      await AppLogger.shared.error(
+        "Failed to connect to database: \(formatPostgresError(error))", category: "Database")
       // Cleanup on failure
       try? await group.shutdownGracefully()
       self.eventLoopGroup = nil

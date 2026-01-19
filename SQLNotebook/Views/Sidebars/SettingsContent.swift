@@ -201,7 +201,8 @@ struct SettingsContent: View {
 
       // File Optimization Settings (Notebook Mode Only)
       if viewModel.viewMode == .notebook {
-        settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent") {
+        settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent")
+        {
           VStack(alignment: .leading, spacing: Spacing.md) {
             // Current file size display
             HStack {

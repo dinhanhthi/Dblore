@@ -56,7 +56,9 @@ final class SQLNotebookDocument: ReferenceFileDocument, ObservableObject, @unche
     return notebookSnapshot
   }
 
-  nonisolated func fileWrapper(snapshot: SQLNotebook, configuration: WriteConfiguration) throws
+  nonisolated func fileWrapper(
+    snapshot: SQLNotebook, configuration: WriteConfiguration
+  ) throws
     -> FileWrapper
   {
     let notebookToSave = snapshot

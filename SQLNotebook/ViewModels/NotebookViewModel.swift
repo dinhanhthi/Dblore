@@ -81,8 +81,8 @@ class NotebookViewModel {
   // MARK: - Search State
   var isSearchPanelVisible: Bool = false
   var searchState: SearchState = SearchState()
-  var searchFocusTrigger: UUID = UUID() // Trigger to force re-focus search field
-  var searchTask: Task<Void, Never>? // Task for cancellation support
+  var searchFocusTrigger: UUID = UUID()  // Trigger to force re-focus search field
+  var searchTask: Task<Void, Never>?  // Task for cancellation support
 
   // MARK: - Query Confirmation State
   var showQueryConfirmationDialog = false

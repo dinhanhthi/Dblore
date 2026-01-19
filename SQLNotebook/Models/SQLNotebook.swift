@@ -8,7 +8,7 @@ import Foundation
 /// Document type for SQL files
 enum DocumentType: String, Codable, Sendable {
   case notebook  // .sqlnb - JSON format with multiple cells
-  case script    // .sql - Plain text format for editor mode
+  case script  // .sql - Plain text format for editor mode
 }
 
 /// Core document model representing a SQL notebook

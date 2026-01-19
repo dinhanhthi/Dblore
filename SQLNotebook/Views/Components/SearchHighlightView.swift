@@ -11,8 +11,8 @@ import SwiftUI
 
 enum SearchHighlighter {
   /// Highlight color cho search matches
-  static let highlightColor = Color(red: 1.0, green: 0.973, blue: 0.769) // #FFF9C4 (light yellow)
-  static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0) // #FFD500 (orange-yellow)
+  static let highlightColor = Color(red: 1.0, green: 0.973, blue: 0.769)  // #FFF9C4 (light yellow)
+  static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0)  // #FFD500 (orange-yellow)
 
   // MARK: - Caching
 
@@ -66,17 +66,21 @@ enum SearchHighlighter {
 
     // Find all matches and highlight them
     var searchStartIndex = searchText.startIndex
-    while let range = searchText.range(of: searchQuery, range: searchStartIndex..<searchText.endIndex) {
+    while let range = searchText.range(
+      of: searchQuery, range: searchStartIndex..<searchText.endIndex)
+    {
       // Convert String.Index to AttributedString.Index
       if let attrStart = AttributedString.Index(range.lowerBound, within: attributedString),
-         let attrEnd = AttributedString.Index(range.upperBound, within: attributedString) {
+        let attrEnd = AttributedString.Index(range.upperBound, within: attributedString)
+      {
         let attrRange = attrStart..<attrEnd
 
         // Check if this is the current match
         let isThisCurrentMatch = currentMatchRange != nil && range == currentMatchRange
 
         // Apply highlight background color
-        attributedString[attrRange].backgroundColor = isThisCurrentMatch ? currentMatchColor : highlightColor
+        attributedString[attrRange].backgroundColor =
+          isThisCurrentMatch ? currentMatchColor : highlightColor
 
         // For accessibility, also make text slightly darker
         attributedString[attrRange].foregroundColor = .black
@@ -110,11 +114,13 @@ enum SearchHighlighter {
 
     // Convert String.Index to AttributedString.Index
     if let attrStart = AttributedString.Index(matchRange.lowerBound, within: attributedString),
-       let attrEnd = AttributedString.Index(matchRange.upperBound, within: attributedString) {
+      let attrEnd = AttributedString.Index(matchRange.upperBound, within: attributedString)
+    {
       let attrRange = attrStart..<attrEnd
 
       // Apply highlight background color
-      attributedString[attrRange].backgroundColor = isCurrentMatch ? currentMatchColor : highlightColor
+      attributedString[attrRange].backgroundColor =
+        isCurrentMatch ? currentMatchColor : highlightColor
       attributedString[attrRange].foregroundColor = .black
     }
 

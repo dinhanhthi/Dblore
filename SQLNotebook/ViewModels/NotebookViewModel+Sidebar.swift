@@ -109,7 +109,8 @@ extension NotebookViewModel {
           tables[index].rowCount = rowCount
         } catch {
           // If fetching columns fails, continue with other tables
-          await AppLogger.shared.warning("Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
+          await AppLogger.shared.warning(
+            "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
         }
       }
 

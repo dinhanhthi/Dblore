@@ -117,6 +117,23 @@ struct DatabaseQueryExecutionTests {
 
         // Assert
         #expect(result.contains("LIMIT 15"), "Should preserve user's LIMIT 15 with trailing semicolon")
+        #expect(!result.hasSuffix("; LIMIT"), "Should not have semicolon before LIMIT")
+    }
+
+    @Test("Query without LIMIT but with trailing semicolon should append LIMIT")
+    func queryWithoutLimitButWithSemicolonShouldAppendLimit() async throws {
+        // Arrange
+        let manager = DatabaseConnectionManager()
+        let query = "SELECT * FROM customers WHERE name = 'John';"
+        let maxRows = 50
+
+        // Act
+        let result = await manager.wrapQueryWithLimitPublic(query, maxRows: maxRows)
+
+        // Assert
+        #expect(result.contains("LIMIT 50"), "Should append LIMIT 50 to query with trailing semicolon")
+        #expect(!result.contains("; LIMIT"), "Should remove semicolon before appending LIMIT")
+        #expect(result.hasSuffix("LIMIT 50"), "Query should end with LIMIT 50, not semicolon")
     }
 
     // MARK: - Case Sensitivity Tests
@@ -376,13 +393,16 @@ extension DatabaseConnectionManager {
             return trimmed
         }
 
+        // Remove trailing semicolon if present
+        let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
+
         // Check for existing LIMIT
-        if hasLimitClausePublic(trimmed) {
-            return replaceLimitValuePublic(trimmed, maxRows: maxRows)
+        if hasLimitClausePublic(cleanQuery) {
+            return replaceLimitValuePublic(cleanQuery, maxRows: maxRows)
         }
 
         // No LIMIT - append maxRows
-        return "\(trimmed) LIMIT \(maxRows)"
+        return "\(cleanQuery) LIMIT \(maxRows)"
     }
 
     /// Public wrapper for private hasLimitClause method

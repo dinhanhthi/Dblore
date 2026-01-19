@@ -138,8 +138,9 @@ struct ErrorResultView: View {
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       if let match = notification.userInfo?["match"] as? SearchMatch,
-         case .errorMessage = match.matchType,
-         match.cellId == cellId {
+        case .errorMessage = match.matchType,
+        match.cellId == cellId
+      {
         // This cell has the current match - highlight specific range
         currentMatchRange = match.matchRange
       } else {
