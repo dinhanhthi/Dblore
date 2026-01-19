@@ -178,6 +178,27 @@ struct SettingsContent: View {
 
       Divider()
 
+      // Editor Settings
+      settingsSection(title: "Editor", icon: "text.cursor") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          Toggle(
+            "Enable Autocomplete",
+            isOn: $appSettings.isAutoCompleteEnabled
+          )
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          .tint(.accent)
+
+          Text(
+            "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes."
+          )
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+        }
+      }
+
+      Divider()
+
       // File Optimization Settings (Notebook Mode Only)
       if viewModel.viewMode == .notebook {
         settingsSection(title: "File Optimization", icon: "gauge.with.dots.needle.bottom.50percent") {
