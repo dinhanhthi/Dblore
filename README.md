@@ -4,15 +4,15 @@
   <img src="assets/sqlnb.png" alt="SQLNotebook Logo" width="100" />
 </p>
 
-A native macOS application for interactive SQL development. Write, execute, and save SQL queries in a notebook-style interface, similar to Jupyter Notebook but designed specifically for SQL workflows.
+A native macOS application for interactive SQL development. Write, execute, and save SQL queries in a notebook-style interface, similar to Jupyter Notebook but designed specifically for SQL workflows. It also supports traditional editor mode for writing SQL queries.
 
 ![Screenshot](./assets/screenshot.png)
 
 ## ✨ Features
 
-- 📓 **Cell-based Interface** - Jupyter-style cells for writing and executing SQL queries
-- ✏️ **Editor Mode** - Edit SQL queries in a code editor-like interface
-- 🔍 **Global Search & Navigation** - Search across all cells with match highlighting and case-sensitive options
+### Core Functionality
+- 📓 **Dual Mode System** - Notebook mode (cell-based) and Editor mode (traditional editor)
+- 🔍 **Global Search & Navigation** - Search across all cells/content with match highlighting and case-sensitive options
 - 💡 **Autocomplete** - Smart SQL autocomplete with keywords, table names, and column suggestions
 - ▶️ **Execute Queries** - Run individual cells, multiple cells, or all cells with execution tracking
 - 📊 **Result Visualization** - Interactive table view with column resizing and JSON data viewer
@@ -152,6 +152,7 @@ The database includes sample tables (customers, products, orders, employees, ana
 ### View
 - `Cmd+B` - Toggle left sidebar (schema browser)
 - `Cmd+,` - Toggle right sidebar (connection info)
+- `Cmd+M` - Switch between notebook and editor modes
 
 See [docs/keyboard_shortcuts.md](docs/keyboard_shortcuts.md) for complete reference.
 
