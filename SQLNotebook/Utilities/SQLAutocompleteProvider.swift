@@ -4,6 +4,10 @@
 //
 //  Provides autocomplete suggestions for SQL keywords, table names, and column names
 //
+//  NOTE: This file has been split into focused modules:
+//  - SQLAutocompleteProvider+Keywords.swift (SQL keyword definitions)
+//  - SQLAutocompleteProvider+ContextParsing.swift (context detection and parsing)
+//
 
 import Foundation
 
@@ -30,71 +34,9 @@ struct AutocompleteSuggestion: Identifiable, Equatable {
 
 @MainActor
 class SQLAutocompleteProvider {
-  // Common SQL keywords (PostgreSQL focus but covers standard SQL)
-  private static let sqlKeywords: [String] = [
-    // DML (Data Manipulation Language)
-    "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-    "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN",
-    "ON", "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "ILIKE",
-    "IS NULL", "IS NOT NULL", "AS", "DISTINCT", "ALL",
-
-    // Aggregation & Grouping
-    "GROUP BY", "HAVING", "ORDER BY", "ASC", "DESC", "LIMIT", "OFFSET",
-    "COUNT", "SUM", "AVG", "MIN", "MAX",
-
-    // DDL (Data Definition Language)
-    "CREATE", "CREATE TABLE", "CREATE INDEX", "CREATE VIEW",
-    "ALTER", "ALTER TABLE", "DROP", "DROP TABLE", "TRUNCATE",
-
-    // DCL (Data Control Language)
-    "GRANT", "REVOKE",
-
-    // Transaction Control
-    "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT",
-
-    // Data Types
-    "INTEGER", "BIGINT", "SMALLINT", "SERIAL", "BIGSERIAL",
-    "VARCHAR", "TEXT", "CHAR", "CHARACTER VARYING",
-    "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ",
-    "NUMERIC", "DECIMAL", "REAL", "DOUBLE PRECISION",
-    "JSON", "JSONB", "UUID", "BYTEA", "ARRAY",
-
-    // Constraints
-    "PRIMARY KEY", "FOREIGN KEY", "REFERENCES", "UNIQUE", "NOT NULL",
-    "CHECK", "DEFAULT", "CASCADE",
-
-    // Window Functions
-    "OVER", "PARTITION BY", "ROW_NUMBER", "RANK", "DENSE_RANK",
-    "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
-
-    // CTEs and Subqueries
-    "WITH", "RECURSIVE", "UNION", "UNION ALL", "INTERSECT", "EXCEPT",
-
-    // PostgreSQL Specific
-    "RETURNING", "CONFLICT", "DO NOTHING", "DO UPDATE",
-    "LATERAL", "TABLESAMPLE", "MATERIALIZED", "REFRESH",
-    "CONCURRENTLY", "IF EXISTS", "IF NOT EXISTS",
-
-    // Case & Casting
-    "CASE", "WHEN", "THEN", "ELSE", "END", "CAST", "::text", "::integer",
-
-    // String Functions
-    "CONCAT", "LENGTH", "LOWER", "UPPER", "TRIM", "SUBSTRING",
-
-    // Date Functions
-    "NOW", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
-    "EXTRACT", "DATE_TRUNC", "INTERVAL",
-
-    // NULL Handling
-    "COALESCE", "NULLIF",
-
-    // Logical
-    "TRUE", "FALSE", "NULL",
-  ]
-
   // Schema cache (tables and columns)
-  private var tables: [DatabaseTable] = []
-  private var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
+  var tables: [DatabaseTable] = []
+  var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
 
   // Current connection manager reference
   private weak var connectionManager: DatabaseConnectionManager?
@@ -134,7 +76,9 @@ class SQLAutocompleteProvider {
           newColumnsCache[key] = columns
         } catch {
           // Skip tables we can't fetch columns for
-          await AppLogger.shared.warning("Failed to fetch columns for \(table.schema).\(table.name): \(error)", category: "Autocomplete")
+          await AppLogger.shared.warning(
+            "Failed to fetch columns for \(table.schema).\(table.name): \(error)",
+            category: "Autocomplete")
         }
       }
       columnsByTable = newColumnsCache
@@ -241,172 +185,5 @@ class SQLAutocompleteProvider {
 
     // Limit to 20 suggestions to keep popup manageable
     return Array(suggestions.prefix(20))
-  }
-
-  // MARK: - Helper Methods
-
-  /// Extract the current word/token being typed at cursor position
-  private func extractCurrentToken(from text: String, at position: Int) -> String {
-    guard position > 0, position <= text.count else { return "" }
-
-    let beforeCursor = String(text.prefix(position))
-    let afterCursor = String(text.suffix(text.count - position))
-
-    // Find start of token (word boundary) - search backwards in beforeCursor
-    var tokenStart = 0
-    for (index, char) in beforeCursor.enumerated().reversed() {
-      if char.isWhitespace || "(),;".contains(char) {
-        tokenStart = index + 1
-        break
-      }
-    }
-
-    // Find end of token in afterCursor
-    var tokenEndInAfter = afterCursor.count
-    for (index, char) in afterCursor.enumerated() {
-      if char.isWhitespace || "(),;".contains(char) {
-        tokenEndInAfter = index
-        break
-      }
-    }
-
-    let tokenInBefore = String(beforeCursor.suffix(beforeCursor.count - tokenStart))
-    let tokenInAfter = String(afterCursor.prefix(tokenEndInAfter))
-
-    let token = tokenInBefore + tokenInAfter
-    return token.trimmingCharacters(in: CharacterSet.whitespaces)
-  }
-
-  /// Detect SQL context (what clause we're in)
-  private func detectContext(in text: String, before position: Int) -> SQLContext {
-    let textBefore = String(text.prefix(position)).uppercased()
-
-    // Find the last SQL keyword before cursor
-    let keywords = ["SELECT", "FROM", "WHERE", "JOIN", "ON", "GROUP BY", "ORDER BY", "HAVING"]
-
-    var lastKeyword: String?
-    var lastKeywordPosition = -1
-
-    for keyword in keywords {
-      if let range = textBefore.range(of: keyword, options: .backwards) {
-        let keywordPosition = textBefore.distance(from: textBefore.startIndex, to: range.lowerBound)
-        if keywordPosition > lastKeywordPosition {
-          lastKeyword = keyword
-          lastKeywordPosition = keywordPosition
-        }
-      }
-    }
-
-    switch lastKeyword {
-    case "FROM", "JOIN":
-      return .afterFromOrJoin
-    case "SELECT", "WHERE", "ON", "HAVING":
-      return .afterSelectOrWhere
-    default:
-      return .unknown
-    }
-  }
-
-  /// Extract table names and aliases from FROM/JOIN clauses
-  /// Returns a mapping of [alias/tableName: fullTableKey] where fullTableKey is "schema.table"
-  private func extractTableReferences(from text: String) -> [String: String] {
-    let upperText = text.uppercased()
-    var tableRefs: [String: String] = [:]
-
-    // Pattern: FROM table_name [alias] or JOIN table_name [alias]
-    // We'll use a simple regex-like approach
-
-    // Find all FROM and JOIN positions
-    let keywords = [
-      "FROM", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN",
-    ]
-
-    for keyword in keywords {
-      var searchRange = upperText.startIndex..<upperText.endIndex
-
-      while let range = upperText.range(of: keyword, range: searchRange) {
-        // Get text after keyword (until next major keyword or end)
-        let afterKeyword = upperText[range.upperBound...]
-        let afterKeywordString = String(afterKeyword)
-
-        // Extract the table reference (format: "table_name" or "table_name alias")
-        // Stop at next SQL keyword or comma
-        let stopKeywords = [
-          "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON", "GROUP", "ORDER",
-          "LIMIT", "UNION", "EXCEPT", "INTERSECT",
-        ]
-        var endIndex = afterKeywordString.endIndex
-
-        for stopKeyword in stopKeywords {
-          if let stopRange = afterKeywordString.range(of: stopKeyword) {
-            let currentEnd = afterKeywordString.distance(
-              from: afterKeywordString.startIndex, to: stopRange.lowerBound)
-            let proposedEnd = afterKeywordString.distance(
-              from: afterKeywordString.startIndex, to: endIndex)
-            if currentEnd < proposedEnd {
-              endIndex = stopRange.lowerBound
-            }
-          }
-        }
-
-        let tableRef = String(afterKeywordString[..<endIndex]).trimmingCharacters(
-          in: .whitespacesAndNewlines)
-
-        // Parse "table_name" or "table_name alias"
-        // Split by whitespace, first part is table name, second part (if exists) is alias
-        let parts = tableRef.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-
-        if let tableName = parts.first, !tableName.isEmpty {
-          // Find full table key from schema cache
-          let matchingTableKey = findMatchingTableKey(for: tableName)
-
-          if let tableKey = matchingTableKey {
-            // Add table name itself as a reference
-            tableRefs[tableName.lowercased()] = tableKey
-
-            // If there's an alias, add it too
-            if parts.count > 1 {
-              let alias = parts[1]
-              tableRefs[alias.lowercased()] = tableKey
-            }
-          }
-        }
-
-        // Move search range forward
-        searchRange = range.upperBound..<upperText.endIndex
-      }
-    }
-
-    return tableRefs
-  }
-
-  /// Find full table key ("schema.table") from schema cache by table name
-  private func findMatchingTableKey(for tableName: String) -> String? {
-    let lowerTableName = tableName.lowercased()
-
-    // Try exact match first
-    for table in tables {
-      if table.name.lowercased() == lowerTableName {
-        return "\(table.schema).\(table.name)"
-      }
-    }
-
-    // Try matching the end part (in case user typed "schema.table")
-    if let dotIndex = lowerTableName.lastIndex(of: ".") {
-      let nameOnly = String(lowerTableName[lowerTableName.index(after: dotIndex)...])
-      for table in tables {
-        if table.name.lowercased() == nameOnly {
-          return "\(table.schema).\(table.name)"
-        }
-      }
-    }
-
-    return nil
-  }
-
-  enum SQLContext {
-    case afterFromOrJoin  // Expecting table names
-    case afterSelectOrWhere  // Expecting column names
-    case unknown
   }
 }
