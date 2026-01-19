@@ -188,6 +188,15 @@ struct NotebookContentView: View {
     .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
       viewModel.toggleSidebar()
     }
+    .focusedSceneValue(\.openSearchAction) { [viewModel] in
+      viewModel.openSearch()
+    }
+    .focusedSceneValue(\.findNextAction) { [viewModel] in
+      viewModel.navigateToNextMatch()
+    }
+    .focusedSceneValue(\.findPreviousAction) { [viewModel] in
+      viewModel.navigateToPreviousMatch()
+    }
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
@@ -242,12 +251,19 @@ struct NotebookContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Only handle events for the key window that belongs to this view's document
+      // This prevents conflicts when multiple windows are open with different modes
+      guard let eventWindow = event.window,
+            eventWindow == NSApplication.shared.keyWindow,
+            eventWindow.windowController?.document === self.document
+      else {
+        return event  // Not our window, pass through
+      }
+
       // Check if a NSTextView is currently first responder
       let textViewIsFocused: Bool = {
-        guard let window = NSApplication.shared.keyWindow,
-          let firstResponder = window.firstResponder
-        else {
-          return false  // No window or responder = no text view focused
+        guard let firstResponder = eventWindow.firstResponder else {
+          return false  // No responder = no text view focused
         }
         return firstResponder is NSTextView
       }()
