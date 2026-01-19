@@ -31,7 +31,8 @@ extension DatabaseConnectionManager {
 
     // DEBUG: Log sanitized query before execution (redact sensitive data)
     let sanitizedQuery = AppLogger.shared.sanitizeQuery(query)
-    await AppLogger.shared.debug("About to execute query: `\(sanitizedQuery)` (maxRows: \(maxRows))", category: "Database")
+    await AppLogger.shared.debug(
+      "About to execute query: `\(sanitizedQuery)` (maxRows: \(maxRows))", category: "Database")
 
     let startTime = Date()
 
@@ -104,7 +105,8 @@ extension DatabaseConnectionManager {
 
     // DEBUG: Log sanitized final query (redact sensitive data)
     let sanitizedExecutionQuery = AppLogger.shared.sanitizeQuery(executionQuery)
-    await AppLogger.shared.debug("Final query to be sent to database: `\(sanitizedExecutionQuery)`", category: "Database")
+    await AppLogger.shared.debug(
+      "Final query to be sent to database: `\(sanitizedExecutionQuery)`", category: "Database")
 
     do {
       // Execute query and collect rows

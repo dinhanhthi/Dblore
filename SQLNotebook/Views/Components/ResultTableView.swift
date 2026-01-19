@@ -206,12 +206,13 @@ struct ResultTableView: View {
             // In editor mode (cellId is nil), accept all matches
             let isEditorMode = cellId == nil
             let columnMatch = viewModel.searchState.matches.first {
-              (isEditorMode || $0.cellId == cellId) &&
-              ($0.matchType == .columnName(column.name))
+              (isEditorMode || $0.cellId == cellId) && ($0.matchType == .columnName(column.name))
             }
             let isCurrentMatch = columnMatch?.id == currentMatchId
-            let matchRange: Range<String.Index>? = isCurrentMatch
-              ? column.name.range(of: searchQuery, options: searchCaseSensitive ? [] : .caseInsensitive)
+            let matchRange: Range<String.Index>? =
+              isCurrentMatch
+              ? column.name.range(
+                of: searchQuery, options: searchCaseSensitive ? [] : .caseInsensitive)
               : nil
 
             SearchHighlightText(
@@ -306,7 +307,8 @@ struct ResultTableView: View {
     for match in viewModel.searchState.matches {
       let matchesThisCell = isEditorMode || match.cellId == cellId
       if matchesThisCell,
-         case .tableData(let rowIndex, let columnName) = match.matchType {
+        case .tableData(let rowIndex, let columnName) = match.matchType
+      {
         let key = "\(rowIndex)-\(columnName)"
         matchLookup[key] = match.id
       }

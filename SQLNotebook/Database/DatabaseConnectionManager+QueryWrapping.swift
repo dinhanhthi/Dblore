@@ -57,14 +57,17 @@ extension DatabaseConnectionManager {
       return trimmed
     }
 
+    // Remove trailing semicolon if present
+    let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
+
     // Check if query already has a LIMIT clause
-    if hasLimitClause(trimmed) {
+    if hasLimitClause(cleanQuery) {
       // Replace existing LIMIT with min(userLimit, maxRows)
-      return replaceLimitValue(trimmed, maxRows: maxRows)
+      return replaceLimitValue(cleanQuery, maxRows: maxRows)
     }
 
     // No LIMIT clause - append LIMIT maxRows
-    return "\(trimmed) LIMIT \(maxRows)"
+    return "\(cleanQuery) LIMIT \(maxRows)"
   }
 
   /// Replace LIMIT value in query with maxRows if user's LIMIT exceeds it
@@ -238,7 +241,8 @@ extension DatabaseConnectionManager {
 
     } catch {
       // If enrichment fails, return original columns
-      await AppLogger.shared.warning("Failed to enrich column types: \(error)", category: "Database")
+      await AppLogger.shared.warning(
+        "Failed to enrich column types: \(error)", category: "Database")
       return columns
     }
   }

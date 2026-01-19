@@ -16,9 +16,9 @@ struct SQLEditorView: View {
   @State private var isTextEmpty: Bool = true
 
   var autocompleteProvider: SQLAutocompleteProvider?
-  var cellId: UUID? // For search highlighting
-  var maxHeight: CGFloat? // Optional max height for scrollable editors (e.g., in editor mode)
-  var isEditorMode: Bool = false // True when used in Editor mode (removes border/focus effects)
+  var cellId: UUID?  // For search highlighting
+  var maxHeight: CGFloat?  // Optional max height for scrollable editors (e.g., in editor mode)
+  var isEditorMode: Bool = false  // True when used in Editor mode (removes border/focus effects)
 
   var body: some View {
     editorContent
@@ -42,7 +42,7 @@ struct SQLEditorView: View {
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.sm + 4)
           .padding(.vertical, Spacing.xxs)
-          .allowsHitTesting(false) // Allow clicks to pass through to background
+          .allowsHitTesting(false)  // Allow clicks to pass through to background
       }
 
       // Text editor with syntax highlighting
@@ -59,7 +59,7 @@ struct SQLEditorView: View {
     .padding(isEditorMode ? .leading : .all, Spacing.sm)
     .padding(isEditorMode ? .vertical : [], Spacing.sm)
     .background(Color.inputBackground)
-    .contentShape(Rectangle()) // Make entire area clickable
+    .contentShape(Rectangle())  // Make entire area clickable
     .onTapGesture {
       // Focus on text editor when clicking anywhere in the editor area
       if let textView = textViewRef {

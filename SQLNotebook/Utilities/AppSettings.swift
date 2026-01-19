@@ -40,7 +40,8 @@ class AppSettings {
     static let maxRowLimit = "app.settings.maxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
     static let themePreference = "app.settings.themePreference"
-    static let bypassDestructiveQueryConfirmation = "app.settings.bypassDestructiveQueryConfirmation"
+    static let bypassDestructiveQueryConfirmation =
+      "app.settings.bypassDestructiveQueryConfirmation"
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
   }
 

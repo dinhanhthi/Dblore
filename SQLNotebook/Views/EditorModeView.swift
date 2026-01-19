@@ -183,7 +183,10 @@ struct ResizableDivider: View {
       .background(
         // Hover indicator
         Rectangle()
-          .fill(isDragging ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear))
+          .fill(
+            isDragging
+              ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear)
+          )
           .frame(height: 8)
       )
       .cursor(NSCursor.resizeUpDown)
@@ -265,7 +268,8 @@ struct ResizableDivider: View {
     executionTime: 0.003,
     rowCount: 0,
     timestamp: Date(),
-    error: "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
+    error:
+      "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
     sourceQuery: "SELECT invalid_column FROM users"
   )
   return EditorModeView(viewModel: viewModel)

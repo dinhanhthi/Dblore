@@ -254,7 +254,7 @@ struct NotebookContentView: View {
       // Only handle events for the key window
       // The focusedSceneValue system ensures commands are routed to the right window
       guard let eventWindow = event.window,
-            eventWindow == NSApplication.shared.keyWindow
+        eventWindow == NSApplication.shared.keyWindow
       else {
         return event  // Not our window, pass through
       }

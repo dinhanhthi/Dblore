@@ -16,8 +16,8 @@ struct HighlightedTextEditor: View {
   @State private var height: CGFloat = 40
 
   var autocompleteProvider: SQLAutocompleteProvider?
-  var cellId: UUID? // For search highlighting
-  var maxHeight: CGFloat? // Optional max height - if set, enables scrolling
+  var cellId: UUID?  // For search highlighting
+  var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
 
   var body: some View {
     HighlightedTextEditorRepresentable(

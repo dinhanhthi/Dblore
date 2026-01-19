@@ -67,7 +67,8 @@ extension DatabaseConnectionManager {
   /// Returns nil for complex queries (JOINs, subqueries, CTEs)
   func extractSingleTableName(_ query: String) -> String? {
     // Normalize query for parsing
-    let normalized = query
+    let normalized =
+      query
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
       .lowercased()

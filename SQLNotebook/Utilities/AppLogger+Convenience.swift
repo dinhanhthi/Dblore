@@ -95,8 +95,7 @@ extension AppLogger {
 
     // Redact content inside IN (...) clauses
     let inClausePattern = #"IN\s*\([^)]+\)"#
-    if let regex = try? NSRegularExpression(pattern: inClausePattern, options: [.caseInsensitive])
-    {
+    if let regex = try? NSRegularExpression(pattern: inClausePattern, options: [.caseInsensitive]) {
       let range = NSRange(sanitized.startIndex..., in: sanitized)
       sanitized = regex.stringByReplacingMatches(
         in: sanitized,
