@@ -9,6 +9,7 @@ struct ResultTableView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID?  // ID of the cell that produced this result
+  var showBorderRadius: Bool = true  // Whether to show border radius (disabled in editor mode)
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
@@ -118,7 +119,7 @@ struct ResultTableView: View {
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+    .clipShape(RoundedRectangle(cornerRadius: showBorderRadius ? CornerRadius.md : 0))
     .onAppear {
       calculateInitialColumnWidths()
     }
