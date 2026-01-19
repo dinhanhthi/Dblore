@@ -116,8 +116,22 @@ struct HeaderView: View {
 
       Spacer()
 
-      // Trailing group - Settings and Connection (common to both modes)
+      // Trailing group - Search, Settings and Connection (common to both modes)
       HStack(spacing: Spacing.xs) {
+        // Search button
+        Button(action: {
+          viewModel.openSearch()
+        }) {
+          Image(systemName: "magnifyingglass")
+        }
+        .buttonStyle(
+          ToolbarButtonStyle(
+            isActive: viewModel.isSearchPanelVisible,
+            iconOnly: true
+          )
+        )
+        .help("Search (⌘F)")
+
         // Settings button
         Button(action: {
           // Toggle sidebar if already showing settings
