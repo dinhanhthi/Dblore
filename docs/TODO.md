@@ -9,7 +9,7 @@
 - 🟡 **Phase 5: Advanced Features** - PARTIAL (5.4 Autocomplete complete; 5.6-5.8 pending)
 - ✅ **Phase 6: Security & Safety** - COMPLETE (6.0.2, 6.0.3, 6.0.4 all implemented; 6.0.5-6.0.6 future)
 - 🟡 **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, integration tests partial)
-- ✅ **Phase 8: Editor Mode** - MOSTLY COMPLETE (8.1-8.5 complete; 8.6-8.7 pending; Run Selection placeholder only)
+- ✅ **Phase 8: Editor Mode** - MOSTLY COMPLETE (8.1-8.5 complete; 8.6-8.8 pending; Run Selection placeholder only)
 
 ---
 
@@ -217,6 +217,31 @@ A traditional SQL editor mode with single editor and result panel below.
 - [ ] Add SQLite support
 - [ ] Add MySQL support (optional)
 
+### 8.8 Executed Query Viewer - PENDING
+- [ ] Add button next to execution metadata ("30 rows • 0.01s")
+  - [ ] Add button in EditorModeView.resultPanelHeader (line 91-133)
+  - [ ] Add button in ResultMetadataView for notebook mode (CellResultViews.swift:158-187)
+  - [ ] Use icon "doc.text" or "chevron.right.square"
+- [ ] Create ExecutedQuerySidebarContent view component
+  - [ ] Display query with syntax highlighting
+  - [ ] Add copy button
+  - [ ] Reuse ExecutedQueryDisplayView component
+- [ ] Add `.executedQuery(query: String, cellId: UUID?)` case to SidebarContent enum
+- [ ] Wire up button action to show query in right sidebar
+  - [ ] Set `viewModel.rightSidebarContent = .executedQuery(...)`
+  - [ ] Set `viewModel.isRightSidebarVisible = true`
+- [ ] Support both Editor mode and Notebook mode
+
+**Note:** Infrastructure is 70% ready:
+- ✅ sourceQuery field exists in CellResult model
+- ✅ ExecutedQueryDisplayView component exists
+- ✅ Right sidebar system exists
+- ❌ Button not implemented
+- ❌ SidebarContent case not added
+- ❌ Sidebar view component not created
+
+**Effort:** LOW-MEDIUM (2-3 hours)
+
 ---
 
 ## Phase 9: Schema Visualizer (PENDING)
@@ -352,7 +377,14 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase (verified 2026-01-08):
    - [ ] Editor mode functional tests
    - Effort: MEDIUM (tests mostly structured, need database setup in CI)
 
-3. **Phase 8.6 Export to CSV** (Medium Effort - NICE TO HAVE)
+3. **Phase 8.8 Executed Query Viewer** (Low Effort - NICE TO HAVE)
+   - [ ] Add button next to execution metadata ("30 rows • 0.01s")
+   - [ ] Create ExecutedQuerySidebarContent view component
+   - [ ] Add `.executedQuery` case to SidebarContent enum
+   - [ ] Wire up button to show query in right sidebar
+   - Effort: LOW-MEDIUM (infrastructure 70% ready, 2-3 hours)
+
+4. **Phase 8.6 Export to CSV** (Medium Effort - NICE TO HAVE)
    - [ ] Implement CSV export from ResultTableView
    - [ ] Add "Export" button to result panel header
    - [ ] Handle special characters, quoted fields
