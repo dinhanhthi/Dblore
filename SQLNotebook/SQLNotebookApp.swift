@@ -144,7 +144,7 @@ struct NotebookCommands: Commands {
         Button("Add New") {
           NotificationCenter.default.post(name: .addCodeCell, object: nil)
         }
-        .keyboardShortcut("n", modifiers: .command)
+        .keyboardShortcut("n", modifiers: [.command, .shift])
 
         Divider()
         Button("Run Cell") {
@@ -272,22 +272,27 @@ struct EditorCommands: Commands {
 // MARK: - New Document Commands
 
 struct NewDocumentCommands: Commands {
+  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
+
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
       Button {
-        // Default Cmd+N already creates notebook, but provide explicit command
-        NSDocumentController.shared.newDocument(nil)
+        // Cmd+N behavior depends on current document mode:
+        // - In notebook mode (or no mode): create new notebook
+        // - In editor mode: create new SQL file
+        if documentMode == .editor {
+          createNewSQLFile()
+        } else {
+          NSDocumentController.shared.newDocument(nil)
+        }
       } label: {
-        Label("New Notebook", systemImage: "doc.badge.plus")
+        if documentMode == .editor {
+          Label("New SQL File", systemImage: "doc.text")
+        } else {
+          Label("New Notebook", systemImage: "doc.badge.plus")
+        }
       }
       .keyboardShortcut("n", modifiers: .command)
-
-      Button {
-        createNewSQLFile()
-      } label: {
-        Label("New SQL File", systemImage: "doc.text")
-      }
-      .keyboardShortcut("e", modifiers: [.command, .shift])
     }
   }
 
