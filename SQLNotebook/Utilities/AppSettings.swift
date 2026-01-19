@@ -41,6 +41,7 @@ class AppSettings {
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
     static let themePreference = "app.settings.themePreference"
     static let bypassDestructiveQueryConfirmation = "app.settings.bypassDestructiveQueryConfirmation"
+    static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
   }
 
   // MARK: - Settings Properties
@@ -95,6 +96,14 @@ class AppSettings {
     }
   }
 
+  /// Enable autocomplete in query editor
+  /// Default: true (enabled)
+  var isAutoCompleteEnabled: Bool = true {
+    didSet {
+      UserDefaults.standard.set(isAutoCompleteEnabled, forKey: Keys.isAutoCompleteEnabled)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -143,6 +152,11 @@ class AppSettings {
       bypassDestructiveQueryConfirmation = UserDefaults.standard.bool(
         forKey: Keys.bypassDestructiveQueryConfirmation)
     }
+
+    // Load autocomplete enabled setting
+    if UserDefaults.standard.object(forKey: Keys.isAutoCompleteEnabled) != nil {
+      isAutoCompleteEnabled = UserDefaults.standard.bool(forKey: Keys.isAutoCompleteEnabled)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -155,5 +169,6 @@ class AppSettings {
     isLeftSidebarVisible = false
     themePreference = .dark
     bypassDestructiveQueryConfirmation = false
+    isAutoCompleteEnabled = true
   }
 }

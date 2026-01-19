@@ -434,28 +434,37 @@ class SQLTextView: NSTextView {
 
   /// Update autocomplete suggestions based on current cursor position
   private func updateAutocompleteSuggestions() {
-    guard let provider = autocompleteProvider else {
-      hideAutocomplete()
-      return
-    }
+    // Check if autocomplete is enabled in settings
+    Task { @MainActor in
+      let isEnabled = AppSettings.shared.isAutoCompleteEnabled
+      guard isEnabled else {
+        hideAutocomplete()
+        return
+      }
 
-    // Early check: if text is empty, hide autocomplete
-    if string.isEmpty {
-      hideAutocomplete()
-      return
-    }
+      guard let provider = autocompleteProvider else {
+        hideAutocomplete()
+        return
+      }
 
-    let cursorPosition = selectedRange().location
-    let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
+      // Early check: if text is empty, hide autocomplete
+      if string.isEmpty {
+        hideAutocomplete()
+        return
+      }
 
-    if suggestions.isEmpty {
-      hideAutocomplete()
-    } else {
-      autocompleteSuggestions = suggestions
-      autocompleteSelectedIndex = 0
+      let cursorPosition = selectedRange().location
+      let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
 
-      // Show NSPopover at cursor position
-      showAutocompletePopover()
+      if suggestions.isEmpty {
+        hideAutocomplete()
+      } else {
+        autocompleteSuggestions = suggestions
+        autocompleteSelectedIndex = 0
+
+        // Show NSPopover at cursor position
+        showAutocompletePopover()
+      }
     }
   }
 
