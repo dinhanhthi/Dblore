@@ -42,6 +42,7 @@ struct SQLEditorView: View {
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.sm + 4)
           .padding(.vertical, Spacing.xxs)
+          .allowsHitTesting(false) // Allow clicks to pass through to background
       }
 
       // Text editor with syntax highlighting
@@ -58,6 +59,14 @@ struct SQLEditorView: View {
     .padding(isEditorMode ? .leading : .all, Spacing.sm)
     .padding(isEditorMode ? .vertical : [], Spacing.sm)
     .background(Color.inputBackground)
+    .contentShape(Rectangle()) // Make entire area clickable
+    .onTapGesture {
+      // Focus on text editor when clicking anywhere in the editor area
+      if let textView = textViewRef {
+        textView.window?.makeFirstResponder(textView)
+      }
+      onFocus?()
+    }
 
     if isEditorMode {
       // Editor mode: no border, no rounded corners, no right padding for scrollbar
