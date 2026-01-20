@@ -16,9 +16,6 @@ struct ResultTableView: View {
   @State private var resizingColumn: String?
   @State private var resizeStartWidth: CGFloat = 0
   @State private var headerScrollPosition: ScrollPosition = ScrollPosition()
-  @State private var contentScrollPosition: ScrollPosition = ScrollPosition()
-  @State private var isContentScrolledByUser: Bool = false
-  @State private var isHeaderScrolledByUser: Bool = false
   @State private var currentMatchId: UUID?
   @State private var matchLookup: [String: UUID] = [:]  // "rowIndex-columnName" → matchId for O(1) lookup
 
@@ -38,19 +35,6 @@ struct ResultTableView: View {
     result.rows.count > maxRowsToRender
   }
 
-  // Estimate if vertical scrolling is needed
-  private var estimatedContentHeight: CGFloat {
-    headerHeight + (CGFloat(min(result.rows.count, maxRowsToRender)) * rowHeight)
-  }
-
-  private var needsVerticalScroll: Bool {
-    estimatedContentHeight > AppSettings.shared.maxResultHeight
-  }
-
-  private var scrollAxes: Axis.Set {
-    needsVerticalScroll ? [.horizontal, .vertical] : .horizontal
-  }
-
   // Force SwiftUI to track searchState changes for re-rendering
   private var searchQuery: String { viewModel.searchState.query }
   private var searchCaseSensitive: Bool { viewModel.searchState.isCaseSensitive }
@@ -60,38 +44,23 @@ struct ResultTableView: View {
     let _ = searchQuery
     let _ = searchCaseSensitive
 
-    VStack(alignment: .leading, spacing: 0) {
-      // Custom header pinning solution (Option B)
-      // Header in separate ScrollView that syncs with content via onScrollGeometryChange
-      // Use same scroll axes as body to ensure consistent centering behavior
-      ScrollView(scrollAxes, showsIndicators: false) {
+    return VStack(alignment: .leading, spacing: 0) {
+      // Header - syncs horizontal scroll position with content
+      ScrollView(.horizontal, showsIndicators: false) {
         headerRow
           .frame(width: totalColumnsWidth, alignment: .leading)
           .background(Color.tableHeaderBackground)
       }
-      .scrollDisabled(true)  // Disable direct scrolling - synced via contentScrollPosition
+      .scrollDisabled(true)  // Disable direct scrolling - synced via HorizontalScrollableContent
       .frame(height: headerHeight)
       .scrollPosition($headerScrollPosition)
-      .onScrollGeometryChange(for: CGFloat.self) { geometry in
-        // Track header horizontal scroll offset
-        geometry.contentOffset.x + geometry.contentInsets.leading
-      } action: { oldValue, newValue in
-        // Sync content when header scrolls
-        guard oldValue != newValue else { return }
-        if !isHeaderScrolledByUser {
-          return  // Avoid feedback loop
-        }
-        contentScrollPosition.scrollTo(x: newValue)
-      }
-      .onScrollPhaseChange { _, newPhase in
-        // Track when user is actively scrolling header
-        isHeaderScrolledByUser = newPhase.isScrolling
-      }
 
-      // Content ScrollView
-      // Using VStack instead of LazyVStack to prevent nested scroll crashes
-      // See SCROLL_CRASH_FIX.md and RESULT_VISIBILITY_CRASH_FIX.md for details
-      ScrollView(scrollAxes, showsIndicators: true) {
+      // Content area - wrapped in custom NSScrollView for horizontal scrolling only
+      // Vertical scrolling passes through to parent notebook list
+      HorizontalScrollableContent(
+        totalWidth: totalColumnsWidth,
+        headerScrollPosition: $headerScrollPosition
+      ) {
         VStack(alignment: .leading, spacing: 0) {
           // Data rows - limited to maxRowsToRender
           ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
@@ -103,40 +72,14 @@ struct ResultTableView: View {
             truncationWarning
           }
         }
-        .frame(width: totalColumnsWidth, alignment: .leading)  // Match header width for alignment
-        .fixedSize(horizontal: false, vertical: true)  // Don't expand vertically to fill container
+        .frame(width: totalColumnsWidth, alignment: .leading)
+        // Add bottom padding to prevent horizontal scrollbar from covering last row
+        .padding(.bottom, 12)
       }
-      .defaultScrollAnchor(.topLeading)  // Align content to top-leading when smaller than container
-      .scrollContentBackground(.hidden)
-      .scrollBounceBehavior(.basedOnSize)
-      .scrollPosition($contentScrollPosition)
-      .onScrollGeometryChange(for: CGFloat.self) { geometry in
-        // Track horizontal scroll offset
-        geometry.contentOffset.x + geometry.contentInsets.leading
-      } action: { oldValue, newValue in
-        // Sync header scroll when content scrolls
-        guard oldValue != newValue else { return }
-        if !isContentScrolledByUser {
-          return  // Avoid feedback loop
-        }
-        headerScrollPosition.scrollTo(x: newValue)
-      }
-      .onScrollPhaseChange { _, newPhase in
-        // Track when user is actively scrolling content
-        isContentScrolledByUser = newPhase.isScrolling
-      }
-      .background(ScrollerConfigurator(needsVerticalScroller: needsVerticalScroll))
-      .frame(maxHeight: AppSettings.shared.maxResultHeight - headerHeight, alignment: .top)
     }
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
     .clipShape(RoundedRectangle(cornerRadius: showBorderRadius ? CornerRadius.md : 0))
-    .overlay {
-      // Overlay to intercept vertical scroll events when content doesn't need vertical scrolling
-      if !needsVerticalScroll {
-        ScrollPassthroughOverlay()
-      }
-    }
     .onAppear {
       calculateInitialColumnWidths()
     }
@@ -151,13 +94,8 @@ struct ResultTableView: View {
           currentMatchId = match.id
           // Build lookup table when match changes
           buildMatchLookup()
-
-          // Scroll to matched row if it's a table data match
-          if case .tableData(let rowIndex, _) = match.matchType {
-            // Calculate vertical position to scroll to
-            let yPosition = CGFloat(rowIndex) * rowHeight
-            contentScrollPosition.scrollTo(y: yPosition)
-          }
+          // Note: Vertical scrolling to matched row is handled by parent notebook list
+          // since result table no longer has internal vertical scrolling
         }
       }
     }
@@ -669,120 +607,156 @@ private struct ResizeHandle: View {
   }
 }
 
-// MARK: - Scroller Configurator
+// MARK: - Horizontal Scrollable Content
 
-private struct ScrollerConfigurator: NSViewRepresentable {
-  let needsVerticalScroller: Bool
+/// A custom NSScrollView wrapper that:
+/// - Only scrolls horizontally (for wide result tables)
+/// - Passes ALL vertical scroll events through to parent (for notebook list scrolling)
+/// - Supports shift+scroll for horizontal scrolling with mouse
+/// - Syncs horizontal scroll position with header
+private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
+  let totalWidth: CGFloat
+  @Binding var headerScrollPosition: ScrollPosition
+  @ViewBuilder let content: () -> Content
 
-  func makeNSView(context: Context) -> NSView {
-    NSView()
+  func makeNSView(context: Context) -> ResultTableScrollView {
+    let scrollView = ResultTableScrollView()
+    scrollView.hasVerticalScroller = false
+    scrollView.hasHorizontalScroller = true
+    scrollView.scrollerStyle = .overlay
+    scrollView.autohidesScrollers = true
+    scrollView.drawsBackground = false
+    scrollView.backgroundColor = .clear
+
+    // Disable vertical scroll elasticity
+    scrollView.verticalScrollElasticity = .none
+    scrollView.horizontalScrollElasticity = .automatic
+
+    // Create hosting view for SwiftUI content
+    let hostingView = NSHostingView(rootView: content())
+    scrollView.documentView = hostingView
+
+    // Set up notification for scroll position sync
+    NotificationCenter.default.addObserver(
+      context.coordinator,
+      selector: #selector(Coordinator.scrollViewDidScroll(_:)),
+      name: NSScrollView.didLiveScrollNotification,
+      object: scrollView
+    )
+
+    return scrollView
   }
 
-  func updateNSView(_ nsView: NSView, context: Context) {
-    DispatchQueue.main.async {
-      guard let scrollView = nsView.enclosingScrollView else { return }
+  func updateNSView(_ scrollView: ResultTableScrollView, context: Context) {
+    // Update content
+    if let hostingView = scrollView.documentView as? NSHostingView<Content> {
+      hostingView.rootView = content()
+      // Let hosting view calculate its intrinsic size
+      let fittingSize = hostingView.fittingSize
+      hostingView.frame = NSRect(origin: .zero, size: fittingSize)
+    }
 
-      // Configure scroller style
-      scrollView.scrollerStyle = .overlay
-      scrollView.autohidesScrollers = true
-      scrollView.hasHorizontalScroller = true
-      scrollView.hasVerticalScroller = needsVerticalScroller
+    // Update coordinator reference
+    context.coordinator.headerScrollPosition = $headerScrollPosition
+  }
 
-      // Force scroller update
-      scrollView.flashScrollers()
+  static func dismantleNSView(_ scrollView: ResultTableScrollView, coordinator: Coordinator) {
+    NotificationCenter.default.removeObserver(coordinator)
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(headerScrollPosition: $headerScrollPosition)
+  }
+
+  // Tell SwiftUI the size we need based on content
+  func sizeThatFits(
+    _ proposal: ProposedViewSize,
+    nsView scrollView: ResultTableScrollView,
+    context: Context
+  ) -> CGSize? {
+    guard let hostingView = scrollView.documentView as? NSHostingView<Content> else {
+      return nil
+    }
+    let fittingSize = hostingView.fittingSize
+    // Use proposed width (or content width), and content height
+    let width = proposal.width ?? fittingSize.width
+    return CGSize(width: width, height: fittingSize.height)
+  }
+
+  class Coordinator: NSObject {
+    var headerScrollPosition: Binding<ScrollPosition>
+
+    init(headerScrollPosition: Binding<ScrollPosition>) {
+      self.headerScrollPosition = headerScrollPosition
+    }
+
+    @objc func scrollViewDidScroll(_ notification: Notification) {
+      guard let scrollView = notification.object as? NSScrollView else { return }
+      let xOffset = scrollView.contentView.bounds.origin.x
+      headerScrollPosition.wrappedValue.scrollTo(x: xOffset)
     }
   }
 }
 
-// MARK: - Scroll Passthrough Overlay
+/// Custom NSScrollView for result tables that:
+/// - Handles horizontal scrolling normally (including shift+scroll for mouse)
+/// - Passes ALL vertical scroll events to parent scroll view via responder chain
+/// This allows the parent notebook list to scroll when hovering over result tables.
+///
+/// Based on Apple's responder chain pattern:
+/// https://developer.apple.com/documentation/appkit/nsscrollview/1403494-scrollwheel
+private class ResultTableScrollView: NSScrollView {
 
-/// Transparent overlay that installs a scroll event monitor to intercept and forward scroll events
-/// Used when the result table doesn't need vertical scrolling
-private struct ScrollPassthroughOverlay: NSViewRepresentable {
-  func makeNSView(context: Context) -> ScrollMonitorView {
-    let view = ScrollMonitorView()
-    return view
+  override func scrollWheel(with event: NSEvent) {
+    // Detect scroll type
+    let isShiftScroll = event.modifierFlags.contains(.shift)
+    let deltaX = event.scrollingDeltaX
+    let deltaY = event.scrollingDeltaY
+
+    // Shift+scroll: convert vertical to horizontal
+    if isShiftScroll && deltaY != 0 && deltaX == 0 {
+      // Handle as horizontal scroll
+      scrollHorizontally(by: deltaY)
+      return  // Consume - don't pass to parent
+    }
+
+    // Pure horizontal scroll (trackpad swipe)
+    if deltaX != 0 && deltaY == 0 {
+      scrollHorizontally(by: deltaX)
+      return  // Consume - don't pass to parent
+    }
+
+    // Diagonal scroll: handle horizontal component, pass vertical to parent
+    if deltaX != 0 && deltaY != 0 {
+      scrollHorizontally(by: deltaX)
+      // Forward to parent for vertical scrolling
+      // Use nextResponder to go up the responder chain
+      nextResponder?.scrollWheel(with: event)
+      return
+    }
+
+    // Pure vertical scroll: pass entirely to parent
+    // This is the key - we forward the event up the responder chain
+    // so the parent notebook List can scroll
+    nextResponder?.scrollWheel(with: event)
   }
 
-  func updateNSView(_ nsView: ScrollMonitorView, context: Context) {}
+  /// Manually scroll horizontally by the given delta
+  private func scrollHorizontally(by delta: CGFloat) {
+    guard let docView = documentView else { return }
 
-  static func dismantleNSView(_ nsView: ScrollMonitorView, coordinator: ()) {
-    nsView.removeMonitor()
+    var origin = contentView.bounds.origin
+    origin.x -= delta
+
+    // Clamp to valid scroll bounds
+    let maxX = max(0, docView.frame.width - contentView.frame.width)
+    origin.x = max(0, min(origin.x, maxX))
+
+    contentView.scroll(to: origin)
+    reflectScrolledClipView(contentView)
   }
 }
 
-/// NSView that monitors scroll events and redirects them to parent scroll view when appropriate
-private class ScrollMonitorView: NSView {
-  private var eventMonitor: Any?
-  private weak var cachedParentScrollView: NSScrollView?
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    if window != nil {
-      setupMonitor()
-    } else {
-      removeMonitor()
-    }
-  }
-
-  func removeMonitor() {
-    if let monitor = eventMonitor {
-      NSEvent.removeMonitor(monitor)
-      eventMonitor = nil
-    }
-  }
-
-  private func setupMonitor() {
-    guard eventMonitor == nil else { return }
-
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-      guard let self = self else { return event }
-      return self.handleScrollEvent(event)
-    }
-  }
-
-  private func handleScrollEvent(_ event: NSEvent) -> NSEvent? {
-    // Only intercept if the event is within our bounds
-    guard let window = self.window else { return event }
-
-    let locationInWindow = event.locationInWindow
-    let locationInView = self.convert(locationInWindow, from: nil)
-
-    // Check if the scroll event is within our view's bounds
-    guard self.bounds.contains(locationInView) else { return event }
-
-    // Find and cache the parent scroll view
-    if cachedParentScrollView == nil {
-      cachedParentScrollView = findParentScrollView()
-    }
-
-    // Forward to parent scroll view
-    if let parent = cachedParentScrollView {
-      parent.scrollWheel(with: event)
-      return nil  // Consume the event
-    }
-
-    return event
-  }
-
-  /// Find the nearest parent NSScrollView (skipping result table's scroll views)
-  private func findParentScrollView() -> NSScrollView? {
-    var scrollViewCount = 0
-    var current: NSView? = superview
-    while let view = current {
-      if let scrollView = view as? NSScrollView {
-        scrollViewCount += 1
-        // Skip the first 2 scroll views (header and content scroll views of result table)
-        // Return the 3rd one which should be the main notebook List
-        if scrollViewCount >= 2 {
-          return scrollView
-        }
-      }
-      current = view.superview
-    }
-    return nil
-  }
-}
 
 // MARK: - Result Metadata Bar
 
