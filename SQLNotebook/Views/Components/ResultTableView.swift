@@ -131,6 +131,12 @@ struct ResultTableView: View {
     .frame(maxWidth: .infinity)
     .background(Color.cellBackground)
     .clipShape(RoundedRectangle(cornerRadius: showBorderRadius ? CornerRadius.md : 0))
+    .overlay {
+      // Overlay to intercept vertical scroll events when content doesn't need vertical scrolling
+      if !needsVerticalScroll {
+        ScrollPassthroughOverlay()
+      }
+    }
     .onAppear {
       calculateInitialColumnWidths()
     }
@@ -668,12 +674,11 @@ private struct ResizeHandle: View {
 private struct ScrollerConfigurator: NSViewRepresentable {
   let needsVerticalScroller: Bool
 
-  func makeNSView(context _: Context) -> NSView {
-    let view = NSView()
-    return view
+  func makeNSView(context: Context) -> NSView {
+    NSView()
   }
 
-  func updateNSView(_ nsView: NSView, context _: Context) {
+  func updateNSView(_ nsView: NSView, context: Context) {
     DispatchQueue.main.async {
       guard let scrollView = nsView.enclosingScrollView else { return }
 
@@ -686,6 +691,96 @@ private struct ScrollerConfigurator: NSViewRepresentable {
       // Force scroller update
       scrollView.flashScrollers()
     }
+  }
+}
+
+// MARK: - Scroll Passthrough Overlay
+
+/// Transparent overlay that installs a scroll event monitor to intercept and forward scroll events
+/// Used when the result table doesn't need vertical scrolling
+private struct ScrollPassthroughOverlay: NSViewRepresentable {
+  func makeNSView(context: Context) -> ScrollMonitorView {
+    let view = ScrollMonitorView()
+    return view
+  }
+
+  func updateNSView(_ nsView: ScrollMonitorView, context: Context) {}
+
+  static func dismantleNSView(_ nsView: ScrollMonitorView, coordinator: ()) {
+    nsView.removeMonitor()
+  }
+}
+
+/// NSView that monitors scroll events and redirects them to parent scroll view when appropriate
+private class ScrollMonitorView: NSView {
+  private var eventMonitor: Any?
+  private weak var cachedParentScrollView: NSScrollView?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil {
+      setupMonitor()
+    } else {
+      removeMonitor()
+    }
+  }
+
+  func removeMonitor() {
+    if let monitor = eventMonitor {
+      NSEvent.removeMonitor(monitor)
+      eventMonitor = nil
+    }
+  }
+
+  private func setupMonitor() {
+    guard eventMonitor == nil else { return }
+
+    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+      guard let self = self else { return event }
+      return self.handleScrollEvent(event)
+    }
+  }
+
+  private func handleScrollEvent(_ event: NSEvent) -> NSEvent? {
+    // Only intercept if the event is within our bounds
+    guard let window = self.window else { return event }
+
+    let locationInWindow = event.locationInWindow
+    let locationInView = self.convert(locationInWindow, from: nil)
+
+    // Check if the scroll event is within our view's bounds
+    guard self.bounds.contains(locationInView) else { return event }
+
+    // Find and cache the parent scroll view
+    if cachedParentScrollView == nil {
+      cachedParentScrollView = findParentScrollView()
+    }
+
+    // Forward to parent scroll view
+    if let parent = cachedParentScrollView {
+      parent.scrollWheel(with: event)
+      return nil  // Consume the event
+    }
+
+    return event
+  }
+
+  /// Find the nearest parent NSScrollView (skipping result table's scroll views)
+  private func findParentScrollView() -> NSScrollView? {
+    var scrollViewCount = 0
+    var current: NSView? = superview
+    while let view = current {
+      if let scrollView = view as? NSScrollView {
+        scrollViewCount += 1
+        // Skip the first 2 scroll views (header and content scroll views of result table)
+        // Return the 3rd one which should be the main notebook List
+        if scrollViewCount >= 2 {
+          return scrollView
+        }
+      }
+      current = view.superview
+    }
+    return nil
   }
 }
 
