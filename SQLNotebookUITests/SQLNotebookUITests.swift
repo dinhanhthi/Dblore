@@ -4,7 +4,6 @@
 //
 //  Created by Anh-Thi Dinh on 12/29/25.
 //
-
 // MARK: - UI Tests
 // These tests run by default locally and are skipped in CI via SKIP_UI_TESTS=true
 
