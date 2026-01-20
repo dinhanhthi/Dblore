@@ -67,10 +67,11 @@ fastlane/test_output
 *.log
 build_output.txt
 
-.DS_Store
-
 # Docker
 docker/**/.env
 docker/**/data/
 docker/**/backups/
 *.sql.backup
+
+# macOS
+.DS_Store
