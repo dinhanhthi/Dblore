@@ -104,7 +104,7 @@ extension AppLogger {
 
   /// Export logs to a file
   func exportLogs(to url: URL) async throws {
-    let allLogs = await getAllLogs().map { $0.formattedLine }.joined(separator: "\n")
+    let allLogs = getAllLogs().map { $0.formattedLine }.joined(separator: "\n")
     try allLogs.write(to: url, atomically: true, encoding: .utf8)
   }
 

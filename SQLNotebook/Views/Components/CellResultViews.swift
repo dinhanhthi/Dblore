@@ -160,30 +160,39 @@ struct ResultMetadataView: View {
   let result: CellResult
 
   var body: some View {
-    HStack(spacing: Spacing.md) {
-      Text("Rows: \(result.rowCount)")
+    VStack(alignment: .leading, spacing: 0) {
+      // Horizontal divider line
+      Rectangle()
+        .fill(Color.border)
+        .frame(height: 1)
+      
+      HStack(spacing: Spacing.md) {
+        Text("Rows: \(result.rowCount)")
 
-      // Show warning if limited (either auto-limited or user LIMIT exceeded)
-      if result.wasLimited || result.userLimitExceeded {
-        HStack(spacing: Spacing.xs) {
-          Text("(")
-            .foregroundColor(.warning)
-          Text("limited to \(AppSettings.shared.maxRowLimit) rows")
-            .foregroundColor(.warning)
-          Text(")")
-            .foregroundColor(.warning)
-        }.font(.labelText)
+        // Show warning if limited (either auto-limited or user LIMIT exceeded)
+        if result.wasLimited || result.userLimitExceeded {
+          HStack(spacing: Spacing.xs) {
+            Text("(")
+              .foregroundColor(.warning)
+            Text("limited to \(AppSettings.shared.maxRowLimit) rows")
+              .foregroundColor(.warning)
+            Text(")")
+              .foregroundColor(.warning)
+          }.font(.labelText)
+        }
+
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+        Text(String(format: "Execution time: %.3fs", result.executionTime))
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+        Text(CellResultViews.formatTimestamp(result.timestamp))
       }
-
-      Text("|")
-        .foregroundColor(.foregroundSubtle)
-      Text(String(format: "Execution time: %.3fs", result.executionTime))
-      Text("|")
-        .foregroundColor(.foregroundSubtle)
-      Text(CellResultViews.formatTimestamp(result.timestamp))
+      .font(.labelText)
+      .foregroundColor(.foregroundSubtle)
+      .padding(.top, Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .font(.labelText)
-    .foregroundColor(.foregroundSubtle)
   }
 }
 
