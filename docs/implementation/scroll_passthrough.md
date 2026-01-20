@@ -1,38 +1,118 @@
-# Scroll Passthrough Issue
+# Scroll Passthrough for Result Tables
 
-## Problem Description
+## Problem
 
-When the mouse cursor is over a nested scroll view (query editor or result table), scroll wheel events are captured by that scroll view instead of propagating to the parent scroll view (the main notebook List). This prevents global scrolling of the app when hovering over these areas.
+When the mouse cursor is over a result table, scroll wheel events are captured by that scroll view instead of propagating to the parent scroll view (the main notebook List). This prevents global scrolling of the app when hovering over result tables.
 
-**Expected behavior:** When content inside a nested scroll view doesn't need scrolling (e.g., short query, few result rows), scroll events should pass through to the parent scroll view for global scrolling.
+**Expected behavior:**
+- Vertical scroll events should pass through to parent notebook list for global scrolling
+- Horizontal scroll events should scroll the result table columns
+- Shift+scroll (mouse) should scroll horizontally
 
-**Current behavior:** Scroll events are captured by the nested scroll view even when it has no scrollable content.
+**Issues solved:**
+1. Vertical scrolling blocked when hovering over result tables
+2. Horizontal scrolling not working with trackpad
+3. Shift+scroll (mouse) not working for horizontal scrolling
+4. Result table content not visible (NSHostingView sizing issue)
+5. Horizontal scrollbar covering last row
 
-## Affected Areas
+## Solution
 
-1. **Query Editor** (`HighlightedTextEditor.swift`)
-   - Uses `NSScrollView` wrapping `SQLTextView` (NSTextView subclass)
-   - Status: ✅ **FIXED** with `PassthroughScrollView`
+### Architecture
 
-2. **Result Table** (`ResultTableView.swift`)
-   - Uses SwiftUI `ScrollView` with underlying `NSScrollView`
-   - Status: ✅ **FIXED** with Local Event Monitor + Overlay
+Result tables use a custom `NSScrollView` subclass (`ResultTableScrollView`) wrapped in `NSViewRepresentable`:
 
-## Solutions Attempted
+1. **Custom ResultTableScrollView** - Subclasses `NSScrollView` and overrides `scrollWheel(with:)` to:
+   - Handle horizontal scrolls internally
+   - Forward vertical scrolls to parent via `nextResponder`
+   - Convert shift+scroll to horizontal scroll
 
-### 1. Override `scrollWheel` in NSTextView (Query Editor) ✅
+2. **HorizontalScrollableContent** - `NSViewRepresentable` wrapper that:
+   - Creates and configures the `ResultTableScrollView`
+   - Hosts SwiftUI content via `NSHostingView`
+   - Syncs horizontal scroll position with header
+   - Implements `sizeThatFits` for proper SwiftUI layout integration
 
-**File:** `SQLTextView.swift`
+3. **No max-height constraint** - Result tables expand to fit content naturally
 
-**Approach:** Override `scrollWheel(with:)` to forward events to parent when content doesn't need scrolling.
+4. **Bottom padding** - Prevents horizontal scrollbar from covering last row
 
-**Result:** Did not work because `NSScrollView` handles scroll events before they reach `NSTextView`.
+### Key Files
 
-### 2. Custom PassthroughScrollView (Query Editor) ✅
+- `ResultTableView.swift` - Main implementation
+  - Line 65-83: `HorizontalScrollableContent` usage with bottom padding
+  - Line 682-764: `HorizontalScrollableContent` struct
+  - Line 766-823: `ResultTableScrollView` class
+
+### ResultTableScrollView Logic
+
+```swift
+override func scrollWheel(with event: NSEvent) {
+  let isShiftScroll = event.modifierFlags.contains(.shift)
+  let deltaX = event.scrollingDeltaX
+  let deltaY = event.scrollingDeltaY
+
+  // Shift+scroll: convert vertical to horizontal
+  if isShiftScroll && deltaY != 0 && deltaX == 0 {
+    scrollHorizontally(by: deltaY)
+    return  // Consume
+  }
+
+  // Pure horizontal scroll (trackpad swipe)
+  if deltaX != 0 && deltaY == 0 {
+    scrollHorizontally(by: deltaX)
+    return  // Consume
+  }
+
+  // Diagonal scroll: handle horizontal, pass vertical to parent
+  if deltaX != 0 && deltaY != 0 {
+    scrollHorizontally(by: deltaX)
+    nextResponder?.scrollWheel(with: event)
+    return
+  }
+
+  // Pure vertical scroll: pass entirely to parent
+  nextResponder?.scrollWheel(with: event)
+}
+```
+
+### NSHostingView Sizing
+
+The `HorizontalScrollableContent` properly sizes the `NSHostingView`:
+
+```swift
+func updateNSView(_ scrollView: ResultTableScrollView, context: Context) {
+  if let hostingView = scrollView.documentView as? NSHostingView<Content> {
+    hostingView.rootView = content()
+    // Let hosting view calculate its intrinsic size
+    let fittingSize = hostingView.fittingSize
+    hostingView.frame = NSRect(origin: .zero, size: fittingSize)
+  }
+}
+
+func sizeThatFits(_ proposal: ProposedViewSize, nsView scrollView: ResultTableScrollView, context: Context) -> CGSize? {
+  guard let hostingView = scrollView.documentView as? NSHostingView<Content> else { return nil }
+  let fittingSize = hostingView.fittingSize
+  let width = proposal.width ?? fittingSize.width
+  return CGSize(width: width, height: fittingSize.height)
+}
+```
+
+### Why This Works
+
+- **Custom NSScrollView subclass** - Full control over `scrollWheel(with:)` method
+- **nextResponder forwarding** - Events propagate up the responder chain to parent scroll view
+- **No SwiftUI ScrollView for content** - Avoids SwiftUI's event interception
+- **Shift+scroll detection** - `event.modifierFlags.contains(.shift)` for mouse horizontal scrolling
+- **NSHostingView.fittingSize** - Properly calculates content size for SwiftUI layout
+- **sizeThatFits implementation** - Tells SwiftUI the exact size needed
+- **Bottom padding** - `.padding(.bottom, 12)` prevents scrollbar overlap
+
+## Query Editor
+
+The query editor uses a similar approach with `PassthroughScrollView`:
 
 **File:** `HighlightedTextEditor.swift`
-
-**Approach:** Create custom `NSScrollView` subclass that overrides `scrollWheel(with:)`.
 
 ```swift
 class PassthroughScrollView: NSScrollView {
@@ -68,190 +148,53 @@ class PassthroughScrollView: NSScrollView {
 }
 ```
 
-**Result:** ✅ Works for query editor because we control the `NSScrollView` creation.
+## Failed Approaches
 
-### 3. Local Event Monitor Only (Result Table) ❌
+These approaches were tried but didn't work:
 
-**Approach:** Use `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` to intercept scroll events globally without an overlay view.
-
-```swift
-eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-  // Check if event is over registered scroll view
-  // Forward to parent if needed
-}
-```
-
-**Result:** Did not work - without an overlay view to determine bounds, we couldn't reliably identify which scroll events to intercept.
-
-### 4. NSViewRepresentable Overlay (Result Table) ❌
-
-**Approach:** Add transparent `NSView` overlay that intercepts scroll events.
-
-**Result:** Did not work - scroll events are handled by underlying `NSScrollView` before reaching overlay.
-
-### 5. Replace NSClipView (Result Table) ❌
-
-**Approach:** Replace `NSScrollView.contentView` with custom `PassthroughClipView`.
-
-```swift
-class PassthroughClipView: NSClipView {
-  override func scrollWheel(with event: NSEvent) {
-    if let parentScrollView = findParentScrollView() {
-      parentScrollView.scrollWheel(with: event)
-    } else {
-      super.scrollWheel(with: event)
-    }
-  }
-}
-```
-
-**Result:** Did not work - `NSScrollView` handles events before delegating to `NSClipView`.
-
-### 6. Disable Vertical Scroll Elasticity (Result Table) ❌
-
-**Approach:** Set `scrollView.verticalScrollElasticity = .none`
-
-**Result:** Did not prevent scroll event capture.
-
-### 7. ISA-Swizzling (Result Table) ❌
-
-**Approach:** Use `object_setClass()` to change the class of SwiftUI's internal `NSScrollView` at runtime to a custom subclass.
-
-**Result:** Did not work reliably - SwiftUI's internal scroll handling still intercepted events before our override could process them.
-
-### 8. Local Event Monitor with Overlay (Result Table) ✅
-
-**Approach:** Combine `NSEvent.addLocalMonitorForEvents(matching: .scrollWheel)` with an `NSViewRepresentable` overlay to intercept scroll events before they reach SwiftUI's scroll view.
-
-```swift
-private struct ScrollPassthroughOverlay: NSViewRepresentable {
-  func makeNSView(context: Context) -> ScrollMonitorView {
-    ScrollMonitorView()
-  }
-
-  func updateNSView(_ nsView: ScrollMonitorView, context: Context) {}
-
-  static func dismantleNSView(_ nsView: ScrollMonitorView, coordinator: ()) {
-    nsView.removeMonitor()
-  }
-}
-
-private class ScrollMonitorView: NSView {
-  private var eventMonitor: Any?
-  private weak var cachedParentScrollView: NSScrollView?
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    if window != nil { setupMonitor() }
-    else { removeMonitor() }
-  }
-
-  func removeMonitor() {
-    if let monitor = eventMonitor {
-      NSEvent.removeMonitor(monitor)
-      eventMonitor = nil
-    }
-  }
-
-  private func setupMonitor() {
-    guard eventMonitor == nil else { return }
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-      guard let self = self else { return event }
-      return self.handleScrollEvent(event)
-    }
-  }
-
-  private func handleScrollEvent(_ event: NSEvent) -> NSEvent? {
-    guard self.window != nil else { return event }
-
-    let locationInWindow = event.locationInWindow
-    let locationInView = self.convert(locationInWindow, from: nil)
-
-    // Only intercept if event is within our bounds
-    guard self.bounds.contains(locationInView) else { return event }
-
-    // Find and cache the parent scroll view
-    if cachedParentScrollView == nil {
-      cachedParentScrollView = findParentScrollView()
-    }
-
-    // Forward to parent and consume the event
-    if let parent = cachedParentScrollView {
-      parent.scrollWheel(with: event)
-      return nil  // Consume the event
-    }
-
-    return event
-  }
-
-  private func findParentScrollView() -> NSScrollView? {
-    var scrollViewCount = 0
-    var current: NSView? = superview
-    while let view = current {
-      if let scrollView = view as? NSScrollView {
-        scrollViewCount += 1
-        // Skip first 2 scroll views (header and content of result table)
-        if scrollViewCount >= 2 { return scrollView }
-      }
-      current = view.superview
-    }
-    return nil
-  }
-}
-```
-
-**Key insights:**
-1. The overlay view (`ScrollMonitorView`) is placed as a SwiftUI `.overlay` on the entire `ResultTableView`
-2. The local event monitor runs **before** events are dispatched to views
-3. We check if the event location is within our overlay bounds to only intercept relevant events
-4. By returning `nil` from the monitor, we consume the event and prevent it from reaching SwiftUI's scroll view
-5. The parent scroll view (notebook List) is cached for performance
-
-**Result:** ✅ Works! The local event monitor intercepts scroll events before SwiftUI processes them.
-
-## Root Cause Analysis
-
-### Why Query Editor Fix Works
-
-The query editor uses `NSViewRepresentable` where we create the `NSScrollView` directly:
-
-```swift
-func makeNSView(context: Context) -> NSScrollView {
-  let scrollView = PassthroughScrollView()  // We control this
-  // ...
-}
-```
-
-### Why Result Table Fix Doesn't Work
-
-The result table uses SwiftUI `ScrollView`:
-
-```swift
-ScrollView(scrollAxes, showsIndicators: true) {
-  // content
-}
-```
-
-SwiftUI creates its own internal `NSScrollView` that we cannot directly replace or subclass. The `NSScrollView` is created and managed by SwiftUI's internal implementation.
-
-## Solution Summary
-
-The key insight is that **local event monitors run before events are dispatched to views**. By combining:
-
-1. An `NSViewRepresentable` overlay to get accurate bounds checking
-2. A local event monitor to intercept events before SwiftUI processes them
-3. Forwarding intercepted events directly to the parent scroll view
-
-We can effectively bypass SwiftUI's scroll event handling when the result table doesn't need vertical scrolling.
+- **SwiftUI ScrollView with .horizontal axes** - Still captured vertical scroll events
+- **Local event monitor** - `NSEvent.addLocalMonitorForEvents` consumed events before responder chain
+- **Method Swizzling** - Swizzled NSScrollView.scrollWheel globally → caused infinite recursion crashes
+- **Replace NSClipView** - Custom PassthroughClipView → NSScrollView handles events before NSClipView
+- **ISA-Swizzling** - `object_setClass()` on SwiftUI's internal NSScrollView → SwiftUI still intercepted events
+- **Overlay-based approach** - `.overlay` modifier with event monitor → blocked horizontal scrolls
+- **Max-height constraint** - Limited result table height → blocked global scrolling when content exceeded max height
+- **NSHostingView without fittingSize** - Content was invisible because frame wasn't set
 
 ## Current Status
 
-- **Query Editor:** ✅ Fixed with `PassthroughScrollView` (custom `NSScrollView` subclass)
-- **Result Table:** ✅ Fixed with Local Event Monitor + Overlay (`ScrollMonitorView`)
+✅ **Working:**
+- Result tables: No vertical scrollbar, expands to fit content
+- Horizontal scroll: Works (scrollbar click, trackpad, shift+scroll)
+- Global vertical scroll: Works (events pass to parent notebook list)
+- Diagonal scroll (trackpad): Horizontal applied to table, vertical to parent
+- Content visibility: NSHostingView properly sized
+- Last row visible: Bottom padding prevents scrollbar overlap
+
+## Testing
+
+Test the following scenarios:
+
+1. **Small result table** (few rows):
+   - Vertical scroll with mouse wheel → parent list scrolls ✅
+   - Vertical scroll with trackpad → parent list scrolls ✅
+   - Horizontal scroll with trackpad → result table scrolls ✅
+   - Shift+scroll with mouse → result table scrolls horizontally ✅
+   - Click horizontal scrollbar → result table scrolls ✅
+   - Last row fully visible (not covered by scrollbar) ✅
+
+2. **Wide result table** (many columns):
+   - All horizontal scroll methods work ✅
+   - Vertical scroll passes to parent ✅
+
+3. **Diagonal scroll** (trackpad):
+   - Horizontal component scrolls result table ✅
+   - Vertical component scrolls parent list ✅
 
 ## References
 
 - [Apple scrollWheel documentation](https://developer.apple.com/documentation/appkit/nsscrollview/1403494-scrollwheel)
-- [Cocoa: Passing scroll events to parent NSScrollView](https://copyprogramming.com/howto/how-to-pass-scroll-events-to-parent-nsscrollview)
+- [Passing scroll events to parent NSScrollView](https://copyprogramming.com/howto/how-to-pass-scroll-events-to-parent-nsscrollview)
 - [How scroll views work on macOS](https://medium.com/hyperoslo/how-scroll-views-work-on-macos-f809225adcd)
-- [10.9 AppKit Release Notes - Gesture scrolling](https://gist.github.com/zwaldowski/8710fddc8b0b39d2c152)
+- [Electron nested scrollview issues](https://github.com/electron/electron/issues/32751)
+- [NSHostingView sizing](https://developer.apple.com/documentation/swiftui/nshostingview)
