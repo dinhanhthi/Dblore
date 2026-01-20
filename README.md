@@ -175,4 +175,4 @@ Notebooks are saved as `.sqlnb` JSON files containing:
 
 ## License
 
-MIT License - see LICENSE file for details
+GPL-3.0 License - see LICENSE file for details

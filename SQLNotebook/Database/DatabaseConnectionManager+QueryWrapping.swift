@@ -165,13 +165,15 @@ extension DatabaseConnectionManager {
       let columnNames = columns.map { "'\($0.name)'" }.joined(separator: ", ")
 
       // Query information_schema to get detailed column types
+      // Include udt_name to handle user-defined types (e.g., pgvector's vector type)
       let typeQuery = """
         SELECT column_name, data_type,
                character_maximum_length,
                numeric_precision,
                numeric_scale,
                datetime_precision,
-               interval_type
+               interval_type,
+               udt_name
         FROM information_schema.columns
         WHERE table_name = '\(tableName)'
           AND column_name IN (\(columnNames))
@@ -187,7 +189,7 @@ extension DatabaseConnectionManager {
 
       for try await row in stream {
         let randomAccess = row.makeRandomAccess()
-        guard randomAccess.count >= 7 else { continue }
+        guard randomAccess.count >= 8 else { continue }
 
         // Extract values
         var cellValues: [PostgresCell] = []
@@ -203,6 +205,13 @@ extension DatabaseConnectionManager {
 
         // Build detailed type string
         var detailedType = dataType.uppercased()
+
+        // For user-defined types, use udt_name instead of "USER-DEFINED"
+        if detailedType == "USER-DEFINED" {
+          if let udtName = try? cellValues[7].decode(String.self, context: .default) {
+            detailedType = udtName.uppercased()
+          }
+        }
 
         // Add length for character types
         if let maxLength = try? cellValues[2].decode(Int.self, context: .default) {
