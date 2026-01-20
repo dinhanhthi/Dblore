@@ -6,6 +6,43 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Passthrough Scroll View
+
+/// Custom NSScrollView that forwards scroll events to parent when content doesn't need scrolling
+class PassthroughScrollView: NSScrollView {
+  override func scrollWheel(with event: NSEvent) {
+    guard let textView = documentView as? NSTextView else {
+      super.scrollWheel(with: event)
+      return
+    }
+
+    let contentHeight = textView.frame.height
+    let visibleHeight = contentView.bounds.height
+
+    // If content doesn't need scrolling, forward to parent (SwiftUI List)
+    if contentHeight <= visibleHeight {
+      nextResponder?.scrollWheel(with: event)
+      return
+    }
+
+    // Content needs scrolling - check boundaries
+    let currentY = contentView.bounds.origin.y
+    let maxY = max(0, contentHeight - visibleHeight)
+
+    let isAtTop = currentY <= 0
+    let isAtBottom = currentY >= maxY - 1  // Small tolerance
+    let scrollingUp = event.scrollingDeltaY > 0
+    let scrollingDown = event.scrollingDeltaY < 0
+
+    // Forward to parent when at boundary and scrolling in that direction
+    if (isAtTop && scrollingUp) || (isAtBottom && scrollingDown) {
+      nextResponder?.scrollWheel(with: event)
+    } else {
+      super.scrollWheel(with: event)
+    }
+  }
+}
+
 // MARK: - Highlighted Text Editor
 
 struct HighlightedTextEditor: View {
@@ -45,7 +82,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var maxHeight: CGFloat?
 
   func makeNSView(context: Context) -> NSScrollView {
-    let scrollView = NSScrollView()
+    let scrollView = PassthroughScrollView()
     let textView = SQLTextView()
 
     textView.delegate = context.coordinator
