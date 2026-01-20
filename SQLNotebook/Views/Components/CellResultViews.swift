@@ -167,11 +167,11 @@ struct ResultMetadataView: View {
       if result.wasLimited || result.userLimitExceeded {
         HStack(spacing: Spacing.xs) {
           Text("(")
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundColor(.foregroundSubtle)
+            .foregroundColor(.warning)
           Text("limited to \(AppSettings.shared.maxRowLimit) rows")
-            .foregroundColor(.foregroundSubtle)
+            .foregroundColor(.warning)
           Text(")")
+            .foregroundColor(.warning)
         }.font(.labelText)
       }
 
@@ -248,7 +248,7 @@ enum CellResultViews {
     columns: [],
     rows: [],
     executionTime: 0.087,
-    rowCount: 1000,
+    rowCount: 50,
     timestamp: Date(),
     wasLimited: true
   )
