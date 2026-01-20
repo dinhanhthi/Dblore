@@ -330,7 +330,7 @@ struct CellDropDelegate: DropDelegate {
   @Previewable @State var cell = PreviewData.cellWithHiddenResult
   CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: true, onRun: {})
     .padding()
-    .frame(width: 600, height: 300)
+    .frame(width: 600, height: 200)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
 }
