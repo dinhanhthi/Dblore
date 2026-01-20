@@ -295,13 +295,13 @@ struct HiddenResultPlaceholderView: View {
       }
       .font(.system(size: 13))
       .frame(maxWidth: .infinity)
-      .padding(.top, 0)
+      .padding(.top, Spacing.xs)
       .padding(.bottom, Spacing.xs)
       .padding(.horizontal, Spacing.md)
       .background(Color.cellBackground.opacity(0.5))
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       .padding(.trailing, Spacing.md)
     }
-    .padding(.bottom, Spacing.md)
+    .padding(.bottom, Spacing.sm)
   }
 }
