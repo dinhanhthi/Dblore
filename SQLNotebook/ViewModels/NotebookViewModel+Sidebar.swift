@@ -135,14 +135,25 @@ extension NotebookViewModel {
     }
   }
 
-  /// Insert text into selected cell at cursor position
+  /// Insert text into selected cell or editor at cursor position
   func insertTextIntoSelectedCell(_ text: String) {
-    // Post notification to insert text - will be handled by CellView
-    NotificationCenter.default.post(
-      name: .insertTextIntoCell,
-      object: nil,
-      userInfo: ["text": text]
-    )
+    // Handle based on current view mode
+    if viewMode == .editor {
+      // Editor mode: insert directly into editor text view
+      if let textView = editorTextView {
+        let selectedRange = textView.selectedRange()
+        textView.insertText(text, replacementRange: selectedRange)
+        // Focus the editor after inserting text
+        textView.window?.makeFirstResponder(textView)
+      }
+    } else {
+      // Notebook mode: post notification to insert text - will be handled by CellView
+      NotificationCenter.default.post(
+        name: .insertTextIntoCell,
+        object: nil,
+        userInfo: ["text": text]
+      )
+    }
   }
 
   // MARK: - Cell Value Editing
