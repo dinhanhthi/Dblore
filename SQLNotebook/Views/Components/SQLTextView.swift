@@ -58,6 +58,9 @@ class SQLTextView: NSTextView {
     if handleCommentShortcut(with: event) {
       return  // Handled, don't pass to super
     }
+    if handleWordWrapShortcut(with: event) {
+      return  // Handled, don't pass to super
+    }
     if handleArrowNavigation(with: event) {
       return  // Handled, don't pass to super
     }
@@ -213,6 +216,27 @@ class SQLTextView: NSTextView {
 
     if isSlash && hasCommand && hasNoOtherModifiers {
       toggleComment()
+      return true
+    }
+
+    return false
+  }
+
+  /// Handle Option+Z shortcut for toggle word wrap
+  /// Returns true if the event was handled
+  private func handleWordWrapShortcut(with event: NSEvent) -> Bool {
+    // Check for Option+Z (keyCode 6 is the "Z" key)
+    let isZ = event.keyCode == 6
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let hasOption = flags.contains(.option)
+    let hasNoOtherModifiers =
+      !flags.contains(.shift) && !flags.contains(.control) && !flags.contains(.command)
+
+    if isZ && hasOption && hasNoOtherModifiers {
+      // Toggle word wrap setting
+      Task { @MainActor in
+        AppSettings.shared.wordWrapEnabled.toggle()
+      }
       return true
     }
 

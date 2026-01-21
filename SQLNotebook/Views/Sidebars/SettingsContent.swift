@@ -88,6 +88,21 @@ struct SettingsContent: View {
             .font(.small)
             .foregroundColor(.foregroundSubtle)
           }
+
+          // Word Wrap toggle (both modes)
+          Toggle(
+            "Word Wrap",
+            isOn: $appSettings.wordWrapEnabled
+          )
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          .tint(.accent)
+
+          Text(
+            "Wrap long lines to fit the editor width. Use Option+Z to toggle quickly."
+          )
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
         }
       }
 
@@ -434,6 +449,8 @@ struct SettingsContent: View {
       shortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
       shortcutRow(action: "Run Cell and Insert Below", shortcut: "Option+Enter")
       shortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
+      shortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
+      shortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
       shortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       shortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
       shortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
@@ -447,6 +464,7 @@ struct SettingsContent: View {
       shortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+E")
       shortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
       shortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
+      shortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
       shortcutRow(action: "Find", shortcut: "Cmd+F")
       shortcutRow(action: "Find Next", shortcut: "Cmd+G")
       shortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")

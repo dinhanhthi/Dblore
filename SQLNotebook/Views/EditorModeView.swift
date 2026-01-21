@@ -48,7 +48,8 @@ struct EditorModeView: View {
             textViewRef: $textViewRef,
             autocompleteProvider: viewModel.autocompleteProvider,
             maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
-            isEditorMode: true  // Remove border and focus effects
+            isEditorMode: true,  // Remove border and focus effects
+            wordWrapEnabled: appSettings.wordWrapEnabled
           )
         }
         .background(Color.inputBackground)

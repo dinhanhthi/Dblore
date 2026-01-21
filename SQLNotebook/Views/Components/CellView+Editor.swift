@@ -19,6 +19,7 @@ struct SQLEditorView: View {
   var cellId: UUID?  // For search highlighting
   var maxHeight: CGFloat?  // Optional max height for scrollable editors (e.g., in editor mode)
   var isEditorMode: Bool = false  // True when used in Editor mode (removes border/focus effects)
+  var wordWrapEnabled: Bool = true  // Word wrap setting (default: enabled)
 
   var body: some View {
     editorContent
@@ -53,7 +54,8 @@ struct SQLEditorView: View {
         isEmpty: $isTextEmpty,
         autocompleteProvider: autocompleteProvider,
         cellId: cellId,
-        maxHeight: maxHeight
+        maxHeight: maxHeight,
+        wordWrapEnabled: wordWrapEnabled
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)
