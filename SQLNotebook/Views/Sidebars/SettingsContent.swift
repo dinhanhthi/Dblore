@@ -55,6 +55,44 @@ struct SettingsContent: View {
 
       Divider()
 
+      // Editor Settings
+      settingsSection(title: "Editor", icon: "text.cursor") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          Toggle(
+            "Enable Autocomplete",
+            isOn: $appSettings.isAutoCompleteEnabled
+          )
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          .tint(.accent)
+
+          Text(
+            "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes."
+          )
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+
+          // Show Line Numbers toggle (Editor mode only)
+          if viewModel.viewMode == .editor {
+            Toggle(
+              "Show Line Numbers",
+              isOn: $appSettings.showLineNumbers
+            )
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+            .tint(.accent)
+
+            Text(
+              "Display line numbers in the gutter. Helps with navigation and debugging queries."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
+        }
+      }
+
+      Divider()
+
       // Result Table Settings (Notebook Mode Only)
       if viewModel.viewMode == .notebook {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
@@ -174,9 +212,6 @@ struct SettingsContent: View {
             .foregroundColor(.foregroundSubtle)
           }
 
-          Divider()
-            .padding(.vertical, Spacing.sm)
-
           // Connection History Size Setting
           VStack(alignment: .leading, spacing: Spacing.xs) {
             HStack {
@@ -207,44 +242,6 @@ struct SettingsContent: View {
               appSettings.maxConnectionHistorySize == 0
                 ? "Connection history is disabled. Passwords will not be saved."
                 : "Store up to \(appSettings.maxConnectionHistorySize) recent connection(s). Passwords are securely stored in Keychain."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-          }
-        }
-      }
-
-      Divider()
-
-      // Editor Settings
-      settingsSection(title: "Editor", icon: "text.cursor") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Toggle(
-            "Enable Autocomplete",
-            isOn: $appSettings.isAutoCompleteEnabled
-          )
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-          .tint(.accent)
-
-          Text(
-            "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
-
-          // Show Line Numbers toggle (Editor mode only)
-          if viewModel.viewMode == .editor {
-            Toggle(
-              "Show Line Numbers",
-              isOn: $appSettings.showLineNumbers
-            )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "Display line numbers in the gutter. Helps with navigation and debugging queries."
             )
             .font(.small)
             .foregroundColor(.foregroundSubtle)
