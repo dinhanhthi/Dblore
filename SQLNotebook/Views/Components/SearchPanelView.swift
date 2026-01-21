@@ -11,6 +11,10 @@ struct SearchPanelView: View {
   @Bindable var viewModel: NotebookViewModel
   @FocusState private var isSearchFieldFocused: Bool
 
+  private var searchPlaceholder: String {
+    viewModel.viewMode == .editor ? "Search in editor..." : "Search in notebook..."
+  }
+
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Search icon
@@ -19,7 +23,7 @@ struct SearchPanelView: View {
         .font(.system(size: 14))
 
       // Search text field
-      TextField("Search in notebook...", text: $viewModel.searchState.query)
+      TextField(searchPlaceholder, text: $viewModel.searchState.query)
         .textFieldStyle(.plain)
         .font(.bodyText)
         .focused($isSearchFieldFocused)
@@ -46,17 +50,20 @@ struct SearchPanelView: View {
         }
 
       // Match counter
-      if !viewModel.searchState.matches.isEmpty || viewModel.searchState.isSearching {
-        if viewModel.searchState.isSearching {
-          ProgressView()
-            .scaleEffect(0.6)
-            .frame(width: 12, height: 12)
-        } else {
-          Text(viewModel.searchState.matchCountText)
-            .font(.caption)
-            .foregroundColor(.foregroundSubtle)
-            .padding(.horizontal, Spacing.xs)
-        }
+      if viewModel.searchState.isSearching {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 12, height: 12)
+      } else if !viewModel.searchState.query.isEmpty {
+        // Show match count when there's a query (even if 0 results)
+        Text(
+          viewModel.searchState.matches.isEmpty
+            ? "0 found"
+            : viewModel.searchState.matchCountText
+        )
+        .font(.caption)
+        .foregroundColor(.foregroundSubtle)
+        .padding(.horizontal, Spacing.xs)
       }
 
       Divider()
@@ -122,10 +129,10 @@ struct SearchPanelView: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: CornerRadius.md)
-        .strokeBorder(Color.border, lineWidth: 1)
+        .strokeBorder(Color.accent.opacity(0.3), lineWidth: 1.5)
     )
-    .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
-    .frame(width: 450)
+    .shadow(color: Color.accent.opacity(0.3), radius: 8, x: 0, y: 4)
+    .frame(maxWidth: .infinity)
     .onAppear {
       // Auto-focus search field when panel appears
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
