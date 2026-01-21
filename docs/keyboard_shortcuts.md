@@ -1,185 +1,235 @@
 # Keyboard Shortcuts
 
-Document này liệt kê tất cả các keyboard shortcuts được hỗ trợ trong SQLNotebook.
+This document lists all keyboard shortcuts supported in SQLNotebook.
 
-**Note:** Nhiều shortcuts chỉ khả dụng ở Notebook mode (.sqlnb). Editor mode (.sql) sử dụng native macOS shortcuts.
+**Note:** SQLNotebook supports two main modes: Notebook mode (.sqlnb) and Editor mode (.sql). Each mode has a different set of shortcuts.
 
-## File Operations
+## Notebook Mode (.sqlnb)
 
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Cmd+N` | New Notebook | Both | Tạo notebook mới (.sqlnb) |
-| `Cmd+Shift+N` | New Notebook | Both | Explicit command để tạo notebook |
-| `Cmd+Shift+E` | New SQL File | Both | Tạo SQL file mới (.sql) |
-| `Cmd+O` | Open | Both | Mở file hiện có (.sqlnb hoặc .sql) |
-| `Cmd+S` | Save | Both | Lưu file hiện tại |
-
-## Cell Management
-
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Cmd+N` | Add Code Cell | Notebook only | Thêm SQL cell mới |
-| `Cmd+Delete` | Delete Cell | Notebook only | Xóa cell đang được chọn |
-| `Cmd+D` | Duplicate Cell | Notebook only | Nhân đôi cell đang được chọn |
-
-## Cell Execution
-
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Ctrl+Enter` | Run Cell | Notebook only | Chạy cell hiện tại và giữ nguyên focus |
-| `Shift+Enter` | Run Cell and Select Next | Notebook only | Chạy cell và chuyển sang cell tiếp theo (tạo mới nếu là cell cuối) |
-| `Option+Enter` | Run Cell and Insert Below | Notebook only | Chạy cell và chèn cell mới bên dưới |
-| `Cmd+Shift+Enter` | Run All Cells | Notebook only | Chạy tất cả các cells trong notebook |
-
-**Note:** Các shortcuts này chỉ khả dụng ở Notebook mode (.sqlnb files). Editor mode (.sql) không có Cell menu.
-
-## Cell Output Management
-
-| Action | Description |
-|--------|-------------|
-| Clear Cell Output | Xóa output của cell đang được chọn (không có shortcut) |
-| Clear All Outputs | Xóa output của tất cả các cells (không có shortcut) |
-
-## Cell Navigation
-
-### Khi KHÔNG focus vào editor:
+### Cell Execution
 
 | Shortcut | Action | Description |
 |----------|--------|-------------|
-| `↑` (Up Arrow) | Select Previous Cell | Chọn cell phía trên |
-| `↓` (Down Arrow) | Select Next Cell | Chọn cell phía dưới |
-| `Enter` | Focus Editor | Focus vào editor của cell đang chọn |
+| `Ctrl+Enter` | Run Cell | Run the current cell, keep focus on the cell |
+| `Shift+Enter` | Run Cell and Select Next | Run cell, move to next cell (create new if at end) |
+| `Option+Enter` | Run Cell and Insert Below | Run cell, create new cell below |
+| `Cmd+Shift+Enter` | Run All Cells | Run all cells in sequence |
 
-### Khi ĐANG focus vào editor:
+### Cell Management
 
 | Shortcut | Action | Description |
 |----------|--------|-------------|
-| `Esc` | Unfocus Editor | Thoát khỏi editor nhưng vẫn giữ cell được chọn |
-| `↑` (Up Arrow) | Navigate to Previous Cell | Chuyển sang cell trước (chỉ khi cursor ở dòng đầu tiên) |
-| `↓` (Down Arrow) | Navigate to Next Cell | Chuyển sang cell sau (chỉ khi cursor ở dòng cuối cùng) |
+| `Cmd+Shift+N` | Add New Cell | Create a new SQL cell |
+| `Cmd+D` | Duplicate Cell | Duplicate the selected cell |
+| `Cmd+Delete` | Delete Cell | Delete the selected cell |
 
-**Note:** Arrow navigation trong editor chỉ hoạt động khi cursor ở dòng đầu/cuối để tránh conflict với việc di chuyển cursor trong multi-line code.
+### Cell Navigation
 
-## View Management
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `↑` (Up Arrow) | Select Previous Cell | Select the cell above (when not focused in editor) |
+| `↓` (Down Arrow) | Select Next Cell | Select the cell below (when not focused in editor) |
+| `Enter` | Focus Editor | Focus into the text editor of the selected cell |
+| `Esc` | Unfocus Editor | Exit editor, keep cell selected |
 
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Cmd+B` | Toggle Left Sidebar | Notebook only | Hiện/ẩn left sidebar (cell outline) |
-| `Cmd+,` | Toggle Right Sidebar | Both | Hiện/ẩn right sidebar (connection info, schema, settings) |
+**Note:** When the cursor is at the first or last line of a cell, Arrow keys move between cells.
 
-## Editing
+### Text Editing
 
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Cmd+Z` | Undo | Both | Hoàn tác thay đổi (context-aware: editor hoặc cell-level) |
-| `Cmd+Shift+Z` | Redo | Both | Làm lại thay đổi đã hoàn tác (context-aware) |
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+/` | Toggle Comment | Comment/uncomment selected lines (add/remove `--`) |
+| `Cmd+Z` | Undo | Undo cell changes (text or cell-level operations) |
+| `Cmd+Shift+Z` | Redo | Redo undone changes |
 
-**Note về Undo/Redo:**
-- Khi focus vào editor: Undo/Redo áp dụng cho text changes trong editor
-- Khi KHÔNG focus vào editor: Undo/Redo áp dụng cho cell-level operations (add, delete, move cells)
+**Note about Undo/Redo:**
+- When focused in editor: Undo/Redo applies to text changes
+- When not focused in editor: Undo/Redo applies to cell-level operations (add, delete, duplicate)
 
-## Search & Find
+### Search & Find
 
-| Shortcut | Action | Available In | Description |
-|----------|--------|------------|-------------|
-| `Cmd+F` | Find in Notebook | Notebook only | Mở search panel để tìm text trong notebook |
-| `Cmd+G` | Find Next | Notebook only | Tìm match tiếp theo |
-| `Cmd+Shift+G` | Find Previous | Notebook only | Tìm match trước đó |
-| `Esc` | Close Search | Notebook only | Đóng search panel |
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+F` | Find in Notebook | Open search panel to find text in all cells |
+| `Cmd+G` | Find Next | Move to next match |
+| `Cmd+Shift+G` | Find Previous | Move to previous match |
+| `Enter` (in search field) | Find Next | Find next match |
+| `Esc` (in search panel) | Close Search | Close search panel |
 
-**Note:** Editor mode sử dụng native macOS Find (Cmd+F) từ TextEditor.
+### View Management
 
-## Menu Access
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+B` | Toggle Left Sidebar | Show/hide left sidebar (Database Schema) |
+| `Cmd+,` | Toggle Right Sidebar | Show/hide right sidebar (Cell Info) |
 
-### Notebook Mode (.sqlnb)
-Các shortcuts này cũng có thể được access qua menu bar:
+### Global Navigation
 
-- **Cell Menu:** Add New, Run Cell, Run Cell and Select Next, Run Cell and Insert Below, Run All Cells, Clear Cell Output, Clear All Outputs, Delete Cell, Duplicate Cell
-- **View Menu:** Toggle Left Sidebar, Toggle Right Sidebar
-- **Edit Menu:** Find in Notebook, Find Next, Find Previous, Undo, Redo
-- **File Menu:** New Notebook, New SQL File, Open, Save
-- **App Menu:** About, Settings
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Esc` | Global Escape | Priority: 1) Close search, 2) Unfocus editor, 3) Close right sidebar |
 
-### Editor Mode (.sql)
-- **View Menu:** Toggle Right Sidebar (basic macOS sidebars)
-- **Edit Menu:** Native macOS Undo, Redo, Find
-- **File Menu:** New Notebook, New SQL File, Open, Save
-- **App Menu:** About, Settings
+### Text Editor Autocomplete
 
-**Key Difference:** Notebook mode có Cell menu và custom Find/sidebar commands, Editor mode sử dụng native macOS menus.
+When autocomplete popup is open:
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `↑` (Up Arrow) | Previous Suggestion | Select previous suggestion, wraps around |
+| `↓` (Down Arrow) | Next Suggestion | Select next suggestion, wraps around |
+| `Enter` / `Tab` | Accept Suggestion | Accept the selected suggestion |
+| `Esc` | Hide Autocomplete | Close autocomplete popup |
+
+---
+
+## Editor Mode (.sql)
+
+### Query Execution
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+R` | Run Query | Run the query in the editor |
+| `Cmd+Enter` | Run Query (Alternative) | Run query - alternative shortcut |
+
+### Text Editing
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+/` | Toggle Comment | Comment/uncomment selected lines |
+| `Cmd+Z` | Undo | Undo text changes |
+| `Cmd+Shift+Z` | Redo | Redo undone changes |
+
+### Search & Find
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+F` | Find | Open search panel |
+| `Cmd+G` | Find Next | Move to next match |
+| `Cmd+Shift+G` | Find Previous | Move to previous match |
+| `Esc` (in search panel) | Close Search | Close search panel |
+
+### View Management
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+B` | Toggle Left Sidebar | Show/hide left sidebar (Database Schema) |
+| `Cmd+,` | Toggle Right Sidebar | Show/hide right sidebar |
+
+### Global Navigation
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Esc` | Global Escape | Priority: 1) Close search, 2) Close right sidebar |
+
+### Text Editor Autocomplete
+
+When autocomplete popup is open:
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `↑` (Up Arrow) | Previous Suggestion | Select previous suggestion, wraps around |
+| `↓` (Down Arrow) | Next Suggestion | Select next suggestion, wraps around |
+| `Enter` / `Tab` | Accept Suggestion | Accept the selected suggestion |
+| `Esc` | Hide Autocomplete | Close autocomplete popup |
+
+---
+
+## Both Modes
+
+### File Operations
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+N` | New Notebook | Create a new notebook (.sqlnb) |
+| `Cmd+Shift+N` | New Notebook (Explicit) | Explicit command to create a new notebook |
+| `Cmd+Shift+E` | New SQL File | Create a new SQL file (.sql) |
+
+**Note:** `Cmd+O` (Open) and `Cmd+S` (Save) are native macOS shortcuts supported automatically.
+
+---
 
 ## Tips & Best Practices
 
+### Notebook Mode
+
 1. **Jupyter-like Workflow:**
-   - Dùng `Shift+Enter` để chạy cell và tự động chuyển sang cell tiếp theo (giống Jupyter Notebook)
-   - Dùng `Option+Enter` để chạy và insert cell mới ngay lập tức
+   - Use `Shift+Enter` to run a cell and automatically move to the next cell (like Jupyter Notebook)
+   - Use `Option+Enter` to run and insert a new cell immediately below
 
 2. **Quick Navigation:**
-   - Khi không cần edit, press `Esc` để thoát editor mode và dùng `↑`/`↓` để navigate nhanh
-   - Press `Enter` để jump vào editor của cell đang chọn
+   - When not editing, press `Esc` to exit editor mode
+   - Use `↑`/`↓` to quickly navigate between cells
+   - Press `Enter` to jump into the editor of the selected cell
 
 3. **Efficient Editing:**
-   - Dùng `Cmd+B` để quickly add cells
-   - Dùng `Cmd+D` để duplicate cells có queries tương tự
-   - Dùng `Ctrl+Enter` khi muốn re-run cell nhiều lần mà không jump sang cell khác
+   - Use `Cmd+Shift+N` to create a new cell
+   - Use `Cmd+D` to duplicate cells with similar queries
+   - Use `Ctrl+Enter` when you want to re-run a cell multiple times without jumping to the next cell
 
-4. **Multi-tasking:**
-   - Toggle sidebars với `Cmd+Shift+L/R` để có thêm screen space khi cần
-   - Left sidebar hiển thị cell outline để navigate large notebooks
-   - Right sidebar hiển thị connection info và database schema
+4. **View Management:**
+   - Toggle `Cmd+B` to show/hide left sidebar (Database Schema)
+   - Toggle `Cmd+,` to show/hide right sidebar (Cell Info)
+
+### Editor Mode
+
+1. **Quick Execution:**
+   - Use `Cmd+R` or `Cmd+Enter` to run a query
+   - Use `Cmd+/` to quickly comment/uncomment
+
+2. **Search:**
+   - Use `Cmd+F` to open search
+   - Use `Cmd+G` / `Cmd+Shift+G` to navigate between matches
+
+---
 
 ## Implementation Notes
 
-### Menu Architecture
+### Architecture Overview
 
-Shortcuts được define trong menu commands ở [SQLNotebookApp.swift](/Users/thi/git/SQLNotebook/SQLNotebook/SQLNotebookApp.swift):
+Shortcuts are implemented across multiple layers:
 
-1. **FocusedValues System** (Lines 55-92)
-   - `DocumentMode` enum tracks Notebook vs Editor mode
-   - `@FocusedValue(\.documentMode)` tracks focused scene
-   - Auto-updates khi user switches windows
+1. **Command Definition Layer** ([SQLNotebookApp.swift](SQLNotebook/SQLNotebookApp.swift))
+   - Defines all commands and keyboard modifiers
+   - Separated by mode: Notebook vs Editor
 
-2. **SharedCommands** (Lines 94-124)
-   - About, Settings (chung cho cả 2 modes)
-   - Defined ở Notebook scene
+2. **Keyboard Event Handler Layer**
+   - [SQLTextView.swift](SQLNotebook/Views/SQLTextView.swift): Text editor shortcuts (Ctrl+Enter, Shift+Enter, Option+Enter, Cmd+/, arrow navigation)
+   - [NotebookContentView.swift](SQLNotebook/Views/NotebookContentView.swift): Notebook-level shortcuts (arrow navigation, Esc, Enter)
+   - [EditorContentView.swift](SQLNotebook/Views/EditorContentView.swift): Editor-level shortcuts (Cmd+Enter, Esc)
 
-3. **NotebookCommands** (Lines 126-220)
-   - Conditional: `if documentMode == .notebook { ... }`
-   - Cell menu, sidebar toggles, search commands
-   - Chỉ show khi Notebook window focused
+3. **Event Processing**
+   - Uses `NSEvent.addLocalMonitorForEvents` for global keyboard monitoring
+   - KeyboardEvent handling for local shortcuts
+   - NotificationCenter for menu-triggered commands
 
-4. **EditorCommands** (Lines 222-240)
-   - Empty (editor sử dụng native macOS menus)
-   - Placeholder cho future editor-specific commands
+### Key Implementation Details
 
-5. **NewDocumentCommands** (Lines 242-288)
-   - New Notebook, New SQL File
-   - Defined ở Notebook scene để tránh duplicate
+**Mode Detection:**
+- Uses `@FocusedValue(\.documentMode)` to track focused document mode
+- Auto-updates when user switches windows
 
-### Keyboard Event Handling
+**Undo/Redo Context Awareness:**
+- When focused in editor: Undo/Redo uses TextEditor's undoManager
+- When not focused: Undo/Redo applies to cell-level operations
 
-Shortcuts cũng được handle ở many levels:
+**Search Panel:**
+- Custom search implementation for Notebook mode
+- Uses NotificationCenter to communicate with SearchPanelView
 
-1. **Menu System** (SQLNotebookApp.swift)
-   - Commands trigger notifications qua `NotificationCenter`
+**Autocomplete Navigation:**
+- Arrow keys (↑/↓) navigate between suggestions
+- Enter/Tab to accept
+- Esc to close popup
 
-2. **Text View Level** (Editor UI)
-   - SQLTextView intercepts keyboard events
-   - Handles execution shortcuts (`Ctrl+Enter`, etc.)
-   - Handles smart arrow navigation
+### File Organization
 
-3. **Window Level** (Content Views)
-   - `NSEvent.addLocalMonitorForEvents` monitors keyboard events
-   - Handles arrow navigation, Enter/Esc keys
-   - Code ở NotebookContentView.swift (lines 216-319) và EditorContentView.swift (lines 170-203)
-
-4. **Notification Handlers**
-   - Modifiers listen to notifications từ menu commands
-   - Triggers actual ViewModel actions
-   - Code ở NotebookContentView.swift (lines 384-536)
-
-### Context-Aware Undo/Redo
-
-Undo/Redo logic ở NotebookContentView.swift (lines 515-535):
-- Khi focus vào editor: Dùng TextEditor's undoManager
-- Khi KHÔNG focus: Dùng cell-level undoManager cho operations
+```
+SQLNotebook/
+├── SQLNotebookApp.swift              # Command definitions
+├── Views/
+│   ├── SQLTextView.swift             # Text editor keyboard handling
+│   ├── NotebookContentView.swift     # Notebook keyboard handling
+│   ├── EditorContentView.swift       # Editor keyboard handling
+│   └── SearchPanelView.swift         # Search panel
+└── ...
+```
