@@ -41,8 +41,25 @@ struct EditorContentView: View {
         .ignoresSafeArea()
 
       VStack(spacing: 0) {
-        // Header
-        HeaderView(viewModel: viewModel)
+        // Header and search panel in ZStack so search slides under header
+        ZStack(alignment: .top) {
+          // Search panel (lower z-index, slides from top under header)
+          VStack(spacing: 0) {
+            Spacer()
+              .frame(height: ComponentSize.headerHeight)
+
+            if viewModel.isSearchPanelVisible {
+              SearchPanelView(viewModel: viewModel)
+                .padding(.horizontal, Spacing.md)
+                .padding(.vertical, Spacing.sm)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+          }
+
+          // Header (higher z-index, covers search panel animation)
+          HeaderView(viewModel: viewModel)
+        }
+        .clipped()
 
         // Main content area
         HStack(spacing: 0) {
@@ -80,23 +97,9 @@ struct EditorContentView: View {
           }
         }
       }
-
-      // Search panel (floating top-right)
-      if viewModel.isSearchPanelVisible {
-        VStack {
-          HStack {
-            Spacer()
-            SearchPanelView(viewModel: viewModel)
-              .padding(.horizontal, Spacing.lg)
-              .padding(.top, Spacing.lg)
-          }
-          Spacer()
-        }
-        .transition(.identity)  // No animation - instant appear/disappear
-      }
     }
     .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
-    .animation(nil, value: viewModel.isSearchPanelVisible)
+    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isSearchPanelVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
     .modifier(
       EditorNotificationHandlerModifier(

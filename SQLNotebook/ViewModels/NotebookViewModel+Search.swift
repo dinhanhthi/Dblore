@@ -221,13 +221,14 @@ extension NotebookViewModel {
     NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
   }
 
-  /// Open search panel
+  /// Toggle search panel (open/close)
   @MainActor
   func openSearch() {
-    // If panel is already visible, trigger re-focus
     if isSearchPanelVisible {
-      searchFocusTrigger = UUID()
+      // Close search if already open
+      closeSearch()
     } else {
+      // Open search panel
       isSearchPanelVisible = true
     }
   }
