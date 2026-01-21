@@ -19,7 +19,7 @@ struct EditorModeView: View {
   var body: some View {
     GeometryReader { geometry in
       let totalHeight = geometry.size.height
-      let minPanelHeight: CGFloat = 150
+      let minPanelHeight: CGFloat = 250  // Increased from 150 to 250
       let maxEditorHeight = totalHeight - minPanelHeight
 
       // Calculate actual heights based on divider position
@@ -70,16 +70,17 @@ struct EditorModeView: View {
             // Result table or error
             if let error = result.error {
               errorView(error: error)
+                .frame(maxHeight: .infinity)
             } else {
               ResultTableView(
                 result: result,
                 viewModel: viewModel,
                 cellId: nil,  // No cell ID in editor mode
-                showBorderRadius: false  // No border radius in editor mode
+                showBorderRadius: false,  // No border radius in editor mode
+                enableVerticalScrolling: true  // Enable vertical scrolling in editor mode
               )
+              .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
             }
-
-            Spacer(minLength: 0)
           }
           .frame(width: geometry.size.width, height: resultHeight)
         } else {
@@ -100,6 +101,13 @@ struct EditorModeView: View {
     }
     .onChange(of: textViewRef) { _, newValue in
       viewModel.editorTextView = newValue
+    }
+    .onChange(of: viewModel.editorResult?.timestamp) { _, _ in
+      // When result timestamp changes (new query executed), reset divider to 50%
+      // This ensures result panel always starts at 50% height after query execution
+      withAnimation(.easeInOut(duration: 0.3)) {
+        dividerPosition = 0.5
+      }
     }
   }
 
