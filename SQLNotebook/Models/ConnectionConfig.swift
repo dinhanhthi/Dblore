@@ -27,6 +27,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var readOnly: Bool
+  var name: String  // Optional label for the connection
 
   nonisolated init(
     databaseType: DatabaseType = .postgresql,
@@ -38,7 +39,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode: SSLMode = .prefer,
     rememberConnection: Bool = false,
     timeoutSeconds: Int = 30,
-    readOnly: Bool = false
+    readOnly: Bool = false,
+    name: String = ""
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -50,6 +52,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
     self.readOnly = readOnly
+    self.name = name
   }
 
   /// Display string for connection info

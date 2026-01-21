@@ -173,6 +173,44 @@ struct SettingsContent: View {
             .font(.small)
             .foregroundColor(.foregroundSubtle)
           }
+
+          Divider()
+            .padding(.vertical, Spacing.sm)
+
+          // Connection History Size Setting
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack {
+              Text("Connection History Size")
+                .font(.subheading)
+                .foregroundColor(.foreground)
+
+              Spacer()
+
+              Text("\(appSettings.maxConnectionHistorySize) connections")
+                .font(.monoSmall)
+                .foregroundColor(.foregroundMuted)
+            }
+
+            Slider(
+              value: Binding(
+                get: { Double(appSettings.maxConnectionHistorySize) },
+                set: { newValue in
+                  appSettings.maxConnectionHistorySize = Int(newValue)
+                }
+              ),
+              in: 0...5,
+              step: 1
+            )
+            .tint(.accent)
+
+            Text(
+              appSettings.maxConnectionHistorySize == 0
+                ? "Connection history is disabled. Passwords will not be saved."
+                : "Store up to \(appSettings.maxConnectionHistorySize) recent connection(s). Passwords are securely stored in Keychain."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
         }
       }
 

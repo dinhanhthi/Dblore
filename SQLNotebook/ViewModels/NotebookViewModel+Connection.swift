@@ -17,8 +17,8 @@ extension NotebookViewModel {
       notebook.connectionConfig = editingConnectionConfig
       connectionState = .connected
 
-      // Save session if remember connection is enabled
-      SessionManager.saveSession(editingConnectionConfig)
+      // Save connection to history if remember connection is enabled
+      SessionManager.saveConnection(editingConnectionConfig)
 
       // Auto-load database schema after successful connection
       await loadDatabaseSchema()
@@ -39,8 +39,8 @@ extension NotebookViewModel {
       await connectionManager.disconnect()
       connectionState = .disconnected
 
-      // Clear saved session when manually disconnecting
-      SessionManager.clearSession()
+      // Note: We don't clear history on disconnect anymore
+      // History persists across disconnects for easy reconnection
 
       // Clear database schema when disconnected
       databaseTables = []
@@ -59,8 +59,9 @@ extension NotebookViewModel {
   func autoConnectIfNeeded() {
     Task { @MainActor [weak self] in
       guard let self else { return }
-      guard SessionManager.hasSession(),
-        let savedConfig = SessionManager.loadSession()
+
+      // Load most recent connection from history
+      guard let savedConfig = SessionManager.loadMostRecentConnection()
       else {
         return
       }
