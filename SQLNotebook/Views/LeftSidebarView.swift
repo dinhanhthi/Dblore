@@ -147,6 +147,7 @@ struct TableRowView: View {
   let onColumnClick: (String) -> Void
 
   @State private var isHoveringTable = false
+  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -195,7 +196,20 @@ struct TableRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
+          // Double click: cancel pending single click and insert table name
+          singleClickTask?.cancel()
+          singleClickTask = nil
           onTableClick()
+        }
+        .onTapGesture(count: 1) {
+          // Single click: schedule toggle with delay
+          singleClickTask?.cancel()
+          singleClickTask = Task {
+            try? await Task.sleep(for: .milliseconds(50))
+            if !Task.isCancelled {
+              onToggle()
+            }
+          }
         }
       }
       .padding(.horizontal, Spacing.md)
@@ -284,6 +298,9 @@ struct ColumnRowView: View {
       } else {
         NSCursor.pop()
       }
+    }
+    .onTapGesture(count: 2) {
+      onClick()
     }
   }
 }
