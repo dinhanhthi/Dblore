@@ -55,6 +55,7 @@ struct HighlightedTextEditor: View {
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?  // For search highlighting
   var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
+  var wordWrapEnabled: Bool = true  // Word wrap setting
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -65,7 +66,8 @@ struct HighlightedTextEditor: View {
       textViewRef: $textViewRef,
       autocompleteProvider: autocompleteProvider,
       cellId: cellId,
-      maxHeight: maxHeight
+      maxHeight: maxHeight,
+      wordWrapEnabled: wordWrapEnabled
     )
     .frame(height: maxHeight ?? height)
   }
@@ -80,6 +82,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?
   var maxHeight: CGFloat?
+  var wordWrapEnabled: Bool = true
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
@@ -123,17 +126,32 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.textContainerInset = NSSize(width: 4, height: 2)
     textView.textContainer?.lineFragmentPadding = 0
 
-    // Configure text container to expand vertically
-    textView.textContainer?.widthTracksTextView = true
+    // Configure text container based on word wrap setting
+    if wordWrapEnabled {
+      // Word wrap enabled: text wraps at container width
+      textView.textContainer?.widthTracksTextView = true
+      textView.textContainer?.containerSize = NSSize(
+        width: 0,  // Will be set by widthTracksTextView
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = false
+    } else {
+      // Word wrap disabled: text extends horizontally, enable horizontal scroll
+      textView.textContainer?.widthTracksTextView = false
+      textView.textContainer?.containerSize = NSSize(
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = true
+    }
     textView.textContainer?.heightTracksTextView = false
     textView.isVerticallyResizable = true
-    textView.isHorizontallyResizable = false
-    textView.autoresizingMask = [.width]
+    textView.autoresizingMask = wordWrapEnabled ? [.width] : [.width, .height]
 
     scrollView.documentView = textView
     // Enable scrolling when maxHeight is set (editor mode)
     scrollView.hasVerticalScroller = maxHeight != nil
-    scrollView.hasHorizontalScroller = false
+    scrollView.hasHorizontalScroller = !wordWrapEnabled  // Enable horizontal scroll when word wrap disabled
     scrollView.drawsBackground = false
 
     // Set initial text with highlighting
@@ -160,6 +178,30 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Update autocomplete provider
     textView.autocompleteProvider = autocompleteProvider
+
+    // Update word wrap setting when it changes
+    if wordWrapEnabled {
+      textView.textContainer?.widthTracksTextView = true
+      textView.textContainer?.containerSize = NSSize(
+        width: scrollView.contentView.bounds.width,
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = false
+      textView.autoresizingMask = [.width]
+      scrollView.hasHorizontalScroller = false
+    } else {
+      textView.textContainer?.widthTracksTextView = false
+      textView.textContainer?.containerSize = NSSize(
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = true
+      textView.autoresizingMask = [.width, .height]
+      scrollView.hasHorizontalScroller = true
+    }
+
+    // Force layout update after word wrap change
+    textView.layoutManager?.ensureLayout(for: textView.textContainer!)
 
     // Only update text from external source if different
     // Don't update if textView is first responder (user is typing)

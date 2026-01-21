@@ -45,6 +45,7 @@ class AppSettings {
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
     static let showLineNumbers = "app.settings.showLineNumbers"
     static let maxConnectionHistorySize = "app.settings.maxConnectionHistorySize"
+    static let wordWrapEnabled = "app.settings.wordWrapEnabled"
   }
 
   // MARK: - Settings Properties
@@ -137,6 +138,14 @@ class AppSettings {
     }
   }
 
+  /// Enable word wrap in Editor mode
+  /// Default: true (enabled)
+  var wordWrapEnabled: Bool = true {
+    didSet {
+      UserDefaults.standard.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -204,6 +213,11 @@ class AppSettings {
       // Default to 5 if not set
       maxConnectionHistorySize = 5
     }
+
+    // Load word wrap enabled setting
+    if UserDefaults.standard.object(forKey: Keys.wordWrapEnabled) != nil {
+      wordWrapEnabled = UserDefaults.standard.bool(forKey: Keys.wordWrapEnabled)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -219,5 +233,6 @@ class AppSettings {
     isAutoCompleteEnabled = true
     showLineNumbers = true
     maxConnectionHistorySize = 5
+    wordWrapEnabled = true
   }
 }

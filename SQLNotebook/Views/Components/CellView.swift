@@ -19,6 +19,7 @@ struct CellView: View {
   let isSelected: Bool
   let onRun: () -> Void
 
+  @Bindable private var appSettings = AppSettings.shared
   @State private var isHovered = false  // Combined hover state for all hover zones
   @State private var isBottomEdgeHovered = false  // For floating action panel
   @State private var isTopRightPanelHovered = false  // For top-right panel hover
@@ -190,7 +191,8 @@ struct CellView: View {
       onFocus: { viewModel.selectedCellId = cell.id },
       textViewRef: $textViewRef,
       autocompleteProvider: viewModel.autocompleteProvider,
-      cellId: cell.id
+      cellId: cell.id,
+      wordWrapEnabled: appSettings.wordWrapEnabled
     )
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage

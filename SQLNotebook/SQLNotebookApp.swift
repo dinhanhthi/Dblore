@@ -351,6 +351,19 @@ struct EditorCommands: Commands {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
         .keyboardShortcut(",", modifiers: [.command])
+
+        Divider()
+
+        Button {
+          AppSettings.shared.wordWrapEnabled.toggle()
+        } label: {
+          if AppSettings.shared.wordWrapEnabled {
+            Label("Disable Word Wrap", systemImage: "text.alignleft")
+          } else {
+            Label("Enable Word Wrap", systemImage: "text.word.spacing")
+          }
+        }
+        .keyboardShortcut("z", modifiers: .option)
       }
     }
   }
@@ -443,4 +456,5 @@ extension Notification.Name {
 
   // Editor mode notifications
   static let runEditorQuery = Notification.Name("runEditorQuery")
+  static let toggleWordWrap = Notification.Name("toggleWordWrap")
 }
