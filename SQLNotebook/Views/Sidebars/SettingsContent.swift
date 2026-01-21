@@ -194,6 +194,23 @@ struct SettingsContent: View {
           )
           .font(.small)
           .foregroundColor(.foregroundSubtle)
+
+          // Show Line Numbers toggle (Editor mode only)
+          if viewModel.viewMode == .editor {
+            Toggle(
+              "Show Line Numbers",
+              isOn: $appSettings.showLineNumbers
+            )
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+            .tint(.accent)
+
+            Text(
+              "Display line numbers in the gutter. Helps with navigation and debugging queries."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
         }
       }
 

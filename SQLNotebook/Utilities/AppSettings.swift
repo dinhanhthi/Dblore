@@ -43,6 +43,7 @@ class AppSettings {
     static let bypassDestructiveQueryConfirmation =
       "app.settings.bypassDestructiveQueryConfirmation"
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
+    static let showLineNumbers = "app.settings.showLineNumbers"
   }
 
   // MARK: - Settings Properties
@@ -105,6 +106,14 @@ class AppSettings {
     }
   }
 
+  /// Show line numbers in Editor mode
+  /// Default: true (shown)
+  var showLineNumbers: Bool = true {
+    didSet {
+      UserDefaults.standard.set(showLineNumbers, forKey: Keys.showLineNumbers)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -158,6 +167,11 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.isAutoCompleteEnabled) != nil {
       isAutoCompleteEnabled = UserDefaults.standard.bool(forKey: Keys.isAutoCompleteEnabled)
     }
+
+    // Load show line numbers setting
+    if UserDefaults.standard.object(forKey: Keys.showLineNumbers) != nil {
+      showLineNumbers = UserDefaults.standard.bool(forKey: Keys.showLineNumbers)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -171,5 +185,6 @@ class AppSettings {
     themePreference = .dark
     bypassDestructiveQueryConfirmation = false
     isAutoCompleteEnabled = true
+    showLineNumbers = true
   }
 }
