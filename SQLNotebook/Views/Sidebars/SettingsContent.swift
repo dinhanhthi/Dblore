@@ -451,9 +451,15 @@ struct LogDocument: FileDocument {
   }
 }
 
-#Preview {
-  SettingsContent(viewModel: NotebookViewModel())
-    .frame(width: 450)
-    .background(Color.cardBackground)
-    .preferredColorScheme(.dark)
+#Preview("Settings") {
+  let viewModel = NotebookViewModel()
+  viewModel.rightSidebarContent = .settings
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 600)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
 }
