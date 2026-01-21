@@ -39,6 +39,10 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if case .connectionDetails = content {
+          // ConnectionDetails handles its own padding and scrolling
+          contentView(for: content)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -184,43 +188,9 @@ struct RightSidebarView: View {
   .preferredColorScheme(.dark)
 }
 
-#Preview("Connection - Not Configured") {
-  let viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .connectionDetails
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
 #Preview("Connection Form") {
   let viewModel = NotebookViewModel()
   viewModel.rightSidebarContent = .connectionForm
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Connection - Connected") {
-  let viewModel = NotebookViewModel()
-  viewModel.notebook.connectionConfig = ConnectionConfig(
-    host: "db.example.com",
-    port: 5432,
-    database: "my_database",
-    username: "admin_user",
-    password: "secret123",
-    sslMode: .require
-  )
-  viewModel.rightSidebarContent = .connectionDetails
 
   return HStack {
     Spacer()
@@ -252,19 +222,6 @@ struct RightSidebarView: View {
     RightSidebarView(viewModel: viewModel)
   }
   .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Settings") {
-  let viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .settings
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 800)
   .background(Color.appBackground)
   .preferredColorScheme(.dark)
 }

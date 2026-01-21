@@ -154,10 +154,7 @@ struct CellInfoContent: View {
           Text(editedBoolValue ? "true" : "false")
             .font(.mono)
             .foregroundColor(.foreground)
-        }
-        .padding(Spacing.sm)
-        .background(Color.inputBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        }.padding(.leading, -5)
       } else if isEditing {
         // Text editor for other types (only in edit mode)
         VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -426,28 +423,6 @@ struct CellInfoContent: View {
   .preferredColorScheme(.dark)
 }
 
-#Preview("Boolean Value - False") {
-  @Previewable @State var viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .cellInfo(
-    columnName: "is_deleted",
-    columnType: "boolean",
-    value: .bool(false),
-    tableName: "posts",
-    rowData: ["post_id": .int(1), "is_deleted": .bool(false)],
-    primaryKeyColumns: ["post_id"],
-    rowIdentifier: .int(1),
-    cellId: nil
-  )
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
 #Preview("String Value") {
   @Previewable @State var viewModel = NotebookViewModel()
   viewModel.rightSidebarContent = .cellInfo(
@@ -480,50 +455,6 @@ struct CellInfoContent: View {
     rowData: ["user_id": .int(42), "email": .string("user@example.com")],
     primaryKeyColumns: ["user_id"],
     rowIdentifier: .int(42),
-    cellId: nil
-  )
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Double Value") {
-  @Previewable @State var viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .cellInfo(
-    columnName: "price",
-    columnType: "numeric(10,2)",
-    value: .double(199.99),
-    tableName: "products",
-    rowData: ["product_id": .int(1), "price": .double(199.99)],
-    primaryKeyColumns: ["product_id"],
-    rowIdentifier: .int(1),
-    cellId: nil
-  )
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("NULL Value") {
-  @Previewable @State var viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .cellInfo(
-    columnName: "deleted_at",
-    columnType: "timestamp",
-    value: .null,
-    tableName: "users",
-    rowData: ["user_id": .int(1), "deleted_at": .null],
-    primaryKeyColumns: ["user_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 
