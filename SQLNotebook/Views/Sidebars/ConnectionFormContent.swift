@@ -19,6 +19,12 @@ struct ConnectionFormContent: View {
   @State private var isPasswordVisible = false
   @State private var connectionStringSSLMode: SSLMode = .prefer
 
+  // Connection history
+  @State private var connectionHistory: [ConnectionHistoryEntry] = []
+  @State private var selectedHistoryId: UUID?
+  @State private var showDeleteConfirmation = false
+  @State private var entryToDelete: UUID?
+
   enum TestResult {
     case success
     case failure(String)
@@ -34,6 +40,11 @@ struct ConnectionFormContent: View {
       // Main scrollable content
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.lg) {
+          // Connection History Dropdown (if available)
+          if !connectionHistory.isEmpty {
+            connectionHistorySection()
+          }
+
           // Input Mode Picker with Sliding Animation
           customTabPicker()
             .onChange(of: inputMode) { _, newMode in
@@ -60,6 +71,9 @@ struct ConnectionFormContent: View {
           }
         }
         .padding(Spacing.lg)
+      }
+      .onAppear {
+        loadConnectionHistory()
       }
 
       // Fixed Footer at bottom
@@ -178,6 +192,13 @@ struct ConnectionFormContent: View {
 
   @ViewBuilder
   private func formFields() -> some View {
+    // Connection Name (required)
+    FormField(label: "Connection Name") {
+      TextField("e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name)
+        .textFieldStyle(.plain)
+        .inputStyle()
+    }
+
     // Host and Port
     HStack(spacing: Spacing.md) {
       FormField(label: "Host") {
@@ -304,6 +325,13 @@ struct ConnectionFormContent: View {
 
   @ViewBuilder
   private func connectionStringFields() -> some View {
+    // Connection Name (required)
+    FormField(label: "Connection Name") {
+      TextField("e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name)
+        .textFieldStyle(.plain)
+        .inputStyle()
+    }
+
     FormField(label: "Connection String") {
       VStack(alignment: .leading, spacing: Spacing.xs) {
         TextField(
@@ -523,6 +551,12 @@ struct ConnectionFormContent: View {
   }
 
   private func testConnection() {
+    // Validate connection name is not empty
+    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty else {
+      testResult = .failure("Connection name is required")
+      return
+    }
+
     isTesting = true
     testResult = nil
 
@@ -539,6 +573,12 @@ struct ConnectionFormContent: View {
   }
 
   private func connect() {
+    // Validate connection name is not empty
+    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty else {
+      testResult = .failure("Connection name is required")
+      return
+    }
+
     isConnecting = true
 
     Task { @MainActor [viewModel] in
@@ -558,6 +598,124 @@ extension ConnectionFormContent.TestResult {
   var isSuccess: Bool {
     if case .success = self { return true }
     return false
+  }
+}
+
+// MARK: - Connection History Helpers
+
+extension ConnectionFormContent {
+  /// Connection history dropdown section
+  @ViewBuilder
+  private func connectionHistorySection() -> some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Text("Recent Connections")
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+
+      Menu {
+        ForEach(connectionHistory) { entry in
+          Button(action: {
+            loadConnection(entry)
+          }) {
+            HStack {
+              // Just show the connection name
+              Text(entry.config.name)
+                .font(.body)
+
+              Spacer()
+
+              Button(action: {
+                entryToDelete = entry.id
+                showDeleteConfirmation = true
+              }) {
+                Image(systemName: "trash")
+                  .foregroundColor(.destructive)
+              }
+              .buttonStyle(.plain)
+            }
+          }
+        }
+
+        Divider()
+
+        Button("Clear All History", role: .destructive) {
+          clearAllHistory()
+        }
+      } label: {
+        HStack {
+          Text(selectedHistoryEntry?.config.name ?? "Select a connection")
+            .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
+          Spacer()
+          Image(systemName: "chevron.down")
+            .foregroundColor(.foregroundMuted)
+        }
+        .padding(Spacing.sm)
+        .background(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .fill(Color.inputBackground)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .stroke(Color.border, lineWidth: 1)
+        )
+      }
+      .buttonStyle(.plain)
+    }
+    .confirmationDialog(
+      "Delete Connection?",
+      isPresented: $showDeleteConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Delete", role: .destructive) {
+        if let id = entryToDelete {
+          deleteConnection(id)
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This will remove the connection from history and delete the saved password.")
+    }
+  }
+
+  private var selectedHistoryEntry: ConnectionHistoryEntry? {
+    connectionHistory.first { $0.id == selectedHistoryId }
+  }
+
+  private func loadConnectionHistory() {
+    connectionHistory = SessionManager.loadHistory()
+    if let mostRecent = connectionHistory.first {
+      selectedHistoryId = mostRecent.id
+      loadConnection(mostRecent)
+    }
+  }
+
+  private func loadConnection(_ entry: ConnectionHistoryEntry) {
+    selectedHistoryId = entry.id
+    viewModel.editingConnectionConfig = entry.config
+
+    if inputMode == .connectionString {
+      connectionString = generateConnectionString()
+    }
+    connectionStringSSLMode = entry.config.sslMode
+    testResult = nil
+    parseError = nil
+  }
+
+  private func deleteConnection(_ id: UUID) {
+    SessionManager.removeConnection(id: id)
+    loadConnectionHistory()
+
+    if selectedHistoryId == id {
+      selectedHistoryId = nil
+      viewModel.editingConnectionConfig = ConnectionConfig()
+    }
+  }
+
+  private func clearAllHistory() {
+    SessionManager.clearAllHistory()
+    loadConnectionHistory()
+    selectedHistoryId = nil
+    viewModel.editingConnectionConfig = ConnectionConfig()
   }
 }
 
