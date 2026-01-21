@@ -40,9 +40,9 @@ Result tables use a custom `NSScrollView` subclass (`ResultTableScrollView`) wra
 ### Key Files
 
 - `ResultTableView.swift` - Main implementation
-  - Line 65-83: `HorizontalScrollableContent` usage with bottom padding
-  - Line 682-764: `HorizontalScrollableContent` struct
-  - Line 766-823: `ResultTableScrollView` class
+  - Line 63-82: `HorizontalScrollableContent` usage with bottom padding
+  - Line 622-725: `HorizontalScrollableContent` struct
+  - Line 735-819: `ResultTableScrollView` class
 
 ### ResultTableScrollView Logic
 

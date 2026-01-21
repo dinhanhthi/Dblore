@@ -631,16 +631,10 @@ private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
     scrollView.hasVerticalScroller = enableVerticalScrolling
     scrollView.hasHorizontalScroller = true
 
-    // Scrollbar appearance based on mode
-    if enableVerticalScrolling {
-      // Editor mode: Always show scrollbars (legacy style)
-      scrollView.scrollerStyle = .legacy
-      scrollView.autohidesScrollers = false
-    } else {
-      // Notebook mode: Overlay scrollbars that auto-hide
-      scrollView.scrollerStyle = .overlay
-      scrollView.autohidesScrollers = true
-    }
+    // Always use legacy scrollbar style to show scrollbar when content overflows
+    // Overlay style auto-hides which makes it hard to discover horizontal scrolling
+    scrollView.scrollerStyle = .legacy
+    scrollView.autohidesScrollers = false
 
     scrollView.drawsBackground = false
     scrollView.backgroundColor = .clear
@@ -670,14 +664,9 @@ private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
     scrollView.hasVerticalScroller = enableVerticalScrolling
     scrollView.verticalScrollElasticity = enableVerticalScrolling ? .automatic : .none
 
-    // Update scrollbar appearance
-    if enableVerticalScrolling {
-      scrollView.scrollerStyle = .legacy
-      scrollView.autohidesScrollers = false
-    } else {
-      scrollView.scrollerStyle = .overlay
-      scrollView.autohidesScrollers = true
-    }
+    // Scrollbar appearance is consistent (legacy style, always visible when overflow)
+    scrollView.scrollerStyle = .legacy
+    scrollView.autohidesScrollers = false
 
     // Update content
     if let hostingView = scrollView.documentView as? NSHostingView<Content> {
@@ -819,6 +808,13 @@ private class ResultTableScrollView: NSScrollView {
 
     contentView.scroll(to: origin)
     reflectScrolledClipView(contentView)
+
+    // Manually post notification to sync header
+    // reflectScrolledClipView doesn't trigger didLiveScrollNotification
+    NotificationCenter.default.post(
+      name: NSScrollView.didLiveScrollNotification,
+      object: self
+    )
   }
 }
 
