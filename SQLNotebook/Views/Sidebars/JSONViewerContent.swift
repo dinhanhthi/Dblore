@@ -75,11 +75,7 @@ struct JSONViewerContent: View {
 
       // JSON content - scrollable both vertically and horizontally
       if isEditing {
-        TextEditor(text: $editedJSON)
-          .font(.mono)
-          .foregroundColor(.foreground)
-          .scrollContentBackground(.hidden)
-          .padding(Spacing.sm)
+        PlainTextEditor(text: $editedJSON)
           .background(Color.inputBackground)
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           .frame(maxHeight: .infinity)

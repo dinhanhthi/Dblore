@@ -158,13 +158,7 @@ struct CellInfoContent: View {
       } else if isEditing {
         // Text editor for other types (only in edit mode)
         VStack(alignment: .leading, spacing: Spacing.xs) {
-          TextEditor(text: $editedValue)
-            .font(.mono)
-            .foregroundColor(.foreground)
-            .scrollContentBackground(.hidden)
-            .padding(.vertical, Spacing.sm)
-            .padding(.leading, Spacing.xs)
-            .padding(.trailing, 0)
+          PlainTextEditor(text: $editedValue)
             .background(Color.inputBackground)
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
             .overlay(
@@ -172,7 +166,6 @@ struct CellInfoContent: View {
                 .stroke(validationError != nil ? Color.destructive : Color.border, lineWidth: 1)
             )
             .frame(maxHeight: .infinity)
-            .focused($isTextEditorFocused)
             .focusedValue(\.isCellValueEditing, isEditing)
             .onChange(of: editedValue) { _, newValue in
               validateInput(newValue)
