@@ -36,16 +36,23 @@ class LineNumberGutterNSView: NSView {
   private var lineNumbers: [(number: Int, yPosition: CGFloat, height: CGFloat)] = []
   private var scrollObserver: NSObjectProtocol?
   private var boundsObserver: NSObjectProtocol?
+  private var selectionObserver: NSObjectProtocol?
   private weak var observedClipView: NSClipView?
+  private weak var observedTextView: NSTextView?
+
+  // Current line tracking
+  private var currentLineNumber: Int = 1
 
   // Top offset to align with text editor
-  // SwiftUI padding (8) + textContainerInset.height (2) = 10
-  private let topOffset: CGFloat = 10
+  // SwiftUI padding (8) + textContainerInset.height (2) - 2 (adjustment) = 8
+  private let topOffset: CGFloat = 8
 
   // Cache NSColors for drawing
   private var backgroundColor: NSColor = .clear
   private var borderColor: NSColor = .clear
   private var textColor: NSColor = .gray
+  private var highlightedTextColor: NSColor = .white
+  private var lineHighlightColor: NSColor = .clear
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -67,6 +74,8 @@ class LineNumberGutterNSView: NSView {
     backgroundColor = NSColor(Color.appBackground)
     borderColor = NSColor(Color.border)
     textColor = NSColor(Color.foregroundSubtle)
+    highlightedTextColor = NSColor(Color.foreground)
+    lineHighlightColor = NSColor(Color.inputBackground)
     layer?.backgroundColor = backgroundColor.cgColor
   }
 
@@ -79,11 +88,57 @@ class LineNumberGutterNSView: NSView {
       NotificationCenter.default.removeObserver(observer)
       boundsObserver = nil
     }
+    if let observer = selectionObserver {
+      NotificationCenter.default.removeObserver(observer)
+      selectionObserver = nil
+    }
     observedClipView = nil
+    observedTextView = nil
   }
 
   private func removeScrollObserver() {
     cleanupObservers()
+  }
+
+  /// Update the current line number based on cursor position
+  private func updateCurrentLine() {
+    guard let textView = observedTextView else {
+      currentLineNumber = 1
+      needsDisplay = true
+      return
+    }
+
+    let cursorPosition = textView.selectedRange().location
+    let text = textView.string as NSString
+
+    // Handle empty text
+    if text.length == 0 {
+      if currentLineNumber != 1 {
+        currentLineNumber = 1
+        needsDisplay = true
+      }
+      return
+    }
+
+    // Find which line the cursor is on by getting the line range at cursor position
+    // Use min to handle cursor at end of text
+    let safePosition = min(cursorPosition, max(0, text.length - 1))
+    let cursorLineRange = text.lineRange(for: NSRange(location: safePosition, length: 0))
+
+    // Count lines up to the cursor's line
+    var lineNumber = 1
+    var characterIndex = 0
+
+    while characterIndex < cursorLineRange.location {
+      let lineRange = text.lineRange(for: NSRange(location: characterIndex, length: 0))
+      lineNumber += 1
+      characterIndex = lineRange.location + lineRange.length
+    }
+
+    if currentLineNumber != lineNumber {
+      currentLineNumber = lineNumber
+      needsDisplay = true
+    }
   }
 
   func updateLineNumbers(text: String, textView: NSTextView?) {
@@ -125,6 +180,27 @@ class LineNumberGutterNSView: NSView {
           self?.needsDisplay = true
         }
       }
+    }
+
+    // Setup selection observer for current line highlighting
+    if observedTextView !== textView {
+      if let observer = selectionObserver {
+        NotificationCenter.default.removeObserver(observer)
+      }
+      observedTextView = textView
+
+      selectionObserver = NotificationCenter.default.addObserver(
+        forName: NSTextView.didChangeSelectionNotification,
+        object: textView,
+        queue: .main
+      ) { [weak self] _ in
+        DispatchQueue.main.async {
+          self?.updateCurrentLine()
+        }
+      }
+
+      // Initial update
+      updateCurrentLine()
     }
 
     // Ensure layout is up to date
@@ -204,9 +280,15 @@ class LineNumberGutterNSView: NSView {
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.alignment = .right
 
-    let attributes: [NSAttributedString.Key: Any] = [
+    let normalAttributes: [NSAttributedString.Key: Any] = [
       .font: font,
       .foregroundColor: textColor,
+      .paragraphStyle: paragraphStyle,
+    ]
+
+    let highlightedAttributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: highlightedTextColor,
       .paragraphStyle: paragraphStyle,
     ]
 
@@ -221,6 +303,20 @@ class LineNumberGutterNSView: NSView {
         continue
       }
 
+      let isCurrentLine = number == currentLineNumber
+
+      // Draw highlight background for current line
+      if isCurrentLine {
+        let highlightRect = CGRect(
+          x: 0,
+          y: adjustedY,
+          width: bounds.width,
+          height: height
+        )
+        context.setFillColor(lineHighlightColor.cgColor)
+        context.fill(highlightRect)
+      }
+
       let numberString = "\(number)"
       let textRect = CGRect(
         x: 0,
@@ -228,6 +324,9 @@ class LineNumberGutterNSView: NSView {
         width: gutterWidth - 8,  // Padding from right edge
         height: height
       )
+
+      // Use highlighted color for current line number
+      let attributes = isCurrentLine ? highlightedAttributes : normalAttributes
 
       // Center vertically within the line height
       let textSize = numberString.size(withAttributes: attributes)
