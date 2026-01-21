@@ -391,7 +391,7 @@ struct NotebookContentView: View {
           .listRowBackground(Color.clear)
           .listRowInsets(
             EdgeInsets(
-              top: Spacing.md, leading: Spacing.lg, bottom: Spacing.md, trailing: Spacing.lg))
+              top: Spacing.md, leading: Spacing.sm, bottom: Spacing.md, trailing: Spacing.sm))
         }
       }
       .listStyle(.plain)

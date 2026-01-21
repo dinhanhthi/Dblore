@@ -19,7 +19,7 @@ This document lists all keyboard shortcuts supported in SQLNotebook.
 
 | Shortcut | Action | Description |
 |----------|--------|-------------|
-| `Cmd+Shift+N` | Add New Cell | Create a new SQL cell |
+| `Cmd+Option+N` | Add New Cell | Create a new SQL cell |
 | `Cmd+D` | Duplicate Cell | Duplicate the selected cell |
 | `Cmd+Delete` | Delete Cell | Delete the selected cell |
 
@@ -140,8 +140,7 @@ When autocomplete popup is open:
 
 | Shortcut | Action | Description |
 |----------|--------|-------------|
-| `Cmd+N` | New Notebook | Create a new notebook (.sqlnb) |
-| `Cmd+Shift+N` | New Notebook (Explicit) | Explicit command to create a new notebook |
+| `Cmd+Shift+N` | New Notebook | Create a new notebook (.sqlnb) |
 | `Cmd+Shift+E` | New SQL File | Create a new SQL file (.sql) |
 
 **Note:** `Cmd+O` (Open) and `Cmd+S` (Save) are native macOS shortcuts supported automatically.
@@ -162,7 +161,7 @@ When autocomplete popup is open:
    - Press `Enter` to jump into the editor of the selected cell
 
 3. **Efficient Editing:**
-   - Use `Cmd+Shift+N` to create a new cell
+   - Use `Cmd+Option+N` to create a new cell
    - Use `Cmd+D` to duplicate cells with similar queries
    - Use `Ctrl+Enter` when you want to re-run a cell multiple times without jumping to the next cell
 
