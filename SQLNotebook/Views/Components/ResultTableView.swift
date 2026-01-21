@@ -10,6 +10,7 @@ struct ResultTableView: View {
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID?  // ID of the cell that produced this result
   var showBorderRadius: Bool = true  // Whether to show border radius (disabled in editor mode)
+  var enableVerticalScrolling: Bool = false  // Whether to enable vertical scrolling (enabled in editor mode)
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
@@ -55,11 +56,14 @@ struct ResultTableView: View {
       .frame(height: headerHeight)
       .scrollPosition($headerScrollPosition)
 
-      // Content area - wrapped in custom NSScrollView for horizontal scrolling only
-      // Vertical scrolling passes through to parent notebook list
+      // Content area - wrapped in custom NSScrollView for horizontal scrolling
+      // Vertical scrolling behavior depends on mode:
+      // - Notebook mode: passes through to parent list
+      // - Editor mode: handled internally with vertical scrollbar
       HorizontalScrollableContent(
         totalWidth: totalColumnsWidth,
-        headerScrollPosition: $headerScrollPosition
+        headerScrollPosition: $headerScrollPosition,
+        enableVerticalScrolling: enableVerticalScrolling
       ) {
         VStack(alignment: .leading, spacing: 0) {
           // Data rows - limited to maxRowsToRender
@@ -610,26 +614,39 @@ private struct ResizeHandle: View {
 // MARK: - Horizontal Scrollable Content
 
 /// A custom NSScrollView wrapper that:
-/// - Only scrolls horizontally (for wide result tables)
-/// - Passes ALL vertical scroll events through to parent (for notebook list scrolling)
+/// - Always scrolls horizontally (for wide result tables)
+/// - Optionally scrolls vertically (controlled by enableVerticalScrolling parameter)
+/// - When vertical scrolling disabled: passes ALL vertical scroll events through to parent
 /// - Supports shift+scroll for horizontal scrolling with mouse
 /// - Syncs horizontal scroll position with header
 private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
   let totalWidth: CGFloat
   @Binding var headerScrollPosition: ScrollPosition
+  let enableVerticalScrolling: Bool
   @ViewBuilder let content: () -> Content
 
   func makeNSView(context: Context) -> ResultTableScrollView {
     let scrollView = ResultTableScrollView()
-    scrollView.hasVerticalScroller = false
+    scrollView.enableVerticalScrolling = enableVerticalScrolling
+    scrollView.hasVerticalScroller = enableVerticalScrolling
     scrollView.hasHorizontalScroller = true
-    scrollView.scrollerStyle = .overlay
-    scrollView.autohidesScrollers = true
+
+    // Scrollbar appearance based on mode
+    if enableVerticalScrolling {
+      // Editor mode: Always show scrollbars (legacy style)
+      scrollView.scrollerStyle = .legacy
+      scrollView.autohidesScrollers = false
+    } else {
+      // Notebook mode: Overlay scrollbars that auto-hide
+      scrollView.scrollerStyle = .overlay
+      scrollView.autohidesScrollers = true
+    }
+
     scrollView.drawsBackground = false
     scrollView.backgroundColor = .clear
 
-    // Disable vertical scroll elasticity
-    scrollView.verticalScrollElasticity = .none
+    // Configure vertical scroll elasticity based on mode
+    scrollView.verticalScrollElasticity = enableVerticalScrolling ? .automatic : .none
     scrollView.horizontalScrollElasticity = .automatic
 
     // Create hosting view for SwiftUI content
@@ -648,6 +665,20 @@ private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
   }
 
   func updateNSView(_ scrollView: ResultTableScrollView, context: Context) {
+    // Update scrolling mode if changed
+    scrollView.enableVerticalScrolling = enableVerticalScrolling
+    scrollView.hasVerticalScroller = enableVerticalScrolling
+    scrollView.verticalScrollElasticity = enableVerticalScrolling ? .automatic : .none
+
+    // Update scrollbar appearance
+    if enableVerticalScrolling {
+      scrollView.scrollerStyle = .legacy
+      scrollView.autohidesScrollers = false
+    } else {
+      scrollView.scrollerStyle = .overlay
+      scrollView.autohidesScrollers = true
+    }
+
     // Update content
     if let hostingView = scrollView.documentView as? NSHostingView<Content> {
       hostingView.rootView = content()
@@ -674,11 +705,17 @@ private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
     nsView scrollView: ResultTableScrollView,
     context: Context
   ) -> CGSize? {
+    // When vertical scrolling is enabled, don't provide custom sizing
+    // Let SwiftUI handle the layout based on frame modifiers
+    if enableVerticalScrolling {
+      return nil
+    }
+
+    // Passthrough mode: tell SwiftUI we need full content height
     guard let hostingView = scrollView.documentView as? NSHostingView<Content> else {
       return nil
     }
     let fittingSize = hostingView.fittingSize
-    // Use proposed width (or content width), and content height
     let width = proposal.width ?? fittingSize.width
     return CGSize(width: width, height: fittingSize.height)
   }
@@ -700,12 +737,15 @@ private struct HorizontalScrollableContent<Content: View>: NSViewRepresentable {
 
 /// Custom NSScrollView for result tables that:
 /// - Handles horizontal scrolling normally (including shift+scroll for mouse)
-/// - Passes ALL vertical scroll events to parent scroll view via responder chain
+/// - Conditionally handles vertical scrolling based on enableVerticalScrolling property
+/// - When vertical scrolling disabled: passes ALL vertical scroll events to parent scroll view
 /// This allows the parent notebook list to scroll when hovering over result tables.
 ///
 /// Based on Apple's responder chain pattern:
 /// https://developer.apple.com/documentation/appkit/nsscrollview/1403494-scrollwheel
 private class ResultTableScrollView: NSScrollView {
+
+  var enableVerticalScrolling: Bool = false
 
   override func scrollWheel(with event: NSEvent) {
     // Detect scroll type
@@ -726,19 +766,44 @@ private class ResultTableScrollView: NSScrollView {
       return  // Consume - don't pass to parent
     }
 
-    // Diagonal scroll: handle horizontal component, pass vertical to parent
+    // Diagonal scroll: handle horizontal component, decide vertical based on mode
     if deltaX != 0 && deltaY != 0 {
       scrollHorizontally(by: deltaX)
-      // Forward to parent for vertical scrolling
-      // Use nextResponder to go up the responder chain
-      nextResponder?.scrollWheel(with: event)
+      if enableVerticalScrolling {
+        // Handle vertical scrolling internally - scroll vertically by deltaY
+        scrollVertically(by: deltaY)
+      } else {
+        // Forward to parent for vertical scrolling
+        nextResponder?.scrollWheel(with: event)
+      }
       return
     }
 
-    // Pure vertical scroll: pass entirely to parent
-    // This is the key - we forward the event up the responder chain
-    // so the parent notebook List can scroll
-    nextResponder?.scrollWheel(with: event)
+    // Pure vertical scroll: handle based on mode
+    if enableVerticalScrolling {
+      // Handle vertical scrolling internally
+      scrollVertically(by: deltaY)
+    } else {
+      // Pass entirely to parent
+      // This is the key - we forward the event up the responder chain
+      // so the parent notebook List can scroll
+      nextResponder?.scrollWheel(with: event)
+    }
+  }
+
+  /// Manually scroll vertically by the given delta
+  private func scrollVertically(by delta: CGFloat) {
+    guard let docView = documentView else { return }
+
+    var origin = contentView.bounds.origin
+    origin.y -= delta
+
+    // Clamp to valid scroll bounds
+    let maxY = max(0, docView.frame.height - contentView.frame.height)
+    origin.y = max(0, min(origin.y, maxY))
+
+    contentView.scroll(to: origin)
+    reflectScrolledClipView(contentView)
   }
 
   /// Manually scroll horizontally by the given delta
