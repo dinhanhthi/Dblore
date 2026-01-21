@@ -10,7 +10,7 @@ SQLNotebook is a macOS application for interactive SQL development, similar to J
 
 ## Communication Rules
 
-**IMPORTANT:** Answer in Vietnamese, keep technical terms in English. Don't automatically open the app (user opens with XCode).
+**IMPORTANT:** Answer in Vietnamese, keep technical terms in English. Don't automatically open the app (user opens with XCode). Write docs in English only.
 
 Examples:
 - ✅ "Tôi sẽ sử dụng `async/await` để execute query này"
