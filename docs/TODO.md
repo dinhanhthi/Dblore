@@ -10,6 +10,7 @@
 - ✅ **Phase 6: Security & Safety** - COMPLETE (6.0.2, 6.0.3, 6.0.4 all implemented; 6.0.5-6.0.6 future)
 - 🟡 **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, integration tests partial)
 - ✅ **Phase 8: Editor Mode** - MOSTLY COMPLETE (8.1-8.5 complete; 8.6-8.8 pending; Run Selection placeholder only)
+- 🟡 **Phase 10: Performance Optimization** - PENDING (see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
 
 ---
 
@@ -186,10 +187,10 @@ A traditional SQL editor mode with single editor and result panel below.
 - [x] Single SQL editor with syntax highlighting - SQLEditorView in EditorModeView.swift:22-29
 - [x] Single result panel below editor - ResultTableView in EditorModeView.swift:43-48
 
-### 8.2 Execution Features - MOSTLY COMPLETE
+### 8.2 Execution Features - PARTIAL ⚠️
 - [x] Implement "Run Query" functionality - runQuery() in EditorModeView.swift:184-188
 - [x] Add execution buttons - Run button with Cmd+Shift+Enter shortcut, EditorModeView.swift:75-83
-- [ ] Implement "Run Selection" functionality - TODO placeholder in EditorModeView.swift:192-195 (not yet implemented)
+- [ ] Implement "Run Selection" functionality - TODO placeholder in EditorModeView.swift:192-195 (not yet implemented) - MEDIUM effort
 - [ ] Implement "Run All" functionality - Future enhancement
 
 ### 8.3 Mode Switching UI - COMPLETE ✅
@@ -252,7 +253,7 @@ A traditional SQL editor mode with single editor and result panel below.
 
 ## Code-Level TODOs Found
 
-Items marked as `// TODO:` or `// FIXME:` in the codebase (verified 2026-01-08):
+Items marked as `// TODO:` or `// FIXME:` in the codebase (verified 2026-01-21):
 
 ### Active Code TODOs (4 items found)
 
@@ -263,7 +264,7 @@ Items marked as `// TODO:` or `// FIXME:` in the codebase (verified 2026-01-08):
    - Effort: MEDIUM - requires text selection tracking and partial execution
 
 2. **Future JSON Value Update** - LOW PRIORITY (Future Enhancement)
-   - [NotebookViewModel+Sidebar.swift:169](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L169)
+   - [NotebookViewModel+Sidebar.swift:181](SQLNotebook/ViewModels/NotebookViewModel+Sidebar.swift#L181)
    - Currently only copies JSON edits to clipboard
    - In the future could update actual database value
    - Status: Low priority, user feedback suggests clipboard copy is sufficient
@@ -437,24 +438,24 @@ Each task is complete when:
 
 ## Latest Verification Report
 
-**Date:** 2026-01-08
-**Git HEAD:** main branch (b079485 - feat: integration tests + editor mode)
+**Date:** 2026-01-21
+**Git HEAD:** main branch (bdebe68 - chore)
 **Recent Commits:**
-- b079485: feat: integration tests + editor mode (VERIFIED - Phase 8 mostly complete)
-- f950e59: chore
-- 5dc6266: feat: read-only mode connection (Phase 6.0.3 ✅)
-- 779f424: chore: add icon to the setting headings
-- f302d86: test: fix warnings in tests
+- bdebe68: chore (VERIFIED - current)
+- a9d04ac: feat: reserve connection history so that we can re-connect easily
+- 85427f8: chore: add icon and centerize + organize previews in right sidebar
+- 00d665d: fix: header should come with the table body when scrolling
+- b5b7b14: fix(editor): scrollbar and height issue in the result panel
 
 **Verification Summary:**
 
-### Verified Complete (Jan 8, 2026)
+### Verified Complete (Jan 21, 2026)
 - ✅ Phase 1-4: Core structure, cell editor, database integration, polish (27,000+ lines)
 - ✅ Phase 5.4: Query autocomplete with 95+ SQL keywords and context awareness
 - ✅ Phase 6: Security & safety features (timeout, retry, TLS, confirmation, read-only, validation)
-- ✅ Phase 8: Editor Mode (ViewMode enum, EditorModeView, mode toggle, content transfer)
-  - 8.1 Core implementation: complete
-  - 8.2 Execution features: Run query complete, Run Selection placeholder only
+- ✅ Phase 8: Editor Mode (AppMode enum, EditorModeView, mode toggle, content transfer)
+  - 8.1 Core implementation: complete (304 lines)
+  - 8.2 Execution features: Run query complete, Run Selection placeholder only ⚠️
   - 8.3 Mode switching: complete
   - 8.4 Sidebar integration: complete
   - 8.5 Result display: complete
@@ -463,28 +464,42 @@ Each task is complete when:
 - 🟡 Phase 7: Mostly complete (test infrastructure ready, integration tests partial)
 
 ### Key Verified Files (Phase 8 Editor Mode)
-- [ViewMode.swift](SQLNotebook/Models/ViewMode.swift) - Enum definition
-- [EditorModeView.swift](SQLNotebook/Views/EditorModeView.swift) - UI component (200 lines)
+- [ViewMode.swift](SQLNotebook/Models/ViewMode.swift) - AppMode enum with .notebook and .editor cases
+- [EditorModeView.swift](SQLNotebook/Views/EditorModeView.swift) - UI component (304 lines)
 - [NotebookViewModel+EditorMode.swift](SQLNotebook/ViewModels/NotebookViewModel+EditorMode.swift) - Business logic
 - [ContentView.swift](SQLNotebook/ContentView.swift) - mainContent property with mode switching
 - [HeaderView.swift](SQLNotebook/Views/HeaderView.swift) - Mode toggle buttons (lines 101-127)
 
-### Code-Level Findings
+### Code-Level Findings (2026-01-21)
 - Found 4 active TODOs in codebase:
-  - EditorModeView.swift:192 - Run Selection (placeholder, needs implementation)
-  - NotebookViewModel+Sidebar.swift:169 - Future JSON DB update (low priority)
+  - EditorModeView.swift:192 - Run Selection (placeholder, needs implementation) ⚠️
+  - NotebookViewModel+Sidebar.swift:181 - Future JSON DB update (low priority)
   - DataModelTests.swift:304 - Keychain storage (deferred security enhancement)
   - DatabaseConnectionManager+Schema.swift:101 - Primary key detection (partial)
 
-**Phase Status Summary (2026-01-08):**
-- ✅ Phase 1-4: Complete
+**Phase Status Summary (2026-01-21):**
+- ✅ Phase 1-4: Complete (~27,000 lines of implementation)
 - 🟡 Phase 5: Partial (5.4 complete; 5.6-5.8 pending)
 - ✅ Phase 6: Complete (6.0.2, 6.0.3, 6.0.4; 6.0.5-6.0.6 future)
 - 🟡 Phase 7: Partial (infrastructure complete; integration tests need work)
-- ✅ Phase 8: Mostly complete (core 8.1-8.5; 8.6-8.7 pending)
+- 🟡 Phase 8: Mostly complete (core 8.1-8.5 complete; 8.2 Run Selection pending; 8.6-8.8 pending)
 
 **Recommended Next Actions:**
 1. **HIGH PRIORITY:** Implement Phase 8.2 Run Selection (medium effort, high impact)
-2. **THEN:** Complete Phase 7 integration tests (database connection, query execution)
-3. **THEN:** Implement Phase 8.6 CSV export (low-medium effort)
-4. **NICE TO HAVE:** Phase 5 advanced features (multi-SQL, schema visualizer)
+   - Text selection tracking in SQLTextView
+   - runSelection() method for partial query execution
+
+2. **HIGH PRIORITY:** Complete Phase 7 Integration Tests (medium effort)
+   - DatabaseConnectionManager connection tests
+   - Query execution tests (SELECT, INSERT/UPDATE/DELETE)
+   - Type mapping tests (JSON/JSONB, DATE, TIMESTAMP)
+
+3. **NICE TO HAVE:** Phase 8.8 Executed Query Viewer (low-medium effort)
+   - Button wiring (infrastructure 70% ready)
+   - ExecutedQuerySidebarContent view component
+
+4. **NICE TO HAVE:** Phase 8.6 CSV Export (low-medium effort)
+
+5. **FUTURE:** Phase 5 Advanced Features (multi-SQL, schema visualizer, AI query)
+
+6. **OPTIMIZATION:** See [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md) for Phase 10 Performance Optimization tasks (20 items, 70-80% expected improvement)
