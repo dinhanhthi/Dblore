@@ -8,9 +8,13 @@ import SwiftUI
 /// Editor mode view - Single SQL editor with result panel below
 struct EditorModeView: View {
   @Bindable var viewModel: NotebookViewModel
+  @Bindable private var appSettings = AppSettings.shared
   @State private var textViewRef: SQLTextView?
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
+
+  /// Width of the line number gutter
+  private let gutterWidth: CGFloat = 44
 
   var body: some View {
     GeometryReader { geometry in
@@ -24,16 +28,29 @@ struct EditorModeView: View {
 
       VStack(spacing: 0) {
         // Top: SQL Editor (with distinct background like cell editor)
-        SQLEditorView(
-          content: $viewModel.editorContent,
-          isSelected: true,
-          isFocused: isFocused,
-          onFocus: { isFocused = true },
-          textViewRef: $textViewRef,
-          autocompleteProvider: viewModel.autocompleteProvider,
-          maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
-          isEditorMode: true  // Remove border and focus effects
-        )
+        HStack(spacing: 0) {
+          // Line numbers gutter (conditionally shown based on settings)
+          if appSettings.showLineNumbers {
+            LineNumberGutterView(
+              text: viewModel.editorContent,
+              textView: textViewRef,
+              gutterWidth: gutterWidth
+            )
+            .frame(width: gutterWidth, height: editorHeight)
+          }
+
+          // SQL Editor
+          SQLEditorView(
+            content: $viewModel.editorContent,
+            isSelected: true,
+            isFocused: isFocused,
+            onFocus: { isFocused = true },
+            textViewRef: $textViewRef,
+            autocompleteProvider: viewModel.autocompleteProvider,
+            maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
+            isEditorMode: true  // Remove border and focus effects
+          )
+        }
         .background(Color.inputBackground)
         .frame(width: geometry.size.width, height: editorHeight)
 
