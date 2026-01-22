@@ -146,4 +146,199 @@ extension DatabaseConnectionManager {
 
     return nil
   }
+
+  // MARK: - Multiple Statement Parsing
+
+  /// Split SQL string into individual statements
+  /// Handles:
+  /// - String literals (single and double quotes)
+  /// - Comments (single-line -- and multi-line /* */)
+  /// - Semicolons inside string literals
+  /// Returns array of trimmed SQL statements
+  nonisolated func splitSQLStatements(_ sql: String) -> [String] {
+    var statements: [String] = []
+    var currentStatement = ""
+    var inSingleQuote = false
+    var inDoubleQuote = false
+    var inMultiLineComment = false
+    var inSingleLineComment = false
+
+    var i = sql.startIndex
+    while i < sql.endIndex {
+      let char = sql[i]
+
+      // Handle single-line comment
+      if !inSingleQuote && !inDoubleQuote && !inMultiLineComment {
+        if char == "-" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "-" {
+            inSingleLineComment = true
+            currentStatement.append(char)
+            i = next
+            continue
+          }
+        }
+      }
+
+      // End single-line comment at newline
+      if inSingleLineComment {
+        currentStatement.append(char)
+        if char == "\n" {
+          inSingleLineComment = false
+        }
+        i = sql.index(after: i)
+        continue
+      }
+
+      // Handle multi-line comment
+      if !inSingleQuote && !inDoubleQuote && !inSingleLineComment {
+        if char == "/" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "*" {
+            inMultiLineComment = true
+            currentStatement.append(char)
+            i = next
+            continue
+          }
+        }
+      }
+
+      // End multi-line comment
+      if inMultiLineComment {
+        currentStatement.append(char)
+        if char == "*" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "/" {
+            inMultiLineComment = false
+            currentStatement.append(sql[next])
+            i = sql.index(after: next)
+            continue
+          }
+        }
+        i = sql.index(after: i)
+        continue
+      }
+
+      // Toggle single quote (handle escaped quotes)
+      if char == "'" && !inDoubleQuote && !inMultiLineComment && !inSingleLineComment {
+        // Check if it's an escaped quote (two single quotes)
+        let next = sql.index(after: i)
+        if inSingleQuote && next < sql.endIndex && sql[next] == "'" {
+          // Escaped quote - add both and continue
+          currentStatement.append(char)
+          currentStatement.append(sql[next])
+          i = sql.index(after: next)
+          continue
+        }
+        inSingleQuote.toggle()
+      }
+
+      // Toggle double quote
+      if char == "\"" && !inSingleQuote && !inMultiLineComment && !inSingleLineComment {
+        inDoubleQuote.toggle()
+      }
+
+      // Check for statement delimiter (semicolon)
+      if char == ";" && !inSingleQuote && !inDoubleQuote && !inMultiLineComment
+        && !inSingleLineComment
+      {
+        // Statement complete
+        let trimmed = currentStatement.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+          statements.append(trimmed)
+        }
+        currentStatement = ""
+        i = sql.index(after: i)
+        continue
+      }
+
+      // Normal character - add to current statement
+      currentStatement.append(char)
+      i = sql.index(after: i)
+    }
+
+    // Add final statement if not empty
+    let trimmed = currentStatement.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty {
+      statements.append(trimmed)
+    }
+
+    return statements
+  }
+
+  /// Check if a SQL string contains multiple statements
+  nonisolated func hasMultipleStatements(_ sql: String) -> Bool {
+    return splitSQLStatements(sql).count > 1
+  }
+
+  /// Check if a SQL statement contains only comments and whitespace
+  /// Returns true if the statement has no executable SQL code
+  nonisolated func isCommentOnlyStatement(_ sql: String) -> Bool {
+    let inSingleQuote = false
+    let inDoubleQuote = false
+    var inMultiLineComment = false
+    var inSingleLineComment = false
+
+    var i = sql.startIndex
+    while i < sql.endIndex {
+      let char = sql[i]
+
+      // Handle single-line comment
+      if !inSingleQuote && !inDoubleQuote && !inMultiLineComment {
+        if char == "-" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "-" {
+            inSingleLineComment = true
+            i = next
+            continue
+          }
+        }
+      }
+
+      // End single-line comment at newline
+      if inSingleLineComment {
+        if char == "\n" {
+          inSingleLineComment = false
+        }
+        i = sql.index(after: i)
+        continue
+      }
+
+      // Handle multi-line comment
+      if !inSingleQuote && !inDoubleQuote && !inSingleLineComment {
+        if char == "/" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "*" {
+            inMultiLineComment = true
+            i = next
+            continue
+          }
+        }
+      }
+
+      // End multi-line comment
+      if inMultiLineComment {
+        if char == "*" {
+          let next = sql.index(after: i)
+          if next < sql.endIndex && sql[next] == "/" {
+            inMultiLineComment = false
+            i = sql.index(after: next)
+            continue
+          }
+        }
+        i = sql.index(after: i)
+        continue
+      }
+
+      // If we find any non-whitespace character outside comments, it's not comment-only
+      if !char.isWhitespace {
+        return false
+      }
+
+      i = sql.index(after: i)
+    }
+
+    // We've gone through the entire string and found only comments/whitespace
+    return true
+  }
 }

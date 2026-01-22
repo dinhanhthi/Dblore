@@ -58,35 +58,95 @@ extension NotebookViewModel {
     let startTime = Date()
 
     do {
-      let result = try await connectionManager.executeQuery(query)
+      // Check if this is a multi-statement query
+      if connectionManager.hasMultipleStatements(query) {
+        // Execute all statements and get detailed results
+        let (statementResults, totalTime) = try await connectionManager
+          .executeMultipleStatementsDetailed(query)
 
-      let executionTime = Date().timeIntervalSince(startTime)
+        totalExecutionTime = totalTime
 
-      editorResult = CellResult(
-        columns: result.columns,
-        rows: result.rows,
-        executionTime: executionTime,
-        rowCount: result.rows.count,
-        timestamp: Date(),
-        error: nil,
-        wasLimited: result.wasLimited,
-        sourceQuery: query,
-        tableName: nil,  // Not available from QueryResult
-        primaryKeyColumns: [],
-        rowIdentifiers: result.rowIdentifiers,
-        userLimitExceeded: result.userLimitExceeded,
-        userRequestedLimit: result.userRequestedLimit,
-        affectedRows: result.affectedRows
-      )
+        // Convert to StatementResult array
+        editorStatementResults = statementResults.enumerated().map { index, tuple in
+          StatementResult(
+            queryText: tuple.queryText,
+            result: CellResult(
+              columns: tuple.result.columns,
+              rows: tuple.result.rows,
+              executionTime: tuple.result.executionTime,
+              rowCount: tuple.result.rows.count,
+              timestamp: Date(),
+              error: nil,
+              wasLimited: tuple.result.wasLimited,
+              sourceQuery: tuple.queryText,
+              tableName: nil,
+              primaryKeyColumns: [],
+              rowIdentifiers: tuple.result.rowIdentifiers,
+              userLimitExceeded: tuple.result.userLimitExceeded,
+              userRequestedLimit: tuple.result.userRequestedLimit,
+              affectedRows: tuple.result.affectedRows
+            ),
+            statementIndex: index
+          )
+        }
+
+        // Select the last statement by default (psql behavior)
+        selectedStatementIndex = editorStatementResults.count - 1
+
+        // Set editorResult to the selected statement's result for backward compatibility
+        if !editorStatementResults.isEmpty {
+          editorResult = editorStatementResults[selectedStatementIndex].result
+        }
+
+      } else {
+        // Single statement - use existing logic
+        let result = try await connectionManager.executeQuery(query)
+
+        let executionTime = Date().timeIntervalSince(startTime)
+
+        // Clear multi-statement state
+        editorStatementResults = []
+        selectedStatementIndex = 0
+        totalExecutionTime = executionTime
+
+        editorResult = CellResult(
+          columns: result.columns,
+          rows: result.rows,
+          executionTime: executionTime,
+          rowCount: result.rows.count,
+          timestamp: Date(),
+          error: nil,
+          wasLimited: result.wasLimited,
+          sourceQuery: query,
+          tableName: nil,  // Not available from QueryResult
+          primaryKeyColumns: [],
+          rowIdentifiers: result.rowIdentifiers,
+          userLimitExceeded: result.userLimitExceeded,
+          userRequestedLimit: result.userRequestedLimit,
+          affectedRows: result.affectedRows
+        )
+      }
 
     } catch {
       let executionTime = Date().timeIntervalSince(startTime)
+
+      // Clear multi-statement state on error
+      editorStatementResults = []
+      selectedStatementIndex = 0
+      totalExecutionTime = executionTime
 
       editorResult = CellResult.errorResult(
         error.localizedDescription,
         executionTime: executionTime
       )
     }
+  }
+
+  /// Select a specific statement result in editor mode
+  func selectEditorStatement(at index: Int) {
+    guard index >= 0 && index < editorStatementResults.count else { return }
+    selectedStatementIndex = index
+    editorResult = editorStatementResults[index].result
   }
 
 }
