@@ -231,40 +231,6 @@ struct TopRightFloatingPanelView: View {
   }
 }
 
-// MARK: - Executed Query Display
-
-struct ExecutedQueryDisplayView: View {
-  let query: String
-
-  var body: some View {
-    HStack(alignment: .top, spacing: Spacing.xs) {
-      Text("Run with query:")
-        .font(.labelText)
-        .foregroundColor(.foregroundSubtle)
-
-      Text(query)
-        .font(.monoMedium)
-        .foregroundColor(.accent.opacity(0.7))
-        .lineLimit(2)
-        .textSelection(.enabled)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-  }
-}
-
-// MARK: - Previews
-
-#Preview("Executed Query Display") {
-  ExecutedQueryDisplayView(
-    query: "SELECT id, name, email FROM users WHERE active = true ORDER BY id LIMIT 1000"
-  )
-  .padding()
-  .frame(width: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
 // MARK: - Drop Indicator
 
 struct DropIndicatorView: View {
