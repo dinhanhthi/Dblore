@@ -42,6 +42,11 @@ extension Color {
     dark: Color(hex: "27272a")  // Zinc 800
   )
 
+  static let gutterBackground = Color(
+    light: Color(hex: "e5e5e5"),  // Lighter gray than inputBackground
+    dark: Color(hex: "3f3f46")  // Zinc 700 - lighter than inputBackground (Zinc 800)
+  )
+
   // Foreground colors
   static let foreground = Color(
     light: Color(hex: "09090b"),  // Very dark zinc
