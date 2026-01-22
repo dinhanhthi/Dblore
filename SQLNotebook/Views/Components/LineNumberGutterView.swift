@@ -70,8 +70,8 @@ class LineNumberGutterNSView: NSView {
   }
 
   private func updateColors() {
-    // Use darker background to distinguish from editor area
-    backgroundColor = NSColor(Color.appBackground)
+    // Use dedicated gutter background that's always lighter than editor
+    backgroundColor = NSColor(Color.gutterBackground)
     borderColor = NSColor(Color.border)
     textColor = NSColor(Color.foregroundSubtle)
     highlightedTextColor = NSColor(Color.foreground)
@@ -170,14 +170,17 @@ class LineNumberGutterNSView: NSView {
         }
       }
 
-      // Also observe frame changes
+      // Also observe frame changes - important for word-wrap layout recalculation
       boundsObserver = NotificationCenter.default.addObserver(
         forName: NSView.frameDidChangeNotification,
         object: textView,
         queue: .main
-      ) { [weak self] _ in
+      ) { [weak self, weak textView] _ in
         DispatchQueue.main.async {
-          self?.needsDisplay = true
+          guard let self = self, let textView = textView else { return }
+          // When frame changes with word-wrap, line positions change
+          // Need to recalculate line numbers, not just redraw
+          self.updateLineNumbers(text: textView.string, textView: textView)
         }
       }
     }
@@ -328,16 +331,16 @@ class LineNumberGutterNSView: NSView {
       // Use highlighted color for current line number
       let attributes = isCurrentLine ? highlightedAttributes : normalAttributes
 
-      // Center vertically within the line height
+      // Top-align the line number (important for word-wrapped lines)
       let textSize = numberString.size(withAttributes: attributes)
-      let centeredRect = CGRect(
+      let topAlignedRect = CGRect(
         x: textRect.origin.x,
-        y: textRect.origin.y + (textRect.height - textSize.height) / 2,
+        y: textRect.origin.y,
         width: textRect.width,
         height: textSize.height
       )
 
-      numberString.draw(in: centeredRect, withAttributes: attributes)
+      numberString.draw(in: topAlignedRect, withAttributes: attributes)
     }
   }
 
