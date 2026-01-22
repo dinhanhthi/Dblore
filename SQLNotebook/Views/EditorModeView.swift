@@ -13,6 +13,7 @@ struct EditorModeView: View {
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isQueryCopied: Bool = false
+  @State private var isErrorCopied: Bool = false
 
   /// Width of the line number gutter
   private let gutterWidth: CGFloat = 44
@@ -140,7 +141,13 @@ struct EditorModeView: View {
           .foregroundColor(result.error != nil ? .red : .green)
           .font(.system(size: 12))
 
-        if result.error == nil {
+        if result.error != nil {
+          // Show "Error" label next to red cross icon
+          Text("Error")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.red)
+        } else {
+          // Show row count and execution time for success
           Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
             .font(.system(size: 12))
             .foregroundColor(.foregroundSubtle)
@@ -187,6 +194,20 @@ struct EditorModeView: View {
     // Reset back to copy icon after 1 second
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
       isQueryCopied = false
+    }
+  }
+  
+  private func copyErrorToClipboard(error: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(error, forType: .string)
+    
+    // Show checkmark feedback
+    isErrorCopied = true
+    
+    // Reset back to copy icon after 500ms
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+      isErrorCopied = false
     }
   }
 
@@ -240,21 +261,30 @@ struct EditorModeView: View {
   }
 
   private func errorView(error: String) -> some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        Text("Error")
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundColor(.red)
-
-        Text(error)
-          .font(.system(size: 12, design: .monospaced))
-          .foregroundStyle(Color.foreground)
-          .textSelection(.enabled)
+    ZStack(alignment: .topTrailing) {
+      ScrollView {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          Text(error)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Color.foreground)
+            .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.md)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(Spacing.md)
+      .background(Color.red.opacity(0.05))
+      
+      // Copy button (top-right, using FloatingPanelButton style)
+      Button(action: { copyErrorToClipboard(error: error) }) {
+        Image(systemName: isErrorCopied ? "checkmark" : "doc.on.doc")
+          .font(.system(size: 12))
+          .contentTransition(.symbolEffect(.replace))
+      }
+      .buttonStyle(FloatingPanelButtonStyle())
+      .help("Copy error message")
+      .padding(.top, Spacing.sm)
+      .padding(.trailing, Spacing.sm)
     }
-    .background(Color.red.opacity(0.05))
   }
 
   // MARK: - Actions
