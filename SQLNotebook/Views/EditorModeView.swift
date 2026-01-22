@@ -124,12 +124,11 @@ struct EditorModeView: View {
 
   /// Creates the header bar for the result panel.
   ///
-  /// Displays query execution metadata and actions:
+  /// Displays query execution metadata for both single and multi-statement queries:
+  /// - For multi-statement: Total statements count + total time, and current statement info
+  /// - For single statement: Row count and execution time
   /// - Success/error indicator icon
-  /// - Row count and execution time (for successful queries)
   /// - Clear result button
-  ///
-  /// The header is positioned at the top of the result panel with a bottom border.
   ///
   /// - Parameter result: The query result containing metadata and optional error
   /// - Returns: A view with query result metadata and action buttons
@@ -147,17 +146,68 @@ struct EditorModeView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.red)
         } else {
-          // Show row count and execution time for success
-          Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+          // Check if multi-statement query
+          if !viewModel.editorStatementResults.isEmpty {
+            // Show total stats
+            Text(
+              "Total: \(viewModel.editorStatementResults.count) statement\(viewModel.editorStatementResults.count == 1 ? "" : "s")"
+            )
             .font(.system(size: 12))
             .foregroundColor(.foregroundSubtle)
 
-          Text("•")
-            .foregroundColor(.foregroundMuted)
+            Text("•")
+              .foregroundColor(.foregroundMuted)
 
-          Text(String(format: "%.2fs", result.executionTime))
-            .font(.system(size: 12))
-            .foregroundColor(.foregroundSubtle)
+            Text(String(format: "%.2fs", viewModel.totalExecutionTime))
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundSubtle)
+
+            // Divider
+            Rectangle()
+              .fill(Color.foregroundMuted.opacity(0.3))
+              .frame(width: 1, height: 12)
+
+            // Current statement stats
+            Text("Current:")
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundMuted)
+
+            if let affectedRows = result.affectedRows {
+              Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+            } else {
+              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+            }
+
+            Text("•")
+              .foregroundColor(.foregroundMuted)
+
+            Text(String(format: "%.2fs", result.executionTime))
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundSubtle)
+
+          } else {
+            // Single statement - show row count and execution time
+            if let affectedRows = result.affectedRows {
+              Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+            } else {
+              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+            }
+
+            Text("•")
+              .foregroundColor(.foregroundMuted)
+
+            Text(String(format: "%.2fs", result.executionTime))
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundSubtle)
+          }
         }
       }
 
@@ -213,18 +263,113 @@ struct EditorModeView: View {
 
   // MARK: - Result Panel Footer
 
-  /// Creates the footer bar for the result panel showing the source query.
+  /// Creates the footer bar for the result panel.
   ///
-  /// Displays the query that was executed with click-to-copy functionality:
-  /// - Icon changes from "wallet.pass" to "checkmark.circle.fill" when copied
-  /// - Long queries are truncated with "..." for better UI
-  /// - Click anywhere on footer to copy the query
+  /// For multi-statement queries: Shows dropdown to select which statement's result to view
+  /// For single statement: Shows the query with click-to-copy functionality
   ///
   /// - Parameter result: The query result containing sourceQuery
-  /// - Returns: A view with clickable query text, or nil if no sourceQuery
+  /// - Returns: A view with query selector or clickable query text
   @ViewBuilder
   private func resultPanelFooter(result: CellResult) -> some View {
-    if let sourceQuery = result.sourceQuery {
+    if !viewModel.editorStatementResults.isEmpty {
+      // Multi-statement query - show dropdown selector + "Run with query"
+      HStack(spacing: Spacing.sm) {
+        // Dropdown menu for statement selection
+        Menu {
+          ForEach(viewModel.editorStatementResults, id: \.id) { statementResult in
+            let index = viewModel.editorStatementResults.firstIndex(where: { $0.id == statementResult.id }) ?? 0
+            Button(action: {
+              viewModel.selectEditorStatement(at: index)
+            }) {
+              HStack {
+                // Combined text: "Result N • query text (truncated)"
+                (Text("Result \(index + 1) • ")
+                  .font(.system(size: 11))
+                + Text(truncateQuery(statementResult.queryText))
+                  .font(.system(size: 11, design: .monospaced)))
+                  .lineLimit(1)
+
+                Spacer()
+
+                // Checkmark for selected item
+                if index == viewModel.selectedStatementIndex {
+                  Image(systemName: "checkmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(.accentColor)
+                }
+              }
+            }
+            .id(statementResult.id)  // Force Button to recreate when data changes
+          }
+        } label: {
+          HStack {
+            Text("Result \(viewModel.selectedStatementIndex + 1)")
+              .font(.system(size: 11))
+              .foregroundColor(.foreground)
+            Spacer()
+            Image(systemName: "chevron.down")
+              .font(.system(size: 9))
+              .foregroundColor(.foregroundMuted)
+          }
+          .padding(.horizontal, Spacing.sm)
+          .padding(.vertical, Spacing.xs)
+          .background(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+              .fill(Color.inputBackground)
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+              .stroke(Color.border, lineWidth: 1)
+          )
+        }
+        .id(viewModel.editorStatementResults.map { $0.id })
+        .buttonStyle(.plain)
+        .help("Select statement result to view")
+        .fixedSize()  // Don't expand
+
+        // "Run with query" text (spans remaining width)
+        if let sourceQuery = result.sourceQuery {
+          let displayQuery = removeComments(sourceQuery)
+          HStack(spacing: Spacing.xs) {
+            Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+              .font(.system(size: 11))
+              .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
+              .frame(width: 11, alignment: .center)
+
+            Text("Run with query (click to copy):")
+              .font(.system(size: 11))
+              .foregroundColor(.foregroundMuted)
+
+            Text(displayQuery)
+              .font(.system(size: 11, design: .monospaced))
+              .foregroundColor(.foregroundSubtle)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+          .onTapGesture {
+            copyQueryToClipboard(query: sourceQuery)
+          }
+          .cursor(NSCursor.pointingHand)
+          .help(isQueryCopied ? "Copied!" : "Click to copy query")
+        }
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.appBackground)
+      .overlay(
+        Rectangle()
+          .fill(Color.foregroundMuted.opacity(0.1))
+          .frame(height: 1),
+        alignment: .top  // Border on top
+      )
+
+    } else if let sourceQuery = result.sourceQuery {
+      // Single statement - show clickable query text
+      let displayQuery = removeComments(sourceQuery)
       HStack(spacing: Spacing.xs) {
         // Icon changes when query is copied (fixed width to prevent text shifting)
         Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
@@ -236,7 +381,7 @@ struct EditorModeView: View {
           .font(.system(size: 11))
           .foregroundColor(.foregroundMuted)
 
-        Text(sourceQuery)
+        Text(displayQuery)
           .font(.system(size: 11, design: .monospaced))
           .foregroundColor(.foregroundSubtle)
           .lineLimit(1)
@@ -291,6 +436,116 @@ struct EditorModeView: View {
 
   private func clearResult() {
     viewModel.editorResult = nil
+    viewModel.editorStatementResults = []
+    viewModel.selectedStatementIndex = 0
+  }
+
+  // MARK: - Helpers
+
+  /// Truncate query text for display in dropdown
+  /// Remove comments from query text for display purposes
+  /// Handles:
+  /// - Leading comments (both single-line and multi-line)
+  /// - Trailing comments (single-line after query)
+  /// - Multi-line comments anywhere in the query
+  private func removeComments(_ query: String) -> String {
+    var result = ""
+    var inSingleQuote = false
+    var inDoubleQuote = false
+
+    var i = query.startIndex
+    while i < query.endIndex {
+      let char = query[i]
+
+      // Handle multi-line comment (/* ... */)
+      if !inSingleQuote && !inDoubleQuote && char == "/" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "*" {
+          // Find the closing */
+          var j = query.index(after: next)
+          var found = false
+          while j < query.endIndex {
+            if query[j] == "*" {
+              let nextJ = query.index(after: j)
+              if nextJ < query.endIndex && query[nextJ] == "/" {
+                // Found closing */
+                i = query.index(after: nextJ)
+                found = true
+                break
+              }
+            }
+            j = query.index(after: j)
+          }
+          if !found {
+            // Unclosed comment - skip rest of query
+            break
+          }
+          continue
+        }
+      }
+
+      // Handle single-line comment (-- ...)
+      if !inSingleQuote && !inDoubleQuote && char == "-" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "-" {
+          // Skip until newline or end of string
+          var j = next
+          while j < query.endIndex && query[j] != "\n" {
+            j = query.index(after: j)
+          }
+          // If we found a newline, skip it and continue
+          if j < query.endIndex {
+            i = query.index(after: j)
+            result.append("\n")
+          } else {
+            // End of string - we're done
+            break
+          }
+          continue
+        }
+      }
+
+      // Toggle single quote (handle escaped quotes)
+      if char == "'" && !inDoubleQuote {
+        let next = query.index(after: i)
+        if inSingleQuote && next < query.endIndex && query[next] == "'" {
+          // Escaped quote - add both and continue
+          result.append(char)
+          result.append(query[next])
+          i = query.index(after: next)
+          continue
+        }
+        inSingleQuote.toggle()
+      }
+
+      // Toggle double quote
+      if char == "\"" && !inSingleQuote {
+        inDoubleQuote.toggle()
+      }
+
+      // Add character to result
+      result.append(char)
+      i = query.index(after: i)
+    }
+
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Shows first ~30 chars and last ~20 chars with "..." in middle
+  /// Truncate query text to show first 10 and last 10 characters
+  private func truncateQuery(_ query: String) -> String {
+    // Remove leading comments first
+    let withoutComments = removeComments(query)
+    let trimmed = withoutComments.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // If query is short enough, return as-is
+    if trimmed.count <= 48 {  // 25 + "..." + 20 = 48
+      return trimmed
+    }
+
+    let firstPart = String(trimmed.prefix(25))
+    let lastPart = String(trimmed.suffix(20))
+    return "\(firstPart)...\(lastPart)"
   }
 }
 

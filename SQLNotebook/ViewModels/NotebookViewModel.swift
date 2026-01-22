@@ -92,7 +92,10 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
-  var editorResult: CellResult?  // Result for editor mode
+  var editorResult: CellResult?  // Result for editor mode (single statement or legacy)
+  var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
+  var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
+  var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
 
   init(notebook: SQLNotebook = .newDocument()) {

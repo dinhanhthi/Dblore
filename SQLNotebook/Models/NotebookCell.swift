@@ -39,6 +39,26 @@ enum CellType: String, Codable, Sendable {
   case sql
 }
 
+/// Result of executing a single SQL statement (within a multi-statement query)
+struct StatementResult: Sendable, Identifiable {
+  let id: UUID
+  let queryText: String  // The individual statement text
+  let result: CellResult  // The execution result
+  let statementIndex: Int  // 0-based index in the query
+
+  nonisolated init(
+    id: UUID = UUID(),
+    queryText: String,
+    result: CellResult,
+    statementIndex: Int
+  ) {
+    self.id = id
+    self.queryText = queryText
+    self.result = result
+    self.statementIndex = statementIndex
+  }
+}
+
 /// Result of executing a SQL cell
 struct CellResult: Codable, Sendable {
   let columns: [ColumnInfo]
