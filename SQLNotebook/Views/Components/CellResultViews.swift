@@ -13,6 +13,7 @@ struct ResultAreaView: View {
   let result: CellResult
   let viewModel: NotebookViewModel
   let cellId: UUID
+  @State private var isQueryCopied: Bool = false
 
   var body: some View {
     HStack(alignment: .top, spacing: 0) {
@@ -21,11 +22,6 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        // Show executed query at top of result area if available
-        if let sourceQuery = result.sourceQuery {
-          ExecutedQueryDisplayView(query: sourceQuery)
-        }
-
         if let error = result.error {
           // Error display with search highlighting
           ErrorResultView(
@@ -40,6 +36,9 @@ struct ResultAreaView: View {
         } else {
           // Result table
           ResultTableView(result: result, viewModel: viewModel, cellId: cellId)
+
+          // Query footer (shows source query with click-to-copy)
+          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
 
           // Result metadata
           ResultMetadataView(result: result)
@@ -165,7 +164,7 @@ struct ResultMetadataView: View {
       Rectangle()
         .fill(Color.border)
         .frame(height: 1)
-      
+
       HStack(spacing: Spacing.md) {
         Text("Rows: \(result.rowCount)")
 
@@ -192,6 +191,64 @@ struct ResultMetadataView: View {
       .foregroundColor(.foregroundSubtle)
       .padding(.top, Spacing.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+}
+
+// MARK: - Result Query Footer
+
+/// Footer showing the source query with click-to-copy functionality.
+struct ResultQueryFooterView: View {
+  let result: CellResult
+  @Binding var isQueryCopied: Bool
+
+  var body: some View {
+    if let sourceQuery = result.sourceQuery {
+      VStack(alignment: .leading, spacing: 0) {
+        // Horizontal divider line
+        Rectangle()
+          .fill(Color.border)
+          .frame(height: 1)
+
+        HStack(spacing: Spacing.xs) {
+          // Icon changes when query is copied (fixed width to prevent text shifting)
+          Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+            .font(.system(size: 11))
+            .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
+            .frame(width: 11, alignment: .center)
+
+          Text("Run with query (click to copy):")
+            .font(.system(size: 11))
+            .foregroundColor(.foregroundMuted)
+
+          Text(sourceQuery)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(.foregroundSubtle)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        .padding(.top, Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onTapGesture {
+          copyQueryToClipboard(query: sourceQuery)
+        }
+        .cursor(NSCursor.pointingHand)
+        .help(isQueryCopied ? "Copied!" : "Click to copy query")
+      }
+    }
+  }
+
+  private func copyQueryToClipboard(query: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(query, forType: .string)
+
+    // Show checkmark feedback
+    isQueryCopied = true
+
+    // Reset back to copy icon after 1 second
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      isQueryCopied = false
     }
   }
 }

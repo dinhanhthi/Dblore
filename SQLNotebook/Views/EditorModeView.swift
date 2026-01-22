@@ -12,6 +12,7 @@ struct EditorModeView: View {
   @State private var textViewRef: SQLTextView?
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
+  @State private var isQueryCopied: Bool = false
 
   /// Width of the line number gutter
   private let gutterWidth: CGFloat = 44
@@ -66,6 +67,7 @@ struct EditorModeView: View {
         // Bottom: Result Panel
         if let result = viewModel.editorResult {
           VStack(alignment: .leading, spacing: 0) {
+            // Header at top
             resultPanelHeader(result: result)
 
             // Result table or error
@@ -73,15 +75,20 @@ struct EditorModeView: View {
               errorView(error: error)
                 .frame(maxHeight: .infinity)
             } else {
-              ResultTableView(
-                result: result,
-                viewModel: viewModel,
-                cellId: nil,  // No cell ID in editor mode
-                showBorderRadius: false,  // No border radius in editor mode
-                enableVerticalScrolling: true  // Enable vertical scrolling in editor mode
-              )
-              .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
+              VStack(alignment: .leading, spacing: 0) {
+                ResultTableView(
+                  result: result,
+                  viewModel: viewModel,
+                  cellId: nil,  // No cell ID in editor mode
+                  showBorderRadius: false,  // No border radius in editor mode
+                  enableVerticalScrolling: true  // Enable vertical scrolling in editor mode
+                )
+                .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
+              }
             }
+
+            // Footer at bottom (shows source query)
+            resultPanelFooter(result: result)
           }
           .frame(width: geometry.size.width, height: resultHeight)
         } else {
@@ -114,6 +121,17 @@ struct EditorModeView: View {
 
   // MARK: - Result Panel Header
 
+  /// Creates the header bar for the result panel.
+  ///
+  /// Displays query execution metadata and actions:
+  /// - Success/error indicator icon
+  /// - Row count and execution time (for successful queries)
+  /// - Clear result button
+  ///
+  /// The header is positioned at the top of the result panel with a bottom border.
+  ///
+  /// - Parameter result: The query result containing metadata and optional error
+  /// - Returns: A view with query result metadata and action buttons
   private func resultPanelHeader(result: CellResult) -> some View {
     HStack {
       // Result info
@@ -154,8 +172,71 @@ struct EditorModeView: View {
       Rectangle()
         .fill(Color.foregroundMuted.opacity(0.1))
         .frame(height: 1),
-      alignment: .bottom
+      alignment: .bottom  // Border on bottom since this is now a header
     )
+  }
+
+  private func copyQueryToClipboard(query: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(query, forType: .string)
+
+    // Show checkmark feedback
+    isQueryCopied = true
+
+    // Reset back to copy icon after 1 second
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      isQueryCopied = false
+    }
+  }
+
+  // MARK: - Result Panel Footer
+
+  /// Creates the footer bar for the result panel showing the source query.
+  ///
+  /// Displays the query that was executed with click-to-copy functionality:
+  /// - Icon changes from "wallet.pass" to "checkmark.circle.fill" when copied
+  /// - Long queries are truncated with "..." for better UI
+  /// - Click anywhere on footer to copy the query
+  ///
+  /// - Parameter result: The query result containing sourceQuery
+  /// - Returns: A view with clickable query text, or nil if no sourceQuery
+  @ViewBuilder
+  private func resultPanelFooter(result: CellResult) -> some View {
+    if let sourceQuery = result.sourceQuery {
+      HStack(spacing: Spacing.xs) {
+        // Icon changes when query is copied (fixed width to prevent text shifting)
+        Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+          .font(.system(size: 11))
+          .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
+          .frame(width: 11, alignment: .center)
+
+        Text("Run with query (click to copy):")
+          .font(.system(size: 11))
+          .foregroundColor(.foregroundMuted)
+
+        Text(sourceQuery)
+          .font(.system(size: 11, design: .monospaced))
+          .foregroundColor(.foregroundSubtle)
+          .lineLimit(1)
+          .truncationMode(.tail)
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.appBackground)
+      .overlay(
+        Rectangle()
+          .fill(Color.foregroundMuted.opacity(0.1))
+          .frame(height: 1),
+        alignment: .top  // Border on top
+      )
+      .onTapGesture {
+        copyQueryToClipboard(query: sourceQuery)
+      }
+      .cursor(NSCursor.pointingHand)
+      .help(isQueryCopied ? "Copied!" : "Click to copy query")
+    }
   }
 
   private func errorView(error: String) -> some View {
@@ -185,11 +266,37 @@ struct EditorModeView: View {
 
 // MARK: - Resizable Divider
 
-/// A draggable horizontal divider for resizing panels
+/// A draggable horizontal divider for resizing split-view panels.
+///
+/// Features:
+/// - Drag to resize panels with smooth animation
+/// - Double-click to reset to 50/50 split
+/// - Hover indicator for visual feedback
+/// - Optimized hit area (8pt) to avoid overlapping with adjacent UI elements
+///
+/// The hit area extends **upward** (-3.5pt offset) to prevent interference with
+/// the result panel header positioned below the divider.
+///
+/// Example:
+/// ```swift
+/// ResizableDivider(
+///   position: $dividerPosition,
+///   totalHeight: geometry.height,
+///   minTopHeight: 250,
+///   minBottomHeight: 250
+/// )
+/// ```
 struct ResizableDivider: View {
-  @Binding var position: CGFloat  // Position as ratio (0.0 to 1.0)
+  /// Position of divider as ratio (0.0 = top, 1.0 = bottom)
+  @Binding var position: CGFloat
+
+  /// Total height of the container
   let totalHeight: CGFloat
+
+  /// Minimum height for top panel (prevents collapse)
   let minTopHeight: CGFloat
+
+  /// Minimum height for bottom panel (prevents collapse)
   let minBottomHeight: CGFloat
 
   @State private var isDragging = false
@@ -199,11 +306,12 @@ struct ResizableDivider: View {
     Rectangle()
       .fill(Color.border)
       .frame(height: 1)
-      .overlay(
-        // Invisible hit area for better UX
+      .background(
+        // Invisible hit area for better UX - extends upward only to avoid blocking result header
         Rectangle()
           .fill(Color.clear)
           .frame(height: 8)
+          .offset(y: -3.5)  // Shift up so hit area doesn't overlap with result header below
           .contentShape(Rectangle())
       )
       .background(
@@ -214,6 +322,7 @@ struct ResizableDivider: View {
               ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear)
           )
           .frame(height: 8)
+          .offset(y: -3.5)  // Match hit area position
       )
       .cursor(NSCursor.resizeUpDown)
       .onHover { hovering in
