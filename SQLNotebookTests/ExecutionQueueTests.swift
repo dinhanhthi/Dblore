@@ -207,8 +207,8 @@ struct ExecutionQueueTests {
         queue.enqueue(cellId: cellId1, query: "SELECT 1")
         queue.enqueue(cellId: cellId2, query: "SELECT 2")
 
-        // Wait for executions to complete
-        try await Task.sleep(for: .milliseconds(100))
+        // Wait for executions to complete (sequential: 2 tasks × 10ms + overhead)
+        try await Task.sleep(for: .milliseconds(200))
 
         // Tasks should be in queue (completed)
         #expect(queue.tasks.count == 2)

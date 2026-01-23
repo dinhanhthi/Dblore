@@ -337,11 +337,13 @@ extension NotebookViewModel {
     // Remove leading/trailing comments to get actual SQL statement
     let cleanQuery = removeLeadingTrailingComments(from: query)
 
-    await AppLogger.shared.debug("Checking pagination for query: \(cleanQuery.prefix(50))...", category: "Pagination")
+    await AppLogger.shared.debug(
+      "Checking pagination for query: \(cleanQuery.prefix(50))...", category: "Pagination")
 
     // Only applicable for SELECT queries
     guard connectionManager.isSelectQuery(cleanQuery) else {
-      await AppLogger.shared.debug("Not a SELECT query, skipping pagination", category: "Pagination")
+      await AppLogger.shared.debug(
+        "Not a SELECT query, skipping pagination", category: "Pagination")
       return nil
     }
 
@@ -351,14 +353,17 @@ extension NotebookViewModel {
       // Query was limited (either auto-added or user's LIMIT was capped)
       // Use the ACTUAL limit that was applied (not user's original limit)
       limit = requestedLimit
-      await AppLogger.shared.debug("Building pagination: query was limited to \(limit)", category: "Pagination")
+      await AppLogger.shared.debug(
+        "Building pagination: query was limited to \(limit)", category: "Pagination")
     } else if let userLimit = connectionManager.extractLimitValue(cleanQuery) {
       // User provided LIMIT in query and it was within maxRows
       limit = userLimit
-      await AppLogger.shared.debug("Building pagination: query has user LIMIT \(limit)", category: "Pagination")
+      await AppLogger.shared.debug(
+        "Building pagination: query has user LIMIT \(limit)", category: "Pagination")
     } else {
       // No LIMIT and not limited
-      await AppLogger.shared.debug("No LIMIT found in query and not limited, skipping pagination", category: "Pagination")
+      await AppLogger.shared.debug(
+        "No LIMIT found in query and not limited, skipping pagination", category: "Pagination")
       return nil
     }
 
@@ -367,11 +372,13 @@ extension NotebookViewModel {
 
     // Get total count using COUNT(*) query
     guard let totalRows = await getTotalRowCount(baseQuery: baseQuery) else {
-      await AppLogger.shared.debug("Failed to get total count, skipping pagination", category: "Pagination")
+      await AppLogger.shared.debug(
+        "Failed to get total count, skipping pagination", category: "Pagination")
       return nil
     }
 
-    await AppLogger.shared.debug("Pagination built: \(totalRows) total rows, \(limit) per page", category: "Pagination")
+    await AppLogger.shared.debug(
+      "Pagination built: \(totalRows) total rows, \(limit) per page", category: "Pagination")
 
     return PaginationInfo(
       currentPage: 1,
@@ -386,15 +393,15 @@ extension NotebookViewModel {
   private func removeLeadingTrailingComments(from query: String) -> String {
     // Safety check for empty query
     guard !query.isEmpty else { return query }
-    
+
     let lines = query.split(separator: "\n", omittingEmptySubsequences: false)
-    
+
     // Safety check for single line or no lines
     guard !lines.isEmpty else { return query.trimmingCharacters(in: .whitespacesAndNewlines) }
-    
+
     var firstNonCommentIndex: Int?
     var lastNonCommentIndex: Int?
-    
+
     // Find first non-comment line
     for (index, line) in lines.enumerated() {
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -403,7 +410,7 @@ extension NotebookViewModel {
         break
       }
     }
-    
+
     // Find last non-comment line
     for (index, line) in lines.enumerated().reversed() {
       let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -412,15 +419,16 @@ extension NotebookViewModel {
         break
       }
     }
-    
+
     // Extract the range of non-comment lines
     guard let firstIndex = firstNonCommentIndex,
-          let lastIndex = lastNonCommentIndex,
-          firstIndex <= lastIndex else {
+      let lastIndex = lastNonCommentIndex,
+      firstIndex <= lastIndex
+    else {
       // All lines are comments or empty - return original query
       return query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    
+
     let relevantLines = lines[firstIndex...lastIndex]
     return relevantLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
   }
@@ -444,14 +452,16 @@ extension NotebookViewModel {
   private func getTotalRowCount(baseQuery: String) async -> Int? {
     // Safety check: ensure connection is active
     guard connectionState == .connected else {
-      await AppLogger.shared.debug("Connection not active, cannot get total count", category: "Pagination")
+      await AppLogger.shared.debug(
+        "Connection not active, cannot get total count", category: "Pagination")
       return nil
     }
-    
+
     // Wrap query in SELECT COUNT(*) FROM (...)
     let countQuery = "SELECT COUNT(*) FROM (\(baseQuery)) AS _count_query"
-    
-    await AppLogger.shared.debug("Executing count query: \(countQuery.prefix(100))...", category: "Pagination")
+
+    await AppLogger.shared.debug(
+      "Executing count query: \(countQuery.prefix(100))...", category: "Pagination")
 
     do {
       // Count query only returns 1 row, but we still pass editorMaxRowLimit for consistency
@@ -474,7 +484,8 @@ extension NotebookViewModel {
         await AppLogger.shared.debug("Got total count (double): \(count)", category: "Pagination")
         return Int(count)
       default:
-        await AppLogger.shared.debug("Count value is not int/double: \(firstValue)", category: "Pagination")
+        await AppLogger.shared.debug(
+          "Count value is not int/double: \(firstValue)", category: "Pagination")
         return nil
       }
     } catch {

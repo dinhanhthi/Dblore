@@ -139,19 +139,26 @@ class ExecutionQueue {
         continue
       }
 
+      let taskId = tasks[nextTaskIndex].id
       let result = await executeTask(tasks[nextTaskIndex])
 
+      // Re-find the task by ID since the array may have changed during await
+      guard let updatedIndex = tasks.firstIndex(where: { $0.id == taskId }) else {
+        currentTask = nil
+        continue
+      }
+
       // Check if task was cancelled during execution
-      if tasks[nextTaskIndex].state == .cancelled {
+      if tasks[updatedIndex].state == .cancelled {
         currentTask = nil
         continue
       }
 
       // Update state based on result
       if let result = result {
-        tasks[nextTaskIndex].state = .completed(result)
+        tasks[updatedIndex].state = .completed(result)
       } else {
-        tasks[nextTaskIndex].state = .failed("Execution returned no result")
+        tasks[updatedIndex].state = .failed("Execution returned no result")
       }
 
       currentTask = nil
