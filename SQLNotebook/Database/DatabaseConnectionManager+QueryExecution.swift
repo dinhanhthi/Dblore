@@ -44,7 +44,9 @@ extension DatabaseConnectionManager {
   ///   - query: SQL string containing multiple statements
   ///   - maxRows: Maximum number of rows to fetch
   /// - Returns: Tuple of (array of results for each statement, total execution time)
-  func executeMultipleStatementsDetailed(_ query: String, maxRows: Int = defaultMaxFetchRows)
+  func executeMultipleStatementsDetailed(
+    _ query: String, maxRows: Int = defaultMaxFetchRows
+  )
     async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval)
   {
     let statements = splitSQLStatements(query)
@@ -82,7 +84,9 @@ extension DatabaseConnectionManager {
   /// - Parameters:
   ///   - query: SQL string containing multiple statements
   ///   - maxRows: Maximum number of rows to fetch
-  private func executeMultipleStatements(_ query: String, maxRows: Int) async throws
+  private func executeMultipleStatements(
+    _ query: String, maxRows: Int
+  ) async throws
     -> QueryResult
   {
     let statements = splitSQLStatements(query)

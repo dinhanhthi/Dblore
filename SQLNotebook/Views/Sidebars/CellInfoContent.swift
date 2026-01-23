@@ -23,7 +23,7 @@ struct CellInfoContent: View {
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
   @FocusState private var isTextEditorFocused: Bool
-  
+
   @Environment(NotebookViewModel.self) private var viewModel
 
   var body: some View {
@@ -99,7 +99,7 @@ struct CellInfoContent: View {
             )
           } else {
             // Beautify, Edit and Copy buttons (for non-boolean types)
-            
+
             // Beautify button (only for string type)
             if isStringValue && !isBeautified {
               FloatingPanelButton(
@@ -116,7 +116,7 @@ struct CellInfoContent: View {
                 action: showOriginal
               )
             }
-            
+
             if !isReadOnly {
               FloatingPanelButton(
                 icon: "pencil",
@@ -228,7 +228,7 @@ struct CellInfoContent: View {
       // Reset beautified state when value changes
       isBeautified = false
       beautifiedJSON = ""
-      
+
       // Update boolean values when value changes
       if case .bool(let boolValue) = newValue {
         editedBoolValue = boolValue
@@ -256,7 +256,7 @@ struct CellInfoContent: View {
     }
     return false
   }
-  
+
   private var isStringValue: Bool {
     if case .string = value {
       return true
@@ -330,9 +330,9 @@ struct CellInfoContent: View {
     let result = CellValueValidator.validate(input, for: value)
     validationError = result.errorMessage
   }
-  
+
   // MARK: - JSON Beautification
-  
+
   private func beautifyJSON() {
     guard case .string(let stringValue) = value else { return }
 
@@ -385,7 +385,7 @@ struct CellInfoContent: View {
       return
     }
   }
-  
+
   private func showOriginal() {
     isBeautified = false
     beautifiedJSON = ""
