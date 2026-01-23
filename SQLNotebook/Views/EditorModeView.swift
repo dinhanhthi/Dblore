@@ -32,7 +32,8 @@ struct EditorModeView: View {
   private var currentPaginationInfo: PaginationInfo? {
     // Multi-statement mode: get pagination for current statement
     if !viewModel.editorStatementResults.isEmpty,
-      let currentStatement = viewModel.editorStatementResults[safe: viewModel.selectedStatementIndex]
+      let currentStatement = viewModel.editorStatementResults[
+        safe: viewModel.selectedStatementIndex]
     {
       return viewModel.editorStatementPaginationInfo[currentStatement.id]
     }
@@ -45,7 +46,8 @@ struct EditorModeView: View {
     Task { @MainActor in
       // Multi-statement mode: navigate page for current statement
       if !viewModel.editorStatementResults.isEmpty,
-        let currentStatement = viewModel.editorStatementResults[safe: viewModel.selectedStatementIndex]
+        let currentStatement = viewModel.editorStatementResults[
+          safe: viewModel.selectedStatementIndex]
       {
         await viewModel.navigateToPageForStatement(statementId: currentStatement.id, page: page)
       } else {
@@ -211,73 +213,73 @@ struct EditorModeView: View {
             .font(.system(size: 12))
 
           if result.error != nil {
-          // Show "Error" label next to red cross icon
-          Text("Error")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.red)
-        } else {
-          // Check if multi-statement query
-          if !viewModel.editorStatementResults.isEmpty {
-            // Show total stats
-            Text(
-              "Total: \(viewModel.editorStatementResults.count) statement\(viewModel.editorStatementResults.count == 1 ? "" : "s")"
-            )
-            .font(.system(size: 12))
-            .foregroundColor(.foregroundSubtle)
-
-            Text("•")
-              .foregroundColor(.foregroundMuted)
-
-            Text(formatExecutionTime(viewModel.totalExecutionTime))
-              .font(.system(size: 12))
-              .foregroundColor(.foregroundSubtle)
-
-            // Divider
-            Rectangle()
-              .fill(Color.foregroundMuted.opacity(0.3))
-              .frame(width: 1, height: 12)
-
-            // Current statement stats
-            Text("Current:")
-              .font(.system(size: 12))
-              .foregroundColor(.foregroundMuted)
-
-            Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
-              .font(.system(size: 12))
-              .foregroundColor(.foregroundSubtle)
-
-            Text("(\(result.affectedRows ?? 0) affected)")
-              .font(.system(size: 12))
-              .foregroundColor(affectedRowsColor(for: result))
-
-            Text("•")
-              .foregroundColor(.foregroundMuted)
-
-            Text(formatExecutionTime(result.executionTime))
-              .font(.system(size: 12))
-              .foregroundColor(.foregroundSubtle)
-
+            // Show "Error" label next to red cross icon
+            Text("Error")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.red)
           } else {
-            // Single statement - show row count and execution time
-            Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+            // Check if multi-statement query
+            if !viewModel.editorStatementResults.isEmpty {
+              // Show total stats
+              Text(
+                "Total: \(viewModel.editorStatementResults.count) statement\(viewModel.editorStatementResults.count == 1 ? "" : "s")"
+              )
               .font(.system(size: 12))
               .foregroundColor(.foregroundSubtle)
 
-            Text("(\(result.affectedRows ?? 0) affected)")
-              .font(.system(size: 12))
-              .foregroundColor(affectedRowsColor(for: result))
+              Text("•")
+                .foregroundColor(.foregroundMuted)
 
-            Text("•")
-              .foregroundColor(.foregroundMuted)
+              Text(formatExecutionTime(viewModel.totalExecutionTime))
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
 
-            Text(formatExecutionTime(result.executionTime))
-              .font(.system(size: 12))
-              .foregroundColor(.foregroundSubtle)
+              // Divider
+              Rectangle()
+                .fill(Color.foregroundMuted.opacity(0.3))
+                .frame(width: 1, height: 12)
+
+              // Current statement stats
+              Text("Current:")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundMuted)
+
+              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+
+              Text("(\(result.affectedRows ?? 0) affected)")
+                .font(.system(size: 12))
+                .foregroundColor(affectedRowsColor(for: result))
+
+              Text("•")
+                .foregroundColor(.foregroundMuted)
+
+              Text(formatExecutionTime(result.executionTime))
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+
+            } else {
+              // Single statement - show row count and execution time
+              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+
+              Text("(\(result.affectedRows ?? 0) affected)")
+                .font(.system(size: 12))
+                .foregroundColor(affectedRowsColor(for: result))
+
+              Text("•")
+                .foregroundColor(.foregroundMuted)
+
+              Text(formatExecutionTime(result.executionTime))
+                .font(.system(size: 12))
+                .foregroundColor(.foregroundSubtle)
+            }
           }
         }
-      }
 
-      Spacer()
+        Spacer()
 
         // Clear button
         Button(action: clearResult) {
@@ -427,7 +429,7 @@ struct EditorModeView: View {
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
         }
-        
+
         // Download dropdown button (right-aligned)
         downloadButton(result: result)
       }
@@ -470,7 +472,7 @@ struct EditorModeView: View {
           }
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
-        
+
         // Download dropdown button (right-aligned)
         downloadButton(result: result)
       }
@@ -486,7 +488,7 @@ struct EditorModeView: View {
       )
     }
   }
-  
+
   /// Download dropdown button
   @ViewBuilder
   private func downloadButton(result: CellResult) -> some View {
@@ -499,21 +501,21 @@ struct EditorModeView: View {
             Text("Download as CSV")
           }
         }
-        
+
         Button(action: { handleDownloadExcel(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Excel")
           }
         }
-        
+
         Button(action: { handleDownloadJSON(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as JSON")
           }
         }
-        
+
         Button(action: { handleDownloadMarkdown(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
@@ -521,9 +523,9 @@ struct EditorModeView: View {
           }
         }
       }
-      
+
       Divider()
-      
+
       // Copy section
       Section("Copy to Clipboard") {
         Button(action: { handleCopyTSV(result: result) }) {
@@ -537,7 +539,7 @@ struct EditorModeView: View {
             }
           }
         }
-        
+
         Button(action: { handleCopyJSON(result: result) }) {
           HStack {
             Image(systemName: showCopyFeedback == .json ? "checkmark" : "doc.on.clipboard")
@@ -549,7 +551,7 @@ struct EditorModeView: View {
             }
           }
         }
-        
+
         Button(action: { handleCopyMarkdown(result: result) }) {
           HStack {
             Image(systemName: showCopyFeedback == .markdown ? "checkmark" : "doc.on.clipboard")
@@ -643,14 +645,14 @@ struct EditorModeView: View {
   /// - Subtle gray for SELECT, 0 affected rows, or when no query info available
   private func affectedRowsColor(for result: CellResult) -> Color {
     let affectedRows = result.affectedRows ?? 0
-    
+
     // If no rows affected, use default gray color
     guard affectedRows > 0, let query = result.sourceQuery else {
       return .foregroundSubtle
     }
-    
+
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    
+
     if trimmed.hasPrefix("DELETE") {
       return .red
     } else if trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE") {
@@ -781,45 +783,49 @@ struct EditorModeView: View {
     let lastPart = String(trimmed.suffix(20))
     return "\(firstPart)...\(lastPart)"
   }
-  
+
   // MARK: - Download/Copy Actions
-  
+
   /// Feedback type for copy operations
   enum CopyFeedbackType {
     case tsv
     case json
     case markdown
   }
-  
+
   private func handleDownloadCSV(result: CellResult) {
     // For multi-statement, use selectedStatementIndex + 1, otherwise nil
-    let queryIndex = !viewModel.editorStatementResults.isEmpty 
-      ? viewModel.selectedStatementIndex + 1 
+    let queryIndex =
+      !viewModel.editorStatementResults.isEmpty
+      ? viewModel.selectedStatementIndex + 1
       : nil
     DataExporter.downloadCSV(result: result, queryIndex: queryIndex)
   }
-  
+
   private func handleDownloadExcel(result: CellResult) {
-    let queryIndex = !viewModel.editorStatementResults.isEmpty 
-      ? viewModel.selectedStatementIndex + 1 
+    let queryIndex =
+      !viewModel.editorStatementResults.isEmpty
+      ? viewModel.selectedStatementIndex + 1
       : nil
     DataExporter.downloadExcel(result: result, queryIndex: queryIndex)
   }
-  
+
   private func handleDownloadJSON(result: CellResult) {
-    let queryIndex = !viewModel.editorStatementResults.isEmpty 
-      ? viewModel.selectedStatementIndex + 1 
+    let queryIndex =
+      !viewModel.editorStatementResults.isEmpty
+      ? viewModel.selectedStatementIndex + 1
       : nil
     DataExporter.downloadJSON(result: result, queryIndex: queryIndex)
   }
-  
+
   private func handleDownloadMarkdown(result: CellResult) {
-    let queryIndex = !viewModel.editorStatementResults.isEmpty 
-      ? viewModel.selectedStatementIndex + 1 
+    let queryIndex =
+      !viewModel.editorStatementResults.isEmpty
+      ? viewModel.selectedStatementIndex + 1
       : nil
     DataExporter.downloadMarkdown(result: result, queryIndex: queryIndex)
   }
-  
+
   private func handleCopyTSV(result: CellResult) {
     DataExporter.copyTSV(result: result)
     showCopyFeedback = .tsv
@@ -827,7 +833,7 @@ struct EditorModeView: View {
       showCopyFeedback = nil
     }
   }
-  
+
   private func handleCopyJSON(result: CellResult) {
     DataExporter.copyJSON(result: result)
     showCopyFeedback = .json
@@ -835,7 +841,7 @@ struct EditorModeView: View {
       showCopyFeedback = nil
     }
   }
-  
+
   private func handleCopyMarkdown(result: CellResult) {
     DataExporter.copyMarkdown(result: result)
     showCopyFeedback = .markdown

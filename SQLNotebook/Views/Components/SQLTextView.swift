@@ -694,7 +694,7 @@ class SQLTextView: NSTextView {
   private func acceptSuggestion(_ suggestion: AutocompleteSuggestion) {
     // Set flag to prevent autocomplete from retriggering during text insertion
     isAcceptingSuggestion = true
-    
+
     // Find the token being completed
     let cursorPosition = selectedRange().location
 
@@ -706,7 +706,7 @@ class SQLTextView: NSTextView {
 
     // Hide autocomplete after accepting
     hideAutocomplete()
-    
+
     // Reset flag after a short delay to allow text insertion to complete
     DispatchQueue.main.async { [weak self] in
       self?.isAcceptingSuggestion = false

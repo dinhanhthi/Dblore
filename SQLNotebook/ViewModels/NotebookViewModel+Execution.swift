@@ -12,9 +12,9 @@ extension NotebookViewModel {
   func runCell(id: UUID) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     guard notebook.cells[index].cellType == .sql else { return }
-    
+
     let query = notebook.cells[index].content
-    
+
     guard connectionState.isConnected else {
       notebook.cells[index].result = .errorResult("Not connected to database", sourceQuery: query)
       onDocumentChanged?()

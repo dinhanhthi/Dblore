@@ -18,7 +18,7 @@ struct ConnectionInfoContent: View {
           if !config.name.isEmpty {
             infoRow(label: "Connection Name", value: config.name)
           }
-          
+
           infoRow(label: "Host", value: config.host)
           infoRow(label: "Port", value: String(config.port))
           infoRow(label: "Database", value: config.database)

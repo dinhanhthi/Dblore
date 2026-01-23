@@ -24,7 +24,7 @@ struct ResultAreaView: View {
       VStack(alignment: .leading, spacing: Spacing.sm) {
         // Query footer (shows source query with click-to-copy) - always shown first
         ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
-        
+
         if let error = result.error {
           // Error display with search highlighting
           ErrorResultView(
@@ -164,14 +164,14 @@ struct ResultMetadataView: View {
   /// - Subtle gray for SELECT, 0 affected rows, or when no query info available
   private func affectedRowsColor(for result: CellResult) -> Color {
     let affectedRows = result.affectedRows ?? 0
-    
+
     // If no rows affected, use default gray color
     guard affectedRows > 0, let query = result.sourceQuery else {
       return .foregroundSubtle
     }
-    
+
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    
+
     if trimmed.hasPrefix("DELETE") {
       return .red
     } else if trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE") {
@@ -230,7 +230,7 @@ struct ResultQueryFooterView: View {
   let result: CellResult
   @Binding var isQueryCopied: Bool
   @State private var showCopyFeedback: CopyFeedbackType? = nil
-  
+
   enum CopyFeedbackType {
     case tsv
     case json
@@ -274,13 +274,13 @@ struct ResultQueryFooterView: View {
           }
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
-          
+
           // Download dropdown button (right-aligned)
           downloadButton(result: result)
         }
         .padding(.vertical, Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        
+
         // Horizontal divider line (bottom)
         Rectangle()
           .fill(Color.border)
@@ -302,7 +302,7 @@ struct ResultQueryFooterView: View {
       isQueryCopied = false
     }
   }
-  
+
   /// Download dropdown button
   @ViewBuilder
   private func downloadButton(result: CellResult) -> some View {
@@ -315,21 +315,21 @@ struct ResultQueryFooterView: View {
             Text("Download as CSV")
           }
         }
-        
+
         Button(action: { handleDownloadExcel(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Excel")
           }
         }
-        
+
         Button(action: { handleDownloadJSON(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as JSON")
           }
         }
-        
+
         Button(action: { handleDownloadMarkdown(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
@@ -337,9 +337,9 @@ struct ResultQueryFooterView: View {
           }
         }
       }
-      
+
       Divider()
-      
+
       // Copy section
       Section("Copy to Clipboard") {
         Button(action: { handleCopyTSV(result: result) }) {
@@ -353,7 +353,7 @@ struct ResultQueryFooterView: View {
             }
           }
         }
-        
+
         Button(action: { handleCopyJSON(result: result) }) {
           HStack {
             Image(systemName: showCopyFeedback == .json ? "checkmark" : "doc.on.clipboard")
@@ -365,7 +365,7 @@ struct ResultQueryFooterView: View {
             }
           }
         }
-        
+
         Button(action: { handleCopyMarkdown(result: result) }) {
           HStack {
             Image(systemName: showCopyFeedback == .markdown ? "checkmark" : "doc.on.clipboard")
@@ -403,25 +403,25 @@ struct ResultQueryFooterView: View {
     .help("Download or copy result data")
     .fixedSize()
   }
-  
+
   // MARK: - Download/Copy Actions
-  
+
   private func handleDownloadCSV(result: CellResult) {
     DataExporter.downloadCSV(result: result, queryIndex: nil)
   }
-  
+
   private func handleDownloadExcel(result: CellResult) {
     DataExporter.downloadExcel(result: result, queryIndex: nil)
   }
-  
+
   private func handleDownloadJSON(result: CellResult) {
     DataExporter.downloadJSON(result: result, queryIndex: nil)
   }
-  
+
   private func handleDownloadMarkdown(result: CellResult) {
     DataExporter.downloadMarkdown(result: result, queryIndex: nil)
   }
-  
+
   private func handleCopyTSV(result: CellResult) {
     DataExporter.copyTSV(result: result)
     showCopyFeedback = .tsv
@@ -429,7 +429,7 @@ struct ResultQueryFooterView: View {
       showCopyFeedback = nil
     }
   }
-  
+
   private func handleCopyJSON(result: CellResult) {
     DataExporter.copyJSON(result: result)
     showCopyFeedback = .json
@@ -437,7 +437,7 @@ struct ResultQueryFooterView: View {
       showCopyFeedback = nil
     }
   }
-  
+
   private func handleCopyMarkdown(result: CellResult) {
     DataExporter.copyMarkdown(result: result)
     showCopyFeedback = .markdown

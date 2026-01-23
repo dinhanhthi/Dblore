@@ -20,45 +20,45 @@ struct DatabaseQueryParsingTests {
   struct StripSingleLineCommentsTests {
 
     @Test("Single-line comment at start is removed")
-    func removeSingleLineCommentAtStart() async throws {
+    func removeSingleLineCommentAtStart() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- comment\nSELECT * FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "\nSELECT * FROM users", "Should remove leading comment")
     }
 
     @Test("Single-line comment at end is removed")
-    func removeSingleLineCommentAtEnd() async throws {
+    func removeSingleLineCommentAtEnd() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users -- comment"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       // Note: When comment is at end without newline, no newline is appended
       #expect(result == "SELECT * FROM users ", "Should remove trailing comment")
     }
 
     @Test("Multiple single-line comments are removed")
-    func removeMultipleSingleLineComments() async throws {
+    func removeMultipleSingleLineComments() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- c1\n-- c2\nSELECT * FROM users -- c3"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       // Note: Last comment doesn't have newline after it, so no newline appended
       #expect(result == "\n\nSELECT * FROM users ", "Should remove all single-line comments")
     }
 
     @Test("Single-line comment with LIMIT inside is removed")
-    func removeSingleLineCommentWithLimitInside() async throws {
+    func removeSingleLineCommentWithLimitInside() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- LIMIT 100\nSELECT * FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "\nSELECT * FROM users", "Should remove comment containing LIMIT")
       #expect(!result.contains("LIMIT"), "Stripped query should not contain LIMIT")
     }
 
     @Test("Inline single-line comment is removed")
-    func removeInlineSingleLineComment() async throws {
+    func removeInlineSingleLineComment() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users WHERE -- inline comment\nid > 10"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT * FROM users WHERE \nid > 10", "Should remove inline comment")
     }
   }
@@ -67,23 +67,23 @@ struct DatabaseQueryParsingTests {
   struct StripMultiLineCommentsTests {
 
     @Test("Multi-line comment at start is removed")
-    func removeMultiLineCommentAtStart() async throws {
+    func removeMultiLineCommentAtStart() throws {
       let manager = DatabaseConnectionManager()
       let query = "/* comment */ SELECT * FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == " SELECT * FROM users", "Should remove leading multi-line comment")
     }
 
     @Test("Multi-line comment at end is removed")
-    func removeMultiLineCommentAtEnd() async throws {
+    func removeMultiLineCommentAtEnd() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users /* comment */"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT * FROM users ", "Should remove trailing multi-line comment")
     }
 
     @Test("Multi-line comment spanning multiple lines is removed")
-    func removeMultiLineCommentSpanningLines() async throws {
+    func removeMultiLineCommentSpanningLines() throws {
       let manager = DatabaseConnectionManager()
       let query = """
       /* This is a
@@ -91,26 +91,26 @@ struct DatabaseQueryParsingTests {
       comment */
       SELECT * FROM users
       """
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result.contains("SELECT * FROM users"), "Should preserve SQL")
       #expect(!result.contains("multi-line"), "Should remove comment content")
     }
 
     @Test("Nested multi-line comment pattern is handled")
-    func handleNestedMultiLineCommentPattern() async throws {
+    func handleNestedMultiLineCommentPattern() throws {
       let manager = DatabaseConnectionManager()
       let query = "/* outer /* inner */ outer */ SELECT * FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       // Note: PostgreSQL doesn't support nested comments, so we test basic behavior
       // The parser stops at first */ closing marker
       #expect(result.contains("SELECT"), "Should contain SELECT")
     }
 
     @Test("Multi-line comment with LIMIT inside is removed")
-    func removeMultiLineCommentWithLimitInside() async throws {
+    func removeMultiLineCommentWithLimitInside() throws {
       let manager = DatabaseConnectionManager()
       let query = "/* LIMIT 100 */ SELECT * FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == " SELECT * FROM users", "Should remove comment")
       #expect(!result.contains("LIMIT"), "Stripped query should not contain LIMIT")
     }
@@ -120,45 +120,45 @@ struct DatabaseQueryParsingTests {
   struct StripCommentsWithStringLiteralsTests {
 
     @Test("String literal with comment-like content is preserved")
-    func preserveStringLiteralWithCommentLikeContent() async throws {
+    func preserveStringLiteralWithCommentLikeContent() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT '-- not a comment' FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT '-- not a comment' FROM users", "Should preserve string literal")
     }
 
     @Test("String literal with multi-line comment-like content is preserved")
-    func preserveStringLiteralWithMultiLineCommentLikeContent() async throws {
+    func preserveStringLiteralWithMultiLineCommentLikeContent() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT '/* not a comment */' FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT '/* not a comment */' FROM users", "Should preserve string literal")
     }
 
     @Test("Real comment after string literal is removed")
-    func removeCommentAfterStringLiteral() async throws {
+    func removeCommentAfterStringLiteral() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT '-- not a comment' FROM users -- real comment"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       // Note: Comment at end without newline doesn't append newline
       #expect(result == "SELECT '-- not a comment' FROM users ", "Should preserve string but remove comment")
       #expect(result.contains("'-- not a comment'"), "Should keep string literal")
     }
 
     @Test("Escaped quote in string is handled correctly")
-    func handleEscapedQuoteInString() async throws {
+    func handleEscapedQuoteInString() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT 'it''s a test' FROM users -- comment"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result.contains("'it''s a test'"), "Should preserve escaped quote")
       #expect(!result.contains("-- comment"), "Should remove comment")
     }
 
     @Test("String containing slash-star pattern is preserved")
-    func preserveStringContainingSlashStarPattern() async throws {
+    func preserveStringContainingSlashStarPattern() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT '/*' FROM users /* real comment */"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result.contains("'/*'"), "Should preserve string literal")
       #expect(!result.contains("real comment"), "Should remove real comment")
     }
@@ -168,10 +168,10 @@ struct DatabaseQueryParsingTests {
   struct StripCommentsComplexCasesTests {
 
     @Test("Query with both single and multi-line comments")
-    func removeBothTypesOfComments() async throws {
+    func removeBothTypesOfComments() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- single\n/* multi */ SELECT * FROM users -- end"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result.contains("SELECT * FROM users"), "Should preserve SQL")
       #expect(!result.contains("single"), "Should remove single-line comment")
       #expect(!result.contains("multi"), "Should remove multi-line comment")
@@ -179,14 +179,14 @@ struct DatabaseQueryParsingTests {
     }
 
     @Test("Real-world query with multiple comments and LIMIT")
-    func realWorldQueryWithCommentsAndLimit() async throws {
+    func realWorldQueryWithCommentsAndLimit() throws {
       let manager = DatabaseConnectionManager()
       let query = """
       -- LIMIT 3
       -- LIMIT 5
       SELECT * FROM bot
       """
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result.contains("SELECT * FROM bot"), "Should preserve SQL")
       #expect(!result.contains("LIMIT 3"), "Should remove comment with LIMIT 3")
       #expect(!result.contains("LIMIT 5"), "Should remove comment with LIMIT 5")
@@ -194,27 +194,27 @@ struct DatabaseQueryParsingTests {
     }
 
     @Test("Comment immediately after SELECT keyword")
-    func removeCommentAfterSelectKeyword() async throws {
+    func removeCommentAfterSelectKeyword() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT -- comment\n* FROM users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT \n* FROM users", "Should remove inline comment")
     }
 
     @Test("Multiple comments between SQL keywords")
-    func removeMultipleCommentsBetweenKeywords() async throws {
+    func removeMultipleCommentsBetweenKeywords() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT /* c1 */ * /* c2 */ FROM /* c3 */ users"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       #expect(result == "SELECT  *  FROM  users", "Should remove all inline comments")
       #expect(!result.contains("/*"), "Should not contain comment markers")
     }
 
     @Test("Empty query after stripping comments")
-    func emptyQueryAfterStrippingComments() async throws {
+    func emptyQueryAfterStrippingComments() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- just a comment"
-      let result = await manager.stripAllComments(query)
+      let result = manager.stripAllComments(query)
       // Note: Comment without trailing newline results in empty string
       #expect(result == "", "Should result in empty string when only comment exists")
     }
@@ -226,34 +226,34 @@ struct DatabaseQueryParsingTests {
   struct ExtractLimitValueTests {
 
     @Test("Query without LIMIT returns nil")
-    func queryWithoutLimitReturnsNil() async throws {
+    func queryWithoutLimitReturnsNil() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == nil, "Should return nil for query without LIMIT")
     }
 
     @Test("Query with LIMIT returns value")
-    func queryWithLimitReturnsValue() async throws {
+    func queryWithLimitReturnsValue() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users LIMIT 50"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 50, "Should extract LIMIT 50")
     }
 
     @Test("LIMIT in comment is ignored")
-    func limitInCommentIsIgnored() async throws {
+    func limitInCommentIsIgnored() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- LIMIT 100\nSELECT * FROM users"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == nil, "Should ignore LIMIT in comment")
     }
 
     @Test("LIMIT in string literal is NOT ignored (known limitation)")
-    func limitInStringLiteralNotIgnored() async throws {
+    func limitInStringLiteralNotIgnored() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT 'LIMIT 50' FROM users"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       // Note: extractLimitValue strips ALL comments but doesn't parse string literals
       // So LIMIT inside strings may be detected (known limitation)
       // This test documents the actual behavior
@@ -261,50 +261,50 @@ struct DatabaseQueryParsingTests {
     }
 
     @Test("Query with actual LIMIT after comment")
-    func queryWithLimitAfterComment() async throws {
+    func queryWithLimitAfterComment() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- comment\nSELECT * FROM users LIMIT 25"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 25, "Should extract actual LIMIT 25")
     }
 
     @Test("LIMIT with large value")
-    func limitWithLargeValue() async throws {
+    func limitWithLargeValue() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users LIMIT 999999"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 999999, "Should extract large LIMIT value")
     }
 
     @Test("LIMIT with value 0")
-    func limitWithZeroValue() async throws {
+    func limitWithZeroValue() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users LIMIT 0"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 0, "Should extract LIMIT 0")
     }
 
     @Test("LIMIT case insensitive")
-    func limitCaseInsensitive() async throws {
+    func limitCaseInsensitive() throws {
       let manager = DatabaseConnectionManager()
       let query = "select * from users limit 42"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 42, "Should extract LIMIT regardless of case")
     }
 
     @Test("LIMIT with trailing semicolon")
-    func limitWithTrailingSemicolon() async throws {
+    func limitWithTrailingSemicolon() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users LIMIT 30;"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 30, "Should extract LIMIT before semicolon")
     }
 
     @Test("Multiple LIMIT in comments ignored, only actual LIMIT extracted")
-    func multipleLimitInCommentsIgnored() async throws {
+    func multipleLimitInCommentsIgnored() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- LIMIT 100\n/* LIMIT 200 */ SELECT * FROM users LIMIT 15"
-      let result = await manager.extractLimitValue(query)
+      let result = manager.extractLimitValue(query)
       #expect(result == 15, "Should extract only actual LIMIT 15")
     }
   }
@@ -443,74 +443,74 @@ struct DatabaseQueryParsingTests {
   struct IsSelectQueryTests {
 
     @Test("Simple SELECT query returns true")
-    func simpleSelectQueryReturnsTrue() async throws {
+    func simpleSelectQueryReturnsTrue() throws {
       let manager = DatabaseConnectionManager()
       let query = "SELECT * FROM users"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == true, "Should detect SELECT query")
     }
 
     @Test("SELECT with leading comment returns true")
-    func selectWithLeadingCommentReturnsTrue() async throws {
+    func selectWithLeadingCommentReturnsTrue() throws {
       let manager = DatabaseConnectionManager()
       let query = "-- comment\nSELECT * FROM users"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == true, "Should detect SELECT after comment")
     }
 
     @Test("SELECT with multi-line comment returns true")
-    func selectWithMultiLineCommentReturnsTrue() async throws {
+    func selectWithMultiLineCommentReturnsTrue() throws {
       let manager = DatabaseConnectionManager()
       let query = "/* comment */ SELECT * FROM users"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == true, "Should detect SELECT after multi-line comment")
     }
 
     @Test("UPDATE query returns false")
-    func updateQueryReturnsFalse() async throws {
+    func updateQueryReturnsFalse() throws {
       let manager = DatabaseConnectionManager()
       let query = "UPDATE users SET name = 'x'"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == false, "Should not detect UPDATE as SELECT")
     }
 
     @Test("DELETE query returns false")
-    func deleteQueryReturnsFalse() async throws {
+    func deleteQueryReturnsFalse() throws {
       let manager = DatabaseConnectionManager()
       let query = "DELETE FROM users"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == false, "Should not detect DELETE as SELECT")
     }
 
     @Test("INSERT query returns false")
-    func insertQueryReturnsFalse() async throws {
+    func insertQueryReturnsFalse() throws {
       let manager = DatabaseConnectionManager()
       let query = "INSERT INTO users VALUES (1)"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == false, "Should not detect INSERT as SELECT")
     }
 
     @Test("CREATE TABLE query returns false")
-    func createTableQueryReturnsFalse() async throws {
+    func createTableQueryReturnsFalse() throws {
       let manager = DatabaseConnectionManager()
       let query = "CREATE TABLE users (id INT)"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == false, "Should not detect CREATE as SELECT")
     }
 
     @Test("Case insensitive SELECT detection")
-    func caseInsensitiveSelectDetection() async throws {
+    func caseInsensitiveSelectDetection() throws {
       let manager = DatabaseConnectionManager()
       let query = "select * from users"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == true, "Should detect lowercase select")
     }
 
     @Test("SELECT in string literal does not trigger detection")
-    func selectInStringLiteralNotDetected() async throws {
+    func selectInStringLiteralNotDetected() throws {
       let manager = DatabaseConnectionManager()
       let query = "UPDATE users SET query = 'SELECT * FROM test'"
-      let result = await manager.isSelectQuery(query)
+      let result = manager.isSelectQuery(query)
       #expect(result == false, "Should not detect SELECT in string literal")
     }
   }
@@ -541,10 +541,7 @@ struct DatabaseQueryParsingTests {
       let manager = DatabaseConnectionManager()
       let query = "-- LIMIT 50\nSELECT * FROM users"
       let result = await manager.hasLimitClause(query)
-      // Note: Current implementation uses simple regex on lowercased string
-      // It may detect LIMIT in comments (known limitation)
-      // This test documents current behavior
-      #expect(result == true, "Current implementation detects LIMIT in comments (known limitation)")
+      #expect(result == false, "Should not detect LIMIT that only appears in comment")
     }
 
     @Test("LIMIT in string returns true (limitation)")
@@ -711,7 +708,7 @@ struct DatabaseQueryParsingTests {
     }
 
     @Test("Scenario: Query with inline comments and string literals")
-    func queryWithInlineCommentsAndStringLiterals() async throws {
+    func queryWithInlineCommentsAndStringLiterals() throws {
       let manager = DatabaseConnectionManager()
 
       let query = """
@@ -721,7 +718,7 @@ struct DatabaseQueryParsingTests {
       """
 
       // Strip comments
-      let stripped = await manager.stripAllComments(query)
+      let stripped = manager.stripAllComments(query)
 
       // Verify: Comments removed, strings preserved
       #expect(!stripped.contains("/*"), "Should remove multi-line comment marker")
@@ -753,7 +750,7 @@ struct DatabaseQueryParsingTests {
     }
 
     @Test("Scenario: Complex query with nested comments")
-    func complexQueryWithNestedComments() async throws {
+    func complexQueryWithNestedComments() throws {
       let manager = DatabaseConnectionManager()
 
       let query = """
@@ -768,7 +765,7 @@ struct DatabaseQueryParsingTests {
       """
 
       // Strip comments
-      let stripped = await manager.stripAllComments(query)
+      let stripped = manager.stripAllComments(query)
 
       // Verify: All comments removed, SQL preserved
       #expect(!stripped.contains("--"), "Should remove single-line comments")
