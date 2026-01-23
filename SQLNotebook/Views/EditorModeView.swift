@@ -333,11 +333,13 @@ struct EditorModeView: View {
         // "Run with query" text (spans remaining width)
         if let sourceQuery = result.sourceQuery {
           let displayQuery = removeComments(sourceQuery)
-          HStack(spacing: Spacing.xs) {
-            Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+          HStack(spacing: Spacing.sm) {
+            Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
               .font(.system(size: 11))
-              .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
-              .frame(width: 11, alignment: .center)
+              .foregroundColor(.foregroundMuted)
+              .frame(width: 11, height: 11, alignment: .center)
+              .contentTransition(.symbolEffect(.replace))
+              .animation(.spring(duration: 0.1), value: isQueryCopied)
 
             Text("Run with query (click to copy):")
               .font(.system(size: 11))
@@ -372,12 +374,14 @@ struct EditorModeView: View {
     } else if let sourceQuery = result.sourceQuery {
       // Single statement - show clickable query text
       let displayQuery = removeComments(sourceQuery)
-      HStack(spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
         // Icon changes when query is copied (fixed width to prevent text shifting)
-        Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+        Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
           .font(.system(size: 11))
-          .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
-          .frame(width: 11, alignment: .center)
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 11, height: 11, alignment: .center)
+          .contentTransition(.symbolEffect(.replace))
+          .animation(.spring(duration: 0.1), value: isQueryCopied)
 
         Text("Run with query (click to copy):")
           .font(.system(size: 11))
