@@ -112,6 +112,21 @@ struct SettingsContent: View {
       if viewModel.viewMode == .notebook {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
           VStack(alignment: .leading, spacing: Spacing.md) {
+            // Hide Run with Query Section toggle
+            Toggle(
+              "Hide Run with Query Section",
+              isOn: $appSettings.hideRunWithQuerySection
+            )
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+            .tint(.accent)
+
+            Text(
+              "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+
             // Max Height
             VStack(alignment: .leading, spacing: Spacing.xs) {
               HStack {

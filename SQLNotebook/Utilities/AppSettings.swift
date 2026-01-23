@@ -46,6 +46,7 @@ class AppSettings {
     static let showLineNumbers = "app.settings.showLineNumbers"
     static let maxConnectionHistorySize = "app.settings.maxConnectionHistorySize"
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
+    static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
   }
 
   // MARK: - Settings Properties
@@ -146,6 +147,14 @@ class AppSettings {
     }
   }
 
+  /// Hide "Run with query" section in Notebook mode result tables
+  /// Default: false (shown)
+  var hideRunWithQuerySection: Bool = false {
+    didSet {
+      UserDefaults.standard.set(hideRunWithQuerySection, forKey: Keys.hideRunWithQuerySection)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -218,6 +227,11 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.wordWrapEnabled) != nil {
       wordWrapEnabled = UserDefaults.standard.bool(forKey: Keys.wordWrapEnabled)
     }
+
+    // Load hide run with query section setting
+    if UserDefaults.standard.object(forKey: Keys.hideRunWithQuerySection) != nil {
+      hideRunWithQuerySection = UserDefaults.standard.bool(forKey: Keys.hideRunWithQuerySection)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -234,5 +248,6 @@ class AppSettings {
     showLineNumbers = true
     maxConnectionHistorySize = 5
     wordWrapEnabled = true
+    hideRunWithQuerySection = false
   }
 }

@@ -22,6 +22,9 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
+        // Query footer (shows source query with click-to-copy) - always shown first
+        ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
+        
         if let error = result.error {
           // Error display with search highlighting
           ErrorResultView(
@@ -30,21 +33,12 @@ struct ResultAreaView: View {
             isCaseSensitive: viewModel.searchState.isCaseSensitive,
             cellId: cellId
           )
-
-          // Query footer (shows source query with click-to-copy) - also shown for errors
-          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
         } else if let affectedRows = result.affectedRows {
           // Success message for UPDATE/DELETE/INSERT
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
-
-          // Query footer (shows source query with click-to-copy) - also shown for affected rows
-          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
         } else {
           // Result table
           ResultTableView(result: result, viewModel: viewModel, cellId: cellId)
-
-          // Query footer (shows source query with click-to-copy)
-          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
 
           // Result metadata
           ResultMetadataView(result: result)
@@ -216,43 +210,53 @@ struct ResultQueryFooterView: View {
   }
 
   var body: some View {
-    if let sourceQuery = result.sourceQuery {
+    // Don't show if setting is enabled to hide this section
+    if !AppSettings.shared.hideRunWithQuerySection, let sourceQuery = result.sourceQuery {
       VStack(alignment: .leading, spacing: 0) {
-        // Horizontal divider line
+        // Horizontal divider line (top)
         Rectangle()
           .fill(Color.border)
           .frame(height: 1)
 
         HStack(spacing: Spacing.sm) {
-          // Icon changes when query is copied (fixed width to prevent text shifting)
-          Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
-            .font(.system(size: 11))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 11, height: 11, alignment: .center)
-            .contentTransition(.symbolEffect(.replace))
-            .animation(.spring(duration: 0.1), value: isQueryCopied)
+          // Clickable area: icon + text + query
+          HStack(spacing: Spacing.sm) {
+            // Icon changes when query is copied (fixed width to prevent text shifting)
+            Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
+              .font(.system(size: 11))
+              .foregroundColor(.foregroundMuted)
+              .frame(width: 11, height: 11, alignment: .center)
+              .contentTransition(.symbolEffect(.replace))
+              .animation(.spring(duration: 0.1), value: isQueryCopied)
 
-          Text("Run with query (click to copy):")
-            .font(.system(size: 11))
-            .foregroundColor(.foregroundMuted)
+            Text("Run with query (click to copy):")
+              .font(.system(size: 11))
+              .foregroundColor(.foregroundMuted)
 
-          Text(sourceQuery)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundColor(.foregroundSubtle)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onTapGesture {
-              copyQueryToClipboard(query: sourceQuery)
-            }
-            .cursor(NSCursor.pointingHand)
-            .help(isQueryCopied ? "Copied!" : "Click to copy query")
+            Text(sourceQuery)
+              .font(.system(size: 11, design: .monospaced))
+              .foregroundColor(.foregroundSubtle)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+          .onTapGesture {
+            copyQueryToClipboard(query: sourceQuery)
+          }
+          .cursor(NSCursor.pointingHand)
+          .help(isQueryCopied ? "Copied!" : "Click to copy query")
           
           // Download dropdown button (right-aligned)
           downloadButton(result: result)
         }
-        .padding(.top, Spacing.sm)
+        .padding(.vertical, Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
+        
+        // Horizontal divider line (bottom)
+        Rectangle()
+          .fill(Color.border)
+          .frame(height: 1)
       }
     }
   }
