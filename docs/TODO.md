@@ -429,14 +429,14 @@ Each task is complete when:
 
 ## Latest Verification Report
 
-**Date:** 2026-01-22
-**Git HEAD:** main branch (a031fae - fix(notebook): line number height)
+**Date:** 2026-01-23
+**Git HEAD:** main branch (eb52443 - feat: use "ms" if execution time under 1s)
 **Recent Commits:**
-- a031fae: fix(notebook): line number height isn't reflexible to the change of window size
-- 54cea72: feat: toggle word-wrap for the query editor
-- f0d8aa5: feat: both options create new notebook/sql file are added to File menu
-- 62c1dac: fix: cannot type double quotes as normal in json format for cell value editor
-- 8fdc947: doc: update TODO & TODO_OPTIMIZE
+- eb52443: feat: use "ms" if execution time under 1s, otherwise use "s"
+- d492c87: feat(editor): support multiple queries in .sql
+- 40b463b: style(editor): error panel with copy button
+- 2773bd8: feat: run with query section added to both modes
+- 5386096: docs: update todo
 
 **Verification Summary:**
 
