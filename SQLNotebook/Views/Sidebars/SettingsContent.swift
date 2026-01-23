@@ -174,12 +174,52 @@ struct SettingsContent: View {
                     appSettings.maxRowLimit = Int(newValue)
                   }
                 ),
-                in: 10...200,
+                in: 50...100,
+                step: 5
+              )
+              .tint(.accent)
+
+              Text("Maximum rows to fetch from database. Values between 50-100 rows.")
+                .font(.small)
+                .foregroundColor(.foregroundSubtle)
+            }
+          }
+        }
+
+        Divider()
+      }
+
+      // Result Table Settings (Editor Mode Only)
+      if viewModel.viewMode == .editor {
+        settingsSection(title: "Result Table", icon: "tablecells.fill") {
+          VStack(alignment: .leading, spacing: Spacing.md) {
+            // Max Row Limit
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+              HStack {
+                Text("Max Rows")
+                  .font(.subheading)
+                  .foregroundColor(.foreground)
+
+                Spacer()
+
+                Text("\(appSettings.editorMaxRowLimit) rows")
+                  .font(.monoSmall)
+                  .foregroundColor(.foregroundMuted)
+              }
+
+              Slider(
+                value: Binding(
+                  get: { Double(appSettings.editorMaxRowLimit) },
+                  set: { newValue in
+                    appSettings.editorMaxRowLimit = Int(newValue)
+                  }
+                ),
+                in: 100...200,
                 step: 10
               )
               .tint(.accent)
 
-              Text("Maximum rows to fetch from database. Values between 10-200 rows.")
+              Text("Maximum rows to fetch from database. Values between 100-200 rows.")
                 .font(.small)
                 .foregroundColor(.foregroundSubtle)
             }

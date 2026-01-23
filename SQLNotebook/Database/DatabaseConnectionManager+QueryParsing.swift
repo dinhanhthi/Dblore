@@ -10,16 +10,137 @@ import Foundation
 extension DatabaseConnectionManager {
   // MARK: - Query Type Detection
 
+  /// Strip leading comments from a query
+  /// Removes single-line (--) and multi-line (/* */) comments from the beginning
+  private nonisolated func stripLeadingComments(_ query: String) -> String {
+    var result = query
+    var changed = true
+
+    while changed {
+      changed = false
+      let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      // Remove single-line comment
+      if trimmed.hasPrefix("--") {
+        if let newlineRange = trimmed.range(of: "\n") {
+          result = String(trimmed[newlineRange.upperBound...])
+          changed = true
+        } else {
+          // Comment extends to end of string
+          return ""
+        }
+      }
+      // Remove multi-line comment
+      else if trimmed.hasPrefix("/*") {
+        if let endRange = trimmed.range(of: "*/") {
+          result = String(trimmed[endRange.upperBound...])
+          changed = true
+        } else {
+          // Unclosed comment
+          return ""
+        }
+      }
+    }
+
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Strip all comments from a query (not just leading)
+  /// Removes single-line (--) and multi-line (/* */) comments from anywhere in the query
+  /// Preserves string literals
+  nonisolated func stripAllComments(_ query: String) -> String {
+    var result = ""
+    var inSingleQuote = false
+    var inDoubleQuote = false
+    var inSingleLineComment = false
+    var inMultiLineComment = false
+
+    var i = query.startIndex
+    while i < query.endIndex {
+      let char = query[i]
+
+      // Handle single-line comment start
+      if !inSingleQuote && !inDoubleQuote && !inMultiLineComment && char == "-" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "-" {
+          inSingleLineComment = true
+          i = next
+          i = query.index(after: i)
+          continue
+        }
+      }
+
+      // End single-line comment at newline
+      if inSingleLineComment {
+        if char == "\n" {
+          inSingleLineComment = false
+          result.append(char)  // Keep the newline
+        }
+        i = query.index(after: i)
+        continue
+      }
+
+      // Handle multi-line comment start
+      if !inSingleQuote && !inDoubleQuote && !inSingleLineComment && char == "/" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "*" {
+          inMultiLineComment = true
+          i = next
+          i = query.index(after: i)
+          continue
+        }
+      }
+
+      // End multi-line comment
+      if inMultiLineComment {
+        if char == "*" {
+          let next = query.index(after: i)
+          if next < query.endIndex && query[next] == "/" {
+            inMultiLineComment = false
+            i = query.index(after: next)
+            continue
+          }
+        }
+        i = query.index(after: i)
+        continue
+      }
+
+      // Toggle quotes (outside comments)
+      if char == "'" && !inDoubleQuote {
+        let next = query.index(after: i)
+        if inSingleQuote && next < query.endIndex && query[next] == "'" {
+          // Escaped quote
+          result.append(char)
+          result.append(query[next])
+          i = query.index(after: next)
+          continue
+        }
+        inSingleQuote.toggle()
+      }
+
+      if char == "\"" && !inSingleQuote {
+        inDoubleQuote.toggle()
+      }
+
+      // Add character to result
+      result.append(char)
+      i = query.index(after: i)
+    }
+
+    return result
+  }
+
   /// Check if a query is a SELECT statement
   nonisolated func isSelectQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.uppercased().hasPrefix("SELECT")
+    let withoutLeadingComments = stripLeadingComments(query)
+    return withoutLeadingComments.uppercased().hasPrefix("SELECT")
   }
 
   /// Check if a query is a data modification statement (UPDATE, DELETE, INSERT)
   func isModificationQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    return trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT")
+    let withoutLeadingComments = stripLeadingComments(query).uppercased()
+    return withoutLeadingComments.hasPrefix("UPDATE") || withoutLeadingComments.hasPrefix("DELETE")
+      || withoutLeadingComments.hasPrefix("INSERT")
   }
 
   /// Check if a query is a DELETE statement
@@ -38,7 +159,9 @@ extension DatabaseConnectionManager {
 
   /// Check if a query already has a LIMIT clause
   func hasLimitClause(_ query: String) -> Bool {
-    let normalized = query.lowercased()
+    // Strip comments first to avoid false positives from LIMIT in comments
+    let withoutComments = stripAllComments(query)
+    let normalized = withoutComments.lowercased()
     // Use regex to find LIMIT as a separate word (not part of another word)
     return normalized.range(of: "\\blimit\\b", options: .regularExpression) != nil
   }
@@ -53,8 +176,11 @@ extension DatabaseConnectionManager {
 
   /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
   nonisolated func extractLimitValue(_ query: String) -> Int? {
+    // Strip comments first to avoid false positives from LIMIT in comments
+    let withoutComments = stripAllComments(query)
+
     // Remove semicolons and trim
-    let cleaned = query.replacingOccurrences(of: ";", with: "").trimmingCharacters(
+    let cleaned = withoutComments.replacingOccurrences(of: ";", with: "").trimmingCharacters(
       in: .whitespacesAndNewlines)
     let normalized = cleaned.lowercased()
 

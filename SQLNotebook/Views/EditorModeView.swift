@@ -17,6 +17,7 @@ extension Array {
 struct EditorModeView: View {
   @Bindable var viewModel: NotebookViewModel
   @Bindable private var appSettings = AppSettings.shared
+  @Environment(\.colorScheme) private var colorScheme
   @State private var textViewRef: SQLTextView?
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
@@ -172,14 +173,44 @@ struct EditorModeView: View {
   /// - Parameter result: The query result containing metadata and optional error
   /// - Returns: A view with query result metadata and action buttons
   private func resultPanelHeader(result: CellResult) -> some View {
-    HStack {
-      // Result info
-      HStack(spacing: Spacing.sm) {
-        Image(systemName: result.error != nil ? "xmark.circle.fill" : "checkmark.circle.fill")
-          .foregroundColor(result.error != nil ? .red : .green)
-          .font(.system(size: 12))
+    VStack(spacing: 0) {
+      // Warning banner (if query exceeded user limit)
+      if result.userLimitExceeded, let requestedLimit = result.userRequestedLimit {
+        HStack(spacing: Spacing.xs) {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .font(.system(size: 11))
+            .foregroundColor(.warning)
 
-        if result.error != nil {
+          Text(
+            "Query returned more than \(requestedLimit) rows. Showing first \(requestedLimit) rows only. Adjust limit in Settings."
+          )
+          .font(.system(size: 11))
+          .foregroundColor(.foreground)
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+          // Color.warning.opacity(colorScheme == .dark ? 0.15 : 0.08)
+          Color.warning.opacity(0.2)
+        )
+        .overlay(
+          Rectangle()
+            .fill(Color.foregroundMuted.opacity(0.1))
+            .frame(height: 1),
+          alignment: .bottom
+        )
+      }
+
+      // Main header
+      HStack {
+        // Result info
+        HStack(spacing: Spacing.sm) {
+          Image(systemName: result.error != nil ? "xmark.circle.fill" : "checkmark.circle.fill")
+            .foregroundColor(result.error != nil ? .red : .green)
+            .font(.system(size: 12))
+
+          if result.error != nil {
           // Show "Error" label next to red cross icon
           Text("Error")
             .font(.system(size: 12, weight: .semibold))
@@ -248,24 +279,25 @@ struct EditorModeView: View {
 
       Spacer()
 
-      // Clear button
-      Button(action: clearResult) {
-        Image(systemName: "xmark")
-          .font(.system(size: 10))
-          .foregroundColor(.foregroundSubtle)
+        // Clear button
+        Button(action: clearResult) {
+          Image(systemName: "xmark")
+            .font(.system(size: 10))
+            .foregroundColor(.foregroundSubtle)
+        }
+        .buttonStyle(.plain)
+        .help("Clear result")
       }
-      .buttonStyle(.plain)
-      .help("Clear result")
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .background(Color.appBackground)
+      .overlay(
+        Rectangle()
+          .fill(Color.foregroundMuted.opacity(0.1))
+          .frame(height: 1),
+        alignment: .bottom  // Border on bottom since this is now a header
+      )
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
-    .background(Color.appBackground)
-    .overlay(
-      Rectangle()
-        .fill(Color.foregroundMuted.opacity(0.1))
-        .frame(height: 1),
-      alignment: .bottom  // Border on bottom since this is now a header
-    )
   }
 
   private func copyQueryToClipboard(query: String) {
@@ -366,8 +398,9 @@ struct EditorModeView: View {
         .fixedSize()  // Don't expand
 
         // "Run with query" text (spans remaining width)
-        if let sourceQuery = result.sourceQuery {
-          let displayQuery = removeComments(sourceQuery)
+        if result.sourceQuery != nil {
+          let actualQuery = getActualExecutedQuery(result: result)
+          let displayQuery = removeComments(actualQuery)
           HStack(spacing: Spacing.sm) {
             Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
               .font(.system(size: 11))
@@ -389,7 +422,7 @@ struct EditorModeView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
           .onTapGesture {
-            copyQueryToClipboard(query: sourceQuery)
+            copyQueryToClipboard(query: actualQuery)
           }
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
@@ -409,9 +442,10 @@ struct EditorModeView: View {
         alignment: .top  // Border on top
       )
 
-    } else if let sourceQuery = result.sourceQuery {
+    } else if result.sourceQuery != nil {
       // Single statement - show clickable query text + Download button
-      let displayQuery = removeComments(sourceQuery)
+      let actualQuery = getActualExecutedQuery(result: result)
+      let displayQuery = removeComments(actualQuery)
       HStack(spacing: Spacing.sm) {
         // Icon changes when query is copied (fixed width to prevent text shifting)
         Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
@@ -432,7 +466,7 @@ struct EditorModeView: View {
           .truncationMode(.tail)
           .frame(maxWidth: .infinity, alignment: .leading)
           .onTapGesture {
-            copyQueryToClipboard(query: sourceQuery)
+            copyQueryToClipboard(query: actualQuery)
           }
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
@@ -632,6 +666,22 @@ struct EditorModeView: View {
   /// - Leading comments (both single-line and multi-line)
   /// - Trailing comments (single-line after query)
   /// - Multi-line comments anywhere in the query
+  /// Get the actual query that was executed (with LIMIT replaced if needed)
+  private func getActualExecutedQuery(result: CellResult) -> String {
+    guard let sourceQuery = result.sourceQuery else {
+      return ""
+    }
+
+    // If query was limited and we have the actual limit used
+    if result.userLimitExceeded, let actualLimit = result.userRequestedLimit {
+      // Replace LIMIT in query with actual limit
+      return viewModel.connectionManager.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+    }
+
+    // Return original query
+    return sourceQuery
+  }
+
   private func removeComments(_ query: String) -> String {
     var result = ""
     var inSingleQuote = false
