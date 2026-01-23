@@ -78,10 +78,15 @@ extension NotebookViewModel {
     AppSettings.shared.isLeftSidebarVisible = isLeftSidebarVisible
   }
 
-  /// Load database schema (tables and columns)
+  /// Load database schema (tables, views, functions, procedures, users, roles)
   func loadDatabaseSchema() async {
     guard connectionState.isConnected else {
       databaseTables = []
+      databaseViews = []
+      databaseFunctions = []
+      databaseProcedures = []
+      databaseUsers = []
+      databaseRoles = []
       return
     }
 
@@ -115,9 +120,71 @@ extension NotebookViewModel {
       }
 
       databaseTables = tables
+
+      // Fetch views
+      do {
+        var views = try await connectionManager.fetchViews()
+        // Fetch columns for each view
+        for index in views.indices {
+          let view = views[index]
+          do {
+            let columns = try await connectionManager.fetchColumns(
+              tableSchema: view.schema,
+              tableName: view.name
+            )
+            views[index].columns = columns
+          } catch {
+            await AppLogger.shared.warning(
+              "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema"
+            )
+          }
+        }
+        databaseViews = views
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch views: \(error)", category: "Schema")
+        databaseViews = []
+      }
+
+      // Fetch functions
+      do {
+        databaseFunctions = try await connectionManager.fetchFunctions()
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch functions: \(error)", category: "Schema")
+        databaseFunctions = []
+      }
+
+      // Fetch procedures
+      do {
+        databaseProcedures = try await connectionManager.fetchProcedures()
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch procedures: \(error)", category: "Schema")
+        databaseProcedures = []
+      }
+
+      // Fetch users
+      do {
+        databaseUsers = try await connectionManager.fetchUsers()
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch users: \(error)", category: "Schema")
+        databaseUsers = []
+      }
+
+      // Fetch roles
+      do {
+        databaseRoles = try await connectionManager.fetchRoles()
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch roles: \(error)", category: "Schema")
+        databaseRoles = []
+      }
+
     } catch {
       await AppLogger.shared.error("Failed to load database schema: \(error)", category: "Schema")
       databaseTables = []
+      databaseViews = []
+      databaseFunctions = []
+      databaseProcedures = []
+      databaseUsers = []
+      databaseRoles = []
     }
 
     isLoadingSchema = false
@@ -132,6 +199,66 @@ extension NotebookViewModel {
   func toggleTableExpansion(tableId: UUID) {
     if let index = databaseTables.firstIndex(where: { $0.id == tableId }) {
       databaseTables[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle view expansion state
+  func toggleViewExpansion(viewId: UUID) {
+    if let index = databaseViews.firstIndex(where: { $0.id == viewId }) {
+      databaseViews[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle function expansion state
+  func toggleFunctionExpansion(functionId: UUID) {
+    if let index = databaseFunctions.firstIndex(where: { $0.id == functionId }) {
+      databaseFunctions[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle procedure expansion state
+  func toggleProcedureExpansion(procedureId: UUID) {
+    if let index = databaseProcedures.firstIndex(where: { $0.id == procedureId }) {
+      databaseProcedures[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle user expansion state
+  func toggleUserExpansion(userId: UUID) {
+    if let index = databaseUsers.firstIndex(where: { $0.id == userId }) {
+      databaseUsers[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle role expansion state
+  func toggleRoleExpansion(roleId: UUID) {
+    if let index = databaseRoles.firstIndex(where: { $0.id == roleId }) {
+      databaseRoles[index].isExpanded.toggle()
+    }
+  }
+
+  /// Toggle expand/collapse all entities in the sidebar
+  func toggleExpandCollapseAll() {
+    areAllEntitiesExpanded.toggle()
+
+    // Apply to all entities
+    for index in databaseTables.indices {
+      databaseTables[index].isExpanded = areAllEntitiesExpanded
+    }
+    for index in databaseViews.indices {
+      databaseViews[index].isExpanded = areAllEntitiesExpanded
+    }
+    for index in databaseFunctions.indices {
+      databaseFunctions[index].isExpanded = areAllEntitiesExpanded
+    }
+    for index in databaseProcedures.indices {
+      databaseProcedures[index].isExpanded = areAllEntitiesExpanded
+    }
+    for index in databaseUsers.indices {
+      databaseUsers[index].isExpanded = areAllEntitiesExpanded
+    }
+    for index in databaseRoles.indices {
+      databaseRoles[index].isExpanded = areAllEntitiesExpanded
     }
   }
 

@@ -47,7 +47,13 @@ class NotebookViewModel {
   // Left sidebar state
   var isLeftSidebarVisible: Bool = false
   var databaseTables: [DatabaseTable] = []
+  var databaseViews: [DatabaseView] = []
+  var databaseFunctions: [DatabaseFunction] = []
+  var databaseProcedures: [DatabaseProcedure] = []
+  var databaseUsers: [DatabaseUser] = []
+  var databaseRoles: [DatabaseRole] = []
   var isLoadingSchema: Bool = false
+  var areAllEntitiesExpanded: Bool = false  // Track expand/collapse state
 
   // Connection config for the sheet
   var editingConnectionConfig: ConnectionConfig

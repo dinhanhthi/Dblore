@@ -248,4 +248,302 @@ extension DatabaseConnectionManager {
       return []
     }
   }
+
+  // MARK: - Views
+
+  /// Fetch all views from the database
+  func fetchViews() async throws -> [DatabaseView] {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        table_schema,
+        table_name,
+        view_definition
+      FROM information_schema.views
+      WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY table_schema, table_name
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var views: [DatabaseView] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard randomAccess.count >= 2,
+          let schema = try? randomAccess[0].decode(String.self, context: .default),
+          let name = try? randomAccess[1].decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        let definition = try? randomAccess[2].decode(String.self, context: .default)
+
+        views.append(DatabaseView(schema: schema, name: name, definition: definition))
+      }
+
+      return views
+    } catch {
+      throw DatabaseError.queryFailed("Failed to fetch views: \(error.localizedDescription)", 0)
+    }
+  }
+
+  // MARK: - Functions
+
+  /// Fetch all functions from the database
+  func fetchFunctions() async throws -> [DatabaseFunction] {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        n.nspname AS schema,
+        p.proname AS name,
+        pg_get_function_result(p.oid) AS return_type,
+        pg_get_function_arguments(p.oid) AS arguments,
+        pg_get_functiondef(p.oid) AS definition
+      FROM pg_proc p
+      JOIN pg_namespace n ON p.pronamespace = n.oid
+      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND p.prokind = 'f'
+      ORDER BY n.nspname, p.proname
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var functions: [DatabaseFunction] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard randomAccess.count >= 4,
+          let schema = try? randomAccess[0].decode(String.self, context: .default),
+          let name = try? randomAccess[1].decode(String.self, context: .default),
+          let returnType = try? randomAccess[2].decode(String.self, context: .default),
+          let arguments = try? randomAccess[3].decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        let definition = try? randomAccess[4].decode(String.self, context: .default)
+
+        functions.append(
+          DatabaseFunction(
+            schema: schema,
+            name: name,
+            returnType: returnType,
+            arguments: arguments,
+            definition: definition
+          )
+        )
+      }
+
+      return functions
+    } catch {
+      throw DatabaseError.queryFailed(
+        "Failed to fetch functions: \(error.localizedDescription)", 0)
+    }
+  }
+
+  // MARK: - Procedures
+
+  /// Fetch all procedures from the database
+  func fetchProcedures() async throws -> [DatabaseProcedure] {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        n.nspname AS schema,
+        p.proname AS name,
+        pg_get_function_arguments(p.oid) AS arguments,
+        pg_get_functiondef(p.oid) AS definition
+      FROM pg_proc p
+      JOIN pg_namespace n ON p.pronamespace = n.oid
+      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND p.prokind = 'p'
+      ORDER BY n.nspname, p.proname
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var procedures: [DatabaseProcedure] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard randomAccess.count >= 3,
+          let schema = try? randomAccess[0].decode(String.self, context: .default),
+          let name = try? randomAccess[1].decode(String.self, context: .default),
+          let arguments = try? randomAccess[2].decode(String.self, context: .default)
+        else {
+          continue
+        }
+
+        let definition = try? randomAccess[3].decode(String.self, context: .default)
+
+        procedures.append(
+          DatabaseProcedure(
+            schema: schema,
+            name: name,
+            arguments: arguments,
+            definition: definition
+          )
+        )
+      }
+
+      return procedures
+    } catch {
+      throw DatabaseError.queryFailed(
+        "Failed to fetch procedures: \(error.localizedDescription)", 0)
+    }
+  }
+
+  // MARK: - Users
+
+  /// Fetch all users from the database
+  func fetchUsers() async throws -> [DatabaseUser] {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        rolname,
+        rolcanlogin,
+        rolsuper,
+        rolcreatedb,
+        rolcreaterole,
+        rolconnlimit
+      FROM pg_roles
+      WHERE rolcanlogin = true
+      ORDER BY rolname
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var users: [DatabaseUser] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard randomAccess.count >= 6,
+          let name = try? randomAccess[0].decode(String.self, context: .default),
+          let canLogin = try? randomAccess[1].decode(Bool.self, context: .default),
+          let isSuperuser = try? randomAccess[2].decode(Bool.self, context: .default),
+          let canCreateDB = try? randomAccess[3].decode(Bool.self, context: .default),
+          let canCreateRole = try? randomAccess[4].decode(Bool.self, context: .default)
+        else {
+          continue
+        }
+
+        let connectionLimit = try? randomAccess[5].decode(Int.self, context: .default)
+
+        users.append(
+          DatabaseUser(
+            name: name,
+            canLogin: canLogin,
+            isSuperuser: isSuperuser,
+            canCreateDB: canCreateDB,
+            canCreateRole: canCreateRole,
+            connectionLimit: connectionLimit
+          )
+        )
+      }
+
+      return users
+    } catch {
+      throw DatabaseError.queryFailed("Failed to fetch users: \(error.localizedDescription)", 0)
+    }
+  }
+
+  // MARK: - Roles
+
+  /// Fetch all roles from the database
+  func fetchRoles() async throws -> [DatabaseRole] {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    let query = """
+      SELECT
+        r.rolname,
+        r.rolcanlogin,
+        r.rolsuper,
+        r.rolcreatedb,
+        r.rolcreaterole,
+        ARRAY(
+          SELECT m.rolname
+          FROM pg_auth_members am
+          JOIN pg_roles m ON am.member = m.oid
+          WHERE am.roleid = r.oid
+        ) AS members
+      FROM pg_roles r
+      WHERE r.rolcanlogin = false
+      ORDER BY r.rolname
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.schema")
+      )
+
+      var roles: [DatabaseRole] = []
+
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+
+        guard randomAccess.count >= 6,
+          let name = try? randomAccess[0].decode(String.self, context: .default),
+          let canLogin = try? randomAccess[1].decode(Bool.self, context: .default),
+          let isSuperuser = try? randomAccess[2].decode(Bool.self, context: .default),
+          let canCreateDB = try? randomAccess[3].decode(Bool.self, context: .default),
+          let canCreateRole = try? randomAccess[4].decode(Bool.self, context: .default)
+        else {
+          continue
+        }
+
+        // Try to decode members array (might be empty)
+        let members = (try? randomAccess[5].decode([String].self, context: .default)) ?? []
+
+        roles.append(
+          DatabaseRole(
+            name: name,
+            canLogin: canLogin,
+            isSuperuser: isSuperuser,
+            canCreateDB: canCreateDB,
+            canCreateRole: canCreateRole,
+            members: members
+          )
+        )
+      }
+
+      return roles
+    } catch {
+      throw DatabaseError.queryFailed("Failed to fetch roles: \(error.localizedDescription)", 0)
+    }
+  }
 }
