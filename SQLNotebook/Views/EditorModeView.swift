@@ -5,6 +5,14 @@
 
 import SwiftUI
 
+// MARK: - Array Extension for Safe Access
+
+extension Array {
+  subscript(safe index: Index) -> Element? {
+    return indices.contains(index) ? self[index] : nil
+  }
+}
+
 /// Editor mode view - Single SQL editor with result panel below
 struct EditorModeView: View {
   @Bindable var viewModel: NotebookViewModel
@@ -18,6 +26,33 @@ struct EditorModeView: View {
 
   /// Width of the line number gutter
   private let gutterWidth: CGFloat = 44
+
+  /// Get current pagination info (computed property to avoid recalculation in body)
+  private var currentPaginationInfo: PaginationInfo? {
+    // Multi-statement mode: get pagination for current statement
+    if !viewModel.editorStatementResults.isEmpty,
+      let currentStatement = viewModel.editorStatementResults[safe: viewModel.selectedStatementIndex]
+    {
+      return viewModel.editorStatementPaginationInfo[currentStatement.id]
+    }
+    // Single statement mode: get pagination for editor result
+    return viewModel.editorPaginationInfo
+  }
+
+  /// Handle page change
+  private func handlePageChange(_ page: Int) {
+    Task { @MainActor in
+      // Multi-statement mode: navigate page for current statement
+      if !viewModel.editorStatementResults.isEmpty,
+        let currentStatement = viewModel.editorStatementResults[safe: viewModel.selectedStatementIndex]
+      {
+        await viewModel.navigateToPageForStatement(statementId: currentStatement.id, page: page)
+      } else {
+        // Single statement mode: navigate page for editor result
+        await viewModel.navigateToPage(page)
+      }
+    }
+  }
 
   var body: some View {
     GeometryReader { geometry in
@@ -83,9 +118,12 @@ struct EditorModeView: View {
                   viewModel: viewModel,
                   cellId: nil,  // No cell ID in editor mode
                   showBorderRadius: false,  // No border radius in editor mode
-                  enableVerticalScrolling: true  // Enable vertical scrolling in editor mode
+                  enableVerticalScrolling: true,  // Enable vertical scrolling in editor mode
+                  paginationInfo: currentPaginationInfo,
+                  onPageChange: handlePageChange
                 )
                 .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
+                .id(result.timestamp)  // Break render cycle on result changes
               }
             }
 

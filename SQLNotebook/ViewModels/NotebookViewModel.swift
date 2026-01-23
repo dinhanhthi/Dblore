@@ -104,6 +104,10 @@ class NotebookViewModel {
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
 
+  // MARK: - Pagination State (Editor Mode)
+  var editorPaginationInfo: PaginationInfo?  // Pagination info for editor result
+  var editorStatementPaginationInfo: [UUID: PaginationInfo] = [:]  // Pagination info per statement
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()

@@ -11,6 +11,8 @@ struct ResultTableView: View {
   let cellId: UUID?  // ID of the cell that produced this result
   var showBorderRadius: Bool = true  // Whether to show border radius (disabled in editor mode)
   var enableVerticalScrolling: Bool = false  // Whether to enable vertical scrolling (enabled in editor mode)
+  var paginationInfo: PaginationInfo? = nil  // Pagination info for editor mode
+  var onPageChange: ((Int) -> Void)? = nil  // Callback when page changes
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
@@ -79,6 +81,11 @@ struct ResultTableView: View {
         .frame(width: totalColumnsWidth, alignment: .leading)
         // Add bottom padding to prevent horizontal scrollbar from covering last row
         .padding(.bottom, 12)
+      }
+
+      // Pagination controls (if applicable)
+      if let paginationInfo = paginationInfo, let onPageChange = onPageChange {
+        PaginationView(info: paginationInfo, onPageChange: onPageChange)
       }
     }
     .frame(maxWidth: .infinity)

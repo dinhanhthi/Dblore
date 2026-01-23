@@ -11,7 +11,7 @@ extension DatabaseConnectionManager {
   // MARK: - Query Type Detection
 
   /// Check if a query is a SELECT statement
-  func isSelectQuery(_ query: String) -> Bool {
+  nonisolated func isSelectQuery(_ query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.uppercased().hasPrefix("SELECT")
   }
@@ -52,7 +52,7 @@ extension DatabaseConnectionManager {
   }
 
   /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
-  func extractLimitValue(_ query: String) -> Int? {
+  nonisolated func extractLimitValue(_ query: String) -> Int? {
     // Remove semicolons and trim
     let cleaned = query.replacingOccurrences(of: ";", with: "").trimmingCharacters(
       in: .whitespacesAndNewlines)

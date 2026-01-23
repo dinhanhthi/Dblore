@@ -67,6 +67,9 @@ extension NotebookViewModel {
 
         totalExecutionTime = totalTime
 
+        // Clear pagination state for multi-statement queries
+        editorStatementPaginationInfo.removeAll()
+
         // Convert to StatementResult array
         editorStatementResults = statementResults.enumerated().map { index, tuple in
           StatementResult(
@@ -91,6 +94,16 @@ extension NotebookViewModel {
           )
         }
 
+        // Build pagination info for each statement with LIMIT
+        for statementResult in editorStatementResults {
+          let cellResult = statementResult.result
+          if let paginationInfo = await buildPaginationInfo(
+            for: statementResult.queryText, result: cellResult)
+          {
+            editorStatementPaginationInfo[statementResult.id] = paginationInfo
+          }
+        }
+
         // Select the last statement by default (psql behavior)
         selectedStatementIndex = editorStatementResults.count - 1
 
@@ -110,7 +123,7 @@ extension NotebookViewModel {
         selectedStatementIndex = 0
         totalExecutionTime = executionTime
 
-        editorResult = CellResult(
+        let cellResult = CellResult(
           columns: result.columns,
           rows: result.rows,
           executionTime: executionTime,
@@ -126,6 +139,11 @@ extension NotebookViewModel {
           userRequestedLimit: result.userRequestedLimit,
           affectedRows: result.affectedRows
         )
+
+        editorResult = cellResult
+
+        // Build pagination info if applicable
+        editorPaginationInfo = await buildPaginationInfo(for: query, result: cellResult)
       }
 
     } catch {
@@ -135,6 +153,8 @@ extension NotebookViewModel {
       editorStatementResults = []
       selectedStatementIndex = 0
       totalExecutionTime = executionTime
+      editorPaginationInfo = nil
+      editorStatementPaginationInfo.removeAll()
 
       editorResult = CellResult.errorResult(
         error.localizedDescription,
@@ -149,6 +169,299 @@ extension NotebookViewModel {
     guard index >= 0 && index < editorStatementResults.count else { return }
     selectedStatementIndex = index
     editorResult = editorStatementResults[index].result
+  }
+
+  // MARK: - Pagination Support
+
+  /// Navigate to a specific page for editor result
+  func navigateToPage(_ page: Int) async {
+    guard let paginationInfo = editorPaginationInfo else { return }
+    guard page > 0 && page <= paginationInfo.totalPages else { return }
+    guard page != paginationInfo.currentPage else { return }
+
+    // Build query with LIMIT and OFFSET
+    let query = paginationInfo.queryForPage(page)
+
+    // Execute query
+    await executeEditorQueryForPagination(query, page: page, paginationInfo: paginationInfo)
+  }
+
+  /// Navigate to a specific page for a multi-statement result
+  func navigateToPageForStatement(statementId: UUID, page: Int) async {
+    guard let paginationInfo = editorStatementPaginationInfo[statementId] else { return }
+    guard page > 0 && page <= paginationInfo.totalPages else { return }
+    guard page != paginationInfo.currentPage else { return }
+
+    // Build query with LIMIT and OFFSET
+    let query = paginationInfo.queryForPage(page)
+
+    // Execute query
+    await executeEditorQueryForStatementPagination(
+      query, statementId: statementId, page: page, paginationInfo: paginationInfo)
+  }
+
+  /// Execute a paginated query for editor mode
+  private func executeEditorQueryForPagination(
+    _ query: String, page: Int, paginationInfo: PaginationInfo
+  ) async {
+    let startTime = Date()
+
+    do {
+      let result = try await connectionManager.executeQuery(query)
+      let executionTime = Date().timeIntervalSince(startTime)
+
+      // Update pagination info with new page
+      editorPaginationInfo = PaginationInfo(
+        currentPage: page,
+        totalRows: paginationInfo.totalRows,
+        rowsPerPage: paginationInfo.rowsPerPage,
+        baseQuery: paginationInfo.baseQuery
+      )
+
+      // Update result
+      editorResult = CellResult(
+        columns: result.columns,
+        rows: result.rows,
+        executionTime: executionTime,
+        rowCount: result.rows.count,
+        timestamp: Date(),
+        error: nil,
+        wasLimited: false,
+        sourceQuery: query,
+        tableName: nil,
+        primaryKeyColumns: [],
+        rowIdentifiers: result.rowIdentifiers,
+        userLimitExceeded: false,
+        userRequestedLimit: paginationInfo.rowsPerPage,
+        affectedRows: nil
+      )
+
+    } catch {
+      let executionTime = Date().timeIntervalSince(startTime)
+      editorResult = CellResult.errorResult(
+        error.localizedDescription,
+        executionTime: executionTime,
+        sourceQuery: query
+      )
+    }
+  }
+
+  /// Execute a paginated query for a specific statement in multi-statement mode
+  private func executeEditorQueryForStatementPagination(
+    _ query: String, statementId: UUID, page: Int, paginationInfo: PaginationInfo
+  ) async {
+    let startTime = Date()
+
+    do {
+      let result = try await connectionManager.executeQuery(query)
+      let executionTime = Date().timeIntervalSince(startTime)
+
+      // Update pagination info with new page
+      editorStatementPaginationInfo[statementId] = PaginationInfo(
+        currentPage: page,
+        totalRows: paginationInfo.totalRows,
+        rowsPerPage: paginationInfo.rowsPerPage,
+        baseQuery: paginationInfo.baseQuery
+      )
+
+      // Update statement result
+      if let index = editorStatementResults.firstIndex(where: { $0.id == statementId }) {
+        let newResult = CellResult(
+          columns: result.columns,
+          rows: result.rows,
+          executionTime: executionTime,
+          rowCount: result.rows.count,
+          timestamp: Date(),
+          error: nil,
+          wasLimited: false,
+          sourceQuery: query,
+          tableName: nil,
+          primaryKeyColumns: [],
+          rowIdentifiers: result.rowIdentifiers,
+          userLimitExceeded: false,
+          userRequestedLimit: paginationInfo.rowsPerPage,
+          affectedRows: nil
+        )
+
+        editorStatementResults[index] = StatementResult(
+          id: statementId,
+          queryText: paginationInfo.baseQuery,
+          result: newResult,
+          statementIndex: editorStatementResults[index].statementIndex
+        )
+
+        // Update selected result if this is the current statement
+        if selectedStatementIndex == index {
+          editorResult = newResult
+        }
+      }
+
+    } catch {
+      let executionTime = Date().timeIntervalSince(startTime)
+      let errorResult = CellResult.errorResult(
+        error.localizedDescription,
+        executionTime: executionTime,
+        sourceQuery: query
+      )
+
+      // Update statement result with error
+      if let index = editorStatementResults.firstIndex(where: { $0.id == statementId }) {
+        editorStatementResults[index] = StatementResult(
+          id: statementId,
+          queryText: paginationInfo.baseQuery,
+          result: errorResult,
+          statementIndex: editorStatementResults[index].statementIndex
+        )
+
+        // Update selected result if this is the current statement
+        if selectedStatementIndex == index {
+          editorResult = errorResult
+        }
+      }
+    }
+  }
+
+  /// Build pagination info for a SELECT query with LIMIT
+  /// Returns nil if pagination is not applicable
+  func buildPaginationInfo(for query: String, result: CellResult) async -> PaginationInfo? {
+    // Remove leading/trailing comments to get actual SQL statement
+    let cleanQuery = removeLeadingTrailingComments(from: query)
+    
+    await AppLogger.shared.debug("Checking pagination for query: \(cleanQuery.prefix(50))...", category: "Pagination")
+    
+    // Only applicable for SELECT queries with LIMIT
+    guard connectionManager.isSelectQuery(cleanQuery) else {
+      await AppLogger.shared.debug("Not a SELECT query, skipping pagination", category: "Pagination")
+      return nil
+    }
+    
+    guard let limit = connectionManager.extractLimitValue(cleanQuery) else {
+      await AppLogger.shared.debug("No LIMIT found in query, skipping pagination", category: "Pagination")
+      return nil
+    }
+
+    await AppLogger.shared.debug("Building pagination: query has LIMIT \(limit)", category: "Pagination")
+
+    // Extract base query (without LIMIT/OFFSET)
+    let baseQuery = removeLimit(from: cleanQuery)
+
+    // Get total count using COUNT(*) query
+    guard let totalRows = await getTotalRowCount(baseQuery: baseQuery) else {
+      await AppLogger.shared.debug("Failed to get total count, skipping pagination", category: "Pagination")
+      return nil
+    }
+
+    await AppLogger.shared.debug("Pagination built: \(totalRows) total rows, \(limit) per page", category: "Pagination")
+
+    return PaginationInfo(
+      currentPage: 1,
+      totalRows: totalRows,
+      rowsPerPage: limit,
+      baseQuery: baseQuery
+    )
+  }
+
+  /// Remove leading and trailing comments from query
+  /// This extracts the actual SQL statement from a query that may have comments
+  private func removeLeadingTrailingComments(from query: String) -> String {
+    // Safety check for empty query
+    guard !query.isEmpty else { return query }
+    
+    let lines = query.split(separator: "\n", omittingEmptySubsequences: false)
+    
+    // Safety check for single line or no lines
+    guard !lines.isEmpty else { return query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    
+    var firstNonCommentIndex: Int?
+    var lastNonCommentIndex: Int?
+    
+    // Find first non-comment line
+    for (index, line) in lines.enumerated() {
+      let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty && !trimmed.hasPrefix("--") {
+        firstNonCommentIndex = index
+        break
+      }
+    }
+    
+    // Find last non-comment line
+    for (index, line) in lines.enumerated().reversed() {
+      let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty && !trimmed.hasPrefix("--") {
+        lastNonCommentIndex = index
+        break
+      }
+    }
+    
+    // Extract the range of non-comment lines
+    guard let firstIndex = firstNonCommentIndex,
+          let lastIndex = lastNonCommentIndex,
+          firstIndex <= lastIndex else {
+      // All lines are comments or empty - return original query
+      return query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    let relevantLines = lines[firstIndex...lastIndex]
+    return relevantLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Remove LIMIT and OFFSET clauses from query
+  private func removeLimit(from query: String) -> String {
+    var result = query
+
+    // Remove LIMIT clause (case-insensitive)
+    result = result.replacingOccurrences(
+      of: "\\s+LIMIT\\s+\\d+", with: "", options: [.regularExpression, .caseInsensitive])
+
+    // Remove OFFSET clause (case-insensitive)
+    result = result.replacingOccurrences(
+      of: "\\s+OFFSET\\s+\\d+", with: "", options: [.regularExpression, .caseInsensitive])
+
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Get total row count for a query using COUNT(*)
+  private func getTotalRowCount(baseQuery: String) async -> Int? {
+    // Safety check: ensure connection is active
+    guard connectionState == .connected else {
+      await AppLogger.shared.debug("Connection not active, cannot get total count", category: "Pagination")
+      return nil
+    }
+    
+    // Wrap query in SELECT COUNT(*) FROM (...)
+    let countQuery = "SELECT COUNT(*) FROM (\(baseQuery)) AS _count_query"
+    
+    await AppLogger.shared.debug("Executing count query: \(countQuery.prefix(100))...", category: "Pagination")
+
+    do {
+      let result = try await connectionManager.executeQuery(countQuery)
+
+      // Extract count from first row, first column
+      guard let firstRow = result.rows.first,
+        let firstValue = firstRow.first
+      else {
+        await AppLogger.shared.debug("Count query returned no rows", category: "Pagination")
+        return nil
+      }
+
+      switch firstValue {
+      case .int(let count):
+        await AppLogger.shared.debug("Got total count: \(count)", category: "Pagination")
+        return count
+      case .double(let count):
+        await AppLogger.shared.debug("Got total count (double): \(count)", category: "Pagination")
+        return Int(count)
+      default:
+        await AppLogger.shared.debug("Count value is not int/double: \(firstValue)", category: "Pagination")
+        return nil
+      }
+    } catch {
+      await AppLogger.shared.debug(
+        "Failed to get total count: \(error.localizedDescription)",
+        category: "Pagination"
+      )
+      return nil
+    }
   }
 
 }
