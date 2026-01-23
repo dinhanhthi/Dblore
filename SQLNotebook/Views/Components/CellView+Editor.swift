@@ -55,6 +55,7 @@ struct SQLEditorView: View {
         autocompleteProvider: autocompleteProvider,
         cellId: cellId,
         maxHeight: maxHeight,
+        isEditorMode: isEditorMode,
         wordWrapEnabled: wordWrapEnabled
       )
     }

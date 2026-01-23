@@ -55,6 +55,7 @@ struct HighlightedTextEditor: View {
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?  // For search highlighting
   var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
+  var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var wordWrapEnabled: Bool = true  // Word wrap setting
 
   var body: some View {
@@ -67,6 +68,7 @@ struct HighlightedTextEditor: View {
       autocompleteProvider: autocompleteProvider,
       cellId: cellId,
       maxHeight: maxHeight,
+      isEditorMode: isEditorMode,
       wordWrapEnabled: wordWrapEnabled
     )
     .frame(height: maxHeight ?? height)
@@ -82,6 +84,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?
   var maxHeight: CGFloat?
+  var isEditorMode: Bool = false
   var wordWrapEnabled: Bool = true
 
   func makeNSView(context: Context) -> NSScrollView {
@@ -98,6 +101,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Setup autocomplete
     textView.autocompleteProvider = autocompleteProvider
+
+    // Set editor mode
+    textView.isEditorMode = isEditorMode
 
     // Store reference to textView
     DispatchQueue.main.async {
@@ -178,6 +184,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Update autocomplete provider
     textView.autocompleteProvider = autocompleteProvider
+
+    // Update editor mode
+    textView.isEditorMode = isEditorMode
 
     // Update word wrap setting when it changes
     if wordWrapEnabled {
