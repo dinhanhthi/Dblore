@@ -12,8 +12,11 @@ extension NotebookViewModel {
   func runCell(id: UUID) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     guard notebook.cells[index].cellType == .sql else { return }
+    
+    let query = notebook.cells[index].content
+    
     guard connectionState.isConnected else {
-      notebook.cells[index].result = .errorResult("Not connected to database")
+      notebook.cells[index].result = .errorResult("Not connected to database", sourceQuery: query)
       onDocumentChanged?()
       return
     }
@@ -30,8 +33,6 @@ extension NotebookViewModel {
     // Give a tiny delay to allow the blur callback to update the binding
     // This ensures cell.content is up-to-date before we execute the query
     try? await Task.sleep(for: .milliseconds(50))
-
-    let query = notebook.cells[index].content
 
     // Enqueue the cell execution
     executionQueue.enqueue(cellId: id, query: query)
@@ -125,12 +126,13 @@ extension NotebookViewModel {
       let executionTime = error.executionTime ?? 0
       result = .errorResult(
         error.localizedDescription,
-        executionTime: executionTime
+        executionTime: executionTime,
+        sourceQuery: task.query
       )
       notebook.cells[index].result = result
     } catch {
       // Handle general errors
-      result = .errorResult(error.localizedDescription)
+      result = .errorResult(error.localizedDescription, sourceQuery: task.query)
       notebook.cells[index].result = result
     }
 

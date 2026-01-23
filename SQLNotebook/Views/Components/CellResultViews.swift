@@ -30,9 +30,15 @@ struct ResultAreaView: View {
             isCaseSensitive: viewModel.searchState.isCaseSensitive,
             cellId: cellId
           )
+
+          // Query footer (shows source query with click-to-copy) - also shown for errors
+          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
         } else if let affectedRows = result.affectedRows {
           // Success message for UPDATE/DELETE/INSERT
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
+
+          // Query footer (shows source query with click-to-copy) - also shown for affected rows
+          ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
         } else {
           // Result table
           ResultTableView(result: result, viewModel: viewModel, cellId: cellId)
