@@ -60,14 +60,19 @@ extension DatabaseConnectionManager {
     // Remove trailing semicolon if present
     let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
 
-    // Check if query already has a LIMIT clause
-    if hasLimitClause(cleanQuery) {
+    // Strip comments before checking for LIMIT clause
+    // This prevents false positives from LIMIT in comments
+    let withoutComments = stripAllComments(cleanQuery)
+
+    // Check if query already has a LIMIT clause (in actual SQL, not comments)
+    if hasLimitClause(withoutComments) {
       // Replace existing LIMIT with min(userLimit, maxRows)
       return replaceLimitValue(cleanQuery, maxRows: maxRows)
     }
 
-    // No LIMIT clause - append LIMIT maxRows
-    return "\(cleanQuery) LIMIT \(maxRows)"
+    // No LIMIT clause - append LIMIT maxRows to the query without comments
+    // This prevents appending LIMIT after a trailing comment that might contain "LIMIT"
+    return "\(withoutComments.trimmingCharacters(in: .whitespacesAndNewlines)) LIMIT \(maxRows)"
   }
 
   /// Replace LIMIT value in query with maxRows if user's LIMIT exceeds it
@@ -84,6 +89,12 @@ extension DatabaseConnectionManager {
     }
 
     // User's LIMIT exceeds maxRows, replace it with maxRows
+    return replaceLimitInQuery(query, newLimit: maxRows)
+  }
+
+  /// Replace LIMIT value in query with a new limit value
+  /// Used to show the actual executed query in UI
+  nonisolated func replaceLimitInQuery(_ query: String, newLimit: Int) -> String {
     let pattern = "\\bLIMIT\\s+\\d+"
     guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
       return query
@@ -94,7 +105,7 @@ extension DatabaseConnectionManager {
       in: query,
       options: [],
       range: nsRange,
-      withTemplate: "LIMIT \(maxRows)"
+      withTemplate: "LIMIT \(newLimit)"
     )
 
     return modifiedQuery

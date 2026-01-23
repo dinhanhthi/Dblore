@@ -63,7 +63,7 @@ extension NotebookViewModel {
         // Execute all statements and get detailed results
         let (statementResults, totalTime) =
           try await connectionManager
-          .executeMultipleStatementsDetailed(query)
+          .executeMultipleStatementsDetailed(query, maxRows: AppSettings.shared.editorMaxRowLimit)
 
         totalExecutionTime = totalTime
 
@@ -114,7 +114,11 @@ extension NotebookViewModel {
 
       } else {
         // Single statement - use existing logic
-        let result = try await connectionManager.executeQuery(query)
+        let maxRows = AppSettings.shared.editorMaxRowLimit
+        await AppLogger.shared.debug(
+          "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
+        let result = try await connectionManager.executeQuery(
+          query, maxRows: maxRows)
 
         let executionTime = Date().timeIntervalSince(startTime)
 
@@ -139,6 +143,10 @@ extension NotebookViewModel {
           userRequestedLimit: result.userRequestedLimit,
           affectedRows: result.affectedRows
         )
+
+        await AppLogger.shared.debug(
+          "CellResult created: userLimitExceeded=\(result.userLimitExceeded), userRequestedLimit=\(result.userRequestedLimit?.description ?? "nil"), rowCount=\(result.rows.count)",
+          category: "Query")
 
         editorResult = cellResult
 
@@ -207,7 +215,8 @@ extension NotebookViewModel {
     let startTime = Date()
 
     do {
-      let result = try await connectionManager.executeQuery(query)
+      let result = try await connectionManager.executeQuery(
+        query, maxRows: AppSettings.shared.editorMaxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -253,7 +262,8 @@ extension NotebookViewModel {
     let startTime = Date()
 
     do {
-      let result = try await connectionManager.executeQuery(query)
+      let result = try await connectionManager.executeQuery(
+        query, maxRows: AppSettings.shared.editorMaxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -326,21 +336,31 @@ extension NotebookViewModel {
   func buildPaginationInfo(for query: String, result: CellResult) async -> PaginationInfo? {
     // Remove leading/trailing comments to get actual SQL statement
     let cleanQuery = removeLeadingTrailingComments(from: query)
-    
+
     await AppLogger.shared.debug("Checking pagination for query: \(cleanQuery.prefix(50))...", category: "Pagination")
-    
-    // Only applicable for SELECT queries with LIMIT
+
+    // Only applicable for SELECT queries
     guard connectionManager.isSelectQuery(cleanQuery) else {
       await AppLogger.shared.debug("Not a SELECT query, skipping pagination", category: "Pagination")
       return nil
     }
-    
-    guard let limit = connectionManager.extractLimitValue(cleanQuery) else {
-      await AppLogger.shared.debug("No LIMIT found in query, skipping pagination", category: "Pagination")
+
+    // Check if we have a LIMIT (either user-provided or auto-added)
+    let limit: Int
+    if result.userLimitExceeded, let requestedLimit = result.userRequestedLimit {
+      // Query was limited (either auto-added or user's LIMIT was capped)
+      // Use the ACTUAL limit that was applied (not user's original limit)
+      limit = requestedLimit
+      await AppLogger.shared.debug("Building pagination: query was limited to \(limit)", category: "Pagination")
+    } else if let userLimit = connectionManager.extractLimitValue(cleanQuery) {
+      // User provided LIMIT in query and it was within maxRows
+      limit = userLimit
+      await AppLogger.shared.debug("Building pagination: query has user LIMIT \(limit)", category: "Pagination")
+    } else {
+      // No LIMIT and not limited
+      await AppLogger.shared.debug("No LIMIT found in query and not limited, skipping pagination", category: "Pagination")
       return nil
     }
-
-    await AppLogger.shared.debug("Building pagination: query has LIMIT \(limit)", category: "Pagination")
 
     // Extract base query (without LIMIT/OFFSET)
     let baseQuery = removeLimit(from: cleanQuery)
@@ -434,7 +454,9 @@ extension NotebookViewModel {
     await AppLogger.shared.debug("Executing count query: \(countQuery.prefix(100))...", category: "Pagination")
 
     do {
-      let result = try await connectionManager.executeQuery(countQuery)
+      // Count query only returns 1 row, but we still pass editorMaxRowLimit for consistency
+      let result = try await connectionManager.executeQuery(
+        countQuery, maxRows: AppSettings.shared.editorMaxRowLimit)
 
       // Extract count from first row, first column
       guard let firstRow = result.rows.first,

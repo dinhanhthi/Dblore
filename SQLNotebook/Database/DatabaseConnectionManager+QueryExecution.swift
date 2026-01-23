@@ -229,9 +229,10 @@ extension DatabaseConnectionManager {
 
     // For SELECT queries, proceed with normal logic
     // Check if user specified a LIMIT that exceeds maxRows
-    let userRequestedLimit = extractLimitValue(query)
+    let userOriginalLimit = extractLimitValue(query)
+    let hadUserLimit = userOriginalLimit != nil
     let userLimitExceeded =
-      if let userLimit = userRequestedLimit {
+      if let userLimit = userOriginalLimit {
         userLimit > maxRows
       } else {
         false
@@ -325,6 +326,31 @@ extension DatabaseConnectionManager {
         wasLimited = true
       }
 
+      // Determine final userLimitExceeded and userRequestedLimit values
+      // userRequestedLimit should always be the ACTUAL limit applied (not user's original limit)
+      let finalUserLimitExceeded: Bool
+      let finalUserRequestedLimit: Int?
+
+      if wasLimited && !hadUserLimit {
+        // We auto-added LIMIT and result was limited
+        // This means there are potentially more rows available
+        finalUserLimitExceeded = true
+        finalUserRequestedLimit = maxRows
+      } else if userLimitExceeded {
+        // User had LIMIT but it exceeded maxRows, so we capped it
+        // Report the actual limit used (maxRows), not the user's original limit
+        finalUserLimitExceeded = true
+        finalUserRequestedLimit = maxRows
+      } else if let userLimit = userOriginalLimit, userLimit <= maxRows {
+        // User had LIMIT within maxRows, use their limit
+        finalUserLimitExceeded = false
+        finalUserRequestedLimit = userLimit
+      } else {
+        // No limiting occurred
+        finalUserLimitExceeded = false
+        finalUserRequestedLimit = nil
+      }
+
       // Try to enrich column type information with modifiers
       let enrichedColumns = await enrichColumnTypes(columns: columns, query: executionQuery)
 
@@ -335,8 +361,8 @@ extension DatabaseConnectionManager {
         executionTime: executionTime,
         wasLimited: wasLimited,
         rowIdentifiers: rowIdentifiers,
-        userLimitExceeded: userLimitExceeded,
-        userRequestedLimit: userRequestedLimit,
+        userLimitExceeded: finalUserLimitExceeded,
+        userRequestedLimit: finalUserRequestedLimit,
         affectedRows: 0  // SELECT queries always have 0 affected rows
       )
 

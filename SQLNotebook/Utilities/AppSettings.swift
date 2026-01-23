@@ -38,6 +38,7 @@ class AppSettings {
     static let maxResultHeight = "app.settings.maxResultHeight"
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
     static let maxRowLimit = "app.settings.maxRowLimit"
+    static let editorMaxRowLimit = "app.settings.editorMaxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
     static let themePreference = "app.settings.themePreference"
     static let bypassDestructiveQueryConfirmation =
@@ -65,16 +66,29 @@ class AppSettings {
     }
   }
 
-  /// Maximum number of rows to fetch from database (default 50, max 200)
+  /// Maximum number of rows to fetch from database in Notebook mode (default 50, range 50-100)
   var maxRowLimit: Int = 50 {
     didSet {
-      // Clamp between 1 and 200
-      let clampedValue = min(max(maxRowLimit, 1), 200)
+      // Clamp between 50 and 100
+      let clampedValue = min(max(maxRowLimit, 50), 100)
       if clampedValue != maxRowLimit {
         maxRowLimit = clampedValue
         return  // Avoid triggering didSet again
       }
       UserDefaults.standard.set(maxRowLimit, forKey: Keys.maxRowLimit)
+    }
+  }
+
+  /// Maximum number of rows to fetch from database in Editor mode (default 100, range 100-200)
+  var editorMaxRowLimit: Int = 100 {
+    didSet {
+      // Clamp between 100 and 200
+      let clampedValue = min(max(editorMaxRowLimit, 100), 200)
+      if clampedValue != editorMaxRowLimit {
+        editorMaxRowLimit = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      UserDefaults.standard.set(editorMaxRowLimit, forKey: Keys.editorMaxRowLimit)
     }
   }
 
@@ -182,8 +196,14 @@ class AppSettings {
 
     let savedLimit = UserDefaults.standard.integer(forKey: Keys.maxRowLimit)
     if savedLimit > 0 {
-      // Clamp between 1 and 200
-      maxRowLimit = min(max(savedLimit, 1), 200)
+      // Clamp between 50 and 100
+      maxRowLimit = min(max(savedLimit, 50), 100)
+    }
+
+    let savedEditorLimit = UserDefaults.standard.integer(forKey: Keys.editorMaxRowLimit)
+    if savedEditorLimit > 0 {
+      // Clamp between 100 and 200
+      editorMaxRowLimit = min(max(savedEditorLimit, 100), 200)
     }
 
     // Load left sidebar visibility state
@@ -241,6 +261,7 @@ class AppSettings {
     maxResultHeight = 500.0
     includeResultsOnSave = true
     maxRowLimit = 50
+    editorMaxRowLimit = 100
     isLeftSidebarVisible = false
     themePreference = .dark
     bypassDestructiveQueryConfirmation = false
