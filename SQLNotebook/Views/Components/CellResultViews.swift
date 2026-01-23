@@ -216,12 +216,14 @@ struct ResultQueryFooterView: View {
           .fill(Color.border)
           .frame(height: 1)
 
-        HStack(spacing: Spacing.xs) {
+        HStack(spacing: Spacing.sm) {
           // Icon changes when query is copied (fixed width to prevent text shifting)
-          Image(systemName: isQueryCopied ? "checkmark.circle.fill" : "wallet.pass")
+          Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
             .font(.system(size: 11))
-            .foregroundColor(isQueryCopied ? .success : .foregroundMuted)
-            .frame(width: 11, alignment: .center)
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 11, height: 11, alignment: .center)
+            .contentTransition(.symbolEffect(.replace))
+            .animation(.spring(duration: 0.1), value: isQueryCopied)
 
           Text("Run with query (click to copy):")
             .font(.system(size: 11))
