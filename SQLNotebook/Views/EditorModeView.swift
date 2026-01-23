@@ -14,6 +14,7 @@ struct EditorModeView: View {
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isQueryCopied: Bool = false
   @State private var isErrorCopied: Bool = false
+  @State private var showCopyFeedback: CopyFeedbackType? = nil
 
   /// Width of the line number gutter
   private let gutterWidth: CGFloat = 44
@@ -273,7 +274,7 @@ struct EditorModeView: View {
   @ViewBuilder
   private func resultPanelFooter(result: CellResult) -> some View {
     if !viewModel.editorStatementResults.isEmpty {
-      // Multi-statement query - show dropdown selector + "Run with query"
+      // Multi-statement query - show dropdown selector + "Run with query" + Download button
       HStack(spacing: Spacing.sm) {
         // Dropdown menu for statement selection
         Menu {
@@ -359,6 +360,9 @@ struct EditorModeView: View {
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
         }
+        
+        // Download dropdown button (right-aligned)
+        downloadButton(result: result)
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
@@ -372,7 +376,7 @@ struct EditorModeView: View {
       )
 
     } else if let sourceQuery = result.sourceQuery {
-      // Single statement - show clickable query text
+      // Single statement - show clickable query text + Download button
       let displayQuery = removeComments(sourceQuery)
       HStack(spacing: Spacing.sm) {
         // Icon changes when query is copied (fixed width to prevent text shifting)
@@ -392,6 +396,15 @@ struct EditorModeView: View {
           .foregroundColor(.foregroundSubtle)
           .lineLimit(1)
           .truncationMode(.tail)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .onTapGesture {
+            copyQueryToClipboard(query: sourceQuery)
+          }
+          .cursor(NSCursor.pointingHand)
+          .help(isQueryCopied ? "Copied!" : "Click to copy query")
+        
+        // Download dropdown button (right-aligned)
+        downloadButton(result: result)
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
@@ -403,12 +416,108 @@ struct EditorModeView: View {
           .frame(height: 1),
         alignment: .top  // Border on top
       )
-      .onTapGesture {
-        copyQueryToClipboard(query: sourceQuery)
-      }
-      .cursor(NSCursor.pointingHand)
-      .help(isQueryCopied ? "Copied!" : "Click to copy query")
     }
+  }
+  
+  /// Download dropdown button
+  @ViewBuilder
+  private func downloadButton(result: CellResult) -> some View {
+    Menu {
+      // Download section
+      Section("Download") {
+        Button(action: { handleDownloadCSV(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as CSV")
+          }
+        }
+        
+        Button(action: { handleDownloadExcel(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as Excel")
+          }
+        }
+        
+        Button(action: { handleDownloadJSON(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as JSON")
+          }
+        }
+        
+        Button(action: { handleDownloadMarkdown(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as Markdown")
+          }
+        }
+      }
+      
+      Divider()
+      
+      // Copy section
+      Section("Copy to Clipboard") {
+        Button(action: { handleCopyTSV(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .tsv ? "checkmark" : "doc.on.clipboard")
+            Text("TSV/Excel")
+            if showCopyFeedback == .tsv {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+        
+        Button(action: { handleCopyJSON(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .json ? "checkmark" : "doc.on.clipboard")
+            Text("JSON")
+            if showCopyFeedback == .json {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+        
+        Button(action: { handleCopyMarkdown(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .markdown ? "checkmark" : "doc.on.clipboard")
+            Text("Markdown")
+            if showCopyFeedback == .markdown {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "arrow.down.circle")
+          .font(.system(size: 11))
+        Text("Download")
+          .font(.system(size: 11))
+        Image(systemName: "chevron.down")
+          .font(.system(size: 8))
+      }
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.inputBackground)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .stroke(Color.border, lineWidth: 1)
+      )
+    }
+    .buttonStyle(.plain)
+    .help("Download or copy result data")
+    .fixedSize()
   }
 
   private func errorView(error: String) -> some View {
@@ -564,6 +673,68 @@ struct EditorModeView: View {
     let firstPart = String(trimmed.prefix(25))
     let lastPart = String(trimmed.suffix(20))
     return "\(firstPart)...\(lastPart)"
+  }
+  
+  // MARK: - Download/Copy Actions
+  
+  /// Feedback type for copy operations
+  enum CopyFeedbackType {
+    case tsv
+    case json
+    case markdown
+  }
+  
+  private func handleDownloadCSV(result: CellResult) {
+    // For multi-statement, use selectedStatementIndex + 1, otherwise nil
+    let queryIndex = !viewModel.editorStatementResults.isEmpty 
+      ? viewModel.selectedStatementIndex + 1 
+      : nil
+    DataExporter.downloadCSV(result: result, queryIndex: queryIndex)
+  }
+  
+  private func handleDownloadExcel(result: CellResult) {
+    let queryIndex = !viewModel.editorStatementResults.isEmpty 
+      ? viewModel.selectedStatementIndex + 1 
+      : nil
+    DataExporter.downloadExcel(result: result, queryIndex: queryIndex)
+  }
+  
+  private func handleDownloadJSON(result: CellResult) {
+    let queryIndex = !viewModel.editorStatementResults.isEmpty 
+      ? viewModel.selectedStatementIndex + 1 
+      : nil
+    DataExporter.downloadJSON(result: result, queryIndex: queryIndex)
+  }
+  
+  private func handleDownloadMarkdown(result: CellResult) {
+    let queryIndex = !viewModel.editorStatementResults.isEmpty 
+      ? viewModel.selectedStatementIndex + 1 
+      : nil
+    DataExporter.downloadMarkdown(result: result, queryIndex: queryIndex)
+  }
+  
+  private func handleCopyTSV(result: CellResult) {
+    DataExporter.copyTSV(result: result)
+    showCopyFeedback = .tsv
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
+  }
+  
+  private func handleCopyJSON(result: CellResult) {
+    DataExporter.copyJSON(result: result)
+    showCopyFeedback = .json
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
+  }
+  
+  private func handleCopyMarkdown(result: CellResult) {
+    DataExporter.copyMarkdown(result: result)
+    showCopyFeedback = .markdown
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
   }
 }
 

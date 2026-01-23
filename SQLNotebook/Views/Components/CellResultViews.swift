@@ -207,6 +207,13 @@ struct ResultMetadataView: View {
 struct ResultQueryFooterView: View {
   let result: CellResult
   @Binding var isQueryCopied: Bool
+  @State private var showCopyFeedback: CopyFeedbackType? = nil
+  
+  enum CopyFeedbackType {
+    case tsv
+    case json
+    case markdown
+  }
 
   var body: some View {
     if let sourceQuery = result.sourceQuery {
@@ -234,14 +241,18 @@ struct ResultQueryFooterView: View {
             .foregroundColor(.foregroundSubtle)
             .lineLimit(1)
             .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onTapGesture {
+              copyQueryToClipboard(query: sourceQuery)
+            }
+            .cursor(NSCursor.pointingHand)
+            .help(isQueryCopied ? "Copied!" : "Click to copy query")
+          
+          // Download dropdown button (right-aligned)
+          downloadButton(result: result)
         }
         .padding(.top, Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onTapGesture {
-          copyQueryToClipboard(query: sourceQuery)
-        }
-        .cursor(NSCursor.pointingHand)
-        .help(isQueryCopied ? "Copied!" : "Click to copy query")
       }
     }
   }
@@ -257,6 +268,149 @@ struct ResultQueryFooterView: View {
     // Reset back to copy icon after 1 second
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
       isQueryCopied = false
+    }
+  }
+  
+  /// Download dropdown button
+  @ViewBuilder
+  private func downloadButton(result: CellResult) -> some View {
+    Menu {
+      // Download section
+      Section("Download") {
+        Button(action: { handleDownloadCSV(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as CSV")
+          }
+        }
+        
+        Button(action: { handleDownloadExcel(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as Excel")
+          }
+        }
+        
+        Button(action: { handleDownloadJSON(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as JSON")
+          }
+        }
+        
+        Button(action: { handleDownloadMarkdown(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("Download as Markdown")
+          }
+        }
+      }
+      
+      Divider()
+      
+      // Copy section
+      Section("Copy to Clipboard") {
+        Button(action: { handleCopyTSV(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .tsv ? "checkmark" : "doc.on.clipboard")
+            Text("TSV/Excel")
+            if showCopyFeedback == .tsv {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+        
+        Button(action: { handleCopyJSON(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .json ? "checkmark" : "doc.on.clipboard")
+            Text("JSON")
+            if showCopyFeedback == .json {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+        
+        Button(action: { handleCopyMarkdown(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .markdown ? "checkmark" : "doc.on.clipboard")
+            Text("Markdown")
+            if showCopyFeedback == .markdown {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "arrow.down.circle")
+          .font(.system(size: 11))
+        Text("Download")
+          .font(.system(size: 11))
+        Image(systemName: "chevron.down")
+          .font(.system(size: 8))
+      }
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.inputBackground)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .stroke(Color.border, lineWidth: 1)
+      )
+    }
+    .buttonStyle(.plain)
+    .help("Download or copy result data")
+    .fixedSize()
+  }
+  
+  // MARK: - Download/Copy Actions
+  
+  private func handleDownloadCSV(result: CellResult) {
+    DataExporter.downloadCSV(result: result, queryIndex: nil)
+  }
+  
+  private func handleDownloadExcel(result: CellResult) {
+    DataExporter.downloadExcel(result: result, queryIndex: nil)
+  }
+  
+  private func handleDownloadJSON(result: CellResult) {
+    DataExporter.downloadJSON(result: result, queryIndex: nil)
+  }
+  
+  private func handleDownloadMarkdown(result: CellResult) {
+    DataExporter.downloadMarkdown(result: result, queryIndex: nil)
+  }
+  
+  private func handleCopyTSV(result: CellResult) {
+    DataExporter.copyTSV(result: result)
+    showCopyFeedback = .tsv
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
+  }
+  
+  private func handleCopyJSON(result: CellResult) {
+    DataExporter.copyJSON(result: result)
+    showCopyFeedback = .json
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
+  }
+  
+  private func handleCopyMarkdown(result: CellResult) {
+    DataExporter.copyMarkdown(result: result)
+    showCopyFeedback = .markdown
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
     }
   }
 }
