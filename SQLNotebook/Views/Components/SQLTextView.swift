@@ -12,6 +12,7 @@ class SQLTextView: NSTextView {
   var onFocus: (() -> Void)?
   var onBlur: ((String) -> Void)?  // Callback with current text when losing focus
   var autocompleteProvider: SQLAutocompleteProvider?
+  var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
 
   // Autocomplete state
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []
@@ -165,7 +166,7 @@ class SQLTextView: NSTextView {
     return false
   }
 
-  /// Handles up/down arrow navigation between cells
+  /// Handles up/down arrow navigation between cells (notebook mode) or line boundaries (editor mode)
   /// Returns true if the event was handled as a navigation action
   private func handleArrowNavigation(with event: NSEvent) -> Bool {
     let isUpArrow = event.keyCode == 126
@@ -185,22 +186,34 @@ class SQLTextView: NSTextView {
     let cursorPosition = selectedRange().location
 
     if isUpArrow {
-      // Navigate to previous cell only if cursor is at the first line
-      // Check if there's a newline before the cursor position
+      // Check if cursor is at the first line (no newline before cursor)
       let textBeforeCursor = text.prefix(cursorPosition)
       if !textBeforeCursor.contains("\n") {
-        // No newline before cursor, we're on the first line
-        NotificationCenter.default.post(name: .selectPreviousCell, object: nil)
-        return true
+        // We're on the first line
+        if isEditorMode {
+          // Editor mode: Move cursor to beginning of line (IDE-like behavior)
+          setSelectedRange(NSRange(location: 0, length: 0))
+          return true
+        } else {
+          // Notebook mode: Navigate to previous cell
+          NotificationCenter.default.post(name: .selectPreviousCell, object: nil)
+          return true
+        }
       }
     } else if isDownArrow {
-      // Navigate to next cell only if cursor is at the last line
-      // Check if there's a newline after the cursor position
+      // Check if cursor is at the last line (no newline after cursor)
       let textAfterCursor = text.suffix(text.count - cursorPosition)
       if !textAfterCursor.contains("\n") {
-        // No newline after cursor, we're on the last line
-        NotificationCenter.default.post(name: .selectNextCell, object: nil)
-        return true
+        // We're on the last line
+        if isEditorMode {
+          // Editor mode: Move cursor to end of line (IDE-like behavior)
+          setSelectedRange(NSRange(location: text.count, length: 0))
+          return true
+        } else {
+          // Notebook mode: Navigate to next cell
+          NotificationCenter.default.post(name: .selectNextCell, object: nil)
+          return true
+        }
       }
     }
 
