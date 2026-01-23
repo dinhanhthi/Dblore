@@ -336,7 +336,8 @@ extension DatabaseConnectionManager {
         wasLimited: wasLimited,
         rowIdentifiers: rowIdentifiers,
         userLimitExceeded: userLimitExceeded,
-        userRequestedLimit: userRequestedLimit
+        userRequestedLimit: userRequestedLimit,
+        affectedRows: 0  // SELECT queries always have 0 affected rows
       )
 
     } catch let error as PSQLError {

@@ -33,8 +33,8 @@ struct ResultAreaView: View {
             isCaseSensitive: viewModel.searchState.isCaseSensitive,
             cellId: cellId
           )
-        } else if let affectedRows = result.affectedRows {
-          // Success message for UPDATE/DELETE/INSERT
+        } else if let affectedRows = result.affectedRows, affectedRows > 0, result.rows.isEmpty {
+          // Success message for UPDATE/DELETE/INSERT (only when no result table)
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
         } else {
           // Result table
@@ -158,6 +158,29 @@ struct ErrorResultView: View {
 struct ResultMetadataView: View {
   let result: CellResult
 
+  /// Determine color for affected rows text based on query type
+  /// - Green for INSERT/UPDATE queries with affected rows > 0
+  /// - Red for DELETE queries with affected rows > 0
+  /// - Subtle gray for SELECT, 0 affected rows, or when no query info available
+  private func affectedRowsColor(for result: CellResult) -> Color {
+    let affectedRows = result.affectedRows ?? 0
+    
+    // If no rows affected, use default gray color
+    guard affectedRows > 0, let query = result.sourceQuery else {
+      return .foregroundSubtle
+    }
+    
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    
+    if trimmed.hasPrefix("DELETE") {
+      return .red
+    } else if trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE") {
+      return .green
+    } else {
+      return .foregroundSubtle
+    }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Horizontal divider line
@@ -179,6 +202,11 @@ struct ResultMetadataView: View {
               .foregroundColor(.warning)
           }.font(.labelText)
         }
+
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+        Text("Affected: \(result.affectedRows ?? 0)")
+          .foregroundColor(affectedRowsColor(for: result))
 
         Text("|")
           .foregroundColor(.foregroundSubtle)
