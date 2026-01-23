@@ -158,7 +158,7 @@ struct EditorModeView: View {
             Text("•")
               .foregroundColor(.foregroundMuted)
 
-            Text(String(format: "%.2fs", viewModel.totalExecutionTime))
+            Text(formatExecutionTime(viewModel.totalExecutionTime))
               .font(.system(size: 12))
               .foregroundColor(.foregroundSubtle)
 
@@ -185,7 +185,7 @@ struct EditorModeView: View {
             Text("•")
               .foregroundColor(.foregroundMuted)
 
-            Text(String(format: "%.2fs", result.executionTime))
+            Text(formatExecutionTime(result.executionTime))
               .font(.system(size: 12))
               .foregroundColor(.foregroundSubtle)
 
@@ -204,7 +204,7 @@ struct EditorModeView: View {
             Text("•")
               .foregroundColor(.foregroundMuted)
 
-            Text(String(format: "%.2fs", result.executionTime))
+            Text(formatExecutionTime(result.executionTime))
               .font(.system(size: 12))
               .foregroundColor(.foregroundSubtle)
           }
@@ -441,6 +441,18 @@ struct EditorModeView: View {
   }
 
   // MARK: - Helpers
+
+  /// Format execution time with appropriate unit
+  /// - If time >= 1 second: show in seconds with 2 decimal places (e.g., "1.23s")
+  /// - If time < 1 second: show in milliseconds with 0 decimal places (e.g., "450ms")
+  private func formatExecutionTime(_ seconds: Double) -> String {
+    if seconds >= 1.0 {
+      return String(format: "%.2fs", seconds)
+    } else {
+      let milliseconds = seconds * 1000
+      return String(format: "%.0fms", milliseconds)
+    }
+  }
 
   /// Truncate query text for display in dropdown
   /// Remove comments from query text for display purposes
