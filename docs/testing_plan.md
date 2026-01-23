@@ -596,6 +596,8 @@ List of all test cases to implement for SQLNotebook project, organized by catego
 - [ ] Cmd+B adds code cell below
 - [ ] Cmd+Backspace deletes selected cell
 - [ ] Cmd+D duplicates cell
+- [ ] Cmd+Shift+J creates new SQL file
+- [ ] Cmd+Shift+S opens Save As dialog
 - [ ] Cmd+Shift+R toggles right sidebar
 - [ ] Cmd+Shift+L toggles left sidebar
 

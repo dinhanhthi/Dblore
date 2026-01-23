@@ -135,7 +135,7 @@ The system provides two types of notifications when limits are applied:
 
 ### Adjusting Row Limit
 
-1. Open Settings sidebar (Cmd+Shift+S or Settings button)
+1. Open Settings sidebar (Cmd+, or Settings button)
 2. Navigate to "Result Table" section
 3. Adjust "Max Rows" slider (10-200 rows)
 4. Changes apply immediately to new queries

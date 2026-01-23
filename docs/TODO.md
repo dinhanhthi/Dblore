@@ -21,7 +21,7 @@
 **Key Features Implemented:**
 - Header actions (Run All, Clear Outputs, Add Cell) with confirmation dialogs
 - Drag & drop cell reordering with visual feedback
-- Global keyboard shortcuts (Cmd+Enter, Cmd+S, Cmd+D, etc.)
+- Global keyboard shortcuts (Cmd+Enter, Cmd+S, Cmd+D, Cmd+Shift+S, Cmd+Shift+J, etc.)
 - Auto-save with debounce and document dirty state tracking
 - Result display controls (show/hide per cell or all cells)
 - File optimization system (size monitoring, compact JSON, manual cleanup)

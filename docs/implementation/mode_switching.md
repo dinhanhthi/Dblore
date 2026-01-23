@@ -90,7 +90,8 @@ final class SQLEditorDocument: ReferenceFileDocument {
 
 - **File > New (Cmd+N)** → Creates new `.sqlnb` notebook
 - **File > New Notebook (Cmd+Shift+N)** → Creates new `.sqlnb` notebook
-- **File > New SQL File (Cmd+Shift+E)** → Shows save dialog, creates `.sql` file
+- **File > New SQL File (Cmd+Shift+J)** → Shows save dialog, creates `.sql` file
+- **File > Save As (Cmd+Shift+S)** → Save document with new name
 - **File > Open (Cmd+O)** → Opens any supported file type
 
 ### Implementation

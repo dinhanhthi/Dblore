@@ -141,7 +141,8 @@ When autocomplete popup is open:
 | Shortcut | Action | Description |
 |----------|--------|-------------|
 | `Cmd+Shift+N` | New Notebook | Create a new notebook (.sqlnb) |
-| `Cmd+Shift+E` | New SQL File | Create a new SQL file (.sql) |
+| `Cmd+Shift+J` | New SQL File | Create a new SQL file (.sql) |
+| `Cmd+Shift+S` | Save As | Save the current document with a new name |
 
 **Note:** `Cmd+O` (Open) and `Cmd+S` (Save) are native macOS shortcuts supported automatically.
 

@@ -679,6 +679,8 @@ Display SQL errors inline below the cell:
 | `Cmd+B` | Add code cell below | ✅ |
 | `Cmd+Delete` | Delete selected cell | ✅ |
 | `Cmd+D` | Duplicate cell | ✅ |
+| `Cmd+Shift+J` | New SQL file | ✅ |
+| `Cmd+Shift+S` | Save As | ✅ |
 | `Cmd+,` | Toggle right sidebar | ✅ |
 | `Cmd+/` | Comment/uncomment line in SQL | ⏳ TODO |
 | `Escape` | Deselect cell / Close sidebar | ✅ |
