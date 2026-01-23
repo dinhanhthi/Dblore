@@ -53,21 +53,24 @@ struct NotebookContentView: View {
         .clipped()
 
         // Main content area
-        HStack(spacing: 0) {
-          // Left sidebar (conditionally shown)
-          if viewModel.isLeftSidebarVisible {
-            LeftSidebarView(viewModel: viewModel)
-              .transition(.move(edge: .leading))
-          }
+        GeometryReader { geometry in
+          HStack(spacing: 0) {
+            // Left sidebar (conditionally shown)
+            if viewModel.isLeftSidebarVisible {
+              LeftSidebarView(viewModel: viewModel)
+                .frame(width: geometry.size.width * 0.3)
+                .transition(.move(edge: .leading))
+            }
 
-          // Main scrollable content (notebook mode)
-          mainContent
-            .frame(maxWidth: .infinity)
+            // Main scrollable content (notebook mode)
+            mainContent
+              .frame(maxWidth: .infinity)
 
-          // Right sidebar (conditionally shown)
-          if viewModel.isRightSidebarVisible {
-            RightSidebarView(viewModel: viewModel)
-              .transition(.move(edge: .trailing))
+            // Right sidebar (conditionally shown)
+            if viewModel.isRightSidebarVisible {
+              RightSidebarView(viewModel: viewModel)
+                .transition(.move(edge: .trailing))
+            }
           }
         }
 
