@@ -42,6 +42,8 @@ struct AutocompleteSuggestionRow: View {
   let isSelected: Bool
   let onSelect: () -> Void
 
+  @State private var isHovering = false
+
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Icon based on suggestion type
@@ -66,10 +68,23 @@ struct AutocompleteSuggestionRow: View {
     }
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, Spacing.xs)
-    .background(isSelected ? Color.accent.opacity(0.15) : Color.clear)
+    .background(backgroundColor)
     .contentShape(Rectangle())
     .onTapGesture {
       onSelect()
+    }
+    .onHover { hovering in
+      isHovering = hovering
+    }
+  }
+
+  private var backgroundColor: Color {
+    if isSelected {
+      return Color.accent.opacity(0.15)
+    } else if isHovering {
+      return Color.accent.opacity(0.08)
+    } else {
+      return Color.clear
     }
   }
 
