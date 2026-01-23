@@ -17,6 +17,7 @@ class SQLTextView: NSTextView {
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []
   private var autocompleteSelectedIndex: Int = 0
   private var autocompletePopover: NSPopover?
+  private var isAcceptingSuggestion = false  // Flag to prevent retriggering autocomplete
 
   // Custom pasteboard type for line copy metadata
   private static let lineCopyType = NSPasteboard.PasteboardType("com.sqlnotebook.copy-type")
@@ -69,6 +70,8 @@ class SQLTextView: NSTextView {
 
   override func didChangeText() {
     super.didChangeText()
+    // Skip autocomplete update if we're accepting a suggestion
+    guard !isAcceptingSuggestion else { return }
     // Update autocomplete suggestions when text changes
     updateAutocompleteSuggestions()
   }
@@ -667,6 +670,9 @@ class SQLTextView: NSTextView {
 
   /// Accept a specific suggestion (used for both keyboard and mouse selection)
   private func acceptSuggestion(_ suggestion: AutocompleteSuggestion) {
+    // Set flag to prevent autocomplete from retriggering during text insertion
+    isAcceptingSuggestion = true
+    
     // Find the token being completed
     let cursorPosition = selectedRange().location
 
@@ -678,6 +684,11 @@ class SQLTextView: NSTextView {
 
     // Hide autocomplete after accepting
     hideAutocomplete()
+    
+    // Reset flag after a short delay to allow text insertion to complete
+    DispatchQueue.main.async { [weak self] in
+      self?.isAcceptingSuggestion = false
+    }
   }
 
   /// Extract the current token being typed at cursor position
