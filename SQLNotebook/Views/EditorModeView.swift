@@ -246,15 +246,15 @@ struct EditorModeView: View {
       isQueryCopied = false
     }
   }
-  
+
   private func copyErrorToClipboard(error: String) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
     pasteboard.setString(error, forType: .string)
-    
+
     // Show checkmark feedback
     isErrorCopied = true
-    
+
     // Reset back to copy icon after 500ms
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
       isErrorCopied = false
@@ -278,7 +278,9 @@ struct EditorModeView: View {
         // Dropdown menu for statement selection
         Menu {
           ForEach(viewModel.editorStatementResults, id: \.id) { statementResult in
-            let index = viewModel.editorStatementResults.firstIndex(where: { $0.id == statementResult.id }) ?? 0
+            let index =
+              viewModel.editorStatementResults.firstIndex(where: { $0.id == statementResult.id })
+              ?? 0
             Button(action: {
               viewModel.selectEditorStatement(at: index)
             }) {
@@ -286,7 +288,7 @@ struct EditorModeView: View {
                 // Combined text: "Result N • query text (truncated)"
                 (Text("Result \(index + 1) • ")
                   .font(.system(size: 11))
-                + Text(truncateQuery(statementResult.queryText))
+                  + Text(truncateQuery(statementResult.queryText))
                   .font(.system(size: 11, design: .monospaced)))
                   .lineLimit(1)
 
@@ -418,7 +420,7 @@ struct EditorModeView: View {
         .padding(Spacing.md)
       }
       .background(Color.red.opacity(0.05))
-      
+
       // Copy button (top-right, using FloatingPanelButton style)
       Button(action: { copyErrorToClipboard(error: error) }) {
         Image(systemName: isErrorCopied ? "checkmark" : "doc.on.doc")

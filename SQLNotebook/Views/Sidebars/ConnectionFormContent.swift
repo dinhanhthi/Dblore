@@ -194,9 +194,11 @@ struct ConnectionFormContent: View {
   private func formFields() -> some View {
     // Connection Name (required)
     FormField(label: "Connection Name") {
-      TextField("e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name)
-        .textFieldStyle(.plain)
-        .inputStyle()
+      TextField(
+        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
+      )
+      .textFieldStyle(.plain)
+      .inputStyle()
     }
 
     // Host and Port
@@ -327,9 +329,11 @@ struct ConnectionFormContent: View {
   private func connectionStringFields() -> some View {
     // Connection Name (required)
     FormField(label: "Connection Name") {
-      TextField("e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name)
-        .textFieldStyle(.plain)
-        .inputStyle()
+      TextField(
+        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
+      )
+      .textFieldStyle(.plain)
+      .inputStyle()
     }
 
     FormField(label: "Connection String") {
@@ -552,7 +556,8 @@ struct ConnectionFormContent: View {
 
   private func testConnection() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty else {
+    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    else {
       testResult = .failure("Connection name is required")
       return
     }
@@ -574,7 +579,8 @@ struct ConnectionFormContent: View {
 
   private func connect() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty else {
+    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    else {
       testResult = .failure("Connection name is required")
       return
     }

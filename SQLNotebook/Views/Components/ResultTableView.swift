@@ -818,7 +818,6 @@ private class ResultTableScrollView: NSScrollView {
   }
 }
 
-
 // MARK: - Result Metadata Bar
 
 struct ResultMetadataBar: View {

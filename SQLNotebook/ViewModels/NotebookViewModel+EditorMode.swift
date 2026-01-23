@@ -61,7 +61,8 @@ extension NotebookViewModel {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(query) {
         // Execute all statements and get detailed results
-        let (statementResults, totalTime) = try await connectionManager
+        let (statementResults, totalTime) =
+          try await connectionManager
           .executeMultipleStatementsDetailed(query)
 
         totalExecutionTime = totalTime
