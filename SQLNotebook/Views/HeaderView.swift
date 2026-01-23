@@ -158,6 +158,7 @@ struct HeaderView: View {
 
         ConnectionButton(
           connectionState: viewModel.connectionState,
+          connectionConfig: viewModel.notebook.connectionConfig,
           onConnect: {
             // Toggle sidebar if already showing connection form
             if viewModel.isRightSidebarVisible,
@@ -194,6 +195,7 @@ struct HeaderView: View {
 
 struct ConnectionButton: View {
   let connectionState: ConnectionState
+  let connectionConfig: ConnectionConfig?
   let onConnect: () -> Void
   let onDisconnect: () -> Void
   let onShowDetails: () -> Void
@@ -246,7 +248,7 @@ struct ConnectionButton: View {
         }
       }
       .confirmationDialog(
-        "Disconnect from database?",
+        disconnectDialogTitle,
         isPresented: $showDisconnectConfirmation,
         titleVisibility: .visible
       ) {
@@ -296,6 +298,13 @@ struct ConnectionButton: View {
       // The icon will indicate the actual state
       return "Connect"
     }
+  }
+
+  private var disconnectDialogTitle: String {
+    if let config = connectionConfig, !config.name.isEmpty {
+      return "Disconnect from database \(config.name)?"
+    }
+    return "Disconnect from database?"
   }
 }
 
