@@ -14,6 +14,11 @@ struct ConnectionInfoContent: View {
     if let config {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
+          // Connection name (if provided)
+          if !config.name.isEmpty {
+            infoRow(label: "Connection Name", value: config.name)
+          }
+          
           infoRow(label: "Host", value: config.host)
           infoRow(label: "Port", value: String(config.port))
           infoRow(label: "Database", value: config.database)
