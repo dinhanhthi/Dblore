@@ -81,7 +81,7 @@ struct EditorContentView: View {
         }
 
         // Footer
-        FooterView(viewModel: viewModel, lastSaved: lastSaved)
+        FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: true)
       }
 
       // Toast notification (bottom-right corner)
