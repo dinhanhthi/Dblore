@@ -74,6 +74,22 @@ struct FloatingPanelButton: View {
   }
 }
 
+struct FloatingPanelToggleButton: View {
+  let icon: String
+  let helpText: String
+  let isActive: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: icon)
+        .font(.system(size: 12))
+    }
+    .buttonStyle(FloatingPanelToggleButtonStyle(isActive: isActive))
+    .help(helpText)
+  }
+}
+
 // MARK: - Floating Action Panel (Bottom)
 
 struct FloatingActionPanelView: View {
