@@ -19,6 +19,7 @@ class SQLTextView: NSTextView {
   private var autocompleteSelectedIndex: Int = 0
   private var autocompletePopover: NSPopover?
   private var isAcceptingSuggestion = false  // Flag to prevent retriggering autocomplete
+  private var isProgrammaticEdit = false  // Flag to prevent autocomplete during programmatic edits
 
   // Custom pasteboard type for line copy metadata
   private static let lineCopyType = NSPasteboard.PasteboardType("com.sqlnotebook.copy-type")
@@ -71,8 +72,8 @@ class SQLTextView: NSTextView {
 
   override func didChangeText() {
     super.didChangeText()
-    // Skip autocomplete update if we're accepting a suggestion
-    guard !isAcceptingSuggestion else { return }
+    // Skip autocomplete update if we're accepting a suggestion or doing programmatic edits
+    guard !isAcceptingSuggestion && !isProgrammaticEdit else { return }
     // Update autocomplete suggestions when text changes
     updateAutocompleteSuggestions()
   }
@@ -300,6 +301,10 @@ class SQLTextView: NSTextView {
     guard let pasteText = pasteboard.string(forType: .string) else { return }
     guard let textStorage = textStorage else { return }
 
+    // Set flag to prevent autocomplete from showing during paste
+    isProgrammaticEdit = true
+    defer { isProgrammaticEdit = false }
+
     let selectedRange = selectedRange()
     let text = textStorage.string as NSString
 
@@ -400,6 +405,10 @@ class SQLTextView: NSTextView {
   /// Toggle SQL comment (--) for selected lines
   private func toggleComment() {
     guard let textStorage = textStorage else { return }
+
+    // Set flag to prevent autocomplete from showing during comment toggle
+    isProgrammaticEdit = true
+    defer { isProgrammaticEdit = false }
 
     let selectedRange = selectedRange()
     let text = textStorage.string as NSString

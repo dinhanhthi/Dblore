@@ -77,7 +77,7 @@ struct PaginationView: View {
       Spacer()
 
       // Total info
-      Text("\(info.totalRows) rows • \(info.totalPages) pages")
+      Text("\(info.totalRows) rows total • \(info.totalPages) pages")
         .font(.caption)
         .foregroundColor(.foregroundSubtle)
     }
