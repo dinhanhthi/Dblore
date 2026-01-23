@@ -138,7 +138,8 @@ extension NotebookViewModel {
 
       editorResult = CellResult.errorResult(
         error.localizedDescription,
-        executionTime: executionTime
+        executionTime: executionTime,
+        sourceQuery: query
       )
     }
   }
