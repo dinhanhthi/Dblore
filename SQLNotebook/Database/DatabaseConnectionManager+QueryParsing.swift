@@ -22,6 +22,18 @@ extension DatabaseConnectionManager {
     return trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT")
   }
 
+  /// Check if a query is a DELETE statement
+  func isDeleteQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.uppercased().hasPrefix("DELETE")
+  }
+
+  /// Check if a query is an INSERT or UPDATE statement
+  func isInsertOrUpdateQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE")
+  }
+
   // MARK: - LIMIT Clause Detection
 
   /// Check if a query already has a LIMIT clause

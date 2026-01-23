@@ -173,15 +173,13 @@ struct EditorModeView: View {
               .font(.system(size: 12))
               .foregroundColor(.foregroundMuted)
 
-            if let affectedRows = result.affectedRows {
-              Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
-                .font(.system(size: 12))
-                .foregroundColor(.foregroundSubtle)
-            } else {
-              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
-                .font(.system(size: 12))
-                .foregroundColor(.foregroundSubtle)
-            }
+            Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundSubtle)
+
+            Text("(\(result.affectedRows ?? 0) affected)")
+              .font(.system(size: 12))
+              .foregroundColor(affectedRowsColor(for: result))
 
             Text("•")
               .foregroundColor(.foregroundMuted)
@@ -192,15 +190,13 @@ struct EditorModeView: View {
 
           } else {
             // Single statement - show row count and execution time
-            if let affectedRows = result.affectedRows {
-              Text("\(affectedRows) row\(affectedRows == 1 ? "" : "s") affected")
-                .font(.system(size: 12))
-                .foregroundColor(.foregroundSubtle)
-            } else {
-              Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
-                .font(.system(size: 12))
-                .foregroundColor(.foregroundSubtle)
-            }
+            Text("\(result.rowCount) row\(result.rowCount == 1 ? "" : "s")")
+              .font(.system(size: 12))
+              .foregroundColor(.foregroundSubtle)
+
+            Text("(\(result.affectedRows ?? 0) affected)")
+              .font(.system(size: 12))
+              .foregroundColor(affectedRowsColor(for: result))
 
             Text("•")
               .foregroundColor(.foregroundMuted)
@@ -566,6 +562,29 @@ struct EditorModeView: View {
     } else {
       let milliseconds = seconds * 1000
       return String(format: "%.0fms", milliseconds)
+    }
+  }
+
+  /// Determine color for affected rows text based on query type
+  /// - Green for INSERT/UPDATE queries with affected rows > 0
+  /// - Red for DELETE queries with affected rows > 0
+  /// - Subtle gray for SELECT, 0 affected rows, or when no query info available
+  private func affectedRowsColor(for result: CellResult) -> Color {
+    let affectedRows = result.affectedRows ?? 0
+    
+    // If no rows affected, use default gray color
+    guard affectedRows > 0, let query = result.sourceQuery else {
+      return .foregroundSubtle
+    }
+    
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    
+    if trimmed.hasPrefix("DELETE") {
+      return .red
+    } else if trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE") {
+      return .green
+    } else {
+      return .foregroundSubtle
     }
   }
 
