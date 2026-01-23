@@ -8,6 +8,7 @@ import SwiftUI
 struct FooterView: View {
   @Bindable var viewModel: NotebookViewModel
   var lastSaved: Date?
+  var isEditorMode: Bool = false
 
   var body: some View {
     HStack(spacing: Spacing.lg) {
@@ -42,14 +43,16 @@ struct FooterView: View {
             .foregroundColor(.foregroundSubtle)
         }
 
-        // Notebook stats
-        Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
+        // Notebook stats (only in notebook mode)
+        if !isEditorMode {
+          Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
 
-        Text("|")
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
+          Text("|")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+        }
 
         // File size indicator
         HStack(spacing: 4) {
