@@ -162,6 +162,53 @@ struct FloatingPanelButtonStyle: ButtonStyle {
   }
 }
 
+struct FloatingPanelToggleButtonStyle: ButtonStyle {
+  let isActive: Bool
+  @State private var isHovering = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .foregroundColor(
+        // Light theme: violet when hovering or active, muted otherwise
+        // Dark theme: always muted
+        colorScheme == .light && (isHovering || isActive)
+          ? Color.accent
+          : .foregroundMuted
+      )
+      .frame(width: 26, height: 26)
+      .background(
+        ZStack {
+          // Opaque base layer to hide content behind
+          Circle()
+            .fill(Color.cellBackgroundHover)
+
+          // Hover/press/active overlay with accent color (only in dark theme)
+          if colorScheme == .dark && (isHovering || configuration.isPressed || isActive) {
+            Circle()
+              .fill(Color.accent.opacity(0.15))
+          }
+        }
+        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+      )
+      .overlay(
+        Circle()
+          .stroke(
+            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.borderSubtle,
+            lineWidth: 1
+          )
+      )
+      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+      .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+      .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .animation(.easeInOut(duration: 0.15), value: isActive)
+      .onHover { hovering in
+        isHovering = hovering
+      }
+      .cursor(.pointingHand)
+  }
+}
+
 // MARK: - Custom Shapes
 
 struct RoundedLeftBorder: Shape {

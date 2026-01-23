@@ -22,6 +22,7 @@ struct CellInfoContent: View {
   @State private var validationError: String?
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
+  @State private var isWordWrapEnabled = false
   @FocusState private var isTextEditorFocused: Bool
 
   @Environment(NotebookViewModel.self) private var viewModel
@@ -98,22 +99,25 @@ struct CellInfoContent: View {
               action: copyToClipboard
             )
           } else {
-            // Beautify, Edit and Copy buttons (for non-boolean types)
+            // Word Wrap, Beautify, Edit and Copy buttons (for non-boolean types)
+
+            // Word Wrap button (only for string type)
+            if isStringValue {
+              FloatingPanelToggleButton(
+                icon: "text.alignleft",
+                helpText: "Word Wrap",
+                isActive: isWordWrapEnabled,
+                action: { isWordWrapEnabled.toggle() }
+              )
+            }
 
             // Beautify button (only for string type)
-            if isStringValue && !isBeautified {
-              FloatingPanelButton(
+            if isStringValue {
+              FloatingPanelToggleButton(
                 icon: "curlybraces",
-                helpText: "Beautify JSON",
-                useSymbolEffect: false,
-                action: beautifyJSON
-              )
-            } else if isStringValue && isBeautified {
-              FloatingPanelButton(
-                icon: "arrow.counterclockwise",
-                helpText: "Show Original",
-                useSymbolEffect: false,
-                action: showOriginal
+                helpText: isBeautified ? "Show Original" : "Beautify JSON",
+                isActive: isBeautified,
+                action: isBeautified ? showOriginal : beautifyJSON
               )
             }
 
@@ -191,29 +195,63 @@ struct CellInfoContent: View {
         if isBeautified {
           // Nested ScrollViews for both axes to avoid centering issue
           // Horizontal outside so scrollbar is always visible at bottom
-          ScrollView(.horizontal, showsIndicators: true) {
+          if isWordWrapEnabled {
+            // With word wrap: only vertical scroll
             ScrollView(.vertical, showsIndicators: true) {
               HighlightedJSONText(json: beautifiedJSON)
                 .padding(Spacing.sm)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.tableHeaderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+          } else {
+            // Without word wrap: both horizontal and vertical scroll
+            ScrollView(.horizontal, showsIndicators: true) {
+              ScrollView(.vertical, showsIndicators: true) {
+                HighlightedJSONText(json: beautifiedJSON)
+                  .padding(Spacing.sm)
+              }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.tableHeaderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           }
-          .frame(maxHeight: .infinity, alignment: .top)
-          .background(Color.tableHeaderBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         } else {
-          ScrollView(.vertical, showsIndicators: true) {
-            Text(value.fullString)
-              .font(.mono)
-              .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
-              .italic(value.isNull)
-              .textSelection(.enabled)
-              .fixedSize(horizontal: false, vertical: true)
-              .frame(maxWidth: .infinity, alignment: .topLeading)
-              .padding(Spacing.sm)
+          if isWordWrapEnabled {
+            // With word wrap: only vertical scroll
+            ScrollView(.vertical, showsIndicators: true) {
+              Text(value.fullString)
+                .font(.mono)
+                .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
+                .italic(value.isNull)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(Spacing.sm)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.tableHeaderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+          } else {
+            // Without word wrap: both horizontal and vertical scroll
+            // Nested ScrollViews for both axes to avoid centering issue
+            // Horizontal outside so scrollbar is always visible at bottom
+            ScrollView(.horizontal, showsIndicators: true) {
+              ScrollView(.vertical, showsIndicators: true) {
+                Text(value.fullString)
+                  .font(.mono)
+                  .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
+                  .italic(value.isNull)
+                  .textSelection(.enabled)
+                  .fixedSize(horizontal: true, vertical: true)
+                  .padding(Spacing.sm)
+              }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.tableHeaderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
           }
-          .frame(maxHeight: .infinity, alignment: .top)
-          .background(Color.tableHeaderBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         }
       }
     }
