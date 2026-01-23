@@ -548,7 +548,9 @@ class SQLTextView: NSTextView {
       let contentView = AutocompletePopupView(
         suggestions: Array(autocompleteSuggestions.prefix(20)),
         selectedIndex: autocompleteSelectedIndex,
-        onSelect: { _ in }
+        onSelect: { [weak self] suggestion in
+          self?.acceptSuggestion(suggestion)
+        }
       )
       let hostingController = NSHostingController(rootView: contentView)
       hostingController.view.wantsLayer = true
@@ -574,8 +576,8 @@ class SQLTextView: NSTextView {
     let contentView = AutocompletePopupView(
       suggestions: Array(autocompleteSuggestions.prefix(20)),  // Limit to 20 items
       selectedIndex: autocompleteSelectedIndex,
-      onSelect: { _ in
-        // Selection handled by keyboard events
+      onSelect: { [weak self] suggestion in
+        self?.acceptSuggestion(suggestion)
       }
     )
 
@@ -660,7 +662,11 @@ class SQLTextView: NSTextView {
     }
 
     let suggestion = autocompleteSuggestions[autocompleteSelectedIndex]
+    acceptSuggestion(suggestion)
+  }
 
+  /// Accept a specific suggestion (used for both keyboard and mouse selection)
+  private func acceptSuggestion(_ suggestion: AutocompleteSuggestion) {
     // Find the token being completed
     let cursorPosition = selectedRange().location
 
@@ -747,8 +753,8 @@ class SQLTextView: NSTextView {
     let contentView = AutocompletePopupView(
       suggestions: Array(autocompleteSuggestions.prefix(20)),
       selectedIndex: autocompleteSelectedIndex,
-      onSelect: { _ in
-        // Selection handled by keyboard events
+      onSelect: { [weak self] suggestion in
+        self?.acceptSuggestion(suggestion)
       }
     )
 
