@@ -79,7 +79,7 @@ struct SuccessResultView: View {
         Text("|")
           .foregroundColor(.foregroundSubtle)
 
-        Text(String(format: "Execution time: %.3fs", executionTime))
+        Text("Execution time: \(CellResultViews.formatExecutionTime(executionTime))")
           .font(.mono)
           .foregroundColor(.foregroundSubtle)
       }
@@ -182,7 +182,7 @@ struct ResultMetadataView: View {
 
         Text("|")
           .foregroundColor(.foregroundSubtle)
-        Text(String(format: "Execution time: %.3fs", result.executionTime))
+        Text("Execution time: \(CellResultViews.formatExecutionTime(result.executionTime))")
         Text("|")
           .foregroundColor(.foregroundSubtle)
         Text(CellResultViews.formatTimestamp(result.timestamp))
@@ -266,6 +266,18 @@ enum CellResultViews {
 
   static func formatTimestamp(_ date: Date) -> String {
     timestampFormatter.string(from: date)
+  }
+
+  /// Format execution time with appropriate unit
+  /// - If time >= 1 second: show in seconds with 3 decimal places (e.g., "1.234s")
+  /// - If time < 1 second: show in milliseconds with 0 decimal places (e.g., "450ms")
+  static func formatExecutionTime(_ seconds: Double) -> String {
+    if seconds >= 1.0 {
+      return String(format: "%.3fs", seconds)
+    } else {
+      let milliseconds = seconds * 1000
+      return String(format: "%.0fms", milliseconds)
+    }
   }
 }
 
