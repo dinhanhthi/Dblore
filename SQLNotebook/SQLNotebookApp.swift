@@ -246,10 +246,10 @@ struct NotebookCommands: Commands {
         }
         .keyboardShortcut(.delete, modifiers: .command)
 
-        Button("Duplicate Cell") {
-          NotificationCenter.default.post(name: .duplicateCell, object: nil)
-        }
-        .keyboardShortcut("d", modifiers: .command)
+      Button("Duplicate Cell") {
+        NotificationCenter.default.post(name: .duplicateCell, object: nil)
+      }
+      .keyboardShortcut("d", modifiers: .command)
       }
 
       // View commands (notebook-specific) - use focused actions for window-specific behavior
@@ -386,7 +386,17 @@ struct NewDocumentCommands: Commands {
       } label: {
         Label("New SQL File", systemImage: "doc.text")
       }
-      .keyboardShortcut("e", modifiers: [.command, .shift])
+      .keyboardShortcut("j", modifiers: [.command, .shift])
+    }
+
+    // Save As command
+    CommandGroup(after: .saveItem) {
+      Button {
+        saveCurrentDocumentAs()
+      } label: {
+        Text("Save As...")
+      }
+      .keyboardShortcut("s", modifiers: [.command, .shift])
     }
   }
 
@@ -417,6 +427,16 @@ struct NewDocumentCommands: Commands {
         }
       }
     }
+  }
+
+  private func saveCurrentDocumentAs() {
+    // Get the current document
+    guard let currentDocument = NSDocumentController.shared.currentDocument else {
+      return
+    }
+
+    // Use the built-in runModalSavePanel to show Save As dialog
+    currentDocument.runModalSavePanel(for: .saveAsOperation, delegate: nil, didSave: nil, contextInfo: nil)
   }
 }
 

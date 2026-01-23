@@ -458,7 +458,8 @@ struct SettingsContent: View {
   private var notebookKeyboardShortcutsList: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       shortcutRow(action: "New Notebook", shortcut: "Cmd+Shift+N")
-      shortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+E")
+      shortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+J")
+      shortcutRow(action: "Save As", shortcut: "Cmd+Shift+S")
       shortcutRow(action: "Add New Cell", shortcut: "Cmd+Option+N")
       shortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
       shortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
@@ -476,7 +477,8 @@ struct SettingsContent: View {
   private var editorKeyboardShortcutsList: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       shortcutRow(action: "New Notebook", shortcut: "Cmd+Shift+N")
-      shortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+E")
+      shortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+J")
+      shortcutRow(action: "Save As", shortcut: "Cmd+Shift+S")
       shortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
       shortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
       shortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
