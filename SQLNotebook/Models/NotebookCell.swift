@@ -14,6 +14,59 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var result: CellResult?
   var isRunning: Bool
   var isResultVisible: Bool
+  /// Results for multi-statement queries (empty for single statement)
+  var statementResults: [StatementResult]
+  /// Currently selected statement index (0-based) for multi-statement queries
+  var selectedStatementIndex: Int
+  /// Total execution time for all statements (for multi-statement queries)
+  var totalExecutionTime: TimeInterval?
+
+  // MARK: - Codable
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case cellType
+    case content
+    case executionCount
+    case result
+    case isRunning
+    case isResultVisible
+    case statementResults
+    case selectedStatementIndex
+    case totalExecutionTime
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    cellType = try container.decode(CellType.self, forKey: .cellType)
+    content = try container.decode(String.self, forKey: .content)
+    executionCount = try container.decodeIfPresent(Int.self, forKey: .executionCount)
+    result = try container.decodeIfPresent(CellResult.self, forKey: .result)
+    isRunning = try container.decodeIfPresent(Bool.self, forKey: .isRunning) ?? false
+    isResultVisible = try container.decodeIfPresent(Bool.self, forKey: .isResultVisible) ?? true
+    // New properties with default values for backward compatibility
+    statementResults =
+      try container.decodeIfPresent([StatementResult].self, forKey: .statementResults) ?? []
+    selectedStatementIndex =
+      try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
+    totalExecutionTime =
+      try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(cellType, forKey: .cellType)
+    try container.encode(content, forKey: .content)
+    try container.encodeIfPresent(executionCount, forKey: .executionCount)
+    try container.encodeIfPresent(result, forKey: .result)
+    try container.encode(isRunning, forKey: .isRunning)
+    try container.encode(isResultVisible, forKey: .isResultVisible)
+    try container.encode(statementResults, forKey: .statementResults)
+    try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
+    try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
+  }
 
   nonisolated init(
     id: UUID = UUID(),
@@ -22,7 +75,10 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     executionCount: Int? = nil,
     result: CellResult? = nil,
     isRunning: Bool = false,
-    isResultVisible: Bool = true
+    isResultVisible: Bool = true,
+    statementResults: [StatementResult] = [],
+    selectedStatementIndex: Int = 0,
+    totalExecutionTime: TimeInterval? = nil
   ) {
     self.id = id
     self.cellType = cellType
@@ -31,6 +87,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.result = result
     self.isRunning = isRunning
     self.isResultVisible = isResultVisible
+    self.statementResults = statementResults
+    self.selectedStatementIndex = selectedStatementIndex
+    self.totalExecutionTime = totalExecutionTime
   }
 }
 
@@ -40,7 +99,7 @@ enum CellType: String, Codable, Sendable {
 }
 
 /// Result of executing a single SQL statement (within a multi-statement query)
-struct StatementResult: Sendable, Identifiable {
+struct StatementResult: Codable, Sendable, Identifiable {
   let id: UUID
   let queryText: String  // The individual statement text
   let result: CellResult  // The execution result

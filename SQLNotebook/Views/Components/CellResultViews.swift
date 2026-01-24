@@ -15,6 +15,11 @@ struct ResultAreaView: View {
   let cellId: UUID
   @State private var isQueryCopied: Bool = false
 
+  /// Get the cell from viewModel
+  private var cell: NotebookCell? {
+    viewModel.notebook.cells.first(where: { $0.id == cellId })
+  }
+
   var body: some View {
     HStack(alignment: .top, spacing: 0) {
       // Fake sidebar to align with cell sidebar
@@ -22,13 +27,26 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        // Query footer (shows source query with click-to-copy) - always shown first
-        ResultQueryFooterView(
-          result: result,
-          isQueryCopied: $isQueryCopied,
-          viewModel: viewModel,
-          cellId: cellId
-        )
+        // Multi-statement selector (shown if there are multiple statements)
+        if let cell = cell, !cell.statementResults.isEmpty {
+          StatementSelectorView(
+            statementResults: cell.statementResults,
+            selectedIndex: cell.selectedStatementIndex,
+            cellId: cellId,
+            viewModel: viewModel,
+            onSelect: { index in
+              viewModel.selectCellStatement(cellId: cellId, at: index)
+            }
+          )
+        } else {
+          // Single statement - show query footer
+          ResultQueryFooterView(
+            result: result,
+            isQueryCopied: $isQueryCopied,
+            viewModel: viewModel,
+            cellId: cellId
+          )
+        }
 
         if let error = result.error {
           // Error display with search highlighting

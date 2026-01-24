@@ -74,54 +74,119 @@ extension NotebookViewModel {
     var result: CellResult?
 
     do {
-      // Execute query using DatabaseConnectionManager
-      // Use app's maxRowLimit setting
-      let queryResult = try await connectionManager.executeQuery(
-        task.query,
-        maxRows: AppSettings.shared.maxRowLimit
-      )
+      // Check if this is a multi-statement query
+      if connectionManager.hasMultipleStatements(task.query) {
+        // Execute all statements and get detailed results
+        let (statementResults, totalTime) =
+          try await connectionManager
+          .executeMultipleStatementsDetailed(task.query, maxRows: AppSettings.shared.maxRowLimit)
 
-      executionCounter += 1
+        executionCounter += 1
 
-      // Extract table name from query (simple SELECT parsing)
-      let tableName = extractTableName(from: task.query)
+        // Convert to StatementResult array
+        let convertedStatements = statementResults.enumerated().map { index, tuple in
+          StatementResult(
+            queryText: tuple.queryText,
+            result: CellResult(
+              columns: tuple.result.columns,
+              rows: tuple.result.rows,
+              executionTime: tuple.result.executionTime,
+              rowCount: tuple.result.rows.count,
+              timestamp: Date(),
+              error: nil,
+              wasLimited: tuple.result.wasLimited,
+              sourceQuery: tuple.queryText,
+              tableName: nil,
+              primaryKeyColumns: [],
+              rowIdentifiers: tuple.result.rowIdentifiers,
+              userLimitExceeded: tuple.result.userLimitExceeded,
+              userRequestedLimit: tuple.result.userRequestedLimit,
+              affectedRows: tuple.result.affectedRows,
+              limitWasCapped: tuple.result.limitWasCapped,
+              actualLimitUsed: tuple.result.actualLimitUsed
+            ),
+            statementIndex: index
+          )
+        }
 
-      // Fetch primary key columns if we have a table name
-      var primaryKeyColumns: [String] = []
-      if let tableName = tableName {
-        primaryKeyColumns =
-          (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-      }
+        // Store all statement results
+        notebook.cells[index].statementResults = convertedStatements
+        notebook.cells[index].totalExecutionTime = totalTime
+        // Select the last statement by default
+        notebook.cells[index].selectedStatementIndex = convertedStatements.count - 1
+        // Set result to the last statement's result for backward compatibility
+        result = convertedStatements.last?.result
+        notebook.cells[index].result = result
+        notebook.cells[index].executionCount = executionCounter
 
-      // Convert QueryResult to CellResult
-      result = CellResult(
-        columns: queryResult.columns,
-        rows: queryResult.rows,
-        executionTime: queryResult.executionTime,
-        rowCount: queryResult.rowCount,
-        timestamp: Date(),
-        wasLimited: queryResult.wasLimited,
-        sourceQuery: task.query,
-        tableName: tableName,
-        primaryKeyColumns: primaryKeyColumns,
-        rowIdentifiers: queryResult.rowIdentifiers,
-        userLimitExceeded: queryResult.userLimitExceeded,
-        userRequestedLimit: queryResult.userRequestedLimit,
-        affectedRows: queryResult.affectedRows,
-        limitWasCapped: queryResult.limitWasCapped,
-        actualLimitUsed: queryResult.actualLimitUsed
-      )
-
-      notebook.cells[index].result = result
-      notebook.cells[index].executionCount = executionCounter
-
-      // Show toast if user's LIMIT was exceeded and capped
-      if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
-        let maxLimit = AppSettings.shared.maxRowLimit
-        showToast(
-          "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
-          type: .warning
+        // Check for any limit exceeded warnings
+        for statementResult in convertedStatements {
+          if statementResult.result.userLimitExceeded,
+            let requestedLimit = statementResult.result.userRequestedLimit
+          {
+            let maxLimit = AppSettings.shared.maxRowLimit
+            showToast(
+              "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
+              type: .warning
+            )
+            break  // Only show once
+          }
+        }
+      } else {
+        // Single statement - use original logic
+        // Execute query using DatabaseConnectionManager
+        // Use app's maxRowLimit setting
+        let queryResult = try await connectionManager.executeQuery(
+          task.query,
+          maxRows: AppSettings.shared.maxRowLimit
         )
+
+        executionCounter += 1
+
+        // Extract table name from query (simple SELECT parsing)
+        let tableName = extractTableName(from: task.query)
+
+        // Fetch primary key columns if we have a table name
+        var primaryKeyColumns: [String] = []
+        if let tableName = tableName {
+          primaryKeyColumns =
+            (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+        }
+
+        // Convert QueryResult to CellResult
+        result = CellResult(
+          columns: queryResult.columns,
+          rows: queryResult.rows,
+          executionTime: queryResult.executionTime,
+          rowCount: queryResult.rowCount,
+          timestamp: Date(),
+          wasLimited: queryResult.wasLimited,
+          sourceQuery: task.query,
+          tableName: tableName,
+          primaryKeyColumns: primaryKeyColumns,
+          rowIdentifiers: queryResult.rowIdentifiers,
+          userLimitExceeded: queryResult.userLimitExceeded,
+          userRequestedLimit: queryResult.userRequestedLimit,
+          affectedRows: queryResult.affectedRows,
+          limitWasCapped: queryResult.limitWasCapped,
+          actualLimitUsed: queryResult.actualLimitUsed
+        )
+
+        notebook.cells[index].result = result
+        notebook.cells[index].executionCount = executionCounter
+        // Clear multi-statement data for single statement
+        notebook.cells[index].statementResults = []
+        notebook.cells[index].selectedStatementIndex = 0
+        notebook.cells[index].totalExecutionTime = nil
+
+        // Show toast if user's LIMIT was exceeded and capped
+        if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
+          let maxLimit = AppSettings.shared.maxRowLimit
+          showToast(
+            "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
+            type: .warning
+          )
+        }
       }
     } catch let error as DatabaseError {
       // Handle database-specific errors
@@ -132,10 +197,18 @@ extension NotebookViewModel {
         sourceQuery: task.query
       )
       notebook.cells[index].result = result
+      // Clear multi-statement data on error
+      notebook.cells[index].statementResults = []
+      notebook.cells[index].selectedStatementIndex = 0
+      notebook.cells[index].totalExecutionTime = nil
     } catch {
       // Handle general errors
       result = .errorResult(error.localizedDescription, sourceQuery: task.query)
       notebook.cells[index].result = result
+      // Clear multi-statement data on error
+      notebook.cells[index].statementResults = []
+      notebook.cells[index].selectedStatementIndex = 0
+      notebook.cells[index].totalExecutionTime = nil
     }
 
     notebook.cells[index].isRunning = false
@@ -347,6 +420,15 @@ extension NotebookViewModel {
   }
 
   // MARK: - Sidebar Update
+
+  /// Select a specific statement result in a cell (for multi-statement queries)
+  func selectCellStatement(cellId: UUID, at index: Int) {
+    guard let cellIndex = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+    guard index >= 0 && index < notebook.cells[cellIndex].statementResults.count else { return }
+
+    notebook.cells[cellIndex].selectedStatementIndex = index
+    notebook.cells[cellIndex].result = notebook.cells[cellIndex].statementResults[index].result
+  }
 
   /// Update the View Query sidebar if it's currently showing query for the given cell
   /// This ensures the sidebar shows the latest executed query after re-running a cell

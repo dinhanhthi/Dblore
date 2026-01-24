@@ -326,87 +326,16 @@ struct EditorModeView: View {
   @ViewBuilder
   private func resultPanelFooter(result: CellResult) -> some View {
     if !viewModel.editorStatementResults.isEmpty {
-      // Multi-statement query - show dropdown selector + "Run with query" + Download button
-      HStack(spacing: Spacing.sm) {
-        // Dropdown menu for statement selection
-        Menu {
-          ForEach(viewModel.editorStatementResults, id: \.id) { statementResult in
-            let index =
-              viewModel.editorStatementResults.firstIndex(where: { $0.id == statementResult.id })
-              ?? 0
-            Button(action: {
-              viewModel.selectEditorStatement(at: index)
-            }) {
-              HStack {
-                // Combined text: "Result N • query text (truncated)"
-                (Text("Result \(index + 1) • ")
-                  .font(.system(size: 11))
-                  + Text(truncateQuery(statementResult.queryText))
-                  .font(.system(size: 11, design: .monospaced)))
-                  .lineLimit(1)
-
-                Spacer()
-
-                // Checkmark for selected item
-                if index == viewModel.selectedStatementIndex {
-                  Image(systemName: "checkmark")
-                    .font(.system(size: 10))
-                    .foregroundColor(.accentColor)
-                }
-              }
-            }
-            .id(statementResult.id)  // Force Button to recreate when data changes
-          }
-        } label: {
-          HStack {
-            Text("Result \(viewModel.selectedStatementIndex + 1)")
-              .font(.system(size: 11))
-              .foregroundColor(.foreground)
-            Spacer()
-            Image(systemName: "chevron.down")
-              .font(.system(size: 9))
-              .foregroundColor(.foregroundMuted)
-          }
-          .padding(.horizontal, Spacing.sm)
-          .padding(.vertical, Spacing.xs)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .fill(Color.inputBackground)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .stroke(Color.border, lineWidth: 1)
-          )
+      // Multi-statement query - use StatementSelectorView
+      StatementSelectorView(
+        statementResults: viewModel.editorStatementResults,
+        selectedIndex: viewModel.selectedStatementIndex,
+        cellId: nil,  // Editor mode has no cell ID
+        viewModel: viewModel,
+        onSelect: { index in
+          viewModel.selectEditorStatement(at: index)
         }
-        .id(viewModel.editorStatementResults.map { $0.id })
-        .buttonStyle(.plain)
-        .help("Select statement result to view")
-        .fixedSize()  // Don't expand
-
-        // "Run with query" bar (reusable component)
-        if result.sourceQuery != nil {
-          let actualQuery = getActualExecutedQuery(result: result)
-          let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
-          QueryCopyBar(
-            query: displayQuery,
-            result: result,
-            viewModel: viewModel,
-            cellId: nil,  // Editor mode has no cell ID
-            queryIndex: viewModel.selectedStatementIndex + 1  // Multi-statement mode
-          )
-        }
-      }
-      .padding(.horizontal, Spacing.md)
-      .padding(.vertical, Spacing.sm)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(Color.appBackground)
-      .overlay(
-        Rectangle()
-          .fill(Color.foregroundMuted.opacity(0.1))
-          .frame(height: 1),
-        alignment: .top  // Border on top
       )
-
     } else if result.sourceQuery != nil {
       // Single statement - show clickable query text + Download button
       let actualQuery = getActualExecutedQuery(result: result)
@@ -528,22 +457,6 @@ struct EditorModeView: View {
 
 
   /// Shows first ~30 chars and last ~20 chars with "..." in middle
-  /// Truncate query text to show first 10 and last 10 characters
-  private func truncateQuery(_ query: String) -> String {
-    // Remove leading comments first
-    let withoutComments = SQLSyntaxHighlighter.removeComments(query)
-    let trimmed = withoutComments.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // If query is short enough, return as-is
-    if trimmed.count <= 48 {  // 25 + "..." + 20 = 48
-      return trimmed
-    }
-
-    let firstPart = String(trimmed.prefix(25))
-    let lastPart = String(trimmed.suffix(20))
-    return "\(firstPart)...\(lastPart)"
-  }
-
 }
 
 // MARK: - Resizable Divider
