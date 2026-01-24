@@ -380,7 +380,8 @@ struct EditorModeView: View {
   /// - Returns: A view with clickable query text
   @ViewBuilder
   private func resultPanelFooter(result: CellResult) -> some View {
-    if result.sourceQuery != nil {
+    // Don't show if setting is enabled to hide this section
+    if !appSettings.hideRunWithQuerySection, result.sourceQuery != nil {
       // Show clickable query text + Download button for both single and multi-statement
       let actualQuery = getActualExecutedQuery(result: result)
       let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)

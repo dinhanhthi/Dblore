@@ -89,3 +89,6 @@ SQLNotebook/Models/CLAUDE.md
 SQLNotebook/Utilities/CLAUDE.md
 SQLNotebookTests/CLAUDE.md
 SQLNotebook.xcodeproj/CLAUDE.md
+SQLNotebook/Views/Sidebars/CLAUDE.md
+SQLNotebook/**/CLAUDE.md
+scripts/CLAUDE.md

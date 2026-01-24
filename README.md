@@ -69,6 +69,24 @@ xcodebuild -scheme SQLNotebook build SWIFT_STRICT_CONCURRENCY=complete
 
 ## Development
 
+### Build Script Setup
+
+**Important:** To prevent build errors from `claude-mem` plugin generating multiple `CLAUDE.md` files, add this build script:
+
+1. Open project in Xcode
+2. Select **SQLNotebook** project (blue icon) → **SQLNotebook** target
+3. Go to **Build Phases** tab
+4. Click **+** button → **New Run Script Phase**
+5. Drag the new script phase to **first position** (above "Compile Sources")
+6. Rename it to: `Clean CLAUDE.md Files`
+7. Paste this script:
+   ```bash
+   "${SRCROOT}/scripts/clean-claude-md.sh"
+   ```
+8. Build the project (Cmd+B)
+
+This script automatically removes auto-generated `CLAUDE.md` files before each build to prevent "Multiple commands produce" errors.
+
 ### Code Formatting
 
 Format code with `swift-format`:

@@ -31,18 +31,11 @@
 		D3E0FC102EF71234009A0E5C /* Exceptions for "SQLNotebook" folder in "SQLNotebook" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Models/CLAUDE.md,
-				Views/CLAUDE.md,
-				Views/Components/CLAUDE.md,
-				ViewModels/CLAUDE.md,
-				Database/CLAUDE.md,
-				Services/CLAUDE.md,
-				Editor/CLAUDE.md,
-				Execution/CLAUDE.md,
-				Models/CLAUDE.md,
-				Utilities/CLAUDE.md,
-				CLAUDE.md,
 				Info.plist,
+				Models/CLAUDE.md,
+				ViewModels/CLAUDE.md,
+				Views/CLAUDE.md,
+				Views/Sidebars/CLAUDE.md,
 			);
 			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
 		};
