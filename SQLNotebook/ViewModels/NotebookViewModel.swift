@@ -25,7 +25,8 @@ enum SidebarContent: Equatable {
     rowIdentifier: CellValue?,  // Row identifier (ctid for PostgreSQL, rowid for SQLite)
     cellId: UUID?  // ID of the cell that produced this result (for re-running after edit)
   )
-  case executedQuery(query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
+  case executedQuery(
+    query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
   case connectionDetails
   case connectionForm
   case settings

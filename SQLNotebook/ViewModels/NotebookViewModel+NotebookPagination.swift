@@ -177,7 +177,10 @@ extension NotebookViewModel {
     statementQuery: String
   ) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
-    guard let statementIndex = notebook.cells[index].statementResults.firstIndex(where: { $0.id == statementId })
+    guard
+      let statementIndex = notebook.cells[index].statementResults.firstIndex(where: {
+        $0.id == statementId
+      })
     else {
       return
     }

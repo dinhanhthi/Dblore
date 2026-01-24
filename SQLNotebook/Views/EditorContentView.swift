@@ -36,141 +36,29 @@ struct EditorContentView: View {
   }
 
   var body: some View {
-    ZStack {
-      Color.appBackground
-        .ignoresSafeArea()
-
-      VStack(spacing: 0) {
-        // Header and search panel in ZStack so search slides under header
-        ZStack(alignment: .top) {
-          // Search panel (lower z-index, slides from top under header)
-          VStack(spacing: 0) {
-            Spacer()
-              .frame(height: ComponentSize.headerHeight)
-
-            if viewModel.isSearchPanelVisible {
-              SearchPanelView(viewModel: viewModel)
-                .padding(.horizontal, Spacing.md)
-                .padding(.vertical, Spacing.sm)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-          }
-
-          // Header (higher z-index, covers search panel animation)
-          HeaderView(viewModel: viewModel)
-        }
-        .clipped()
-
-        // Main content area
-        GeometryReader { geometry in
-          HStack(spacing: 0) {
-            // Left sidebar (conditionally shown)
-            if viewModel.isLeftSidebarVisible {
-              let maxSidebarWidth = geometry.size.width * 0.35
-              let constrainedWidth = min(appSettings.leftSidebarWidth, maxSidebarWidth)
-
-              LeftSidebarView(viewModel: viewModel)
-                .frame(width: constrainedWidth)
-                .transition(.move(edge: .leading))
-
-              // Resizable divider
-              ResizableSidebarDivider(
-                sidebarWidth: $appSettings.leftSidebarWidth,
-                minWidth: 320,
-                maxWidth: maxSidebarWidth,
-                side: .left
-              )
-            }
-
-            // Main editor content
-            EditorModeView(viewModel: viewModel)
-              .frame(maxWidth: .infinity)
-
-            // Right sidebar (conditionally shown)
-            if viewModel.isRightSidebarVisible {
-              RightSidebarView(viewModel: viewModel)
-                .transition(.move(edge: .trailing))
-            }
-          }
-        }
-
-        // Footer
-        FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: true)
-      }
-
-      // Toast notification (bottom-right corner)
-      if let toast = viewModel.currentToast {
-        VStack {
-          Spacer()
-          HStack {
-            Spacer()
-            ToastView(toast: toast, viewModel: viewModel)
-              .padding(.horizontal, Spacing.lg)
-              .padding(.vertical, Spacing.xxl)
-              .transition(.move(edge: .trailing).combined(with: .opacity))
-          }
-        }
-      }
+    NotebookLayoutView(
+      viewModel: viewModel,
+      lastSaved: $lastSaved,
+      isEditorMode: true
+    ) {
+      // Main editor content
+      EditorModeView(viewModel: viewModel)
     }
-    .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
-    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isSearchPanelVisible)
-    .windowAppearance(appSettings.themePreference.colorScheme)
     .modifier(
       EditorNotificationHandlerModifier(
         viewModel: viewModel,
         syncDocument: syncDocument
       )
     )
-    .modifier(EditorSearchNotificationHandlerModifier(viewModel: viewModel))
-    .confirmationDialog(
-      "Confirm Destructive Query",
-      isPresented: $viewModel.showQueryConfirmationDialog,
-      titleVisibility: .visible
-    ) {
-      Button("Execute Query", role: .destructive) {
-        Task { @MainActor [viewModel] in
-          await viewModel.executePendingQuery()
-          syncDocument()
-        }
-      }
-      Button("Cancel", role: .cancel) {
-        viewModel.cancelPendingQuery()
-      }
-    } message: {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("This query will modify data in your database:")
-          .font(.body)
-        Text(viewModel.pendingQuery)
-          .font(.system(.body, design: .monospaced))
-          .lineLimit(5)
-        Text("Are you sure you want to proceed?")
-          .font(.body)
-      }
-    }
-    .focusedSceneValue(\.documentMode, .editor)
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [viewModel] in
-      viewModel.toggleLeftSidebar()
-    }
-    .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
-      viewModel.toggleSidebar()
-    }
-    .focusedSceneValue(\.openSearchAction) { [viewModel] in
-      viewModel.openSearch()
-    }
-    .focusedSceneValue(\.findNextAction) { [viewModel] in
-      viewModel.navigateToNextMatch()
-    }
-    .focusedSceneValue(\.findPreviousAction) { [viewModel] in
-      viewModel.navigateToPreviousMatch()
-    }
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncDocument)
+    .searchNotifications(viewModel: viewModel)
+    .focusedSceneActions(viewModel: viewModel, mode: .editor)
     .onChange(of: viewModel.editorContent) { _, newContent in
       syncDocument()
     }
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
-    .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
-    .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
@@ -306,25 +194,6 @@ private struct EditorNotificationHandlerModifier: ViewModifier {
           await viewModel.runEditorQuery()
           syncDocument()
         }
-      }
-  }
-}
-
-// MARK: - Search Notification Handler Modifier
-
-private struct EditorSearchNotificationHandlerModifier: ViewModifier {
-  let viewModel: NotebookViewModel
-
-  func body(content: Content) -> some View {
-    content
-      .onReceive(NotificationCenter.default.publisher(for: .openSearch)) { _ in
-        viewModel.openSearch()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .findNext)) { _ in
-        viewModel.navigateToNextMatch()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: .findPrevious)) { _ in
-        viewModel.navigateToPreviousMatch()
       }
   }
 }

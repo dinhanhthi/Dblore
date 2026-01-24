@@ -67,7 +67,8 @@ enum DocumentCoder {
         var totalExecutionTime: TimeInterval? = nil
         if let statementResultsArray = cellDict["statementResults"] as? [[String: Any]] {
           for statementDict in statementResultsArray {
-            let statementId = (statementDict["id"] as? String).flatMap { UUID(uuidString: $0) }
+            let statementId =
+              (statementDict["id"] as? String).flatMap { UUID(uuidString: $0) }
               ?? UUID()
             let queryText = statementDict["queryText"] as? String ?? ""
             let statementIndex = statementDict["statementIndex"] as? Int ?? 0
@@ -108,7 +109,9 @@ enum DocumentCoder {
 
         // Decode statement pagination info
         var statementPaginationInfo: [UUID: PaginationInfo] = [:]
-        if let statementPaginationDict = cellDict["statementPaginationInfo"] as? [String: [String: Any]] {
+        if let statementPaginationDict = cellDict["statementPaginationInfo"]
+          as? [String: [String: Any]]
+        {
           for (statementIdString, paginationDict) in statementPaginationDict {
             if let statementId = UUID(uuidString: statementIdString) {
               let currentPage = paginationDict["currentPage"] as? Int ?? 1

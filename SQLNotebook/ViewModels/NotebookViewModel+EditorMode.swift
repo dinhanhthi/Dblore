@@ -187,7 +187,7 @@ extension NotebookViewModel {
     guard index >= 0 && index < editorStatementResults.count else { return }
     selectedStatementIndex = index
     editorResult = editorStatementResults[index].result
-    
+
     // Update the View Query sidebar if it's currently open for editor mode
     updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
   }
@@ -259,7 +259,7 @@ extension NotebookViewModel {
         limitWasCapped: false,
         actualLimitUsed: paginationInfo.rowsPerPage
       )
-      
+
       // Update the View Query sidebar if it's currently open for editor mode
       updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
 
@@ -270,7 +270,7 @@ extension NotebookViewModel {
         executionTime: executionTime,
         sourceQuery: query
       )
-      
+
       // Update the View Query sidebar even on error
       updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
     }
@@ -326,7 +326,7 @@ extension NotebookViewModel {
         // Update selected result if this is the current statement
         if selectedStatementIndex == index {
           editorResult = newResult
-          
+
           // Update the View Query sidebar if it's currently open for editor mode
           updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
         }
@@ -352,7 +352,7 @@ extension NotebookViewModel {
         // Update selected result if this is the current statement
         if selectedStatementIndex == index {
           editorResult = errorResult
-          
+
           // Update the View Query sidebar even on error
           updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
         }
