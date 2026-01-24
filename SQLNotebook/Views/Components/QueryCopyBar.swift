@@ -8,6 +8,15 @@
 
 import SwiftUI
 
+/// Preference key for tracking view width
+struct WidthPreferenceKey: PreferenceKey {
+  static var defaultValue: CGFloat = 0
+
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = nextValue()
+  }
+}
+
 /// A reusable component that displays a query with click-to-copy functionality and action buttons.
 ///
 /// Features:
@@ -51,42 +60,72 @@ struct QueryCopyBar: View {
     SQLSyntaxHighlighter.removeComments(query)
   }
 
-  var body: some View {
-    HStack(spacing: Spacing.sm) {
-      // Clickable area: icon + text + query (entire bar is clickable)
-      HStack(spacing: Spacing.sm) {
-        // Icon changes when query is copied (fixed width to prevent text shifting)
-        Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
-          .font(.system(size: 11))
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 11, height: 11, alignment: .center)
-          .contentTransition(.symbolEffect(.replace))
-          .animation(.spring(duration: 0.1), value: isQueryCopied)
+  /// Layout mode based on available width
+  private enum LayoutMode {
+    case full        // >= 600pt: Full labels for everything
+    case intermediate // 300-599pt: Icon-only buttons, icon + query (no label)
+    case compact     // < 300pt: Hide query section entirely, show full buttons
 
-        Text("Run with query (click to copy):")
-          .font(.system(size: 11))
-          .foregroundColor(.foregroundMuted)
-
-        Text(displayQuery)
-          .font(.system(size: 11, design: .monospaced))
-          .foregroundColor(.foregroundSubtle)
-          .lineLimit(1)
-          .truncationMode(.tail)
+    static func from(width: CGFloat) -> LayoutMode {
+      if width >= 600 {
+        return .full
+      } else if width >= 300 {
+        return .intermediate
+      } else {
+        return .compact
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .contentShape(Rectangle())  // Make entire HStack tappable
-      .onTapGesture {
-        copyQueryToClipboard(query: query)
-      }
-      .cursor(NSCursor.pointingHand)
-      .help(isQueryCopied ? "Copied!" : "Click to copy query")
-
-      // View Query button (left of Download button)
-      viewQueryButton(query: query)
-
-      // Download dropdown button (right-aligned)
-      downloadButton(result: result)
     }
+  }
+
+  var body: some View {
+    GeometryReader { geometry in
+      let currentWidth = geometry.size.width
+      let currentMode = LayoutMode.from(width: currentWidth)
+
+      HStack(spacing: Spacing.sm) {
+        // Clickable area: icon + text + query (entire bar is clickable)
+        // Hidden completely in compact mode
+        if currentMode != .compact {
+          HStack(spacing: Spacing.sm) {
+            // Icon changes when query is copied (fixed width to prevent text shifting)
+            Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
+              .font(.system(size: 11))
+              .foregroundColor(.foregroundMuted)
+              .frame(width: 11, height: 11, alignment: .center)
+              .contentTransition(.symbolEffect(.replace))
+              .animation(.spring(duration: 0.1), value: isQueryCopied)
+
+            // Hide label in intermediate mode, show in full mode
+            if currentMode == .full {
+              Text("Run with query (click to copy):")
+                .font(.system(size: 11))
+                .foregroundColor(.foregroundMuted)
+            }
+
+            Text(displayQuery)
+              .font(.system(size: 11, design: .monospaced))
+              .foregroundColor(.foregroundSubtle)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())  // Make entire HStack tappable
+          .onTapGesture {
+            copyQueryToClipboard(query: query)
+          }
+          .cursor(NSCursor.pointingHand)
+          .help(isQueryCopied ? "Copied!" : "Click to copy query")
+        }
+
+        // View Query button (left of Download button)
+        viewQueryButton(query: query, mode: currentMode)
+
+        // Download dropdown button (right-aligned)
+        downloadButton(result: result, mode: currentMode)
+      }
+      .frame(width: geometry.size.width, alignment: .leading)
+    }
+    .frame(height: 30)
   }
 
   // MARK: - Actions
@@ -108,7 +147,7 @@ struct QueryCopyBar: View {
   // MARK: - View Query Button
 
   @ViewBuilder
-  private func viewQueryButton(query: String) -> some View {
+  private func viewQueryButton(query: String, mode: LayoutMode) -> some View {
     Button(action: {
       // Show query in right sidebar (without comments)
       let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
@@ -123,8 +162,12 @@ struct QueryCopyBar: View {
       HStack(spacing: 4) {
         Image(systemName: "eye")
           .font(.system(size: 11))
-        Text("View Query")
-          .font(.system(size: 11))
+
+        // Show label in full mode or compact mode, hide in intermediate mode
+        if mode == .full || mode == .compact {
+          Text("View Query")
+            .font(.system(size: 11))
+        }
       }
       .foregroundColor(.foreground)
       .padding(.horizontal, Spacing.sm)
@@ -146,7 +189,7 @@ struct QueryCopyBar: View {
   // MARK: - Download Button
 
   @ViewBuilder
-  private func downloadButton(result: CellResult) -> some View {
+  private func downloadButton(result: CellResult, mode: LayoutMode) -> some View {
     Menu {
       // Download section
       Section("Download") {
@@ -223,10 +266,18 @@ struct QueryCopyBar: View {
       HStack(spacing: 4) {
         Image(systemName: "arrow.down.circle")
           .font(.system(size: 11))
-        Text("Download")
-          .font(.system(size: 11))
-        Image(systemName: "chevron.down")
-          .font(.system(size: 8))
+
+        // Show label in full mode or compact mode, hide in intermediate mode
+        if mode == .full || mode == .compact {
+          Text("Download")
+            .font(.system(size: 11))
+        }
+
+        // Show chevron only when label is shown
+        if mode == .full || mode == .compact {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 8))
+        }
       }
       .foregroundColor(.foreground)
       .padding(.horizontal, Spacing.sm)
@@ -296,7 +347,7 @@ struct QueryCopyBar: View {
 
 // MARK: - Previews
 
-#Preview("Query Copy Bar") {
+#Preview("Query Copy Bar - Responsive") {
   let result = CellResult(
     columns: [],
     rows: [],
@@ -308,7 +359,7 @@ struct QueryCopyBar: View {
   )
 
   return VStack(spacing: 20) {
-    Text("Normal Query Bar")
+    Text("Full Width (>600pt)")
       .font(.headline)
 
     QueryCopyBar(
@@ -318,6 +369,7 @@ struct QueryCopyBar: View {
       viewModel: NotebookViewModel(),
       cellId: UUID()
     )
+    .frame(width: 700)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
     .background(Color.appBackground)
@@ -328,7 +380,28 @@ struct QueryCopyBar: View {
       alignment: .top
     )
 
-    Text("Short Query")
+    Text("Intermediate Width (300-600pt)")
+      .font(.headline)
+
+    QueryCopyBar(
+      query:
+        "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10",
+      result: result,
+      viewModel: NotebookViewModel(),
+      cellId: UUID()
+    )
+    .frame(width: 450)
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, Spacing.sm)
+    .background(Color.appBackground)
+    .overlay(
+      Rectangle()
+        .fill(Color.foregroundMuted.opacity(0.1))
+        .frame(height: 1),
+      alignment: .top
+    )
+
+    Text("Compact Width (<300pt)")
       .font(.headline)
 
     QueryCopyBar(
@@ -337,6 +410,7 @@ struct QueryCopyBar: View {
       viewModel: NotebookViewModel(),
       cellId: nil
     )
+    .frame(width: 250)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
     .background(Color.appBackground)
