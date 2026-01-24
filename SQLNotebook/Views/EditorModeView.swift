@@ -316,6 +316,37 @@ struct EditorModeView: View {
     }
   }
 
+  /// View Query button
+  @ViewBuilder
+  private func viewQueryButton(query: String) -> some View {
+    Button(action: {
+      // Show query in right sidebar
+      viewModel.rightSidebarContent = .executedQuery(query: query, cellId: nil)
+      viewModel.isRightSidebarVisible = true
+    }) {
+      HStack(spacing: 4) {
+        Image(systemName: "eye")
+          .font(.system(size: 11))
+        Text("View Query")
+          .font(.system(size: 11))
+      }
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.inputBackground)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .stroke(Color.border, lineWidth: 1)
+      )
+    }
+    .buttonStyle(.plain)
+    .help("View full query in sidebar")
+    .fixedSize()
+  }
+
   private func copyErrorToClipboard(error: String) {
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
@@ -430,6 +461,9 @@ struct EditorModeView: View {
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
         }
 
+        // View Query button (left of Download button)
+        viewQueryButton(query: getActualExecutedQuery(result: result))
+
         // Download dropdown button (right-aligned)
         downloadButton(result: result)
       }
@@ -472,6 +506,9 @@ struct EditorModeView: View {
           }
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
+
+        // View Query button (left of Download button)
+        viewQueryButton(query: actualQuery)
 
         // Download dropdown button (right-aligned)
         downloadButton(result: result)
