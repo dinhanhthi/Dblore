@@ -46,6 +46,11 @@ struct QueryCopyBar: View {
   @State private var isQueryCopied: Bool = false
   @State private var showCopyFeedback: CopyFeedbackType? = nil
 
+  /// Query with comments removed for display purposes
+  private var displayQuery: String {
+    SQLSyntaxHighlighter.removeComments(query)
+  }
+
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Clickable area: icon + text + query (entire bar is clickable)
@@ -62,7 +67,7 @@ struct QueryCopyBar: View {
           .font(.system(size: 11))
           .foregroundColor(.foregroundMuted)
 
-        Text(query)
+        Text(displayQuery)
           .font(.system(size: 11, design: .monospaced))
           .foregroundColor(.foregroundSubtle)
           .lineLimit(1)
