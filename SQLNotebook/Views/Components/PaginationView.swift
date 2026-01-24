@@ -81,7 +81,6 @@ struct PaginationView: View {
         .font(.caption)
         .foregroundColor(.foregroundSubtle)
     }
-    .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.xs)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {

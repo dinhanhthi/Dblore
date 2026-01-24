@@ -60,11 +60,12 @@ struct ResultAreaView: View {
           // Success message for UPDATE/DELETE/INSERT (only when no result table)
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
         } else {
-          // Result table
-          ResultTableView(result: result, viewModel: viewModel, cellId: cellId)
-
-          // Result metadata
-          ResultMetadataView(result: result)
+          // Result table with pagination support
+          NotebookResultTableView(
+            result: result,
+            viewModel: viewModel,
+            cellId: cellId
+          )
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -398,4 +399,61 @@ enum CellResultViews {
     .frame(width: 600)
     .background(Color.appBackground)
     .preferredColorScheme(.dark)
+}
+
+// MARK: - Notebook Result Table View
+
+/// Wrapper for ResultTableView that provides pagination support for notebook mode
+struct NotebookResultTableView: View {
+  let result: CellResult
+  @Bindable var viewModel: NotebookViewModel
+  let cellId: UUID
+
+  /// Get the cell from viewModel
+  private var cell: NotebookCell? {
+    viewModel.notebook.cells.first(where: { $0.id == cellId })
+  }
+
+  /// Get pagination info for this cell
+  private var paginationInfo: PaginationInfo? {
+    viewModel.getPaginationInfo(for: cellId)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // Result table
+      ResultTableView(
+        result: result,
+        viewModel: viewModel,
+        cellId: cellId,
+        showBorderRadius: false,
+        enableVerticalScrolling: false,
+        paginationInfo: paginationInfo,
+        onPageChange: handlePageChange
+      )
+
+      // Result metadata (below table)
+      ResultMetadataView(result: result)
+    }
+  }
+
+  /// Handle page change for single statement or selected statement in multi-statement
+  private func handlePageChange(_ page: Int) {
+    Task { @MainActor in
+      guard let cell = cell else { return }
+
+      if !cell.statementResults.isEmpty {
+        // Multi-statement mode - navigate for selected statement
+        let selectedStatement = cell.statementResults[cell.selectedStatementIndex]
+        await viewModel.navigateToPageForCellStatement(
+          cellId: cellId,
+          statementId: selectedStatement.id,
+          page: page
+        )
+      } else {
+        // Single statement mode
+        await viewModel.navigateToPageForCell(cellId: cellId, page: page)
+      }
+    }
+  }
 }
