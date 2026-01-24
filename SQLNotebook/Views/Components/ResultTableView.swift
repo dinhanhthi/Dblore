@@ -29,16 +29,8 @@ struct ResultTableView: View {
   private let maxColumnWidth: CGFloat = 500  // Maximum width when resizing
   private let rowHeight: CGFloat = 32  // Approximate row height
   private let headerHeight: CGFloat = 48  // Approximate header height
-  private let maxRowsToRender: Int = 500  // Reduced from 1000 to prevent scroll conflicts with VStack
-
-  // Limit rows to render for performance
-  private var displayedRows: ArraySlice<[CellValue]> {
-    result.rows.prefix(maxRowsToRender)
-  }
-
-  private var hasMoreRows: Bool {
-    result.rows.count > maxRowsToRender
-  }
+  // Note: Row limiting is handled at database level via AppSettings.maxRowLimit/editorMaxRowLimit
+  // All rows from result are rendered since DB already limits to max 100/200 rows
 
   // Computed properties for search state (read-only, not tracked for re-render)
   // Only searchVersion state triggers re-renders (10.2.3 optimization)
@@ -71,14 +63,9 @@ struct ResultTableView: View {
         enableVerticalScrolling: enableVerticalScrolling
       ) {
         VStack(alignment: .leading, spacing: 0) {
-          // Data rows - limited to maxRowsToRender
-          ForEach(Array(displayedRows.enumerated()), id: \.offset) { rowIndex, row in
+          // Data rows - DB already limits via AppSettings.maxRowLimit/editorMaxRowLimit
+          ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
             dataRow(row: row, rowIndex: rowIndex)
-          }
-
-          // Show warning if rows are truncated
-          if hasMoreRows {
-            truncationWarning
           }
         }
         .frame(width: totalColumnsWidth, alignment: .leading)
@@ -160,20 +147,6 @@ struct ResultTableView: View {
       // Recalculate total width when column widths change (10.1.6 optimization)
       recalculateTotalWidth()
     }
-  }
-
-  private var truncationWarning: some View {
-    HStack {
-      Image(systemName: "exclamationmark.triangle.fill")
-        .foregroundColor(.warning)
-      Text("Showing first \(maxRowsToRender) of \(result.rows.count) rows to maintain performance")
-        .font(.labelText)
-        .foregroundColor(.foregroundSubtle)
-    }
-    .padding(.horizontal, Spacing.lg)
-    .padding(.vertical, Spacing.md)
-    .frame(maxWidth: .infinity)
-    .background(Color.warning.opacity(0.1))
   }
 
   // MARK: - Header Row
@@ -438,10 +411,9 @@ struct ResultTableView: View {
 
     // Calculate width needed for data cells (sample first 100 rows for performance)
     var maxDataWidth: CGFloat = 0
-    // Use displayedRows instead of result.rows to match what's actually rendered
-    let sampleSize = min(100, displayedRows.count)  // Only sample first 100 rows
+    let sampleSize = min(100, result.rows.count)  // Only sample first 100 rows
     for rowIndex in 0..<sampleSize {
-      let row = displayedRows[displayedRows.startIndex + rowIndex]
+      let row = result.rows[rowIndex]
       guard columnIndex < row.count else { continue }
       let value = row[columnIndex]
       let displayText = value.displayString
