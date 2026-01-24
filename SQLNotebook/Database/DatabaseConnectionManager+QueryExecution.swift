@@ -359,6 +359,12 @@ extension DatabaseConnectionManager {
         finalUserRequestedLimit = nil
       }
 
+      // Determine limitWasCapped and actualLimitUsed for UI display
+      // limitWasCapped = true when user's LIMIT was > maxRows (regardless of result rows)
+      // This is used to show correct query in "Run with query" bar and View Query sidebar
+      let limitWasCapped = userLimitExceeded  // userLimitExceeded means user's LIMIT > maxRows
+      let actualLimitUsed: Int? = limitWasCapped ? maxRows : userOriginalLimit
+
       // Try to enrich column type information with modifiers
       let enrichedColumns = await enrichColumnTypes(columns: columns, query: executionQuery)
 
@@ -371,7 +377,9 @@ extension DatabaseConnectionManager {
         rowIdentifiers: rowIdentifiers,
         userLimitExceeded: finalUserLimitExceeded,
         userRequestedLimit: finalUserRequestedLimit,
-        affectedRows: 0  // SELECT queries always have 0 affected rows
+        affectedRows: 0,  // SELECT queries always have 0 affected rows
+        limitWasCapped: limitWasCapped,
+        actualLimitUsed: actualLimitUsed
       )
 
     } catch let error as PSQLError {

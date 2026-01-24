@@ -107,7 +107,9 @@ extension NotebookViewModel {
         rowIdentifiers: queryResult.rowIdentifiers,
         userLimitExceeded: queryResult.userLimitExceeded,
         userRequestedLimit: queryResult.userRequestedLimit,
-        affectedRows: queryResult.affectedRows
+        affectedRows: queryResult.affectedRows,
+        limitWasCapped: queryResult.limitWasCapped,
+        actualLimitUsed: queryResult.actualLimitUsed
       )
 
       notebook.cells[index].result = result

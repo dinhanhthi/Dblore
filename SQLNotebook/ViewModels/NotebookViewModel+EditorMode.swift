@@ -88,7 +88,9 @@ extension NotebookViewModel {
               rowIdentifiers: tuple.result.rowIdentifiers,
               userLimitExceeded: tuple.result.userLimitExceeded,
               userRequestedLimit: tuple.result.userRequestedLimit,
-              affectedRows: tuple.result.affectedRows
+              affectedRows: tuple.result.affectedRows,
+              limitWasCapped: tuple.result.limitWasCapped,
+              actualLimitUsed: tuple.result.actualLimitUsed
             ),
             statementIndex: index
           )
@@ -141,7 +143,9 @@ extension NotebookViewModel {
           rowIdentifiers: result.rowIdentifiers,
           userLimitExceeded: result.userLimitExceeded,
           userRequestedLimit: result.userRequestedLimit,
-          affectedRows: result.affectedRows
+          affectedRows: result.affectedRows,
+          limitWasCapped: result.limitWasCapped,
+          actualLimitUsed: result.actualLimitUsed
         )
 
         await AppLogger.shared.debug(
@@ -242,7 +246,9 @@ extension NotebookViewModel {
         rowIdentifiers: result.rowIdentifiers,
         userLimitExceeded: false,
         userRequestedLimit: paginationInfo.rowsPerPage,
-        affectedRows: nil
+        affectedRows: nil,
+        limitWasCapped: false,
+        actualLimitUsed: paginationInfo.rowsPerPage
       )
 
     } catch {
@@ -290,7 +296,9 @@ extension NotebookViewModel {
           rowIdentifiers: result.rowIdentifiers,
           userLimitExceeded: false,
           userRequestedLimit: paginationInfo.rowsPerPage,
-          affectedRows: nil
+          affectedRows: nil,
+          limitWasCapped: false,
+          actualLimitUsed: paginationInfo.rowsPerPage
         )
 
         editorStatementResults[index] = StatementResult(

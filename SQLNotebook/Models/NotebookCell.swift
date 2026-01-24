@@ -83,6 +83,11 @@ struct CellResult: Codable, Sendable {
   let userRequestedLimit: Int?
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
   let affectedRows: Int?
+  /// True if user's LIMIT was capped to maxRows (even if no limiting occurred in result)
+  /// This is for display purposes - to show correct query in UI
+  let limitWasCapped: Bool
+  /// The actual LIMIT used in executed query (after capping)
+  let actualLimitUsed: Int?
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -98,7 +103,9 @@ struct CellResult: Codable, Sendable {
     rowIdentifiers: [CellValue] = [],
     userLimitExceeded: Bool = false,
     userRequestedLimit: Int? = nil,
-    affectedRows: Int? = nil
+    affectedRows: Int? = nil,
+    limitWasCapped: Bool = false,
+    actualLimitUsed: Int? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -114,6 +121,8 @@ struct CellResult: Codable, Sendable {
     self.userLimitExceeded = userLimitExceeded
     self.userRequestedLimit = userRequestedLimit
     self.affectedRows = affectedRows
+    self.limitWasCapped = limitWasCapped
+    self.actualLimitUsed = actualLimitUsed
   }
 
   /// Creates an error result

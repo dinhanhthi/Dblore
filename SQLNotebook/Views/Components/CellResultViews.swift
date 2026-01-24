@@ -237,9 +237,25 @@ struct ResultQueryFooterView: View {
   var viewModel: NotebookViewModel?
   var cellId: UUID?
 
+  /// Get the actual query that was executed (with LIMIT replaced if it was capped)
+  private var actualExecutedQuery: String? {
+    guard let sourceQuery = result.sourceQuery else {
+      return nil
+    }
+
+    // If user's LIMIT was capped to maxRows, show the actual query sent to database
+    if result.limitWasCapped, let actualLimit = result.actualLimitUsed,
+      let connectionManager = viewModel?.connectionManager
+    {
+      return connectionManager.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+    }
+
+    return sourceQuery
+  }
+
   var body: some View {
     // Don't show if setting is enabled to hide this section
-    if !AppSettings.shared.hideRunWithQuerySection, let sourceQuery = result.sourceQuery {
+    if !AppSettings.shared.hideRunWithQuerySection, let query = actualExecutedQuery {
       VStack(alignment: .leading, spacing: 0) {
         // Horizontal divider line (top)
         Rectangle()
@@ -247,7 +263,7 @@ struct ResultQueryFooterView: View {
           .frame(height: 1)
 
         QueryCopyBar(
-          query: sourceQuery,
+          query: query,
           result: result,
           viewModel: viewModel,
           cellId: cellId,
