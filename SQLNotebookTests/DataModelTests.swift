@@ -801,6 +801,62 @@ struct DataModelTests {
         #expect(decoded.userRequestedLimit == 10000)
     }
 
+    @Test("CellResult - User LIMIT exceeds maxRows but database has fewer rows than maxRows")
+    func cellResultUserLimitExceedsButFewerActualRows() throws {
+        // Scenario: Database has 36 rows, maxRows setting is 100, user query has LIMIT 130
+        // Expected: No warning should be shown because actual rows (36) < maxRows (100)
+
+        // Arrange - Simulate 36 rows returned
+        let rows = (1...36).map { [CellValue.int($0)] }
+        let result = CellResult(
+            columns: [ColumnInfo(name: "id", type: "integer")],
+            rows: rows,
+            executionTime: 0.01,
+            rowCount: 36,
+            timestamp: Date(),
+            wasLimited: false,  // Not limited by auto-LIMIT
+            userLimitExceeded: false,  // Should be false because actual rows < maxRows
+            userRequestedLimit: nil  // Should be nil because no warning needed
+        )
+
+        // Act - Round-trip encoding/decoding
+        let data = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(CellResult.self, from: data)
+
+        // Assert - No warning should be shown
+        #expect(decoded.userLimitExceeded == false)
+        #expect(decoded.userRequestedLimit == nil)
+        #expect(decoded.rowCount == 36)
+    }
+
+    @Test("CellResult - User LIMIT exceeds maxRows AND database returns maxRows")
+    func cellResultUserLimitExceedsAndMaxRowsReturned() throws {
+        // Scenario: Database has 200 rows, maxRows setting is 100, user query has LIMIT 130
+        // Expected: Warning should be shown because actual rows returned = maxRows (100)
+
+        // Arrange - Simulate 100 rows returned (capped at maxRows)
+        let rows = (1...100).map { [CellValue.int($0)] }
+        let result = CellResult(
+            columns: [ColumnInfo(name: "id", type: "integer")],
+            rows: rows,
+            executionTime: 0.01,
+            rowCount: 100,
+            timestamp: Date(),
+            wasLimited: false,
+            userLimitExceeded: true,  // Should be true because returned exactly maxRows
+            userRequestedLimit: 100  // Should show the actual limit applied
+        )
+
+        // Act - Round-trip encoding/decoding
+        let data = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(CellResult.self, from: data)
+
+        // Assert - Warning should be shown
+        #expect(decoded.userLimitExceeded == true)
+        #expect(decoded.userRequestedLimit == 100)
+        #expect(decoded.rowCount == 100)
+    }
+
     // MARK: - DatabaseSchema Model Tests
 
     @Test("DatabaseTable encoding and properties")
