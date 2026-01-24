@@ -62,6 +62,11 @@ struct DatabaseColumn: Identifiable, Sendable {
 
     let lowercasedType = type.lowercased()
 
+    // Array types (check BEFORE text types to avoid "text[]" matching "text")
+    if lowercasedType.contains("array") || lowercasedType.contains("[]") {
+      return "list.bullet"
+    }
+
     // Numeric types
     if lowercasedType.contains("int") || lowercasedType.contains("serial")
       || lowercasedType.contains("bigserial") || lowercasedType.contains("smallserial")
@@ -110,11 +115,6 @@ struct DatabaseColumn: Identifiable, Sendable {
     // UUID
     if lowercasedType.contains("uuid") {
       return "number.square"
-    }
-
-    // Array types
-    if lowercasedType.contains("array") || lowercasedType.contains("[]") {
-      return "list.bullet"
     }
 
     // Default fallback
