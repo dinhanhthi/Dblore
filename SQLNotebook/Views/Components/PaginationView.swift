@@ -7,6 +7,57 @@
 
 import SwiftUI
 
+private struct PageButtonStyle: ButtonStyle {
+  let isCurrentPage: Bool
+  @State private var isHovering = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.caption)
+      .fontWeight(isCurrentPage ? .semibold : .regular)
+      .foregroundColor(isCurrentPage ? .white : .foreground)
+      .frame(width: 24, height: 24)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
+          .fill(
+            isCurrentPage
+              ? Color.accent
+              : (isHovering || configuration.isPressed
+                  ? Color.foregroundMuted.opacity(0.2)
+                  : Color.clear)
+          )
+      )
+      .contentShape(Rectangle())
+      .animation(.easeInOut(duration: 0.1), value: isHovering)
+      .onHover { hovering in
+        isHovering = hovering
+      }
+  }
+}
+
+private struct ArrowButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) private var isEnabled
+  @State private var isHovering = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .frame(width: 24, height: 24)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
+          .fill(
+            isHovering && isEnabled || configuration.isPressed
+              ? Color.foregroundMuted.opacity(0.2)
+              : Color.clear
+          )
+      )
+      .contentShape(Rectangle())
+      .animation(.easeInOut(duration: 0.1), value: isHovering)
+      .onHover { hovering in
+        isHovering = hovering
+      }
+  }
+}
+
 struct PaginationView: View {
   let info: PaginationInfo
   let onPageChange: (Int) -> Void
@@ -25,10 +76,8 @@ struct PaginationView: View {
           Image(systemName: "chevron.left")
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(info.hasPreviousPage ? .foreground : .foregroundSubtle)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ArrowButtonStyle())
         .disabled(!info.hasPreviousPage)
 
         // Page numbers - use enumerated to handle duplicate -1 (ellipsis)
@@ -45,17 +94,8 @@ struct PaginationView: View {
               onPageChange(pageNumber)
             } label: {
               Text("\(pageNumber)")
-                .font(.caption)
-                .fontWeight(pageNumber == info.currentPage ? .semibold : .regular)
-                .foregroundColor(pageNumber == info.currentPage ? .white : .foreground)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-                .background(
-                  RoundedRectangle(cornerRadius: CornerRadius.sm)
-                    .fill(pageNumber == info.currentPage ? Color.accent : Color.clear)
-                )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PageButtonStyle(isCurrentPage: pageNumber == info.currentPage))
           }
         }
 
@@ -68,10 +108,8 @@ struct PaginationView: View {
           Image(systemName: "chevron.right")
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(info.hasNextPage ? .foreground : .foregroundSubtle)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ArrowButtonStyle())
         .disabled(!info.hasNextPage)
       }
 
