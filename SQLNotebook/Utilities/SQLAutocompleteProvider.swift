@@ -59,8 +59,9 @@ class SQLAutocompleteProvider {
 
     // Check cache validity (10.1.4 optimization - skip refetch if cache is still valid)
     if let lastRefresh = lastRefreshTime,
-       Date().timeIntervalSince(lastRefresh) < cacheValidityDuration,
-       !tables.isEmpty {
+      Date().timeIntervalSince(lastRefresh) < cacheValidityDuration,
+      !tables.isEmpty
+    {
       // Cache is still valid, skip refetch
       return
     }

@@ -80,7 +80,8 @@ extension NotebookViewModel {
         let (statementResults, totalTime) =
           try await Task.withTimeout(seconds: 60) {
             try await self.connectionManager
-              .executeMultipleStatementsDetailed(task.query, maxRows: AppSettings.shared.maxRowLimit)
+              .executeMultipleStatementsDetailed(
+                task.query, maxRows: AppSettings.shared.maxRowLimit)
           }
 
         executionCounter += 1
@@ -133,7 +134,8 @@ extension NotebookViewModel {
           }
         }
         // Sync statement pagination info to cell for persistence
-        notebook.cells[index].statementPaginationInfo = cellStatementPaginationInfo[task.cellId] ?? [:]
+        notebook.cells[index].statementPaginationInfo =
+          cellStatementPaginationInfo[task.cellId] ?? [:]
         // Clear single statement pagination info for multi-statement
         notebook.cells[index].paginationInfo = nil
 
@@ -483,7 +485,7 @@ extension NotebookViewModel {
 
     notebook.cells[cellIndex].selectedStatementIndex = index
     notebook.cells[cellIndex].result = notebook.cells[cellIndex].statementResults[index].result
-    
+
     // Update the View Query sidebar if it's currently open for this cell
     updateExecutedQuerySidebarIfNeeded(cellId: cellId, result: notebook.cells[cellIndex].result)
   }
@@ -495,7 +497,7 @@ extension NotebookViewModel {
     guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent else {
       return
     }
-    
+
     // Check if the sidebar is showing query for this specific cell (or editor mode if both are nil)
     guard sidebarCellId == cellId else {
       return

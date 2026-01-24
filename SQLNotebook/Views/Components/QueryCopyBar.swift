@@ -303,7 +303,8 @@ struct QueryCopyBar: View {
     executionTime: 0.045,
     rowCount: 10,
     timestamp: Date(),
-    sourceQuery: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10"
+    sourceQuery:
+      "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10"
   )
 
   return VStack(spacing: 20) {
@@ -311,7 +312,8 @@ struct QueryCopyBar: View {
       .font(.headline)
 
     QueryCopyBar(
-      query: "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10",
+      query:
+        "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10",
       result: result,
       viewModel: NotebookViewModel(),
       cellId: UUID()

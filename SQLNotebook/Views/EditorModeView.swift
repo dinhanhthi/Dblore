@@ -390,7 +390,8 @@ struct EditorModeView: View {
         result: result,
         viewModel: viewModel,
         cellId: nil,  // Editor mode has no cell ID
-        queryIndex: !viewModel.editorStatementResults.isEmpty ? (viewModel.selectedStatementIndex + 1) : nil
+        queryIndex: !viewModel.editorStatementResults.isEmpty
+          ? (viewModel.selectedStatementIndex + 1) : nil
       )
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
@@ -508,7 +509,6 @@ struct EditorModeView: View {
     // Return original query
     return sourceQuery
   }
-
 
   /// Shows first ~30 chars and last ~20 chars with "..." in middle
 }

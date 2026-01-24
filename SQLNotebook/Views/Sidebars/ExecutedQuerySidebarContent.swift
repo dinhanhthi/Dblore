@@ -122,7 +122,8 @@ struct ExecutedQuerySidebarContent: View {
 
 #Preview("Simple Query") {
   let viewModel = NotebookViewModel()
-  let query = "SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 100;"
+  let query =
+    "SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 100;"
   viewModel.rightSidebarContent = .executedQuery(
     query: query, cellId: UUID(), limitWasCapped: false, actualLimit: nil
   )
