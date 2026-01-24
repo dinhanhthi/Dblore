@@ -271,6 +271,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Notification observers
     private var highlightObserver: NSObjectProtocol?
     private var clearObserver: NSObjectProtocol?
+    private var unfocusObserver: NSObjectProtocol?
 
     init(
       text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>
@@ -418,6 +419,19 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // MARK: - Search Highlighting
 
     private func setupNotificationObservers() {
+      // Listen for unfocus editor notification
+      unfocusObserver = NotificationCenter.default.addObserver(
+        forName: .unfocusEditor,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self, let textView = self.textView else { return }
+          // Unfocus the text view by resigning first responder
+          textView.window?.makeFirstResponder(nil)
+        }
+      }
+
       // Listen for highlight search match notification
       highlightObserver = NotificationCenter.default.addObserver(
         forName: .highlightSearchMatch,

@@ -4,6 +4,7 @@
 //
 //
 
+import AppKit
 import Foundation
 
 // MARK: - Global Search
@@ -238,6 +239,12 @@ extension NotebookViewModel {
       object: nil,
       userInfo: ["viewModelId": id]
     )
+
+    // Restore focus to previous responder (like VSCode)
+    if let previousResponder = previousFirstResponder {
+      NSApplication.shared.keyWindow?.makeFirstResponder(previousResponder)
+      previousFirstResponder = nil
+    }
   }
 
   /// Toggle search panel (open/close)
@@ -247,6 +254,9 @@ extension NotebookViewModel {
       // Close search if already open
       closeSearch()
     } else {
+      // Save current first responder before opening search (like VSCode)
+      previousFirstResponder = NSApplication.shared.keyWindow?.firstResponder
+
       // Open search panel
       isSearchPanelVisible = true
     }
