@@ -187,6 +187,9 @@ extension NotebookViewModel {
     guard index >= 0 && index < editorStatementResults.count else { return }
     selectedStatementIndex = index
     editorResult = editorStatementResults[index].result
+    
+    // Update the View Query sidebar if it's currently open for editor mode
+    updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)
   }
 
   // MARK: - Pagination Support
