@@ -225,11 +225,13 @@ extension NotebookViewModel {
       }
     } catch is TaskTimeoutError {
       // Handle query timeout (10.1.5 optimization)
+      executionCounter += 1
       result = .errorResult(
         "Query execution timed out after 60 seconds",
         sourceQuery: task.query
       )
       notebook.cells[index].result = result
+      notebook.cells[index].executionCount = executionCounter
       // Clear multi-statement data on error
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
@@ -241,6 +243,7 @@ extension NotebookViewModel {
         "Query timed out for cell \(task.cellId)", category: "Execution")
     } catch let error as DatabaseError {
       // Handle database-specific errors
+      executionCounter += 1
       let executionTime = error.executionTime ?? 0
       result = .errorResult(
         error.localizedDescription,
@@ -248,6 +251,7 @@ extension NotebookViewModel {
         sourceQuery: task.query
       )
       notebook.cells[index].result = result
+      notebook.cells[index].executionCount = executionCounter
       // Clear multi-statement data on error
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
@@ -257,8 +261,10 @@ extension NotebookViewModel {
       cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     } catch {
       // Handle general errors
+      executionCounter += 1
       result = .errorResult(error.localizedDescription, sourceQuery: task.query)
       notebook.cells[index].result = result
+      notebook.cells[index].executionCount = executionCounter
       // Clear multi-statement data on error
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
