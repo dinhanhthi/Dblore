@@ -204,6 +204,62 @@ struct EditorModeView: View {
 
       // Main header
       HStack {
+        // Dropdown for multi-statement queries (at the beginning)
+        if !viewModel.editorStatementResults.isEmpty {
+          // Dropdown menu for statement selection
+          Menu {
+            ForEach(viewModel.editorStatementResults.indices, id: \.self) { index in
+              let statementResult = viewModel.editorStatementResults[index]
+              Button(action: {
+                viewModel.selectEditorStatement(at: index)
+              }) {
+                HStack {
+                  // Combined text: "Result N • query text (truncated)"
+                  (Text("Result \(index + 1) • ")
+                    .font(.system(size: 11))
+                    + Text(truncateQuery(statementResult.queryText))
+                    .font(.system(size: 11, design: .monospaced)))
+                    .lineLimit(1)
+
+                  Spacer()
+
+                  // Checkmark for selected item
+                  if index == viewModel.selectedStatementIndex {
+                    Image(systemName: "checkmark")
+                      .font(.system(size: 10))
+                      .foregroundColor(.accentColor)
+                  }
+                }
+              }
+              .id(statementResult.id)
+            }
+          } label: {
+            HStack {
+              Text("Result \(viewModel.selectedStatementIndex + 1)")
+                .font(.system(size: 11))
+                .foregroundColor(.foreground)
+              Spacer()
+              Image(systemName: "chevron.down")
+                .font(.system(size: 9))
+                .foregroundColor(.foregroundMuted)
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .fill(Color.inputBackground)
+            )
+            .overlay(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .stroke(Color.border, lineWidth: 1)
+            )
+          }
+          .id(viewModel.editorStatementResults.map { $0.id })
+          .buttonStyle(.plain)
+          .help("Select statement result to view")
+          .fixedSize()
+        }
+
         // Result info
         HStack(spacing: Spacing.sm) {
           Image(systemName: result.error != nil ? "xmark.circle.fill" : "checkmark.circle.fill")
@@ -318,26 +374,14 @@ struct EditorModeView: View {
 
   /// Creates the footer bar for the result panel.
   ///
-  /// For multi-statement queries: Shows dropdown to select which statement's result to view
-  /// For single statement: Shows the query with click-to-copy functionality
+  /// For both single and multi-statement: Shows the query with click-to-copy functionality
   ///
   /// - Parameter result: The query result containing sourceQuery
-  /// - Returns: A view with query selector or clickable query text
+  /// - Returns: A view with clickable query text
   @ViewBuilder
   private func resultPanelFooter(result: CellResult) -> some View {
-    if !viewModel.editorStatementResults.isEmpty {
-      // Multi-statement query - use StatementSelectorView
-      StatementSelectorView(
-        statementResults: viewModel.editorStatementResults,
-        selectedIndex: viewModel.selectedStatementIndex,
-        cellId: nil,  // Editor mode has no cell ID
-        viewModel: viewModel,
-        onSelect: { index in
-          viewModel.selectEditorStatement(at: index)
-        }
-      )
-    } else if result.sourceQuery != nil {
-      // Single statement - show clickable query text + Download button
+    if result.sourceQuery != nil {
+      // Show clickable query text + Download button for both single and multi-statement
       let actualQuery = getActualExecutedQuery(result: result)
       let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
       QueryCopyBar(
@@ -345,7 +389,7 @@ struct EditorModeView: View {
         result: result,
         viewModel: viewModel,
         cellId: nil,  // Editor mode has no cell ID
-        queryIndex: nil  // Single statement mode
+        queryIndex: !viewModel.editorStatementResults.isEmpty ? (viewModel.selectedStatementIndex + 1) : nil
       )
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
@@ -396,6 +440,15 @@ struct EditorModeView: View {
   }
 
   // MARK: - Helpers
+
+  /// Truncate long query text for display in dropdown menu
+  private func truncateQuery(_ query: String, maxLength: Int = 60) -> String {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.count <= maxLength {
+      return trimmed
+    }
+    return String(trimmed.prefix(maxLength)) + "..."
+  }
 
   /// Format execution time with appropriate unit
   /// - If time >= 1 second: show in seconds with 2 decimal places (e.g., "1.23s")

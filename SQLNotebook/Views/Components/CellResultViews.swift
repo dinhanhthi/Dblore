@@ -27,26 +27,13 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        // Multi-statement selector (shown if there are multiple statements)
-        if let cell = cell, !cell.statementResults.isEmpty {
-          StatementSelectorView(
-            statementResults: cell.statementResults,
-            selectedIndex: cell.selectedStatementIndex,
-            cellId: cellId,
-            viewModel: viewModel,
-            onSelect: { index in
-              viewModel.selectCellStatement(cellId: cellId, at: index)
-            }
-          )
-        } else {
-          // Single statement - show query footer
-          ResultQueryFooterView(
-            result: result,
-            isQueryCopied: $isQueryCopied,
-            viewModel: viewModel,
-            cellId: cellId
-          )
-        }
+        // Query footer (for both single and multi-statement)
+        ResultQueryFooterView(
+          result: result,
+          isQueryCopied: $isQueryCopied,
+          viewModel: viewModel,
+          cellId: cellId
+        )
 
         if let error = result.error {
           // Error display with search highlighting
@@ -181,6 +168,10 @@ struct ErrorResultView: View {
 
 struct ResultMetadataView: View {
   let result: CellResult
+  var statementResults: [StatementResult]? = nil
+  var selectedStatementIndex: Int? = nil
+  var viewModel: NotebookViewModel? = nil
+  var cellId: UUID? = nil
 
   /// Determine color for affected rows text based on query type
   /// - Green for INSERT/UPDATE queries with affected rows > 0
@@ -205,6 +196,15 @@ struct ResultMetadataView: View {
     }
   }
 
+  /// Truncate long query text for display in dropdown menu
+  private func truncateQuery(_ query: String, maxLength: Int = 60) -> String {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.count <= maxLength {
+      return trimmed
+    }
+    return String(trimmed.prefix(maxLength)) + "..."
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Horizontal divider line
@@ -213,6 +213,69 @@ struct ResultMetadataView: View {
         .frame(height: 1)
 
       HStack(spacing: Spacing.md) {
+        // Dropdown menu for multi-statement queries (at the beginning)
+        if let statementResults = statementResults,
+          let selectedIndex = selectedStatementIndex,
+          let viewModel = viewModel,
+          let cellId = cellId,
+          !statementResults.isEmpty
+        {
+          Menu {
+            ForEach(statementResults.indices, id: \.self) { index in
+              let statementResult = statementResults[index]
+              Button(action: {
+                viewModel.selectCellStatement(cellId: cellId, at: index)
+              }) {
+                HStack {
+                  // Combined text: "Result N • query text (truncated)"
+                  (Text("Result \(index + 1) • ")
+                    .font(.system(size: 11))
+                    + Text(truncateQuery(statementResult.queryText))
+                    .font(.system(size: 11, design: .monospaced)))
+                    .lineLimit(1)
+
+                  Spacer()
+
+                  // Checkmark for selected item
+                  if index == selectedIndex {
+                    Image(systemName: "checkmark")
+                      .font(.system(size: 10))
+                      .foregroundColor(.accentColor)
+                  }
+                }
+              }
+              .id(statementResult.id)
+            }
+          } label: {
+            HStack {
+              Text("Result \(selectedIndex + 1)")
+                .font(.system(size: 11))
+                .foregroundColor(.foreground)
+              Spacer()
+              Image(systemName: "chevron.down")
+                .font(.system(size: 9))
+                .foregroundColor(.foregroundMuted)
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .fill(Color.inputBackground)
+            )
+            .overlay(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .stroke(Color.border, lineWidth: 1)
+            )
+          }
+          .id(statementResults.map { $0.id })
+          .buttonStyle(.plain)
+          .help("Select statement result to view")
+          .fixedSize()
+
+          Text("|")
+            .foregroundColor(.foregroundSubtle)
+        }
+
         Text("Rows: \(result.rowCount)")
 
         // Show warning if limited (either auto-limited or user LIMIT exceeded)
@@ -242,6 +305,7 @@ struct ResultMetadataView: View {
       .font(.labelText)
       .foregroundColor(.foregroundSubtle)
       .padding(.top, Spacing.sm)
+      .padding(.bottom, Spacing.sm)  // Add bottom padding to prevent overlap with floating action panel
       .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
@@ -432,8 +496,20 @@ struct NotebookResultTableView: View {
         onPageChange: handlePageChange
       )
 
-      // Result metadata (below table)
-      ResultMetadataView(result: result)
+      // Result metadata (below table) with dropdown for multi-statement
+      if let cell = cell, !cell.statementResults.isEmpty {
+        // Multi-statement: show dropdown in metadata bar
+        ResultMetadataView(
+          result: result,
+          statementResults: cell.statementResults,
+          selectedStatementIndex: cell.selectedStatementIndex,
+          viewModel: viewModel,
+          cellId: cellId
+        )
+      } else {
+        // Single statement: no dropdown
+        ResultMetadataView(result: result)
+      }
     }
   }
 
