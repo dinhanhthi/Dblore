@@ -10,6 +10,7 @@ import SwiftUI
 struct PaginationView: View {
   let info: PaginationInfo
   let onPageChange: (Int) -> Void
+  var includeHorizontalPadding: Bool = false
 
   var body: some View {
     HStack(spacing: Spacing.md) {
@@ -82,6 +83,7 @@ struct PaginationView: View {
         .foregroundColor(.foregroundSubtle)
     }
     .padding(.vertical, Spacing.xs)
+    .padding(.horizontal, includeHorizontalPadding ? Spacing.sm : 0)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
       Divider()

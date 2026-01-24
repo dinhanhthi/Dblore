@@ -89,7 +89,11 @@ struct ResultTableView: View {
       if let paginationInfo = paginationInfo, let onPageChange = onPageChange,
         paginationInfo.totalPages > 1
       {
-        PaginationView(info: paginationInfo, onPageChange: onPageChange)
+        PaginationView(
+          info: paginationInfo,
+          onPageChange: onPageChange,
+          includeHorizontalPadding: cellId == nil  // Add padding in Editor mode only
+        )
       }
     }
     .frame(maxWidth: .infinity)
