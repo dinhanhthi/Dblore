@@ -82,7 +82,7 @@ struct PaginationView: View {
         .foregroundColor(.foregroundSubtle)
     }
     .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
+    .padding(.vertical, Spacing.xs)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
       Divider()
