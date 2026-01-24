@@ -23,7 +23,12 @@ struct ResultAreaView: View {
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
         // Query footer (shows source query with click-to-copy) - always shown first
-        ResultQueryFooterView(result: result, isQueryCopied: $isQueryCopied)
+        ResultQueryFooterView(
+          result: result,
+          isQueryCopied: $isQueryCopied,
+          viewModel: viewModel,
+          cellId: cellId
+        )
 
         if let error = result.error {
           // Error display with search highlighting
@@ -230,6 +235,8 @@ struct ResultQueryFooterView: View {
   let result: CellResult
   @Binding var isQueryCopied: Bool
   @State private var showCopyFeedback: CopyFeedbackType? = nil
+  var viewModel: NotebookViewModel?
+  var cellId: UUID?
 
   enum CopyFeedbackType {
     case tsv
@@ -275,6 +282,9 @@ struct ResultQueryFooterView: View {
           .cursor(NSCursor.pointingHand)
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
 
+          // View Query button (left of Download button)
+          viewQueryButton(query: sourceQuery)
+
           // Download dropdown button (right-aligned)
           downloadButton(result: result)
         }
@@ -301,6 +311,37 @@ struct ResultQueryFooterView: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
       isQueryCopied = false
     }
+  }
+
+  /// View Query button
+  @ViewBuilder
+  private func viewQueryButton(query: String) -> some View {
+    Button(action: {
+      // Show query in right sidebar
+      viewModel?.rightSidebarContent = .executedQuery(query: query, cellId: cellId)
+      viewModel?.isRightSidebarVisible = true
+    }) {
+      HStack(spacing: 4) {
+        Image(systemName: "eye")
+          .font(.system(size: 11))
+        Text("View Query")
+          .font(.system(size: 11))
+      }
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.inputBackground)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .stroke(Color.border, lineWidth: 1)
+      )
+    }
+    .buttonStyle(.plain)
+    .help("View full query in sidebar")
+    .fixedSize()
   }
 
   /// Download dropdown button

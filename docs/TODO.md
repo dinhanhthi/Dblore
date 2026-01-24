@@ -9,7 +9,7 @@
 - 🟡 **Phase 5: Advanced Features** - PARTIAL (5.4 Autocomplete complete; 5.6-5.8 pending)
 - ✅ **Phase 6: Security & Safety** - COMPLETE (6.0.2, 6.0.3, 6.0.4 all implemented; 6.0.5-6.0.6 future)
 - 🟡 **Phase 7: Testing Suite** - MOSTLY COMPLETE (CI/CD setup done, integration tests partial)
-- ✅ **Phase 8: Editor Mode** - COMPLETE (8.1-8.5 complete including Run Selection; 8.6-8.8 future enhancements)
+- ✅ **Phase 8: Editor Mode** - COMPLETE (8.1-8.5, 8.8 complete including Run Selection and Executed Query Viewer; 8.6-8.7 future enhancements)
 - 🟡 **Phase 10: Performance Optimization** - PENDING (see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
 
 ---
@@ -212,37 +212,39 @@ A traditional SQL editor mode with single editor and result panel below.
 - [x] Toast notifications for success/error - showToast() calls in executeEditorQuery() (NotebookViewModel+EditorMode.swift:68-83)
 
 ### 8.6 Export Results - PENDING
-- [ ] Implement "Export to CSV" for result tables
+- [x] Implement "Export to CSV/JSON/EXCEL/MARKDOWN" for result tables
 
 ### 8.7 Multiple Database Support - PENDING
 - [ ] Abstract database connection interface
 - [ ] Add SQLite support
 - [ ] Add MySQL support (optional)
 
-### 8.8 Executed Query Viewer - PENDING
-- [ ] Add button next to execution metadata ("30 rows • 0.01s")
-  - [ ] Add button in EditorModeView.resultPanelHeader (line 91-133)
-  - [ ] Add button in ResultMetadataView for notebook mode (CellResultViews.swift:158-187)
-  - [ ] Use icon "doc.text" or "chevron.right.square"
-- [ ] Create ExecutedQuerySidebarContent view component
-  - [ ] Display query with syntax highlighting
-  - [ ] Add copy button
-  - [ ] Reuse ExecutedQueryDisplayView component
-- [ ] Add `.executedQuery(query: String, cellId: UUID?)` case to SidebarContent enum
-- [ ] Wire up button action to show query in right sidebar
-  - [ ] Set `viewModel.rightSidebarContent = .executedQuery(...)`
-  - [ ] Set `viewModel.isRightSidebarVisible = true`
-- [ ] Support both Editor mode and Notebook mode
+### 8.8 Executed Query Viewer - COMPLETE ✅
+- [x] Add button next to execution metadata ("30 rows • 0.01s")
+  - [x] Add "View Query" button in EditorModeView.resultPanelFooter (both single and multi-statement modes)
+  - [x] Add "View Query" button in ResultQueryFooterView for notebook mode (CellResultViews.swift)
+  - [x] Use icon "eye" for button
+- [x] Create ExecutedQuerySidebarContent view component
+  - [x] Display query with syntax highlighting using SQLSyntaxHighlighter
+  - [x] Add copy button with checkmark feedback
+  - [x] Horizontal and vertical scrolling support
+- [x] Add `.executedQuery(query: String, cellId: UUID?)` case to SidebarContent enum
+- [x] Wire up button action to show query in right sidebar
+  - [x] Set `viewModel.rightSidebarContent = .executedQuery(...)`
+  - [x] Set `viewModel.isRightSidebarVisible = true`
+- [x] Support both Editor mode and Notebook mode
 
-**Note:** Infrastructure is 70% ready:
-- ✅ sourceQuery field exists in CellResult model
-- ✅ ExecutedQueryDisplayView component exists
-- ✅ Right sidebar system exists
-- ❌ Button not implemented
-- ❌ SidebarContent case not added
-- ❌ Sidebar view component not created
+**Implementation Details:**
+- ✅ ExecutedQuerySidebarContent view (SQLNotebook/Views/Sidebars/ExecutedQuerySidebarContent.swift)
+- ✅ Button added to "Run with query" bar (left of Download button)
+- ✅ SidebarContent.executedQuery case added (NotebookViewModel.swift:28)
+- ✅ RightSidebarView updated to handle executedQuery case (RightSidebarView.swift:44-50, 98, 158-159)
+- ✅ EditorModeView: viewQueryButton() method (EditorModeView.swift:320-346)
+- ✅ CellResultViews: viewQueryButton() method (CellResultViews.swift:307-334)
+- ✅ Works in both Editor and Notebook modes
+- ✅ Build successful (xcodebuild clean build)
 
-**Effort:** LOW-MEDIUM (2-3 hours)
+**Effort:** Completed in ~2 hours
 
 ---
 

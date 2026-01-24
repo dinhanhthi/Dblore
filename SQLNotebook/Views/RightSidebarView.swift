@@ -39,6 +39,13 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if case .executedQuery = content {
+          // ExecutedQuerySidebarContent handles its own ScrollView
+          VStack(alignment: .leading, spacing: 0) {
+            contentView(for: content)
+              .padding(Spacing.md)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if case .connectionDetails = content {
           // ConnectionDetails handles its own padding and scrolling
           contentView(for: content)
@@ -94,6 +101,8 @@ struct RightSidebarView: View {
       return "JSON Viewer"
     case .cellInfo:
       return "Cell Value"
+    case .executedQuery:
+      return "Executed Query"
     case .connectionDetails:
       return "Connection"
     case .connectionForm:
@@ -151,6 +160,8 @@ struct RightSidebarView: View {
         isReadOnly: viewModel.notebook.connectionConfig?.readOnly ?? false
       )
       .environment(viewModel)
+    case .executedQuery(let query, let cellId):
+      ExecutedQuerySidebarContent(query: query, cellId: cellId)
     case .connectionDetails:
       ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
