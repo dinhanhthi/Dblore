@@ -212,101 +212,111 @@ struct ResultMetadataView: View {
         .fill(Color.border)
         .frame(height: 1)
 
-      HStack(spacing: Spacing.md) {
-        // Dropdown menu for multi-statement queries (at the beginning)
-        if let statementResults = statementResults,
-          let selectedIndex = selectedStatementIndex,
-          let viewModel = viewModel,
-          let cellId = cellId,
-          !statementResults.isEmpty
-        {
-          Menu {
-            ForEach(statementResults.indices, id: \.self) { index in
-              let statementResult = statementResults[index]
-              Button(action: {
-                viewModel.selectCellStatement(cellId: cellId, at: index)
-              }) {
-                HStack {
-                  // Combined text: "Result N • query text (truncated)"
-                  (Text("Result \(index + 1) • ")
-                    .font(.system(size: 11))
-                    + Text(truncateQuery(statementResult.queryText))
-                    .font(.system(size: 11, design: .monospaced)))
-                    .lineLimit(1)
+      GeometryReader { geometry in
+        let currentWidth = geometry.size.width
+        let shouldShowTimestamp = currentWidth >= 600
 
-                  Spacer()
+        HStack(spacing: Spacing.md) {
+          // Dropdown menu for multi-statement queries (at the beginning)
+          if let statementResults = statementResults,
+            let selectedIndex = selectedStatementIndex,
+            let viewModel = viewModel,
+            let cellId = cellId,
+            !statementResults.isEmpty
+          {
+            Menu {
+              ForEach(statementResults.indices, id: \.self) { index in
+                let statementResult = statementResults[index]
+                Button(action: {
+                  viewModel.selectCellStatement(cellId: cellId, at: index)
+                }) {
+                  HStack {
+                    // Combined text: "Result N • query text (truncated)"
+                    (Text("Result \(index + 1) • ")
+                      .font(.system(size: 11))
+                      + Text(truncateQuery(statementResult.queryText))
+                      .font(.system(size: 11, design: .monospaced)))
+                      .lineLimit(1)
 
-                  // Checkmark for selected item
-                  if index == selectedIndex {
-                    Image(systemName: "checkmark")
-                      .font(.system(size: 10))
-                      .foregroundColor(.accentColor)
+                    Spacer()
+
+                    // Checkmark for selected item
+                    if index == selectedIndex {
+                      Image(systemName: "checkmark")
+                        .font(.system(size: 10))
+                        .foregroundColor(.accentColor)
+                    }
                   }
                 }
+                .id(statementResult.id)
               }
-              .id(statementResult.id)
+            } label: {
+              HStack {
+                Text("Result \(selectedIndex + 1)")
+                  .font(.system(size: 11))
+                  .foregroundColor(.foreground)
+                Spacer()
+                Image(systemName: "chevron.down")
+                  .font(.system(size: 9))
+                  .foregroundColor(.foregroundMuted)
+              }
+              .padding(.horizontal, Spacing.sm)
+              .padding(.vertical, Spacing.xs)
+              .background(
+                RoundedRectangle(cornerRadius: CornerRadius.md)
+                  .fill(Color.inputBackground)
+              )
+              .overlay(
+                RoundedRectangle(cornerRadius: CornerRadius.md)
+                  .stroke(Color.border, lineWidth: 1)
+              )
             }
-          } label: {
-            HStack {
-              Text("Result \(selectedIndex + 1)")
-                .font(.system(size: 11))
-                .foregroundColor(.foreground)
-              Spacer()
-              Image(systemName: "chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(.foregroundMuted)
-            }
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xs)
-            .background(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(Color.inputBackground)
-            )
-            .overlay(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .stroke(Color.border, lineWidth: 1)
-            )
+            .id(statementResults.map { $0.id })
+            .buttonStyle(.plain)
+            .help("Select statement result to view")
+            .fixedSize()
+
+            Text("|")
+              .foregroundColor(.foregroundSubtle)
           }
-          .id(statementResults.map { $0.id })
-          .buttonStyle(.plain)
-          .help("Select statement result to view")
-          .fixedSize()
+
+          Text("Rows: \(result.rowCount)")
+
+          // Show warning if limited (either auto-limited or user LIMIT exceeded)
+          if result.wasLimited || result.userLimitExceeded {
+            HStack(spacing: Spacing.xs) {
+              Text("(")
+                .foregroundColor(.warning)
+              Text("limited to \(AppSettings.shared.maxRowLimit) rows")
+                .foregroundColor(.warning)
+              Text(")")
+                .foregroundColor(.warning)
+            }.font(.labelText)
+          }
 
           Text("|")
             .foregroundColor(.foregroundSubtle)
+          Text("Affected: \(result.affectedRows ?? 0)")
+            .foregroundColor(affectedRowsColor(for: result))
+
+          Text("|")
+            .foregroundColor(.foregroundSubtle)
+          Text("Execution time: \(CellResultViews.formatExecutionTime(result.executionTime))")
+
+          // Hide timestamp and separator when width < 600px
+          if shouldShowTimestamp {
+            Text("|")
+              .foregroundColor(.foregroundSubtle)
+            Text(CellResultViews.formatTimestamp(result.timestamp))
+          }
         }
-
-        Text("Rows: \(result.rowCount)")
-
-        // Show warning if limited (either auto-limited or user LIMIT exceeded)
-        if result.wasLimited || result.userLimitExceeded {
-          HStack(spacing: Spacing.xs) {
-            Text("(")
-              .foregroundColor(.warning)
-            Text("limited to \(AppSettings.shared.maxRowLimit) rows")
-              .foregroundColor(.warning)
-            Text(")")
-              .foregroundColor(.warning)
-          }.font(.labelText)
-        }
-
-        Text("|")
-          .foregroundColor(.foregroundSubtle)
-        Text("Affected: \(result.affectedRows ?? 0)")
-          .foregroundColor(affectedRowsColor(for: result))
-
-        Text("|")
-          .foregroundColor(.foregroundSubtle)
-        Text("Execution time: \(CellResultViews.formatExecutionTime(result.executionTime))")
-        Text("|")
-          .foregroundColor(.foregroundSubtle)
-        Text(CellResultViews.formatTimestamp(result.timestamp))
+        .font(.labelText)
+        .foregroundColor(.foregroundSubtle)
+        .frame(width: geometry.size.width, alignment: .leading)
       }
-      .font(.labelText)
-      .foregroundColor(.foregroundSubtle)
+      .frame(height: 30)
       .padding(.top, Spacing.sm)
       .padding(.bottom, Spacing.sm)  // Add bottom padding to prevent overlap with floating action panel
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 }
