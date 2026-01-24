@@ -36,6 +36,9 @@ enum SidebarContent: Equatable {
 @MainActor
 @Observable
 class NotebookViewModel {
+  // Unique identifier for this view model instance (to scope search notifications)
+  let id: UUID = UUID()
+
   var notebook: SQLNotebook
   var connectionState: ConnectionState = .disconnected
   var selectedCellId: UUID?

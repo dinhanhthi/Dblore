@@ -192,6 +192,7 @@ struct CellView: View {
       textViewRef: $textViewRef,
       autocompleteProvider: viewModel.autocompleteProvider,
       cellId: cell.id,
+      viewModelId: viewModel.id,
       wordWrapEnabled: appSettings.wordWrapEnabled
     )
     .focused($isEditorFocused)
