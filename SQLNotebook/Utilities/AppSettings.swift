@@ -40,6 +40,7 @@ class AppSettings {
     static let maxRowLimit = "app.settings.maxRowLimit"
     static let editorMaxRowLimit = "app.settings.editorMaxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
+    static let leftSidebarWidth = "app.settings.leftSidebarWidth"
     static let themePreference = "app.settings.themePreference"
     static let bypassDestructiveQueryConfirmation =
       "app.settings.bypassDestructiveQueryConfirmation"
@@ -96,6 +97,20 @@ class AppSettings {
   var isLeftSidebarVisible: Bool = false {
     didSet {
       UserDefaults.standard.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
+    }
+  }
+
+  /// Width of the left sidebar (database schema) in points
+  /// Default: 250, Min: 200, Max: 40% of window width
+  var leftSidebarWidth: CGFloat = 250.0 {
+    didSet {
+      // Clamp between 200 and reasonable max (will be further clamped by view based on window width)
+      let clampedValue = max(leftSidebarWidth, 200)
+      if clampedValue != leftSidebarWidth {
+        leftSidebarWidth = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      UserDefaults.standard.set(Double(leftSidebarWidth), forKey: Keys.leftSidebarWidth)
     }
   }
 
@@ -211,6 +226,12 @@ class AppSettings {
       isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
     }
 
+    // Load left sidebar width
+    let savedSidebarWidth = UserDefaults.standard.double(forKey: Keys.leftSidebarWidth)
+    if savedSidebarWidth > 0 {
+      leftSidebarWidth = max(CGFloat(savedSidebarWidth), 200)
+    }
+
     // Load theme preference
     if let themeString = UserDefaults.standard.string(forKey: Keys.themePreference),
       let theme = ThemePreference(rawValue: themeString)
@@ -263,6 +284,7 @@ class AppSettings {
     maxRowLimit = 50
     editorMaxRowLimit = 100
     isLeftSidebarVisible = false
+    leftSidebarWidth = 250.0
     themePreference = .dark
     bypassDestructiveQueryConfirmation = false
     isAutoCompleteEnabled = true

@@ -66,9 +66,20 @@ struct EditorContentView: View {
           HStack(spacing: 0) {
             // Left sidebar (conditionally shown)
             if viewModel.isLeftSidebarVisible {
+              let maxSidebarWidth = geometry.size.width * 0.35
+              let constrainedWidth = min(appSettings.leftSidebarWidth, maxSidebarWidth)
+
               LeftSidebarView(viewModel: viewModel)
-                .frame(width: geometry.size.width * 0.3)
+                .frame(width: constrainedWidth)
                 .transition(.move(edge: .leading))
+
+              // Resizable divider
+              ResizableSidebarDivider(
+                sidebarWidth: $appSettings.leftSidebarWidth,
+                minWidth: 320,
+                maxWidth: maxSidebarWidth,
+                side: .left
+              )
             }
 
             // Main editor content

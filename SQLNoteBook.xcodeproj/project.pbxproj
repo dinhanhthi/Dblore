@@ -32,10 +32,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				Models/CLAUDE.md,
-				ViewModels/CLAUDE.md,
-				Views/CLAUDE.md,
-				Views/Sidebars/CLAUDE.md,
 			);
 			target = D3E0FB922EF70DBB009A0E5A /* SQLNotebook */;
 		};
