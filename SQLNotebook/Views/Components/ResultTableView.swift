@@ -22,6 +22,7 @@ struct ResultTableView: View {
   @State private var currentMatchId: UUID?
   @State private var matchLookup: [String: UUID] = [:]  // "rowIndex-columnName" → matchId for O(1) lookup
   @State private var cachedTotalColumnsWidth: CGFloat = 0  // Cached total width (10.1.6 optimization)
+  @State private var searchVersion: Int = 0  // Increment only when current match changes (10.2.3 optimization)
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -39,14 +40,15 @@ struct ResultTableView: View {
     result.rows.count > maxRowsToRender
   }
 
-  // Force SwiftUI to track searchState changes for re-rendering
+  // Computed properties for search state (read-only, not tracked for re-render)
+  // Only searchVersion state triggers re-renders (10.2.3 optimization)
   private var searchQuery: String { viewModel.searchState.query }
   private var searchCaseSensitive: Bool { viewModel.searchState.isCaseSensitive }
 
   var body: some View {
-    // Access search properties to establish SwiftUI dependency tracking
-    let _ = searchQuery
-    let _ = searchCaseSensitive
+    // Only track searchVersion for re-renders, not individual search properties
+    // This prevents unnecessary re-renders when query changes but match doesn't
+    let _ = searchVersion
 
     return VStack(alignment: .leading, spacing: 0) {
       // Header - syncs horizontal scroll position with content
@@ -110,21 +112,33 @@ struct ResultTableView: View {
         let matchesThisCell = isEditorMode || match.cellId == cellId
 
         if matchesThisCell {
-          currentMatchId = match.id
-          // Build lookup table when match changes
-          buildMatchLookup()
+          // Only update if match actually changed (10.2.3 optimization)
+          if currentMatchId != match.id {
+            currentMatchId = match.id
+            // Increment searchVersion to trigger re-render
+            searchVersion += 1
+            // Build lookup table when match changes
+            buildMatchLookup()
+          }
           // Note: Vertical scrolling to matched row is handled by parent notebook list
           // since result table no longer has internal vertical scrolling
         }
       }
     }
     .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
-      currentMatchId = nil
-      matchLookup.removeAll()  // Clear lookup table
+      // Only clear if there was a match (10.2.3 optimization)
+      if currentMatchId != nil {
+        currentMatchId = nil
+        matchLookup.removeAll()  // Clear lookup table
+        searchVersion += 1  // Trigger re-render to clear highlights
+      }
     }
-    .onChange(of: viewModel.searchState.matches.count) { _, _ in
-      // Rebuild lookup when search results change
-      buildMatchLookup()
+    .onChange(of: viewModel.searchState.matches.count) { oldCount, newCount in
+      // Only rebuild lookup when match count actually changes (10.2.3 optimization)
+      if oldCount != newCount {
+        buildMatchLookup()
+        // Don't increment searchVersion here - only when currentMatch changes
+      }
     }
     // Note: macOS doesn't have memory warnings like iOS (10.1.2 optimization)
     // matchLookup cache is already limited by search logic and cleared on panel close
@@ -284,7 +298,7 @@ struct ResultTableView: View {
     }
   }
 
-  private func cellContent(value: CellValue, rowIndex: Int, columnName: String) -> CellContentView {
+  private func cellContent(value: CellValue, rowIndex: Int, columnName: String) -> some View {
     // O(1) lookup instead of O(n) linear search through all matches
     let key = "\(rowIndex)-\(columnName)"
     let matchId = matchLookup[key]
@@ -296,6 +310,7 @@ struct ResultTableView: View {
       isCaseSensitive: searchCaseSensitive,
       isCurrentMatch: isCurrentMatch
     )
+    .equatable()  // Use Equatable protocol to skip re-render when props unchanged (10.2.3)
   }
 
   // MARK: - Helpers
@@ -438,12 +453,30 @@ struct ResultTableView: View {
 // MARK: - Cell Content View
 
 // Extracted to reduce type complexity in ResultTableView
+// Equatable protocol allows SwiftUI to skip re-render when props unchanged (10.2.3 optimization)
 
-private struct CellContentView: View {
+private struct CellContentView: View, Equatable {
   let value: CellValue
   let searchQuery: String
   let isCaseSensitive: Bool
   let isCurrentMatch: Bool
+
+  // Custom equality check - only re-render if relevant properties change
+  static func == (lhs: CellContentView, rhs: CellContentView) -> Bool {
+    // Only re-render if current match status changed or search query changed
+    // Don't compare value equality as it's expensive for JSON/large strings
+    if lhs.isCurrentMatch != rhs.isCurrentMatch {
+      return false
+    }
+    if lhs.searchQuery != rhs.searchQuery {
+      return false
+    }
+    if lhs.isCaseSensitive != rhs.isCaseSensitive {
+      return false
+    }
+    // Value comparison - use identity check for performance
+    return lhs.value.displayString == rhs.value.displayString
+  }
 
   /// Memoized display string to avoid repeated computation
   private var displayString: String {
