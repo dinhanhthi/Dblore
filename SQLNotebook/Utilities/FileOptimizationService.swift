@@ -160,6 +160,55 @@ extension FileOptimizationService {
         if let result = cell.result, includeResultsOnSave {
           cellDict["result"] = encodeResult(result, dateFormatter: dateFormatter)
         }
+        // Save isRunning and isResultVisible state
+        cellDict["isRunning"] = cell.isRunning
+        cellDict["isResultVisible"] = cell.isResultVisible
+
+        // Save multi-statement results
+        if !cell.statementResults.isEmpty {
+          let statementResultsArray = cell.statementResults.map { statementResult in
+            var statementDict: [String: Any] = [
+              "id": statementResult.id.uuidString,
+              "queryText": statementResult.queryText,
+              "statementIndex": statementResult.statementIndex,
+            ]
+            if includeResultsOnSave {
+              statementDict["result"] = encodeResult(
+                statementResult.result, dateFormatter: dateFormatter)
+            }
+            return statementDict
+          }
+          cellDict["statementResults"] = statementResultsArray
+          cellDict["selectedStatementIndex"] = cell.selectedStatementIndex
+          if let totalTime = cell.totalExecutionTime {
+            cellDict["totalExecutionTime"] = totalTime
+          }
+        }
+
+        // Save pagination info
+        if let paginationInfo = cell.paginationInfo {
+          cellDict["paginationInfo"] = [
+            "currentPage": paginationInfo.currentPage,
+            "totalRows": paginationInfo.totalRows,
+            "rowsPerPage": paginationInfo.rowsPerPage,
+            "baseQuery": paginationInfo.baseQuery,
+          ]
+        }
+
+        // Save statement pagination info
+        if !cell.statementPaginationInfo.isEmpty {
+          var statementPaginationDict: [String: [String: Any]] = [:]
+          for (statementId, paginationInfo) in cell.statementPaginationInfo {
+            statementPaginationDict[statementId.uuidString] = [
+              "currentPage": paginationInfo.currentPage,
+              "totalRows": paginationInfo.totalRows,
+              "rowsPerPage": paginationInfo.rowsPerPage,
+              "baseQuery": paginationInfo.baseQuery,
+            ]
+          }
+          cellDict["statementPaginationInfo"] = statementPaginationDict
+        }
+
         cellsArray.append(cellDict)
       }
       json["cells"] = cellsArray

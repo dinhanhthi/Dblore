@@ -130,6 +130,10 @@ extension NotebookViewModel {
             cellStatementPaginationInfo[task.cellId]?[statementResult.id] = paginationInfo
           }
         }
+        // Sync statement pagination info to cell for persistence
+        notebook.cells[index].statementPaginationInfo = cellStatementPaginationInfo[task.cellId] ?? [:]
+        // Clear single statement pagination info for multi-statement
+        notebook.cells[index].paginationInfo = nil
 
         // Check for any limit exceeded warnings
         for statementResult in convertedStatements {
@@ -200,6 +204,10 @@ extension NotebookViewModel {
         }
         // Clear statement pagination info for single statement
         cellStatementPaginationInfo.removeValue(forKey: task.cellId)
+        // Sync pagination info to cell for persistence
+        notebook.cells[index].paginationInfo = cellPaginationInfo[task.cellId]
+        // Clear statement pagination info for single statement
+        notebook.cells[index].statementPaginationInfo = [:]
 
         // Show toast if user's LIMIT was exceeded and capped
         if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {

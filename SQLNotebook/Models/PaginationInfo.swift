@@ -8,7 +8,7 @@
 import Foundation
 
 /// Information about pagination for a query result
-struct PaginationInfo: Sendable {
+struct PaginationInfo: Codable, Sendable {
   /// Current page number (1-based)
   let currentPage: Int
   /// Total number of rows in the database
