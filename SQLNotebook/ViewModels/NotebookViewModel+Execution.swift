@@ -146,6 +146,9 @@ extension NotebookViewModel {
     // Check file size after execution and show warning if needed
     checkFileSizeAfterExecution()
 
+    // Update View Query sidebar if it's showing query for this cell
+    updateExecutedQuerySidebarIfNeeded(cellId: task.cellId, result: result)
+
     return result
   }
 
@@ -341,5 +344,39 @@ extension NotebookViewModel {
       .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
 
     return cleanedTableName.isEmpty ? nil : cleanedTableName
+  }
+
+  // MARK: - Sidebar Update
+
+  /// Update the View Query sidebar if it's currently showing query for the given cell
+  /// This ensures the sidebar shows the latest executed query after re-running a cell
+  func updateExecutedQuerySidebarIfNeeded(cellId: UUID, result: CellResult?) {
+    // Check if sidebar is showing executed query for this cell
+    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent,
+      sidebarCellId == cellId
+    else {
+      return
+    }
+
+    // Get the actual executed query (with LIMIT adjusted if needed)
+    guard let sourceQuery = result?.sourceQuery else { return }
+
+    let actualQuery: String
+    if let result = result, result.limitWasCapped, let actualLimit = result.actualLimitUsed {
+      actualQuery = CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+    } else {
+      actualQuery = sourceQuery
+    }
+
+    // Remove comments for display
+    let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
+
+    // Update sidebar content
+    rightSidebarContent = .executedQuery(
+      query: displayQuery,
+      cellId: cellId,
+      limitWasCapped: result?.limitWasCapped ?? false,
+      actualLimit: result?.actualLimitUsed
+    )
   }
 }

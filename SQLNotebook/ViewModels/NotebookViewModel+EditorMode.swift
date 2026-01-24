@@ -112,6 +112,9 @@ extension NotebookViewModel {
         // Set editorResult to the selected statement's result for backward compatibility
         if !editorStatementResults.isEmpty {
           editorResult = editorStatementResults[selectedStatementIndex].result
+
+          // Update View Query sidebar if it's open for editor mode
+          updateEditorExecutedQuerySidebarIfNeeded(result: editorResult!)
         }
 
       } else {
@@ -156,6 +159,9 @@ extension NotebookViewModel {
 
         // Build pagination info if applicable
         editorPaginationInfo = await buildPaginationInfo(for: query, result: cellResult)
+
+        // Update View Query sidebar if it's open for editor mode
+        updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)
       }
 
     } catch {
@@ -505,4 +511,37 @@ extension NotebookViewModel {
     }
   }
 
+  // MARK: - Sidebar Update
+
+  /// Update the View Query sidebar if it's currently showing editor mode query (cellId is nil)
+  /// This ensures the sidebar shows the latest executed query after re-running in editor mode
+  func updateEditorExecutedQuerySidebarIfNeeded(result: CellResult) {
+    // Check if sidebar is showing executed query for editor mode (cellId is nil)
+    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent,
+      sidebarCellId == nil
+    else {
+      return
+    }
+
+    // Get the actual executed query (with LIMIT adjusted if needed)
+    guard let sourceQuery = result.sourceQuery else { return }
+
+    let actualQuery: String
+    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
+      actualQuery = CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+    } else {
+      actualQuery = sourceQuery
+    }
+
+    // Remove comments for display
+    let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
+
+    // Update sidebar content
+    rightSidebarContent = .executedQuery(
+      query: displayQuery,
+      cellId: nil,
+      limitWasCapped: result.limitWasCapped,
+      actualLimit: result.actualLimitUsed
+    )
+  }
 }
