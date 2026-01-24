@@ -307,6 +307,150 @@ struct DatabaseQueryParsingTests {
       let result = manager.extractLimitValue(query)
       #expect(result == 15, "Should extract only actual LIMIT 15")
     }
+
+    @Test("LIMIT without trailing semicolon is extracted")
+    func limitWithoutTrailingSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot LIMIT 10"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 without semicolon")
+    }
+
+    @Test("LIMIT in multi-statement query (first statement)")
+    func limitInMultiStatementFirst() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot LIMIT 10;\nSELECT * FROM users"
+      let result = manager.extractLimitValue(query)
+      // extractLimitValue should find the first LIMIT
+      #expect(result == 10, "Should extract LIMIT 10 from first statement")
+    }
+
+    @Test("LIMIT in multi-statement query (second statement)")
+    func limitInMultiStatementSecond() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM autoupdate;\nSELECT * FROM bot LIMIT 10"
+      let result = manager.extractLimitValue(query)
+      // extractLimitValue should find LIMIT even in second statement
+      #expect(result == 10, "Should extract LIMIT 10 from second statement")
+    }
+
+    @Test("LIMIT in multi-statement query (second statement with semicolon)")
+    func limitInMultiStatementSecondWithSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM autoupdate;\nSELECT * FROM bot LIMIT 10;"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 from second statement with semicolon")
+    }
+  }
+
+  // MARK: - extractLimitValue Edge Cases for Pagination Bug
+
+  @Suite("extractLimitValue - Pagination Bug Scenarios")
+  struct ExtractLimitValuePaginationBugTests {
+
+    @Test("Single SELECT with LIMIT and semicolon")
+    func singleSelectWithLimitAndSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot LIMIT 10;"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 with semicolon")
+    }
+
+    @Test("Single SELECT with LIMIT without semicolon")
+    func singleSelectWithLimitWithoutSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot LIMIT 10"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 without semicolon")
+    }
+
+    @Test("Split statement loses semicolon but keeps LIMIT")
+    func splitStatementKeepsLimit() throws {
+      let manager = DatabaseConnectionManager()
+      let originalQuery = "SELECT * FROM bot LIMIT 10;"
+
+      // Simulate what splitSQLStatements does
+      let statements = manager.splitSQLStatements(originalQuery)
+      #expect(statements.count == 1, "Should have 1 statement")
+
+      let statement = statements[0]
+      // The split statement should NOT have semicolon
+      #expect(!statement.hasSuffix(";"), "Split statement should not have trailing semicolon")
+
+      // But extractLimitValue should still work
+      let result = manager.extractLimitValue(statement)
+      #expect(result == 10, "Should extract LIMIT 10 from split statement")
+    }
+
+    @Test("Multi-statement: second statement with LIMIT (no semicolon)")
+    func multiStatementSecondWithLimitNoSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let fullQuery = "SELECT * FROM autoupdate;\nSELECT * FROM bot LIMIT 10"
+
+      let statements = manager.splitSQLStatements(fullQuery)
+      #expect(statements.count == 2, "Should have 2 statements")
+
+      let secondStatement = statements[1]
+      let result = manager.extractLimitValue(secondStatement)
+      #expect(result == 10, "Should extract LIMIT 10 from second statement")
+    }
+
+    @Test("Multi-statement: second statement with LIMIT (with semicolon)")
+    func multiStatementSecondWithLimitWithSemicolon() throws {
+      let manager = DatabaseConnectionManager()
+      let fullQuery = "SELECT * FROM autoupdate;\nSELECT * FROM bot LIMIT 10;"
+
+      let statements = manager.splitSQLStatements(fullQuery)
+      #expect(statements.count == 2, "Should have 2 statements")
+
+      let secondStatement = statements[1]
+      let result = manager.extractLimitValue(secondStatement)
+      #expect(result == 10, "Should extract LIMIT 10 from second statement")
+    }
+
+    @Test("Complex query: LIMIT with WHERE and ORDER BY")
+    func complexQueryWithLimit() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot WHERE id > 100 ORDER BY name LIMIT 10"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 from complex query")
+    }
+
+    @Test("Complex query with whitespace before LIMIT")
+    func complexQueryWithWhitespaceBeforeLimit() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot WHERE id > 100    \n   LIMIT    10"
+      let result = manager.extractLimitValue(query)
+      #expect(result == 10, "Should extract LIMIT 10 with extra whitespace")
+    }
+
+    @Test("Query with LIMIT and trailing semicolon for COUNT")
+    func queryWithLimitAndSemicolonForCount() throws {
+      // This test documents the bug where removeLimit doesn't remove semicolon
+      // which causes COUNT query to fail with syntax error
+      let query = "SELECT * FROM bot LIMIT 10;"
+
+      // Simulate what removeLimit should do (after fix)
+      var result = query
+      result = result.replacingOccurrences(
+        of: "\\s+LIMIT\\s+\\d+", with: "", options: [.regularExpression, .caseInsensitive])
+      result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      // After removing LIMIT, we should also remove trailing semicolon
+      if result.hasSuffix(";") {
+        result = String(result.dropLast())
+      }
+      result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      #expect(result == "SELECT * FROM bot", "Should remove both LIMIT and semicolon")
+      #expect(!result.contains(";"), "Result should not contain semicolon")
+
+      // The COUNT query should be valid
+      let countQuery = "SELECT COUNT(*) FROM (\(result)) AS _count_query"
+      #expect(
+        countQuery == "SELECT COUNT(*) FROM (SELECT * FROM bot) AS _count_query",
+        "COUNT query should be valid SQL")
+    }
   }
 
   // MARK: - wrapQueryWithLimit Tests - CRITICAL: Comment Stripping

@@ -474,6 +474,12 @@ extension NotebookViewModel {
     result = result.replacingOccurrences(
       of: "\\s+OFFSET\\s+\\d+", with: "", options: [.regularExpression, .caseInsensitive])
 
+    // Remove trailing semicolon (important for COUNT queries)
+    result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+    if result.hasSuffix(";") {
+      result = String(result.dropLast())
+    }
+
     return result.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
