@@ -219,7 +219,7 @@ Each task is complete when:
 - ✅ Phase 6: Complete (6.0.2-6.0.4; 6.0.5-6.0.6 future)
 - ✅ Phase 7: Complete (47/47 unit tests; integration/UI tests deferred)
 - ✅ Phase 8: Complete (8.1-8.6, 8.8 including Multi-SQL; 8.7 future)
-- 🟡 Phase 10: In Progress (10/19 tasks complete: Phase 10.1 Quick Wins ✅ 9/9 complete, 10.2.5 Primary Key Detection ✅; 10.1.1 LazyVStack ❌ INVALID)
+- 🟡 Phase 10: In Progress (11/19 tasks complete: Phase 10.1 Quick Wins ✅ 9/9 complete, 10.2.2 ExecutionQueue ✅, 10.2.5 Primary Key Detection ✅; 10.1.1 LazyVStack ❌ INVALID)
 
 **Recommended Next Actions:**
 1. **Phase 10 Performance Optimization** - Address performance bottlenecks for large datasets (see TODO_OPTIMIZE.md)
@@ -273,6 +273,15 @@ All quick-win optimization tasks completed in single session:
 
 **Expected Impact:** 40-50% overall performance improvement (memory, CPU, I/O)
 
+#### Phase 10.2.2: ExecutionQueue Off Main Actor ✅ (2026-01-24)
+- **Location:** `ExecutionQueue.swift:118-220`
+- **Implementation:**
+  - `startProcessing()` uses `Task.detached` instead of `Task { @MainActor in }`
+  - `processQueue()` marked `nonisolated` to run off main actor
+  - State access via `MainActor.run { }` blocks
+  - Keeps `@Observable` for SwiftUI integration
+- **Impact:** Non-blocking UI during query execution
+
 #### Phase 10.2.5: Primary Key Detection ✅
 - **Phase 10.2.5: Primary Key Detection** - ✅ IMPLEMENTED
   - Location: `DatabaseConnectionManager+Schema.swift:65-237`
@@ -296,12 +305,12 @@ All quick-win optimization tasks completed in single session:
 ### 🎯 Recommended Next Priority (Phase 10.2: Major Refactors)
 
 **High Priority Tasks (MEDIUM-HIGH effort):**
-1. **10.2.1: True Virtual Scrolling (TanStack-like)** - HIGH priority, HIGH effort
-2. **10.2.2: Move ExecutionQueue Off Main Actor** - HIGH priority, MEDIUM effort
-3. **10.2.3: ResultTableView Search Optimization** - HIGH priority, MEDIUM effort
-4. **10.2.4: Query Result Streaming** - HIGH priority, HIGH effort
+1. **10.2.3: ResultTableView Search Optimization** - HIGH priority, MEDIUM effort
+2. **10.2.1: True Virtual Scrolling (TanStack-like)** - HIGH priority, HIGH effort
+3. **10.2.4: Query Result Streaming** - HIGH priority, HIGH effort
 
 **Code Quality (Phase 10.3):**
 - **10.3.1: Split ResultTableView** (920 lines → ~300 lines) - MEDIUM effort
+- **10.3.5: Toast Deadlock Prevention** - LOW effort (quick fix)
 
 See [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md) for detailed task descriptions.

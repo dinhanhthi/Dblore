@@ -3,11 +3,13 @@
 //  SQLNotebook
 //
 //  Manages the queue of cell execution tasks, ensuring sequential execution
+//  10.2.2 Optimization: Queue processing runs off main actor for non-blocking UI
 //
 
 import Foundation
 
-/// Actor that manages the execution queue for SQL cells
+/// Class that manages the execution queue for SQL cells
+/// UI state is @MainActor for SwiftUI observation, but processing runs off main thread
 @MainActor
 @Observable
 class ExecutionQueue {
@@ -17,7 +19,7 @@ class ExecutionQueue {
   /// Currently executing task
   private(set) var currentTask: ExecutionTask?
 
-  /// Task for processing the queue
+  /// Task for processing the queue (runs detached from main actor)
   private var processingTask: Task<Void, Never>?
 
   /// Flag to track if queue is processing
@@ -26,7 +28,7 @@ class ExecutionQueue {
   /// Maximum history size before auto-clearing (10.1.7 optimization)
   private let maxHistorySize: Int = 10
 
-  /// Callback for executing a task
+  /// Callback for executing a task (runs on main actor for UI updates)
   private let executeTask: @MainActor (ExecutionTask) async -> CellResult?
 
   init(executeTask: @escaping @MainActor (ExecutionTask) async -> CellResult?) {
@@ -116,65 +118,103 @@ class ExecutionQueue {
   private func startProcessing() {
     isProcessing = true
 
-    processingTask = Task { @MainActor in
-      await processQueue()
+    // 10.2.2 Optimization: Run queue processing in detached task to avoid blocking main actor
+    // The processing loop itself runs off main thread, only UI updates hop to main actor
+    processingTask = Task.detached { [weak self] in
+      await self?.processQueue()
     }
   }
 
-  private func processQueue() async {
-    while isProcessing {
-      // Find next pending task
-      guard let nextTaskIndex = tasks.firstIndex(where: { $0.state == .pending }) else {
+  /// Process the queue - runs in detached task, hops to main actor for state access
+  /// Using nonisolated to actually run off main actor
+  nonisolated private func processQueue() async {
+    while await MainActor.run(body: { self.isProcessing }) {
+      // Find next pending task on main actor (quick UI state read)
+      guard let (nextTaskIndex, taskToExecute) = await MainActor.run(body: {
+        self.getNextPendingTask()
+      }) else {
         // No more pending tasks
-        isProcessing = false
-        currentTask = nil
+        await MainActor.run {
+          self.isProcessing = false
+          self.currentTask = nil
+        }
         return
       }
 
-      // Mark as executing
-      tasks[nextTaskIndex].state = .executing
-      currentTask = tasks[nextTaskIndex]
+      // Mark as executing on main actor
+      await MainActor.run {
+        guard nextTaskIndex < self.tasks.count else { return }
+        self.tasks[nextTaskIndex].state = .executing
+        self.currentTask = self.tasks[nextTaskIndex]
+      }
 
-      // Execute the task
+      // Check cancellation
       if Task.isCancelled {
-        tasks[nextTaskIndex].state = .cancelled
-        currentTask = nil
+        await MainActor.run {
+          guard nextTaskIndex < self.tasks.count else { return }
+          self.tasks[nextTaskIndex].state = .cancelled
+          self.currentTask = nil
+        }
         continue
       }
 
-      let taskId = tasks[nextTaskIndex].id
-      let result = await executeTask(tasks[nextTaskIndex])
+      // Execute the task on main actor (the callback handles UI updates internally)
+      let result = await self.executeTaskOnMainActor(taskToExecute)
 
-      // Re-find the task by ID since the array may have changed during await
-      guard let updatedIndex = tasks.firstIndex(where: { $0.id == taskId }) else {
-        currentTask = nil
-        continue
+      // Update state on main actor based on result
+      await MainActor.run {
+        self.updateTaskResult(taskId: taskToExecute.id, result: result)
       }
+    }
+  }
 
-      // Check if task was cancelled during execution
-      if tasks[updatedIndex].state == .cancelled {
-        currentTask = nil
-        continue
-      }
+  // MARK: - Private Helpers
 
-      // Update state based on result
-      if let result = result {
-        tasks[updatedIndex].state = .completed(result)
-      } else {
-        tasks[updatedIndex].state = .failed("Execution returned no result")
-      }
+  /// Execute task callback on main actor (async wrapper for nonisolated context)
+  @MainActor
+  private func executeTaskOnMainActor(_ task: ExecutionTask) async -> CellResult? {
+    await executeTask(task)
+  }
 
+  /// Get the next pending task from the queue
+  private func getNextPendingTask() -> (Int, ExecutionTask)? {
+    guard let index = tasks.firstIndex(where: { $0.state == .pending }) else {
+      return nil
+    }
+    return (index, tasks[index])
+  }
+
+  /// Update task result and auto-clear old tasks
+  private func updateTaskResult(taskId: UUID, result: CellResult?) {
+    // Re-find the task by ID since the array may have changed during await
+    guard let updatedIndex = tasks.firstIndex(where: { $0.id == taskId }) else {
       currentTask = nil
+      return
+    }
 
-      // Auto-clear old completed tasks if history exceeds limit (10.1.7 optimization)
-      let completedCount = tasks.filter { $0.state.isTerminal }.count
-      if completedCount > maxHistorySize {
-        // Keep only the most recent maxHistorySize completed tasks
-        let completedTasks = tasks.filter { $0.state.isTerminal }
-        let tasksToRemove = completedTasks.dropLast(maxHistorySize)
-        let idsToRemove = Set(tasksToRemove.map { $0.id })
-        tasks.removeAll { idsToRemove.contains($0.id) }
-      }
+    // Check if task was cancelled during execution
+    if tasks[updatedIndex].state == .cancelled {
+      currentTask = nil
+      return
+    }
+
+    // Update state based on result
+    if let result = result {
+      tasks[updatedIndex].state = .completed(result)
+    } else {
+      tasks[updatedIndex].state = .failed("Execution returned no result")
+    }
+
+    currentTask = nil
+
+    // Auto-clear old completed tasks if history exceeds limit (10.1.7 optimization)
+    let completedCount = tasks.filter { $0.state.isTerminal }.count
+    if completedCount > maxHistorySize {
+      // Keep only the most recent maxHistorySize completed tasks
+      let completedTasks = tasks.filter { $0.state.isTerminal }
+      let tasksToRemove = completedTasks.dropLast(maxHistorySize)
+      let idsToRemove = Set(tasksToRemove.map { $0.id })
+      tasks.removeAll { idsToRemove.contains($0.id) }
     }
   }
 }

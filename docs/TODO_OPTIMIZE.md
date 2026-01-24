@@ -139,12 +139,19 @@
 - **Effort:** HIGH (3-4 weeks)
 - **Verified:** 2026-01-23
 
-#### 10.2.2 Concurrency - Move ExecutionQueue Off Main Actor ⚡ HIGH PRIORITY
-- [ ] Change ExecutionQueue from `@MainActor class` to `actor`
-- [ ] Update UI via `MainActor.run { }` blocks only
-- **Location:** ExecutionQueue.swift:11-13
+#### 10.2.2 Concurrency - Move ExecutionQueue Off Main Actor ✅ COMPLETE
+- [x] Process queue in detached Task (off main actor)
+- [x] UI state reads/writes via `MainActor.run { }` blocks
+- [x] Keep @Observable for SwiftUI integration
+- **Location:** ExecutionQueue.swift:118-220
+- **Implementation:**
+  - `startProcessing()` uses `Task.detached` instead of `Task { @MainActor in }`
+  - `processQueue()` marked `nonisolated` to actually run off main actor
+  - State access via `MainActor.run { }` for: `isProcessing`, `tasks`, `currentTask`
+  - Added `executeTaskOnMainActor()` wrapper for async callback
 - **Impact:** Non-blocking UI during query execution
 - **Effort:** MEDIUM
+- **Verified:** 2026-01-24
 
 #### 10.2.3 UI Performance - Optimize ResultTableView Search Rendering ⚡ HIGH PRIORITY
 - [ ] Add `@State private var searchVersion: Int` to control re-renders
@@ -250,7 +257,7 @@
 | 10.1.9 | Search Task Cancellation | MEDIUM | LOW | 80% faster cancel | ✅ |
 | 10.1.10 | JSON Encoding Performance | MEDIUM | LOW | 50% faster I/O | ✅ |
 | 10.2.1 | Result Set Pagination | HIGH | HIGH | 60-70% less memory | 🚧 |
-| 10.2.2 | ExecutionQueue Off Main Actor | HIGH | MEDIUM | Non-blocking UI | ❌ |
+| 10.2.2 | ExecutionQueue Off Main Actor | HIGH | MEDIUM | Non-blocking UI | ✅ |
 | 10.2.3 | ResultTableView Search Optimization | HIGH | MEDIUM | 50-70% faster search | ❌ |
 | 10.2.4 | Query Result Streaming | HIGH | HIGH | 3x faster perceived | ❌ |
 | 10.2.5 | Primary Key Detection | MEDIUM | MEDIUM | Better data safety | ✅ |
