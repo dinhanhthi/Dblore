@@ -82,12 +82,12 @@ struct PaginationView: View {
         .font(.caption)
         .foregroundColor(.foregroundSubtle)
     }
-    .padding(.vertical, Spacing.xs)
+    .padding(.vertical, Spacing.sm)
     .padding(.horizontal, includeHorizontalPadding ? Spacing.sm : 0)
     .background(Color.cardBackground)
-    .overlay(alignment: .top) {
-      Divider()
-    }
+    // .overlay(alignment: .top) {
+    //   Divider()
+    // }
   }
 
   private var visiblePageNumbers: [Int] {
