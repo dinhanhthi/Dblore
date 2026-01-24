@@ -129,6 +129,16 @@ class NotebookViewModel {
     // Set connection manager for autocomplete provider
     autocompleteProvider.setConnectionManager(connectionManager)
 
+    // Restore pagination state from cells
+    for cell in notebook.cells {
+      if let paginationInfo = cell.paginationInfo {
+        cellPaginationInfo[cell.id] = paginationInfo
+      }
+      if !cell.statementPaginationInfo.isEmpty {
+        cellStatementPaginationInfo[cell.id] = cell.statementPaginationInfo
+      }
+    }
+
     // Load sidebar visibility from settings after init
     Task {
       self.isLeftSidebarVisible = AppSettings.shared.isLeftSidebarVisible

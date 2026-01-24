@@ -106,6 +106,8 @@ extension NotebookViewModel {
         rowsPerPage: paginationInfo.rowsPerPage,
         baseQuery: paginationInfo.baseQuery
       )
+      // Sync pagination info to cell for persistence
+      notebook.cells[index].paginationInfo = cellPaginationInfo[cellId]
 
       // Extract table name from original query (not the paginated query)
       let tableName = extractTableName(from: sourceQuery)
@@ -194,6 +196,8 @@ extension NotebookViewModel {
         rowsPerPage: paginationInfo.rowsPerPage,
         baseQuery: paginationInfo.baseQuery
       )
+      // Sync statement pagination info to cell for persistence
+      notebook.cells[index].statementPaginationInfo = cellStatementPaginationInfo[cellId] ?? [:]
 
       // Create new cell result - use paginated query for View Query sidebar
       let newResult = CellResult(

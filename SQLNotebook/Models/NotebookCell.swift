@@ -20,6 +20,10 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var selectedStatementIndex: Int
   /// Total execution time for all statements (for multi-statement queries)
   var totalExecutionTime: TimeInterval?
+  /// Pagination info for single statement result (nil if not paginated)
+  var paginationInfo: PaginationInfo?
+  /// Pagination info for multi-statement results (key: statementId)
+  var statementPaginationInfo: [UUID: PaginationInfo]
 
   // MARK: - Codable
 
@@ -34,6 +38,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case statementResults
     case selectedStatementIndex
     case totalExecutionTime
+    case paginationInfo
+    case statementPaginationInfo
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -52,6 +58,10 @@ struct NotebookCell: Codable, Identifiable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
+    paginationInfo = try container.decodeIfPresent(PaginationInfo.self, forKey: .paginationInfo)
+    statementPaginationInfo =
+      try container.decodeIfPresent([UUID: PaginationInfo].self, forKey: .statementPaginationInfo)
+      ?? [:]
   }
 
   nonisolated func encode(to encoder: Encoder) throws {
@@ -66,6 +76,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encode(statementResults, forKey: .statementResults)
     try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
     try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
+    try container.encodeIfPresent(paginationInfo, forKey: .paginationInfo)
+    try container.encode(statementPaginationInfo, forKey: .statementPaginationInfo)
   }
 
   nonisolated init(
@@ -78,7 +90,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     isResultVisible: Bool = true,
     statementResults: [StatementResult] = [],
     selectedStatementIndex: Int = 0,
-    totalExecutionTime: TimeInterval? = nil
+    totalExecutionTime: TimeInterval? = nil,
+    paginationInfo: PaginationInfo? = nil,
+    statementPaginationInfo: [UUID: PaginationInfo] = [:]
   ) {
     self.id = id
     self.cellType = cellType
@@ -90,6 +104,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.statementResults = statementResults
     self.selectedStatementIndex = selectedStatementIndex
     self.totalExecutionTime = totalExecutionTime
+    self.paginationInfo = paginationInfo
+    self.statementPaginationInfo = statementPaginationInfo
   }
 }
 
