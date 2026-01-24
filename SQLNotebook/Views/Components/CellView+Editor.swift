@@ -17,6 +17,7 @@ struct SQLEditorView: View {
 
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?  // For search highlighting
+  var viewModelId: UUID?  // ID of the viewModel (for scoped search)
   var maxHeight: CGFloat?  // Optional max height for scrollable editors (e.g., in editor mode)
   var isEditorMode: Bool = false  // True when used in Editor mode (removes border/focus effects)
   var wordWrapEnabled: Bool = true  // Word wrap setting (default: enabled)
@@ -54,6 +55,7 @@ struct SQLEditorView: View {
         isEmpty: $isTextEmpty,
         autocompleteProvider: autocompleteProvider,
         cellId: cellId,
+        viewModelId: viewModelId,
         maxHeight: maxHeight,
         isEditorMode: isEditorMode,
         wordWrapEnabled: wordWrapEnabled

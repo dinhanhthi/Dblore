@@ -3,8 +3,8 @@
 //  SQLNotebook
 //
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 /// Helper view to display window dimensions
 struct WindowDimensionsView: View {

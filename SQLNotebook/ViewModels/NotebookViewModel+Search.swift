@@ -26,8 +26,12 @@ extension NotebookViewModel {
 
     guard !query.isEmpty else {
       searchState.isSearching = false
-      // Clear highlights when query is empty
-      NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
+      // Clear highlights when query is empty (include viewModel ID)
+      NotificationCenter.default.post(
+        name: .clearSearchHighlights,
+        object: nil,
+        userInfo: ["viewModelId": id]
+      )
       return
     }
 
@@ -57,8 +61,12 @@ extension NotebookViewModel {
         if !matches.isEmpty {
           navigateToMatch(at: 0)
         } else {
-          // Clear highlights when no matches found
-          NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
+          // Clear highlights when no matches found (include viewModel ID)
+          NotificationCenter.default.post(
+            name: .clearSearchHighlights,
+            object: nil,
+            userInfo: ["viewModelId": id]
+          )
         }
       }
     }
@@ -200,7 +208,7 @@ extension NotebookViewModel {
       guard !Task.isCancelled else { return }
 
       await MainActor.run {
-        // Post notification for highlight
+        // Post notification for highlight (include viewModel ID to scope to this window)
         NotificationCenter.default.post(
           name: .highlightSearchMatch,
           object: nil,
@@ -208,6 +216,7 @@ extension NotebookViewModel {
             "match": match,
             "query": searchState.query,
             "caseSensitive": searchState.isCaseSensitive,
+            "viewModelId": id,
           ]
         )
       }
@@ -223,8 +232,12 @@ extension NotebookViewModel {
     // Clear AttributedString cache to free memory
     SearchHighlighter.clearCache()
 
-    // Clear all highlights
-    NotificationCenter.default.post(name: .clearSearchHighlights, object: nil)
+    // Clear all highlights (include viewModel ID)
+    NotificationCenter.default.post(
+      name: .clearSearchHighlights,
+      object: nil,
+      userInfo: ["viewModelId": id]
+    )
   }
 
   /// Toggle search panel (open/close)

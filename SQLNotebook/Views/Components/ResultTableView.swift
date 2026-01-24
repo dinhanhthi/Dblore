@@ -105,6 +105,13 @@ struct ResultTableView: View {
       calculateInitialColumnWidths()
     }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      // Only respond if this notification is for our viewModel instance
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else {
+        return
+      }
+
       if let match = notification.userInfo?["match"] as? SearchMatch {
         // In editor mode, cellId is nil - accept all matches
         // In notebook mode, only accept matches for this cell
@@ -125,7 +132,14 @@ struct ResultTableView: View {
         }
       }
     }
-    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { notification in
+      // Only respond if this notification is for our viewModel instance
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else {
+        return
+      }
+
       // Only clear if there was a match (10.2.3 optimization)
       if currentMatchId != nil {
         currentMatchId = nil

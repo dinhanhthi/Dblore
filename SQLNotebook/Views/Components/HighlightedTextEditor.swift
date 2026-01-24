@@ -54,6 +54,7 @@ struct HighlightedTextEditor: View {
 
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?  // For search highlighting
+  var viewModelId: UUID?  // ID of the viewModel (for scoped search)
   var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var wordWrapEnabled: Bool = true  // Word wrap setting
@@ -67,6 +68,7 @@ struct HighlightedTextEditor: View {
       textViewRef: $textViewRef,
       autocompleteProvider: autocompleteProvider,
       cellId: cellId,
+      viewModelId: viewModelId,
       maxHeight: maxHeight,
       isEditorMode: isEditorMode,
       wordWrapEnabled: wordWrapEnabled
@@ -83,6 +85,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var textViewRef: SQLTextView?
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?
+  var viewModelId: UUID?
   var maxHeight: CGFloat?
   var isEditorMode: Bool = false
   var wordWrapEnabled: Bool = true
@@ -113,6 +116,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Store weak reference in coordinator for search highlighting
     context.coordinator.textView = textView
     context.coordinator.cellId = cellId
+    context.coordinator.viewModelId = viewModelId
+    textView.viewModelId = viewModelId
     textView.isRichText = false
     textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     textView.textColor = NSColor(Color.foreground)
@@ -254,6 +259,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Weak reference to text view for search highlighting
     weak var textView: NSTextView?
     var cellId: UUID?
+    var viewModelId: UUID?  // ID of the viewModel (for scoped search)
 
     // Search state
     private var searchQuery: String = ""
@@ -420,6 +426,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       ) { [weak self] notification in
         guard let self = self else { return }
 
+        // Only respond if this notification is for our viewModel instance
+        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+          notificationViewModelId == self.viewModelId
+        else {
+          return
+        }
+
         // Extract data first before Task
         guard let match = notification.userInfo?["match"] as? SearchMatch else { return }
 
@@ -477,7 +490,15 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         forName: .clearSearchHighlights,
         object: nil,
         queue: .main
-      ) { [weak self] _ in
+      ) { [weak self] notification in
+        // Only respond if this notification is for our viewModel instance
+        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+          let self = self,
+          notificationViewModelId == self.viewModelId
+        else {
+          return
+        }
+
         Task { @MainActor [weak self] in
           guard let self = self else { return }
 

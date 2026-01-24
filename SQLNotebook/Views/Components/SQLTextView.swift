@@ -13,6 +13,7 @@ class SQLTextView: NSTextView {
   var onBlur: ((String) -> Void)?  // Callback with current text when losing focus
   var autocompleteProvider: SQLAutocompleteProvider?
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
+  var viewModelId: UUID?  // ID of the viewModel that owns this text view (for scoped search)
 
   // Autocomplete state
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []

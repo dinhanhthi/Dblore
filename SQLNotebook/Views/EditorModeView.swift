@@ -86,6 +86,7 @@ struct EditorModeView: View {
             onFocus: { isFocused = true },
             textViewRef: $textViewRef,
             autocompleteProvider: viewModel.autocompleteProvider,
+            viewModelId: viewModel.id,
             maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
             isEditorMode: true,  // Remove border and focus effects
             wordWrapEnabled: appSettings.wordWrapEnabled

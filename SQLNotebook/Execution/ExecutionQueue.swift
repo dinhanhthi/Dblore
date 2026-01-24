@@ -130,9 +130,11 @@ class ExecutionQueue {
   nonisolated private func processQueue() async {
     while await MainActor.run(body: { self.isProcessing }) {
       // Find next pending task on main actor (quick UI state read)
-      guard let (nextTaskIndex, taskToExecute) = await MainActor.run(body: {
-        self.getNextPendingTask()
-      }) else {
+      guard
+        let (nextTaskIndex, taskToExecute) = await MainActor.run(body: {
+          self.getNextPendingTask()
+        })
+      else {
         // No more pending tasks
         await MainActor.run {
           self.isProcessing = false

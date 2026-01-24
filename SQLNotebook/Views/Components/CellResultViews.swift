@@ -41,7 +41,8 @@ struct ResultAreaView: View {
             error: error,
             searchQuery: viewModel.searchState.query,
             isCaseSensitive: viewModel.searchState.isCaseSensitive,
-            cellId: cellId
+            cellId: cellId,
+            viewModel: viewModel
           )
         } else if let affectedRows = result.affectedRows, affectedRows > 0, result.rows.isEmpty {
           // Success message for UPDATE/DELETE/INSERT (only when no result table)
@@ -109,6 +110,7 @@ struct ErrorResultView: View {
   let searchQuery: String
   let isCaseSensitive: Bool
   let cellId: UUID
+  let viewModel: NotebookViewModel
   @State private var currentMatchRange: Range<String.Index>?
 
   var body: some View {
@@ -147,6 +149,13 @@ struct ErrorResultView: View {
     .background(Color.destructive.opacity(0.1))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      // Only respond if this notification is for our viewModel instance
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else {
+        return
+      }
+
       if let match = notification.userInfo?["match"] as? SearchMatch,
         case .errorMessage = match.matchType,
         match.cellId == cellId
@@ -158,7 +167,14 @@ struct ErrorResultView: View {
         currentMatchRange = nil
       }
     }
-    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { _ in
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { notification in
+      // Only respond if this notification is for our viewModel instance
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else {
+        return
+      }
+
       currentMatchRange = nil
     }
   }
@@ -429,12 +445,19 @@ enum CellResultViews {
 }
 
 #Preview("Error Result") {
-  ErrorResultView(
+  let notebook = SQLNotebook(
+    cells: [NotebookCell(cellType: .sql, content: "SELECT * FROM test")],
+    connectionConfig: nil
+  )
+  let viewModel = NotebookViewModel(notebook: notebook)
+
+  return ErrorResultView(
     error:
       "ERROR: column \"invalid_column\" does not exist\nLINE 1: SELECT invalid_column FROM users;\n               ^",
     searchQuery: "",
     isCaseSensitive: false,
-    cellId: UUID()
+    cellId: UUID(),
+    viewModel: viewModel
   )
   .padding()
   .frame(width: 600)

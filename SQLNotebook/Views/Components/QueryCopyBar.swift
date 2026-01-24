@@ -62,9 +62,9 @@ struct QueryCopyBar: View {
 
   /// Layout mode based on available width
   private enum LayoutMode {
-    case full        // >= 600pt: Full labels for everything
-    case intermediate // 300-599pt: Icon-only buttons, icon + query (no label)
-    case compact     // < 300pt: Hide query section entirely, show full buttons
+    case full  // >= 600pt: Full labels for everything
+    case intermediate  // 300-599pt: Icon-only buttons, icon + query (no label)
+    case compact  // < 300pt: Hide query section entirely, show full buttons
 
     static func from(width: CGFloat) -> LayoutMode {
       if width >= 600 {
