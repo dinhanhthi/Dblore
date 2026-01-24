@@ -437,12 +437,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         forName: .highlightSearchMatch,
         object: nil,
         queue: .main
-      ) { [weak self] notification in
+      ) { [weak self, viewModelId] notification in
         guard let self = self else { return }
 
         // Only respond if this notification is for our viewModel instance
         guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
-          notificationViewModelId == self.viewModelId
+          notificationViewModelId == viewModelId
         else {
           return
         }
@@ -504,11 +504,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         forName: .clearSearchHighlights,
         object: nil,
         queue: .main
-      ) { [weak self] notification in
+      ) { [weak self, viewModelId] notification in
+        guard let self = self else { return }
+
         // Only respond if this notification is for our viewModel instance
         guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
-          let self = self,
-          notificationViewModelId == self.viewModelId
+          notificationViewModelId == viewModelId
         else {
           return
         }

@@ -23,8 +23,8 @@ private struct PageButtonStyle: ButtonStyle {
             isCurrentPage
               ? Color.accent
               : (isHovering || configuration.isPressed
-                  ? Color.foregroundMuted.opacity(0.2)
-                  : Color.clear)
+                ? Color.foregroundMuted.opacity(0.2)
+                : Color.clear)
           )
       )
       .contentShape(Rectangle())
