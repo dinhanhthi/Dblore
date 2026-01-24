@@ -173,7 +173,7 @@ struct CellView: View {
   /// This zone is offset downward to align with the floating panel position
   private var bottomEdgeHoverZone: some View {
     Color.clear
-      .frame(height: 50)  // Height of the hover-sensitive area
+      .frame(height: 30)  // Reduced from 50 to 30 to prevent overlap with dropdown in metadata bar
       .contentShape(Rectangle())
       .onHover { hovering in
         isBottomEdgeHovered = hovering
