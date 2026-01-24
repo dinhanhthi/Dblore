@@ -4,6 +4,31 @@
 //
 
 import SwiftUI
+import AppKit
+
+/// Helper view to display window dimensions
+struct WindowDimensionsView: View {
+  @State private var windowSize: CGSize = .zero
+
+  var body: some View {
+    Text("| \(Int(windowSize.width))×\(Int(windowSize.height))pt")
+      .font(.small)
+      .foregroundColor(.foregroundSubtle.opacity(0.7))
+      .monospacedDigit()
+      .onAppear {
+        updateWindowSize()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in
+        updateWindowSize()
+      }
+  }
+
+  private func updateWindowSize() {
+    if let window = NSApp.keyWindow {
+      windowSize = window.frame.size
+    }
+  }
+}
 
 struct FooterView: View {
   @Bindable var viewModel: NotebookViewModel
@@ -27,6 +52,9 @@ struct FooterView: View {
         Text(connectionStatusText)
           .font(.small)
           .foregroundColor(.foregroundMuted)
+
+        // Window dimensions (for debugging)
+        WindowDimensionsView()
       }
 
       Spacer()

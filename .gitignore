@@ -92,3 +92,5 @@ SQLNotebook.xcodeproj/CLAUDE.md
 SQLNotebook/Views/Sidebars/CLAUDE.md
 SQLNotebook/**/CLAUDE.md
 scripts/CLAUDE.md
+
+docs/implementation/CLAUDE.md
