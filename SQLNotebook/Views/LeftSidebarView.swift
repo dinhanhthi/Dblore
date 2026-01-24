@@ -181,9 +181,6 @@ struct LeftSidebarView: View {
               onToggle: {
                 viewModel.toggleTableExpansion(tableId: table.id)
               },
-              onTableClick: {
-                viewModel.insertTextIntoSelectedCell(table.name)
-              },
               onColumnClick: { columnName in
                 viewModel.insertTextIntoSelectedCell(columnName)
               }
@@ -205,9 +202,6 @@ struct LeftSidebarView: View {
               onToggle: {
                 viewModel.toggleViewExpansion(viewId: view.id)
               },
-              onViewClick: {
-                viewModel.insertTextIntoSelectedCell(view.name)
-              },
               onColumnClick: { columnName in
                 viewModel.insertTextIntoSelectedCell(columnName)
               }
@@ -228,9 +222,6 @@ struct LeftSidebarView: View {
               isExpanded: function.isExpanded,
               onToggle: {
                 viewModel.toggleFunctionExpansion(functionId: function.id)
-              },
-              onFunctionClick: {
-                viewModel.insertTextIntoSelectedCell(function.name)
               }
             )
           }
@@ -249,9 +240,6 @@ struct LeftSidebarView: View {
               isExpanded: procedure.isExpanded,
               onToggle: {
                 viewModel.toggleProcedureExpansion(procedureId: procedure.id)
-              },
-              onProcedureClick: {
-                viewModel.insertTextIntoSelectedCell(procedure.name)
               }
             )
           }
@@ -278,9 +266,6 @@ struct LeftSidebarView: View {
               isExpanded: user.isExpanded,
               onToggle: {
                 viewModel.toggleUserExpansion(userId: user.id)
-              },
-              onUserClick: {
-                viewModel.insertTextIntoSelectedCell(user.name)
               }
             )
           }
@@ -299,9 +284,6 @@ struct LeftSidebarView: View {
               isExpanded: role.isExpanded,
               onToggle: {
                 viewModel.toggleRoleExpansion(roleId: role.id)
-              },
-              onRoleClick: {
-                viewModel.insertTextIntoSelectedCell(role.name)
               }
             )
           }
@@ -371,13 +353,16 @@ struct EntitySection<Content: View>: View {
     VStack(alignment: .leading, spacing: 0) {
       // Section header
       Button(action: {
-        sectionExpanded.toggle()
+        withAnimation(.snappy(duration: 0.2)) {
+          sectionExpanded.toggle()
+        }
       }) {
         HStack(spacing: Spacing.xs) {
-          Image(systemName: sectionExpanded ? "chevron.down" : "chevron.right")
+          Image(systemName: "chevron.right")
             .font(.system(size: 10, weight: .semibold))
             .foregroundColor(.foregroundMuted)
             .frame(width: 12, height: 12)
+            .rotationEffect(.degrees(sectionExpanded ? 90 : 0))
 
           Image(systemName: icon)
             .font(.system(size: 12))
@@ -408,8 +393,10 @@ struct EntitySection<Content: View>: View {
               .frame(width: 1)
               .padding(.leading, Spacing.md + 6)  // Align with chevron center
           }
+          .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 
@@ -419,24 +406,20 @@ struct TableRowView: View {
   let table: DatabaseTable
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onTableClick: () -> Void
   let onColumnClick: (String) -> Void
 
   @State private var isHoveringTable = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Table row
       HStack(spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
         // Table icon
         Image(systemName: "tablecells")
@@ -470,23 +453,10 @@ struct TableRowView: View {
               )
           }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-          // Double click: cancel pending single click and insert table name
-          singleClickTask?.cancel()
-          singleClickTask = nil
-          onTableClick()
-        }
-        .onTapGesture(count: 1) {
-          // Single click: schedule toggle with delay
-          singleClickTask?.cancel()
-          singleClickTask = Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            if !Task.isCancelled {
-              onToggle()
-            }
-          }
-        }
+      }
+      .contentShape(Rectangle())
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -522,8 +492,10 @@ struct TableRowView: View {
             .frame(width: 1)
             .padding(.leading, Spacing.md + 6)  // Align with chevron center
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 
@@ -533,24 +505,20 @@ struct ViewRowView: View {
   let view: DatabaseView
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onViewClick: () -> Void
   let onColumnClick: (String) -> Void
 
   @State private var isHovering = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // View row
       HStack(spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
         // View icon
         Image(systemName: "eye")
@@ -571,21 +539,10 @@ struct ViewRowView: View {
 
           Spacer()
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-          singleClickTask?.cancel()
-          singleClickTask = nil
-          onViewClick()
-        }
-        .onTapGesture(count: 1) {
-          singleClickTask?.cancel()
-          singleClickTask = Task {
-            try? await Task.sleep(for: .milliseconds(50))
-            if !Task.isCancelled {
-              onToggle()
-            }
-          }
-        }
+      }
+      .contentShape(Rectangle())
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -621,8 +578,10 @@ struct ViewRowView: View {
             .frame(width: 1)
             .padding(.leading, Spacing.md + 6)  // Align with chevron center
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 
@@ -632,24 +591,20 @@ struct FunctionRowView: View {
   let function: DatabaseFunction
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onFunctionClick: () -> Void
 
   @State private var isHovering = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Function row
       HStack(alignment: .top, spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 2)  // Fine-tune alignment with text
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .padding(.top, 2)  // Fine-tune alignment with text
 
         // Function icon
         Image(systemName: "function")
@@ -674,19 +629,8 @@ struct FunctionRowView: View {
         Spacer()
       }
       .contentShape(Rectangle())
-      .onTapGesture(count: 2) {
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        onFunctionClick()
-      }
-      .onTapGesture(count: 1) {
-        singleClickTask?.cancel()
-        singleClickTask = Task {
-          try? await Task.sleep(for: .milliseconds(50))
-          if !Task.isCancelled {
-            onToggle()
-          }
-        }
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -723,8 +667,10 @@ struct FunctionRowView: View {
             .frame(width: 1)
             .padding(.leading, Spacing.md + 6)  // Align with chevron center
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 
@@ -734,24 +680,20 @@ struct ProcedureRowView: View {
   let procedure: DatabaseProcedure
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onProcedureClick: () -> Void
 
   @State private var isHovering = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Procedure row
       HStack(alignment: .top, spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 2)  // Fine-tune alignment with text
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .padding(.top, 2)  // Fine-tune alignment with text
 
         // Procedure icon
         Image(systemName: "gearshape.2")
@@ -776,19 +718,8 @@ struct ProcedureRowView: View {
         Spacer()
       }
       .contentShape(Rectangle())
-      .onTapGesture(count: 2) {
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        onProcedureClick()
-      }
-      .onTapGesture(count: 1) {
-        singleClickTask?.cancel()
-        singleClickTask = Task {
-          try? await Task.sleep(for: .milliseconds(50))
-          if !Task.isCancelled {
-            onToggle()
-          }
-        }
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -814,23 +745,19 @@ struct UserRowView: View {
   let user: DatabaseUser
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onUserClick: () -> Void
 
   @State private var isHovering = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // User row
       HStack(spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
         // User icon
         Image(systemName: user.isSuperuser ? "person.badge.key" : "person")
@@ -845,19 +772,8 @@ struct UserRowView: View {
         Spacer()
       }
       .contentShape(Rectangle())
-      .onTapGesture(count: 2) {
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        onUserClick()
-      }
-      .onTapGesture(count: 1) {
-        singleClickTask?.cancel()
-        singleClickTask = Task {
-          try? await Task.sleep(for: .milliseconds(50))
-          if !Task.isCancelled {
-            onToggle()
-          }
-        }
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -896,8 +812,10 @@ struct UserRowView: View {
             .frame(width: 1)
             .padding(.leading, Spacing.md + 6)  // Align with chevron center
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 
@@ -907,23 +825,19 @@ struct RoleRowView: View {
   let role: DatabaseRole
   let isExpanded: Bool
   let onToggle: () -> Void
-  let onRoleClick: () -> Void
 
   @State private var isHovering = false
-  @State private var singleClickTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Role row
       HStack(spacing: Spacing.xs) {
         // Expand/collapse chevron
-        Button(action: onToggle) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 12, height: 12)
-        }
-        .buttonStyle(.plain)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 12, height: 12)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
         // Role icon
         Image(systemName: role.isSuperuser ? "person.2.badge.key" : "person.2")
@@ -951,19 +865,8 @@ struct RoleRowView: View {
         }
       }
       .contentShape(Rectangle())
-      .onTapGesture(count: 2) {
-        singleClickTask?.cancel()
-        singleClickTask = nil
-        onRoleClick()
-      }
-      .onTapGesture(count: 1) {
-        singleClickTask?.cancel()
-        singleClickTask = Task {
-          try? await Task.sleep(for: .milliseconds(50))
-          if !Task.isCancelled {
-            onToggle()
-          }
-        }
+      .onTapGesture {
+        onToggle()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -1024,8 +927,10 @@ struct RoleRowView: View {
             .frame(width: 1)
             .padding(.leading, Spacing.md + 6)  // Align with chevron center
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .clipped()
   }
 }
 

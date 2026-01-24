@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 
 // MARK: - Sidebar Management
 
@@ -197,68 +198,82 @@ extension NotebookViewModel {
 
   /// Toggle table expansion state
   func toggleTableExpansion(tableId: UUID) {
-    if let index = databaseTables.firstIndex(where: { $0.id == tableId }) {
-      databaseTables[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseTables.firstIndex(where: { $0.id == tableId }) {
+        databaseTables[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle view expansion state
   func toggleViewExpansion(viewId: UUID) {
-    if let index = databaseViews.firstIndex(where: { $0.id == viewId }) {
-      databaseViews[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseViews.firstIndex(where: { $0.id == viewId }) {
+        databaseViews[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle function expansion state
   func toggleFunctionExpansion(functionId: UUID) {
-    if let index = databaseFunctions.firstIndex(where: { $0.id == functionId }) {
-      databaseFunctions[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseFunctions.firstIndex(where: { $0.id == functionId }) {
+        databaseFunctions[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle procedure expansion state
   func toggleProcedureExpansion(procedureId: UUID) {
-    if let index = databaseProcedures.firstIndex(where: { $0.id == procedureId }) {
-      databaseProcedures[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseProcedures.firstIndex(where: { $0.id == procedureId }) {
+        databaseProcedures[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle user expansion state
   func toggleUserExpansion(userId: UUID) {
-    if let index = databaseUsers.firstIndex(where: { $0.id == userId }) {
-      databaseUsers[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseUsers.firstIndex(where: { $0.id == userId }) {
+        databaseUsers[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle role expansion state
   func toggleRoleExpansion(roleId: UUID) {
-    if let index = databaseRoles.firstIndex(where: { $0.id == roleId }) {
-      databaseRoles[index].isExpanded.toggle()
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseRoles.firstIndex(where: { $0.id == roleId }) {
+        databaseRoles[index].isExpanded.toggle()
+      }
     }
   }
 
   /// Toggle expand/collapse all entities in the sidebar
   func toggleExpandCollapseAll() {
-    areAllEntitiesExpanded.toggle()
+    withAnimation(.snappy(duration: 0.25)) {
+      areAllEntitiesExpanded.toggle()
 
-    // Apply to all entities
-    for index in databaseTables.indices {
-      databaseTables[index].isExpanded = areAllEntitiesExpanded
-    }
-    for index in databaseViews.indices {
-      databaseViews[index].isExpanded = areAllEntitiesExpanded
-    }
-    for index in databaseFunctions.indices {
-      databaseFunctions[index].isExpanded = areAllEntitiesExpanded
-    }
-    for index in databaseProcedures.indices {
-      databaseProcedures[index].isExpanded = areAllEntitiesExpanded
-    }
-    for index in databaseUsers.indices {
-      databaseUsers[index].isExpanded = areAllEntitiesExpanded
-    }
-    for index in databaseRoles.indices {
-      databaseRoles[index].isExpanded = areAllEntitiesExpanded
+      // Apply to all entities
+      for index in databaseTables.indices {
+        databaseTables[index].isExpanded = areAllEntitiesExpanded
+      }
+      for index in databaseViews.indices {
+        databaseViews[index].isExpanded = areAllEntitiesExpanded
+      }
+      for index in databaseFunctions.indices {
+        databaseFunctions[index].isExpanded = areAllEntitiesExpanded
+      }
+      for index in databaseProcedures.indices {
+        databaseProcedures[index].isExpanded = areAllEntitiesExpanded
+      }
+      for index in databaseUsers.indices {
+        databaseUsers[index].isExpanded = areAllEntitiesExpanded
+      }
+      for index in databaseRoles.indices {
+        databaseRoles[index].isExpanded = areAllEntitiesExpanded
+      }
     }
   }
 
