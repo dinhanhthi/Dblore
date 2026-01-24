@@ -75,3 +75,16 @@ docker/**/backups/
 
 # macOS
 .DS_Store
+docs/CLAUDE.md
+
+# claude-mem context files
+SQLNotebook/Database/CLAUDE.md
+SQLNotebook/Services/CLAUDE.md
+SQLNotebook/ViewModels/CLAUDE.md
+SQLNotebook/Views/CLAUDE.md
+SQLNotebook/Views/Components/CLAUDE.md
+SQLNotebook/Editor/CLAUDE.md
+SQLNotebook/Execution/CLAUDE.md
+SQLNotebook/Models/CLAUDE.md
+SQLNotebook/Utilities/CLAUDE.md
+SQLNotebookTests/CLAUDE.md

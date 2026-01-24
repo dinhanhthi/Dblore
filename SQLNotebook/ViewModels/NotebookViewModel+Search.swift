@@ -189,9 +189,15 @@ extension NotebookViewModel {
     // Select the cell containing the match (triggers scroll via ScrollViewReader)
     selectedCellId = match.cellId
 
-    // Wait for scroll to complete, then highlight
-    Task {
+    // Cancel previous navigation task to debounce rapid navigation (10.1.3 optimization)
+    searchNavigationTask?.cancel()
+
+    // Wait for scroll to complete, then highlight (debounced)
+    searchNavigationTask = Task {
       try? await Task.sleep(for: .milliseconds(200))
+
+      // Check if cancelled during sleep (debouncing)
+      guard !Task.isCancelled else { return }
 
       await MainActor.run {
         // Post notification for highlight
@@ -313,6 +319,11 @@ extension NotebookViewModel {
     var matches: [SearchMatch] = []
 
     for (rowIndex, row) in result.rows.enumerated() {
+      // Check cancellation in inner loop for faster response (10.1.9 optimization)
+      if Task.isCancelled {
+        return matches
+      }
+
       for (columnIndex, cellValue) in row.enumerated() {
         // Early exit if we have enough matches
         if matches.count >= maxMatches {

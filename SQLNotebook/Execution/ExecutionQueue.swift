@@ -23,6 +23,9 @@ class ExecutionQueue {
   /// Flag to track if queue is processing
   private var isProcessing = false
 
+  /// Maximum history size before auto-clearing (10.1.7 optimization)
+  private let maxHistorySize: Int = 10
+
   /// Callback for executing a task
   private let executeTask: @MainActor (ExecutionTask) async -> CellResult?
 
@@ -162,6 +165,16 @@ class ExecutionQueue {
       }
 
       currentTask = nil
+
+      // Auto-clear old completed tasks if history exceeds limit (10.1.7 optimization)
+      let completedCount = tasks.filter { $0.state.isTerminal }.count
+      if completedCount > maxHistorySize {
+        // Keep only the most recent maxHistorySize completed tasks
+        let completedTasks = tasks.filter { $0.state.isTerminal }
+        let tasksToRemove = completedTasks.dropLast(maxHistorySize)
+        let idsToRemove = Set(tasksToRemove.map { $0.id })
+        tasks.removeAll { idsToRemove.contains($0.id) }
+      }
     }
   }
 }

@@ -76,10 +76,12 @@ extension NotebookViewModel {
     do {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(task.query) {
-        // Execute all statements and get detailed results
+        // Execute all statements with timeout (10.1.5 optimization)
         let (statementResults, totalTime) =
-          try await connectionManager
-          .executeMultipleStatementsDetailed(task.query, maxRows: AppSettings.shared.maxRowLimit)
+          try await Task.withTimeout(seconds: 60) {
+            try await self.connectionManager
+              .executeMultipleStatementsDetailed(task.query, maxRows: AppSettings.shared.maxRowLimit)
+          }
 
         executionCounter += 1
 
@@ -150,12 +152,13 @@ extension NotebookViewModel {
         }
       } else {
         // Single statement - use original logic
-        // Execute query using DatabaseConnectionManager
-        // Use app's maxRowLimit setting
-        let queryResult = try await connectionManager.executeQuery(
-          task.query,
-          maxRows: AppSettings.shared.maxRowLimit
-        )
+        // Execute query with timeout (10.1.5 optimization)
+        let queryResult = try await Task.withTimeout(seconds: 60) {
+          try await self.connectionManager.executeQuery(
+            task.query,
+            maxRows: AppSettings.shared.maxRowLimit
+          )
+        }
 
         executionCounter += 1
 
@@ -218,6 +221,22 @@ extension NotebookViewModel {
           )
         }
       }
+    } catch is TaskTimeoutError {
+      // Handle query timeout (10.1.5 optimization)
+      result = .errorResult(
+        "Query execution timed out after 60 seconds",
+        sourceQuery: task.query
+      )
+      notebook.cells[index].result = result
+      // Clear multi-statement data on error
+      notebook.cells[index].statementResults = []
+      notebook.cells[index].selectedStatementIndex = 0
+      notebook.cells[index].totalExecutionTime = nil
+      // Clear pagination info on error
+      cellPaginationInfo.removeValue(forKey: task.cellId)
+      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
+      await AppLogger.shared.error(
+        "Query timed out for cell \(task.cellId)", category: "Execution")
     } catch let error as DatabaseError {
       // Handle database-specific errors
       let executionTime = error.executionTime ?? 0

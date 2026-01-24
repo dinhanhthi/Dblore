@@ -38,6 +38,10 @@ class SQLAutocompleteProvider {
   var tables: [DatabaseTable] = []
   var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
 
+  // Cache validity tracking (10.1.4 optimization)
+  private var lastRefreshTime: Date?
+  private let cacheValidityDuration: TimeInterval = 5 * 60  // 5 minutes
+
   // Current connection manager reference
   private weak var connectionManager: DatabaseConnectionManager?
 
@@ -53,11 +57,20 @@ class SQLAutocompleteProvider {
   func refreshSchema() async {
     guard let manager = connectionManager else { return }
 
+    // Check cache validity (10.1.4 optimization - skip refetch if cache is still valid)
+    if let lastRefresh = lastRefreshTime,
+       Date().timeIntervalSince(lastRefresh) < cacheValidityDuration,
+       !tables.isEmpty {
+      // Cache is still valid, skip refetch
+      return
+    }
+
     // Check if connected
     let isConnected = await manager.isConnected
     guard isConnected else {
       tables = []
       columnsByTable = [:]
+      lastRefreshTime = nil
       return
     }
 
@@ -83,9 +96,19 @@ class SQLAutocompleteProvider {
       }
       columnsByTable = newColumnsCache
 
+      // Update cache timestamp (10.1.4 optimization)
+      lastRefreshTime = Date()
+
     } catch {
       await AppLogger.shared.error("Failed to refresh schema: \(error)", category: "Autocomplete")
     }
+  }
+
+  /// Clear the schema cache (10.1.4 & 10.1.8 optimization)
+  func clearCache() {
+    tables = []
+    columnsByTable = [:]
+    lastRefreshTime = nil
   }
 
   // MARK: - Autocomplete Suggestions
