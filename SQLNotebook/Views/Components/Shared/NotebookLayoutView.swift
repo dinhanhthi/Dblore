@@ -30,9 +30,14 @@ struct NotebookLayoutView<Content: View>: View {
             // Left sidebar (conditionally shown)
             ResizableLeftSidebar(viewModel: viewModel, maxWidth: geometry.size.width * 0.35)
 
-            // Main content (passed from parent)
-            content
-              .frame(maxWidth: .infinity)
+            // Main content (passed from parent) or Schema Visualizer
+            if viewModel.isSchemaVisualizerActive {
+              SchemaVisualizerContent(viewModel: viewModel)
+                .frame(maxWidth: .infinity)
+            } else {
+              content
+                .frame(maxWidth: .infinity)
+            }
 
             // Right sidebar (conditionally shown)
             RightSidebarContainer(viewModel: viewModel)

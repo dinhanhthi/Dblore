@@ -99,6 +99,7 @@ extension NotebookViewModel {
       databaseProcedures = []
       databaseUsers = []
       databaseRoles = []
+      databaseForeignKeys = []
       return
     }
 
@@ -189,6 +190,14 @@ extension NotebookViewModel {
         databaseRoles = []
       }
 
+      // Fetch foreign keys for schema visualizer
+      do {
+        databaseForeignKeys = try await connectionManager.fetchForeignKeys()
+      } catch {
+        await AppLogger.shared.warning("Failed to fetch foreign keys: \(error)", category: "Schema")
+        databaseForeignKeys = []
+      }
+
     } catch {
       await AppLogger.shared.error("Failed to load database schema: \(error)", category: "Schema")
       databaseTables = []
@@ -197,6 +206,7 @@ extension NotebookViewModel {
       databaseProcedures = []
       databaseUsers = []
       databaseRoles = []
+      databaseForeignKeys = []
     }
 
     isLoadingSchema = false
@@ -291,13 +301,13 @@ extension NotebookViewModel {
   // MARK: - Responsive Sidebar Management
 
   /// Sidebar side enumeration for conflict handling
-  private enum SidebarSide {
+  enum SidebarSide {
     case left, right
   }
 
   /// Handle sidebar conflict when window width is narrow (< 1200pt)
   /// Automatically closes the opposite sidebar to ensure only one is open
-  private func handleSidebarConflict(opening: SidebarSide) {
+  func handleSidebarConflict(opening: SidebarSide) {
     // Get current window width
     guard let window = NSApp.keyWindow else { return }
     let windowWidth = window.frame.size.width

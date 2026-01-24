@@ -41,17 +41,23 @@ struct DatabaseColumn: Identifiable, Sendable {
   let type: String
   let isNullable: Bool
   let isPrimaryKey: Bool
+  let isIdentity: Bool
+  let isUnique: Bool
 
   nonisolated init(
     name: String,
     type: String,
     isNullable: Bool = true,
-    isPrimaryKey: Bool = false
+    isPrimaryKey: Bool = false,
+    isIdentity: Bool = false,
+    isUnique: Bool = false
   ) {
     self.name = name
     self.type = type
     self.isNullable = isNullable
     self.isPrimaryKey = isPrimaryKey
+    self.isIdentity = isIdentity
+    self.isUnique = isUnique
   }
 
   /// Returns the appropriate SF Symbol icon name for this column's data type

@@ -66,8 +66,11 @@ extension DatabaseConnectionManager {
     let primaryKeyColumns = try await fetchPrimaryKeyColumns(
       tableName: "\(tableSchema).\(tableName)")
 
+    // Fetch unique constraint columns
+    let uniqueColumns = try await fetchUniqueColumns(tableSchema: tableSchema, tableName: tableName)
+
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
-    // Include additional columns for type enrichment
+    // Include additional columns for type enrichment and identity
     let query = """
       SELECT
         column_name,
@@ -77,7 +80,8 @@ extension DatabaseConnectionManager {
         character_maximum_length,
         numeric_precision,
         numeric_scale,
-        datetime_precision
+        datetime_precision,
+        is_identity
       FROM information_schema.columns
       WHERE table_schema = '\(tableSchema)'
         AND table_name = '\(tableName)'
@@ -109,6 +113,17 @@ extension DatabaseConnectionManager {
 
         // Check if this column is a primary key
         let isPrimaryKey = primaryKeyColumns.contains(columnName)
+
+        // Check if this column is identity
+        var isIdentity = false
+        if cells.count > 8,
+          let isIdentityStr = try? cells[8].decode(String.self, context: .default)
+        {
+          isIdentity = isIdentityStr.uppercased() == "YES"
+        }
+
+        // Check if this column has unique constraint (but not primary key)
+        let isUnique = uniqueColumns.contains(columnName) && !isPrimaryKey
 
         // Build enriched type string with precision/scale/length
         var enrichedType = dataType.uppercased()
@@ -146,7 +161,9 @@ extension DatabaseConnectionManager {
             name: columnName,
             type: enrichedType,
             isNullable: isNullable,
-            isPrimaryKey: isPrimaryKey
+            isPrimaryKey: isPrimaryKey,
+            isIdentity: isIdentity,
+            isUnique: isUnique
           )
         )
       }
@@ -157,6 +174,46 @@ extension DatabaseConnectionManager {
         "Failed to fetch columns for \(tableSchema).\(tableName): \(error.localizedDescription)",
         0
       )
+    }
+  }
+
+  /// Fetch unique constraint column names for a table (single-column unique constraints only)
+  private func fetchUniqueColumns(tableSchema: String, tableName: String) async throws -> Set<
+    String
+  > {
+    guard let connection = _connection else {
+      throw DatabaseError.notConnected
+    }
+
+    // Query to get unique constraint columns (only single-column constraints)
+    let query = """
+      SELECT a.attname AS column_name
+      FROM pg_index i
+      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indrelid = '\(tableSchema).\(tableName)'::regclass
+        AND i.indisunique
+        AND NOT i.indisprimary
+        AND array_length(i.indkey, 1) = 1
+      """
+
+    do {
+      let stream = try await connection.query(
+        PostgresQuery(unsafeSQL: query),
+        logger: Logger(label: "sqlnotebook.unique")
+      )
+
+      var uniqueColumns: Set<String> = []
+      for try await row in stream {
+        let randomAccess = row.makeRandomAccess()
+        if let columnName = try? randomAccess[0].decode(String.self) {
+          uniqueColumns.insert(columnName)
+        }
+      }
+
+      return uniqueColumns
+    } catch {
+      // If query fails, return empty set
+      return []
     }
   }
 
