@@ -244,10 +244,8 @@ struct ResultQueryFooterView: View {
     }
 
     // If user's LIMIT was capped to maxRows, show the actual query sent to database
-    if result.limitWasCapped, let actualLimit = result.actualLimitUsed,
-      let connectionManager = viewModel?.connectionManager
-    {
-      return connectionManager.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
+      return CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
     }
 
     return sourceQuery
@@ -305,6 +303,25 @@ enum CellResultViews {
       let milliseconds = seconds * 1000
       return String(format: "%.0fms", milliseconds)
     }
+  }
+
+  /// Replace LIMIT value in query with a new limit value
+  /// Used to show the actual executed query in UI when LIMIT was capped
+  static func replaceLimitInQuery(_ query: String, newLimit: Int) -> String {
+    let pattern = "\\bLIMIT\\s+\\d+"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+      return query
+    }
+
+    let nsRange = NSRange(query.startIndex..., in: query)
+    let modifiedQuery = regex.stringByReplacingMatches(
+      in: query,
+      options: [],
+      range: nsRange,
+      withTemplate: "LIMIT \(newLimit)"
+    )
+
+    return modifiedQuery
   }
 }
 
