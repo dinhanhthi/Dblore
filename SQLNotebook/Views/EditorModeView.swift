@@ -515,9 +515,10 @@ struct EditorModeView: View {
       return ""
     }
 
-    // If query was limited and we have the actual limit used
-    if result.userLimitExceeded, let actualLimit = result.userRequestedLimit {
-      // Replace LIMIT in query with actual limit
+    // If user's LIMIT was capped (even if no limiting occurred in result)
+    // Show the actual query that was sent to database
+    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
+      // Replace LIMIT in query with actual limit used
       return viewModel.connectionManager.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
     }
 
