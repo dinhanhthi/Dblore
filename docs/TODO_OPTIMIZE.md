@@ -116,28 +116,16 @@
 
 ### 10.2 Major Refactors (MEDIUM-HIGH Effort - 3-4 weeks)
 
-#### 10.2.1 Memory - Large Result Set Pagination ⚡ HIGH PRIORITY (TanStack-like Virtual Scrolling)
-- **Current Status:** 🚧 PARTIAL - Basic row limiting implemented (500 rows max), NOT true virtualization
-- **Current Implementation:** ResultTableView.swift:28-37 uses `result.rows.prefix(maxRowsToRender)`
-- **Missing vs TanStack Virtual:**
-  - [ ] No viewport-based rendering (renders all 500 rows upfront)
-  - [ ] No virtual scrolling (uses standard ForEach, not lazy)
-  - [ ] No on-demand row creation (all rows created immediately)
-  - [ ] No row recycling/reuse pattern
-  - [ ] No dynamic row heights support
-  - [ ] No pagination/infinite scroll UI (just truncation warning)
-- **Proposed TanStack-like Implementation:**
-  - [ ] Research SwiftUI table virtualization approaches (NSTableView wrapper vs LazyVStack)
-  - [ ] Implement `ResultRowStorage` with disk-backed or paged storage
-  - [ ] Add `visibleRows` property returning ArraySlice for current viewport
-  - [ ] Implement viewport-based rendering (only render visible rows + buffer)
-  - [ ] Add pagination controls (load more, page size selection, jump to page)
-  - [ ] Auto-clear old results when memory pressure detected
-  - [ ] Add row recycling for smooth scrolling performance
-- **Location:** NotebookCell.swift:43-65 (CellResult struct), ResultTableView.swift:28-37, 68-72
-- **Impact:** 60-70% memory reduction for large notebooks, TanStack-like UX
-- **Effort:** HIGH (3-4 weeks)
-- **Verified:** 2026-01-23
+#### 10.2.1 Memory - Large Result Set Pagination ❌ CLOSED - Not Needed
+- **Status:** ❌ CLOSED - Virtual scrolling not needed
+- **Reason:** Row limiting is handled at database level via `AppSettings.maxRowLimit` (50-100) and `editorMaxRowLimit` (100-200). Database queries are wrapped with LIMIT clause before execution, so ResultTableView never receives more than ~200 rows.
+- **Changes Made (2026-01-24):**
+  - Removed redundant `maxRowsToRender = 500` constant from ResultTableView.swift
+  - Removed `displayedRows` computed property (now uses `result.rows` directly)
+  - Removed `hasMoreRows` computed property
+  - Removed `truncationWarning` view (DB-level warning via toast is sufficient)
+- **Test Coverage:** 70+ test cases in DatabaseQueryExecutionTests.swift and DatabaseQueryWrappingTests.swift verify LIMIT is always applied to SELECT queries
+- **Date Closed:** 2026-01-24
 
 #### 10.2.2 Concurrency - Move ExecutionQueue Off Main Actor ✅ COMPLETE
 - [x] Process queue in detached Task (off main actor)
@@ -264,7 +252,7 @@
 | 10.1.8 | Clear Autocomplete Cache | LOW | LOW | Frees 1-5MB | ✅ |
 | 10.1.9 | Search Task Cancellation | MEDIUM | LOW | 80% faster cancel | ✅ |
 | 10.1.10 | JSON Encoding Performance | MEDIUM | LOW | 50% faster I/O | ✅ |
-| 10.2.1 | Result Set Pagination | HIGH | HIGH | 60-70% less memory | 🚧 |
+| 10.2.1 | Result Set Pagination | ~~HIGH~~ | ~~HIGH~~ | ~~60-70% less memory~~ | ❌ CLOSED |
 | 10.2.2 | ExecutionQueue Off Main Actor | HIGH | MEDIUM | Non-blocking UI | ✅ |
 | 10.2.3 | ResultTableView Search Optimization | HIGH | MEDIUM | 50-70% faster search | ✅ |
 | 10.2.4 | Query Result Streaming | HIGH | HIGH | 3x faster perceived | ❌ |

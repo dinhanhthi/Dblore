@@ -5,9 +5,9 @@
 - ✅ **Phase 1-4: Foundation** - COMPLETE (Core structure, Cell editor, Database integration, Polish)
 - 🟡 **Phase 5: Advanced Features** - PARTIAL (Autocomplete ✅, Multi-SQL ✅; AI/Schema Visualizer pending)
 - ✅ **Phase 6: Security & Safety** - COMPLETE (Connection security, Query confirmations, Read-only mode, Value validation)
-- ✅ **Phase 7: Testing** - COMPLETE (387/387 unit tests passing; Integration/UI tests deferred)
+- ✅ **Phase 7: Testing** - COMPLETE (399 unit tests passing; Integration/UI tests deferred)
 - ✅ **Phase 8: Editor Mode** - COMPLETE (Run Selection, Multi-SQL, Export CSV/Excel/JSON/Markdown, Executed Query Viewer)
-- 🟡 **Phase 10: Performance Optimization** - IN PROGRESS (11/19 tasks complete; 1 invalid task; see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
+- 🟡 **Phase 10: Performance Optimization** - IN PROGRESS (12/17 tasks complete; 2 invalid/closed tasks; see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
 
 ---
 
@@ -97,8 +97,11 @@ Local model only:
 - [ ] Add SQLite support
 - [ ] Add MySQL support (optional)
 
-#### 8.2 Additional Features (FUTURE)
-- [ ] Implement "Run All" functionality (run all cells/statements)
+#### 8.2 Run All Cells - COMPLETE ✅
+- [x] Run All Cells functionality (Cmd+Shift+Enter)
+- [x] Confirmation dialog for destructive queries
+- [x] Sequential execution with cancel support
+- **Location:** NotebookViewModel+Execution.swift:293, HeaderView.swift:48-59
 
 ---
 
@@ -149,7 +152,7 @@ Active TODOs found in codebase (verified 2026-01-22):
 - DatabaseConnectionManager+QueryParsing.swift - splitSQLStatements(), hasMultipleStatements()
 
 ### Phase 7: Unit Tests ✅
-- 387/387 tests passing (100% pass rate)
+- 399/399 tests passing (100% pass rate)
 - Data model serialization tests
 - SQL syntax highlighter tests
 - ViewModel logic tests
@@ -217,9 +220,9 @@ Each task is complete when:
 - ✅ Phase 1-4: Complete (~27,000+ lines)
 - 🟡 Phase 5: Mostly complete (5.4 Autocomplete ✅, 5.8 Multi-SQL ✅; 5.6 AI/5.7 Schema Visualizer pending)
 - ✅ Phase 6: Complete (6.0.2-6.0.4; 6.0.5-6.0.6 future)
-- ✅ Phase 7: Complete (47/47 unit tests; integration/UI tests deferred)
-- ✅ Phase 8: Complete (8.1-8.6, 8.8 including Multi-SQL; 8.7 future)
-- 🟡 Phase 10: In Progress (11/19 tasks complete: Phase 10.1 Quick Wins ✅ 9/9 complete, 10.2.2 ExecutionQueue ✅, 10.2.5 Primary Key Detection ✅; 10.1.1 LazyVStack ❌ INVALID)
+- ✅ Phase 7: Complete (399 unit tests passing; integration/UI tests deferred)
+- ✅ Phase 8: Complete (8.1-8.6, 8.2 Run All ✅, 8.8 Multi-SQL ✅; 8.7 future)
+- 🟡 Phase 10: In Progress (12/17 tasks complete: Phase 10.1 ✅ 9/9, 10.2.2 ✅, 10.2.3 ✅, 10.2.5 ✅; 10.1.1 ❌ INVALID, 10.2.1 ❌ CLOSED)
 
 **Recommended Next Actions:**
 1. **Phase 10 Performance Optimization** - Address performance bottlenecks for large datasets (see TODO_OPTIMIZE.md)
@@ -288,13 +291,7 @@ All quick-win optimization tasks completed in single session:
   - `fetchPrimaryKeyColumns()` queries `pg_constraint` system catalog
   - Primary key information properly populated in `ColumnSchema.isPrimaryKey`
 
-### 🚧 Partial Implementation (Noted in TODO_OPTIMIZE.md)
-- **Phase 10.2.1: Large Result Set Pagination** - 🚧 PARTIAL (Basic row limiting only)
-  - Location: `ResultTableView.swift:30-38`
-  - Current: Hard limit of 500 rows with truncation warning
-  - Missing: True viewport-based rendering, virtual scrolling, row recycling (TanStack-like pattern)
-
-### ❌ Invalid Tasks (Cannot Implement)
+### ❌ Invalid/Closed Tasks
 - **Phase 10.1.1: LazyVStack for Cells** - ❌ INVALID (2026-01-24)
   - **Reason:** LazyVStack causes app crashes with variable-height NSTextView content
   - **Evidence:** scroll_crash_fix.md documents extensive research (2026-01-03)
@@ -302,12 +299,17 @@ All quick-win optimization tasks completed in single session:
   - **Decision:** Keep current `List` implementation (proven stable)
   - **Reference:** [scroll_crash_fix.md](implementation/scroll_crash_fix.md)
 
+- **Phase 10.2.1: Virtual Scrolling** - ❌ CLOSED (2026-01-24)
+  - **Reason:** Not needed - row limiting handled at database level
+  - DB queries wrapped with LIMIT via `AppSettings.maxRowLimit` (50-100) / `editorMaxRowLimit` (100-200)
+  - Removed redundant `maxRowsToRender = 500` from ResultTableView.swift
+  - **Test Coverage:** 70+ tests verify LIMIT is always applied to SELECT queries
+
 ### 🎯 Recommended Next Priority (Phase 10.2: Major Refactors)
 
 **High Priority Tasks (MEDIUM-HIGH effort):**
 1. ~~**10.2.3: ResultTableView Search Optimization**~~ ✅ COMPLETE (2026-01-24)
-2. **10.2.1: True Virtual Scrolling (TanStack-like)** - HIGH priority, HIGH effort
-3. **10.2.4: Query Result Streaming** - HIGH priority, HIGH effort
+2. **10.2.4: Query Result Streaming** - HIGH priority, HIGH effort
 
 **Code Quality (Phase 10.3):**
 - **10.3.1: Split ResultTableView** (920 lines → ~300 lines) - MEDIUM effort
