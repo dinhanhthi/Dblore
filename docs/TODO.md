@@ -7,7 +7,7 @@
 - ✅ **Phase 6: Security & Safety** - COMPLETE (Connection security, Query confirmations, Read-only mode, Value validation)
 - ✅ **Phase 7: Testing** - COMPLETE (47/47 unit tests passing; Integration/UI tests deferred)
 - ✅ **Phase 8: Editor Mode** - COMPLETE (Run Selection, Multi-SQL, Export CSV/Excel/JSON/Markdown, Executed Query Viewer)
-- 🟡 **Phase 10: Performance Optimization** - PENDING (see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
+- 🟡 **Phase 10: Performance Optimization** - IN PROGRESS (1/19 tasks complete; 1 invalid task; see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
 
 ---
 
@@ -219,9 +219,35 @@ Each task is complete when:
 - ✅ Phase 6: Complete (6.0.2-6.0.4; 6.0.5-6.0.6 future)
 - ✅ Phase 7: Complete (47/47 unit tests; integration/UI tests deferred)
 - ✅ Phase 8: Complete (8.1-8.6, 8.8 including Multi-SQL; 8.7 future)
-- 🟡 Phase 10: Pending (performance optimization)
+- 🟡 Phase 10: In Progress (1/19 tasks complete: 10.2.5 Primary Key Detection ✅; 10.1.1 LazyVStack ❌ INVALID)
 
 **Recommended Next Actions:**
 1. **Phase 10 Performance Optimization** - Address performance bottlenecks for large datasets (see TODO_OPTIMIZE.md)
 2. **Phase 5.7 Schema Visualizer** - Foreign key relationship graph (large effort)
 3. **Phase 5.6 AI Natural Language Query** - Local LLM integration (large effort)
+
+---
+
+## Verification Report (2026-01-24)
+
+### ✅ Verified Complete (Since Last Update)
+- **Phase 10.2.5: Primary Key Detection** - ✅ IMPLEMENTED
+  - Location: `DatabaseConnectionManager+Schema.swift:65-237`
+  - `fetchPrimaryKeyColumns()` queries `pg_constraint` system catalog
+  - Primary key information properly populated in `ColumnSchema.isPrimaryKey`
+
+### 🚧 Partial Implementation (Noted in TODO_OPTIMIZE.md)
+- **Phase 10.2.1: Large Result Set Pagination** - 🚧 PARTIAL (Basic row limiting only)
+  - Location: `ResultTableView.swift:30-38`
+  - Current: Hard limit of 500 rows with truncation warning
+  - Missing: True viewport-based rendering, virtual scrolling, row recycling (TanStack-like pattern)
+
+### ❌ Invalid Tasks (Cannot Implement)
+- **Phase 10.1.1: LazyVStack for Cells** - ❌ INVALID (2026-01-24)
+  - **Reason:** LazyVStack causes app crashes with variable-height NSTextView content
+  - **Evidence:** scroll_crash_fix.md documents extensive research (2026-01-03)
+  - **Memory Issue:** LazyVStack leaks 33MB per scroll vs List (151MB vs 118MB)
+  - **Decision:** Keep current `List` implementation (proven stable)
+  - **Reference:** [scroll_crash_fix.md](implementation/scroll_crash_fix.md)
+
+### ❌ Not Started (Quick Wins Available - HIGH PRIORITY)

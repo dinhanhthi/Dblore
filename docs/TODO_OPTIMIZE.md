@@ -9,14 +9,23 @@
 
 ### 10.1 Quick Wins (LOW Effort - 1-2 weeks)
 
-#### 10.1.1 UI Performance - LazyVStack for Cells ⚡ HIGH PRIORITY
-- **Current Status:** ❌ NOT USING LazyVStack - Uses `List` with `ForEach` (NotebookContentView.swift:377-395)
-- [ ] Verify NotebookContentView uses LazyVStack (not ForEach alone)
-- [ ] Add LazyVStack wrapper if missing
-- **Location:** NotebookContentView.swift:377-395
-- **Impact:** 80% faster initial render for 100+ cells
-- **Effort:** LOW
-- **Verified:** 2026-01-23
+#### 10.1.1 UI Performance - LazyVStack for Cells ❌ INVALID - CANNOT IMPLEMENT
+- **Current Status:** ❌ **BLOCKED** - LazyVStack causes app crashes (documented in scroll_crash_fix.md)
+- **Current Implementation:** Uses `List` (optimal choice after extensive research)
+- **Location:** NotebookContentView.swift:378-410
+- **Why This Task is Invalid:**
+  - ⛔ **CRITICAL:** LazyVStack crashes app when scrolling with variable-height NSTextView content
+  - ⛔ **Memory Leak:** LazyVStack retains 33MB extra per scroll session vs List (118MB vs 151MB)
+  - ⛔ **NSViewRepresentable Issues:** LazyVStack has lifecycle problems with wrapped NSViews
+  - ⛔ **Already Fixed:** scroll_crash_fix.md (2026-01-03) documents extensive research and testing
+  - ✅ **List is Optimal:** Provides proper view recycling, handles variable heights, prevents crashes
+- **Research Sources:**
+  - [docs/implementation/scroll_crash_fix.md](../implementation/scroll_crash_fix.md) - Complete analysis
+  - [List vs LazyVStack Performance](https://fatbobman.com/en/posts/list-or-lazyvstack/) - Memory comparison
+  - [Variable Height in LazyVStack](https://developer.apple.com/forums/thread/685461) - Known crash issue
+- **Decision:** ✅ **KEEP LIST** - Do not attempt LazyVStack migration
+- **Status:** CLOSED - Will not implement
+- **Date Closed:** 2026-01-24
 
 #### 10.1.2 Memory - Search Cache Optimization
 - [ ] Add memory pressure notification handler to clear SearchHighlighter cache
@@ -130,12 +139,13 @@
 - **Impact:** 3x faster perceived performance, non-blocking UI
 - **Effort:** HIGH
 
-#### 10.2.5 Database - Primary Key Detection
-- [ ] Query pg_constraint for primary key information
-- [ ] Update schema loading to populate `isPrimaryKey` correctly
-- **Location:** DatabaseConnectionManager+Schema.swift:101
+#### 10.2.5 Database - Primary Key Detection ✅ COMPLETE
+- [x] Query pg_constraint for primary key information
+- [x] Update schema loading to populate `isPrimaryKey` correctly
+- **Location:** DatabaseConnectionManager+Schema.swift:65-237
 - **Impact:** Better UPDATE WHERE clauses, improved data safety
 - **Effort:** MEDIUM
+- **Verified:** 2026-01-24
 
 ---
 
@@ -204,28 +214,28 @@
 
 ## Summary Table
 
-| Phase | Item | Priority | Effort | Impact |
-|-------|------|----------|--------|--------|
-| 10.1.1 | LazyVStack for Cells | HIGH | LOW | 80% faster render |
-| 10.1.2 | Search Cache Optimization | MEDIUM | LOW | 20-30% less memory |
-| 10.1.3 | Debounce Search Notifications | MEDIUM | LOW | 30% less CPU |
-| 10.1.4 | Schema Fetching Cache | MEDIUM | LOW | 90% faster autocomplete |
-| 10.1.5 | Query Timeout | MEDIUM | LOW | Prevents hangs |
-| 10.1.6 | Cache Column Widths | LOW | LOW | 5-10% faster table |
-| 10.1.7 | Auto-Clear ExecutionQueue | LOW | LOW | Prevents memory leak |
-| 10.1.8 | Clear Autocomplete Cache | LOW | LOW | Frees 1-5MB |
-| 10.1.9 | Search Task Cancellation | MEDIUM | LOW | 80% faster cancel |
-| 10.1.10 | JSON Encoding Performance | MEDIUM | LOW | 50% faster I/O |
-| 10.2.1 | Result Set Pagination | HIGH | HIGH | 60-70% less memory |
-| 10.2.2 | ExecutionQueue Off Main Actor | HIGH | MEDIUM | Non-blocking UI |
-| 10.2.3 | ResultTableView Search Optimization | HIGH | MEDIUM | 50-70% faster search |
-| 10.2.4 | Query Result Streaming | HIGH | HIGH | 3x faster perceived |
-| 10.2.5 | Primary Key Detection | MEDIUM | MEDIUM | Better data safety |
-| 10.3.1 | Split ResultTableView | MEDIUM | MEDIUM | Maintainability |
-| 10.3.2 | ViewModel State Structure | LOW | MEDIUM | 10-15% fewer updates |
-| 10.3.3 | EditorModeView GeometryReader | LOW | MEDIUM | 10-20% less lag |
-| 10.3.4 | File Size Calculation | MEDIUM | LOW | 20% faster execution |
-| 10.3.5 | Toast Deadlock Prevention | LOW | LOW | Prevents rare bug |
+| Phase | Item | Priority | Effort | Impact | Status |
+|-------|------|----------|--------|--------|--------|
+| 10.1.1 | LazyVStack for Cells | ~~HIGH~~ | ~~LOW~~ | ~~80% faster~~ | ❌ INVALID |
+| 10.1.2 | Search Cache Optimization | MEDIUM | LOW | 20-30% less memory | ❌ |
+| 10.1.3 | Debounce Search Notifications | MEDIUM | LOW | 30% less CPU | ❌ |
+| 10.1.4 | Schema Fetching Cache | MEDIUM | LOW | 90% faster autocomplete | ❌ |
+| 10.1.5 | Query Timeout | MEDIUM | LOW | Prevents hangs | ❌ |
+| 10.1.6 | Cache Column Widths | LOW | LOW | 5-10% faster table | ❌ |
+| 10.1.7 | Auto-Clear ExecutionQueue | LOW | LOW | Prevents memory leak | ❌ |
+| 10.1.8 | Clear Autocomplete Cache | LOW | LOW | Frees 1-5MB | ❌ |
+| 10.1.9 | Search Task Cancellation | MEDIUM | LOW | 80% faster cancel | ❌ |
+| 10.1.10 | JSON Encoding Performance | MEDIUM | LOW | 50% faster I/O | ❌ |
+| 10.2.1 | Result Set Pagination | HIGH | HIGH | 60-70% less memory | 🚧 |
+| 10.2.2 | ExecutionQueue Off Main Actor | HIGH | MEDIUM | Non-blocking UI | ❌ |
+| 10.2.3 | ResultTableView Search Optimization | HIGH | MEDIUM | 50-70% faster search | ❌ |
+| 10.2.4 | Query Result Streaming | HIGH | HIGH | 3x faster perceived | ❌ |
+| 10.2.5 | Primary Key Detection | MEDIUM | MEDIUM | Better data safety | ✅ |
+| 10.3.1 | Split ResultTableView | MEDIUM | MEDIUM | Maintainability | ❌ |
+| 10.3.2 | ViewModel State Structure | LOW | MEDIUM | 10-15% fewer updates | ❌ |
+| 10.3.3 | EditorModeView GeometryReader | LOW | MEDIUM | 10-20% less lag | ❌ |
+| 10.3.4 | File Size Calculation | MEDIUM | LOW | 20% faster execution | ❌ |
+| 10.3.5 | Toast Deadlock Prevention | LOW | LOW | Prevents rare bug | ❌ |
 
 ---
 
@@ -246,11 +256,16 @@
 
 ## Latest Verification Report
 
-**Date:** 2026-01-23
-**Task:** Verify lazy load implementation for table results (TanStack-like virtualization)
+**Date:** 2026-01-24
 **Verified By:** /todo agent
 
 ### Findings Summary
+
+#### ✅ 10.2.5 Primary Key Detection - COMPLETE
+- **Location:** `DatabaseConnectionManager+Schema.swift:65-237`
+- `fetchPrimaryKeyColumns()` queries `pg_constraint` system catalog
+- Primary key information properly populated in `ColumnSchema.isPrimaryKey`
+- Status: ✅ **VERIFIED COMPLETE**
 
 #### ⚠️ 10.2.1 Large Result Set Pagination - PARTIAL Implementation
 
@@ -277,16 +292,20 @@
 
 **Recommendation:** This is a HIGH PRIORITY task requiring significant architectural changes. Current implementation provides basic protection but doesn't match TanStack's lazy loading UX.
 
-#### ❌ 10.1.1 LazyVStack for Cells - NOT IMPLEMENTED
+#### ❌ 10.1.1 LazyVStack for Cells - INVALID TASK (See Section 10.1.1 Above)
+
+**Status:** CLOSED - Cannot implement due to scroll crash issues
 
 **Current State:**
-- NotebookContentView.swift:377-395 uses `List` with `ForEach`
-- **NOT using LazyVStack** for cell rendering
-- Quick win opportunity (LOW effort, HIGH impact)
+- NotebookContentView.swift:378-410 uses `List` with `ForEach`
+- **List is the CORRECT choice** - proven stable after extensive research
+- LazyVStack migration would reintroduce critical crash bugs
+
+**Reference:** See scroll_crash_fix.md for complete analysis
 
 **Next Steps:**
-1. Start with Phase 10.1.1 (LazyVStack for cells) - LOW effort, 80% improvement
-2. Then tackle Phase 10.2.1 (True virtualization) - HIGH effort, 60-70% memory reduction
-3. Consider NSTableView wrapper for native virtualization support
+1. ~~Phase 10.1.1 (LazyVStack)~~ - ❌ INVALID - Causes crashes
+2. **Phase 10.1.2-10.1.10** (Other Quick Wins) - Start here instead
+3. Phase 10.2.1 (True virtualization) - HIGH effort, consider NSTableView wrapper
 
 ---
