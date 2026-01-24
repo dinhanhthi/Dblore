@@ -57,7 +57,7 @@ struct ResultAreaView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.top, 0)
-      .padding(.bottom, 0)
+      .padding(.bottom, Spacing.sm)
       .padding(.trailing, Spacing.md)
     }
     .padding(.bottom, Spacing.md)
@@ -350,7 +350,7 @@ struct ResultQueryFooterView: View {
           cellId: cellId,
           queryIndex: nil  // Notebook mode always uses nil
         )
-        .padding(.vertical, Spacing.sm)
+        .padding(.top, Spacing.sm)
 
         // Horizontal divider line (bottom)
         Rectangle()
