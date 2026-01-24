@@ -182,6 +182,164 @@ Local LLM integration for natural language to SQL conversion.
 
 ---
 
+## Feature Ideas (Inspired by Popular SQL Editors)
+
+Features curated from [Beekeeper Studio](https://www.beekeeperstudio.io/), [DBeaver](https://dbeaver.io/), [TablePlus](https://tableplus.com/), and Jupyter Notebooks.
+
+### 🎯 High Value - Medium Effort
+
+#### Query History & Favorites
+*Inspired by: DBeaver, PopSQL, DataGrip*
+- [ ] Persistent query history (last 100 queries per connection)
+- [ ] Star/favorite frequently used queries
+- [ ] Search through query history
+- [ ] Quick re-execute from history
+- [ ] Export/import query collections
+
+#### SQL Snippets Library
+*Inspired by: SSMS, Metabase, SQuirreL SQL*
+- [ ] Save reusable SQL snippets with names/descriptions
+- [ ] Snippet categories (DDL, DML, Reports, etc.)
+- [ ] Insert snippet via autocomplete (e.g., type `snip:` prefix)
+- [ ] Share snippets between notebooks
+- [ ] Built-in common snippets (CREATE TABLE template, etc.)
+
+#### Data Import (Reverse of Export)
+*Inspired by: DBeaver, TablePlus*
+- [ ] Import CSV/JSON into existing table
+- [ ] Create table from CSV headers
+- [ ] Data type inference from file content
+- [ ] Preview before import
+- [ ] Conflict handling (skip, update, replace)
+
+### 🔄 Medium Value - Medium Effort
+
+#### Query Formatting/Beautify
+*Inspired by: DBeaver, DataGrip*
+- [ ] Auto-format SQL with consistent style
+- [ ] Keyboard shortcut (Cmd+Shift+F)
+- [ ] Configurable formatting rules (uppercase keywords, indentation)
+- [ ] Format selection only
+
+#### Table Data Quick Edit (Inline Editing)
+*Inspired by: TablePlus, Beekeeper Studio*
+- [x] Double-click cell to edit value directly
+- [ ] Visual diff before commit (highlight changed cells)
+- [ ] Batch commit changes
+- [ ] Undo/redo for edits
+- [ ] NULL value handling
+
+#### Connection Profiles/Groups
+*Inspired by: DBeaver, DbVisualizer*
+- [ ] Group connections by project/environment (Dev, Staging, Prod)
+- [ ] Color-coded connection indicators
+- [ ] Quick switch between connections
+- [ ] Connection templates
+
+### 📓 Notebook-Specific (Jupyter-Inspired)
+
+#### Markdown Cells
+*Inspired by: Jupyter Notebook*
+- [ ] Add markdown cell type (alongside SQL cells)
+- [ ] Rich text rendering (headers, lists, code blocks)
+- [ ] Document analysis workflow with explanations
+- [ ] Toggle between edit/preview mode
+
+#### Cell Protection/Lock Mode
+*Inspired by: Jupyter "frozen cells", Excel protected cells*
+- [ ] Add `isProtected` property to NotebookCell model
+- [ ] Lock/unlock button in cell toolbar (lock icon)
+- [ ] Visual indicator for protected cells (dimmed or badge)
+- [ ] Skip protected cells in "Run All Cells" (Cmd+Shift+Enter)
+- [ ] Skip protected cells in "Run and Select Next" (Shift+Enter)
+- [ ] Prevent editing content of protected cells
+- [ ] Keyboard shortcut to toggle protection (Cmd+L)
+
+**Use cases:**
+- Protect setup/initialization queries from accidental re-execution
+- Keep reference queries visible but inactive
+- Prevent accidental modification of critical queries
+
+#### Cell Bookmarks with Labels
+*Inspired by: IDE bookmarks, Notion*
+- [ ] Add `bookmark` property to NotebookCell model (optional label string)
+- [ ] Bookmark button in cell toolbar (bookmark icon, toggleable)
+- [ ] Custom label input when bookmarking (popup or inline)
+- [ ] Visual indicator for bookmarked cells (colored bookmark icon)
+- [ ] Left sidebar section "Bookmarks" showing all bookmarked cells
+- [ ] Click bookmark label to scroll/navigate to cell
+- [ ] Keyboard shortcut to toggle bookmark (Cmd+Shift+B)
+- [ ] Reorder bookmarks in sidebar (drag & drop)
+
+**Use cases:**
+- Quick navigation in large notebooks
+- Mark important queries for easy access
+- Create table of contents for notebook sections
+
+#### Cell Tags & Organization
+*Inspired by: Jupyter, Notion*
+- [ ] Tag cells for categorization (multiple tags per cell)
+- [ ] Filter/search by tags
+- [ ] Table of contents from cell titles
+
+#### Export Notebook as Report
+*Inspired by: Jupyter nbconvert*
+- [ ] Export entire notebook as HTML report
+- [ ] Export as PDF with results
+- [ ] Hide/show code in export
+- [ ] Custom report templates
+
+### 🔧 Developer/Power User Features
+
+#### Query Execution Plan (EXPLAIN)
+*Inspired by: pgAdmin, DBeaver*
+- [ ] Visual EXPLAIN ANALYZE results
+- [ ] Highlight slow operations
+- [ ] Index suggestions
+- [ ] Compare plans between queries
+
+#### Database Diff & Compare
+*Inspired by: DBeaver Pro, Redgate*
+- [ ] Compare schemas between two databases
+- [ ] Generate migration SQL
+- [ ] Visual diff of table structures
+- [ ] Sync schema changes
+
+#### SSH Tunnel Support
+*Inspired by: TablePlus, Beekeeper Studio*
+- [ ] Built-in SSH tunnel for remote databases
+- [ ] SSH key authentication
+- [ ] Jump host support
+- [ ] Connection through bastion
+
+### 💡 Nice-to-Have (Low Priority)
+
+#### Query Performance Metrics
+- [ ] Execution time history per query
+- [ ] Average/min/max execution times
+- [ ] Slow query highlighting
+
+#### Database Bookmarks
+- [ ] Bookmark specific tables/views
+- [ ] Quick access panel for bookmarks
+- [ ] Bookmark with notes
+
+#### Collaborative Features (Future)
+- [ ] Share notebooks via link
+- [ ] Real-time collaboration (like Google Docs)
+- [ ] Comments on cells
+- [ ] Version history
+
+---
+
+**Sources:**
+- [Best Beekeeper Studio Alternatives 2025](https://www.dbvis.com/thetable/best-beekeeper-studio-alternatives-in-2025/)
+- [DBeaver ER Diagrams Documentation](https://dbeaver.com/docs/dbeaver/ER-Diagrams/)
+- [Top 5 PostgreSQL GUIs 2026](https://www.beekeeperstudio.io/blog/top-5-postgresql-guis)
+- [Jupyter Notebook Best Practices](https://coderpad.io/blog/data-science/mastering-jupyter-notebooks-best-practices-for-data-science/)
+
+---
+
 ## Code-Level TODOs
 
 Active TODOs found in codebase (verified 2026-01-22):
