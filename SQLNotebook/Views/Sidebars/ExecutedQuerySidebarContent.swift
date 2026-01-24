@@ -12,6 +12,8 @@ import SwiftUI
 struct ExecutedQuerySidebarContent: View {
   let query: String
   let cellId: UUID?
+  let limitWasCapped: Bool
+  let actualLimit: Int?
 
   @State private var isCopied = false
   @State private var isWordWrapEnabled = false
@@ -70,7 +72,30 @@ struct ExecutedQuerySidebarContent: View {
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
+
+      // Warning footer when LIMIT was capped
+      if limitWasCapped, let limit = actualLimit {
+        limitCappedWarning(limit: limit)
+      }
     }
+  }
+
+  // MARK: - Limit Capped Warning
+
+  @ViewBuilder
+  private func limitCappedWarning(limit: Int) -> some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.yellow)
+        .font(.system(size: 12))
+
+      Text("LIMIT was adjusted to \(limit) based on Max Rows setting.")
+        .font(.system(size: 11))
+        .foregroundColor(.foregroundMuted)
+
+      Spacer()
+    }
+    .padding(.top, Spacing.md)
   }
 
   private var highlightedQuery: AttributedString {
@@ -98,7 +123,9 @@ struct ExecutedQuerySidebarContent: View {
 #Preview("Simple Query") {
   let viewModel = NotebookViewModel()
   let query = "SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 100;"
-  viewModel.rightSidebarContent = .executedQuery(query: query, cellId: UUID())
+  viewModel.rightSidebarContent = .executedQuery(
+    query: query, cellId: UUID(), limitWasCapped: false, actualLimit: nil
+  )
 
   return HStack {
     Spacer()
@@ -127,7 +154,25 @@ struct ExecutedQuerySidebarContent: View {
     ORDER BY total_spent DESC
     LIMIT 1000;
     """
-  viewModel.rightSidebarContent = .executedQuery(query: query, cellId: nil)
+  viewModel.rightSidebarContent = .executedQuery(
+    query: query, cellId: nil, limitWasCapped: false, actualLimit: nil
+  )
+
+  return HStack {
+    Spacer()
+    RightSidebarView(viewModel: viewModel)
+  }
+  .frame(height: 600)
+  .background(Color.appBackground)
+  .preferredColorScheme(.dark)
+}
+
+#Preview("Query with Limit Capped Warning") {
+  let viewModel = NotebookViewModel()
+  let query = "SELECT * FROM users LIMIT 100;"
+  viewModel.rightSidebarContent = .executedQuery(
+    query: query, cellId: UUID(), limitWasCapped: true, actualLimit: 100
+  )
 
   return HStack {
     Spacer()
