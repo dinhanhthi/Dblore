@@ -428,15 +428,21 @@ extension NotebookViewModel {
 
     notebook.cells[cellIndex].selectedStatementIndex = index
     notebook.cells[cellIndex].result = notebook.cells[cellIndex].statementResults[index].result
+    
+    // Update the View Query sidebar if it's currently open for this cell
+    updateExecutedQuerySidebarIfNeeded(cellId: cellId, result: notebook.cells[cellIndex].result)
   }
 
-  /// Update the View Query sidebar if it's currently showing query for the given cell
-  /// This ensures the sidebar shows the latest executed query after re-running a cell
-  func updateExecutedQuerySidebarIfNeeded(cellId: UUID, result: CellResult?) {
-    // Check if sidebar is showing executed query for this cell
-    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent,
-      sidebarCellId == cellId
-    else {
+  /// Update the View Query sidebar if it's currently showing query for the given cell or editor mode
+  /// This ensures the sidebar shows the latest executed query after re-running a cell or switching statements
+  func updateExecutedQuerySidebarIfNeeded(cellId: UUID?, result: CellResult?) {
+    // Check if sidebar is showing executed query
+    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent else {
+      return
+    }
+    
+    // Check if the sidebar is showing query for this specific cell (or editor mode if both are nil)
+    guard sidebarCellId == cellId else {
       return
     }
 
