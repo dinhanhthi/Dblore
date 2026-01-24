@@ -109,6 +109,14 @@ class NotebookViewModel {
   var editorPaginationInfo: PaginationInfo?  // Pagination info for editor result
   var editorStatementPaginationInfo: [UUID: PaginationInfo] = [:]  // Pagination info per statement
 
+  // MARK: - Pagination State (Notebook Mode)
+  /// Pagination info for cells with single statement results
+  /// Key: cellId, Value: PaginationInfo
+  var cellPaginationInfo: [UUID: PaginationInfo] = [:]
+  /// Pagination info for multi-statement cell results
+  /// Key: cellId, Value: [statementId: PaginationInfo]
+  var cellStatementPaginationInfo: [UUID: [UUID: PaginationInfo]] = [:]
+
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
     editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()

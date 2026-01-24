@@ -119,6 +119,18 @@ extension NotebookViewModel {
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
 
+        // Build pagination info for each statement with LIMIT
+        for statementResult in convertedStatements {
+          if let paginationInfo = await buildPaginationInfo(
+            for: statementResult.queryText, result: statementResult.result)
+          {
+            if cellStatementPaginationInfo[task.cellId] == nil {
+              cellStatementPaginationInfo[task.cellId] = [:]
+            }
+            cellStatementPaginationInfo[task.cellId]?[statementResult.id] = paginationInfo
+          }
+        }
+
         // Check for any limit exceeded warnings
         for statementResult in convertedStatements {
           if statementResult.result.userLimitExceeded,
@@ -179,6 +191,16 @@ extension NotebookViewModel {
         notebook.cells[index].selectedStatementIndex = 0
         notebook.cells[index].totalExecutionTime = nil
 
+        // Build pagination info if applicable
+        if let paginationInfo = await buildPaginationInfo(for: task.query, result: result!) {
+          cellPaginationInfo[task.cellId] = paginationInfo
+        } else {
+          // Clear pagination info if not applicable
+          cellPaginationInfo.removeValue(forKey: task.cellId)
+        }
+        // Clear statement pagination info for single statement
+        cellStatementPaginationInfo.removeValue(forKey: task.cellId)
+
         // Show toast if user's LIMIT was exceeded and capped
         if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
           let maxLimit = AppSettings.shared.maxRowLimit
@@ -201,6 +223,9 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
+      // Clear pagination info on error
+      cellPaginationInfo.removeValue(forKey: task.cellId)
+      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     } catch {
       // Handle general errors
       result = .errorResult(error.localizedDescription, sourceQuery: task.query)
@@ -209,6 +234,9 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
+      // Clear pagination info on error
+      cellPaginationInfo.removeValue(forKey: task.cellId)
+      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     }
 
     notebook.cells[index].isRunning = false
