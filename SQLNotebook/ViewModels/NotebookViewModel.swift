@@ -57,8 +57,17 @@ class NotebookViewModel {
   var databaseProcedures: [DatabaseProcedure] = []
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
+  var databaseForeignKeys: [ForeignKey] = []
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false  // Track expand/collapse state
+
+  // Schema visualizer state
+  var schemaGraph: SchemaGraph?
+  var visualizerScale: CGFloat = 1.0
+  var visualizerOffset: CGPoint = .zero
+  var selectedGraphNodeId: UUID?
+  var isLoadingSchemaGraph: Bool = false
+  var isSchemaVisualizerActive: Bool = false  // Show visualizer in main body instead of cells/editor
 
   // Connection config for the sheet
   var editingConnectionConfig: ConnectionConfig

@@ -7,7 +7,7 @@
 - ✅ **Phase 6: Security & Safety** - COMPLETE (Connection security, Query confirmations, Read-only mode, Value validation)
 - ✅ **Phase 7: Testing** - COMPLETE (399 unit tests passing; Integration/UI tests deferred)
 - ✅ **Phase 8: Editor Mode** - COMPLETE (Run Selection, Multi-SQL, Export CSV/Excel/JSON/Markdown, Executed Query Viewer)
-- ⏳ **Phase 9: Schema Visualizer** - PENDING (Foreign key graph visualization - **NEXT PRIORITY**)
+- ✅ **Phase 9: Schema Visualizer** - COMPLETE (Foreign key graph visualization, force-directed layout, pan/zoom/select)
 - 🟡 **Phase 10: Performance Optimization** - IN PROGRESS (12/17 tasks complete; 2 invalid/closed tasks; see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
 - ⏳ **Phase 11: AI-Powered Natural Language Query** - PENDING (Local LLM integration - FUTURE)
 
@@ -127,30 +127,49 @@ Add embedded SQLite sandbox in Developer Settings for testing without external d
 
 ---
 
-### Phase 9: Schema Visualizer (NEXT PRIORITY - Large Effort) 🎯
+### Phase 9: Schema Visualizer - COMPLETE ✅
 
 Visualize database schema with foreign key relationships as an interactive graph.
 
-#### 9.1 Data Layer
-- [ ] Query foreign key relationships from `pg_constraint` system catalog
-- [ ] Build relationship graph data structure (tables as nodes, FK as edges)
-- [ ] Cache schema relationships with 5-minute validity
+#### 9.1 Data Layer ✅
+- [x] Query foreign key relationships from `pg_constraint` system catalog
+- [x] Build relationship graph data structure (tables as nodes, FK as edges)
+- [x] Load FK data in schema loading flow
 
-#### 9.2 Visual Graph Component
-- [ ] Create visual graph component using SwiftUI Canvas or Core Graphics
-- [ ] Implement auto-layout algorithm for table positioning
-- [ ] Draw relationship lines with cardinality indicators (1-to-many, many-to-many)
+**Implementation:**
+- `Models/ForeignKey.swift` - ForeignKey model with action enum
+- `Database/DatabaseConnectionManager+ForeignKeys.swift` - FK query from pg_constraint
+- `Models/SchemaGraph.swift` - SchemaGraph, SchemaNode, SchemaEdge models
 
-#### 9.3 Interactivity
-- [ ] Implement pan functionality (drag to move view)
-- [ ] Implement zoom functionality (pinch/scroll to zoom)
-- [ ] Click table to highlight its relationships
-- [ ] Double-click table to show table details/columns
+#### 9.2 Visual Graph Component ✅
+- [x] Create visual graph component using Core Graphics
+- [x] Implement force-directed auto-layout algorithm
+- [x] Draw relationship lines with cardinality indicators (n-to-1)
 
-#### 9.4 UI Integration
-- [ ] Add "Schema Visualizer" button/menu item in sidebar
-- [ ] Create dedicated view/window for the visualizer
-- [ ] Support dark/light mode themes
+**Implementation:**
+- `Utilities/SchemaLayoutEngine.swift` - Force-directed layout algorithm
+- `Views/Components/SchemaGraphView.swift` - NSViewRepresentable with Core Graphics rendering
+
+#### 9.3 Interactivity ✅
+- [x] Implement pan functionality (drag to move view)
+- [x] Implement zoom functionality (pinch/scroll to zoom, 0.25x-3x)
+- [x] Click table to highlight its relationships
+- [x] Double-click table to expand in sidebar
+
+**Controls:**
+- Pan: Drag canvas or scroll
+- Zoom: Cmd+scroll or pinch gesture
+- Select: Click on node
+
+#### 9.4 UI Integration ✅
+- [x] Add "Schema Visualizer" button in left sidebar header
+- [x] Create dedicated sidebar content view
+- [x] Support dark/light mode themes
+
+**Implementation:**
+- `ViewModels/NotebookViewModel+SchemaVisualizer.swift` - State management
+- `Views/Sidebars/SchemaVisualizerContent.swift` - Sidebar content view
+- Modified: `NotebookViewModel.swift`, `RightSidebarView.swift`, `LeftSidebarView.swift`
 
 ---
 
@@ -414,15 +433,12 @@ Active TODOs found in codebase (verified 2026-01-22):
 ## Next Steps
 
 ### Immediate Priority
-1. **Phase 10 Performance Optimization** (See TODO_OPTIMIZE.md) - Improve performance for large datasets
-
-### Next Priority 🎯
-2. **Phase 9: Schema Visualizer** (Large effort) - Visualize foreign key relationships as interactive graph
+1. **Phase 10 Performance Optimization** (See TODO_OPTIMIZE.md) - Complete remaining tasks
 
 ### Future Enhancements
-3. **Phase 8.8 Developer Sandbox Database** (Medium effort) - Embedded SQLite for testing
-4. **Phase 8.7 Multiple Database Support** (Large effort) - SQLite/MySQL
-5. **Phase 11: AI-Powered Queries** (Large effort) - Local LLM integration
+2. **Phase 8.8 Developer Sandbox Database** (Medium effort) - Embedded SQLite for testing
+3. **Phase 8.7 Multiple Database Support** (Large effort) - SQLite/MySQL
+4. **Phase 11: AI-Powered Queries** (Large effort) - Local LLM integration
 
 ### Do Last
 5. **Phase 7 Integration & UI Tests** (Medium effort) - After all features complete
@@ -441,7 +457,7 @@ Each task is complete when:
 
 ---
 
-## Latest Status (2026-01-24)
+## Latest Status (2026-01-25)
 
 **Git HEAD:** main branch
 
@@ -451,14 +467,13 @@ Each task is complete when:
 - ✅ Phase 6: Complete (6.0.2-6.0.4; 6.0.5-6.0.6 future)
 - ✅ Phase 7: Complete (399 unit tests passing; integration/UI tests deferred)
 - ✅ Phase 8: Complete (8.1-8.6, 8.2 Run All ✅, 8.8 Multi-SQL ✅; 8.7 future)
-- ⏳ Phase 9: Schema Visualizer - PENDING (**NEXT PRIORITY**)
+- ✅ Phase 9: Schema Visualizer - COMPLETE (FK graph, force-directed layout, pan/zoom/select)
 - 🟡 Phase 10: In Progress (12/17 tasks complete: Phase 10.1 ✅ 9/9, 10.2.2 ✅, 10.2.3 ✅, 10.2.5 ✅; 10.1.1 ❌ INVALID, 10.2.1 ❌ CLOSED)
 - ⏳ Phase 11: AI-Powered Natural Language Query - PENDING (FUTURE)
 
 **Recommended Next Actions:**
-1. **Phase 10 Performance Optimization** - Address performance bottlenecks for large datasets (see TODO_OPTIMIZE.md)
-2. **Phase 9: Schema Visualizer** - Foreign key relationship graph (large effort) 🎯
-3. **Phase 11: AI Natural Language Query** - Local LLM integration (large effort, FUTURE)
+1. **Phase 10 Performance Optimization** - Address remaining performance tasks (see TODO_OPTIMIZE.md)
+2. **Phase 11: AI Natural Language Query** - Local LLM integration (large effort, FUTURE)
 
 ---
 

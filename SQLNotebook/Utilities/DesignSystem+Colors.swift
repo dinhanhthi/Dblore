@@ -74,6 +74,22 @@ extension Color {
     dark: Color(hex: "3f3f46")  // Zinc 700
   )
 
+  // Schema visualizer specific colors (darker in light theme for better visibility)
+  static let schemaNodeBorder = Color(
+    light: Color(hex: "a1a1aa"),  // Zinc 400 (darker than border's Zinc 200)
+    dark: Color(hex: "3f3f46")  // Zinc 700 (slightly lighter than border's Zinc 800)
+  )
+
+  static let schemaNodeHeader = Color(
+    light: Color(hex: "e4e4e7"),  // Zinc 200 (darker than cardHeaderBackground's f5f5f5)
+    dark: Color(hex: "27272a")  // Zinc 800 (same as cardHeaderBackground)
+  )
+
+  static let schemaColumnText = Color(
+    light: Color(hex: "3f3f46"),  // Zinc 700 (darker than foregroundMuted's Zinc 600)
+    dark: Color(hex: "a1a1aa")  // Zinc 400 (same as foregroundMuted)
+  )
+
   static let borderFocus = Color(
     light: Color(hex: "9333ea"),  // Purple 600
     dark: Color(hex: "a855f7")  // Purple 500
