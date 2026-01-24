@@ -306,4 +306,94 @@ enum SQLSyntaxHighlighter {
       }
     }
   }
+
+  // MARK: - Query Processing
+
+  /// Remove SQL comments from a query string
+  /// Handles:
+  /// - Single-line comments (-- ...)
+  /// - Multi-line comments (/* ... */)
+  /// - Comments inside string literals are preserved
+  static func removeComments(_ query: String) -> String {
+    var result = ""
+    var inSingleQuote = false
+    var inDoubleQuote = false
+
+    var i = query.startIndex
+    while i < query.endIndex {
+      let char = query[i]
+
+      // Handle multi-line comment (/* ... */)
+      if !inSingleQuote && !inDoubleQuote && char == "/" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "*" {
+          // Find the closing */
+          var j = query.index(after: next)
+          var found = false
+          while j < query.endIndex {
+            if query[j] == "*" {
+              let nextJ = query.index(after: j)
+              if nextJ < query.endIndex && query[nextJ] == "/" {
+                // Found closing */
+                i = query.index(after: nextJ)
+                found = true
+                break
+              }
+            }
+            j = query.index(after: j)
+          }
+          if !found {
+            // Unclosed comment - skip rest of query
+            break
+          }
+          continue
+        }
+      }
+
+      // Handle single-line comment (-- ...)
+      if !inSingleQuote && !inDoubleQuote && char == "-" {
+        let next = query.index(after: i)
+        if next < query.endIndex && query[next] == "-" {
+          // Skip until newline or end of string
+          var j = next
+          while j < query.endIndex && query[j] != "\n" {
+            j = query.index(after: j)
+          }
+          // If we found a newline, skip it and continue
+          if j < query.endIndex {
+            i = query.index(after: j)
+            result.append("\n")
+          } else {
+            // End of string - we're done
+            break
+          }
+          continue
+        }
+      }
+
+      // Toggle single quote (handle escaped quotes)
+      if char == "'" && !inDoubleQuote {
+        let next = query.index(after: i)
+        if inSingleQuote && next < query.endIndex && query[next] == "'" {
+          // Escaped quote - add both and continue
+          result.append(char)
+          result.append(query[next])
+          i = query.index(after: next)
+          continue
+        }
+        inSingleQuote.toggle()
+      }
+
+      // Toggle double quote
+      if char == "\"" && !inSingleQuote {
+        inDoubleQuote.toggle()
+      }
+
+      // Add character to result
+      result.append(char)
+      i = query.index(after: i)
+    }
+
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
 }

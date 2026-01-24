@@ -320,8 +320,9 @@ struct EditorModeView: View {
   @ViewBuilder
   private func viewQueryButton(query: String) -> some View {
     Button(action: {
-      // Show query in right sidebar
-      viewModel.rightSidebarContent = .executedQuery(query: query, cellId: nil)
+      // Show query in right sidebar (without comments)
+      let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
+      viewModel.rightSidebarContent = .executedQuery(query: queryWithoutComments, cellId: nil)
       viewModel.isRightSidebarVisible = true
     }) {
       HStack(spacing: 4) {
@@ -433,7 +434,7 @@ struct EditorModeView: View {
         // "Run with query" text (spans remaining width)
         if result.sourceQuery != nil {
           let actualQuery = getActualExecutedQuery(result: result)
-          let displayQuery = removeComments(actualQuery)
+          let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
           HStack(spacing: Spacing.sm) {
             Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
               .font(.system(size: 11))
@@ -481,7 +482,7 @@ struct EditorModeView: View {
     } else if result.sourceQuery != nil {
       // Single statement - show clickable query text + Download button
       let actualQuery = getActualExecutedQuery(result: result)
-      let displayQuery = removeComments(actualQuery)
+      let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
       HStack(spacing: Spacing.sm) {
         // Icon changes when query is copied (fixed width to prevent text shifting)
         Image(systemName: isQueryCopied ? "checkmark" : "doc.on.doc")
@@ -721,94 +722,12 @@ struct EditorModeView: View {
     return sourceQuery
   }
 
-  private func removeComments(_ query: String) -> String {
-    var result = ""
-    var inSingleQuote = false
-    var inDoubleQuote = false
-
-    var i = query.startIndex
-    while i < query.endIndex {
-      let char = query[i]
-
-      // Handle multi-line comment (/* ... */)
-      if !inSingleQuote && !inDoubleQuote && char == "/" {
-        let next = query.index(after: i)
-        if next < query.endIndex && query[next] == "*" {
-          // Find the closing */
-          var j = query.index(after: next)
-          var found = false
-          while j < query.endIndex {
-            if query[j] == "*" {
-              let nextJ = query.index(after: j)
-              if nextJ < query.endIndex && query[nextJ] == "/" {
-                // Found closing */
-                i = query.index(after: nextJ)
-                found = true
-                break
-              }
-            }
-            j = query.index(after: j)
-          }
-          if !found {
-            // Unclosed comment - skip rest of query
-            break
-          }
-          continue
-        }
-      }
-
-      // Handle single-line comment (-- ...)
-      if !inSingleQuote && !inDoubleQuote && char == "-" {
-        let next = query.index(after: i)
-        if next < query.endIndex && query[next] == "-" {
-          // Skip until newline or end of string
-          var j = next
-          while j < query.endIndex && query[j] != "\n" {
-            j = query.index(after: j)
-          }
-          // If we found a newline, skip it and continue
-          if j < query.endIndex {
-            i = query.index(after: j)
-            result.append("\n")
-          } else {
-            // End of string - we're done
-            break
-          }
-          continue
-        }
-      }
-
-      // Toggle single quote (handle escaped quotes)
-      if char == "'" && !inDoubleQuote {
-        let next = query.index(after: i)
-        if inSingleQuote && next < query.endIndex && query[next] == "'" {
-          // Escaped quote - add both and continue
-          result.append(char)
-          result.append(query[next])
-          i = query.index(after: next)
-          continue
-        }
-        inSingleQuote.toggle()
-      }
-
-      // Toggle double quote
-      if char == "\"" && !inSingleQuote {
-        inDoubleQuote.toggle()
-      }
-
-      // Add character to result
-      result.append(char)
-      i = query.index(after: i)
-    }
-
-    return result.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
 
   /// Shows first ~30 chars and last ~20 chars with "..." in middle
   /// Truncate query text to show first 10 and last 10 characters
   private func truncateQuery(_ query: String) -> String {
     // Remove leading comments first
-    let withoutComments = removeComments(query)
+    let withoutComments = SQLSyntaxHighlighter.removeComments(query)
     let trimmed = withoutComments.trimmingCharacters(in: .whitespacesAndNewlines)
 
     // If query is short enough, return as-is
