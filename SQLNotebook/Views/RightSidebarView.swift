@@ -160,8 +160,13 @@ struct RightSidebarView: View {
         isReadOnly: viewModel.notebook.connectionConfig?.readOnly ?? false
       )
       .environment(viewModel)
-    case .executedQuery(let query, let cellId):
-      ExecutedQuerySidebarContent(query: query, cellId: cellId)
+    case .executedQuery(let query, let cellId, let limitWasCapped, let actualLimit):
+      ExecutedQuerySidebarContent(
+        query: query,
+        cellId: cellId,
+        limitWasCapped: limitWasCapped,
+        actualLimit: actualLimit
+      )
     case .connectionDetails:
       ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
     case .connectionForm:
