@@ -317,8 +317,9 @@ struct ResultQueryFooterView: View {
   @ViewBuilder
   private func viewQueryButton(query: String) -> some View {
     Button(action: {
-      // Show query in right sidebar
-      viewModel?.rightSidebarContent = .executedQuery(query: query, cellId: cellId)
+      // Show query in right sidebar (without comments)
+      let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
+      viewModel?.rightSidebarContent = .executedQuery(query: queryWithoutComments, cellId: cellId)
       viewModel?.isRightSidebarVisible = true
     }) {
       HStack(spacing: 4) {
