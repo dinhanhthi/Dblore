@@ -84,7 +84,10 @@ struct ResultTableView: View {
       }
 
       // Pagination controls (if applicable)
-      if let paginationInfo = paginationInfo, let onPageChange = onPageChange {
+      // Only show pagination if there are multiple pages
+      if let paginationInfo = paginationInfo, let onPageChange = onPageChange,
+        paginationInfo.totalPages > 1
+      {
         PaginationView(info: paginationInfo, onPageChange: onPageChange)
       }
     }

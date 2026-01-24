@@ -328,6 +328,7 @@ extension DatabaseConnectionManager {
 
       // Determine final userLimitExceeded and userRequestedLimit values
       // userRequestedLimit should always be the ACTUAL limit applied (not user's original limit)
+      // IMPORTANT: userLimitExceeded should only be true if we ACTUALLY returned maxRows
       let finalUserLimitExceeded: Bool
       let finalUserRequestedLimit: Int?
 
@@ -338,9 +339,16 @@ extension DatabaseConnectionManager {
         finalUserRequestedLimit = maxRows
       } else if userLimitExceeded {
         // User had LIMIT but it exceeded maxRows, so we capped it
-        // Report the actual limit used (maxRows), not the user's original limit
-        finalUserLimitExceeded = true
-        finalUserRequestedLimit = maxRows
+        // However, only show warning if we ACTUALLY returned maxRows
+        // (if database has fewer rows than maxRows, no need to warn)
+        if resultRows.count >= maxRows {
+          finalUserLimitExceeded = true
+          finalUserRequestedLimit = maxRows
+        } else {
+          // Database had fewer rows than maxRows, no warning needed
+          finalUserLimitExceeded = false
+          finalUserRequestedLimit = nil
+        }
       } else if let userLimit = userOriginalLimit, userLimit <= maxRows {
         // User had LIMIT within maxRows, use their limit
         finalUserLimitExceeded = false
