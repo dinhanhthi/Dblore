@@ -288,6 +288,9 @@ extension NotebookViewModel {
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
     try? await Task.sleep(for: .milliseconds(50))
 
+    // Reset execution counter to start counting from 1 again
+    executionCounter = 0
+
     // Enqueue all SQL cells
     for cell in notebook.cells where cell.cellType == .sql {
       if !executionQueue.isInQueue(cellId: cell.id) {
