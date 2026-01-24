@@ -45,8 +45,8 @@ extension NotebookViewModel {
       // Clear database schema when disconnected
       databaseTables = []
 
-      // Clear autocomplete schema
-      await autocompleteProvider.refreshSchema()
+      // Clear autocomplete cache on disconnect (10.1.8 optimization)
+      autocompleteProvider.clearCache()
     }
   }
 

@@ -21,6 +21,7 @@ struct ResultTableView: View {
   @State private var headerScrollPosition: ScrollPosition = ScrollPosition()
   @State private var currentMatchId: UUID?
   @State private var matchLookup: [String: UUID] = [:]  // "rowIndex-columnName" → matchId for O(1) lookup
+  @State private var cachedTotalColumnsWidth: CGFloat = 0  // Cached total width (10.1.6 optimization)
 
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
@@ -120,6 +121,12 @@ struct ResultTableView: View {
     .onChange(of: viewModel.searchState.matches.count) { _, _ in
       // Rebuild lookup when search results change
       buildMatchLookup()
+    }
+    // Note: macOS doesn't have memory warnings like iOS (10.1.2 optimization)
+    // matchLookup cache is already limited by search logic and cleared on panel close
+    .onChange(of: columnWidths) { _, _ in
+      // Recalculate total width when column widths change (10.1.6 optimization)
+      recalculateTotalWidth()
     }
   }
 
@@ -298,15 +305,23 @@ struct ResultTableView: View {
       // Set default width for all columns
       columnWidths[column.name] = defaultColumnWidth
     }
+
+    // Update cached total width (10.1.6 optimization)
+    recalculateTotalWidth()
   }
 
   private func columnWidth(for columnName: String) -> CGFloat {
     columnWidths[columnName] ?? defaultColumnWidth
   }
 
-  // Calculate total width of all columns for consistent alignment
+  // Calculate total width of all columns for consistent alignment (cached - 10.1.6 optimization)
   private var totalColumnsWidth: CGFloat {
-    result.columns.reduce(0) { total, column in
+    cachedTotalColumnsWidth
+  }
+
+  /// Recalculate cached total columns width
+  private func recalculateTotalWidth() {
+    cachedTotalColumnsWidth = result.columns.reduce(0) { total, column in
       total + columnWidth(for: column.name)
     }
   }
