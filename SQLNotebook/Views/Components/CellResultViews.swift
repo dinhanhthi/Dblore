@@ -332,7 +332,7 @@ struct ResultMetadataView: View {
       }
       .frame(height: 30)
       .padding(.top, Spacing.sm)
-      .padding(.bottom, Spacing.sm)  // Add bottom padding to prevent overlap with floating action panel
+      .padding(.bottom, 0)  // Add bottom padding to prevent overlap with floating action panel
     }
   }
 }

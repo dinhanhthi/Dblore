@@ -12,6 +12,7 @@ struct NotebookContentView: View {
   @State private var lastSaved: Date?
 
   @State private var keyEventMonitor: Any?
+  @State private var monitorWindow: NSWindow?  // Track which window this monitor belongs to
   @State private var focusedTextView: NSTextView?
   @State private var isCellValueEditing = false
   @State private var showRunAllConfirmation = false
@@ -156,12 +157,22 @@ struct NotebookContentView: View {
 
   private func setupKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-      // Only handle events for the key window
-      // The focusedSceneValue system ensures commands are routed to the right window
+      // CRITICAL: Only handle events for the key window
+      // Store window reference on first event to identify "our" window
       guard let eventWindow = event.window,
         eventWindow == NSApplication.shared.keyWindow
       else {
         return event  // Not our window, pass through
+      }
+
+      // Store our window on first event if not set
+      if self.monitorWindow == nil {
+        self.monitorWindow = eventWindow
+      }
+
+      // Only handle if this is OUR window (prevent multi-window conflicts)
+      guard eventWindow == self.monitorWindow else {
+        return event  // Different window, pass through
       }
 
       // Check if a NSTextView is currently first responder
@@ -175,7 +186,10 @@ struct NotebookContentView: View {
       // Handle ESC key
       let isEscape = event.keyCode == 53
       if isEscape {
-        // Priority 0: If search panel is open, close it first
+        // Priority 0: If search panel is open, close it
+        // Note: This works together with SearchPanelView's .onKeyPress
+        // - If search field is focused: .onKeyPress handles it and returns .handled (blocks this)
+        // - If search field is NOT focused: this NSEvent monitor handles it
         if self.viewModel.isSearchPanelVisible {
           Task { @MainActor [viewModel] in
             viewModel.closeSearch()
