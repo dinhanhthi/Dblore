@@ -37,6 +37,12 @@ struct NotebookLayoutView<Content: View>: View {
             // Right sidebar (conditionally shown)
             RightSidebarContainer(viewModel: viewModel)
           }
+          .onChange(of: geometry.size.width) { oldWidth, newWidth in
+            handleWindowWidthChange(newWidth)
+          }
+          .onAppear {
+            handleWindowWidthChange(geometry.size.width)
+          }
         }
 
         // Footer
@@ -51,5 +57,21 @@ struct NotebookLayoutView<Content: View>: View {
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
+  }
+
+  // MARK: - Responsive Sidebar Logic
+
+  /// Handle window width change for responsive sidebar behavior
+  /// When width < 1200pt, only allow one sidebar to be open at a time
+  private func handleWindowWidthChange(_ width: CGFloat) {
+    let narrowWindowThreshold: CGFloat = 1200
+
+    // If window is narrow and both sidebars are open, keep only right sidebar
+    if width < narrowWindowThreshold
+      && viewModel.isLeftSidebarVisible
+      && viewModel.isRightSidebarVisible
+    {
+      viewModel.isLeftSidebarVisible = false
+    }
   }
 }

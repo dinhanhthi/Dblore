@@ -16,6 +16,7 @@ extension NotebookViewModel {
   func showJSONInSidebar(json: String, path: String) {
     rightSidebarContent = .jsonViewer(json: json, path: path)
     isRightSidebarVisible = true
+    handleSidebarConflict(opening: .right)
   }
 
   /// Show cell value details in sidebar
@@ -40,29 +41,36 @@ extension NotebookViewModel {
       cellId: cellId
     )
     isRightSidebarVisible = true
+    handleSidebarConflict(opening: .right)
   }
 
   /// Show connection details in sidebar
   func showConnectionDetails() {
     rightSidebarContent = .connectionDetails
     isRightSidebarVisible = true
+    handleSidebarConflict(opening: .right)
   }
 
   /// Show connection form in sidebar
   func showConnectionForm() {
     rightSidebarContent = .connectionForm
     isRightSidebarVisible = true
+    handleSidebarConflict(opening: .right)
   }
 
   /// Show settings in sidebar
   func showSettings() {
     rightSidebarContent = .settings
     isRightSidebarVisible = true
+    handleSidebarConflict(opening: .right)
   }
 
   /// Toggle sidebar visibility
   func toggleSidebar() {
     isRightSidebarVisible.toggle()
+    if isRightSidebarVisible {
+      handleSidebarConflict(opening: .right)
+    }
   }
 
   /// Close the sidebar
@@ -77,6 +85,9 @@ extension NotebookViewModel {
   func toggleLeftSidebar() {
     isLeftSidebarVisible.toggle()
     AppSettings.shared.isLeftSidebarVisible = isLeftSidebarVisible
+    if isLeftSidebarVisible {
+      handleSidebarConflict(opening: .left)
+    }
   }
 
   /// Load database schema (tables, views, functions, procedures, users, roles)
@@ -273,6 +284,38 @@ extension NotebookViewModel {
       }
       for index in databaseRoles.indices {
         databaseRoles[index].isExpanded = areAllEntitiesExpanded
+      }
+    }
+  }
+
+  // MARK: - Responsive Sidebar Management
+
+  /// Sidebar side enumeration for conflict handling
+  private enum SidebarSide {
+    case left, right
+  }
+
+  /// Handle sidebar conflict when window width is narrow (< 1200pt)
+  /// Automatically closes the opposite sidebar to ensure only one is open
+  private func handleSidebarConflict(opening: SidebarSide) {
+    // Get current window width
+    guard let window = NSApp.keyWindow else { return }
+    let windowWidth = window.frame.size.width
+    let narrowWindowThreshold: CGFloat = 1200
+
+    // Only enforce single-sidebar rule when window is narrow
+    guard windowWidth < narrowWindowThreshold else { return }
+
+    // Close the opposite sidebar
+    switch opening {
+    case .left:
+      if isRightSidebarVisible {
+        isRightSidebarVisible = false
+      }
+    case .right:
+      if isLeftSidebarVisible {
+        isLeftSidebarVisible = false
+        AppSettings.shared.isLeftSidebarVisible = false
       }
     }
   }
