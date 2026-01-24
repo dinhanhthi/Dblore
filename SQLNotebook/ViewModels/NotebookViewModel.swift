@@ -102,6 +102,11 @@ class NotebookViewModel {
   var pendingQueryCellId: UUID?
   var pendingQuery: String = ""
 
+  // MARK: - Run All Cells Destructive Query Confirmation
+  var showRunAllDestructiveConfirmation = false
+  var runAllDestructiveQueryCount = 0
+  var runAllPendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
+
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode

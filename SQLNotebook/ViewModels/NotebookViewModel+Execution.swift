@@ -289,19 +289,96 @@ extension NotebookViewModel {
   }
 
   /// Run all SQL cells sequentially by adding them to the queue
+  /// Checks for destructive queries and asks for confirmation if bypass setting is disabled
   func runAllCells() async {
     // Force blur to ensure text content is saved
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
     try? await Task.sleep(for: .milliseconds(50))
 
+    // Check if connection is in read-only mode
+    let isReadOnly = notebook.connectionConfig?.readOnly ?? false
+
+    // Collect all SQL cells with their destructive status
+    var pendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
+    var destructiveCount = 0
+
+    for cell in notebook.cells where cell.cellType == .sql {
+      if !executionQueue.isInQueue(cellId: cell.id) {
+        let isDestructive = isModificationQuery(cell.content)
+        pendingCells.append((id: cell.id, query: cell.content, isDestructive: isDestructive))
+        if isDestructive {
+          destructiveCount += 1
+        }
+      }
+    }
+
+    // If no cells to run, return early
+    guard !pendingCells.isEmpty else { return }
+
+    // Check if we need to show confirmation for destructive queries
+    // Only show if: there are destructive queries AND bypass is disabled AND not read-only
+    if destructiveCount > 0 && !AppSettings.shared.bypassDestructiveQueryConfirmation && !isReadOnly
+    {
+      // Store pending cells and show confirmation dialog
+      runAllPendingCells = pendingCells
+      runAllDestructiveQueryCount = destructiveCount
+      showRunAllDestructiveConfirmation = true
+      return
+    }
+
+    // Execute all cells (skip destructive queries if read-only)
+    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: isReadOnly)
+  }
+
+  /// Execute Run All Cells after user confirmation (allows destructive queries)
+  func executeRunAllCellsWithDestructive() async {
+    let pendingCells = runAllPendingCells
+    runAllPendingCells = []
+    runAllDestructiveQueryCount = 0
+
+    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: false)
+  }
+
+  /// Execute Run All Cells skipping destructive queries
+  func executeRunAllCellsSkipDestructive() async {
+    let pendingCells = runAllPendingCells
+    let destructiveCount = runAllDestructiveQueryCount
+    runAllPendingCells = []
+    runAllDestructiveQueryCount = 0
+
+    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: true)
+
+    // Show toast about skipped queries
+    if destructiveCount > 0 {
+      let queryWord = destructiveCount == 1 ? "query" : "queries"
+      showToast(
+        "\(destructiveCount) destructive \(queryWord) skipped",
+        type: .warning
+      )
+    }
+  }
+
+  /// Cancel Run All Cells operation
+  func cancelRunAllCells() {
+    runAllPendingCells = []
+    runAllDestructiveQueryCount = 0
+    showRunAllDestructiveConfirmation = false
+  }
+
+  /// Internal helper to execute Run All Cells
+  private func executeRunAllCells(
+    pendingCells: [(id: UUID, query: String, isDestructive: Bool)],
+    skipDestructive: Bool
+  ) async {
     // Reset execution counter to start counting from 1 again
     executionCounter = 0
 
-    // Enqueue all SQL cells
-    for cell in notebook.cells where cell.cellType == .sql {
-      if !executionQueue.isInQueue(cellId: cell.id) {
-        executionQueue.enqueue(cellId: cell.id, query: cell.content)
+    // Enqueue cells, optionally skipping destructive ones
+    for cell in pendingCells {
+      if skipDestructive && cell.isDestructive {
+        continue
       }
+      executionQueue.enqueue(cellId: cell.id, query: cell.query)
     }
   }
 

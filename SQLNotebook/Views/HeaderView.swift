@@ -61,6 +61,30 @@ struct HeaderView: View {
           } message: {
             Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
           }
+          .confirmationDialog(
+            runAllDestructiveDialogTitle,
+            isPresented: Binding(
+              get: { viewModel.showRunAllDestructiveConfirmation },
+              set: { viewModel.showRunAllDestructiveConfirmation = $0 }
+            ),
+            titleVisibility: .visible
+          ) {
+            Button("Allow", role: .destructive) {
+              Task { @MainActor [viewModel] in
+                await viewModel.executeRunAllCellsWithDestructive()
+              }
+            }
+            Button("Don't Allow", role: .none) {
+              Task { @MainActor [viewModel] in
+                await viewModel.executeRunAllCellsSkipDestructive()
+              }
+            }
+            Button("Cancel", role: .cancel) {
+              viewModel.cancelRunAllCells()
+            }
+          } message: {
+            Text(runAllDestructiveDialogMessage)
+          }
 
           Button(action: {
             showClearAllOutputsConfirmation = true
@@ -191,6 +215,25 @@ struct HeaderView: View {
     }
   }
 
+  // MARK: - Run All Destructive Dialog
+
+  private var runAllDestructiveDialogTitle: String {
+    let count = viewModel.runAllDestructiveQueryCount
+    let queryWord = count == 1 ? "query" : "queries"
+    return "Run All contains \(count) destructive \(queryWord)"
+  }
+
+  private var runAllDestructiveDialogMessage: String {
+    let count = viewModel.runAllDestructiveQueryCount
+    let queryWord = count == 1 ? "query" : "queries"
+    return """
+      This batch contains \(count) destructive \(queryWord) (UPDATE, DELETE, INSERT) \
+      that will modify your database.
+
+      • Allow: Execute all queries including destructive ones
+      • Don't Allow: Skip destructive queries and run the rest
+      """
+  }
 }
 
 struct ConnectionButton: View {
