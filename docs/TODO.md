@@ -3,11 +3,13 @@
 ## Current Status Overview
 
 - ✅ **Phase 1-4: Foundation** - COMPLETE (Core structure, Cell editor, Database integration, Polish)
-- 🟡 **Phase 5: Advanced Features** - PARTIAL (Autocomplete ✅, Multi-SQL ✅; AI/Schema Visualizer pending)
+- ✅ **Phase 5: Advanced Features** - COMPLETE (Autocomplete ✅, Multi-SQL ✅)
 - ✅ **Phase 6: Security & Safety** - COMPLETE (Connection security, Query confirmations, Read-only mode, Value validation)
 - ✅ **Phase 7: Testing** - COMPLETE (399 unit tests passing; Integration/UI tests deferred)
 - ✅ **Phase 8: Editor Mode** - COMPLETE (Run Selection, Multi-SQL, Export CSV/Excel/JSON/Markdown, Executed Query Viewer)
+- ⏳ **Phase 9: Schema Visualizer** - PENDING (Foreign key graph visualization - **NEXT PRIORITY**)
 - 🟡 **Phase 10: Performance Optimization** - IN PROGRESS (12/17 tasks complete; 2 invalid/closed tasks; see [TODO_OPTIMIZE.md](TODO_OPTIMIZE.md))
+- ⏳ **Phase 11: AI-Powered Natural Language Query** - PENDING (Local LLM integration - FUTURE)
 
 ---
 
@@ -40,17 +42,6 @@ Execute multiple SQL commands in single cell (like pgAdmin/DBeaver):
 - Error stops execution (no continue-on-error mode)
 - No selective re-execution of failed commands (would require UI redesign)
 
-#### 5.7 Schema Visualizer (FUTURE - Large Effort)
-- [ ] Query foreign key relationships
-- [ ] Build relationship graph
-- [ ] Create visual graph component with pan/zoom
-
-#### 5.6 AI-Powered Natural Language Query (FUTURE - Large Effort)
-Local model only:
-- [ ] Select local LLM framework
-- [ ] Integrate local model into app
-- [ ] Implement prompt engineering for natural language → SQL
-- [ ] Create UI component for AI query input
 
 ---
 
@@ -97,6 +88,37 @@ Local model only:
 - [ ] Add SQLite support
 - [ ] Add MySQL support (optional)
 
+#### 8.8 Developer Sandbox Database (Medium Effort)
+
+Add embedded SQLite sandbox in Developer Settings for testing without external database.
+
+**Purpose:** Allow users to test the app immediately without setting up PostgreSQL. Also useful for debugging/support.
+
+##### 8.8.1 Embedded SQLite Database
+- [ ] Bundle SQLite library (already available in macOS)
+- [ ] Create in-memory SQLite database with sample schema
+- [ ] Sample tables: `users`, `products`, `orders` (with foreign keys)
+- [ ] Sample data: 50-100 rows per table
+
+##### 8.8.2 Developer Settings UI
+- [ ] Add "Sandbox Database" section in Developer Settings
+- [ ] "Start Sandbox" button to launch embedded SQLite
+- [ ] Running indicator (green dot / "Running" label)
+- [ ] "Stop Sandbox" button when running
+- [ ] Auto-connect option after starting
+
+##### 8.8.3 Connection Integration
+- [ ] Create special connection config for sandbox
+- [ ] Auto-populate connection form when sandbox is running
+- [ ] Clear indication that using sandbox vs real database
+
+**Location:** [SettingsContent.swift:427-452](SQLNotebook/Views/Sidebars/SettingsContent.swift#L427) (Developer section)
+
+**Notes:**
+- SQLite is simpler than PostgreSQL - some SQL syntax differences
+- Good for basic testing, not full PostgreSQL feature parity
+- Can extend sample data for specific debugging scenarios
+
 #### 8.2 Run All Cells - COMPLETE ✅
 - [x] Run All Cells functionality (Cmd+Shift+Enter)
 - [x] Confirmation dialog for destructive queries
@@ -105,11 +127,58 @@ Local model only:
 
 ---
 
-### Phase 9: Schema Visualizer (FUTURE - Large Effort)
-- [ ] Query foreign key relationships
-- [ ] Build relationship graph
-- [ ] Create visual graph component
-- [ ] Implement pan and zoom functionality
+### Phase 9: Schema Visualizer (NEXT PRIORITY - Large Effort) 🎯
+
+Visualize database schema with foreign key relationships as an interactive graph.
+
+#### 9.1 Data Layer
+- [ ] Query foreign key relationships from `pg_constraint` system catalog
+- [ ] Build relationship graph data structure (tables as nodes, FK as edges)
+- [ ] Cache schema relationships with 5-minute validity
+
+#### 9.2 Visual Graph Component
+- [ ] Create visual graph component using SwiftUI Canvas or Core Graphics
+- [ ] Implement auto-layout algorithm for table positioning
+- [ ] Draw relationship lines with cardinality indicators (1-to-many, many-to-many)
+
+#### 9.3 Interactivity
+- [ ] Implement pan functionality (drag to move view)
+- [ ] Implement zoom functionality (pinch/scroll to zoom)
+- [ ] Click table to highlight its relationships
+- [ ] Double-click table to show table details/columns
+
+#### 9.4 UI Integration
+- [ ] Add "Schema Visualizer" button/menu item in sidebar
+- [ ] Create dedicated view/window for the visualizer
+- [ ] Support dark/light mode themes
+
+---
+
+### Phase 11: AI-Powered Natural Language Query (FUTURE - Large Effort)
+
+Local LLM integration for natural language to SQL conversion.
+
+**Prerequisites:** Local-only (no cloud API dependency)
+
+#### 11.1 LLM Framework Selection
+- [ ] Evaluate local LLM options (llama.cpp, MLX, etc.)
+- [ ] Select framework based on performance/memory trade-offs
+- [ ] Integrate selected framework into app bundle
+
+#### 11.2 Model Integration
+- [ ] Download/bundle suitable SQL-focused model
+- [ ] Implement model loading and inference
+- [ ] Handle memory management for large models
+
+#### 11.3 Prompt Engineering
+- [ ] Design prompt template with schema context
+- [ ] Implement few-shot examples for SQL generation
+- [ ] Handle schema-aware query generation
+
+#### 11.4 UI Components
+- [ ] Create AI query input field (separate from SQL editor)
+- [ ] Show generated SQL with option to edit before execution
+- [ ] Display confidence indicators for generated queries
 
 ---
 
@@ -188,15 +257,17 @@ Active TODOs found in codebase (verified 2026-01-22):
 
 ### Immediate Priority
 1. **Phase 10 Performance Optimization** (See TODO_OPTIMIZE.md) - Improve performance for large datasets
-2. **Phase 5.7 Schema Visualizer** (Large effort) - Visualize foreign key relationships
+
+### Next Priority 🎯
+2. **Phase 9: Schema Visualizer** (Large effort) - Visualize foreign key relationships as interactive graph
 
 ### Future Enhancements
-3. **Phase 5.7 Schema Visualizer** (Large effort) - Foreign key graph
+3. **Phase 8.8 Developer Sandbox Database** (Medium effort) - Embedded SQLite for testing
 4. **Phase 8.7 Multiple Database Support** (Large effort) - SQLite/MySQL
-5. **Phase 5.6 AI-Powered Queries** (Large effort) - Local LLM integration
+5. **Phase 11: AI-Powered Queries** (Large effort) - Local LLM integration
 
 ### Do Last
-6. **Phase 7 Integration & UI Tests** (Medium effort) - After all features complete
+5. **Phase 7 Integration & UI Tests** (Medium effort) - After all features complete
 
 ---
 
@@ -218,16 +289,18 @@ Each task is complete when:
 
 **Phase Status:**
 - ✅ Phase 1-4: Complete (~27,000+ lines)
-- 🟡 Phase 5: Mostly complete (5.4 Autocomplete ✅, 5.8 Multi-SQL ✅; 5.6 AI/5.7 Schema Visualizer pending)
+- ✅ Phase 5: Complete (5.4 Autocomplete ✅, 5.8 Multi-SQL ✅)
 - ✅ Phase 6: Complete (6.0.2-6.0.4; 6.0.5-6.0.6 future)
 - ✅ Phase 7: Complete (399 unit tests passing; integration/UI tests deferred)
 - ✅ Phase 8: Complete (8.1-8.6, 8.2 Run All ✅, 8.8 Multi-SQL ✅; 8.7 future)
+- ⏳ Phase 9: Schema Visualizer - PENDING (**NEXT PRIORITY**)
 - 🟡 Phase 10: In Progress (12/17 tasks complete: Phase 10.1 ✅ 9/9, 10.2.2 ✅, 10.2.3 ✅, 10.2.5 ✅; 10.1.1 ❌ INVALID, 10.2.1 ❌ CLOSED)
+- ⏳ Phase 11: AI-Powered Natural Language Query - PENDING (FUTURE)
 
 **Recommended Next Actions:**
 1. **Phase 10 Performance Optimization** - Address performance bottlenecks for large datasets (see TODO_OPTIMIZE.md)
-2. **Phase 5.7 Schema Visualizer** - Foreign key relationship graph (large effort)
-3. **Phase 5.6 AI Natural Language Query** - Local LLM integration (large effort)
+2. **Phase 9: Schema Visualizer** - Foreign key relationship graph (large effort) 🎯
+3. **Phase 11: AI Natural Language Query** - Local LLM integration (large effort, FUTURE)
 
 ---
 
