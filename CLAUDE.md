@@ -275,7 +275,8 @@ SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
 3. **Performance:** Use `LazyVStack` for long lists, test with 100+ cells
 4. **Design:** Check `DesignSystem.swift` for colors/spacing (8pt grid)
 5. **Security:** Validate inputs, use SSL for production (Keychain not yet implemented)
-6. **Documentation:**
+6. **Code Formatting (REQUIRED):** **ALWAYS** run `swift-format -i -r SQLNotebook/` after modifying any Swift code. This is mandatory to maintain consistent code style.
+7. **Documentation:**
    - Never read files in `docs/implementation/` unless you are asked for
    - **ALWAYS use the `docer` agent** when asked to write documentation
    - Follow `docer` agent rules strictly:
