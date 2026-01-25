@@ -61,7 +61,7 @@ struct ResultAreaView: View {
       .padding(.bottom, Spacing.sm)
       .padding(.trailing, Spacing.md)
     }
-    .padding(.bottom, Spacing.md)
+    .padding(.bottom, 0)
   }
 }
 
@@ -233,12 +233,12 @@ struct ResultMetadataView: View {
         let shouldShowTimestamp = currentWidth >= 600
 
         HStack(spacing: Spacing.md) {
-          // Dropdown menu for multi-statement queries (at the beginning)
+          // Dropdown menu for multi-statement queries (at the beginning, only show when > 1 statement)
           if let statementResults = statementResults,
             let selectedIndex = selectedStatementIndex,
             let viewModel = viewModel,
             let cellId = cellId,
-            !statementResults.isEmpty
+            statementResults.count > 1
           {
             Menu {
               ForEach(statementResults.indices, id: \.self) { index in
@@ -530,8 +530,8 @@ struct NotebookResultTableView: View {
         onPageChange: handlePageChange
       )
 
-      // Result metadata (below table) with dropdown for multi-statement
-      if let cell = cell, !cell.statementResults.isEmpty {
+      // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
+      if let cell = cell, cell.statementResults.count > 1 {
         // Multi-statement: show dropdown in metadata bar
         ResultMetadataView(
           result: result,

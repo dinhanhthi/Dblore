@@ -205,8 +205,8 @@ struct EditorModeView: View {
 
       // Main header
       HStack {
-        // Dropdown for multi-statement queries (at the beginning)
-        if !viewModel.editorStatementResults.isEmpty {
+        // Dropdown for multi-statement queries (at the beginning, only show when > 1 statement)
+        if viewModel.editorStatementResults.count > 1 {
           // Dropdown menu for statement selection
           Menu {
             ForEach(viewModel.editorStatementResults.indices, id: \.self) { index in
