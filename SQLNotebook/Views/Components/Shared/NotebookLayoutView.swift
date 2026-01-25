@@ -48,7 +48,11 @@ struct NotebookLayoutView<Content: View>: View {
                     .padding(.horizontal, Spacing.md)
                     .padding(.vertical, Spacing.sm)
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(.asymmetric(
+                  insertion: .move(edge: .top).combined(with: .opacity),
+                  removal: .move(edge: .top).combined(with: .opacity)
+                ))
+                .animation(.easeOut(duration: 0.2), value: viewModel.isSearchPanelVisible)
               }
             }
             .frame(maxWidth: .infinity)
@@ -73,7 +77,6 @@ struct NotebookLayoutView<Content: View>: View {
       ToastOverlay(viewModel: viewModel)
     }
     .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
-    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: viewModel.isSearchPanelVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
