@@ -19,13 +19,15 @@ struct ResizableLeftSidebar: View {
       LeftSidebarView(viewModel: viewModel)
         .frame(width: constrainedWidth)
         .transition(.move(edge: .leading))
-
-      ResizableSidebarDivider(
-        sidebarWidth: $appSettings.leftSidebarWidth,
-        minWidth: 320,
-        maxWidth: maxWidth,
-        side: .left
-      )
+        .overlay(alignment: .trailing) {
+          ResizableSidebarDivider(
+            sidebarWidth: $appSettings.leftSidebarWidth,
+            minWidth: 320,
+            maxWidth: maxWidth,
+            side: .left
+          )
+          .offset(x: 4)
+        }
     }
   }
 }
