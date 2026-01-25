@@ -183,6 +183,7 @@ struct HeaderView: View {
         ConnectionButton(
           connectionState: viewModel.connectionState,
           connectionConfig: viewModel.notebook.connectionConfig,
+          isSchemaVisualizerActive: viewModel.isSchemaVisualizerActive,
           onConnect: {
             // Toggle sidebar if already showing connection form
             if viewModel.isRightSidebarVisible,
@@ -203,7 +204,8 @@ struct HeaderView: View {
             } else {
               viewModel.showConnectionDetails()
             }
-          }
+          },
+          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() }
         )
       }
     }
@@ -239,9 +241,11 @@ struct HeaderView: View {
 struct ConnectionButton: View {
   let connectionState: ConnectionState
   let connectionConfig: ConnectionConfig?
+  let isSchemaVisualizerActive: Bool
   let onConnect: () -> Void
   let onDisconnect: () -> Void
   let onShowDetails: () -> Void
+  let onToggleSchemaVisualizer: () -> Void
 
   @State private var showDisconnectConfirmation = false
   @State private var isHoveringDisconnect = false
@@ -289,6 +293,16 @@ struct ConnectionButton: View {
             NSCursor.pop()
           }
         }
+
+        // Schema Visualizer button
+        Button(action: onToggleSchemaVisualizer) {
+          Image(systemName: "point.3.connected.trianglepath.dotted")
+            .foregroundColor(Color(red: 0.0, green: 0.68, blue: 0.94))  // Sky blue
+        }
+        .buttonStyle(ToolbarButtonStyle(isActive: isSchemaVisualizerActive, iconOnly: true))
+        .help(
+          isSchemaVisualizerActive
+            ? "Close Schema Visualizer" : "Visualize Schema Relationships")
       }
       .confirmationDialog(
         disconnectDialogTitle,
