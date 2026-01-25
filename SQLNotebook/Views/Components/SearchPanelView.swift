@@ -148,5 +148,10 @@ struct SearchPanelView: View {
         isSearchFieldFocused = true
       }
     }
+    .onKeyPress(.escape) {
+      // Close search panel when ESC is pressed (works when search field is focused)
+      viewModel.closeSearch()
+      return .handled
+    }
   }
 }
