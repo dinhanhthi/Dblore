@@ -884,10 +884,17 @@ class SchemaGraphNSView: NSView {
     )
 
     // Draw highlight with rounded corners
-    let highlightColor =
-      isCurrentMatch
-      ? NSColor.systemYellow.withAlphaComponent(0.8)  // Current match: bright yellow
-      : NSColor.systemYellow.withAlphaComponent(0.4)  // Other matches: dimmer yellow
+    // Current match: orange-yellow, Other matches: white (dark) / gray (light)
+    let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let highlightColor: NSColor
+    if isCurrentMatch {
+      highlightColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)  // #FFD500 orange-yellow
+    } else {
+      highlightColor =
+        isDarkMode
+        ? NSColor.white.withAlphaComponent(0.8)
+        : NSColor.gray.withAlphaComponent(0.6)
+    }
 
     context.setFillColor(highlightColor.cgColor)
     let highlightPath = CGPath(

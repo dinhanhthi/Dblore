@@ -203,13 +203,17 @@ enum SQLSyntaxHighlighter {
         // Orange-yellow for current match
         backgroundColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)  // #FFD500
       } else {
-        // Light yellow for other matches
-        backgroundColor = NSColor(red: 1.0, green: 0.976, blue: 0.769, alpha: 1.0)  // #FFF9C4
+        // Dark mode: white with opacity / Light mode: gray with opacity
+        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        backgroundColor =
+          isDarkMode
+          ? NSColor.white.withAlphaComponent(0.8)
+          : NSColor.gray.withAlphaComponent(0.6)
       }
 
       result.addAttribute(.backgroundColor, value: backgroundColor, range: nsRange)
 
-      // Use black text for better contrast on yellow background
+      // Use black text for better contrast on highlight background
       result.addAttribute(.foregroundColor, value: NSColor.black, range: nsRange)
 
       searchStartIndex = range.upperBound

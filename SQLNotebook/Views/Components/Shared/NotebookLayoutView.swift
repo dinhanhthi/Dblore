@@ -48,10 +48,12 @@ struct NotebookLayoutView<Content: View>: View {
                     .padding(.horizontal, Spacing.md)
                     .padding(.vertical, Spacing.sm)
                 }
-                .transition(.asymmetric(
-                  insertion: .move(edge: .top).combined(with: .opacity),
-                  removal: .move(edge: .top).combined(with: .opacity)
-                ))
+                .transition(
+                  .asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .move(edge: .top).combined(with: .opacity)
+                  )
+                )
                 .animation(.easeOut(duration: 0.2), value: viewModel.isSearchPanelVisible)
               }
             }

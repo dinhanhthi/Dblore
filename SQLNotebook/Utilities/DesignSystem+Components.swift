@@ -90,8 +90,8 @@ struct SidebarHeaderButtonStyle: ButtonStyle {
             isActive
               ? Color.accent.opacity(0.15)
               : (isHovering && isEnabled || configuration.isPressed
-                  ? Color.foregroundMuted.opacity(0.2)
-                  : Color.clear)
+                ? Color.foregroundMuted.opacity(0.2)
+                : Color.clear)
           )
       )
       .contentShape(Rectangle())

@@ -10,9 +10,21 @@ import SwiftUI
 // MARK: - Search Highlighting Utilities
 
 enum SearchHighlighter {
-  /// Highlight color cho search matches
-  static let highlightColor = Color(red: 1.0, green: 0.973, blue: 0.769)  // #FFF9C4 (light yellow)
+  /// Current match color (orange-yellow, same for both modes)
   static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0)  // #FFD500 (orange-yellow)
+
+  /// Check if current appearance is dark mode
+  static var isDarkMode: Bool {
+    NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+  }
+
+  /// Highlight color for other matches (adapts to color scheme)
+  /// Dark mode: white with opacity / Light mode: gray with opacity
+  static var highlightColor: Color {
+    isDarkMode
+      ? Color.white.opacity(0.8)
+      : Color.gray.opacity(0.6)
+  }
 
   // MARK: - Caching
 

@@ -438,18 +438,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         object: nil,
         queue: .main
       ) { [weak self] notification in
-        guard let self = self else { return }
+        guard self != nil else { return }
 
-        // Only respond if this notification is for our viewModel instance
-        // Note: Read viewModelId from self instead of capturing it, because it's set after init()
+        // Extract notification data before entering MainActor context
         guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
-          notificationViewModelId == self.viewModelId
-        else {
-          return
-        }
-
-        // Extract data first before Task
-        guard let match = notification.userInfo?["match"] as? SearchMatch else { return }
+          let match = notification.userInfo?["match"] as? SearchMatch
+        else { return }
 
         // Check match type (must be done before Task to avoid actor isolation issues)
         let isSQLContent: Bool
@@ -468,6 +462,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
         Task { @MainActor [weak self] in
           guard let self = self else { return }
+
+          // Only respond if this notification is for our viewModel instance
+          // Note: Check viewModelId here (inside MainActor) to avoid actor isolation warning
+          guard notificationViewModelId == self.viewModelId else { return }
 
           // Update search state for ALL cells (to show yellow highlights)
           self.searchQuery = query
@@ -506,18 +504,18 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         object: nil,
         queue: .main
       ) { [weak self] notification in
-        guard let self = self else { return }
+        guard self != nil else { return }
 
-        // Only respond if this notification is for our viewModel instance
-        // Note: Read viewModelId from self instead of capturing it, because it's set after init()
-        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
-          notificationViewModelId == self.viewModelId
-        else {
-          return
-        }
+        // Extract notification data before entering MainActor context
+        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID
+        else { return }
 
         Task { @MainActor [weak self] in
           guard let self = self else { return }
+
+          // Only respond if this notification is for our viewModel instance
+          // Note: Check viewModelId here (inside MainActor) to avoid actor isolation warning
+          guard notificationViewModelId == self.viewModelId else { return }
 
           // Clear search state
           self.searchQuery = ""

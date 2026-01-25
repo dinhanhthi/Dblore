@@ -574,7 +574,8 @@ extension NotebookViewModel {
     let nodeHeaderHeight: CGFloat = 32
     let nodeColumnHeight: CGFloat = 18
     let nodePadding: CGFloat = 8
-    let nodeHeight = nodeHeaderHeight + CGFloat(node.table.columns.count) * nodeColumnHeight
+    let nodeHeight =
+      nodeHeaderHeight + CGFloat(node.table.columns.count) * nodeColumnHeight
       + nodePadding
 
     // Calculate node center
