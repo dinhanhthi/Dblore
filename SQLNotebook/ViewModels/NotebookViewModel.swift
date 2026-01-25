@@ -100,6 +100,11 @@ class NotebookViewModel {
   var hasShownWarningDialog = false
   var hasShownLargeDialog = false
 
+  // File size cache (10.3.4 optimization)
+  var cachedFileSize: Int64 = 0
+  var fileSizeExecutionCounter: Int = 0
+  let fileSizeCheckInterval: Int = 5  // Check every 5 executions
+
   // MARK: - Search State
   var isSearchPanelVisible: Bool = false
   var searchState: SearchState = SearchState()
@@ -169,6 +174,9 @@ class NotebookViewModel {
     Task {
       self.isLeftSidebarVisible = AppSettings.shared.isLeftSidebarVisible
     }
+
+    // Calculate initial file size for cache (10.3.4)
+    recalculateFileSize()
   }
 
   // MARK: - Toast Notifications
@@ -215,9 +223,15 @@ class NotebookViewModel {
   }
 
   /// Calculate current file size (with results if enabled in settings)
+  /// Uses cached value for performance - recalculated every 5 executions (10.3.4)
   var estimatedFileSize: Int64 {
+    cachedFileSize
+  }
+
+  /// Force recalculate file size and update cache
+  func recalculateFileSize() {
     let includeResults = AppSettings.getIncludeResultsOnSave()
-    return
+    cachedFileSize =
       (try? FileOptimizationService.calculateNotebookSize(notebook, includeResults: includeResults))
       ?? 0
   }

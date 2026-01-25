@@ -478,7 +478,16 @@ extension NotebookViewModel {
   // MARK: - File Size Monitoring
 
   /// Check file size after cell execution and show warning dialogs if needed
+  /// Only recalculates every 5 executions for performance (10.3.4 optimization)
   func checkFileSizeAfterExecution() {
+    // Increment counter and check if we should recalculate
+    fileSizeExecutionCounter += 1
+    guard fileSizeExecutionCounter >= fileSizeCheckInterval else { return }
+
+    // Reset counter and recalculate
+    fileSizeExecutionCounter = 0
+    recalculateFileSize()
+
     let fileSize = estimatedFileSize
 
     // Check if we exceeded large threshold (and haven't shown dialog yet)
