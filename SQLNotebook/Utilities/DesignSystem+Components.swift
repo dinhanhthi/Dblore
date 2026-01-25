@@ -75,6 +75,34 @@ struct GhostButtonStyle: ButtonStyle {
   }
 }
 
+struct SidebarHeaderButtonStyle: ButtonStyle {
+  var isActive: Bool = false
+  @Environment(\.isEnabled) private var isEnabled
+  @State private var isHovering = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .foregroundColor(isActive ? .accent : nil)
+      .frame(width: 24, height: 24)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
+          .fill(
+            isActive
+              ? Color.accent.opacity(0.15)
+              : (isHovering && isEnabled || configuration.isPressed
+                  ? Color.foregroundMuted.opacity(0.2)
+                  : Color.clear)
+          )
+      )
+      .contentShape(Rectangle())
+      .animation(.easeInOut(duration: 0.1), value: isHovering)
+      .onHover { hovering in
+        isHovering = hovering
+      }
+      .cursor(.pointingHand)
+  }
+}
+
 struct ToolbarButtonStyle: ButtonStyle {
   var isActive: Bool = false
   var iconOnly: Bool = false

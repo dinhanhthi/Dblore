@@ -308,7 +308,7 @@ struct NotebookContentView: View {
           .listRowInsets(
             EdgeInsets(
               top: Spacing.md,
-              leading: viewModel.isLeftSidebarVisible ? 0 : Spacing.sm,
+              leading: Spacing.md,
               bottom: Spacing.md,
               trailing: Spacing.xs))
         }

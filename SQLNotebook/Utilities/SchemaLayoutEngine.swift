@@ -345,12 +345,16 @@ final class SchemaLayoutEngine {
     let connectedNodeIds = Set(graph.edges.flatMap { [$0.sourceNodeId, $0.targetNodeId] })
 
     // Get isolated node indices
-    let isolatedIndices = graph.nodes.indices.filter { !connectedNodeIds.contains(graph.nodes[$0].id) }
+    let isolatedIndices = graph.nodes.indices.filter {
+      !connectedNodeIds.contains(graph.nodes[$0].id)
+    }
 
     guard !isolatedIndices.isEmpty else { return }
 
     // If all nodes are isolated, no need to reposition
-    let connectedIndices = graph.nodes.indices.filter { connectedNodeIds.contains(graph.nodes[$0].id) }
+    let connectedIndices = graph.nodes.indices.filter {
+      connectedNodeIds.contains(graph.nodes[$0].id)
+    }
     guard !connectedIndices.isEmpty else { return }
 
     // Calculate bounding box of connected nodes

@@ -50,22 +50,10 @@ struct LeftSidebarView: View {
 
       Spacer()
 
-      HStack(spacing: Spacing.lg) {
+      HStack(spacing: Spacing.xs) {
         // Expand/Collapse all button
         if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
-          Button(action: {
-            viewModel.toggleExpandCollapseAll()
-          }) {
-            Image(
-              systemName: viewModel.areAllEntitiesExpanded
-                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-            )
-            .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(GhostButtonStyle())
-          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
-
-          // Schema Visualizer button - sky blue color
+          // Schema Visualizer button
           Button(action: {
             viewModel.toggleSchemaVisualizer()
           }) {
@@ -73,8 +61,23 @@ struct LeftSidebarView: View {
               .font(.system(size: 12, weight: .medium))
               .foregroundColor(Color(red: 0.0, green: 0.68, blue: 0.94))  // Sky blue
           }
-          .buttonStyle(GhostButtonStyle())
-          .help(viewModel.isSchemaVisualizerActive ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+          .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
+          .help(
+            viewModel.isSchemaVisualizerActive
+              ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+
+          Button(action: {
+            viewModel.toggleExpandCollapseAll()
+          }) {
+            Image(
+              systemName: viewModel.areAllEntitiesExpanded
+                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+            )
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle())
+          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
         }
 
         // Refresh button
@@ -85,18 +88,20 @@ struct LeftSidebarView: View {
             }
           }) {
             Image(systemName: "arrow.clockwise")
+              .font(.system(size: 12, weight: .semibold))
               .foregroundColor(.foregroundMuted)
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(SidebarHeaderButtonStyle())
           .disabled(viewModel.isLoadingSchema)
         }
 
         // Close button
         Button(action: { viewModel.toggleLeftSidebar() }) {
           Image(systemName: "xmark")
+            .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.foregroundMuted)
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SidebarHeaderButtonStyle())
       }
     }
     .padding(.horizontal, Spacing.md)

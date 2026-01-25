@@ -35,7 +35,7 @@ struct SchemaVisualizerContent: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.foreground)
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SidebarHeaderButtonStyle())
         .help("Back to \(viewModel.viewMode == .notebook ? "Notebook" : "Editor")")
 
         Text("Schema Relationships")
@@ -58,14 +58,15 @@ struct SchemaVisualizerContent: View {
       Spacer()
 
       // Controls
-      HStack(spacing: Spacing.sm) {
+      HStack(spacing: Spacing.xs) {
         // Zoom controls
         HStack(spacing: Spacing.xs) {
           Button(action: { viewModel.zoomOutVisualizer() }) {
             Image(systemName: "minus.magnifyingglass")
-              .font(.system(size: 12))
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.foregroundMuted)
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(SidebarHeaderButtonStyle())
           .help("Zoom Out (Cmd+Scroll or Pinch)")
 
           Text("\(Int(viewModel.visualizerScale * 100))%")
@@ -75,9 +76,10 @@ struct SchemaVisualizerContent: View {
 
           Button(action: { viewModel.zoomInVisualizer() }) {
             Image(systemName: "plus.magnifyingglass")
-              .font(.system(size: 12))
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.foregroundMuted)
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(SidebarHeaderButtonStyle())
           .help("Zoom In (Cmd+Scroll or Pinch)")
         }
         .padding(.horizontal, Spacing.xs)
@@ -89,9 +91,10 @@ struct SchemaVisualizerContent: View {
 
         Button(action: { viewModel.resetVisualizerView() }) {
           Image(systemName: "arrow.counterclockwise")
-            .font(.system(size: 12))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SidebarHeaderButtonStyle())
         .help("Reset View")
 
         // Refresh button
@@ -101,19 +104,20 @@ struct SchemaVisualizerContent: View {
           }
         }) {
           Image(systemName: "arrow.clockwise")
-            .font(.system(size: 12))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SidebarHeaderButtonStyle())
         .help("Refresh Schema")
         .disabled(viewModel.isLoadingSchemaGraph)
 
         // Close button
         Button(action: { viewModel.hideSchemaVisualizer() }) {
           Image(systemName: "xmark")
-            .font(.system(size: 12))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.foregroundMuted)
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SidebarHeaderButtonStyle())
         .help("Close Visualizer (Esc)")
       }
     }

@@ -178,7 +178,9 @@ extension DatabaseConnectionManager {
   }
 
   /// Fetch unique constraint column names for a table (single-column unique constraints only)
-  private func fetchUniqueColumns(tableSchema: String, tableName: String) async throws -> Set<
+  private func fetchUniqueColumns(
+    tableSchema: String, tableName: String
+  ) async throws -> Set<
     String
   > {
     guard let connection = _connection else {

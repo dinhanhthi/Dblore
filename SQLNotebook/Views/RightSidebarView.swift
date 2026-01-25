@@ -82,9 +82,10 @@ struct RightSidebarView: View {
 
       Button(action: { viewModel.closeSidebar() }) {
         Image(systemName: "xmark")
+          .font(.system(size: 12, weight: .semibold))
           .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(GhostButtonStyle())
+      .buttonStyle(SidebarHeaderButtonStyle())
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)

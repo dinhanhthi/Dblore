@@ -551,7 +551,9 @@ class SchemaGraphNSView: NSView {
       return false
     }
 
-    private func distanceToSegment(point: CGPoint, segmentStart: CGPoint, segmentEnd: CGPoint)
+    private func distanceToSegment(
+      point: CGPoint, segmentStart: CGPoint, segmentEnd: CGPoint
+    )
       -> CGFloat
     {
       let dx = segmentEnd.x - segmentStart.x
@@ -687,7 +689,8 @@ class SchemaGraphNSView: NSView {
 
       // Draw expand button (arrow.up.left.and.arrow.down.right icon)
       let expandButtonRect = expandButtonRect(for: node)
-      drawExpandButton(context, in: expandButtonRect, isHovered: hoveredExpandButtonNodeId == node.id)
+      drawExpandButton(
+        context, in: expandButtonRect, isHovered: hoveredExpandButtonNodeId == node.id)
 
       // Draw column count badge (moved to left of expand button)
       let columnCount = node.table.columns.count
