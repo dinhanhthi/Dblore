@@ -123,9 +123,8 @@ struct QueryCopyBar: View {
         // Download dropdown button (right-aligned)
         downloadButton(result: result, mode: currentMode)
       }
-      .frame(width: geometry.size.width, alignment: .leading)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
-    .frame(height: 30)
   }
 
   // MARK: - Actions
@@ -358,7 +357,7 @@ struct QueryCopyBar: View {
       "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10"
   )
 
-  return VStack(spacing: 20) {
+  VStack(spacing: 20) {
     Text("Full Width (>600pt)")
       .font(.headline)
 
@@ -369,7 +368,7 @@ struct QueryCopyBar: View {
       viewModel: NotebookViewModel(),
       cellId: UUID()
     )
-    .frame(width: 700)
+    .frame(width: 700, height: 24)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
     .background(Color.appBackground)
@@ -390,7 +389,7 @@ struct QueryCopyBar: View {
       viewModel: NotebookViewModel(),
       cellId: UUID()
     )
-    .frame(width: 450)
+    .frame(width: 450, height: 24)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
     .background(Color.appBackground)
@@ -410,7 +409,7 @@ struct QueryCopyBar: View {
       viewModel: NotebookViewModel(),
       cellId: nil
     )
-    .frame(width: 250)
+    .frame(width: 250, height: 24)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
     .background(Color.appBackground)

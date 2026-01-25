@@ -394,6 +394,7 @@ struct EditorModeView: View {
         queryIndex: !viewModel.editorStatementResults.isEmpty
           ? (viewModel.selectedStatementIndex + 1) : nil
       )
+      .frame(height: 24)
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
       .frame(maxWidth: .infinity, alignment: .leading)

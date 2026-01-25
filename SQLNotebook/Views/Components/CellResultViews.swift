@@ -376,7 +376,8 @@ struct ResultQueryFooterView: View {
           cellId: cellId,
           queryIndex: nil  // Notebook mode always uses nil
         )
-        .padding(.top, Spacing.sm)
+        .frame(height: 24)
+        .padding(.vertical, Spacing.sm)
 
         // Horizontal divider line (bottom)
         Rectangle()
