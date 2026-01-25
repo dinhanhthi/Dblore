@@ -186,9 +186,11 @@ class NotebookViewModel {
     toastDismissTask = Task {
       try? await Task.sleep(for: .seconds(4))
 
-      // Wait until toast is no longer hovered
-      while self.isToastHovered {
+      // Wait until toast is no longer hovered (max 20 seconds to prevent deadlock)
+      var hoverWaitTime = 0
+      while self.isToastHovered && hoverWaitTime < 40 {
         try? await Task.sleep(for: .seconds(0.5))
+        hoverWaitTime += 1
       }
 
       // Dismiss only if the message matches (user might have shown a new toast)
