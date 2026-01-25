@@ -64,6 +64,17 @@ struct LeftSidebarView: View {
           }
           .buttonStyle(GhostButtonStyle())
           .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
+
+          // Schema Visualizer button - sky blue color
+          Button(action: {
+            viewModel.toggleSchemaVisualizer()
+          }) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+              .font(.system(size: 12, weight: .medium))
+              .foregroundColor(Color(red: 0.0, green: 0.68, blue: 0.94))  // Sky blue
+          }
+          .buttonStyle(GhostButtonStyle())
+          .help(viewModel.isSchemaVisualizerActive ? "Close Schema Visualizer" : "Visualize Schema Relationships")
         }
 
         // Refresh button
@@ -902,8 +913,6 @@ struct RoleRowView: View {
 
           // Members
           if !role.members.isEmpty {
-            Divider()
-              .padding(.vertical, Spacing.xs)
             Text("Members:")
               .font(.monoSmall)
               .foregroundColor(.foregroundMuted)

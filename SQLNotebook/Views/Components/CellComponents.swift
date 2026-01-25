@@ -188,6 +188,14 @@ struct TopRightFloatingPanelView: View {
           )
         }
 
+        FloatingPanelButton(
+          icon: "trash",
+          helpText: "Delete Cell",
+          action: {
+            isDeleteConfirming = true
+          }
+        )
+
         // Toggle visibility button (only show if cell has result)
         if cell.result != nil {
           FloatingPanelButton(
@@ -198,14 +206,6 @@ struct TopRightFloatingPanelView: View {
             }
           )
         }
-
-        FloatingPanelButton(
-          icon: "trash",
-          helpText: "Delete Cell",
-          action: {
-            isDeleteConfirming = true
-          }
-        )
       }
 
       FloatingPanelButton(
