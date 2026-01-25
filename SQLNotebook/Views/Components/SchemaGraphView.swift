@@ -112,9 +112,10 @@ class SchemaGraphNSView: NSView {
   private var draggedNodeId: UUID?
   private var lastMouseLocation: CGPoint = .zero
 
-  // Hover state for edges and expand button
+  // Hover state for edges, expand button, and nodes
   private var hoveredEdgeId: UUID?
   private var hoveredExpandButtonNodeId: UUID?
+  private var hoveredNodeId: UUID?
   private var trackingArea: NSTrackingArea?
 
   // Hover delay for highlighting connected tables
@@ -197,6 +198,9 @@ class SchemaGraphNSView: NSView {
     context.setFillColor(NSColor(Color.appBackground).cgColor)
     context.fill(bounds)
 
+    // Draw dot pattern on background
+    drawDotPattern(context)
+
     // Clip to bounds
     context.clip(to: bounds)
 
@@ -210,6 +214,55 @@ class SchemaGraphNSView: NSView {
 
     // Draw nodes
     drawNodes(context)
+
+    context.restoreGState()
+  }
+
+  // MARK: - Dot Pattern Background
+
+  private func drawDotPattern(_ context: CGContext) {
+    let dotSpacing: CGFloat = 20  // Space between dots
+    let dotRadius: CGFloat = 1.0  // Small dot size
+    let dotColor = NSColor(Color.foregroundMuted).withAlphaComponent(0.15)
+
+    context.saveGState()
+    context.setFillColor(dotColor.cgColor)
+
+    // Calculate visible area in canvas coordinates
+    let visibleRect = CGRect(
+      x: -offset.x / scale,
+      y: -offset.y / scale,
+      width: bounds.width / scale,
+      height: bounds.height / scale
+    )
+
+    // Adjust dot spacing based on scale for consistent visual density
+    let adjustedSpacing = dotSpacing / scale
+
+    // Calculate start positions (aligned to grid)
+    let startX = floor(visibleRect.minX / adjustedSpacing) * adjustedSpacing
+    let startY = floor(visibleRect.minY / adjustedSpacing) * adjustedSpacing
+
+    // Apply transform for canvas coordinates
+    context.translateBy(x: offset.x, y: offset.y)
+    context.scaleBy(x: scale, y: scale)
+
+    // Draw dots in the visible area
+    var x = startX
+    while x <= visibleRect.maxX {
+      var y = startY
+      while y <= visibleRect.maxY {
+        let dotRect = CGRect(
+          x: x - dotRadius,
+          y: y - dotRadius,
+          width: dotRadius * 2,
+          height: dotRadius * 2
+        )
+        context.fillEllipse(in: dotRect)
+        y += adjustedSpacing
+      }
+      x += adjustedSpacing
+    }
 
     context.restoreGState()
   }
@@ -552,14 +605,19 @@ class SchemaGraphNSView: NSView {
     for node in graph.nodes {
       let rect = nodeRect(for: node)
       let isSelected = selectedNodeId == node.id
+      let isHovered = hoveredNodeId == node.id
       let isHighlightedByEdge = isNodeHighlightedByEdge(node.id)
 
-      // Draw shadow (stronger when highlighted by edge)
+      // Draw shadow (stronger when highlighted by edge or hovered)
       context.saveGState()
       if isHighlightedByEdge {
         context.setShadow(
           offset: CGSize(width: 0, height: 3), blur: 8,
           color: edgeHighlightColor.withAlphaComponent(0.4).cgColor)
+      } else if isHovered && !isSelected {
+        context.setShadow(
+          offset: CGSize(width: 0, height: 3), blur: 6,
+          color: NSColor.white.withAlphaComponent(0.2).cgColor)
       } else {
         context.setShadow(
           offset: CGSize(width: 0, height: 2), blur: 4,
@@ -597,11 +655,21 @@ class SchemaGraphNSView: NSView {
       context.setFillColor(nodeHeaderColor.cgColor)
       context.fillPath()
 
-      // Draw border (highlighted when selected or connected to highlighted edge)
+      // Draw border (highlighted when selected, hovered, or connected to highlighted edge)
       context.addPath(path)
-      let borderColor =
-        (isSelected || isHighlightedByEdge) ? nodeSelectedBorderColor : nodeBorderColor
-      let borderWidth: CGFloat = (isSelected || isHighlightedByEdge) ? 2 : 1
+      let borderColor: NSColor
+      let borderWidth: CGFloat
+      if isSelected || isHighlightedByEdge {
+        borderColor = nodeSelectedBorderColor
+        borderWidth = 2
+      } else if isHovered {
+        // Lighter border on hover (more visible in dark mode)
+        borderColor = nodeBorderColor.blended(withFraction: 0.5, of: .white) ?? nodeBorderColor
+        borderWidth = 1.5
+      } else {
+        borderColor = nodeBorderColor
+        borderWidth = 1
+      }
       context.setStrokeColor(borderColor.cgColor)
       context.setLineWidth(borderWidth)
       context.strokePath()
@@ -887,6 +955,17 @@ class SchemaGraphNSView: NSView {
       needsRedraw = true
     }
 
+    // Check if hovering over a node (for hover effect)
+    if let node = hitTestNode(at: point) {
+      if hoveredNodeId != node.id {
+        hoveredNodeId = node.id
+        needsRedraw = true
+      }
+    } else if hoveredNodeId != nil {
+      hoveredNodeId = nil
+      needsRedraw = true
+    }
+
     // Check if hovering over an edge
     if let edge = hitTestEdge(at: point) {
       if hoveredEdgeId != edge.id {
@@ -927,6 +1006,10 @@ class SchemaGraphNSView: NSView {
     }
     if hoveredExpandButtonNodeId != nil {
       hoveredExpandButtonNodeId = nil
+      needsRedraw = true
+    }
+    if hoveredNodeId != nil {
+      hoveredNodeId = nil
       needsRedraw = true
     }
     if highlightedEdgeId != nil {

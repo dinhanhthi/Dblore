@@ -87,7 +87,7 @@ extension Color {
 
   static let schemaColumnText = Color(
     light: Color(hex: "3f3f46"),  // Zinc 700 (darker than foregroundMuted's Zinc 600)
-    dark: Color(hex: "a1a1aa")  // Zinc 400 (same as foregroundMuted)
+    dark: Color(hex: "d4d4d8")  // Zinc 300 (lighter/whiter for better visibility)
   )
 
   static let borderFocus = Color(

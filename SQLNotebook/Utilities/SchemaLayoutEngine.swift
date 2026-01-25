@@ -99,9 +99,6 @@ final class SchemaLayoutEngine {
     // Calculate grid dimensions
     let columns = max(1, Int(ceil(sqrt(Double(nodeCount)))))
 
-    // Calculate max node height for spacing
-    let maxNodeHeight = graph.nodes.map { nodeHeight(for: $0.table) }.max() ?? 150
-
     // Position nodes in grid with proper spacing
     var currentX: CGFloat = canvasPadding
     var currentY: CGFloat = canvasPadding
