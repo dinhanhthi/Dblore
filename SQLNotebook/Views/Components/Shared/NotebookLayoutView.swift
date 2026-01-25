@@ -31,13 +31,28 @@ struct NotebookLayoutView<Content: View>: View {
             ResizableLeftSidebar(viewModel: viewModel, maxWidth: geometry.size.width * 0.35)
 
             // Main content (passed from parent) or Schema Visualizer
-            if viewModel.isSchemaVisualizerActive {
-              SchemaVisualizerContent(viewModel: viewModel)
-                .frame(maxWidth: .infinity)
-            } else {
-              content
-                .frame(maxWidth: .infinity)
+            // with search panel overlay
+            ZStack(alignment: .top) {
+              if viewModel.isSchemaVisualizerActive {
+                SchemaVisualizerContent(viewModel: viewModel)
+              } else {
+                content
+              }
+
+              // Search panel overlay (slides from top, floating right)
+              if viewModel.isSearchPanelVisible {
+                HStack {
+                  Spacer()
+                  SearchPanelView(viewModel: viewModel)
+                    .frame(width: 500)
+                    .padding(.horizontal, Spacing.md)
+                    .padding(.vertical, Spacing.sm)
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+              }
             }
+            .frame(maxWidth: .infinity)
+            .clipped()
 
             // Right sidebar (conditionally shown)
             RightSidebarContainer(viewModel: viewModel)
