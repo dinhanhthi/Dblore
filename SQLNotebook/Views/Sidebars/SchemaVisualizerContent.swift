@@ -206,6 +206,7 @@ struct SchemaVisualizerContent: View {
         scale: $viewModel.visualizerScale,
         offset: $viewModel.visualizerOffset,
         selectedNodeId: $viewModel.selectedGraphNodeId,
+        searchState: viewModel.schemaSearchState,
         onNodeDoubleClick: { node in
           handleNodeDoubleClick(node)
         }

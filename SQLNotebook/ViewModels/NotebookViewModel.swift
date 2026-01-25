@@ -106,6 +106,10 @@ class NotebookViewModel {
   var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
   var previousFirstResponder: NSResponder?  // Store previous responder to restore focus after search closes
 
+  // Schema search state (for schema visualizer)
+  var schemaSearchState: SchemaSearchState = SchemaSearchState()
+  var schemaSearchTask: Task<Void, Never>?
+
   // MARK: - Query Confirmation State
   var showQueryConfirmationDialog = false
   var pendingQueryCellId: UUID?

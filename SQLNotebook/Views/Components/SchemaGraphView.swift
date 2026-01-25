@@ -14,6 +14,7 @@ struct SchemaGraphView: NSViewRepresentable {
   @Binding var scale: CGFloat
   @Binding var offset: CGPoint
   @Binding var selectedNodeId: UUID?
+  var searchState: SchemaSearchState
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
 
   func makeNSView(context: Context) -> SchemaGraphNSView {
@@ -22,6 +23,7 @@ struct SchemaGraphView: NSViewRepresentable {
     view.scale = scale
     view.offset = offset
     view.selectedNodeId = selectedNodeId
+    view.searchState = searchState
     view.onNodeSelected = { nodeId in
       DispatchQueue.main.async {
         selectedNodeId = nodeId
@@ -53,6 +55,7 @@ struct SchemaGraphView: NSViewRepresentable {
     nsView.scale = scale
     nsView.offset = offset
     nsView.selectedNodeId = selectedNodeId
+    nsView.searchState = searchState
     nsView.needsDisplay = true
   }
 }
@@ -78,6 +81,10 @@ class SchemaGraphNSView: NSView {
   }
 
   var selectedNodeId: UUID? {
+    didSet { needsDisplay = true }
+  }
+
+  var searchState: SchemaSearchState = SchemaSearchState() {
     didSet { needsDisplay = true }
   }
 
@@ -676,16 +683,34 @@ class SchemaGraphNSView: NSView {
       context.setLineWidth(borderWidth)
       context.strokePath()
 
-      // Draw table name
+      // Draw table name (with search highlight if matching)
       let tableName = node.table.name
       let tableFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
-      let tableAttributes: [NSAttributedString.Key: Any] = [
-        .font: tableFont,
-        .foregroundColor: textColor,
-      ]
-      let tableString = NSAttributedString(string: tableName, attributes: tableAttributes)
       let tablePoint = CGPoint(x: rect.minX + 10, y: rect.minY + 8)
-      tableString.draw(at: tablePoint)
+
+      // Check if table name has search match
+      let tableNameMatch = searchState.matches.first {
+        $0.nodeId == node.id && $0.matchType == .tableName
+      }
+
+      if let match = tableNameMatch, !searchState.query.isEmpty {
+        drawHighlightedText(
+          context,
+          text: tableName,
+          at: tablePoint,
+          font: tableFont,
+          textColor: textColor,
+          highlightRange: match.matchRange,
+          isCurrentMatch: searchState.currentMatch?.id == match.id
+        )
+      } else {
+        let tableAttributes: [NSAttributedString.Key: Any] = [
+          .font: tableFont,
+          .foregroundColor: textColor,
+        ]
+        let tableString = NSAttributedString(string: tableName, attributes: tableAttributes)
+        tableString.draw(at: tablePoint)
+      }
 
       // Draw expand button (arrow.up.left.and.arrow.down.right icon)
       let expandButtonRect = expandButtonRect(for: node)
@@ -750,17 +775,35 @@ class SchemaGraphNSView: NSView {
       }
       iconX += iconSpacing
 
-      // Draw column name
+      // Draw column name (with search highlight if matching)
       let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
       let nameFont = hasSpecialAttributes ? pkFont : columnFont
       let nameColor = hasSpecialAttributes ? textColor : columnTextColor
+      let namePoint = CGPoint(x: iconX + 2, y: y)
 
-      let nameAttributes: [NSAttributedString.Key: Any] = [
-        .font: nameFont,
-        .foregroundColor: nameColor,
-      ]
-      let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
-      nameString.draw(at: CGPoint(x: iconX + 2, y: y))
+      // Check if column name has search match
+      let columnMatch = searchState.matches.first {
+        $0.nodeId == node.id && $0.matchType == .columnName(columnIndex: index)
+      }
+
+      if let match = columnMatch, !searchState.query.isEmpty {
+        drawHighlightedText(
+          context,
+          text: column.name,
+          at: namePoint,
+          font: nameFont,
+          textColor: nameColor,
+          highlightRange: match.matchRange,
+          isCurrentMatch: searchState.currentMatch?.id == match.id
+        )
+      } else {
+        let nameAttributes: [NSAttributedString.Key: Any] = [
+          .font: nameFont,
+          .foregroundColor: nameColor,
+        ]
+        let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
+        nameString.draw(at: namePoint)
+      }
 
       // Draw type on the right
       let typeAttributes: [NSAttributedString.Key: Any] = [
@@ -791,6 +834,92 @@ class SchemaGraphNSView: NSView {
       tintedImage?.unlockFocus()
 
       tintedImage?.draw(in: imageRect)
+    }
+  }
+
+  /// Draw text with highlighted search match (zoom-independent highlight)
+  /// The highlight background is drawn using absolute pixel values to maintain consistent size at any zoom level
+  private func drawHighlightedText(
+    _ context: CGContext,
+    text: String,
+    at point: CGPoint,
+    font: NSFont,
+    textColor: NSColor,
+    highlightRange: Range<String.Index>,
+    isCurrentMatch: Bool
+  ) {
+    // Create attributed string for the full text
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineBreakMode = .byClipping
+
+    let baseAttributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: textColor,
+      .paragraphStyle: paragraphStyle,
+    ]
+
+    // Calculate positions for highlight
+    let beforeHighlight = String(text[..<highlightRange.lowerBound])
+    let highlightedPart = String(text[highlightRange])
+    let afterHighlight = String(text[highlightRange.upperBound...])
+
+    // Measure text widths
+    let beforeWidth =
+      (beforeHighlight as NSString).size(withAttributes: baseAttributes).width
+    let highlightWidth =
+      (highlightedPart as NSString).size(withAttributes: baseAttributes).width
+    let textHeight = (text as NSString).size(withAttributes: baseAttributes).height
+
+    // Draw highlight background (using fixed pixel values, not scaled)
+    // Save state to apply inverse scale for highlight rect
+    context.saveGState()
+
+    // Calculate highlight rect in canvas coordinates
+    let highlightPadding: CGFloat = 1
+    let highlightRect = CGRect(
+      x: point.x + beforeWidth - highlightPadding,
+      y: point.y - 1,
+      width: highlightWidth + highlightPadding * 2,
+      height: textHeight + 2
+    )
+
+    // Draw highlight with rounded corners
+    let highlightColor =
+      isCurrentMatch
+      ? NSColor.systemYellow.withAlphaComponent(0.8)  // Current match: bright yellow
+      : NSColor.systemYellow.withAlphaComponent(0.4)  // Other matches: dimmer yellow
+
+    context.setFillColor(highlightColor.cgColor)
+    let highlightPath = CGPath(
+      roundedRect: highlightRect, cornerWidth: 2, cornerHeight: 2, transform: nil)
+    context.addPath(highlightPath)
+    context.fillPath()
+
+    // Draw border for current match
+    if isCurrentMatch {
+      context.setStrokeColor(NSColor.systemOrange.cgColor)
+      context.setLineWidth(1)
+      context.addPath(highlightPath)
+      context.strokePath()
+    }
+
+    context.restoreGState()
+
+    // Draw the text on top
+    // Before highlight part
+    if !beforeHighlight.isEmpty {
+      let beforeString = NSAttributedString(string: beforeHighlight, attributes: baseAttributes)
+      beforeString.draw(at: point)
+    }
+
+    // Highlighted part (same attributes, the background provides the highlight)
+    let highlightedString = NSAttributedString(string: highlightedPart, attributes: baseAttributes)
+    highlightedString.draw(at: CGPoint(x: point.x + beforeWidth, y: point.y))
+
+    // After highlight part
+    if !afterHighlight.isEmpty {
+      let afterString = NSAttributedString(string: afterHighlight, attributes: baseAttributes)
+      afterString.draw(at: CGPoint(x: point.x + beforeWidth + highlightWidth, y: point.y))
     }
   }
 

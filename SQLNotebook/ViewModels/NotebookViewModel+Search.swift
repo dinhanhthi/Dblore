@@ -230,6 +230,9 @@ extension NotebookViewModel {
     isSearchPanelVisible = false
     searchState = SearchState()
 
+    // Clear schema search state as well
+    schemaSearchState = SchemaSearchState()
+
     // Clear AttributedString cache to free memory
     SearchHighlighter.clearCache()
 
@@ -435,5 +438,165 @@ extension NotebookViewModel {
     }
 
     return context
+  }
+
+  // MARK: - Schema Search
+
+  /// Perform search in schema visualizer (table names and column names)
+  @MainActor
+  func performSchemaSearch(query: String, caseSensitive: Bool) async {
+    // Cancel previous search
+    schemaSearchTask?.cancel()
+
+    schemaSearchState.isSearching = true
+    schemaSearchState.query = query
+    schemaSearchState.isCaseSensitive = caseSensitive
+    schemaSearchState.matches = []
+    schemaSearchState.currentMatchIndex = 0
+
+    guard !query.isEmpty, let graph = schemaGraph else {
+      schemaSearchState.isSearching = false
+      return
+    }
+
+    schemaSearchTask = Task {
+      let matches = await buildSchemaSearchMatches(
+        graph: graph, query: query, caseSensitive: caseSensitive)
+
+      guard !Task.isCancelled else { return }
+
+      await MainActor.run {
+        schemaSearchState.matches = matches
+        schemaSearchState.isSearching = false
+
+        // Auto-navigate to first match
+        if !matches.isEmpty {
+          navigateToSchemaMatch(at: 0)
+        }
+      }
+    }
+
+    await schemaSearchTask?.value
+  }
+
+  /// Build schema search matches from graph nodes
+  private func buildSchemaSearchMatches(
+    graph: SchemaGraph, query: String, caseSensitive: Bool
+  ) async -> [SchemaSearchMatch] {
+    var allMatches: [SchemaSearchMatch] = []
+
+    for node in graph.nodes {
+      if Task.isCancelled { break }
+
+      let searchQuery = caseSensitive ? query : query.lowercased()
+
+      // 1. Search in table name
+      let tableName = node.table.name
+      let searchTableName = caseSensitive ? tableName : tableName.lowercased()
+      if let range = searchTableName.range(of: searchQuery) {
+        allMatches.append(
+          SchemaSearchMatch(
+            nodeId: node.id,
+            tableName: node.table.qualifiedName,
+            matchType: .tableName,
+            matchedText: tableName,
+            matchRange: range
+          ))
+      }
+
+      // 2. Search in column names
+      for (columnIndex, column) in node.table.columns.enumerated() {
+        let columnName = column.name
+        let searchColumnName = caseSensitive ? columnName : columnName.lowercased()
+        if let range = searchColumnName.range(of: searchQuery) {
+          allMatches.append(
+            SchemaSearchMatch(
+              nodeId: node.id,
+              tableName: node.table.qualifiedName,
+              matchType: .columnName(columnIndex: columnIndex),
+              matchedText: columnName,
+              matchRange: range
+            ))
+        }
+      }
+    }
+
+    return allMatches
+  }
+
+  /// Navigate to next schema match
+  @MainActor
+  func navigateToNextSchemaMatch() {
+    guard !schemaSearchState.matches.isEmpty else { return }
+
+    let newIndex = (schemaSearchState.currentMatchIndex + 1) % schemaSearchState.matches.count
+    navigateToSchemaMatch(at: newIndex)
+  }
+
+  /// Navigate to previous schema match
+  @MainActor
+  func navigateToPreviousSchemaMatch() {
+    guard !schemaSearchState.matches.isEmpty else { return }
+
+    let newIndex =
+      schemaSearchState.currentMatchIndex == 0
+      ? schemaSearchState.matches.count - 1
+      : schemaSearchState.currentMatchIndex - 1
+    navigateToSchemaMatch(at: newIndex)
+  }
+
+  /// Navigate to specific schema match index
+  @MainActor
+  func navigateToSchemaMatch(at index: Int) {
+    guard index >= 0, index < schemaSearchState.matches.count else { return }
+
+    schemaSearchState.currentMatchIndex = index
+    let match = schemaSearchState.matches[index]
+
+    // Select the node containing the match
+    selectedGraphNodeId = match.nodeId
+
+    // Pan to the node position
+    if let graph = schemaGraph, let node = graph.node(withId: match.nodeId) {
+      panToSchemaNode(node)
+    }
+  }
+
+  /// Pan the visualizer view to center on a node
+  @MainActor
+  private func panToSchemaNode(_ node: SchemaNode) {
+    // Calculate target offset to center the node
+    // We need to account for the current scale
+    // The node should be centered in the viewport
+
+    // Node dimensions (matching SchemaGraphNSView constants)
+    let nodeWidth: CGFloat = 200
+    let nodeHeaderHeight: CGFloat = 32
+    let nodeColumnHeight: CGFloat = 18
+    let nodePadding: CGFloat = 8
+    let nodeHeight = nodeHeaderHeight + CGFloat(node.table.columns.count) * nodeColumnHeight
+      + nodePadding
+
+    // Calculate node center
+    let nodeCenter = CGPoint(
+      x: node.position.x + nodeWidth / 2,
+      y: node.position.y + nodeHeight / 2
+    )
+
+    // Assume viewport size of 800x600 (will be adjusted by actual view size)
+    // The offset formula: offset = viewportCenter - nodeCenter * scale
+    let viewportWidth: CGFloat = 800
+    let viewportHeight: CGFloat = 600
+
+    visualizerOffset = CGPoint(
+      x: viewportWidth / 2 - nodeCenter.x * visualizerScale,
+      y: viewportHeight / 2 - nodeCenter.y * visualizerScale
+    )
+  }
+
+  /// Clear schema search
+  @MainActor
+  func clearSchemaSearch() {
+    schemaSearchState = SchemaSearchState()
   }
 }

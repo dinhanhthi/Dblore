@@ -11,8 +11,59 @@ struct SearchPanelView: View {
   @Bindable var viewModel: NotebookViewModel
   @FocusState private var isSearchFieldFocused: Bool
 
+  // MARK: - Computed Properties for Schema/Normal Search
+
+  private var isSchemaSearch: Bool {
+    viewModel.isSchemaVisualizerActive
+  }
+
   private var searchPlaceholder: String {
-    viewModel.viewMode == .editor ? "Search in editor..." : "Search in notebook..."
+    if isSchemaSearch {
+      return "Search in schema..."
+    }
+    return viewModel.viewMode == .editor ? "Search in editor..." : "Search in notebook..."
+  }
+
+  private var currentQuery: Binding<String> {
+    if isSchemaSearch {
+      return $viewModel.schemaSearchState.query
+    }
+    return $viewModel.searchState.query
+  }
+
+  private var isCaseSensitive: Bool {
+    if isSchemaSearch {
+      return viewModel.schemaSearchState.isCaseSensitive
+    }
+    return viewModel.searchState.isCaseSensitive
+  }
+
+  private var isSearching: Bool {
+    if isSchemaSearch {
+      return viewModel.schemaSearchState.isSearching
+    }
+    return viewModel.searchState.isSearching
+  }
+
+  private var queryIsEmpty: Bool {
+    if isSchemaSearch {
+      return viewModel.schemaSearchState.query.isEmpty
+    }
+    return viewModel.searchState.query.isEmpty
+  }
+
+  private var matchesIsEmpty: Bool {
+    if isSchemaSearch {
+      return viewModel.schemaSearchState.matches.isEmpty
+    }
+    return viewModel.searchState.matches.isEmpty
+  }
+
+  private var matchCountText: String {
+    if isSchemaSearch {
+      return viewModel.schemaSearchState.matchCountText
+    }
+    return viewModel.searchState.matchCountText
   }
 
   var body: some View {
@@ -23,42 +74,35 @@ struct SearchPanelView: View {
         .font(.system(size: 14))
 
       // Search text field
-      TextField(searchPlaceholder, text: $viewModel.searchState.query)
+      TextField(searchPlaceholder, text: currentQuery)
         .textFieldStyle(.plain)
         .font(.bodyText)
         .focused($isSearchFieldFocused)
-        .onChange(of: viewModel.searchState.query) { _, newValue in
+        .onChange(of: currentQuery.wrappedValue) { _, newValue in
           // Debounce search
           Task {
             try? await Task.sleep(for: .milliseconds(300))
-            if viewModel.searchState.query == newValue {
-              await viewModel.performSearch(
-                query: newValue,
-                caseSensitive: viewModel.searchState.isCaseSensitive
-              )
+            if currentQuery.wrappedValue == newValue {
+              await performSearch(query: newValue)
             }
           }
         }
         .onSubmit {
           // Enter key navigates to next match (like Cmd+G)
-          viewModel.navigateToNextMatch()
+          navigateToNextMatch()
         }
 
       // Match counter
-      if viewModel.searchState.isSearching {
+      if isSearching {
         ProgressView()
           .scaleEffect(0.6)
           .frame(width: 12, height: 12)
-      } else if !viewModel.searchState.query.isEmpty {
+      } else if !queryIsEmpty {
         // Show match count when there's a query (even if 0 results)
-        Text(
-          viewModel.searchState.matches.isEmpty
-            ? "0 found"
-            : viewModel.searchState.matchCountText
-        )
-        .font(.caption)
-        .foregroundColor(.foregroundSubtle)
-        .padding(.horizontal, Spacing.xs)
+        Text(matchesIsEmpty ? "0 found" : matchCountText)
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+          .padding(.horizontal, Spacing.xs)
       }
 
       Divider()
@@ -66,42 +110,36 @@ struct SearchPanelView: View {
 
       // Navigation buttons
       Button {
-        viewModel.navigateToPreviousMatch()
+        navigateToPreviousMatch()
       } label: {
         Image(systemName: "chevron.up")
           .font(.system(size: 12))
       }
       .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .disabled(viewModel.searchState.matches.isEmpty)
+      .disabled(matchesIsEmpty)
 
       Button {
-        viewModel.navigateToNextMatch()
+        navigateToNextMatch()
       } label: {
         Image(systemName: "chevron.down")
           .font(.system(size: 12))
       }
       .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .disabled(viewModel.searchState.matches.isEmpty)
+      .disabled(matchesIsEmpty)
 
       Divider()
         .frame(height: 20)
 
       // Case sensitivity toggle
       Button {
-        viewModel.searchState.isCaseSensitive.toggle()
-        Task {
-          await viewModel.performSearch(
-            query: viewModel.searchState.query,
-            caseSensitive: viewModel.searchState.isCaseSensitive
-          )
-        }
+        toggleCaseSensitive()
       } label: {
         Image(systemName: "textformat")
           .font(.system(size: 14))
       }
       .buttonStyle(
         ToolbarButtonStyle(
-          isActive: viewModel.searchState.isCaseSensitive,
+          isActive: isCaseSensitive,
           iconOnly: true
         )
       )
@@ -152,6 +190,58 @@ struct SearchPanelView: View {
       // Close search panel when ESC is pressed (works when search field is focused)
       viewModel.closeSearch()
       return .handled
+    }
+  }
+
+  // MARK: - Helper Methods
+
+  private func performSearch(query: String) async {
+    if isSchemaSearch {
+      await viewModel.performSchemaSearch(
+        query: query,
+        caseSensitive: viewModel.schemaSearchState.isCaseSensitive
+      )
+    } else {
+      await viewModel.performSearch(
+        query: query,
+        caseSensitive: viewModel.searchState.isCaseSensitive
+      )
+    }
+  }
+
+  private func navigateToNextMatch() {
+    if isSchemaSearch {
+      viewModel.navigateToNextSchemaMatch()
+    } else {
+      viewModel.navigateToNextMatch()
+    }
+  }
+
+  private func navigateToPreviousMatch() {
+    if isSchemaSearch {
+      viewModel.navigateToPreviousSchemaMatch()
+    } else {
+      viewModel.navigateToPreviousMatch()
+    }
+  }
+
+  private func toggleCaseSensitive() {
+    if isSchemaSearch {
+      viewModel.schemaSearchState.isCaseSensitive.toggle()
+      Task {
+        await viewModel.performSchemaSearch(
+          query: viewModel.schemaSearchState.query,
+          caseSensitive: viewModel.schemaSearchState.isCaseSensitive
+        )
+      }
+    } else {
+      viewModel.searchState.isCaseSensitive.toggle()
+      Task {
+        await viewModel.performSearch(
+          query: viewModel.searchState.query,
+          caseSensitive: viewModel.searchState.isCaseSensitive
+        )
+      }
     }
   }
 }
