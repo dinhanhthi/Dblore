@@ -73,6 +73,23 @@ struct SchemaEdge: Identifiable, Sendable, Equatable {
   }
 }
 
+/// Saved position for a schema node, keyed by table qualified name
+struct SavedNodePosition: Codable, Sendable, Equatable {
+  let tableQualifiedName: String
+  let x: CGFloat
+  let y: CGFloat
+
+  var position: CGPoint {
+    CGPoint(x: x, y: y)
+  }
+
+  nonisolated init(tableQualifiedName: String, position: CGPoint) {
+    self.tableQualifiedName = tableQualifiedName
+    self.x = position.x
+    self.y = position.y
+  }
+}
+
 /// Represents the complete schema graph with nodes and edges
 struct SchemaGraph: Sendable, Equatable {
   var nodes: [SchemaNode]
@@ -81,6 +98,30 @@ struct SchemaGraph: Sendable, Equatable {
   nonisolated init(nodes: [SchemaNode] = [], edges: [SchemaEdge] = []) {
     self.nodes = nodes
     self.edges = edges
+  }
+
+  /// Export current node positions for persistence
+  func exportPositions() -> [SavedNodePosition] {
+    nodes.map { node in
+      SavedNodePosition(
+        tableQualifiedName: node.qualifiedName,
+        position: node.position
+      )
+    }
+  }
+
+  /// Apply saved positions to nodes
+  mutating func applyPositions(_ savedPositions: [SavedNodePosition]) {
+    let positionByName = Dictionary(
+      savedPositions.map { ($0.tableQualifiedName, $0.position) },
+      uniquingKeysWith: { first, _ in first }
+    )
+
+    for index in nodes.indices {
+      if let savedPosition = positionByName[nodes[index].qualifiedName] {
+        nodes[index].position = savedPosition
+      }
+    }
   }
 
   /// Find a node by its ID

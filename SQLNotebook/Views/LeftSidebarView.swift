@@ -50,7 +50,7 @@ struct LeftSidebarView: View {
 
       Spacer()
 
-      HStack(spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
         // Expand/Collapse all button
         if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
           // Schema Visualizer button

@@ -3,6 +3,7 @@
 //  SQLNotebook
 //
 
+import AppKit
 import Observation
 import SwiftUI
 
@@ -68,6 +69,7 @@ class NotebookViewModel {
   var selectedGraphNodeId: UUID?
   var isLoadingSchemaGraph: Bool = false
   var isSchemaVisualizerActive: Bool = false  // Show visualizer in main body instead of cells/editor
+  weak var schemaGraphNSView: SchemaGraphNSView?  // Reference for export functionality
 
   // Connection config for the sheet
   var editingConnectionConfig: ConnectionConfig

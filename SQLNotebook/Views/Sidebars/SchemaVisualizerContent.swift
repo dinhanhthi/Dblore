@@ -58,7 +58,7 @@ struct SchemaVisualizerContent: View {
       Spacer()
 
       // Controls
-      HStack(spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
         // Zoom controls
         HStack(spacing: Spacing.xs) {
           Button(action: { viewModel.zoomOutVisualizer() }) {
@@ -96,6 +96,30 @@ struct SchemaVisualizerContent: View {
         }
         .buttonStyle(SidebarHeaderButtonStyle())
         .help("Reset View")
+
+        // Reset layout button
+        Button(action: {
+          Task {
+            await viewModel.resetSchemaLayout()
+          }
+        }) {
+          Image(systemName: "rectangle.3.group")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(SidebarHeaderButtonStyle())
+        .help("Reset Layout to Default")
+        .disabled(viewModel.isLoadingSchemaGraph)
+
+        // Export as PNG button
+        Button(action: { viewModel.exportSchemaAsImage() }) {
+          Image(systemName: "square.and.arrow.up")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(SidebarHeaderButtonStyle())
+        .help("Export as PNG")
+        .disabled(viewModel.schemaGraph?.isEmpty ?? true)
 
         // Refresh button
         Button(action: {
@@ -209,6 +233,12 @@ struct SchemaVisualizerContent: View {
         searchState: viewModel.schemaSearchState,
         onNodeDoubleClick: { node in
           handleNodeDoubleClick(node)
+        },
+        onNodeDragEnded: {
+          viewModel.saveSchemaNodePositions()
+        },
+        onViewCreated: { nsView in
+          viewModel.schemaGraphNSView = nsView
         }
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)

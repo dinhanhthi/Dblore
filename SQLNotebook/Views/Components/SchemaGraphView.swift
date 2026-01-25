@@ -16,6 +16,8 @@ struct SchemaGraphView: NSViewRepresentable {
   @Binding var selectedNodeId: UUID?
   var searchState: SchemaSearchState
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
+  var onNodeDragEnded: (() -> Void)?
+  var onViewCreated: ((SchemaGraphNSView) -> Void)?
 
   func makeNSView(context: Context) -> SchemaGraphNSView {
     let view = SchemaGraphNSView()
@@ -36,6 +38,7 @@ struct SchemaGraphView: NSViewRepresentable {
         }
       }
     }
+    view.onNodeDragEnded = onNodeDragEnded
     view.onNodeDoubleClick = onNodeDoubleClick
     view.onOffsetChanged = { newOffset in
       DispatchQueue.main.async {
@@ -47,6 +50,10 @@ struct SchemaGraphView: NSViewRepresentable {
         scale = newScale
       }
     }
+    // Notify parent that view was created
+    DispatchQueue.main.async {
+      onViewCreated?(view)
+    }
     return view
   }
 
@@ -56,6 +63,7 @@ struct SchemaGraphView: NSViewRepresentable {
     nsView.offset = offset
     nsView.selectedNodeId = selectedNodeId
     nsView.searchState = searchState
+    nsView.onNodeDragEnded = onNodeDragEnded
     nsView.needsDisplay = true
   }
 }
@@ -90,6 +98,7 @@ class SchemaGraphNSView: NSView {
 
   var onNodeSelected: ((UUID?) -> Void)?
   var onNodeMoved: ((UUID, CGPoint) -> Void)?
+  var onNodeDragEnded: (() -> Void)?
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
   var onOffsetChanged: ((CGPoint) -> Void)?
   var onScaleChanged: ((CGFloat) -> Void)?
@@ -610,14 +619,28 @@ class SchemaGraphNSView: NSView {
     return false
   }
 
+  /// Check if a node is connected to the currently selected node
+  private func isNodeConnectedToSelectedNode(_ nodeId: UUID) -> Bool {
+    guard let selectedId = selectedNodeId, nodeId != selectedId else {
+      return false
+    }
+    // Check if there's an edge connecting this node to the selected node
+    return graph.edges.contains { edge in
+      (edge.sourceNodeId == nodeId && edge.targetNodeId == selectedId)
+        || (edge.sourceNodeId == selectedId && edge.targetNodeId == nodeId)
+    }
+  }
+
   private func drawNodes(_ context: CGContext) {
     for node in graph.nodes {
       let rect = nodeRect(for: node)
       let isSelected = selectedNodeId == node.id
       let isHovered = hoveredNodeId == node.id
       let isHighlightedByEdge = isNodeHighlightedByEdge(node.id)
+      let isConnectedToSelected = isNodeConnectedToSelectedNode(node.id)
 
       // Draw shadow (stronger when highlighted by edge or hovered)
+      // Connected-to-selected nodes use normal shadow (no extra shadow like hover)
       context.saveGState()
       if isHighlightedByEdge {
         context.setShadow(
@@ -664,13 +687,18 @@ class SchemaGraphNSView: NSView {
       context.setFillColor(nodeHeaderColor.cgColor)
       context.fillPath()
 
-      // Draw border (highlighted when selected, hovered, or connected to highlighted edge)
+      // Draw border (highlighted when selected, hovered, connected to highlighted edge,
+      // or connected to selected node)
       context.addPath(path)
       let borderColor: NSColor
       let borderWidth: CGFloat
       if isSelected || isHighlightedByEdge {
         borderColor = nodeSelectedBorderColor
         borderWidth = 2
+      } else if isConnectedToSelected {
+        // Blue border for cards connected to selected node
+        borderColor = NSColor.systemBlue
+        borderWidth = 1.5
       } else if isHovered {
         // Lighter border on hover (more visible in dark mode)
         borderColor = nodeBorderColor.blended(withFraction: 0.5, of: .white) ?? nodeBorderColor
@@ -919,8 +947,15 @@ class SchemaGraphNSView: NSView {
       beforeString.draw(at: point)
     }
 
-    // Highlighted part (same attributes, the background provides the highlight)
-    let highlightedString = NSAttributedString(string: highlightedPart, attributes: baseAttributes)
+    // Highlighted part - use dark text color for better contrast on bright highlight background
+    let highlightedTextColor = NSColor.black
+    let highlightedAttributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: highlightedTextColor,
+      .paragraphStyle: paragraphStyle,
+    ]
+    let highlightedString = NSAttributedString(
+      string: highlightedPart, attributes: highlightedAttributes)
     highlightedString.draw(at: CGPoint(x: point.x + beforeWidth, y: point.y))
 
     // After highlight part
@@ -1074,6 +1109,11 @@ class SchemaGraphNSView: NSView {
       }
     }
 
+    // Notify when node drag ends to save positions
+    if isDraggingNode {
+      onNodeDragEnded?()
+    }
+
     isDraggingNode = false
     isDraggingCanvas = false
     draggedNodeId = nil
@@ -1212,6 +1252,336 @@ class SchemaGraphNSView: NSView {
       onScaleChanged?(scale)
       onOffsetChanged?(offset)
       needsDisplay = true
+    }
+  }
+
+  // MARK: - Export to Image
+
+  /// Render the schema graph to an NSImage with auto-crop to the smallest bounding box containing all cards
+  /// - Parameters:
+  ///   - padding: Extra padding around the bounding box (default: 40 points)
+  ///   - includeBackground: Whether to include the background color and dot pattern (default: true)
+  /// - Returns: NSImage containing the rendered schema graph, or nil if no nodes exist
+  func renderToImage(padding: CGFloat = 40, includeBackground: Bool = true) -> NSImage? {
+    guard !graph.nodes.isEmpty else { return nil }
+
+    // Calculate bounding box of all nodes
+    var minX = CGFloat.infinity
+    var minY = CGFloat.infinity
+    var maxX = -CGFloat.infinity
+    var maxY = -CGFloat.infinity
+
+    for node in graph.nodes {
+      let rect = nodeRect(for: node)
+      minX = min(minX, rect.minX)
+      minY = min(minY, rect.minY)
+      maxX = max(maxX, rect.maxX)
+      maxY = max(maxY, rect.maxY)
+    }
+
+    // Add padding
+    minX -= padding
+    minY -= padding
+    maxX += padding
+    maxY += padding
+
+    let boundingWidth = maxX - minX
+    let boundingHeight = maxY - minY
+
+    // Create image with the bounding box size
+    let imageSize = NSSize(width: boundingWidth, height: boundingHeight)
+    let image = NSImage(size: imageSize)
+
+    image.lockFocus()
+    guard let context = NSGraphicsContext.current?.cgContext else {
+      image.unlockFocus()
+      return nil
+    }
+
+    if includeBackground {
+      // Fill background
+      context.setFillColor(NSColor(Color.appBackground).cgColor)
+      context.fill(CGRect(origin: .zero, size: imageSize))
+
+      // Draw dot pattern background for the visible area
+      drawDotPatternForExport(context, size: imageSize, offsetX: minX, offsetY: minY)
+    }
+    // If not including background, the image will have transparent background
+
+    // Translate to account for the bounding box offset
+    context.translateBy(x: -minX, y: -minY)
+
+    // Draw edges first (at scale 1.0)
+    drawEdgesForExport(context)
+
+    // Draw nodes
+    drawNodesForExport(context)
+
+    image.unlockFocus()
+
+    return image
+  }
+
+  /// Draw dot pattern for export (similar to drawDotPattern but for export context)
+  private func drawDotPatternForExport(
+    _ context: CGContext, size: NSSize, offsetX: CGFloat, offsetY: CGFloat
+  ) {
+    let dotSpacing: CGFloat = 20
+    let dotRadius: CGFloat = 1.0
+    let dotColor = NSColor(Color.foregroundMuted).withAlphaComponent(0.15)
+
+    context.saveGState()
+    context.setFillColor(dotColor.cgColor)
+
+    // Calculate visible area
+    let visibleRect = CGRect(
+      x: offsetX,
+      y: offsetY,
+      width: size.width,
+      height: size.height
+    )
+
+    // Calculate start positions (aligned to grid)
+    let startX = floor(visibleRect.minX / dotSpacing) * dotSpacing
+    let startY = floor(visibleRect.minY / dotSpacing) * dotSpacing
+
+    // Translate for canvas coordinates
+    context.translateBy(x: -offsetX, y: -offsetY)
+
+    // Draw dots
+    var x = startX
+    while x <= visibleRect.maxX {
+      var y = startY
+      while y <= visibleRect.maxY {
+        let dotRect = CGRect(
+          x: x - dotRadius,
+          y: y - dotRadius,
+          width: dotRadius * 2,
+          height: dotRadius * 2
+        )
+        context.fillEllipse(in: dotRect)
+        y += dotSpacing
+      }
+      x += dotSpacing
+    }
+
+    context.restoreGState()
+  }
+
+  /// Draw edges for export (without hover/selection states)
+  private func drawEdgesForExport(_ context: CGContext) {
+    for edge in graph.edges {
+      guard
+        let sourceNode = graph.node(withId: edge.sourceNodeId),
+        let targetNode = graph.node(withId: edge.targetNodeId)
+      else { continue }
+
+      let sourceRect = nodeRect(for: sourceNode)
+      let targetRect = nodeRect(for: targetNode)
+
+      drawOrthogonalEdgeForExport(
+        context,
+        edge: edge,
+        from: sourceRect,
+        to: targetRect
+      )
+    }
+  }
+
+  /// Draw orthogonal edge for export (always non-highlighted style)
+  private func drawOrthogonalEdgeForExport(
+    _ context: CGContext,
+    edge: SchemaEdge,
+    from sourceRect: CGRect,
+    to targetRect: CGRect
+  ) {
+    let sourceCenter = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
+    let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+
+    let dx = targetCenter.x - sourceCenter.x
+    let dy = targetCenter.y - sourceCenter.y
+
+    var startPoint: CGPoint
+    var endPoint: CGPoint
+    var midPoint1: CGPoint
+    var midPoint2: CGPoint
+
+    if abs(dx) > abs(dy) {
+      if dx > 0 {
+        startPoint = CGPoint(x: sourceRect.maxX, y: sourceRect.midY)
+        endPoint = CGPoint(x: targetRect.minX, y: targetRect.midY)
+      } else {
+        startPoint = CGPoint(x: sourceRect.minX, y: sourceRect.midY)
+        endPoint = CGPoint(x: targetRect.maxX, y: targetRect.midY)
+      }
+      let midX = (startPoint.x + endPoint.x) / 2
+      midPoint1 = CGPoint(x: midX, y: startPoint.y)
+      midPoint2 = CGPoint(x: midX, y: endPoint.y)
+    } else {
+      if dy > 0 {
+        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.maxY)
+        endPoint = CGPoint(x: targetRect.midX, y: targetRect.minY)
+      } else {
+        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.minY)
+        endPoint = CGPoint(x: targetRect.midX, y: targetRect.maxY)
+      }
+      let midY = (startPoint.y + endPoint.y) / 2
+      midPoint1 = CGPoint(x: startPoint.x, y: midY)
+      midPoint2 = CGPoint(x: endPoint.x, y: midY)
+    }
+
+    // Draw main path (non-highlighted style)
+    context.setStrokeColor(edgeColor.cgColor)
+    context.setLineWidth(0.75)
+
+    context.move(to: startPoint)
+    context.addLine(to: midPoint1)
+    context.addLine(to: midPoint2)
+    context.addLine(to: endPoint)
+    context.strokePath()
+
+    // Draw ER notation symbols
+    drawZeroCircle(context, at: startPoint, from: midPoint1, highlighted: false, offsetDistance: 16)
+    drawCrowsFoot(context, at: startPoint, toward: midPoint1, highlighted: false)
+    drawZeroCircle(context, at: endPoint, from: midPoint2, highlighted: false, offsetDistance: 14)
+    drawOneNotation(context, at: endPoint, from: midPoint2, highlighted: false)
+  }
+
+  /// Draw nodes for export (without hover/selection states)
+  private func drawNodesForExport(_ context: CGContext) {
+    for node in graph.nodes {
+      let rect = nodeRect(for: node)
+
+      // Draw shadow
+      context.saveGState()
+      context.setShadow(
+        offset: CGSize(width: 0, height: 2), blur: 4,
+        color: NSColor.black.withAlphaComponent(0.15).cgColor)
+
+      // Draw node background
+      let path = CGPath(
+        roundedRect: rect, cornerWidth: nodeCornerRadius, cornerHeight: nodeCornerRadius,
+        transform: nil)
+      context.addPath(path)
+      context.setFillColor(nodeBackgroundColor.cgColor)
+      context.fillPath()
+
+      context.restoreGState()
+
+      // Draw header background
+      let headerRect = CGRect(
+        x: rect.minX, y: rect.minY, width: rect.width, height: nodeHeaderHeight)
+      let headerPath = CGMutablePath()
+      headerPath.move(to: CGPoint(x: rect.minX + nodeCornerRadius, y: rect.minY))
+      headerPath.addLine(to: CGPoint(x: rect.maxX - nodeCornerRadius, y: rect.minY))
+      headerPath.addArc(
+        center: CGPoint(x: rect.maxX - nodeCornerRadius, y: rect.minY + nodeCornerRadius),
+        radius: nodeCornerRadius, startAngle: -.pi / 2, endAngle: 0, clockwise: false)
+      headerPath.addLine(to: CGPoint(x: rect.maxX, y: headerRect.maxY))
+      headerPath.addLine(to: CGPoint(x: rect.minX, y: headerRect.maxY))
+      headerPath.addLine(to: CGPoint(x: rect.minX, y: rect.minY + nodeCornerRadius))
+      headerPath.addArc(
+        center: CGPoint(x: rect.minX + nodeCornerRadius, y: rect.minY + nodeCornerRadius),
+        radius: nodeCornerRadius, startAngle: .pi, endAngle: -.pi / 2, clockwise: false)
+      headerPath.closeSubpath()
+
+      context.addPath(headerPath)
+      context.setFillColor(nodeHeaderColor.cgColor)
+      context.fillPath()
+
+      // Draw border (default style)
+      context.addPath(path)
+      context.setStrokeColor(nodeBorderColor.cgColor)
+      context.setLineWidth(1)
+      context.strokePath()
+
+      // Draw table name
+      let tableName = node.table.name
+      let tableFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+      let tablePoint = CGPoint(x: rect.minX + 10, y: rect.minY + 8)
+      let tableAttributes: [NSAttributedString.Key: Any] = [
+        .font: tableFont,
+        .foregroundColor: textColor,
+      ]
+      let tableString = NSAttributedString(string: tableName, attributes: tableAttributes)
+      tableString.draw(at: tablePoint)
+
+      // Draw column count badge
+      let columnCount = node.table.columns.count
+      let countFont = NSFont.systemFont(ofSize: 9, weight: .medium)
+      let countAttributes: [NSAttributedString.Key: Any] = [
+        .font: countFont,
+        .foregroundColor: subtleTextColor,
+      ]
+      let countString = NSAttributedString(string: "\(columnCount)", attributes: countAttributes)
+      let countSize = countString.size()
+      let countPoint = CGPoint(x: rect.maxX - countSize.width - 10, y: rect.minY + 10)
+      countString.draw(at: countPoint)
+
+      // Draw columns
+      drawColumnsForExport(context, node: node, rect: rect)
+    }
+  }
+
+  /// Draw columns for export (without search highlighting)
+  private func drawColumnsForExport(_ context: CGContext, node: SchemaNode, rect: CGRect) {
+    let columns = node.table.columns
+    let columnFont = NSFont.systemFont(ofSize: 9, weight: .regular)
+    let pkFont = NSFont.systemFont(ofSize: 9, weight: .medium)
+    let typeFont = NSFont.monospacedSystemFont(ofSize: 8, weight: .regular)
+    let iconFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+
+    for (index, column) in columns.enumerated() {
+      let y = rect.minY + nodeHeaderHeight + 4 + CGFloat(index) * nodeColumnHeight
+
+      // Draw column attribute icons
+      var iconX = rect.minX + 6
+      let iconSpacing: CGFloat = 10
+
+      if column.isPrimaryKey {
+        drawSFSymbol("key.fill", at: CGPoint(x: iconX, y: y), color: .systemYellow, font: iconFont)
+        iconX += iconSpacing
+      }
+
+      if column.isIdentity {
+        drawSFSymbol("number", at: CGPoint(x: iconX, y: y), color: .systemBlue, font: iconFont)
+        iconX += iconSpacing
+      }
+
+      if column.isUnique {
+        drawSFSymbol("touchid", at: CGPoint(x: iconX, y: y), color: .systemPurple, font: iconFont)
+        iconX += iconSpacing
+      }
+
+      if column.isNullable {
+        drawSFSymbol("diamond", at: CGPoint(x: iconX, y: y), color: subtleTextColor, font: iconFont)
+      } else {
+        drawSFSymbol(
+          "diamond.fill", at: CGPoint(x: iconX, y: y), color: .systemGray, font: iconFont)
+      }
+      iconX += iconSpacing
+
+      // Draw column name
+      let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
+      let nameFont = hasSpecialAttributes ? pkFont : columnFont
+      let nameColor = hasSpecialAttributes ? textColor : columnTextColor
+      let namePoint = CGPoint(x: iconX + 2, y: y)
+
+      let nameAttributes: [NSAttributedString.Key: Any] = [
+        .font: nameFont,
+        .foregroundColor: nameColor,
+      ]
+      let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
+      nameString.draw(at: namePoint)
+
+      // Draw type on the right
+      let typeAttributes: [NSAttributedString.Key: Any] = [
+        .font: typeFont,
+        .foregroundColor: subtleTextColor.withAlphaComponent(0.7),
+      ]
+      let typeString = NSAttributedString(string: column.type, attributes: typeAttributes)
+      let typeSize = typeString.size()
+      typeString.draw(at: CGPoint(x: rect.maxX - typeSize.width - 8, y: y + 1))
     }
   }
 }
