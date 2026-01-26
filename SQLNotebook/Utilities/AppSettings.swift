@@ -24,6 +24,88 @@ enum ThemePreference: String, CaseIterable {
   }
 }
 
+/// Accent color preference enum
+enum AccentColor: String, CaseIterable {
+  case purple = "Purple"
+  case blue = "Blue"
+  case green = "Green"
+  case orange = "Orange"
+  case pink = "Pink"
+  case cyan = "Cyan"
+
+  /// Light mode hex color
+  var lightHex: String {
+    switch self {
+    case .purple: return "9333ea"
+    case .blue: return "2563eb"
+    case .green: return "16a34a"
+    case .orange: return "ea580c"
+    case .pink: return "db2777"
+    case .cyan: return "0891b2"
+    }
+  }
+
+  /// Dark mode hex color
+  var darkHex: String {
+    switch self {
+    case .purple: return "a855f7"
+    case .blue: return "3b82f6"
+    case .green: return "22c55e"
+    case .orange: return "f97316"
+    case .pink: return "ec4899"
+    case .cyan: return "06b6d4"
+    }
+  }
+
+  /// Muted light mode hex color
+  var mutedLightHex: String {
+    switch self {
+    case .purple: return "7e22ce"
+    case .blue: return "1d4ed8"
+    case .green: return "15803d"
+    case .orange: return "c2410c"
+    case .pink: return "be185d"
+    case .cyan: return "0e7490"
+    }
+  }
+
+  /// Muted dark mode hex color
+  var mutedDarkHex: String {
+    switch self {
+    case .purple: return "7c3aed"
+    case .blue: return "2563eb"
+    case .green: return "16a34a"
+    case .orange: return "ea580c"
+    case .pink: return "db2777"
+    case .cyan: return "0891b2"
+    }
+  }
+
+  /// Syntax keyword light mode hex color (slightly lighter for readability)
+  var syntaxLightHex: String {
+    switch self {
+    case .purple: return "9333ea"
+    case .blue: return "2563eb"
+    case .green: return "16a34a"
+    case .orange: return "ea580c"
+    case .pink: return "db2777"
+    case .cyan: return "0891b2"
+    }
+  }
+
+  /// Syntax keyword dark mode hex color (slightly lighter for readability)
+  var syntaxDarkHex: String {
+    switch self {
+    case .purple: return "c084fc"
+    case .blue: return "93c5fd"
+    case .green: return "86efac"
+    case .orange: return "fdba74"
+    case .pink: return "f9a8d4"
+    case .cyan: return "67e8f9"
+    }
+  }
+}
+
 /// Global app settings using UserDefaults
 /// These settings apply to the entire app, not per-notebook
 @MainActor
@@ -51,6 +133,7 @@ class AppSettings {
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
     static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
+    static let accentColor = "app.settings.accentColor"
   }
 
   // MARK: - Settings Properties
@@ -207,6 +290,16 @@ class AppSettings {
     }
   }
 
+  /// Accent color preference for the app UI
+  /// Default: purple
+  var accentColor: AccentColor = .purple {
+    didSet {
+      UserDefaults.standard.set(accentColor.rawValue, forKey: Keys.accentColor)
+      // Notify views to update colors
+      NotificationCenter.default.post(name: .accentColorChanged, object: nil)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -306,6 +399,13 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
       syntaxHighlightingEnabled = UserDefaults.standard.bool(forKey: Keys.syntaxHighlightingEnabled)
     }
+
+    // Load accent color preference
+    if let accentString = UserDefaults.standard.string(forKey: Keys.accentColor),
+      let accent = AccentColor(rawValue: accentString)
+    {
+      accentColor = accent
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -327,5 +427,6 @@ class AppSettings {
     hideRunWithQuerySection = false
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
+    accentColor = .purple
   }
 }

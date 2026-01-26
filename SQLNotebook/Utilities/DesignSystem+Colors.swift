@@ -90,21 +90,30 @@ extension Color {
     dark: Color(hex: "d4d4d8")  // Zinc 300 (lighter/whiter for better visibility)
   )
 
-  static let borderFocus = Color(
-    light: Color(hex: "9333ea"),  // Purple 600
-    dark: Color(hex: "a855f7")  // Purple 500
-  )
+  static var borderFocus: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.lightHex),
+      dark: Color(hex: accent.darkHex)
+    )
+  }
 
-  // Accent colors
-  static let accent = Color(
-    light: Color(hex: "9333ea"),  // Purple 600
-    dark: Color(hex: "a855f7")  // Purple 500
-  )
+  // Accent colors (dynamic based on user preference)
+  static var accent: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.lightHex),
+      dark: Color(hex: accent.darkHex)
+    )
+  }
 
-  static let accentMuted = Color(
-    light: Color(hex: "7e22ce"),  // Purple 700
-    dark: Color(hex: "7c3aed")  // Purple 600
-  )
+  static var accentMuted: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.mutedLightHex),
+      dark: Color(hex: accent.mutedDarkHex)
+    )
+  }
 
   // Semantic colors
   static let success = Color(
@@ -133,11 +142,14 @@ extension Color {
     dark: Color(hex: "0f0f11")  // Very dark
   )
 
-  // Syntax highlighting colors
-  static let syntaxKeyword = Color(
-    light: Color(hex: "9333ea"),  // Purple 600
-    dark: Color(hex: "c084fc")  // Purple 400
-  )
+  // Syntax highlighting colors (keyword color matches accent)
+  static var syntaxKeyword: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.syntaxLightHex),
+      dark: Color(hex: accent.syntaxDarkHex)
+    )
+  }
 
   static let syntaxFunction = Color(
     light: Color(hex: "0284c7"),  // Sky 600

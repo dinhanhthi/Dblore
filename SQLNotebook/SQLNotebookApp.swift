@@ -481,4 +481,5 @@ extension Notification.Name {
 
   // Settings change notifications
   static let syntaxHighlightingChanged = Notification.Name("syntaxHighlightingChanged")
+  static let accentColorChanged = Notification.Name("accentColorChanged")
 }

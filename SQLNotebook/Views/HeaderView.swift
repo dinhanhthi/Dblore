@@ -439,7 +439,7 @@ struct ConnectionButton: View {
         // Schema Visualizer button
         Button(action: onToggleSchemaVisualizer) {
           Image(systemName: "point.3.connected.trianglepath.dotted")
-            .foregroundColor(Color(red: 0.0, green: 0.68, blue: 0.94))  // Sky blue
+            .foregroundColor(.accent)
         }
         .buttonStyle(ToolbarButtonStyle(isActive: isSchemaVisualizerActive, iconOnly: true))
         .help(

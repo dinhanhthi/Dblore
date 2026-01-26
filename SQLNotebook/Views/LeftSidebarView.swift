@@ -59,7 +59,7 @@ struct LeftSidebarView: View {
           }) {
             Image(systemName: "point.3.connected.trianglepath.dotted")
               .font(.system(size: 12, weight: .medium))
-              .foregroundColor(Color(red: 0.0, green: 0.68, blue: 0.94))  // Sky blue
+              .foregroundColor(.accent)
           }
           .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
           .help(
