@@ -57,13 +57,13 @@ struct EditorModeView: View {
 
   var body: some View {
     SizeReader { containerSize in
-      let totalHeight = containerSize.height
+      let totalHeight = max(containerSize.height, 1)  // Ensure non-zero
       let minPanelHeight: CGFloat = 250  // Increased from 150 to 250
-      let maxEditorHeight = totalHeight - minPanelHeight
+      let maxEditorHeight = max(totalHeight - minPanelHeight, minPanelHeight)
 
       // Calculate actual heights based on divider position
       let editorHeight = max(minPanelHeight, min(maxEditorHeight, totalHeight * dividerPosition))
-      let resultHeight = totalHeight - editorHeight
+      let resultHeight = max(totalHeight - editorHeight, 0)  // Ensure non-negative
 
       VStack(spacing: 0) {
         // Top: SQL Editor (with distinct background like cell editor)
