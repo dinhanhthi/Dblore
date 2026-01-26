@@ -109,6 +109,11 @@ class SchemaGraphNSView: NSView {
   var showColumnConnections: Bool = false {
     didSet {
       updateColumnConnectionAnimation()
+      // Clear selection when column connections are hidden
+      if !showColumnConnections {
+        selectedColumnConnectionEdgeId = nil
+        hoveredColumnConnectionEdgeId = nil
+      }
       needsDisplay = true
     }
   }
@@ -157,8 +162,9 @@ class SchemaGraphNSView: NSView {
   private var selectedEdgeId: UUID?  // Edge that was clicked
   private let edgeHoverDelay: TimeInterval = 0.3  // 300ms delay before highlighting tables
 
-  // Column connection line hover state
+  // Column connection line hover and selection state
   private var hoveredColumnConnectionEdgeId: UUID?  // Edge whose column connection is being hovered
+  private var selectedColumnConnectionEdgeId: UUID?  // Edge whose column connection is selected (clicked)
   private var columnConnectionAnimationPhase: CGFloat = 0  // Animation phase for dashed lines
   private var columnConnectionAnimationTimer: Timer?  // Timer for dash animation
 
@@ -733,14 +739,15 @@ class SchemaGraphNSView: NSView {
           let targetIndex = targetNode.table.columns.firstIndex(where: { $0.name == targetCol })
         else { continue }
 
-        let isHovered = hoveredColumnConnectionEdgeId == edge.id
+        let isHighlighted =
+          hoveredColumnConnectionEdgeId == edge.id || selectedColumnConnectionEdgeId == edge.id
         drawColumnConnectionLine(
           context,
           sourceRect: sourceRect,
           targetRect: targetRect,
           sourceColumnIndex: sourceIndex,
           targetColumnIndex: targetIndex,
-          isHovered: isHovered,
+          isHighlighted: isHighlighted,
           pathOutput: &paths,
           edgeId: edge.id
         )
@@ -757,19 +764,22 @@ class SchemaGraphNSView: NSView {
     targetRect: CGRect,
     sourceColumnIndex: Int,
     targetColumnIndex: Int,
-    isHovered: Bool,
+    isHighlighted: Bool,
     pathOutput: inout [ColumnConnectionPath],
     edgeId: UUID
   ) {
-    // Calculate Y position for source column
+    // Calculate Y position for source column - align with vertical center of column name text
+    // Text is drawn at y = nodeHeaderHeight + 4 + index * nodeColumnHeight
+    // Font size is 9pt, so text height is ~11px. Center = y + fontSize/2 + small offset
+    let textVerticalCenter: CGFloat = 5  // Approximate center offset for 9pt font
     let sourceY =
       sourceRect.minY + nodeHeaderHeight + 4 + CGFloat(sourceColumnIndex) * nodeColumnHeight
-      + nodeColumnHeight / 2
+      + textVerticalCenter
 
     // Calculate Y position for target column
     let targetY =
       targetRect.minY + nodeHeaderHeight + 4 + CGFloat(targetColumnIndex) * nodeColumnHeight
-      + nodeColumnHeight / 2
+      + textVerticalCenter
 
     // Determine connection points based on relative positions
     let sourceCenter = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
@@ -808,13 +818,13 @@ class SchemaGraphNSView: NSView {
       ))
 
     // Set line style
-    let lineColor: NSColor = isHovered ? .systemGreen : edgeColor.withAlphaComponent(0.6)
-    let lineWidth: CGFloat = isHovered ? 2.0 : 1.0
+    let lineColor: NSColor = isHighlighted ? .systemGreen : edgeColor.withAlphaComponent(0.6)
+    let lineWidth: CGFloat = isHighlighted ? 2.0 : 1.0
 
     context.saveGState()
 
-    // Draw glow effect when hovered
-    if isHovered {
+    // Draw glow effect when highlighted (hovered or selected)
+    if isHighlighted {
       context.setShadow(
         offset: .zero,
         blur: 6,
@@ -906,13 +916,15 @@ class SchemaGraphNSView: NSView {
     }
   }
 
-  /// Get column indices that should be highlighted for a node due to column connection hover
+  /// Get column indices that should be highlighted for a node due to column connection hover or selection
   private func getHighlightedColumnsForNode(_ nodeId: UUID) -> Set<Int> {
-    guard showColumnConnections, let hoveredEdgeId = hoveredColumnConnectionEdgeId else {
-      return []
-    }
+    guard showColumnConnections else { return [] }
 
-    guard let highlightInfo = highlightedColumnsForEdge(hoveredEdgeId) else {
+    // Check both hover and selection states
+    let activeEdgeId = hoveredColumnConnectionEdgeId ?? selectedColumnConnectionEdgeId
+    guard let edgeId = activeEdgeId else { return [] }
+
+    guard let highlightInfo = highlightedColumnsForEdge(edgeId) else {
       return []
     }
 
@@ -1147,15 +1159,26 @@ class SchemaGraphNSView: NSView {
     }
   }
 
-  /// Draw an SF Symbol at the specified location
-  private func drawSFSymbol(_ name: String, at point: CGPoint, color: NSColor, font: NSFont) {
+  /// Draw an SF Symbol at the specified location, vertically centered with the text line
+  /// - Parameters:
+  ///   - name: SF Symbol name
+  ///   - point: Base position (x for horizontal, y is the text baseline position)
+  ///   - color: Symbol color
+  ///   - font: Font used for sizing the symbol
+  ///   - textHeight: Height of the text to center with (default: 11 for 9pt font)
+  private func drawSFSymbol(
+    _ name: String, at point: CGPoint, color: NSColor, font: NSFont, textHeight: CGFloat = 11
+  ) {
     if let symbolImage = NSImage(systemSymbolName: name, accessibilityDescription: nil) {
       let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .medium)
       let configuredImage = symbolImage.withSymbolConfiguration(config)
 
       // Draw the symbol
       let imageSize = CGSize(width: 8, height: 8)
-      let imageRect = CGRect(origin: point, size: imageSize)
+      // Center the icon vertically with the text line
+      let centeredY = point.y + (textHeight - imageSize.height) / 2
+      let imageRect = CGRect(
+        x: point.x, y: centeredY, width: imageSize.width, height: imageSize.height)
 
       // Apply color tint
       let tintedImage = configuredImage?.copy() as? NSImage
@@ -1349,6 +1372,21 @@ class SchemaGraphNSView: NSView {
       return
     }
 
+    // Check if clicking on a column connection line (only when column connections are visible)
+    if showColumnConnections, let edgeId = hitTestColumnConnection(at: point) {
+      // Select/deselect column connection
+      if selectedColumnConnectionEdgeId == edgeId {
+        selectedColumnConnectionEdgeId = nil
+      } else {
+        selectedColumnConnectionEdgeId = edgeId
+      }
+      // Clear other selections
+      selectedEdgeId = nil
+      onNodeSelected?(nil)
+      needsDisplay = true
+      return
+    }
+
     // Check if clicking on an edge (only when table connections are visible)
     if showTableConnections, let edge = hitTestEdge(at: point) {
       // Select/deselect edge
@@ -1357,7 +1395,8 @@ class SchemaGraphNSView: NSView {
       } else {
         selectedEdgeId = edge.id
       }
-      // Clear node selection when selecting edge
+      // Clear other selections
+      selectedColumnConnectionEdgeId = nil
       onNodeSelected?(nil)
       needsDisplay = true
       return
@@ -1368,12 +1407,14 @@ class SchemaGraphNSView: NSView {
       isDraggingCanvas = false
       draggedNodeId = node.id
       selectedEdgeId = nil  // Clear edge selection when selecting node
+      selectedColumnConnectionEdgeId = nil  // Clear column connection selection
       onNodeSelected?(node.id)
     } else {
       isDraggingCanvas = true
       isDraggingNode = false
       draggedNodeId = nil
       selectedEdgeId = nil  // Clear edge selection when clicking canvas
+      selectedColumnConnectionEdgeId = nil  // Clear column connection selection
       onNodeSelected?(nil)
     }
     needsDisplay = true
