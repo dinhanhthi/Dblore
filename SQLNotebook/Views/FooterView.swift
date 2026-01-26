@@ -37,7 +37,7 @@ struct FooterView: View {
 
   var body: some View {
     HStack(spacing: Spacing.lg) {
-      //      Left side
+      // Left side - always visible
       HStack(spacing: Spacing.sm) {
         // App version
         Text("v\(appVersion)")
@@ -60,29 +60,46 @@ struct FooterView: View {
       Spacer()
 
       HStack(spacing: Spacing.sm) {
-        // Last saved
-        if let lastSaved {
-          Text(lastSavedText(lastSaved))
+        // Schema visualizer stats (when active)
+        if viewModel.isSchemaVisualizerActive {
+          if let graph = viewModel.schemaGraph {
+            HStack(spacing: Spacing.sm) {
+              Label("\(graph.nodes.count) tables", systemImage: "tablecells")
+              Label("\(graph.edges.count) relationships", systemImage: "arrow.triangle.branch")
+            }
             .font(.small)
-            .foregroundColor(.foregroundSubtle)
+            .foregroundColor(.foregroundMuted)
 
-          Text("|")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
+            Text("|")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+          }
+        } else {
+          // Normal mode stats
+          // Last saved
+          if let lastSaved {
+            Text(lastSavedText(lastSaved))
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+
+            Text("|")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+          }
+
+          // Notebook stats (only in notebook mode)
+          if !isEditorMode {
+            Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+
+            Text("|")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+          }
         }
 
-        // Notebook stats (only in notebook mode)
-        if !isEditorMode {
-          Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-
-          Text("|")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-        }
-
-        // File size indicator
+        // File size indicator (always visible)
         HStack(spacing: 4) {
           Image(systemName: fileSizeIcon)
             .font(.small)

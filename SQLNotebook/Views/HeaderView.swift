@@ -21,8 +21,14 @@ struct HeaderView: View {
         }
         .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
 
-        // Mode-specific buttons
-        if viewModel.viewMode == .notebook {
+        // Schema Visualizer mode buttons (replaces normal buttons when active)
+        if viewModel.isSchemaVisualizerActive {
+          Divider()
+            .frame(height: 20)
+
+          schemaVisualizerButtons
+        } else if viewModel.viewMode == .notebook {
+          // Notebook mode buttons
           Divider()
             .frame(height: 20)
 
@@ -141,7 +147,7 @@ struct HeaderView: View {
       Spacer()
 
       // Trailing group - Search, Settings and Connection (common to both modes)
-      HStack(spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
         // Search button
         Button(action: {
           viewModel.openSearch()
@@ -217,6 +223,93 @@ struct HeaderView: View {
     }
   }
 
+  // MARK: - Schema Visualizer Buttons
+
+  private var schemaVisualizerButtons: some View {
+    HStack(spacing: Spacing.sm) {
+      // Back button
+      Button(action: { viewModel.hideSchemaVisualizer() }) {
+        Label("Back", systemImage: "chevron.left")
+      }
+      .buttonStyle(ToolbarButtonStyle())
+      .help("Back to \(viewModel.viewMode == .notebook ? "Notebook" : "Editor")")
+
+      Divider()
+        .frame(height: 20)
+
+      // Zoom controls grouped together (tight spacing inside)
+      HStack(spacing: 0) {
+        Button(action: { viewModel.zoomOutVisualizer() }) {
+          Image(systemName: "minus.magnifyingglass")
+        }
+        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+        .help("Zoom Out")
+
+        Text("\(Int(viewModel.visualizerScale * 100))%")
+          .font(.monoSmall)
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 45)
+
+        Button(action: { viewModel.zoomInVisualizer() }) {
+          Image(systemName: "plus.magnifyingglass")
+        }
+        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+        .help("Zoom In")
+      }
+      .padding(.horizontal, Spacing.xs)
+      .padding(.vertical, Spacing.xxs)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.inputBackground)
+      )
+
+      Divider()
+        .frame(height: 20)
+
+      // Reset view button
+      Button(action: { viewModel.resetVisualizerView() }) {
+        Image(systemName: "arrow.counterclockwise")
+      }
+      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+      .help("Reset View")
+
+      // Reset layout button
+      Button(action: {
+        Task {
+          await viewModel.resetSchemaLayout()
+        }
+      }) {
+        Image(systemName: "rectangle.3.group")
+      }
+      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+      .help("Reset Layout to Default")
+      .disabled(viewModel.isLoadingSchemaGraph)
+
+      Divider()
+        .frame(height: 20)
+
+      // Export as PNG button
+      Button(action: { viewModel.exportSchemaAsImage() }) {
+        Image(systemName: "square.and.arrow.up")
+      }
+      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+      .help("Export as PNG")
+      .disabled(viewModel.schemaGraph?.isEmpty ?? true)
+
+      // Refresh button
+      Button(action: {
+        Task {
+          await viewModel.refreshSchemaGraph()
+        }
+      }) {
+        Image(systemName: "arrow.clockwise")
+      }
+      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+      .help("Refresh Schema")
+      .disabled(viewModel.isLoadingSchemaGraph)
+    }
+  }
+
   // MARK: - Run All Destructive Dialog
 
   private var runAllDestructiveDialogTitle: String {
@@ -254,43 +347,45 @@ struct ConnectionButton: View {
   var body: some View {
     if connectionState.isConnected {
       // Connected state - no button style, green text, with info icon
-      HStack(spacing: 0) {
-        Button(action: { showDisconnectConfirmation = true }) {
-          HStack(spacing: Spacing.xs) {
-            connectionIcon
-            Text(connectionText)
-              .foregroundColor(.success)
+      HStack(spacing: Spacing.xs) {
+        HStack(spacing: 0) {
+          Button(action: { showDisconnectConfirmation = true }) {
+            HStack(spacing: Spacing.xs) {
+              connectionIcon
+              Text(connectionText)
+                .foregroundColor(.success)
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .fill(isHoveringDisconnect ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+            )
+            .contentShape(Rectangle())
           }
-          .padding(.horizontal, Spacing.sm)
-          .padding(.vertical, Spacing.xs)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .fill(isHoveringDisconnect ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isHoveringDisconnect)
-        .onHover { hovering in
-          isHoveringDisconnect = hovering
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
+          .buttonStyle(.plain)
+          .animation(.easeInOut(duration: 0.15), value: isHoveringDisconnect)
+          .onHover { hovering in
+            isHoveringDisconnect = hovering
+            if hovering {
+              NSCursor.pointingHand.push()
+            } else {
+              NSCursor.pop()
+            }
           }
-        }
 
-        Button(action: onShowDetails) {
-          Image(systemName: "info.circle")
-        }
-        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-        .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
-        .onHover { hovering in
-          isHoveringInfo = hovering
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
+          Button(action: onShowDetails) {
+            Image(systemName: "info.circle")
+          }
+          .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+          .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
+          .onHover { hovering in
+            isHoveringInfo = hovering
+            if hovering {
+              NSCursor.pointingHand.push()
+            } else {
+              NSCursor.pop()
+            }
           }
         }
 
