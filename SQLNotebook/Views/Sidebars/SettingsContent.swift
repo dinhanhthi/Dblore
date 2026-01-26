@@ -57,68 +57,39 @@ struct SettingsContent: View {
 
       // Editor Settings
       settingsSection(title: "Editor", icon: "text.cursor") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Toggle(
-            "Enable Autocomplete",
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+          SettingsToggle(
+            title: "Enable Autocomplete",
+            description:
+              "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes.",
             isOn: $appSettings.isAutoCompleteEnabled
           )
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-          .tint(.accent)
-
-          Text(
-            "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
 
           // Show Line Numbers toggle (Editor mode only)
           if viewModel.viewMode == .editor {
-            Toggle(
-              "Show Line Numbers",
+            SettingsToggle(
+              title: "Show Line Numbers",
+              description:
+                "Display line numbers in the gutter. Helps with navigation and debugging queries.",
               isOn: $appSettings.showLineNumbers
             )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "Display line numbers in the gutter. Helps with navigation and debugging queries."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
           }
 
           // Word Wrap toggle (both modes)
-          Toggle(
-            "Word Wrap",
+          SettingsToggle(
+            title: "Word Wrap",
+            description: "Wrap long lines to fit the editor width. Use Option+Z to toggle quickly.",
             isOn: $appSettings.wordWrapEnabled
           )
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-          .tint(.accent)
-
-          Text(
-            "Wrap long lines to fit the editor width. Use Option+Z to toggle quickly."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
 
           // Simple Mode toggle (Editor mode only)
           if viewModel.viewMode == .editor {
-            Toggle(
-              "Simple Mode",
+            SettingsToggle(
+              title: "Simple Mode",
+              description:
+                "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file.",
               isOn: $appSettings.editorSimpleMode
             )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
           }
         }
       }
@@ -128,78 +99,41 @@ struct SettingsContent: View {
       // Result Table Settings (Notebook Mode Only)
       if viewModel.viewMode == .notebook {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
-          VStack(alignment: .leading, spacing: Spacing.md) {
+          VStack(alignment: .leading, spacing: Spacing.lg) {
             // Hide Run with Query Section toggle
-            Toggle(
-              "Hide Run with Query Section",
+            SettingsToggle(
+              title: "Hide Run with Query Section",
+              description:
+                "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables.",
               isOn: $appSettings.hideRunWithQuerySection
             )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
 
             // Max Height
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-              HStack {
-                Text("Max Height")
-                  .font(.subheading)
-                  .foregroundColor(.foreground)
-
-                Spacer()
-
-                Text("\(Int(appSettings.maxResultHeight)) pt")
-                  .font(.monoSmall)
-                  .foregroundColor(.foregroundMuted)
-              }
-
-              Slider(
-                value: $appSettings.maxResultHeight,
-                in: 200...1000,
-                step: 50
-              )
-              .tint(.accent)
-
-              Text("Adjust the maximum height of result tables. Values between 200-1000 points.")
-                .font(.small)
-                .foregroundColor(.foregroundSubtle)
-            }
+            SettingsSlider(
+              title: "Max Height",
+              valueText: "\(Int(appSettings.maxResultHeight)) pt",
+              value: Binding(
+                get: { Double(appSettings.maxResultHeight) },
+                set: { appSettings.maxResultHeight = CGFloat($0) }
+              ),
+              range: 200...1000,
+              step: 50,
+              description:
+                "Adjust the maximum height of result tables. Values between 200-1000 points."
+            )
 
             // Max Row Limit
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-              HStack {
-                Text("Max Rows")
-                  .font(.subheading)
-                  .foregroundColor(.foreground)
-
-                Spacer()
-
-                Text("\(appSettings.maxRowLimit) rows")
-                  .font(.monoSmall)
-                  .foregroundColor(.foregroundMuted)
-              }
-
-              Slider(
-                value: Binding(
-                  get: { Double(appSettings.maxRowLimit) },
-                  set: { newValue in
-                    appSettings.maxRowLimit = Int(newValue)
-                  }
-                ),
-                in: 50...100,
-                step: 5
-              )
-              .tint(.accent)
-
-              Text("Maximum rows to fetch from database. Values between 50-100 rows.")
-                .font(.small)
-                .foregroundColor(.foregroundSubtle)
-            }
+            SettingsSlider(
+              title: "Max Rows",
+              valueText: "\(appSettings.maxRowLimit) rows",
+              value: Binding(
+                get: { Double(appSettings.maxRowLimit) },
+                set: { appSettings.maxRowLimit = Int($0) }
+              ),
+              range: 50...100,
+              step: 5,
+              description: "Maximum rows to fetch from database. Values between 50-100 rows."
+            )
           }
         }
 
@@ -209,52 +143,27 @@ struct SettingsContent: View {
       // Result Table Settings (Editor Mode Only)
       if viewModel.viewMode == .editor {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
-          VStack(alignment: .leading, spacing: Spacing.md) {
+          VStack(alignment: .leading, spacing: Spacing.lg) {
             // Hide Run with Query Section toggle
-            Toggle(
-              "Hide Run with Query Section",
+            SettingsToggle(
+              title: "Hide Run with Query Section",
+              description:
+                "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables.",
               isOn: $appSettings.hideRunWithQuerySection
             )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
 
             // Max Row Limit
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-              HStack {
-                Text("Max Rows")
-                  .font(.subheading)
-                  .foregroundColor(.foreground)
-
-                Spacer()
-
-                Text("\(appSettings.editorMaxRowLimit) rows")
-                  .font(.monoSmall)
-                  .foregroundColor(.foregroundMuted)
-              }
-
-              Slider(
-                value: Binding(
-                  get: { Double(appSettings.editorMaxRowLimit) },
-                  set: { newValue in
-                    appSettings.editorMaxRowLimit = Int(newValue)
-                  }
-                ),
-                in: 100...200,
-                step: 10
-              )
-              .tint(.accent)
-
-              Text("Maximum rows to fetch from database. Values between 100-200 rows.")
-                .font(.small)
-                .foregroundColor(.foregroundSubtle)
-            }
+            SettingsSlider(
+              title: "Max Rows",
+              valueText: "\(appSettings.editorMaxRowLimit) rows",
+              value: Binding(
+                get: { Double(appSettings.editorMaxRowLimit) },
+                set: { appSettings.editorMaxRowLimit = Int($0) }
+              ),
+              range: 100...200,
+              step: 10,
+              description: "Maximum rows to fetch from database. Values between 100-200 rows."
+            )
           }
         }
 
@@ -264,21 +173,12 @@ struct SettingsContent: View {
       // Save Settings (Notebook Mode Only)
       if viewModel.viewMode == .notebook {
         settingsSection(title: "Save Options", icon: "square.and.arrow.down.fill") {
-          VStack(alignment: .leading, spacing: Spacing.md) {
-            Toggle(
-              "Include Results When Saving",
-              isOn: $appSettings.includeResultsOnSave
-            )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .tint(.accent)
-
-            Text(
-              "When enabled, query results are saved with the notebook. Disable to reduce file size."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-          }
+          SettingsToggle(
+            title: "Include Results When Saving",
+            description:
+              "When enabled, query results are saved with the notebook. Disable to reduce file size.",
+            isOn: $appSettings.includeResultsOnSave
+          )
         }
 
         Divider()
@@ -286,60 +186,29 @@ struct SettingsContent: View {
 
       // Security Settings
       settingsSection(title: "Security", icon: "lock.shield.fill") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Toggle(
-            "Bypass Destructive Query Confirmation",
-            isOn: $appSettings.bypassDestructiveQueryConfirmation
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+          SettingsToggle(
+            title: "Bypass Destructive Query Confirmation",
+            description:
+              "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases.",
+            warning: viewModel.editingConnectionConfig.readOnly
+              ? "This option is disabled because connection is in read-only mode."
+              : nil,
+            isOn: $appSettings.bypassDestructiveQueryConfirmation,
+            isDisabled: viewModel.editingConnectionConfig.readOnly
           )
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-          .tint(.accent)
-          .disabled(viewModel.editingConnectionConfig.readOnly)
-
-          if viewModel.editingConnectionConfig.readOnly {
-            HStack(spacing: Spacing.xs) {
-              Image(systemName: "exclamationmark.triangle.fill")
-                .font(.small)
-              Text(
-                "This option is disabled because connection is in read-only mode."
-              )
-            }
-            .font(.small)
-            .foregroundColor(.warning)
-          } else {
-            Text(
-              "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases."
-            )
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-          }
 
           // Connection History Size Setting
-          VStack(alignment: .leading, spacing: Spacing.xs) {
-            HStack {
-              Text("Connection History Size")
-                .font(.subheading)
-                .foregroundColor(.foreground)
-
-              Spacer()
-
-              Text("\(appSettings.maxConnectionHistorySize) connections")
-                .font(.monoSmall)
-                .foregroundColor(.foregroundMuted)
-            }
-
-            Slider(
-              value: Binding(
-                get: { Double(appSettings.maxConnectionHistorySize) },
-                set: { newValue in
-                  appSettings.maxConnectionHistorySize = Int(newValue)
-                }
-              ),
-              in: 0...5,
-              step: 1
-            )
-            .tint(.accent)
-
+          SettingsSlider(
+            title: "Connection History Size",
+            valueText: "\(appSettings.maxConnectionHistorySize) connections",
+            value: Binding(
+              get: { Double(appSettings.maxConnectionHistorySize) },
+              set: { appSettings.maxConnectionHistorySize = Int($0) }
+            ),
+            range: 0...5,
+            step: 1
+          ) {
             Text(
               appSettings.maxConnectionHistorySize == 0
                 ? "Connection history is disabled. Passwords will not be saved."
@@ -577,6 +446,149 @@ struct SettingsContent: View {
         .padding(.vertical, Spacing.xs)
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    }
+  }
+}
+
+// MARK: - Settings Toggle Component
+
+/// A reusable toggle component for settings with title and description
+private struct SettingsToggle<DescriptionContent: View>: View {
+  let title: String
+  @Binding var isOn: Bool
+  var isDisabled: Bool = false
+  @ViewBuilder let descriptionContent: () -> DescriptionContent
+
+  // Checkbox width + spacing to align description with label text
+  private let checkboxIndent: CGFloat = 20
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Toggle(title, isOn: $isOn)
+        .font(.bodyText)
+        .foregroundColor(.foreground)
+        .tint(.accent)
+        .disabled(isDisabled)
+
+      descriptionContent()
+        .padding(.leading, checkboxIndent)
+    }
+  }
+}
+
+extension SettingsToggle where DescriptionContent == Text {
+  /// Convenience initializer for simple text description
+  init(
+    title: String,
+    description: String,
+    isOn: Binding<Bool>,
+    isDisabled: Bool = false
+  ) {
+    self.title = title
+    self._isOn = isOn
+    self.isDisabled = isDisabled
+    self.descriptionContent = {
+      Text(description)
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
+    }
+  }
+}
+
+extension SettingsToggle where DescriptionContent == SettingsToggleDescription {
+  /// Convenience initializer for description with optional warning
+  init(
+    title: String,
+    description: String,
+    warning: String?,
+    isOn: Binding<Bool>,
+    isDisabled: Bool = false
+  ) {
+    self.title = title
+    self._isOn = isOn
+    self.isDisabled = isDisabled
+    self.descriptionContent = {
+      SettingsToggleDescription(description: description, warning: warning)
+    }
+  }
+}
+
+/// Helper view for toggle description with optional warning
+struct SettingsToggleDescription: View {
+  let description: String
+  let warning: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Text(description)
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
+
+      if let warning = warning {
+        HStack(alignment: .top, spacing: Spacing.xs) {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .font(.small)
+          Text(warning)
+        }
+        .font(.small)
+        .foregroundColor(.warning)
+      }
+    }
+  }
+}
+
+// MARK: - Settings Slider Component
+
+/// A reusable slider component for settings with title, value display, and description
+private struct SettingsSlider<DescriptionContent: View>: View {
+  let title: String
+  let valueText: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  let step: Double
+  @ViewBuilder let descriptionContent: () -> DescriptionContent
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack {
+        Text(title)
+          .font(.subheading)
+          .foregroundColor(.foreground)
+
+        Spacer()
+
+        Text(valueText)
+          .font(.monoSmall)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Slider(value: $value, in: range, step: step)
+        .tint(.accent)
+
+      descriptionContent()
+    }
+  }
+}
+
+extension SettingsSlider where DescriptionContent == Text {
+  /// Convenience initializer for simple text description
+  init(
+    title: String,
+    valueText: String,
+    value: Binding<Double>,
+    range: ClosedRange<Double>,
+    step: Double,
+    description: String
+  ) {
+    self.title = title
+    self.valueText = valueText
+    self._value = value
+    self.range = range
+    self.step = step
+    self.descriptionContent = {
+      Text(description)
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
     }
   }
 }
