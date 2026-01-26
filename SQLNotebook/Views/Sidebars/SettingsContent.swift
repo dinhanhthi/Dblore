@@ -59,6 +59,13 @@ struct SettingsContent: View {
       settingsSection(title: "Editor", icon: "text.cursor") {
         VStack(alignment: .leading, spacing: Spacing.lg) {
           SettingsToggle(
+            title: "Enable Syntax Highlighting",
+            description:
+              "Colorize SQL keywords, functions, strings, and comments. Disable to improve performance with large files.",
+            isOn: $appSettings.syntaxHighlightingEnabled
+          )
+
+          SettingsToggle(
             title: "Enable Autocomplete",
             description:
               "When enabled, SQL keywords, table names, and column names will be suggested as you type. Works in both Notebook and Editor modes.",

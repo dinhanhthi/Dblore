@@ -152,7 +152,23 @@ enum SQLSyntaxHighlighter {
 
   // MARK: - Highlighting
 
+  /// Returns plain text with default styling (no syntax highlighting)
+  private static func plainText(_ text: String) -> NSAttributedString {
+    let result = NSMutableAttributedString(string: text)
+    let defaultAttributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+      .foregroundColor: NSColor(Color.foreground),
+    ]
+    result.addAttributes(defaultAttributes, range: NSRange(location: 0, length: text.count))
+    return result
+  }
+
   static func highlight(_ text: String) -> NSAttributedString {
+    // Check if syntax highlighting is disabled
+    if !AppSettings.shared.syntaxHighlightingEnabled {
+      return plainText(text)
+    }
+
     let result = NSMutableAttributedString(string: text)
 
     // Default attributes
@@ -180,7 +196,7 @@ enum SQLSyntaxHighlighter {
     isCaseSensitive: Bool,
     currentMatchRange: NSRange?
   ) -> NSAttributedString {
-    // First apply syntax highlighting
+    // First apply syntax highlighting (or plain text if disabled)
     let result = NSMutableAttributedString(attributedString: highlight(text))
 
     // Then apply search highlighting on top

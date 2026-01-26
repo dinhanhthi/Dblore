@@ -272,6 +272,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     private var highlightObserver: NSObjectProtocol?
     private var clearObserver: NSObjectProtocol?
     private var unfocusObserver: NSObjectProtocol?
+    private var syntaxHighlightObserver: NSObjectProtocol?
 
     init(
       text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>
@@ -525,6 +526,19 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           self.isSearchActive = false
 
           // Reapply highlighting without search
+          self.reapplyHighlighting()
+        }
+      }
+
+      // Listen for syntax highlighting setting changes
+      syntaxHighlightObserver = NotificationCenter.default.addObserver(
+        forName: .syntaxHighlightingChanged,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          // Reapply highlighting with new setting
           self.reapplyHighlighting()
         }
       }

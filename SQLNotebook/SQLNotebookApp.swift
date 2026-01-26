@@ -478,4 +478,7 @@ extension Notification.Name {
   // Editor mode notifications
   static let runEditorQuery = Notification.Name("runEditorQuery")
   static let toggleWordWrap = Notification.Name("toggleWordWrap")
+
+  // Settings change notifications
+  static let syntaxHighlightingChanged = Notification.Name("syntaxHighlightingChanged")
 }

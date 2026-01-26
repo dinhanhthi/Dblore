@@ -50,6 +50,7 @@ class AppSettings {
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
+    static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
   }
 
   // MARK: - Settings Properties
@@ -195,6 +196,17 @@ class AppSettings {
     }
   }
 
+  /// Enable syntax highlighting in SQL editors
+  /// When disabled, SQL code is displayed as plain text (faster for large files)
+  /// Default: true (enabled)
+  var syntaxHighlightingEnabled: Bool = true {
+    didSet {
+      UserDefaults.standard.set(syntaxHighlightingEnabled, forKey: Keys.syntaxHighlightingEnabled)
+      // Notify editors to re-apply highlighting
+      NotificationCenter.default.post(name: .syntaxHighlightingChanged, object: nil)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -289,6 +301,11 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.editorSimpleMode) != nil {
       editorSimpleMode = UserDefaults.standard.bool(forKey: Keys.editorSimpleMode)
     }
+
+    // Load syntax highlighting enabled setting
+    if UserDefaults.standard.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
+      syntaxHighlightingEnabled = UserDefaults.standard.bool(forKey: Keys.syntaxHighlightingEnabled)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -309,5 +326,6 @@ class AppSettings {
     wordWrapEnabled = true
     hideRunWithQuerySection = false
     editorSimpleMode = false
+    syntaxHighlightingEnabled = true
   }
 }

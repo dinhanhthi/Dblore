@@ -67,30 +67,37 @@ struct EditorModeView: View {
 
       VStack(spacing: 0) {
         // Top: SQL Editor (with distinct background like cell editor)
-        HStack(spacing: 0) {
-          // Line numbers gutter (conditionally shown based on settings)
-          if appSettings.showLineNumbers {
-            LineNumberGutterView(
-              text: viewModel.editorContent,
-              textView: textViewRef,
-              gutterWidth: gutterWidth
+        ZStack(alignment: .bottomTrailing) {
+          HStack(spacing: 0) {
+            // Line numbers gutter (conditionally shown based on settings)
+            if appSettings.showLineNumbers {
+              LineNumberGutterView(
+                text: viewModel.editorContent,
+                textView: textViewRef,
+                gutterWidth: gutterWidth
+              )
+              .frame(width: gutterWidth, height: editorHeight)
+            }
+
+            // SQL Editor
+            SQLEditorView(
+              content: $viewModel.editorContent,
+              isSelected: true,
+              isFocused: isFocused,
+              onFocus: { isFocused = true },
+              textViewRef: $textViewRef,
+              autocompleteProvider: viewModel.autocompleteProvider,
+              viewModelId: viewModel.id,
+              maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
+              isEditorMode: true,  // Remove border and focus effects
+              wordWrapEnabled: appSettings.wordWrapEnabled
             )
-            .frame(width: gutterWidth, height: editorHeight)
           }
 
-          // SQL Editor
-          SQLEditorView(
-            content: $viewModel.editorContent,
-            isSelected: true,
-            isFocused: isFocused,
-            onFocus: { isFocused = true },
-            textViewRef: $textViewRef,
-            autocompleteProvider: viewModel.autocompleteProvider,
-            viewModelId: viewModel.id,
-            maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
-            isEditorMode: true,  // Remove border and focus effects
-            wordWrapEnabled: appSettings.wordWrapEnabled
-          )
+          // Floating toggle for syntax highlighting
+          SyntaxHighlightToggleButton()
+            .padding(.trailing, Spacing.lg)
+            .padding(.bottom, Spacing.md)
         }
         .background(Color.inputBackground)
         .frame(width: geometry.size.width, height: editorHeight)
@@ -527,6 +534,34 @@ struct EditorModeView: View {
   }
 
   /// Shows first ~30 chars and last ~20 chars with "..." in middle
+}
+
+// MARK: - Syntax Highlight Toggle Button
+
+/// Floating toggle button for quickly enabling/disabling syntax highlighting.
+/// Syncs with AppSettings.syntaxHighlightingEnabled.
+struct SyntaxHighlightToggleButton: View {
+  @Bindable private var appSettings = AppSettings.shared
+  @State private var isHovering = false
+
+  var body: some View {
+    Button(action: {
+      appSettings.syntaxHighlightingEnabled.toggle()
+    }) {
+      Image(systemName: appSettings.syntaxHighlightingEnabled ? "paintbrush.fill" : "paintbrush")
+        .font(.system(size: 12))
+        .contentTransition(.symbolEffect(.replace))
+    }
+    .buttonStyle(FloatingPanelButtonStyle())
+    .help(
+      appSettings.syntaxHighlightingEnabled
+        ? "Disable syntax highlighting" : "Enable syntax highlighting"
+    )
+    .opacity(isHovering ? 1.0 : 0.6)
+    .onHover { hovering in
+      isHovering = hovering
+    }
+  }
 }
 
 // MARK: - Resizable Divider
