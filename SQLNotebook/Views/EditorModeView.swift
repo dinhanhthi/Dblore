@@ -113,6 +113,20 @@ struct EditorModeView: View {
             if let error = result.error {
               errorView(error: error)
                 .frame(maxHeight: .infinity)
+            } else if result.rows.isEmpty && result.columns.isEmpty {
+              // Empty result (no rows and no columns) - e.g., comment-only queries
+              // Execution time is already shown in the header
+              VStack(spacing: Spacing.sm) {
+                Spacer()
+                Image(systemName: "tray")
+                  .font(.system(size: 28))
+                  .foregroundColor(.foregroundSubtle)
+                Text("No result")
+                  .font(.system(size: 13, weight: .medium))
+                  .foregroundColor(.foregroundMuted)
+                Spacer()
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
               VStack(alignment: .leading, spacing: 0) {
                 ResultTableView(

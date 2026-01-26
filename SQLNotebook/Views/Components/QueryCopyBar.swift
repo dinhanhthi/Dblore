@@ -191,7 +191,7 @@ struct QueryCopyBar: View {
   private func downloadButton(result: CellResult, mode: LayoutMode) -> some View {
     Menu {
       // Download section
-      Section("Download") {
+      Section("Download result data") {
         Button(action: { handleDownloadCSV(result: result) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
@@ -224,7 +224,7 @@ struct QueryCopyBar: View {
       Divider()
 
       // Copy section
-      Section("Copy to Clipboard") {
+      Section("Copy result data to clipboard") {
         Button(action: { handleCopyTSV(result: result) }) {
           HStack {
             Image(systemName: showCopyFeedback == .tsv ? "checkmark" : "doc.on.clipboard")

@@ -47,6 +47,9 @@ struct ResultAreaView: View {
         } else if let affectedRows = result.affectedRows, affectedRows > 0, result.rows.isEmpty {
           // Success message for UPDATE/DELETE/INSERT (only when no result table)
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
+        } else if result.rows.isEmpty && result.columns.isEmpty {
+          // Empty result (no rows and no columns) - e.g., comment-only queries
+          EmptyResultView()
         } else {
           // Result table with pagination support
           NotebookResultTableView(
@@ -99,6 +102,26 @@ struct SuccessResultView: View {
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.green.opacity(0.1))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+  }
+}
+
+// MARK: - Empty Result View
+
+struct EmptyResultView: View {
+  var body: some View {
+    VStack(alignment: .center, spacing: Spacing.sm) {
+      Image(systemName: "tray")
+        .font(.system(size: 28))
+        .foregroundColor(.foregroundSubtle)
+
+      Text("No result")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundColor(.foregroundMuted)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, Spacing.xl)
+    .background(Color.cellBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 }
@@ -439,6 +462,14 @@ enum CellResultViews {
 
 #Preview("Success Result") {
   SuccessResultView(affectedRows: 5, executionTime: 0.123)
+    .padding()
+    .frame(width: 600)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Empty Result") {
+  EmptyResultView()
     .padding()
     .frame(width: 600)
     .background(Color.appBackground)
