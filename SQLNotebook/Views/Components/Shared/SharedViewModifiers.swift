@@ -67,8 +67,8 @@ extension View {
     self.confirmationDialog(
       "Confirm Destructive Query",
       isPresented: Binding(
-        get: { viewModel.showQueryConfirmationDialog },
-        set: { viewModel.showQueryConfirmationDialog = $0 }
+        get: { viewModel.queryConfirmationState.showDialog },
+        set: { viewModel.queryConfirmationState.showDialog = $0 }
       ),
       titleVisibility: .visible
     ) {
@@ -85,7 +85,7 @@ extension View {
       VStack(alignment: .leading, spacing: 8) {
         Text("This query will modify data in your database:")
           .font(.body)
-        Text(viewModel.pendingQuery)
+        Text(viewModel.queryConfirmationState.pendingQuery)
           .font(.system(.body, design: .monospaced))
           .lineLimit(5)
         Text("Are you sure you want to proceed?")

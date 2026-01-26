@@ -89,43 +89,29 @@ class NotebookViewModel {
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
 
-  // Toast notification
-  var currentToast: ToastMessage?
-  var isToastHovered = false
-  private var toastDismissTask: Task<Void, Never>?
+  // MARK: - Toast State (10.3.2 optimization)
+  var toastState: ToastState = ToastState()
+  @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
 
-  // File size warning tracking
-  var showFileSizeWarningDialog = false
-  var showFileSizeLargeDialog = false
-  var hasShownWarningDialog = false
-  var hasShownLargeDialog = false
+  // MARK: - File Size State (10.3.2 optimization)
+  var fileSizeState: FileSizeState = FileSizeState()
+  @ObservationIgnored var fileSizeExecutionCounter: Int = 0
+  @ObservationIgnored let fileSizeCheckInterval: Int = 5  // Check every 5 executions
 
-  // File size cache (10.3.4 optimization)
-  var cachedFileSize: Int64 = 0
-  var fileSizeExecutionCounter: Int = 0
-  let fileSizeCheckInterval: Int = 5  // Check every 5 executions
-
-  // MARK: - Search State
+  // MARK: - Search State (10.3.2 optimization)
   var isSearchPanelVisible: Bool = false
   var searchState: SearchState = SearchState()
   var searchFocusTrigger: UUID = UUID()  // Trigger to force re-focus search field
-  var searchTask: Task<Void, Never>?  // Task for cancellation support
-  var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
-  var previousFirstResponder: NSResponder?  // Store previous responder to restore focus after search closes
+  @ObservationIgnored var searchTask: Task<Void, Never>?  // Task for cancellation support
+  @ObservationIgnored var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
+  @ObservationIgnored var previousFirstResponder: NSResponder?  // Store previous responder
 
   // Schema search state (for schema visualizer)
   var schemaSearchState: SchemaSearchState = SchemaSearchState()
-  var schemaSearchTask: Task<Void, Never>?
+  @ObservationIgnored var schemaSearchTask: Task<Void, Never>?
 
-  // MARK: - Query Confirmation State
-  var showQueryConfirmationDialog = false
-  var pendingQueryCellId: UUID?
-  var pendingQuery: String = ""
-
-  // MARK: - Run All Cells Destructive Query Confirmation
-  var showRunAllDestructiveConfirmation = false
-  var runAllDestructiveQueryCount = 0
-  var runAllPendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
+  // MARK: - Query Confirmation State (10.3.2 optimization)
+  var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
 
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
@@ -182,7 +168,7 @@ class NotebookViewModel {
   // MARK: - Toast Notifications
 
   func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
-    currentToast = ToastMessage(message: message, type: type)
+    toastState.show(message, type: type)
     startToastDismissTimer(for: message)
   }
 
@@ -196,20 +182,20 @@ class NotebookViewModel {
 
       // Wait until toast is no longer hovered (max 20 seconds to prevent deadlock)
       var hoverWaitTime = 0
-      while self.isToastHovered && hoverWaitTime < 40 {
+      while self.toastState.isHovered && hoverWaitTime < 40 {
         try? await Task.sleep(for: .seconds(0.5))
         hoverWaitTime += 1
       }
 
       // Dismiss only if the message matches (user might have shown a new toast)
-      if self.currentToast?.message == message {
-        self.currentToast = nil
+      if self.toastState.currentToast?.message == message {
+        self.toastState.dismiss()
       }
     }
   }
 
   func setToastHovered(_ hovered: Bool) {
-    isToastHovered = hovered
+    toastState.setHovered(hovered)
   }
 
   // MARK: - Statistics
@@ -225,30 +211,30 @@ class NotebookViewModel {
   /// Calculate current file size (with results if enabled in settings)
   /// Uses cached value for performance - recalculated every 5 executions (10.3.4)
   var estimatedFileSize: Int64 {
-    cachedFileSize
+    fileSizeState.cachedSize
   }
 
   /// Force recalculate file size and update cache
   func recalculateFileSize() {
     let includeResults = AppSettings.getIncludeResultsOnSave()
-    cachedFileSize =
+    fileSizeState.cachedSize =
       (try? FileOptimizationService.calculateNotebookSize(notebook, includeResults: includeResults))
       ?? 0
   }
 
   /// Get formatted file size string
   var formattedFileSize: String {
-    FileOptimizationService.formatFileSize(estimatedFileSize)
+    fileSizeState.formattedSize
   }
 
   /// Check if file size is large
   var isFileSizeLarge: Bool {
-    estimatedFileSize > FileOptimizationService.largeSizeThreshold
+    fileSizeState.isLarge
   }
 
   /// Check if file size is approaching warning threshold
   var isFileSizeWarning: Bool {
-    estimatedFileSize > FileOptimizationService.warningSizeThreshold
+    fileSizeState.isWarning
   }
 
   // MARK: - Query Confirmation
@@ -283,9 +269,9 @@ class NotebookViewModel {
         }
       } else {
         // Show confirmation dialog
-        pendingQueryCellId = id
-        pendingQuery = query
-        showQueryConfirmationDialog = true
+        queryConfirmationState.pendingCellId = id
+        queryConfirmationState.pendingQuery = query
+        queryConfirmationState.showDialog = true
       }
     } else {
       // Execute directly if not a modification query
@@ -301,19 +287,16 @@ class NotebookViewModel {
     if viewMode == .editor {
       await executeConfirmedEditorQuery()
     } else {
-      guard let cellId = pendingQueryCellId else { return }
+      guard let cellId = queryConfirmationState.pendingCellId else { return }
       await runCell(id: cellId)
 
       // Clear pending state
-      pendingQueryCellId = nil
-      pendingQuery = ""
+      queryConfirmationState.clear()
     }
   }
 
   /// Cancel the pending query execution
   func cancelPendingQuery() {
-    pendingQueryCellId = nil
-    pendingQuery = ""
-    showQueryConfirmationDialog = false
+    queryConfirmationState.clear()
   }
 }

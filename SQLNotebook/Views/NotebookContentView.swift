@@ -71,7 +71,7 @@ struct NotebookContentView: View {
     }
     .alert(
       "File Size Warning",
-      isPresented: $viewModel.showFileSizeWarningDialog,
+      isPresented: $viewModel.fileSizeState.showWarningDialog,
       actions: {
         Button("OK", role: .cancel) {}
         Button("Open Settings") {
@@ -87,7 +87,7 @@ struct NotebookContentView: View {
     )
     .alert(
       "File Size Limit Exceeded",
-      isPresented: $viewModel.showFileSizeLargeDialog,
+      isPresented: $viewModel.fileSizeState.showLargeDialog,
       actions: {
         Button("OK", role: .cancel) {}
         Button("Remove All Results") {

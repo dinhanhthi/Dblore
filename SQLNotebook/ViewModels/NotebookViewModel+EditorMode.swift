@@ -96,9 +96,9 @@ extension NotebookViewModel {
     let isModification = isModificationQuery(query)
     if isModification && !AppSettings.shared.bypassDestructiveQueryConfirmation {
       // Show confirmation dialog
-      pendingQuery = query
-      pendingQueryCellId = nil  // No cell ID in editor mode
-      showQueryConfirmationDialog = true
+      queryConfirmationState.pendingQuery = query
+      queryConfirmationState.pendingCellId = nil  // No cell ID in editor mode
+      queryConfirmationState.showDialog = true
       return
     }
 
@@ -107,10 +107,9 @@ extension NotebookViewModel {
 
   /// Execute the pending editor query after confirmation
   func executeConfirmedEditorQuery() async {
-    guard !pendingQuery.isEmpty else { return }
-    await executeEditorQuery(pendingQuery)
-    pendingQuery = ""
-    pendingQueryCellId = nil
+    guard !queryConfirmationState.pendingQuery.isEmpty else { return }
+    await executeEditorQuery(queryConfirmationState.pendingQuery)
+    queryConfirmationState.clear()
   }
 
   /// Execute query in editor mode (internal)

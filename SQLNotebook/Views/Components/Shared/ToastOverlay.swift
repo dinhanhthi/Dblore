@@ -11,7 +11,7 @@ struct ToastOverlay: View {
   let viewModel: NotebookViewModel
 
   var body: some View {
-    if let toast = viewModel.currentToast {
+    if let toast = viewModel.toastState.currentToast {
       VStack {
         Spacer()
         HStack {

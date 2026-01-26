@@ -73,8 +73,8 @@ struct HeaderView: View {
           .confirmationDialog(
             runAllDestructiveDialogTitle,
             isPresented: Binding(
-              get: { viewModel.showRunAllDestructiveConfirmation },
-              set: { viewModel.showRunAllDestructiveConfirmation = $0 }
+              get: { viewModel.queryConfirmationState.showRunAllConfirmation },
+              set: { viewModel.queryConfirmationState.showRunAllConfirmation = $0 }
             ),
             titleVisibility: .visible
           ) {
@@ -329,13 +329,13 @@ struct HeaderView: View {
   // MARK: - Run All Destructive Dialog
 
   private var runAllDestructiveDialogTitle: String {
-    let count = viewModel.runAllDestructiveQueryCount
+    let count = viewModel.queryConfirmationState.runAllDestructiveCount
     let queryWord = count == 1 ? "query" : "queries"
     return "Run All contains \(count) destructive \(queryWord)"
   }
 
   private var runAllDestructiveDialogMessage: String {
-    let count = viewModel.runAllDestructiveQueryCount
+    let count = viewModel.queryConfirmationState.runAllDestructiveCount
     let queryWord = count == 1 ? "query" : "queries"
     return """
       This batch contains \(count) destructive \(queryWord) (UPDATE, DELETE, INSERT) \

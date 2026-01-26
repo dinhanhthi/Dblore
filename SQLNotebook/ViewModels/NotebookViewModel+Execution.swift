@@ -320,9 +320,9 @@ extension NotebookViewModel {
     if destructiveCount > 0 && !AppSettings.shared.bypassDestructiveQueryConfirmation && !isReadOnly
     {
       // Store pending cells and show confirmation dialog
-      runAllPendingCells = pendingCells
-      runAllDestructiveQueryCount = destructiveCount
-      showRunAllDestructiveConfirmation = true
+      queryConfirmationState.runAllPendingCells = pendingCells
+      queryConfirmationState.runAllDestructiveCount = destructiveCount
+      queryConfirmationState.showRunAllConfirmation = true
       return
     }
 
@@ -332,19 +332,17 @@ extension NotebookViewModel {
 
   /// Execute Run All Cells after user confirmation (allows destructive queries)
   func executeRunAllCellsWithDestructive() async {
-    let pendingCells = runAllPendingCells
-    runAllPendingCells = []
-    runAllDestructiveQueryCount = 0
+    let pendingCells = queryConfirmationState.runAllPendingCells
+    queryConfirmationState.clearRunAll()
 
     await executeRunAllCells(pendingCells: pendingCells, skipDestructive: false)
   }
 
   /// Execute Run All Cells skipping destructive queries
   func executeRunAllCellsSkipDestructive() async {
-    let pendingCells = runAllPendingCells
-    let destructiveCount = runAllDestructiveQueryCount
-    runAllPendingCells = []
-    runAllDestructiveQueryCount = 0
+    let pendingCells = queryConfirmationState.runAllPendingCells
+    let destructiveCount = queryConfirmationState.runAllDestructiveCount
+    queryConfirmationState.clearRunAll()
 
     await executeRunAllCells(pendingCells: pendingCells, skipDestructive: true)
 
@@ -360,9 +358,7 @@ extension NotebookViewModel {
 
   /// Cancel Run All Cells operation
   func cancelRunAllCells() {
-    runAllPendingCells = []
-    runAllDestructiveQueryCount = 0
-    showRunAllDestructiveConfirmation = false
+    queryConfirmationState.clearRunAll()
   }
 
   /// Internal helper to execute Run All Cells
@@ -491,16 +487,18 @@ extension NotebookViewModel {
     let fileSize = estimatedFileSize
 
     // Check if we exceeded large threshold (and haven't shown dialog yet)
-    if fileSize > FileOptimizationService.largeSizeThreshold && !hasShownLargeDialog {
-      hasShownLargeDialog = true
-      showFileSizeLargeDialog = true
+    if fileSize > FileOptimizationService.largeSizeThreshold && !fileSizeState.hasShownLargeDialog {
+      fileSizeState.hasShownLargeDialog = true
+      fileSizeState.showLargeDialog = true
       return  // Don't show warning dialog if we're already showing large dialog
     }
 
     // Check if we exceeded warning threshold (and haven't shown dialog yet)
-    if fileSize > FileOptimizationService.warningSizeThreshold && !hasShownWarningDialog {
-      hasShownWarningDialog = true
-      showFileSizeWarningDialog = true
+    if fileSize > FileOptimizationService.warningSizeThreshold
+      && !fileSizeState.hasShownWarningDialog
+    {
+      fileSizeState.hasShownWarningDialog = true
+      fileSizeState.showWarningDialog = true
     }
   }
 

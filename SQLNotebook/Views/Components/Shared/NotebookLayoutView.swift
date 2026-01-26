@@ -78,7 +78,7 @@ struct NotebookLayoutView<Content: View>: View {
       // Toast notification overlay
       ToastOverlay(viewModel: viewModel)
     }
-    .animation(.easeInOut(duration: 0.4), value: viewModel.currentToast)
+    .animation(.easeInOut(duration: 0.4), value: viewModel.toastState.currentToast)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
