@@ -5,9 +5,10 @@
 //  Comprehensive unit tests for cell value validation logic
 //
 
-import Testing
-@testable import SQLNotebook
 import Foundation
+import Testing
+
+@testable import SQLNotebook
 
 @Suite("Cell Value Validator Tests")
 @MainActor
@@ -23,9 +24,9 @@ struct CellValueValidatorTests {
       "-1",
       "42",
       "-42",
-      "2147483647",     // Int max (32-bit)
-      "-2147483648",    // Int min (32-bit)
-      "9223372036854775807"  // Int64 max
+      "2147483647",  // Int max (32-bit)
+      "-2147483648",  // Int min (32-bit)
+      "9223372036854775807",  // Int64 max
     ]
 
     for input in validIntegers {
@@ -46,15 +47,17 @@ struct CellValueValidatorTests {
       ("1,000", "Invalid integer format"),
       ("123 456", "Invalid integer format"),
       ("0x1F", "Invalid integer format"),  // Hex not supported
-      ("  42  ", "Invalid integer format"), // Whitespace not trimmed
+      ("  42  ", "Invalid integer format"),  // Whitespace not trimmed
       ("42abc", "Invalid integer format"),  // Extra characters
-      ("abc42", "Invalid integer format")
+      ("abc42", "Invalid integer format"),
     ]
 
     for (input, expectedError) in invalidIntegers {
       let result = CellValueValidator.validate(input, for: .int(0))
       #expect(!result.isValid, "'\(input)' should be invalid integer")
-      #expect(result.errorMessage == expectedError, "Expected error: \(expectedError), got: \(result.errorMessage ?? "nil")")
+      #expect(
+        result.errorMessage == expectedError,
+        "Expected error: \(expectedError), got: \(result.errorMessage ?? "nil")")
     }
   }
 
@@ -74,7 +77,7 @@ struct CellValueValidatorTests {
       "-2.5e-3",
       "inf",
       "-inf",
-      "Infinity"
+      "Infinity",
     ]
 
     for input in validDoubles {
@@ -92,9 +95,9 @@ struct CellValueValidatorTests {
       ("12.34.56", "Invalid number format"),
       ("1,234.56", "Invalid number format"),
       ("12 34", "Invalid number format"),
-      ("  3.14  ", "Invalid number format"), // Whitespace not trimmed
-      ("3.14abc", "Invalid number format"),   // Extra characters
-      ("abc3.14", "Invalid number format")
+      ("  3.14  ", "Invalid number format"),  // Whitespace not trimmed
+      ("3.14abc", "Invalid number format"),  // Extra characters
+      ("abc3.14", "Invalid number format"),
     ]
 
     for (input, expectedError) in invalidDoubles {
@@ -113,7 +116,7 @@ struct CellValueValidatorTests {
       "null",
       "NULL",
       "Null",
-      "nUlL"
+      "nUlL",
     ]
 
     for input in validNulls {
@@ -129,10 +132,10 @@ struct CellValueValidatorTests {
       "nil",
       "none",
       "undefined",
-      "null ",    // Extra space
-      " null",    // Leading space
-      "null1",    // Extra characters
-      "1null"
+      "null ",  // Extra space
+      " null",  // Leading space
+      "null1",  // Extra characters
+      "1null",
     ]
 
     for input in invalidNulls {
@@ -155,11 +158,11 @@ struct CellValueValidatorTests {
       "[\"a\", \"b\", \"c\"]",
       "{\"nested\": {\"key\": \"value\"}}",
       "[{\"id\": 1}, {\"id\": 2}]",
-      "null",     // JSON null is valid
-      "true",     // JSON boolean
+      "null",  // JSON null is valid
+      "true",  // JSON boolean
       "false",
-      "42",       // JSON number
-      "\"string\""  // JSON string
+      "42",  // JSON number
+      "\"string\"",  // JSON string
     ]
 
     for input in validJSON {
@@ -190,7 +193,7 @@ struct CellValueValidatorTests {
       ("{,}", "Invalid JSON syntax"),  // Just comma
       ("[ , ]", "Invalid JSON syntax"),  // Just comma in array
       ("{\"key\": , \"value2\": \"test\"}", "Invalid JSON syntax"),  // Missing value before comma
-      ("[1, , 3]", "Invalid JSON syntax")  // Empty element in array
+      ("[1, , 3]", "Invalid JSON syntax"),  // Empty element in array
     ]
 
     for (input, expectedError) in invalidJSON {
@@ -207,7 +210,7 @@ struct CellValueValidatorTests {
     let validDates = [
       "2024-02-20T14:15:00Z",
       "2024-01-01T00:00:00Z",
-      "2023-12-31T23:59:59Z"
+      "2023-12-31T23:59:59Z",
     ]
 
     for input in validDates {
@@ -222,7 +225,7 @@ struct CellValueValidatorTests {
     let validDates = [
       "2024-02-20 14:15:00",
       "2024-01-01 00:00:00",
-      "2023-12-31 23:59:59"
+      "2023-12-31 23:59:59",
     ]
 
     for input in validDates {
@@ -237,12 +240,12 @@ struct CellValueValidatorTests {
     // This is the critical test case mentioned in the requirements
     let invalidDates = [
       "2024-02-20T14:15:00Z asdasda",  // Extra text after valid date
-      "2024-02-20 14:15:00 extra",     // Extra text after valid timestamp
-      "prefix 2024-02-20T14:15:00Z",   // Prefix before valid date
-      "2024-02-20T14:15:00Z\n",        // Newline after
-      "2024-02-20 14:15:00\t",         // Tab after
-      " 2024-02-20T14:15:00Z",         // Leading space
-      "2024-02-20T14:15:00Z "          // Trailing space
+      "2024-02-20 14:15:00 extra",  // Extra text after valid timestamp
+      "prefix 2024-02-20T14:15:00Z",  // Prefix before valid date
+      "2024-02-20T14:15:00Z\n",  // Newline after
+      "2024-02-20 14:15:00\t",  // Tab after
+      " 2024-02-20T14:15:00Z",  // Leading space
+      "2024-02-20T14:15:00Z ",  // Trailing space
     ]
 
     for input in invalidDates {
@@ -257,13 +260,13 @@ struct CellValueValidatorTests {
     let invalidDates = [
       ("", "Date cannot be empty"),
       ("2024-02-20", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Missing time
-      ("14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),    // Only time
+      ("14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Only time
       ("2024/02/20 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Wrong separator
       ("20-02-2024 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Wrong order
       ("Feb 20, 2024", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
       ("2024-13-01 00:00:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Invalid month
       ("2024-02-30 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Invalid day
-      ("abc", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)")
+      ("abc", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
     ]
 
     for (input, expectedError) in invalidDates {
@@ -299,7 +302,7 @@ struct CellValueValidatorTests {
       "y",
       "n",
       "Y",
-      "N"
+      "N",
     ]
 
     for input in validBooleans {
@@ -323,7 +326,7 @@ struct CellValueValidatorTests {
       "1true",
       " true",
       "true ",
-      "abc"
+      "abc",
     ]
 
     for input in invalidBooleans {
@@ -339,10 +342,10 @@ struct CellValueValidatorTests {
   func binaryDataValidInputs() {
     let validBinaryData = [
       "48656c6c6f",  // Hex string
-      "SGVsbG8=",    // Base64
+      "SGVsbG8=",  // Base64
       "binary data",  // Plain text
       "\\x48656c6c6f",  // Postgres hex format
-      "any non-empty string"
+      "any non-empty string",
     ]
 
     for input in validBinaryData {
@@ -375,7 +378,7 @@ struct CellValueValidatorTests {
       "special !@#$%^&*() chars",
       "emoji 🎉🔥",
       "newline\ncharacter",
-      "tab\tcharacter"
+      "tab\tcharacter",
     ]
 
     for input in anyStrings {
@@ -394,7 +397,7 @@ struct CellValueValidatorTests {
       "  ",
       "\t",
       "\n",
-      "\r\n"
+      "\r\n",
     ]
 
     // Integer should reject whitespace

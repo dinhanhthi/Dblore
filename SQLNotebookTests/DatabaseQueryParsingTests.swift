@@ -6,9 +6,10 @@
 //  Tests stripAllComments, stripLeadingComments, isSelectQuery, extractLimitValue, etc.
 //
 
-import Testing
-@testable import SQLNotebook
 import Foundation
+import Testing
+
+@testable import SQLNotebook
 
 @Suite("Database Query Parsing Tests")
 @MainActor
@@ -86,11 +87,11 @@ struct DatabaseQueryParsingTests {
     func removeMultiLineCommentSpanningLines() throws {
       let manager = DatabaseConnectionManager()
       let query = """
-      /* This is a
-      multi-line
-      comment */
-      SELECT * FROM users
-      """
+        /* This is a
+        multi-line
+        comment */
+        SELECT * FROM users
+        """
       let result = manager.stripAllComments(query)
       #expect(result.contains("SELECT * FROM users"), "Should preserve SQL")
       #expect(!result.contains("multi-line"), "Should remove comment content")
@@ -141,7 +142,9 @@ struct DatabaseQueryParsingTests {
       let query = "SELECT '-- not a comment' FROM users -- real comment"
       let result = manager.stripAllComments(query)
       // Note: Comment at end without newline doesn't append newline
-      #expect(result == "SELECT '-- not a comment' FROM users ", "Should preserve string but remove comment")
+      #expect(
+        result == "SELECT '-- not a comment' FROM users ",
+        "Should preserve string but remove comment")
       #expect(result.contains("'-- not a comment'"), "Should keep string literal")
     }
 
@@ -182,10 +185,10 @@ struct DatabaseQueryParsingTests {
     func realWorldQueryWithCommentsAndLimit() throws {
       let manager = DatabaseConnectionManager()
       let query = """
-      -- LIMIT 3
-      -- LIMIT 5
-      SELECT * FROM bot
-      """
+        -- LIMIT 3
+        -- LIMIT 5
+        SELECT * FROM bot
+        """
       let result = manager.stripAllComments(query)
       #expect(result.contains("SELECT * FROM bot"), "Should preserve SQL")
       #expect(!result.contains("LIMIT 3"), "Should remove comment with LIMIT 3")
@@ -825,6 +828,58 @@ struct DatabaseQueryParsingTests {
     }
   }
 
+  // MARK: - SQL Syntax Behavior Tests
+
+  @Suite("SQL Syntax Behavior - Alias and Typos")
+  struct SQLSyntaxBehaviorTests {
+
+    @Test("Trailing word after table name is treated as table alias by SQL")
+    func trailingWordTreatedAsAlias() throws {
+      // IMPORTANT: This test documents expected SQL behavior, not a bug!
+      // Query: "SELECT col FROM table_name limi" is VALID SQL because:
+      // - "limi" is parsed as a table alias (equivalent to "FROM table_name AS limi")
+      // - PostgreSQL, MySQL, SQLite all allow "FROM table alias" syntax without AS keyword
+      // - This is standard SQL behavior, not a bug in SQLNotebook
+
+      // The query is syntactically valid - we're just checking our parser doesn't reject it
+      let manager = DatabaseConnectionManager()
+
+      // These queries are ALL valid SQL (trailing word = alias):
+      let validQueries = [
+        "SELECT * FROM users u",  // Common alias syntax
+        "SELECT * FROM users AS u",  // Explicit alias syntax
+        "SELECT * FROM bot limi",  // Looks like typo but is valid alias
+        "SELECT * FROM bot whatever",  // Any word can be alias
+      ]
+
+      for query in validQueries {
+        // Our isSelectQuery should recognize these as SELECT queries
+        #expect(manager.isSelectQuery(query) == true, "'\(query)' should be recognized as SELECT")
+      }
+    }
+
+    @Test("Limit typo 'limi' would become alias when wrapped with LIMIT")
+    func limitTypoBehavior() async throws {
+      // When user types "SELECT * FROM bot limi" intending "SELECT * FROM bot LIMIT"
+      // but typos "LIMIT" as "limi", the query becomes valid because:
+      // - "limi" is parsed as table alias
+      // - Our wrapQueryWithLimit will add actual LIMIT clause
+      // Final query: "SELECT * FROM bot limi LIMIT <maxRows>" - valid SQL!
+
+      let manager = DatabaseConnectionManager()
+      let query = "SELECT * FROM bot limi"
+      let result = await manager.wrapQueryWithLimit(query, maxRows: 100)
+
+      // The result is valid SQL: "SELECT * FROM bot limi LIMIT 100"
+      // PostgreSQL interprets this as: SELECT * FROM bot AS limi LIMIT 100
+      #expect(result.contains("LIMIT 100"), "Should add LIMIT clause")
+      #expect(result.contains("limi"), "Alias 'limi' should be preserved")
+
+      // This is expected behavior - not a bug!
+      // User should check their query if they intended to write "LIMIT"
+    }
+  }
+
   // MARK: - Integration Tests - Real-world Scenarios
 
   @Suite("Integration - Real-world Scenarios")
@@ -836,9 +891,9 @@ struct DatabaseQueryParsingTests {
 
       // User writes a query with LIMIT in comment (maybe old query they commented out)
       let userQuery = """
-      -- Old limit: LIMIT 1000
-      SELECT * FROM large_table
-      """
+        -- Old limit: LIMIT 1000
+        SELECT * FROM large_table
+        """
 
       // App wraps with maxRows = 100
       let result = await manager.wrapQueryWithLimit(userQuery, maxRows: 100)
@@ -856,10 +911,10 @@ struct DatabaseQueryParsingTests {
       let manager = DatabaseConnectionManager()
 
       let query = """
-      SELECT /* user cols */ name, email, '-- not a comment' AS note
-      FROM users -- active users only
-      WHERE status = 'active'
-      """
+        SELECT /* user cols */ name, email, '-- not a comment' AS note
+        FROM users -- active users only
+        WHERE status = 'active'
+        """
 
       // Strip comments
       let stripped = manager.stripAllComments(query)
@@ -878,10 +933,10 @@ struct DatabaseQueryParsingTests {
       let manager = DatabaseConnectionManager()
 
       let query = """
-      -- Pagination: 100 rows per page
-      -- LIMIT 100 OFFSET 200
-      SELECT id, name FROM products ORDER BY id
-      """
+        -- Pagination: 100 rows per page
+        -- LIMIT 100 OFFSET 200
+        SELECT id, name FROM products ORDER BY id
+        """
 
       // Wrap with maxRows = 50
       let result = await manager.wrapQueryWithLimit(query, maxRows: 50)
@@ -898,15 +953,15 @@ struct DatabaseQueryParsingTests {
       let manager = DatabaseConnectionManager()
 
       let query = """
-      -- Start of query
-      SELECT
-        u.id,
-        u.name, /* user name */
-        u.email /* contact */
-      FROM users u
-      WHERE u.active = true
-      -- End of query
-      """
+        -- Start of query
+        SELECT
+          u.id,
+          u.name, /* user name */
+          u.email /* contact */
+        FROM users u
+        WHERE u.active = true
+        -- End of query
+        """
 
       // Strip comments
       let stripped = manager.stripAllComments(query)

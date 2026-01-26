@@ -2,9 +2,10 @@
 // Unit tests for Global Search functionality
 // Tests search highlighting, match finding, and navigation
 
-import Testing
-@testable import SQLNotebook
 import Foundation
+import Testing
+
+@testable import SQLNotebook
 
 @Suite("Global Search Tests")
 @MainActor

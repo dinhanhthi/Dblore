@@ -3,8 +3,9 @@
 //  SQLNotebookTests
 //
 
-import Testing
 import Foundation
+import Testing
+
 @testable import SQLNotebook
 
 struct AppLoggerTests {
