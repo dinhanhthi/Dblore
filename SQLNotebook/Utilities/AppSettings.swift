@@ -49,6 +49,7 @@ class AppSettings {
     static let maxConnectionHistorySize = "app.settings.maxConnectionHistorySize"
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
+    static let editorSimpleMode = "app.settings.editorSimpleMode"
   }
 
   // MARK: - Settings Properties
@@ -184,6 +185,16 @@ class AppSettings {
     }
   }
 
+  /// Editor Simple Mode - controls Run behavior when no selection
+  /// When OFF: Run executes the entire file (default)
+  /// When ON: Run executes only the query at cursor position
+  /// Default: false (off - traditional behavior)
+  var editorSimpleMode: Bool = false {
+    didSet {
+      UserDefaults.standard.set(editorSimpleMode, forKey: Keys.editorSimpleMode)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -273,6 +284,11 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.hideRunWithQuerySection) != nil {
       hideRunWithQuerySection = UserDefaults.standard.bool(forKey: Keys.hideRunWithQuerySection)
     }
+
+    // Load editor simple mode setting
+    if UserDefaults.standard.object(forKey: Keys.editorSimpleMode) != nil {
+      editorSimpleMode = UserDefaults.standard.bool(forKey: Keys.editorSimpleMode)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -292,5 +308,6 @@ class AppSettings {
     maxConnectionHistorySize = 5
     wordWrapEnabled = true
     hideRunWithQuerySection = false
+    editorSimpleMode = false
   }
 }

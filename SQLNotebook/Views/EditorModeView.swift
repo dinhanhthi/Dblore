@@ -135,7 +135,7 @@ struct EditorModeView: View {
           .frame(width: geometry.size.width, height: resultHeight)
         } else {
           // Empty state
-          VStack {
+          VStack(spacing: Spacing.sm) {
             Spacer()
             Text("No results yet")
               .font(.system(size: 14))

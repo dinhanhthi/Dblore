@@ -9,7 +9,9 @@ import Foundation
 // MARK: - Editor Mode
 
 extension NotebookViewModel {
-  /// Get selected text from editor, or entire content if no selection
+  /// Get selected text from editor, or content based on Simple Mode setting
+  /// - Simple Mode OFF: Return entire content if no selection
+  /// - Simple Mode ON: Return query at cursor position if no selection
   func getEditorQueryText() -> String? {
     // Try to get selected text from editor
     if let textView = editorTextView {
@@ -20,13 +22,71 @@ extension NotebookViewModel {
           .trimmingCharacters(in: .whitespacesAndNewlines)
       }
     }
-    // No selection, return entire content
-    return editorContent.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // No selection - behavior depends on Simple Mode setting
+    if AppSettings.shared.editorSimpleMode {
+      // Simple Mode: Return query at cursor position
+      return getQueryAtCursor()
+    } else {
+      // Normal Mode: Return entire content
+      return editorContent.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+  }
+
+  /// Get the SQL query(ies) on the current line where cursor is positioned
+  /// Returns the content of the current line (may contain multiple statements)
+  /// Returns nil if the line is empty or contains only comments/whitespace
+  func getQueryAtCursor() -> String? {
+    guard let textView = editorTextView,
+      let textStorage = textView.textStorage
+    else {
+      return nil
+    }
+
+    let fullText = textStorage.string
+    guard !fullText.isEmpty else { return nil }
+
+    let cursorPosition = textView.selectedRange().location
+    guard cursorPosition <= fullText.count else { return nil }
+
+    // Get the line range containing the cursor
+    let nsString = fullText as NSString
+    let lineRange = nsString.lineRange(for: NSRange(location: cursorPosition, length: 0))
+    let lineContent = nsString.substring(with: lineRange)
+
+    // Trim and check if line has executable content (not just comments/whitespace)
+    let trimmed = lineContent.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    // Check if the line contains only comments
+    if connectionManager.isCommentOnlyStatement(trimmed) {
+      return nil
+    }
+
+    return trimmed
+  }
+
+  /// Clear all editor results (used when Simple Mode runs on empty/comment-only line)
+  private func clearEditorResults() {
+    editorResult = nil
+    editorStatementResults = []
+    selectedStatementIndex = 0
+    totalExecutionTime = 0
+    editorPaginationInfo = nil
+    editorStatementPaginationInfo.removeAll()
   }
 
   /// Run query in editor mode (selection if any, otherwise all content)
   func runEditorQuery() async {
-    guard let query = getEditorQueryText(), !query.isEmpty else { return }
+    let query = getEditorQueryText()
+
+    // In Simple Mode, clear results if no executable query on current line
+    if AppSettings.shared.editorSimpleMode && (query == nil || query!.isEmpty) {
+      clearEditorResults()
+      return
+    }
+
+    guard let query = query, !query.isEmpty else { return }
     guard connectionState == .connected else {
       showToast("Not connected to database", type: .error)
       return

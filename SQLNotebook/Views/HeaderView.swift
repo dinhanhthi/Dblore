@@ -145,7 +145,7 @@ struct HeaderView: View {
           }
           .buttonStyle(ToolbarButtonStyle())
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
-          .help("Run query (⌘R / ⌘Enter) - runs selection if any, otherwise runs all")
+          .help(editorRunButtonHelp)
         }
       }
 
@@ -226,6 +226,16 @@ struct HeaderView: View {
     .background(Color.appBackground)
     .overlay(alignment: .bottom) {
       Divider()
+    }
+  }
+
+  // MARK: - Help Text
+
+  private var editorRunButtonHelp: String {
+    if AppSettings.shared.editorSimpleMode {
+      return "Run query (⌘R / ⌘Enter) - runs selection, or query at cursor"
+    } else {
+      return "Run query (⌘R / ⌘Enter) - runs selection, or entire file"
     }
   }
 

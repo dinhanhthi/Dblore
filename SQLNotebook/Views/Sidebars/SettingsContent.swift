@@ -103,6 +103,23 @@ struct SettingsContent: View {
           )
           .font(.small)
           .foregroundColor(.foregroundSubtle)
+
+          // Simple Mode toggle (Editor mode only)
+          if viewModel.viewMode == .editor {
+            Toggle(
+              "Simple Mode",
+              isOn: $appSettings.editorSimpleMode
+            )
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+            .tint(.accent)
+
+            Text(
+              "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file."
+            )
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+          }
         }
       }
 
