@@ -217,7 +217,12 @@ struct HeaderView: View {
               viewModel.showConnectionDetails()
             }
           },
-          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() }
+          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() },
+          onSwitchToReadOnly: {
+            Task {
+              await viewModel.enableReadOnlyMode()
+            }
+          }
         )
       }
     }
@@ -355,10 +360,16 @@ struct ConnectionButton: View {
   let onDisconnect: () -> Void
   let onShowDetails: () -> Void
   let onToggleSchemaVisualizer: () -> Void
+  let onSwitchToReadOnly: () -> Void
 
   @State private var showDisconnectConfirmation = false
   @State private var isHoveringDisconnect = false
   @State private var isHoveringInfo = false
+
+  /// Check if connection is in read-only mode
+  private var isReadOnly: Bool {
+    connectionConfig?.readOnly ?? false
+  }
 
   var body: some View {
     if connectionState.isConnected {
@@ -424,6 +435,12 @@ struct ConnectionButton: View {
       ) {
         Button("Disconnect", role: .destructive) {
           onDisconnect()
+        }
+        // Show "Switch to Read-only" only when not already in read-only mode
+        if !isReadOnly {
+          Button("Switch to Read-only") {
+            onSwitchToReadOnly()
+          }
         }
         Button("Cancel", role: .cancel) {}
       } message: {
