@@ -43,11 +43,6 @@
 			path = SQLNotebookTests;
 			sourceTree = "<group>";
 		};
-		D30425832F031148008916E0 /* SQLNotebookUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = SQLNotebookUITests;
-			sourceTree = "<group>";
-		};
 		D3E0FB952EF70DBB009A0E5A /* SQLNotebook */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -90,7 +85,6 @@
 				D304258D2F0314CC008916E0 /* SQLNotebook.xctestplan */,
 				D3E0FB952EF70DBB009A0E5A /* SQLNotebook */,
 				D30425762F0310D3008916E0 /* SQLNotebookTests */,
-				D30425832F031148008916E0 /* SQLNotebookUITests */,
 				D304258E2F033777008916E0 /* Frameworks */,
 				D3E0FB942EF70DBB009A0E5A /* Products */,
 			);
