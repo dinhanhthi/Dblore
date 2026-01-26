@@ -88,7 +88,12 @@ struct SizeReader<Content: View>: View {
         }
       }
       .overlay {
-        content(size)
+        // Only render content when we have valid dimensions
+        // This prevents "Invalid view geometry: width is negative" warnings
+        // that occur when content tries to use zero/negative dimensions
+        if size.width > 0 && size.height > 0 {
+          content(size)
+        }
       }
   }
 }
