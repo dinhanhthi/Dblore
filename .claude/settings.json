@@ -1,7 +1,4 @@
 {
   "model": "sonnet",
-  "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "XcodeBuildMCP"
-  ]
+  "enableAllProjectMcpServers": true
 }
