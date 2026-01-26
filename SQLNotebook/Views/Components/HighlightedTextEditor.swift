@@ -218,8 +218,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.layoutManager?.ensureLayout(for: textView.textContainer!)
 
     // Only update text from external source if different
-    // Don't update if textView is first responder (user is typing)
-    if textView.string != text, textView.window?.firstResponder != textView {
+    // Note: We allow update even when first responder for external file reload scenarios
+    if textView.string != text {
       // Apply syntax highlighting when updating from external source
       context.coordinator.applyHighlighting(to: textView, text: text)
 

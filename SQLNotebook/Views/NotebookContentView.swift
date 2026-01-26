@@ -108,9 +108,29 @@ struct NotebookContentView: View {
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
+    .fileConflictAlert(
+      state: $document.fileConflictState,
+      hasUnsavedChanges: lastSaved == nil,
+      onKeepMyVersion: {
+        // Mark document as dirty to preserve local version
+        syncDocument()
+        document.fileConflictState.dismiss()
+      },
+      onLoadExternal: {
+        reloadExternalContent()
+      }
+    )
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
+
+      // Set up file URL for external change monitoring
+      setupFileMonitoring()
+
+      // Set up callback for external reload
+      document.onExternalReload = { [self] in
+        viewModel.notebook = document.notebook
+      }
 
       // Auto-connect to saved session if available
       viewModel.autoConnectIfNeeded()
@@ -118,10 +138,62 @@ struct NotebookContentView: View {
     .onDisappear {
       removeKeyEventMonitor()
       viewModel.onDocumentChanged = nil
+      document.onExternalReload = nil
 
       // Disconnect from database when window closes to prevent connection leaks
       Task {
         await viewModel.connectionManager.disconnect()
+      }
+    }
+  }
+
+  // MARK: - External Content Reload
+
+  private func reloadExternalContent() {
+    do {
+      try document.reloadFromDisk()
+      // Update viewModel with reloaded notebook
+      viewModel.notebook = document.notebook
+      // Reset lastSaved to indicate clean state
+      lastSaved = Date()
+    } catch {
+      print("❌ [NotebookContentView] Failed to reload from disk: \(error)")
+    }
+    document.fileConflictState.dismiss()
+  }
+
+  // MARK: - File Monitoring Setup
+
+  private func setupFileMonitoring() {
+    // Get file URL from NSDocumentController
+    // Try multiple times with increasing delays to ensure window is ready
+    let notebookId = document.notebook.id
+    let delays = [0.1, 0.5, 1.0]
+
+    for delay in delays {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak document] in
+        guard let document = document else { return }
+        // Skip if URL already set
+        guard document.presentedItemURL == nil else { return }
+
+        // Find matching NSDocument by comparing notebook ID
+        for doc in NSDocumentController.shared.documents {
+          guard let nsDoc = doc as? NSDocument,
+            let fileURL = nsDoc.fileURL,
+            fileURL.pathExtension == "sqlnb"
+          else { continue }
+
+          // Try to match by reading file and comparing notebook ID
+          if let data = try? Data(contentsOf: fileURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let idString = json["id"] as? String,
+            let fileId = UUID(uuidString: idString),
+            fileId == notebookId
+          {
+            document.setFileURL(fileURL)
+            return
+          }
+        }
       }
     }
   }
@@ -132,22 +204,15 @@ struct NotebookContentView: View {
     // Capture old value before changing
     let oldNotebook = document.notebook
 
-    print(
-      "🔄 [NotebookContentView] syncDocument() - notebook changed (cells: \(viewModel.notebook.cells.count))"
-    )
-
     // Sync notebook back to document
     document.notebook = viewModel.notebook
 
     // Register undo action to mark document as dirty
     // This is critical for ReferenceFileDocument to know the document has changed
     if let undoManager = undoManager {
-      print("📝 [NotebookContentView] Registering undo action")
       undoManager.registerUndo(withTarget: document) { [oldNotebook] doc in
         doc.notebook = oldNotebook
       }
-    } else {
-      print("⚠️ [NotebookContentView] No undoManager available!")
     }
 
     lastSaved = nil  // Mark as unsaved

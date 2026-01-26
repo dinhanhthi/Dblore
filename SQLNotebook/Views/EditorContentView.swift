@@ -60,9 +60,56 @@ struct EditorContentView: View {
     .onChange(of: viewModel.notebook.metadata.title) { _, _ in
       syncDocument()
     }
+    .onChange(of: document.content) { _, newContent in
+      // Sync document content to viewModel when document changes externally
+      // This handles the case where document is loaded async after view init
+      if viewModel.editorContent != newContent {
+        viewModel.editorContent = newContent
+
+        // Force update NSTextView directly since @State binding may not trigger update
+        if let textView = viewModel.editorTextView {
+          let highlighted = SQLSyntaxHighlighter.highlight(newContent)
+          textView.textStorage?.setAttributedString(highlighted)
+        }
+      }
+    }
+    .fileConflictAlert(
+      state: $document.fileConflictState,
+      hasUnsavedChanges: lastSaved == nil,
+      onKeepMyVersion: {
+        // Mark document as dirty to preserve local version
+        syncDocument()
+        document.fileConflictState.dismiss()
+      },
+      onLoadExternal: {
+        reloadExternalContent()
+      }
+    )
     .onAppear {
       setupKeyEventMonitor()
       viewModel.onDocumentChanged = syncDocument
+
+      // Sync content from document to viewModel on appear
+      // This ensures content is loaded correctly even if document was loaded async
+      if viewModel.editorContent != document.content {
+        viewModel.editorContent = document.content
+        viewModel.notebook.metadata = document.metadata
+
+        // Force update NSTextView if already available
+        if let textView = viewModel.editorTextView {
+          let highlighted = SQLSyntaxHighlighter.highlight(document.content)
+          textView.textStorage?.setAttributedString(highlighted)
+        }
+      }
+
+      // Set up file URL for external change monitoring
+      setupFileMonitoring()
+
+      // Set up callback for external reload
+      document.onExternalReload = { [self] in
+        viewModel.editorContent = document.content
+        viewModel.notebook.metadata = document.metadata
+      }
 
       // Auto-connect to saved session if available
       viewModel.autoConnectIfNeeded()
@@ -70,10 +117,70 @@ struct EditorContentView: View {
     .onDisappear {
       removeKeyEventMonitor()
       viewModel.onDocumentChanged = nil
+      document.onExternalReload = nil
 
       // Disconnect from database when window closes to prevent connection leaks
       Task {
         await viewModel.connectionManager.disconnect()
+      }
+    }
+  }
+
+  // MARK: - External Content Reload
+
+  private func reloadExternalContent() {
+    do {
+      try document.reloadFromDisk()
+      // Update viewModel with reloaded content
+      let newContent = document.content
+
+      viewModel.editorContent = newContent
+      viewModel.notebook.metadata = document.metadata
+
+      // IMPORTANT: Directly update the NSTextView because @State doesn't trigger SwiftUI updates
+      // for @Observable object properties. The binding chain is broken.
+      if let textView = viewModel.editorTextView {
+        let highlighted = SQLSyntaxHighlighter.highlight(newContent)
+        textView.textStorage?.setAttributedString(highlighted)
+      }
+
+      // Reset lastSaved to indicate clean state
+      lastSaved = Date()
+    } catch {
+      print("❌ [EditorContentView] Failed to reload from disk: \(error)")
+    }
+    document.fileConflictState.dismiss()
+  }
+
+  // MARK: - File Monitoring Setup
+
+  private func setupFileMonitoring() {
+    // Get file URL from NSDocumentController
+    // Try multiple times with increasing delays to ensure window is ready
+    let contentToMatch = document.content
+    let delays = [0.1, 0.5, 1.0]
+
+    for delay in delays {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak document] in
+        guard let document = document else { return }
+        // Skip if URL already set
+        guard document.presentedItemURL == nil else { return }
+
+        // Find matching NSDocument by comparing content
+        for doc in NSDocumentController.shared.documents {
+          guard let nsDoc = doc as? NSDocument,
+            let fileURL = nsDoc.fileURL,
+            fileURL.pathExtension == "sql"
+          else { continue }
+
+          // Try to match by reading file content
+          if let fileContent = try? String(contentsOf: fileURL, encoding: .utf8),
+            fileContent == contentToMatch
+          {
+            document.setFileURL(fileURL)
+            return
+          }
+        }
       }
     }
   }
@@ -93,10 +200,6 @@ struct EditorContentView: View {
       return
     }
 
-    print(
-      "🔄 [EditorContentView] syncDocument() - content changed from \(oldContent.count) to \(newContent.count) chars"
-    )
-
     // Sync editorContent back to document
     document.content = newContent
     document.metadata = newMetadata
@@ -104,13 +207,10 @@ struct EditorContentView: View {
     // Register undo action to mark document as dirty
     // This is critical for ReferenceFileDocument to know the document has changed
     if let undoManager = undoManager {
-      print("📝 [EditorContentView] Registering undo action")
       undoManager.registerUndo(withTarget: document) { [oldContent, oldMetadata] doc in
         doc.content = oldContent
         doc.metadata = oldMetadata
       }
-    } else {
-      print("⚠️ [EditorContentView] No undoManager available!")
     }
 
     lastSaved = nil  // Mark as unsaved
