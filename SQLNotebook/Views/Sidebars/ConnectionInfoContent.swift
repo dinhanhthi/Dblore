@@ -14,18 +14,7 @@ struct ConnectionInfoContent: View {
     if let config {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          // Connection name (if provided)
-          if !config.name.isEmpty {
-            infoRow(label: "Connection Name", value: config.name)
-          }
-
-          infoRow(label: "Host", value: config.host)
-          infoRow(label: "Port", value: String(config.port))
-          infoRow(label: "Database", value: config.database)
-          infoRow(label: "Username", value: config.username)
-          infoRow(label: "SSL Mode", value: config.sslMode.displayName)
-
-          // Read-only mode indicator
+          // Read-only mode indicator (at top for visibility)
           if config.readOnly {
             HStack(spacing: Spacing.xs) {
               Image(systemName: "lock.fill")
@@ -43,6 +32,17 @@ struct ConnectionInfoContent: View {
                 .fill(Color.warning.opacity(0.1))
             )
           }
+
+          // Connection name (if provided)
+          if !config.name.isEmpty {
+            infoRow(label: "Connection Name", value: config.name)
+          }
+
+          infoRow(label: "Host", value: config.host)
+          infoRow(label: "Port", value: String(config.port))
+          infoRow(label: "Database", value: config.database)
+          infoRow(label: "Username", value: config.username)
+          infoRow(label: "SSL Mode", value: config.sslMode.displayName)
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .topLeading)

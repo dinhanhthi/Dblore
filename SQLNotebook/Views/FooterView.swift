@@ -53,6 +53,11 @@ struct FooterView: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
 
+        // Read-only mode badge
+        if viewModel.notebook.connectionConfig?.readOnly == true {
+          readOnlyBadge
+        }
+
         // Window dimensions (for debugging)
         WindowDimensionsView()
       }
@@ -181,6 +186,24 @@ struct FooterView: View {
 
   private var appVersion: String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+  }
+
+  // MARK: - Read-only Badge
+
+  private var readOnlyBadge: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "lock.fill")
+        .font(.system(size: 9))
+      Text("Read-only")
+        .font(.small)
+    }
+    .foregroundColor(.warning)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, 2)
+    .background(Color.warning.opacity(0.15))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .help(
+      "Connection is in read-only mode. Modification queries (INSERT, UPDATE, DELETE) are blocked.")
   }
 
   // MARK: - File Size Helpers
