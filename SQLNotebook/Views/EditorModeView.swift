@@ -56,8 +56,8 @@ struct EditorModeView: View {
   }
 
   var body: some View {
-    GeometryReader { geometry in
-      let totalHeight = geometry.size.height
+    SizeReader { containerSize in
+      let totalHeight = containerSize.height
       let minPanelHeight: CGFloat = 250  // Increased from 150 to 250
       let maxEditorHeight = totalHeight - minPanelHeight
 
@@ -100,7 +100,7 @@ struct EditorModeView: View {
             .padding(.bottom, Spacing.md)
         }
         .background(Color.inputBackground)
-        .frame(width: geometry.size.width, height: editorHeight)
+        .frame(width: containerSize.width, height: editorHeight)
 
         // Draggable divider
         ResizableDivider(
@@ -153,7 +153,7 @@ struct EditorModeView: View {
             // Footer at bottom (shows source query)
             resultPanelFooter(result: result)
           }
-          .frame(width: geometry.size.width, height: resultHeight)
+          .frame(width: containerSize.width, height: resultHeight)
         } else {
           // Empty state
           VStack(spacing: Spacing.sm) {
@@ -166,7 +166,7 @@ struct EditorModeView: View {
               .foregroundColor(.foregroundMuted)
             Spacer()
           }
-          .frame(width: geometry.size.width, height: resultHeight)
+          .frame(width: containerSize.width, height: resultHeight)
         }
       }
     }
