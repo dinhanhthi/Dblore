@@ -97,6 +97,8 @@ struct SchemaVisualizerContent: View {
         scale: $viewModel.visualizerScale,
         offset: $viewModel.visualizerOffset,
         selectedNodeId: $viewModel.selectedGraphNodeId,
+        showTableConnections: $viewModel.showTableConnections,
+        showColumnConnections: $viewModel.showColumnConnections,
         searchState: viewModel.schemaSearchState,
         onNodeDoubleClick: { node in
           handleNodeDoubleClick(node)

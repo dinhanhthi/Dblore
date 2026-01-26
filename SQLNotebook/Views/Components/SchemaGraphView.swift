@@ -14,6 +14,8 @@ struct SchemaGraphView: NSViewRepresentable {
   @Binding var scale: CGFloat
   @Binding var offset: CGPoint
   @Binding var selectedNodeId: UUID?
+  @Binding var showTableConnections: Bool
+  @Binding var showColumnConnections: Bool
   var searchState: SchemaSearchState
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
   var onNodeDragEnded: (() -> Void)?
@@ -25,6 +27,8 @@ struct SchemaGraphView: NSViewRepresentable {
     view.scale = scale
     view.offset = offset
     view.selectedNodeId = selectedNodeId
+    view.showTableConnections = showTableConnections
+    view.showColumnConnections = showColumnConnections
     view.searchState = searchState
     view.onNodeSelected = { nodeId in
       DispatchQueue.main.async {
@@ -62,6 +66,8 @@ struct SchemaGraphView: NSViewRepresentable {
     nsView.scale = scale
     nsView.offset = offset
     nsView.selectedNodeId = selectedNodeId
+    nsView.showTableConnections = showTableConnections
+    nsView.showColumnConnections = showColumnConnections
     nsView.searchState = searchState
     nsView.onNodeDragEnded = onNodeDragEnded
     nsView.needsDisplay = true
@@ -94,6 +100,17 @@ class SchemaGraphNSView: NSView {
 
   var searchState: SchemaSearchState = SchemaSearchState() {
     didSet { needsDisplay = true }
+  }
+
+  var showTableConnections: Bool = true {
+    didSet { needsDisplay = true }
+  }
+
+  var showColumnConnections: Bool = false {
+    didSet {
+      updateColumnConnectionAnimation()
+      needsDisplay = true
+    }
   }
 
   var onNodeSelected: ((UUID?) -> Void)?
@@ -140,6 +157,11 @@ class SchemaGraphNSView: NSView {
   private var selectedEdgeId: UUID?  // Edge that was clicked
   private let edgeHoverDelay: TimeInterval = 0.3  // 300ms delay before highlighting tables
 
+  // Column connection line hover state
+  private var hoveredColumnConnectionEdgeId: UUID?  // Edge whose column connection is being hovered
+  private var columnConnectionAnimationPhase: CGFloat = 0  // Animation phase for dashed lines
+  private var columnConnectionAnimationTimer: Timer?  // Timer for dash animation
+
   // MARK: - Initialization
 
   override init(frame frameRect: NSRect) {
@@ -177,6 +199,35 @@ class SchemaGraphNSView: NSView {
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
     setupTrackingArea()
+  }
+
+  /// Start or stop column connection animation based on showColumnConnections state
+  func updateColumnConnectionAnimation() {
+    if showColumnConnections {
+      startColumnConnectionAnimation()
+    } else {
+      stopColumnConnectionAnimation()
+    }
+  }
+
+  private func startColumnConnectionAnimation() {
+    guard columnConnectionAnimationTimer == nil else { return }
+    columnConnectionAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
+      [weak self] _ in
+      Task { @MainActor in
+        self?.columnConnectionAnimationPhase += 1
+        if self?.columnConnectionAnimationPhase ?? 0 > 20 {
+          self?.columnConnectionAnimationPhase = 0
+        }
+        self?.needsDisplay = true
+      }
+    }
+  }
+
+  private func stopColumnConnectionAnimation() {
+    columnConnectionAnimationTimer?.invalidate()
+    columnConnectionAnimationTimer = nil
+    columnConnectionAnimationPhase = 0
   }
 
   private func updateColors() {
@@ -225,8 +276,15 @@ class SchemaGraphNSView: NSView {
     context.translateBy(x: offset.x, y: offset.y)
     context.scaleBy(x: scale, y: scale)
 
-    // Draw edges first
-    drawEdges(context)
+    // Draw edges first (table connection lines)
+    if showTableConnections {
+      drawEdges(context)
+    }
+
+    // Draw column connection lines if enabled
+    if showColumnConnections {
+      drawColumnConnections(context)
+    }
 
     // Draw nodes
     drawNodes(context)
@@ -606,6 +664,223 @@ class SchemaGraphNSView: NSView {
     return nil
   }
 
+  // MARK: - Column Connection Lines
+
+  /// Cache for column connection paths for hit testing
+  private struct ColumnConnectionPath {
+    let edgeId: UUID
+    let sourceColumnIndex: Int
+    let targetColumnIndex: Int
+    let path: [CGPoint]  // Points along the path
+
+    func contains(_ point: CGPoint, threshold: CGFloat = 8) -> Bool {
+      for i in 0..<(path.count - 1) {
+        if distanceToSegment(point: point, segmentStart: path[i], segmentEnd: path[i + 1])
+          < threshold
+        {
+          return true
+        }
+      }
+      return false
+    }
+
+    private func distanceToSegment(
+      point: CGPoint, segmentStart: CGPoint, segmentEnd: CGPoint
+    ) -> CGFloat {
+      let dx = segmentEnd.x - segmentStart.x
+      let dy = segmentEnd.y - segmentStart.y
+      let lengthSquared = dx * dx + dy * dy
+
+      if lengthSquared == 0 {
+        return hypot(point.x - segmentStart.x, point.y - segmentStart.y)
+      }
+
+      var t = ((point.x - segmentStart.x) * dx + (point.y - segmentStart.y) * dy) / lengthSquared
+      t = max(0, min(1, t))
+
+      let nearestX = segmentStart.x + t * dx
+      let nearestY = segmentStart.y + t * dy
+
+      return hypot(point.x - nearestX, point.y - nearestY)
+    }
+  }
+
+  private var cachedColumnConnectionPaths: [UUID: [ColumnConnectionPath]] = [:]
+
+  /// Draw dashed animated lines connecting FK columns between tables
+  private func drawColumnConnections(_ context: CGContext) {
+    cachedColumnConnectionPaths.removeAll()
+
+    for edge in graph.edges {
+      guard
+        let sourceNode = graph.node(withId: edge.sourceNodeId),
+        let targetNode = graph.node(withId: edge.targetNodeId)
+      else { continue }
+
+      let sourceRect = nodeRect(for: sourceNode)
+      let targetRect = nodeRect(for: targetNode)
+
+      // Get column pairs from the foreign key
+      let fk = edge.foreignKey
+      let columnPairs = zip(fk.sourceColumns, fk.targetColumns)
+
+      var paths: [ColumnConnectionPath] = []
+
+      for (sourceCol, targetCol) in columnPairs {
+        // Find column indices
+        guard
+          let sourceIndex = sourceNode.table.columns.firstIndex(where: { $0.name == sourceCol }),
+          let targetIndex = targetNode.table.columns.firstIndex(where: { $0.name == targetCol })
+        else { continue }
+
+        let isHovered = hoveredColumnConnectionEdgeId == edge.id
+        drawColumnConnectionLine(
+          context,
+          sourceRect: sourceRect,
+          targetRect: targetRect,
+          sourceColumnIndex: sourceIndex,
+          targetColumnIndex: targetIndex,
+          isHovered: isHovered,
+          pathOutput: &paths,
+          edgeId: edge.id
+        )
+      }
+
+      cachedColumnConnectionPaths[edge.id] = paths
+    }
+  }
+
+  /// Draw a single column connection line with dashed animated style
+  private func drawColumnConnectionLine(
+    _ context: CGContext,
+    sourceRect: CGRect,
+    targetRect: CGRect,
+    sourceColumnIndex: Int,
+    targetColumnIndex: Int,
+    isHovered: Bool,
+    pathOutput: inout [ColumnConnectionPath],
+    edgeId: UUID
+  ) {
+    // Calculate Y position for source column
+    let sourceY =
+      sourceRect.minY + nodeHeaderHeight + 4 + CGFloat(sourceColumnIndex) * nodeColumnHeight
+      + nodeColumnHeight / 2
+
+    // Calculate Y position for target column
+    let targetY =
+      targetRect.minY + nodeHeaderHeight + 4 + CGFloat(targetColumnIndex) * nodeColumnHeight
+      + nodeColumnHeight / 2
+
+    // Determine connection points based on relative positions
+    let sourceCenter = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
+    let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+
+    var startPoint: CGPoint
+    var endPoint: CGPoint
+
+    // Connect from edge of node closest to the other node
+    if sourceCenter.x < targetCenter.x {
+      // Source is to the left of target
+      startPoint = CGPoint(x: sourceRect.maxX, y: sourceY)
+      endPoint = CGPoint(x: targetRect.minX, y: targetY)
+    } else {
+      // Source is to the right of target
+      startPoint = CGPoint(x: sourceRect.minX, y: sourceY)
+      endPoint = CGPoint(x: targetRect.maxX, y: targetY)
+    }
+
+    // Create path with horizontal offset for visual clarity
+    let midX = (startPoint.x + endPoint.x) / 2
+    let path = [
+      startPoint,
+      CGPoint(x: midX, y: startPoint.y),
+      CGPoint(x: midX, y: endPoint.y),
+      endPoint,
+    ]
+
+    // Store path for hit testing
+    pathOutput.append(
+      ColumnConnectionPath(
+        edgeId: edgeId,
+        sourceColumnIndex: sourceColumnIndex,
+        targetColumnIndex: targetColumnIndex,
+        path: path
+      ))
+
+    // Set line style
+    let lineColor: NSColor = isHovered ? .systemGreen : edgeColor.withAlphaComponent(0.6)
+    let lineWidth: CGFloat = isHovered ? 2.0 : 1.0
+
+    context.saveGState()
+
+    // Draw glow effect when hovered
+    if isHovered {
+      context.setShadow(
+        offset: .zero,
+        blur: 6,
+        color: NSColor.systemGreen.withAlphaComponent(0.5).cgColor
+      )
+    }
+
+    context.setStrokeColor(lineColor.cgColor)
+    context.setLineWidth(lineWidth)
+
+    // Set dashed line pattern with animation
+    let dashPattern: [CGFloat] = [6, 4]
+    let dashPhase = columnConnectionAnimationPhase
+    context.setLineDash(phase: dashPhase, lengths: dashPattern)
+
+    // Draw the path
+    context.move(to: path[0])
+    for i in 1..<path.count {
+      context.addLine(to: path[i])
+    }
+    context.strokePath()
+
+    context.restoreGState()
+  }
+
+  /// Hit test for column connection lines
+  private func hitTestColumnConnection(at point: CGPoint) -> UUID? {
+    let canvasPoint = screenToCanvas(point)
+
+    for (edgeId, paths) in cachedColumnConnectionPaths {
+      for connectionPath in paths {
+        if connectionPath.contains(canvasPoint, threshold: 8 / scale) {
+          return edgeId
+        }
+      }
+    }
+    return nil
+  }
+
+  /// Get the column indices that should be highlighted for a given edge
+  func highlightedColumnsForEdge(
+    _ edgeId: UUID
+  ) -> (
+    sourceNodeId: UUID, sourceColumns: [Int], targetNodeId: UUID, targetColumns: [Int]
+  )? {
+    guard let edge = graph.edges.first(where: { $0.id == edgeId }),
+      let sourceNode = graph.node(withId: edge.sourceNodeId),
+      let targetNode = graph.node(withId: edge.targetNodeId)
+    else { return nil }
+
+    let fk = edge.foreignKey
+    var sourceIndices: [Int] = []
+    var targetIndices: [Int] = []
+
+    for (sourceCol, targetCol) in zip(fk.sourceColumns, fk.targetColumns) {
+      if let idx = sourceNode.table.columns.firstIndex(where: { $0.name == sourceCol }) {
+        sourceIndices.append(idx)
+      }
+      if let idx = targetNode.table.columns.firstIndex(where: { $0.name == targetCol }) {
+        targetIndices.append(idx)
+      }
+    }
+
+    return (edge.sourceNodeId, sourceIndices, edge.targetNodeId, targetIndices)
+  }
+
   // MARK: - Node Drawing
 
   /// Check if a node should be highlighted due to edge hover/selection
@@ -629,6 +904,24 @@ class SchemaGraphNSView: NSView {
       (edge.sourceNodeId == nodeId && edge.targetNodeId == selectedId)
         || (edge.sourceNodeId == selectedId && edge.targetNodeId == nodeId)
     }
+  }
+
+  /// Get column indices that should be highlighted for a node due to column connection hover
+  private func getHighlightedColumnsForNode(_ nodeId: UUID) -> Set<Int> {
+    guard showColumnConnections, let hoveredEdgeId = hoveredColumnConnectionEdgeId else {
+      return []
+    }
+
+    guard let highlightInfo = highlightedColumnsForEdge(hoveredEdgeId) else {
+      return []
+    }
+
+    if nodeId == highlightInfo.sourceNodeId {
+      return Set(highlightInfo.sourceColumns)
+    } else if nodeId == highlightInfo.targetNodeId {
+      return Set(highlightInfo.targetColumns)
+    }
+    return []
   }
 
   private func drawNodes(_ context: CGContext) {
@@ -769,8 +1062,14 @@ class SchemaGraphNSView: NSView {
     let typeFont = NSFont.monospacedSystemFont(ofSize: 8, weight: .regular)
     let iconFont = NSFont.systemFont(ofSize: 8, weight: .medium)
 
+    // Get highlighted columns for column connection hover
+    let highlightedColumns = getHighlightedColumnsForNode(node.id)
+
     for (index, column) in columns.enumerated() {
       let y = rect.minY + nodeHeaderHeight + 4 + CGFloat(index) * nodeColumnHeight
+
+      // Check if this column should be highlighted due to column connection hover
+      let isColumnHighlighted = highlightedColumns.contains(index)
 
       // Draw column attribute icons (SF Symbols)
       var iconX = rect.minX + 6
@@ -803,10 +1102,13 @@ class SchemaGraphNSView: NSView {
       }
       iconX += iconSpacing
 
-      // Draw column name (with search highlight if matching)
+      // Draw column name (with search highlight if matching, or green highlight for FK connection)
       let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
       let nameFont = hasSpecialAttributes ? pkFont : columnFont
-      let nameColor = hasSpecialAttributes ? textColor : columnTextColor
+      // Use green color if highlighted by column connection hover
+      let nameColor: NSColor =
+        isColumnHighlighted
+        ? .systemGreen : (hasSpecialAttributes ? textColor : columnTextColor)
       let namePoint = CGPoint(x: iconX + 2, y: y)
 
       // Check if column name has search match
@@ -825,8 +1127,9 @@ class SchemaGraphNSView: NSView {
           isCurrentMatch: searchState.currentMatch?.id == match.id
         )
       } else {
+        // Draw with potential green highlight for FK connection
         let nameAttributes: [NSAttributedString.Key: Any] = [
-          .font: nameFont,
+          .font: isColumnHighlighted ? NSFont.systemFont(ofSize: 9, weight: .semibold) : nameFont,
           .foregroundColor: nameColor,
         ]
         let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
@@ -1046,8 +1349,8 @@ class SchemaGraphNSView: NSView {
       return
     }
 
-    // Check if clicking on an edge
-    if let edge = hitTestEdge(at: point) {
+    // Check if clicking on an edge (only when table connections are visible)
+    if showTableConnections, let edge = hitTestEdge(at: point) {
       // Select/deselect edge
       if selectedEdgeId == edge.id {
         selectedEdgeId = nil
@@ -1145,31 +1448,53 @@ class SchemaGraphNSView: NSView {
       needsRedraw = true
     }
 
-    // Check if hovering over an edge
-    if let edge = hitTestEdge(at: point) {
-      if hoveredEdgeId != edge.id {
-        hoveredEdgeId = edge.id
-        needsRedraw = true
+    // Check if hovering over an edge (only when table connections are visible)
+    if showTableConnections {
+      if let edge = hitTestEdge(at: point) {
+        if hoveredEdgeId != edge.id {
+          hoveredEdgeId = edge.id
+          needsRedraw = true
 
-        // Cancel previous timer and start new one for hover delay
-        edgeHoverTimer?.invalidate()
-        highlightedEdgeId = nil  // Reset highlighted edge immediately
+          // Cancel previous timer and start new one for hover delay
+          edgeHoverTimer?.invalidate()
+          highlightedEdgeId = nil  // Reset highlighted edge immediately
 
-        // Start timer to highlight connected tables after delay
-        edgeHoverTimer = Timer.scheduledTimer(withTimeInterval: edgeHoverDelay, repeats: false) {
-          [weak self] _ in
-          Task { @MainActor in
-            self?.highlightedEdgeId = edge.id
-            self?.needsDisplay = true
+          // Start timer to highlight connected tables after delay
+          edgeHoverTimer = Timer.scheduledTimer(withTimeInterval: edgeHoverDelay, repeats: false) {
+            [weak self] _ in
+            Task { @MainActor in
+              self?.highlightedEdgeId = edge.id
+              self?.needsDisplay = true
+            }
           }
         }
+      } else if hoveredEdgeId != nil {
+        hoveredEdgeId = nil
+        highlightedEdgeId = nil  // Clear highlighted edge when not hovering
+        edgeHoverTimer?.invalidate()
+        edgeHoverTimer = nil
+        needsRedraw = true
       }
     } else if hoveredEdgeId != nil {
+      // Clear edge hover state when table connections are hidden
       hoveredEdgeId = nil
-      highlightedEdgeId = nil  // Clear highlighted edge when not hovering
+      highlightedEdgeId = nil
       edgeHoverTimer?.invalidate()
       edgeHoverTimer = nil
       needsRedraw = true
+    }
+
+    // Check if hovering over a column connection line (only when column connections are visible)
+    if showColumnConnections {
+      if let edgeId = hitTestColumnConnection(at: point) {
+        if hoveredColumnConnectionEdgeId != edgeId {
+          hoveredColumnConnectionEdgeId = edgeId
+          needsRedraw = true
+        }
+      } else if hoveredColumnConnectionEdgeId != nil {
+        hoveredColumnConnectionEdgeId = nil
+        needsRedraw = true
+      }
     }
 
     if needsRedraw {
@@ -1193,6 +1518,10 @@ class SchemaGraphNSView: NSView {
     }
     if highlightedEdgeId != nil {
       highlightedEdgeId = nil
+      needsRedraw = true
+    }
+    if hoveredColumnConnectionEdgeId != nil {
+      hoveredColumnConnectionEdgeId = nil
       needsRedraw = true
     }
     edgeHoverTimer?.invalidate()

@@ -306,6 +306,24 @@ struct HeaderView: View {
       .help("Reset Layout to Default")
       .disabled(viewModel.isLoadingSchemaGraph)
 
+      // Toggle table connection lines (ER diagram lines)
+      Button(action: { viewModel.showTableConnections.toggle() }) {
+        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+      }
+      .buttonStyle(ToolbarButtonStyle(isActive: viewModel.showTableConnections, iconOnly: true))
+      .help(
+        viewModel.showTableConnections
+          ? "Hide Table Connections" : "Show Table Connections")
+
+      // Toggle column connection lines
+      Button(action: { viewModel.showColumnConnections.toggle() }) {
+        Image(systemName: "arrow.triangle.branch")
+      }
+      .buttonStyle(ToolbarButtonStyle(isActive: viewModel.showColumnConnections, iconOnly: true))
+      .help(
+        viewModel.showColumnConnections
+          ? "Hide Column Connections" : "Show Column Connections")
+
       Divider()
         .frame(height: 20)
 

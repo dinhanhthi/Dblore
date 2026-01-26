@@ -70,6 +70,8 @@ class NotebookViewModel {
   var isLoadingSchemaGraph: Bool = false
   var isSchemaVisualizerActive: Bool = false  // Show visualizer in main body instead of cells/editor
   weak var schemaGraphNSView: SchemaGraphNSView?  // Reference for export functionality
+  var showTableConnections: Bool = true  // Show relationship lines between tables (default: true)
+  var showColumnConnections: Bool = false  // Show dashed lines connecting FK columns
 
   // Connection config for the sheet
   var editingConnectionConfig: ConnectionConfig
