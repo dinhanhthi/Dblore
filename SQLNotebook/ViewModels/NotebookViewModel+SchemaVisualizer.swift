@@ -128,8 +128,7 @@ extension NotebookViewModel {
       canvasSize: canvasSize
     )
 
-    // Reset view state
-    visualizerScale = 1.0
+    // Reset view state but keep current zoom level
     visualizerOffset = .zero
     selectedGraphNodeId = nil
 
