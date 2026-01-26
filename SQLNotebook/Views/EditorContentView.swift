@@ -168,8 +168,7 @@ struct EditorContentView: View {
 
         // Find matching NSDocument by comparing content
         for doc in NSDocumentController.shared.documents {
-          guard let nsDoc = doc as? NSDocument,
-            let fileURL = nsDoc.fileURL,
+          guard let fileURL = doc.fileURL,
             fileURL.pathExtension == "sql"
           else { continue }
 

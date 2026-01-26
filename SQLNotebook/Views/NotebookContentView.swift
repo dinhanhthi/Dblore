@@ -178,8 +178,7 @@ struct NotebookContentView: View {
 
         // Find matching NSDocument by comparing notebook ID
         for doc in NSDocumentController.shared.documents {
-          guard let nsDoc = doc as? NSDocument,
-            let fileURL = nsDoc.fileURL,
+          guard let fileURL = doc.fileURL,
             fileURL.pathExtension == "sqlnb"
           else { continue }
 
