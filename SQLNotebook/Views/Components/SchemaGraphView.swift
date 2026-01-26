@@ -42,6 +42,13 @@ struct SchemaGraphView: NSViewRepresentable {
         }
       }
     }
+    view.onNodeResized = { nodeId, newWidth in
+      DispatchQueue.main.async {
+        if let index = graph.nodes.firstIndex(where: { $0.id == nodeId }) {
+          graph.nodes[index].width = newWidth
+        }
+      }
+    }
     view.onNodeDragEnded = onNodeDragEnded
     view.onNodeDoubleClick = onNodeDoubleClick
     view.onOffsetChanged = { newOffset in
@@ -120,18 +127,23 @@ class SchemaGraphNSView: NSView {
 
   var onNodeSelected: ((UUID?) -> Void)?
   var onNodeMoved: ((UUID, CGPoint) -> Void)?
+  var onNodeResized: ((UUID, CGFloat) -> Void)?
   var onNodeDragEnded: (() -> Void)?
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
   var onOffsetChanged: ((CGPoint) -> Void)?
   var onScaleChanged: ((CGFloat) -> Void)?
 
-  // Node size
-  private let nodeWidth: CGFloat = 200
+  // Node size constraints
+  private let nodeMinWidth: CGFloat = 150
+  private let nodeMaxWidth: CGFloat = 400
+  private let nodeDefaultWidth: CGFloat = 200
   private let nodeHeaderHeight: CGFloat = 32
   private let nodeColumnHeight: CGFloat = 18
   private let nodeCornerRadius: CGFloat = 8
   private let nodePadding: CGFloat = 8
   private let expandButtonSize: CGFloat = 16
+  private let resizeHandleWidth: CGFloat = 8
+  private let columnTypeGap: CGFloat = 12  // Gap between column name and type
 
   // Colors (cached for performance)
   private var nodeBackgroundColor: NSColor = .white
@@ -167,6 +179,13 @@ class SchemaGraphNSView: NSView {
   private var selectedColumnConnectionEdgeId: UUID?  // Edge whose column connection is selected (clicked)
   private var columnConnectionAnimationPhase: CGFloat = 0  // Animation phase for dashed lines
   private var columnConnectionAnimationTimer: Timer?  // Timer for dash animation
+
+  // Resize state
+  private var isResizingNode: Bool = false
+  private var resizingNodeId: UUID?
+  private var isResizingFromLeft: Bool = false  // Track if resizing from left edge
+  private var hoveredResizeHandleNodeId: UUID?
+  private var hoveredLeftResizeHandleNodeId: UUID?
 
   // MARK: - Initialization
 
@@ -1114,6 +1133,17 @@ class SchemaGraphNSView: NSView {
       }
       iconX += iconSpacing
 
+      // Calculate available width for column name
+      let typeAttributes: [NSAttributedString.Key: Any] = [
+        .font: typeFont,
+        .foregroundColor: subtleTextColor.withAlphaComponent(0.7),
+      ]
+      let typeString = NSAttributedString(string: column.type, attributes: typeAttributes)
+      let typeSize = typeString.size()
+      let typeX = rect.maxX - typeSize.width - 8
+      let nameStartX = iconX + 2
+      let maxNameWidth = typeX - nameStartX - columnTypeGap
+
       // Draw column name (with search highlight if matching, or green highlight for FK connection)
       let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
       let nameFont = hasSpecialAttributes ? pkFont : columnFont
@@ -1121,7 +1151,7 @@ class SchemaGraphNSView: NSView {
       let nameColor: NSColor =
         isColumnHighlighted
         ? .systemGreen : (hasSpecialAttributes ? textColor : columnTextColor)
-      let namePoint = CGPoint(x: iconX + 2, y: y)
+      let namePoint = CGPoint(x: nameStartX, y: y)
 
       // Check if column name has search match
       let columnMatch = searchState.matches.first {
@@ -1129,34 +1159,98 @@ class SchemaGraphNSView: NSView {
       }
 
       if let match = columnMatch, !searchState.query.isEmpty {
+        // Truncate name if needed for search highlight
+        let truncatedName = truncateText(
+          column.name, font: nameFont, maxWidth: maxNameWidth)
         drawHighlightedText(
           context,
-          text: column.name,
+          text: truncatedName,
           at: namePoint,
           font: nameFont,
           textColor: nameColor,
-          highlightRange: match.matchRange,
+          highlightRange: adjustRangeForTruncation(
+            match.matchRange, originalText: column.name, truncatedText: truncatedName),
           isCurrentMatch: searchState.currentMatch?.id == match.id
         )
       } else {
-        // Draw with potential green highlight for FK connection
+        // Draw with potential green highlight for FK connection, truncated if needed
+        let truncatedName = truncateText(column.name, font: nameFont, maxWidth: maxNameWidth)
         let nameAttributes: [NSAttributedString.Key: Any] = [
           .font: isColumnHighlighted ? NSFont.systemFont(ofSize: 9, weight: .semibold) : nameFont,
           .foregroundColor: nameColor,
         ]
-        let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
+        let nameString = NSAttributedString(string: truncatedName, attributes: nameAttributes)
         nameString.draw(at: namePoint)
       }
 
       // Draw type on the right
-      let typeAttributes: [NSAttributedString.Key: Any] = [
-        .font: typeFont,
-        .foregroundColor: subtleTextColor.withAlphaComponent(0.7),
-      ]
-      let typeString = NSAttributedString(string: column.type, attributes: typeAttributes)
-      let typeSize = typeString.size()
-      typeString.draw(at: CGPoint(x: rect.maxX - typeSize.width - 8, y: y + 1))
+      typeString.draw(at: CGPoint(x: typeX, y: y + 1))
     }
+  }
+
+  /// Truncate text to fit within maxWidth, adding "..." if needed
+  private func truncateText(_ text: String, font: NSFont, maxWidth: CGFloat) -> String {
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let fullWidth = (text as NSString).size(withAttributes: attributes).width
+
+    if fullWidth <= maxWidth {
+      return text
+    }
+
+    let ellipsis = "..."
+    let ellipsisWidth = (ellipsis as NSString).size(withAttributes: attributes).width
+    let availableWidth = maxWidth - ellipsisWidth
+
+    if availableWidth <= 0 {
+      return ellipsis
+    }
+
+    // Binary search for the right truncation point
+    var low = 0
+    var high = text.count
+
+    while low < high {
+      let mid = (low + high + 1) / 2
+      let truncated = String(text.prefix(mid))
+      let width = (truncated as NSString).size(withAttributes: attributes).width
+
+      if width <= availableWidth {
+        low = mid
+      } else {
+        high = mid - 1
+      }
+    }
+
+    if low == 0 {
+      return ellipsis
+    }
+
+    return String(text.prefix(low)) + ellipsis
+  }
+
+  /// Adjust highlight range for truncated text
+  private func adjustRangeForTruncation(
+    _ range: Range<String.Index>, originalText: String, truncatedText: String
+  ) -> Range<String.Index> {
+    // If text wasn't truncated, return original range
+    if !truncatedText.hasSuffix("...") {
+      return range
+    }
+
+    let truncatedWithoutEllipsis = String(truncatedText.dropLast(3))
+    let truncatedEndIndex = truncatedWithoutEllipsis.endIndex
+
+    // Adjust range to fit within truncated text
+    let adjustedLower = min(range.lowerBound, truncatedEndIndex)
+    let adjustedUpper = min(range.upperBound, truncatedEndIndex)
+
+    // Ensure we have a valid range
+    if adjustedLower >= adjustedUpper {
+      // Range is completely outside truncated text, return empty range at end
+      return truncatedWithoutEllipsis.endIndex..<truncatedWithoutEllipsis.endIndex
+    }
+
+    return adjustedLower..<adjustedUpper
   }
 
   /// Draw an SF Symbol at the specified location, vertically centered with the text line
@@ -1291,17 +1385,45 @@ class SchemaGraphNSView: NSView {
     }
   }
 
-  /// Calculate node rect - height based on ALL columns
+  /// Calculate node rect - height based on ALL columns, width from node or auto-calculated
   private func nodeRect(for node: SchemaNode) -> CGRect {
     let columnsCount = node.table.columns.count
     let height = nodeHeaderHeight + CGFloat(columnsCount) * nodeColumnHeight + nodePadding
+    let width = node.width ?? calculateAutoWidth(for: node)
 
     return CGRect(
       x: node.position.x,
       y: node.position.y,
-      width: nodeWidth,
+      width: width,
       height: max(height, 60)
     )
+  }
+
+  /// Calculate auto width for a node based on content
+  private func calculateAutoWidth(for node: SchemaNode) -> CGFloat {
+    let columnFont = NSFont.systemFont(ofSize: 9, weight: .regular)
+    let typeFont = NSFont.monospacedSystemFont(ofSize: 8, weight: .regular)
+    let tableFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+
+    // Calculate width needed for table name in header
+    let tableNameWidth =
+      (node.table.name as NSString).size(withAttributes: [.font: tableFont]).width + 60  // padding + buttons
+
+    // Calculate max width needed for columns
+    var maxColumnWidth: CGFloat = 0
+    let iconAreaWidth: CGFloat = 46  // Space for icons (4 icons * 10 spacing + 6 padding)
+    let rightPadding: CGFloat = 8
+
+    for column in node.table.columns {
+      let nameWidth = (column.name as NSString).size(withAttributes: [.font: columnFont]).width
+      let typeWidth = (column.type as NSString).size(withAttributes: [.font: typeFont]).width
+      let totalWidth = iconAreaWidth + nameWidth + columnTypeGap + typeWidth + rightPadding
+      maxColumnWidth = max(maxColumnWidth, totalWidth)
+    }
+
+    // Use the larger of table name width or column width, clamped to min/max
+    let contentWidth = max(tableNameWidth, maxColumnWidth)
+    return min(max(contentWidth, nodeMinWidth), nodeMaxWidth)
   }
 
   /// Calculate expand button rect for a node
@@ -1312,6 +1434,28 @@ class SchemaGraphNSView: NSView {
       y: nodeR.minY + (nodeHeaderHeight - expandButtonSize) / 2,
       width: expandButtonSize,
       height: expandButtonSize
+    )
+  }
+
+  /// Calculate resize handle rect for a node (right edge)
+  private func resizeHandleRect(for node: SchemaNode) -> CGRect {
+    let nodeR = nodeRect(for: node)
+    return CGRect(
+      x: nodeR.maxX - resizeHandleWidth / 2,
+      y: nodeR.minY,
+      width: resizeHandleWidth,
+      height: nodeR.height
+    )
+  }
+
+  /// Calculate left resize handle rect for a node (left edge)
+  private func leftResizeHandleRect(for node: SchemaNode) -> CGRect {
+    let nodeR = nodeRect(for: node)
+    return CGRect(
+      x: nodeR.minX - resizeHandleWidth / 2,
+      y: nodeR.minY,
+      width: resizeHandleWidth,
+      height: nodeR.height
     )
   }
 
@@ -1359,6 +1503,53 @@ class SchemaGraphNSView: NSView {
     return nil
   }
 
+  /// Hit test for resize handle (right edge of node)
+  private func hitTestResizeHandle(at point: CGPoint) -> SchemaNode? {
+    let canvasPoint = screenToCanvas(point)
+    for node in graph.nodes.reversed() {
+      if resizeHandleRect(for: node).contains(canvasPoint) {
+        return node
+      }
+    }
+    return nil
+  }
+
+  /// Hit test for left resize handle (left edge of node)
+  private func hitTestLeftResizeHandle(at point: CGPoint) -> SchemaNode? {
+    let canvasPoint = screenToCanvas(point)
+    for node in graph.nodes.reversed() {
+      if leftResizeHandleRect(for: node).contains(canvasPoint) {
+        return node
+      }
+    }
+    return nil
+  }
+
+  /// Auto-fit node width to content (double-click on resize handle)
+  private func autoFitNodeWidth(_ node: SchemaNode, fromLeft: Bool) {
+    guard let index = graph.nodes.firstIndex(where: { $0.id == node.id }) else { return }
+
+    let currentWidth = graph.nodes[index].width ?? calculateAutoWidth(for: node)
+    let optimalWidth = calculateAutoWidth(for: node)
+
+    if fromLeft {
+      // When auto-fitting from left, adjust position to keep right edge fixed
+      let widthDiff = currentWidth - optimalWidth
+      let newPosition = CGPoint(
+        x: graph.nodes[index].position.x + widthDiff,
+        y: graph.nodes[index].position.y
+      )
+      graph.nodes[index].position = newPosition
+      onNodeMoved?(node.id, newPosition)
+    }
+
+    // Set width to nil to use auto-calculated width
+    graph.nodes[index].width = nil
+    onNodeResized?(node.id, optimalWidth)
+    onNodeDragEnded?()  // Save the changes
+    needsDisplay = true
+  }
+
   // MARK: - Mouse Events
 
   override func mouseDown(with event: NSEvent) {
@@ -1369,6 +1560,40 @@ class SchemaGraphNSView: NSView {
     if let node = hitTestExpandButton(at: point) {
       // Trigger the same action as double-click
       onNodeDoubleClick?(node)
+      return
+    }
+
+    // Check if double-clicking on right resize handle - auto-fit to content
+    if event.clickCount == 2 {
+      if let node = hitTestResizeHandle(at: point) {
+        autoFitNodeWidth(node, fromLeft: false)
+        return
+      }
+      if let node = hitTestLeftResizeHandle(at: point) {
+        autoFitNodeWidth(node, fromLeft: true)
+        return
+      }
+    }
+
+    // Check if clicking right resize handle
+    if let node = hitTestResizeHandle(at: point) {
+      isResizingNode = true
+      resizingNodeId = node.id
+      isResizingFromLeft = false
+      isDraggingNode = false
+      isDraggingCanvas = false
+      NSCursor.resizeLeftRight.push()
+      return
+    }
+
+    // Check if clicking left resize handle
+    if let node = hitTestLeftResizeHandle(at: point) {
+      isResizingNode = true
+      resizingNodeId = node.id
+      isResizingFromLeft = true
+      isDraggingNode = false
+      isDraggingCanvas = false
+      NSCursor.resizeLeftRight.push()
       return
     }
 
@@ -1423,9 +1648,36 @@ class SchemaGraphNSView: NSView {
   override func mouseDragged(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     let deltaX = point.x - lastMouseLocation.x
-    let deltaY = point.y - lastMouseLocation.y
 
-    if isDraggingNode, let nodeId = draggedNodeId {
+    if isResizingNode, let nodeId = resizingNodeId {
+      if let index = graph.nodes.firstIndex(where: { $0.id == nodeId }) {
+        let currentWidth = graph.nodes[index].width ?? calculateAutoWidth(for: graph.nodes[index])
+        let scaledDelta = deltaX / scale
+
+        if isResizingFromLeft {
+          // Resize from left: decrease width when dragging right, increase when dragging left
+          // Also need to move the position to keep right edge fixed
+          let newWidth = min(max(currentWidth - scaledDelta, nodeMinWidth), nodeMaxWidth)
+          let actualWidthChange = currentWidth - newWidth
+          // Move position by the actual width change (positive when shrinking, negative when growing)
+          let newPosition = CGPoint(
+            x: graph.nodes[index].position.x + actualWidthChange,
+            y: graph.nodes[index].position.y
+          )
+          graph.nodes[index].width = newWidth
+          graph.nodes[index].position = newPosition
+          onNodeResized?(nodeId, newWidth)
+          onNodeMoved?(nodeId, newPosition)
+        } else {
+          // Resize from right: increase width when dragging right
+          let newWidth = min(max(currentWidth + scaledDelta, nodeMinWidth), nodeMaxWidth)
+          graph.nodes[index].width = newWidth
+          onNodeResized?(nodeId, newWidth)
+        }
+        needsDisplay = true
+      }
+    } else if isDraggingNode, let nodeId = draggedNodeId {
+      let deltaY = point.y - lastMouseLocation.y
       if let index = graph.nodes.firstIndex(where: { $0.id == nodeId }) {
         let newPosition = CGPoint(
           x: graph.nodes[index].position.x + deltaX / scale,
@@ -1436,6 +1688,7 @@ class SchemaGraphNSView: NSView {
         needsDisplay = true
       }
     } else if isDraggingCanvas {
+      let deltaY = point.y - lastMouseLocation.y
       offset.x += deltaX
       offset.y += deltaY
       onOffsetChanged?(offset)
@@ -1448,24 +1701,65 @@ class SchemaGraphNSView: NSView {
   override func mouseUp(with event: NSEvent) {
     if event.clickCount == 2 {
       let point = convert(event.locationInWindow, from: nil)
-      if let node = hitTestNode(at: point) {
+      // Don't trigger node double-click if clicking on resize handles (already handled in mouseDown)
+      let isOnResizeHandle =
+        hitTestResizeHandle(at: point) != nil || hitTestLeftResizeHandle(at: point) != nil
+      if !isOnResizeHandle, let node = hitTestNode(at: point) {
         onNodeDoubleClick?(node)
       }
     }
 
-    // Notify when node drag ends to save positions
-    if isDraggingNode {
+    // Notify when node drag or resize ends to save positions
+    if isDraggingNode || isResizingNode {
       onNodeDragEnded?()
+    }
+
+    // Reset resize cursor
+    if isResizingNode {
+      NSCursor.pop()
     }
 
     isDraggingNode = false
     isDraggingCanvas = false
+    isResizingNode = false
+    isResizingFromLeft = false
     draggedNodeId = nil
+    resizingNodeId = nil
   }
 
   override func mouseMoved(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     var needsRedraw = false
+
+    // Check if hovering over right resize handle (show resize cursor)
+    if let node = hitTestResizeHandle(at: point) {
+      if hoveredResizeHandleNodeId != node.id {
+        hoveredResizeHandleNodeId = node.id
+        NSCursor.resizeLeftRight.push()
+        needsRedraw = true
+      }
+    } else if hoveredResizeHandleNodeId != nil {
+      hoveredResizeHandleNodeId = nil
+      NSCursor.pop()
+      needsRedraw = true
+    }
+
+    // Check if hovering over left resize handle (show resize cursor)
+    if let node = hitTestLeftResizeHandle(at: point) {
+      if hoveredLeftResizeHandleNodeId != node.id {
+        hoveredLeftResizeHandleNodeId = node.id
+        if hoveredResizeHandleNodeId == nil {  // Only push if right handle cursor not already active
+          NSCursor.resizeLeftRight.push()
+        }
+        needsRedraw = true
+      }
+    } else if hoveredLeftResizeHandleNodeId != nil {
+      hoveredLeftResizeHandleNodeId = nil
+      if hoveredResizeHandleNodeId == nil {  // Only pop if right handle cursor not active
+        NSCursor.pop()
+      }
+      needsRedraw = true
+    }
 
     // Check if hovering over an expand button
     if let node = hitTestExpandButton(at: point) {
@@ -1563,6 +1857,16 @@ class SchemaGraphNSView: NSView {
     }
     if hoveredColumnConnectionEdgeId != nil {
       hoveredColumnConnectionEdgeId = nil
+      needsRedraw = true
+    }
+    if hoveredResizeHandleNodeId != nil {
+      hoveredResizeHandleNodeId = nil
+      NSCursor.pop()
+      needsRedraw = true
+    }
+    if hoveredLeftResizeHandleNodeId != nil {
+      hoveredLeftResizeHandleNodeId = nil
+      NSCursor.pop()
       needsRedraw = true
     }
     edgeHoverTimer?.invalidate()
@@ -1931,27 +2235,33 @@ class SchemaGraphNSView: NSView {
       }
       iconX += iconSpacing
 
-      // Draw column name
-      let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
-      let nameFont = hasSpecialAttributes ? pkFont : columnFont
-      let nameColor = hasSpecialAttributes ? textColor : columnTextColor
-      let namePoint = CGPoint(x: iconX + 2, y: y)
-
-      let nameAttributes: [NSAttributedString.Key: Any] = [
-        .font: nameFont,
-        .foregroundColor: nameColor,
-      ]
-      let nameString = NSAttributedString(string: column.name, attributes: nameAttributes)
-      nameString.draw(at: namePoint)
-
-      // Draw type on the right
+      // Calculate available width for column name
       let typeAttributes: [NSAttributedString.Key: Any] = [
         .font: typeFont,
         .foregroundColor: subtleTextColor.withAlphaComponent(0.7),
       ]
       let typeString = NSAttributedString(string: column.type, attributes: typeAttributes)
       let typeSize = typeString.size()
-      typeString.draw(at: CGPoint(x: rect.maxX - typeSize.width - 8, y: y + 1))
+      let typeX = rect.maxX - typeSize.width - 8
+      let nameStartX = iconX + 2
+      let maxNameWidth = typeX - nameStartX - columnTypeGap
+
+      // Draw column name (truncated if needed)
+      let hasSpecialAttributes = column.isPrimaryKey || column.isIdentity || column.isUnique
+      let nameFont = hasSpecialAttributes ? pkFont : columnFont
+      let nameColor = hasSpecialAttributes ? textColor : columnTextColor
+      let namePoint = CGPoint(x: nameStartX, y: y)
+
+      let truncatedName = truncateText(column.name, font: nameFont, maxWidth: maxNameWidth)
+      let nameAttributes: [NSAttributedString.Key: Any] = [
+        .font: nameFont,
+        .foregroundColor: nameColor,
+      ]
+      let nameString = NSAttributedString(string: truncatedName, attributes: nameAttributes)
+      nameString.draw(at: namePoint)
+
+      // Draw type on the right
+      typeString.draw(at: CGPoint(x: typeX, y: y + 1))
     }
   }
 }

@@ -14,17 +14,20 @@ struct SchemaNode: Identifiable, Sendable, Equatable {
   let table: DatabaseTable
   var position: CGPoint
   var isSelected: Bool
+  var width: CGFloat?  // Custom width set by user, nil means auto-calculated
 
   nonisolated init(
     id: UUID = UUID(),
     table: DatabaseTable,
     position: CGPoint = .zero,
-    isSelected: Bool = false
+    isSelected: Bool = false,
+    width: CGFloat? = nil
   ) {
     self.id = id
     self.table = table
     self.position = position
     self.isSelected = isSelected
+    self.width = width
   }
 
   /// Table qualified name for lookups
@@ -36,6 +39,7 @@ struct SchemaNode: Identifiable, Sendable, Equatable {
     lhs.id == rhs.id
       && lhs.position == rhs.position
       && lhs.isSelected == rhs.isSelected
+      && lhs.width == rhs.width
   }
 }
 
@@ -78,15 +82,17 @@ struct SavedNodePosition: Codable, Sendable, Equatable {
   let tableQualifiedName: String
   let x: CGFloat
   let y: CGFloat
+  let width: CGFloat?  // Custom width set by user
 
   var position: CGPoint {
     CGPoint(x: x, y: y)
   }
 
-  nonisolated init(tableQualifiedName: String, position: CGPoint) {
+  nonisolated init(tableQualifiedName: String, position: CGPoint, width: CGFloat? = nil) {
     self.tableQualifiedName = tableQualifiedName
     self.x = position.x
     self.y = position.y
+    self.width = width
   }
 }
 
@@ -105,21 +111,23 @@ struct SchemaGraph: Sendable, Equatable {
     nodes.map { node in
       SavedNodePosition(
         tableQualifiedName: node.qualifiedName,
-        position: node.position
+        position: node.position,
+        width: node.width
       )
     }
   }
 
   /// Apply saved positions to nodes
   mutating func applyPositions(_ savedPositions: [SavedNodePosition]) {
-    let positionByName = Dictionary(
-      savedPositions.map { ($0.tableQualifiedName, $0.position) },
+    let savedByName = Dictionary(
+      savedPositions.map { ($0.tableQualifiedName, $0) },
       uniquingKeysWith: { first, _ in first }
     )
 
     for index in nodes.indices {
-      if let savedPosition = positionByName[nodes[index].qualifiedName] {
-        nodes[index].position = savedPosition
+      if let saved = savedByName[nodes[index].qualifiedName] {
+        nodes[index].position = saved.position
+        nodes[index].width = saved.width
       }
     }
   }
