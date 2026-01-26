@@ -83,4 +83,32 @@ extension NotebookViewModel {
       }
     }
   }
+
+  /// Disable read-only mode for the current connection
+  /// This updates both the editing config and notebook config, then reconnects
+  func disableReadOnlyMode() async {
+    // Update both configs
+    editingConnectionConfig.readOnly = false
+    notebook.connectionConfig?.readOnly = false
+
+    // Log the action
+    await AppLogger.shared.info(
+      "Read-only mode disabled for connection: \(editingConnectionConfig.safeDisplayString)",
+      category: "Connection")
+
+    // Reconnect if currently connected to apply the change
+    if case .connected = connectionState {
+      do {
+        try await connect()
+        showToast("Read-only mode disabled", type: .success)
+      } catch {
+        showToast("Failed to reconnect: \(error.localizedDescription)", type: .error)
+      }
+    } else {
+      showToast("Read-only mode disabled", type: .success)
+    }
+
+    // Sync document to save the change
+    onDocumentChanged?()
+  }
 }

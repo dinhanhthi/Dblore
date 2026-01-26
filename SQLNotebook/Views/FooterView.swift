@@ -34,6 +34,7 @@ struct FooterView: View {
   @Bindable var viewModel: NotebookViewModel
   var lastSaved: Date?
   var isEditorMode: Bool = false
+  @State private var showDisableReadOnlyConfirmation = false
 
   var body: some View {
     HStack(spacing: Spacing.lg) {
@@ -53,9 +54,12 @@ struct FooterView: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
 
-        // Read-only mode badge
+        // Read-only mode badge (clickable)
         if viewModel.notebook.connectionConfig?.readOnly == true {
           readOnlyBadge
+            .onTapGesture {
+              showDisableReadOnlyConfirmation = true
+            }
         }
 
         // Window dimensions (for debugging)
@@ -123,6 +127,22 @@ struct FooterView: View {
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
       Divider()
+    }
+    .confirmationDialog(
+      "Disable Read-only Mode?",
+      isPresented: $showDisableReadOnlyConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Disable Read-only Mode", role: .destructive) {
+        Task {
+          await viewModel.disableReadOnlyMode()
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
+      )
     }
   }
 
@@ -202,8 +222,14 @@ struct FooterView: View {
     .padding(.vertical, 2)
     .background(Color.warning.opacity(0.15))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-    .help(
-      "Connection is in read-only mode. Modification queries (INSERT, UPDATE, DELETE) are blocked.")
+    .help("Click to disable read-only mode")
+    .onHover { hovering in
+      if hovering {
+        NSCursor.pointingHand.push()
+      } else {
+        NSCursor.pop()
+      }
+    }
   }
 
   // MARK: - File Size Helpers

@@ -169,7 +169,7 @@ struct RightSidebarView: View {
         actualLimit: actualLimit
       )
     case .connectionDetails:
-      ConnectionInfoContent(config: viewModel.notebook.connectionConfig)
+      ConnectionInfoContent(viewModel: viewModel)
     case .connectionForm:
       ConnectionFormContent(viewModel: viewModel)
     case .settings:

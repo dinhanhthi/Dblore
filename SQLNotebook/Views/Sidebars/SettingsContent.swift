@@ -11,6 +11,7 @@ struct SettingsContent: View {
   @Bindable var appSettings = AppSettings.shared
   @State private var showRemoveResultsConfirmation = false
   @State private var isExportingLogs = false
+  @State private var showDisableReadOnlyConfirmation = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -196,14 +197,23 @@ struct SettingsContent: View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
           SettingsToggle(
             title: "Bypass Destructive Query Confirmation",
-            description:
-              "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases.",
-            warning: viewModel.editingConnectionConfig.readOnly
-              ? "This option is disabled because connection is in read-only mode."
-              : nil,
             isOn: $appSettings.bypassDestructiveQueryConfirmation,
             isDisabled: viewModel.editingConnectionConfig.readOnly
-          )
+          ) {
+            SettingsToggleDescriptionWithAction(
+              description:
+                "When enabled, UPDATE, DELETE, and INSERT queries will execute immediately without confirmation. Not recommended for production databases.",
+              warning: viewModel.editingConnectionConfig.readOnly
+                ? "This option is disabled because connection is in read-only mode."
+                : nil,
+              actionTitle: viewModel.editingConnectionConfig.readOnly
+                ? "Disable Read-only Mode"
+                : nil,
+              onAction: {
+                showDisableReadOnlyConfirmation = true
+              }
+            )
+          }
 
           // Connection History Size Setting
           SettingsSlider(
@@ -225,6 +235,22 @@ struct SettingsContent: View {
             .foregroundColor(.foregroundSubtle)
           }
         }
+      }
+      .confirmationDialog(
+        "Disable Read-only Mode?",
+        isPresented: $showDisableReadOnlyConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Disable Read-only Mode", role: .destructive) {
+          Task {
+            await viewModel.disableReadOnlyMode()
+          }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text(
+          "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
+        )
       }
 
       Divider()
@@ -539,6 +565,47 @@ struct SettingsToggleDescription: View {
         }
         .font(.small)
         .foregroundColor(.warning)
+      }
+    }
+  }
+}
+
+/// Helper view for toggle description with optional warning and action button
+struct SettingsToggleDescriptionWithAction: View {
+  let description: String
+  let warning: String?
+  let actionTitle: String?
+  let onAction: (() -> Void)?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text(description)
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
+
+      if let warning = warning {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          HStack(alignment: .top, spacing: Spacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .font(.small)
+            Text(warning)
+          }
+          .font(.small)
+          .foregroundColor(.warning)
+
+          if let actionTitle = actionTitle, let onAction = onAction {
+            Button(action: onAction) {
+              Text(actionTitle)
+                .font(.small)
+                .foregroundColor(.white)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, Spacing.xs)
+                .background(Color.warning)
+                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+            }
+            .buttonStyle(.plain)
+          }
+        }
       }
     }
   }

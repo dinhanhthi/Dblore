@@ -8,7 +8,12 @@ import SwiftUI
 // MARK: - Connection Info Content
 
 struct ConnectionInfoContent: View {
-  let config: ConnectionConfig?
+  @Bindable var viewModel: NotebookViewModel
+  @State private var showDisableReadOnlyConfirmation = false
+
+  private var config: ConnectionConfig? {
+    viewModel.notebook.connectionConfig
+  }
 
   var body: some View {
     if let config {
@@ -24,6 +29,17 @@ struct ConnectionInfoContent: View {
               Text("Read-only mode enabled")
                 .font(.caption)
                 .foregroundColor(.warning)
+
+              Spacer()
+
+              Button(action: {
+                showDisableReadOnlyConfirmation = true
+              }) {
+                Text("Disable")
+                  .font(.caption)
+                  .foregroundColor(.accent)
+              }
+              .buttonStyle(.plain)
             }
             .padding(Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -31,6 +47,22 @@ struct ConnectionInfoContent: View {
               RoundedRectangle(cornerRadius: CornerRadius.md)
                 .fill(Color.warning.opacity(0.1))
             )
+            .confirmationDialog(
+              "Disable Read-only Mode?",
+              isPresented: $showDisableReadOnlyConfirmation,
+              titleVisibility: .visible
+            ) {
+              Button("Disable Read-only Mode", role: .destructive) {
+                Task {
+                  await viewModel.disableReadOnlyMode()
+                }
+              }
+              Button("Cancel", role: .cancel) {}
+            } message: {
+              Text(
+                "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
+              )
+            }
           }
 
           // Connection name (if provided)
