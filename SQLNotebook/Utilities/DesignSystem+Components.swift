@@ -87,11 +87,9 @@ struct SidebarHeaderButtonStyle: ButtonStyle {
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
           .fill(
-            isActive
-              ? Color.accent.opacity(0.15)
-              : (isHovering && isEnabled || configuration.isPressed
-                ? Color.foregroundMuted.opacity(0.2)
-                : Color.clear)
+            isActive || isHovering && isEnabled || configuration.isPressed
+              ? Color.foregroundMuted.opacity(0.2)
+              : Color.clear
           )
       )
       .contentShape(Rectangle())

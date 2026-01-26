@@ -20,6 +20,7 @@ struct HeaderView: View {
           Image(systemName: "sidebar.left")
         }
         .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
+        .help("Toggle Sidebar (⌘⇧L)")
 
         // Schema Visualizer mode buttons (replaces normal buttons when active)
         if viewModel.isSchemaVisualizerActive {
@@ -47,6 +48,7 @@ struct HeaderView: View {
           .buttonStyle(ToolbarButtonStyle())
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
+          .help("New Cell (⌘N)")
 
           Button(action: {
             showRunAllConfirmation = true
@@ -55,6 +57,7 @@ struct HeaderView: View {
           }
           .buttonStyle(ToolbarButtonStyle())
           .disabled(!viewModel.connectionState.isConnected)
+          .help("Run All Cells")
           .confirmationDialog(
             "Run all cells?",
             isPresented: $showRunAllConfirmation,
@@ -98,6 +101,7 @@ struct HeaderView: View {
             Label("Clear All Outputs", systemImage: "trash")
           }
           .buttonStyle(ToolbarButtonStyle())
+          .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
             isPresented: $showClearAllOutputsConfirmation,
@@ -126,6 +130,7 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .buttonStyle(ToolbarButtonStyle())
+          .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
           Divider()
@@ -182,6 +187,7 @@ struct HeaderView: View {
             iconOnly: true
           )
         )
+        .help("Settings")
 
         Divider()
           .frame(height: 20)
@@ -364,6 +370,7 @@ struct ConnectionButton: View {
             .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
+          .help("Click to Disconnect")
           .animation(.easeInOut(duration: 0.15), value: isHoveringDisconnect)
           .onHover { hovering in
             isHoveringDisconnect = hovering
@@ -378,6 +385,7 @@ struct ConnectionButton: View {
             Image(systemName: "info.circle")
           }
           .buttonStyle(ToolbarButtonStyle(iconOnly: true))
+          .help("Connection Details")
           .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
           .onHover { hovering in
             isHoveringInfo = hovering
@@ -427,6 +435,7 @@ struct ConnectionButton: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(ToolbarButtonStyle())
+      .help("Connect to Database")
       .onHover { hovering in
         if hovering {
           NSCursor.pointingHand.push()
