@@ -27,6 +27,11 @@ struct ResultTableView: View {
   @State private var cachedTotalColumnsWidth: CGFloat = 0  // Cached total width (10.1.6 optimization)
   @State private var searchVersion: Int = 0  // Increment only when current match changes (10.2.3 optimization)
 
+  // Column sorting state
+  @State private var sortColumn: String? = nil  // Column name to sort by
+  @State private var sortAscending: Bool = true  // Sort direction (true = ascending)
+  @State private var hoveredHeaderColumn: String? = nil  // Track which header is hovered
+
   private let defaultColumnWidth: CGFloat = 170  // Default width for all columns
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
   private let maxColumnWidth: CGFloat = 500  // Maximum width when resizing
@@ -67,7 +72,8 @@ struct ResultTableView: View {
       ) {
         VStack(alignment: .leading, spacing: 0) {
           // Data rows - DB already limits via AppSettings.maxRowLimit/editorMaxRowLimit
-          ForEach(Array(result.rows.enumerated()), id: \.offset) { rowIndex, row in
+          // Use sortedRows for display (sorted based on selected column)
+          ForEach(Array(sortedRows.enumerated()), id: \.offset) { rowIndex, row in
             dataRow(row: row, rowIndex: rowIndex)
           }
         }
@@ -164,57 +170,81 @@ struct ResultTableView: View {
 
   private func headerCell(column: ColumnInfo) -> some View {
     HStack(spacing: 0) {
-      VStack(alignment: .leading, spacing: Spacing.xxs) {
-        HStack(spacing: Spacing.xs) {
-          // Primary key indicator
-          if result.primaryKeyColumns.contains(column.name) {
-            Image(systemName: "key")
-              .font(.system(size: 10))
-              .foregroundColor(.warning)
-          }
-
-          // Highlight column name if search query matches
-          if !searchQuery.isEmpty {
-            // Find the match for this column name
-            // In editor mode (cellId is nil), accept all matches
-            let isEditorMode = cellId == nil
-            let columnMatch = viewModel.searchState.matches.first {
-              (isEditorMode || $0.cellId == cellId) && ($0.matchType == .columnName(column.name))
+      HStack(spacing: Spacing.xs) {
+        VStack(alignment: .leading, spacing: Spacing.xxs) {
+          HStack(spacing: Spacing.xs) {
+            // Primary key indicator
+            if result.primaryKeyColumns.contains(column.name) {
+              Image(systemName: "key")
+                .font(.system(size: 10))
+                .foregroundColor(.warning)
             }
-            let isCurrentMatch = columnMatch?.id == currentMatchId
-            let matchRange: Range<String.Index>? =
-              isCurrentMatch
-              ? column.name.range(
-                of: searchQuery, options: searchCaseSensitive ? [] : .caseInsensitive)
-              : nil
 
-            SearchHighlightText(
-              text: column.name,
-              query: searchQuery,
-              caseSensitive: searchCaseSensitive,
-              currentMatchRange: matchRange
-            )
-            .font(.system(.body, weight: .semibold))
-            .lineLimit(1)
-            .truncationMode(.tail)
-          } else {
-            Text(column.name)
+            // Highlight column name if search query matches
+            if !searchQuery.isEmpty {
+              // Find the match for this column name
+              // In editor mode (cellId is nil), accept all matches
+              let isEditorMode = cellId == nil
+              let columnMatch = viewModel.searchState.matches.first {
+                (isEditorMode || $0.cellId == cellId) && ($0.matchType == .columnName(column.name))
+              }
+              let isCurrentMatch = columnMatch?.id == currentMatchId
+              let matchRange: Range<String.Index>? =
+                isCurrentMatch
+                ? column.name.range(
+                  of: searchQuery, options: searchCaseSensitive ? [] : .caseInsensitive)
+                : nil
+
+              SearchHighlightText(
+                text: column.name,
+                query: searchQuery,
+                caseSensitive: searchCaseSensitive,
+                currentMatchRange: matchRange
+              )
               .font(.system(.body, weight: .semibold))
-              .foregroundColor(.foreground)
               .lineLimit(1)
               .truncationMode(.tail)
+            } else {
+              Text(column.name)
+                .font(.system(.body, weight: .semibold))
+                .foregroundColor(.foreground)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
           }
+
+          Text(column.type)
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
 
-        Text(column.type)
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
-          .lineLimit(1)
-          .truncationMode(.tail)
+        Spacer()
+
+        // Sort indicator
+        if sortColumn == column.name {
+          // Active sort indicator
+          Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(.accentColor)
+        } else if hoveredHeaderColumn == column.name {
+          // Show subtle indicator on hover (hint that column is sortable)
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.system(size: 10, weight: .regular))
+            .foregroundColor(.foregroundSubtle)
+        }
       }
       .padding(.horizontal, Spacing.lg)
       .padding(.vertical, Spacing.xs)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+      .onHover { isHovering in
+        hoveredHeaderColumn = isHovering ? column.name : nil
+      }
+      .onTapGesture {
+        toggleSort(for: column.name)
+      }
 
       // Resize handle
       ResultTableResizeHandle(
@@ -229,6 +259,24 @@ struct ResultTableView: View {
       )
     }
     .frame(width: columnWidth(for: column.name), alignment: .leading)
+  }
+
+  /// Toggle sort for a column
+  private func toggleSort(for columnName: String) {
+    if sortColumn == columnName {
+      // Same column: toggle direction or clear
+      if sortAscending {
+        sortAscending = false
+      } else {
+        // Already descending, clear sort
+        sortColumn = nil
+        sortAscending = true
+      }
+    } else {
+      // New column: start with ascending
+      sortColumn = columnName
+      sortAscending = true
+    }
   }
 
   // MARK: - Data Row
@@ -301,6 +349,26 @@ struct ResultTableView: View {
       isCurrentMatch: isCurrentMatch
     )
     .equatable()  // Use Equatable protocol to skip re-render when props unchanged (10.2.3)
+  }
+
+  // MARK: - Sorting
+
+  /// Sorted rows based on current sort column and direction
+  private var sortedRows: [[CellValue]] {
+    guard let sortColumn = sortColumn,
+      let columnIndex = result.columns.firstIndex(where: { $0.name == sortColumn })
+    else {
+      return result.rows
+    }
+
+    return result.rows.sorted { row1, row2 in
+      guard columnIndex < row1.count, columnIndex < row2.count else {
+        return false
+      }
+      let value1 = row1[columnIndex]
+      let value2 = row2[columnIndex]
+      return sortAscending ? value1 < value2 : value2 < value1
+    }
   }
 
   // MARK: - Helpers

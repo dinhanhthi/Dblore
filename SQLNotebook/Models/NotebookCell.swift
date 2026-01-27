@@ -223,7 +223,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
 }
 
 /// A value in a result cell, supporting multiple SQL types
-enum CellValue: Codable, Equatable, Sendable {
+enum CellValue: Codable, Equatable, Sendable, Comparable {
   case string(String)
   case int(Int)
   case double(Double)
@@ -302,5 +302,52 @@ enum CellValue: Codable, Equatable, Sendable {
   nonisolated var isJSON: Bool {
     if case .json = self { return true }
     return false
+  }
+
+  // MARK: - Comparable
+
+  /// Sort priority for different types (null always last)
+  private var sortPriority: Int {
+    switch self {
+    case .null: return 999  // Nulls sort last
+    case .bool: return 0
+    case .int: return 1
+    case .double: return 2
+    case .date: return 3
+    case .string: return 4
+    case .json: return 5
+    case .data: return 6
+    }
+  }
+
+  static func < (lhs: CellValue, rhs: CellValue) -> Bool {
+    // Nulls always sort last
+    if case .null = lhs { return false }
+    if case .null = rhs { return true }
+
+    // Compare same types directly
+    switch (lhs, rhs) {
+    case (.int(let l), .int(let r)):
+      return l < r
+    case (.double(let l), .double(let r)):
+      return l < r
+    case (.int(let l), .double(let r)):
+      return Double(l) < r
+    case (.double(let l), .int(let r)):
+      return l < Double(r)
+    case (.string(let l), .string(let r)):
+      return l.localizedStandardCompare(r) == .orderedAscending
+    case (.bool(let l), .bool(let r)):
+      return !l && r  // false < true
+    case (.date(let l), .date(let r)):
+      return l < r
+    case (.json(let l), .json(let r)):
+      return l.localizedStandardCompare(r) == .orderedAscending
+    case (.data(let l), .data(let r)):
+      return l.count < r.count
+    default:
+      // Different types: compare by sort priority
+      return lhs.sortPriority < rhs.sortPriority
+    }
   }
 }
