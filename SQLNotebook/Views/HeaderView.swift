@@ -189,6 +189,11 @@ struct HeaderView: View {
         )
         .help("Settings")
 
+        // Safe Mode Indicator (clickable to open settings)
+        SafeModeIndicator(onTap: {
+          viewModel.showSafeModeSettings()
+        })
+
         Divider()
           .frame(height: 20)
 
@@ -531,6 +536,61 @@ private struct ConnectionIconView: View {
       // (.disconnected, .connecting, .error)
       Image(systemName: "bolt.slash")
         .foregroundColor(.foregroundMuted)
+    }
+  }
+}
+
+/// MARK: - Safe Mode Indicator
+
+/// Shows current Safe Mode level in the header - clickable to open settings
+struct SafeModeIndicator: View {
+  @Bindable private var appSettings = AppSettings.shared
+  var onTap: () -> Void
+
+  var body: some View {
+    let safeMode = appSettings.safeMode
+
+    // Only show indicator for non-Silent modes
+    if safeMode != .silent {
+      Button(action: onTap) {
+        HStack(spacing: Spacing.xs) {
+          Image(systemName: safeModeIcon)
+            .font(.system(size: 12))
+            .foregroundColor(safeModeColor)
+
+          Text(safeMode.displayName)
+            .font(.small)
+            .foregroundColor(safeModeColor)
+        }
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.xs)
+        .background(safeModeColor.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+      }
+      .buttonStyle(.plain)
+      .help("Click to open Safe Mode settings")
+    }
+  }
+
+  private var safeModeIcon: String {
+    switch appSettings.safeMode {
+    case .silent:
+      return "bolt.fill"
+    case .alertRead, .alertAll:
+      return "exclamationmark.triangle.fill"
+    case .safeRead, .safeAll:
+      return "lock.shield.fill"
+    }
+  }
+
+  private var safeModeColor: Color {
+    switch appSettings.safeMode {
+    case .silent:
+      return .foregroundMuted
+    case .alertRead, .alertAll:
+      return .warning
+    case .safeRead, .safeAll:
+      return .accent
     }
   }
 }

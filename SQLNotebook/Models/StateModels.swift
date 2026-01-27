@@ -62,6 +62,7 @@ struct QueryConfirmationState: Equatable, Sendable {
   var pendingCellId: UUID?
   var pendingQuery: String = ""
   var affectsAllRows: Bool = false  // True if DELETE/UPDATE without WHERE clause
+  var requiresPassword: Bool = false  // True for Safe Mode levels 3-4
 
   // Run All Cells destructive query confirmation
   var showRunAllConfirmation: Bool = false
@@ -73,6 +74,7 @@ struct QueryConfirmationState: Equatable, Sendable {
     pendingCellId = nil
     pendingQuery = ""
     affectsAllRows = false
+    requiresPassword = false
   }
 
   mutating func clearRunAll() {
@@ -87,6 +89,7 @@ struct QueryConfirmationState: Equatable, Sendable {
       && lhs.pendingCellId == rhs.pendingCellId
       && lhs.pendingQuery == rhs.pendingQuery
       && lhs.affectsAllRows == rhs.affectsAllRows
+      && lhs.requiresPassword == rhs.requiresPassword
       && lhs.showRunAllConfirmation == rhs.showRunAllConfirmation
       && lhs.runAllDestructiveCount == rhs.runAllDestructiveCount
       && lhs.runAllPendingCells.count == rhs.runAllPendingCells.count

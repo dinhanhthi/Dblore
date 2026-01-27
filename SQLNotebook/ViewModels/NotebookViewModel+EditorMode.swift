@@ -100,14 +100,31 @@ extension NotebookViewModel {
       }
     }
 
-    // Check for modification queries and show confirmation if needed
+    let safeMode = AppSettings.shared.safeMode
     let isModification = isModificationQuery(query)
-    if isModification && !AppSettings.shared.bypassDestructiveQueryConfirmation {
+
+    // Determine if confirmation is needed based on Safe Mode level
+    let needsConfirmation: Bool
+    switch safeMode {
+    case .silent:
+      // No confirmation needed for any query
+      needsConfirmation = false
+    case .alertRead, .safeRead:
+      // Only confirm modification queries
+      needsConfirmation = isModification
+    case .alertAll, .safeAll:
+      // Confirm all queries
+      needsConfirmation = true
+    }
+
+    if needsConfirmation {
       // Show confirmation dialog
       queryConfirmationState.pendingQuery = query
       queryConfirmationState.pendingCellId = nil  // No cell ID in editor mode
       // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
-      queryConfirmationState.affectsAllRows = connectionManager.affectsAllRows(query)
+      queryConfirmationState.affectsAllRows =
+        isModification && connectionManager.affectsAllRows(query)
+      queryConfirmationState.requiresPassword = safeMode.requiresPassword
       queryConfirmationState.showDialog = true
       return
     }

@@ -3,7 +3,9 @@
 //  SQLNotebook
 //
 
+import CommonCrypto
 import Foundation
+import LocalAuthentication
 import SwiftUI
 
 /// Theme preference enum
@@ -21,6 +23,77 @@ enum ThemePreference: String, CaseIterable {
     case .dark:
       return .dark
     }
+  }
+}
+
+/// Safe Mode levels for query protection (similar to TablePlus)
+/// Higher levels provide more protection against accidental data modification
+enum SafeMode: Int, CaseIterable, Sendable {
+  /// No confirmations - execute all queries immediately
+  case silent = 0
+  /// Confirm non-SELECT queries (UPDATE/DELETE/INSERT/DROP/etc.) with a dialog
+  case alertRead = 1
+  /// Confirm ALL queries including SELECT with a dialog
+  case alertAll = 2
+  /// Require password for non-SELECT queries
+  case safeRead = 3
+  /// Require password for ALL queries
+  case safeAll = 4
+
+  var displayName: String {
+    switch self {
+    case .silent: return "Silent"
+    case .alertRead: return "Alert (Read)"
+    case .alertAll: return "Alert (All)"
+    case .safeRead: return "Safe (Read)"
+    case .safeAll: return "Safe (All)"
+    }
+  }
+
+  var description: String {
+    switch self {
+    case .silent:
+      return "No confirmations. All queries execute immediately."
+    case .alertRead:
+      return "Confirm data modification queries (UPDATE, DELETE, INSERT, DROP, etc.)"
+    case .alertAll:
+      return "Confirm all queries including SELECT"
+    case .safeRead:
+      return "Require password for data modification queries"
+    case .safeAll:
+      return "Require password for all queries"
+    }
+  }
+
+  /// Short description for display in settings list
+  var shortDescription: String {
+    switch self {
+    case .silent:
+      return "Execute all queries without confirmation"
+    case .alertRead:
+      return "Confirm UPDATE, DELETE, INSERT, DROP"
+    case .alertAll:
+      return "Confirm all queries including SELECT"
+    case .safeRead:
+      return "Password required for modifications"
+    case .safeAll:
+      return "Password required for all queries"
+    }
+  }
+
+  /// Returns true if this mode requires confirmation for SELECT queries
+  var requiresConfirmationForSelect: Bool {
+    self == .alertAll || self == .safeAll
+  }
+
+  /// Returns true if this mode requires confirmation for modification queries
+  var requiresConfirmationForModification: Bool {
+    self != .silent
+  }
+
+  /// Returns true if this mode requires password entry (not just confirmation)
+  var requiresPassword: Bool {
+    self == .safeRead || self == .safeAll
   }
 }
 
@@ -135,6 +208,9 @@ class AppSettings {
     static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
     static let accentColor = "app.settings.accentColor"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
+    static let safeMode = "app.settings.safeMode"
+    static let safeModePassword = "app.settings.safeModePassword"
+    static let safeModeBiometricEnabled = "app.settings.safeModeBiometricEnabled"
   }
 
   // MARK: - Settings Properties
@@ -310,6 +386,125 @@ class AppSettings {
     }
   }
 
+  /// Safe Mode level for query protection
+  /// Default: .alertRead (confirm modification queries)
+  var safeMode: SafeMode = .alertRead {
+    didSet {
+      UserDefaults.standard.set(safeMode.rawValue, forKey: Keys.safeMode)
+    }
+  }
+
+  /// Password for Safe Mode (used in safeRead and safeAll levels)
+  /// Stored in UserDefaults as simple hash (not production-secure, but sufficient for local app)
+  /// Default: empty string (no password set)
+  var safeModePassword: String = "" {
+    didSet {
+      // Store hashed password (SHA256)
+      let hashedPassword = safeModePassword.isEmpty ? "" : hashPassword(safeModePassword)
+      UserDefaults.standard.set(hashedPassword, forKey: Keys.safeModePassword)
+    }
+  }
+
+  /// Check if Safe Mode password is set (password or biometric)
+  var isSafeModePasswordSet: Bool {
+    let hasPassword =
+      !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
+    let hasBiometric = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
+    return hasPassword || hasBiometric
+  }
+
+  /// Check if Safe Mode has a custom password set (not biometric)
+  var hasCustomPasswordSet: Bool {
+    !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
+  }
+
+  /// Verify Safe Mode password
+  /// Returns true if password matches stored hash
+  func verifySafeModePassword(_ password: String) -> Bool {
+    let storedHash = UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? ""
+    if storedHash.isEmpty {
+      return true  // No password set, allow access
+    }
+    return hashPassword(password) == storedHash
+  }
+
+  /// Hash password using SHA256
+  private func hashPassword(_ password: String) -> String {
+    guard let data = password.data(using: .utf8) else { return "" }
+    let hash = data.withUnsafeBytes { bytes -> [UInt8] in
+      var hash = [UInt8](repeating: 0, count: 32)
+      CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
+      return hash
+    }
+    return hash.map { String(format: "%02x", $0) }.joined()
+  }
+
+  // MARK: - Biometric Authentication
+
+  /// Observable property for biometric enabled state
+  /// This property triggers SwiftUI refresh when biometric state changes
+  private(set) var biometricEnabledState: Bool = false
+
+  /// Check if biometric authentication is enabled for Safe Mode
+  var isBiometricEnabled: Bool {
+    biometricEnabledState
+  }
+
+  /// Check if Safe Mode has any protection (password or biometric)
+  var isSafeModeProtected: Bool {
+    isSafeModePasswordSet || isBiometricEnabled
+  }
+
+  /// Enable biometric/system authentication for Safe Mode
+  /// Uses deviceOwnerAuthentication which supports Touch ID, Face ID, or macOS password
+  func enableBiometricAuth() async throws {
+    let context = LAContext()
+    var error: NSError?
+
+    // Check if device owner authentication is available (Touch ID, Face ID, or password)
+    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+      throw error
+        ?? NSError(
+          domain: "SafeMode", code: -1,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "System authentication is not available. Please set up Touch ID or a system password."
+          ])
+    }
+
+    // Authenticate using Touch ID, Face ID, or macOS password
+    let success = try await context.evaluatePolicy(
+      .deviceOwnerAuthentication,
+      localizedReason: "Enable system authentication for Safe Mode query authorization")
+
+    if success {
+      await MainActor.run {
+        // Clear any existing password and enable biometric/system auth
+        UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
+        UserDefaults.standard.set(true, forKey: Keys.safeModeBiometricEnabled)
+        // Update observable property to trigger UI refresh
+        biometricEnabledState = true
+      }
+    }
+  }
+
+  /// Verify using biometric authentication
+  func verifyBiometric() async throws -> Bool {
+    let context = LAContext()
+
+    // Use biometrics or device passcode as fallback
+    return try await context.evaluatePolicy(
+      .deviceOwnerAuthentication,
+      localizedReason: "Authorize query execution in Safe Mode")
+  }
+
+  /// Disable biometric authentication
+  func disableBiometricAuth() {
+    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
+    // Update observable property to trigger UI refresh
+    biometricEnabledState = false
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -421,6 +616,19 @@ class AppSettings {
     if UserDefaults.standard.object(forKey: Keys.hideColumnTypes) != nil {
       hideColumnTypes = UserDefaults.standard.bool(forKey: Keys.hideColumnTypes)
     }
+
+    // Load Safe Mode setting
+    let savedSafeMode = UserDefaults.standard.integer(forKey: Keys.safeMode)
+    if UserDefaults.standard.object(forKey: Keys.safeMode) != nil,
+      let mode = SafeMode(rawValue: savedSafeMode)
+    {
+      safeMode = mode
+    }
+    // Note: safeModePassword is not loaded directly - it's stored as hash
+    // and only verified via verifySafeModePassword()
+
+    // Load biometric enabled state
+    biometricEnabledState = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
   }
 
   // MARK: - Reset to Defaults
@@ -444,5 +652,15 @@ class AppSettings {
     syntaxHighlightingEnabled = true
     accentColor = .purple
     hideColumnTypes = false
+    safeMode = .alertRead
+    // Note: Don't reset safeModePassword on general reset for security
+  }
+
+  /// Clear Safe Mode password and biometric (separate from general reset)
+  func clearSafeModePassword() {
+    UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
+    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
+    // Update observable property to trigger UI refresh
+    biometricEnabledState = false
   }
 }

@@ -272,7 +272,7 @@ class NotebookViewModel {
     return false
   }
 
-  /// Show confirmation dialog before executing a destructive query
+  /// Show confirmation dialog before executing a query based on Safe Mode level
   func confirmAndRunCell(id: UUID) {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     let query = notebook.cells[index].content
@@ -286,24 +286,34 @@ class NotebookViewModel {
       }
     }
 
-    // Check if query is a modification query
-    if isModificationQuery(query) {
-      // Check if user wants to bypass confirmation
-      if AppSettings.shared.bypassDestructiveQueryConfirmation {
-        // Execute directly if bypass is enabled
-        Task {
-          await runCell(id: id)
-        }
-      } else {
-        // Show confirmation dialog
-        queryConfirmationState.pendingCellId = id
-        queryConfirmationState.pendingQuery = query
-        // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
-        queryConfirmationState.affectsAllRows = connectionManager.affectsAllRows(query)
-        queryConfirmationState.showDialog = true
-      }
+    let safeMode = AppSettings.shared.safeMode
+    let isModification = isModificationQuery(query)
+
+    // Determine if confirmation is needed based on Safe Mode level
+    let needsConfirmation: Bool
+    switch safeMode {
+    case .silent:
+      // No confirmation needed for any query
+      needsConfirmation = false
+    case .alertRead, .safeRead:
+      // Only confirm modification queries
+      needsConfirmation = isModification
+    case .alertAll, .safeAll:
+      // Confirm all queries
+      needsConfirmation = true
+    }
+
+    if needsConfirmation {
+      // Show confirmation dialog
+      queryConfirmationState.pendingCellId = id
+      queryConfirmationState.pendingQuery = query
+      // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
+      queryConfirmationState.affectsAllRows =
+        isModification && connectionManager.affectsAllRows(query)
+      queryConfirmationState.requiresPassword = safeMode.requiresPassword
+      queryConfirmationState.showDialog = true
     } else {
-      // Execute directly if not a modification query
+      // Execute directly
       Task {
         await runCell(id: id)
       }

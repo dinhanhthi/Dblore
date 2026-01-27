@@ -65,6 +65,17 @@ extension NotebookViewModel {
     handleSidebarConflict(opening: .right)
   }
 
+  /// Show settings and scroll to Safe Mode section
+  func showSafeModeSettings() {
+    showSettings()
+    // Post notification to scroll to Safe Mode section after a short delay
+    // to allow the sidebar to render first
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(100))
+      NotificationCenter.default.post(name: .scrollToSafeModeSettings, object: nil)
+    }
+  }
+
   /// Toggle sidebar visibility
   func toggleSidebar() {
     isRightSidebarVisible.toggle()
