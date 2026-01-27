@@ -826,6 +826,63 @@ struct DatabaseQueryParsingTests {
       let result = await manager.isModificationQuery(query)
       #expect(result == false, "Should not detect CREATE as modification")
     }
+
+    @Test("DROP query returns true")
+    func dropQueryReturnsTrue() async throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "DROP TABLE users",
+        "DROP DATABASE mydb",
+        "DROP INDEX idx_name",
+        "DROP VIEW my_view",
+        "DROP SCHEMA public",
+      ]
+      for query in queries {
+        let result = await manager.isModificationQuery(query)
+        #expect(result == true, "Should detect DROP query as modification: \(query)")
+      }
+    }
+
+    @Test("TRUNCATE query returns true")
+    func truncateQueryReturnsTrue() async throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "TRUNCATE TABLE users",
+        "TRUNCATE users",
+      ]
+      for query in queries {
+        let result = await manager.isModificationQuery(query)
+        #expect(result == true, "Should detect TRUNCATE query as modification: \(query)")
+      }
+    }
+
+    @Test("ALTER query returns true")
+    func alterQueryReturnsTrue() async throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "ALTER TABLE users ADD COLUMN age INT",
+        "ALTER TABLE users DROP COLUMN email",
+        "ALTER TABLE users RENAME TO customers",
+      ]
+      for query in queries {
+        let result = await manager.isModificationQuery(query)
+        #expect(result == true, "Should detect ALTER query as modification: \(query)")
+      }
+    }
+
+    @Test("DROP/TRUNCATE/ALTER with leading comment returns true")
+    func schemaModificationWithLeadingCommentReturnsTrue() async throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "-- comment\nDROP TABLE users",
+        "/* multi-line */ TRUNCATE TABLE users",
+        "-- be careful\nALTER TABLE users DROP COLUMN email",
+      ]
+      for query in queries {
+        let result = await manager.isModificationQuery(query)
+        #expect(result == true, "Should detect schema modification after comment: \(query)")
+      }
+    }
   }
 
   // MARK: - SQL Syntax Behavior Tests

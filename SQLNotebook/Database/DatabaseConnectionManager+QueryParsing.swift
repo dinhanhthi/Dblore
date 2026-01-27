@@ -136,11 +136,24 @@ extension DatabaseConnectionManager {
     return withoutLeadingComments.uppercased().hasPrefix("SELECT")
   }
 
-  /// Check if a query is a data modification statement (UPDATE, DELETE, INSERT)
+  /// Check if a query is a destructive modification statement
+  /// Includes: UPDATE, DELETE, INSERT (data modification)
+  /// And: DROP, TRUNCATE, ALTER (schema modification)
   func isModificationQuery(_ query: String) -> Bool {
     let withoutLeadingComments = stripLeadingComments(query).uppercased()
-    return withoutLeadingComments.hasPrefix("UPDATE") || withoutLeadingComments.hasPrefix("DELETE")
+    // Data modification
+    if withoutLeadingComments.hasPrefix("UPDATE") || withoutLeadingComments.hasPrefix("DELETE")
       || withoutLeadingComments.hasPrefix("INSERT")
+    {
+      return true
+    }
+    // Schema modification (destructive)
+    if withoutLeadingComments.hasPrefix("DROP") || withoutLeadingComments.hasPrefix("TRUNCATE")
+      || withoutLeadingComments.hasPrefix("ALTER")
+    {
+      return true
+    }
+    return false
   }
 
   /// Check if a query is a DELETE statement

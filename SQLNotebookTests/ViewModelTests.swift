@@ -482,17 +482,55 @@ struct ViewModelTests {
     #expect(!viewModel.isModificationQuery("select * from users"))
   }
 
-  @Test("Other queries are not modifications")
-  func otherQueriesAreNotModifications() {
+  @Test("Detect DROP query as modification")
+  func detectDropQueryAsModification() {
     // Arrange
     let notebook = createTestNotebook()
     let viewModel = NotebookViewModel(notebook: notebook)
 
-    // Act & Assert
+    // Act & Assert - DROP is a destructive schema modification
+    #expect(viewModel.isModificationQuery("DROP TABLE users"))
+    #expect(viewModel.isModificationQuery("DROP DATABASE mydb"))
+    #expect(viewModel.isModificationQuery("DROP INDEX idx_name"))
+    #expect(viewModel.isModificationQuery("DROP VIEW my_view"))
+    #expect(viewModel.isModificationQuery("drop table users"))
+  }
+
+  @Test("Detect TRUNCATE query as modification")
+  func detectTruncateQueryAsModification() {
+    // Arrange
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    // Act & Assert - TRUNCATE deletes all rows (destructive)
+    #expect(viewModel.isModificationQuery("TRUNCATE TABLE users"))
+    #expect(viewModel.isModificationQuery("TRUNCATE users"))
+    #expect(viewModel.isModificationQuery("truncate table users"))
+  }
+
+  @Test("Detect ALTER query as modification")
+  func detectAlterQueryAsModification() {
+    // Arrange
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    // Act & Assert - ALTER can be destructive (DROP COLUMN, etc.)
+    #expect(viewModel.isModificationQuery("ALTER TABLE users ADD COLUMN age INT"))
+    #expect(viewModel.isModificationQuery("ALTER TABLE users DROP COLUMN email"))
+    #expect(viewModel.isModificationQuery("ALTER TABLE users RENAME TO customers"))
+    #expect(viewModel.isModificationQuery("alter table users add column age int"))
+  }
+
+  @Test("CREATE and other DDL queries are not modifications")
+  func createAndOtherDdlQueriesAreNotModifications() {
+    // Arrange
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    // Act & Assert - CREATE is not destructive (doesn't modify existing data)
     #expect(!viewModel.isModificationQuery("CREATE TABLE users (id INT)"))
-    #expect(!viewModel.isModificationQuery("DROP TABLE users"))
-    #expect(!viewModel.isModificationQuery("ALTER TABLE users ADD COLUMN age INT"))
-    #expect(!viewModel.isModificationQuery("TRUNCATE TABLE users"))
+    #expect(!viewModel.isModificationQuery("CREATE INDEX idx_name ON users(name)"))
+    #expect(!viewModel.isModificationQuery("CREATE VIEW user_view AS SELECT * FROM users"))
   }
 
   @Test("Confirm and run shows dialog for UPDATE query")
@@ -507,9 +545,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
-    #expect(viewModel.showQueryConfirmationDialog == true)
-    #expect(viewModel.pendingQueryCellId == cellId)
-    #expect(viewModel.pendingQuery == "UPDATE users SET name = 'John'")
+    #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "UPDATE users SET name = 'John'")
   }
 
   @Test("Confirm and run shows dialog for DELETE query")
@@ -524,9 +562,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
-    #expect(viewModel.showQueryConfirmationDialog == true)
-    #expect(viewModel.pendingQueryCellId == cellId)
-    #expect(viewModel.pendingQuery == "DELETE FROM users WHERE id = 1")
+    #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "DELETE FROM users WHERE id = 1")
   }
 
   @Test("Confirm and run shows dialog for INSERT query")
@@ -541,9 +579,10 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
-    #expect(viewModel.showQueryConfirmationDialog == true)
-    #expect(viewModel.pendingQueryCellId == cellId)
-    #expect(viewModel.pendingQuery == "INSERT INTO users (name) VALUES ('John')")
+    #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
+    #expect(
+      viewModel.queryConfirmationState.pendingQuery == "INSERT INTO users (name) VALUES ('John')")
   }
 
   @Test("Confirm and run executes directly for SELECT query")
@@ -558,9 +597,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - No dialog should be shown for SELECT
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
   }
 
   @Test("Cancel pending query clears state")
@@ -571,15 +610,15 @@ struct ViewModelTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "DELETE FROM users"
     viewModel.confirmAndRunCell(id: cellId)
-    #expect(viewModel.showQueryConfirmationDialog == true)
+    #expect(viewModel.queryConfirmationState.showDialog == true)
 
     // Act
     viewModel.cancelPendingQuery()
 
     // Assert
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
   }
 
   @Test("Confirm and run with non-existent cell does nothing")
@@ -593,9 +632,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: nonExistentId)
 
     // Assert - Nothing should happen
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
   }
 
   // MARK: - Bypass Confirmation Setting Tests
@@ -621,9 +660,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - No dialog should be shown
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
 
     // Cleanup
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
@@ -644,9 +683,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - No dialog should be shown
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
 
     // Cleanup
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
@@ -667,9 +706,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - No dialog should be shown
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.pendingQuery == "")
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "")
 
     // Cleanup
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
@@ -690,9 +729,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Dialog should be shown
-    #expect(viewModel.showQueryConfirmationDialog == true)
-    #expect(viewModel.pendingQueryCellId == cellId)
-    #expect(viewModel.pendingQuery == "UPDATE users SET name = 'John'")
+    #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
+    #expect(viewModel.queryConfirmationState.pendingQuery == "UPDATE users SET name = 'John'")
 
     // Cleanup
     viewModel.cancelPendingQuery()
@@ -728,9 +767,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.currentToast?.type == .error)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks DELETE query")
@@ -748,9 +787,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.currentToast?.type == .error)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks INSERT query")
@@ -768,9 +807,9 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
-    #expect(viewModel.currentToast?.type == .error)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(viewModel.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode allows SELECT query")
@@ -788,10 +827,10 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should not show error toast or confirmation dialog for SELECT
-    #expect(viewModel.showQueryConfirmationDialog == false)
-    #expect(viewModel.pendingQueryCellId == nil)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
     // Note: Toast may not be set to error (it could be nil or info)
-    if let toast = viewModel.currentToast {
+    if let toast = viewModel.toastState.currentToast {
       #expect(toast.type != .error)
     }
   }
@@ -814,8 +853,8 @@ struct ViewModelTests {
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show confirmation dialog (not error)
-    #expect(viewModel.showQueryConfirmationDialog == true)
-    #expect(viewModel.pendingQueryCellId == cellId)
+    #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
 
     // Cleanup
     viewModel.cancelPendingQuery()

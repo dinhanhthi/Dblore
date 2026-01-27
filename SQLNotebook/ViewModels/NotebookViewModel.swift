@@ -241,10 +241,20 @@ class NotebookViewModel {
 
   // MARK: - Query Confirmation
 
-  /// Check if a query is a destructive modification statement (UPDATE, DELETE, INSERT)
+  /// Check if a query is a destructive modification statement
+  /// Includes: UPDATE, DELETE, INSERT (data modification)
+  /// And: DROP, TRUNCATE, ALTER (schema modification)
   func isModificationQuery(_ query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    return trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT")
+    // Data modification
+    if trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT") {
+      return true
+    }
+    // Schema modification (destructive)
+    if trimmed.hasPrefix("DROP") || trimmed.hasPrefix("TRUNCATE") || trimmed.hasPrefix("ALTER") {
+      return true
+    }
+    return false
   }
 
   /// Show confirmation dialog before executing a destructive query
