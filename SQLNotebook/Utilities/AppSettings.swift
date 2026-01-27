@@ -28,7 +28,7 @@ enum ThemePreference: String, CaseIterable {
 
 /// Safe Mode levels for query protection (similar to TablePlus)
 /// Higher levels provide more protection against accidental data modification
-enum SafeMode: Int, CaseIterable, Sendable {
+enum SafeMode: Int, Codable, CaseIterable, Sendable {
   /// No confirmations - execute all queries immediately
   case silent = 0
   /// Confirm non-SELECT queries (UPDATE/DELETE/INSERT/DROP/etc.) with a dialog

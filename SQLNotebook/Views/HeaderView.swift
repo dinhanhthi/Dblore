@@ -190,9 +190,14 @@ struct HeaderView: View {
         .help("Settings")
 
         // Safe Mode Indicator (clickable to open settings)
-        SafeModeIndicator(onTap: {
-          viewModel.showSafeModeSettings()
-        })
+        // Shows per-connection SafeMode if set, otherwise global
+        SafeModeIndicator(
+          connectionConfig: viewModel.connectionState.isConnected
+            ? viewModel.notebook.connectionConfig : nil,
+          onTap: {
+            viewModel.showSafeModeSettings()
+          }
+        )
 
         Divider()
           .frame(height: 20)
@@ -543,12 +548,24 @@ private struct ConnectionIconView: View {
 /// MARK: - Safe Mode Indicator
 
 /// Shows current Safe Mode level in the header - clickable to open settings
+/// Shows per-connection SafeMode if set, otherwise shows global SafeMode
 struct SafeModeIndicator: View {
   @Bindable private var appSettings = AppSettings.shared
+  var connectionConfig: ConnectionConfig?  // Current connection's config (if connected)
   var onTap: () -> Void
 
+  /// The effective SafeMode - per-connection override or global setting
+  private var effectiveSafeMode: SafeMode {
+    connectionConfig?.safeMode ?? appSettings.safeMode
+  }
+
+  /// Whether showing per-connection override vs global setting
+  private var isPerConnectionOverride: Bool {
+    connectionConfig?.safeMode != nil
+  }
+
   var body: some View {
-    let safeMode = appSettings.safeMode
+    let safeMode = effectiveSafeMode
 
     // Only show indicator for non-Silent modes
     if safeMode != .silent {
@@ -568,12 +585,14 @@ struct SafeModeIndicator: View {
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
       }
       .buttonStyle(.plain)
-      .help("Click to open Safe Mode settings")
+      .help(
+        isPerConnectionOverride
+          ? "Per-connection Safe Mode (click to edit)" : "Click to open Safe Mode settings")
     }
   }
 
   private var safeModeIcon: String {
-    switch appSettings.safeMode {
+    switch effectiveSafeMode {
     case .silent:
       return "bolt.fill"
     case .alertRead, .alertAll:
@@ -584,7 +603,7 @@ struct SafeModeIndicator: View {
   }
 
   private var safeModeColor: Color {
-    switch appSettings.safeMode {
+    switch effectiveSafeMode {
     case .silent:
       return .foregroundMuted
     case .alertRead, .alertAll:

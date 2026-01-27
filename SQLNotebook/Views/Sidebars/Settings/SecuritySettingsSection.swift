@@ -15,8 +15,8 @@ struct SecuritySettingsSection: View {
   var body: some View {
     SettingsSection(title: "Security", icon: "lock.shield.fill") {
       VStack(alignment: .leading, spacing: Spacing.lg) {
-        // Safe Mode Picker
-        SafeModePicker(appSettings: appSettings, viewModel: viewModel)
+        // Combined Safe Mode Section
+        SafeModeSection(appSettings: appSettings, viewModel: viewModel)
           .id("safeModeSection")
 
         // Connection History Size Setting
@@ -94,64 +94,53 @@ struct SecuritySettingsSection: View {
   }
 }
 
-// MARK: - Safe Mode Picker Component
+// MARK: - Safe Mode Section (Combined Layout)
 
-/// Dialog mode for password setup sheet
-private enum PasswordDialogMode {
-  case password
-  case biometric
-}
+/// Combined Safe Mode section with current connection and global settings
+struct SafeModeSection: View {
+  var appSettings: AppSettings
+  var viewModel: NotebookViewModel
+  @State private var selectedConnectionMode: SafeMode?
 
-/// Action that requires authentication
-private enum ProtectedAction {
-  case changeSafeMode(SafeMode)
-  case removeProtection
-  case switchToPassword  // Switch from Touch ID to password
-  case switchToBiometric  // Switch from password to Touch ID
-}
-
-/// A picker component for Safe Mode levels with password management
-struct SafeModePicker: View {
-  @Bindable var appSettings: AppSettings
-  let viewModel: NotebookViewModel  // For accessing database password
+  // Password management states (moved from SafeModePicker)
   @State private var showPasswordSetup: Bool = false
-  @State private var currentPassword: String = ""  // For verifying current password when changing
+  @State private var currentPassword: String = ""
   @State private var newPassword: String = ""
   @State private var confirmPassword: String = ""
   @State private var passwordError: String?
   @State private var dialogMode: PasswordDialogMode = .password
-  @State private var activeDialogMode: PasswordDialogMode = .password  // Captured when sheet opens
-  @State private var refreshTrigger: UUID = UUID()  // Force UI refresh
-  @State private var isChangingPassword: Bool = false  // Track if we're changing existing password
-  @State private var useDbPasswordForChange: Bool = false  // Forgot password mode for change password
+  @State private var activeDialogMode: PasswordDialogMode = .password
+  @State private var refreshTrigger: UUID = UUID()
+  @State private var isChangingPassword: Bool = false
+  @State private var useDbPasswordForChange: Bool = false
 
-  // Authentication for protected actions
+  // Authentication states
   @State private var showAuthSheet: Bool = false
   @State private var pendingAction: ProtectedAction?
   @State private var authPassword: String = ""
   @State private var authError: String?
   @State private var isAuthenticating: Bool = false
-  @State private var useDbPasswordForAuth: Bool = false  // Forgot password mode for auth
+  @State private var useDbPasswordForAuth: Bool = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
-      // Safe Mode Picker Label
+      // Section Header
       Text("Safe Mode")
         .font(.subheading)
         .foregroundColor(.foreground)
 
-      // Mode Selection with descriptions
-      VStack(alignment: .leading, spacing: 0) {
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          safeModeOption(mode)
-        }
+      // Current Connection Row (only when connected)
+      if viewModel.connectionState.isConnected {
+        currentConnectionRow
       }
+
+      // Global Row
+      globalRow
     }
-    .id(refreshTrigger)  // Force refresh when trigger changes
+    .id(refreshTrigger)
     .sheet(isPresented: $showPasswordSetup) {
       passwordSetupSheet
         .onAppear {
-          // Capture the dialog mode when sheet opens - this prevents mode switching during editing
           activeDialogMode = dialogMode
         }
     }
@@ -163,71 +152,106 @@ struct SafeModePicker: View {
           isAuthenticating = false
         }
     }
+    .onAppear {
+      selectedConnectionMode = viewModel.notebook.connectionConfig?.safeMode
+    }
   }
 
-  @ViewBuilder
-  private func safeModeOption(_ mode: SafeMode) -> some View {
-    let isSelected = appSettings.safeMode == mode
+  // MARK: - Current Connection Row
 
-    VStack(alignment: .leading, spacing: 0) {
-      // Mode selection button
-      Button(action: {
-        // Check if current mode is protected and user is trying to change it
-        if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
-          && mode != appSettings.safeMode
-        {
-          // Require authentication before changing mode
-          pendingAction = .changeSafeMode(mode)
-          showAuthSheet = true
-        } else {
-          withAnimation(.snappy(duration: 0.2)) {
-            appSettings.safeMode = mode
-          }
+  private var currentConnectionRow: some View {
+    HStack(alignment: .center) {
+      // Label
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Current connection")
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+        if let config = viewModel.notebook.connectionConfig {
+          Text(config.name.isEmpty ? config.displayString : config.name)
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
         }
-      }) {
-        HStack(alignment: .top, spacing: Spacing.sm) {
-          Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-            .foregroundColor(isSelected ? .accent : .foregroundMuted)
-            .font(.system(size: 16))
-
-          VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: Spacing.xs) {
-              Text(mode.displayName)
-                .font(.bodyText)
-                .foregroundColor(isSelected ? .foreground : .foregroundMuted)
-
-              if mode.requiresPassword {
-                Image(systemName: "lock.fill")
-                  .font(.system(size: 10))
-                  .foregroundColor(.foregroundSubtle)
-              }
-            }
-
-            // Short description for each mode
-            Text(mode.shortDescription)
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
-
-          Spacer()
-        }
-        .padding(.vertical, Spacing.sm)
-        .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
 
-      // Password panel - shown indented under selected Safe mode options
-      if isSelected && mode.requiresPassword {
-        passwordManagementPanel
-          .padding(.leading, Spacing.lg + Spacing.sm)
-          .padding(.bottom, Spacing.sm)
+      Spacer()
+
+      // Dropdown
+      Picker("", selection: $selectedConnectionMode) {
+        Text("Use Global").tag(SafeMode?.none)
+        ForEach(SafeMode.allCases, id: \.self) { mode in
+          Text(mode.displayName).tag(Optional(mode))
+        }
+      }
+      .pickerStyle(.menu)
+      .frame(width: 140)
+      .onChange(of: selectedConnectionMode) { _, newValue in
+        viewModel.notebook.connectionConfig?.safeMode = newValue
+        viewModel.onDocumentChanged?()
       }
     }
   }
 
+  // MARK: - Global Row
+
+  private var globalRow: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack(alignment: .center) {
+        // Label
+        Text(viewModel.connectionState.isConnected ? "Global" : "Default")
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+
+        Spacer()
+
+        // Dropdown
+        Picker(
+          "",
+          selection: Binding(
+            get: { appSettings.safeMode },
+            set: { newMode in
+              handleSafeModeChange(to: newMode)
+            }
+          )
+        ) {
+          ForEach(SafeMode.allCases, id: \.self) { mode in
+            Text(mode.displayName).tag(mode)
+          }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 140)
+      }
+
+      // Description of selected global mode
+      Text(appSettings.safeMode.shortDescription)
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
+
+      // Password panel - shown when Safe mode (requires password) is selected
+      if appSettings.safeMode.requiresPassword {
+        passwordManagementPanel
+      }
+    }
+  }
+
+  // MARK: - Safe Mode Change Handler
+
+  private func handleSafeModeChange(to newMode: SafeMode) {
+    if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
+      && newMode != appSettings.safeMode
+    {
+      pendingAction = .changeSafeMode(newMode)
+      showAuthSheet = true
+    } else {
+      withAnimation(.snappy(duration: 0.2)) {
+        appSettings.safeMode = newMode
+      }
+    }
+  }
+
+  // MARK: - Password Management Panel
+
   private var passwordManagementPanel: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      // Status header
       HStack(spacing: Spacing.xs) {
         Image(systemName: appSettings.isSafeModePasswordSet ? "lock.fill" : "lock.open.fill")
           .font(.system(size: 12))
@@ -244,25 +268,17 @@ struct SafeModePicker: View {
           .foregroundColor(.foregroundSubtle)
       }
 
-      // Action buttons
       HStack(spacing: Spacing.md) {
-        // Set Password button
-        // - If Touch ID is enabled: require Touch ID auth first, then show password setup
-        // - If password is enabled: show password setup directly (to change)
-        // - If nothing is set: show password setup directly
         Button(action: {
           if appSettings.isBiometricEnabled {
-            // Touch ID is enabled - require auth first before switching to password
             pendingAction = .switchToPassword
             showAuthSheet = true
           } else {
-            // No protection or password mode - show password setup directly
             dialogMode = .password
             currentPassword = ""
             newPassword = ""
             confirmPassword = ""
             passwordError = nil
-            // Track if we're changing an existing password
             isChangingPassword = appSettings.hasCustomPasswordSet
             showPasswordSetup = true
           }
@@ -270,7 +286,6 @@ struct SafeModePicker: View {
           HStack(spacing: Spacing.xs) {
             Image(systemName: "key.fill")
               .font(.system(size: 10))
-            // Show "Change" if custom password is set (not biometric), otherwise "Set Password"
             Text(appSettings.hasCustomPasswordSet ? "Change" : "Set Password")
           }
           .font(.small)
@@ -278,18 +293,12 @@ struct SafeModePicker: View {
         }
         .buttonStyle(.plain)
 
-        // Touch ID button
-        // - If password is enabled: require password auth first, then enable Touch ID
-        // - If Touch ID is already enabled: do nothing (already active)
-        // - If nothing is set: show Touch ID setup directly
         if !appSettings.isBiometricEnabled {
           Button(action: {
             if appSettings.isSafeModePasswordSet && !appSettings.isBiometricEnabled {
-              // Password is enabled - require auth first before switching to Touch ID
               pendingAction = .switchToBiometric
               showAuthSheet = true
             } else {
-              // No protection - show Touch ID setup directly
               dialogMode = .biometric
               newPassword = ""
               confirmPassword = ""
@@ -308,10 +317,8 @@ struct SafeModePicker: View {
           .buttonStyle(.plain)
         }
 
-        // Remove button (only if protection is set)
         if appSettings.isSafeModePasswordSet {
           Button(action: {
-            // Require authentication before removing protection
             pendingAction = .removeProtection
             showAuthSheet = true
           }) {
@@ -328,16 +335,14 @@ struct SafeModePicker: View {
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
   }
 
+  // MARK: - Password Setup Sheet
+
   private var passwordSetupSheet: some View {
     VStack(spacing: Spacing.lg) {
-      // Use activeDialogMode which is captured when sheet opens
-      // This prevents the view from switching while user is interacting
       switch activeDialogMode {
       case .biometric:
-        // Touch ID / Biometric setup
         biometricSetupContent
       case .password:
-        // Password setup
         passwordSetupContent
       }
     }
@@ -346,109 +351,35 @@ struct SafeModePicker: View {
     .background(Color.appBackground)
   }
 
-  private var passwordSetupContent: some View {
-    VStack(spacing: Spacing.lg) {
-      Text(isChangingPassword ? "Change Safe Mode Password" : "Set Safe Mode Password")
-        .font(.heading)
-        .foregroundColor(.foreground)
-
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        // Current password field - only shown when changing existing password
-        if isChangingPassword {
-          VStack(alignment: .leading, spacing: Spacing.xs) {
-            HStack {
-              Text(
-                useDbPasswordForChange ? "Database Password" : "Current Password"
-              )
-              .font(.bodyText)
-              .foregroundColor(.foreground)
-
-              Spacer()
-
-              // Forgot password option - only show when connected
-              if viewModel.connectionState == .connected {
-                Button(action: {
-                  useDbPasswordForChange.toggle()
-                  currentPassword = ""
-                  passwordError = nil
-                }) {
-                  Text(useDbPasswordForChange ? "Use Safe Mode Password" : "Forgot Password?")
-                    .font(.small)
-                    .foregroundColor(.accent)
-                }
-                .buttonStyle(.plain)
-              }
-            }
-            SecureField(
-              useDbPasswordForChange ? "Enter database password" : "Enter current password",
-              text: $currentPassword
-            )
-            .textFieldStyle(.roundedBorder)
-
-            if useDbPasswordForChange {
-              Text("Using database connection password to verify your identity.")
-                .font(.small)
-                .foregroundColor(.foregroundSubtle)
-            }
-          }
-        }
-
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-          Text("New Password")
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-          SecureField("Enter password", text: $newPassword)
-            .textFieldStyle(.roundedBorder)
-        }
-
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-          Text("Confirm Password")
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-          SecureField("Confirm password", text: $confirmPassword)
-            .textFieldStyle(.roundedBorder)
-        }
-
-        if let error = passwordError {
-          Text(error)
-            .font(.small)
-            .foregroundColor(.destructive)
-        }
-      }
-
-      HStack(spacing: Spacing.md) {
-        Button("Cancel") {
-          showPasswordSetup = false
-          useDbPasswordForChange = false
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(.foregroundMuted)
-
-        Button("Save Password") {
-          savePassword()
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(
-          newPassword.isEmpty || confirmPassword.isEmpty
-            || (isChangingPassword && currentPassword.isEmpty))
-      }
-    }
-  }
-
   private var biometricSetupContent: some View {
     VStack(spacing: Spacing.lg) {
       Image(systemName: "touchid")
         .font(.system(size: 48))
         .foregroundColor(.accent)
 
-      Text("Enable Touch ID")
-        .font(.heading)
-        .foregroundColor(.foreground)
+      VStack(spacing: Spacing.xs) {
+        Text("Enable Touch ID")
+          .font(.heading)
+          .foregroundColor(.foreground)
+        Text("Use Touch ID to quickly unlock Safe Mode")
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+          .multilineTextAlignment(.center)
+      }
 
-      Text("Use Touch ID or your macOS password to authorize queries in Safe Mode.")
-        .font(.bodyText)
-        .foregroundColor(.foregroundMuted)
-        .multilineTextAlignment(.center)
+      VStack(spacing: Spacing.sm) {
+        SecureField("Backup Password", text: $newPassword)
+          .textFieldStyle(.plain)
+          .inputStyle()
+
+        SecureField("Confirm Password", text: $confirmPassword)
+          .textFieldStyle(.plain)
+          .inputStyle()
+
+        Text("A backup password is required in case Touch ID is unavailable.")
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+      }
 
       if let error = passwordError {
         Text(error)
@@ -460,301 +391,308 @@ struct SafeModePicker: View {
         Button("Cancel") {
           showPasswordSetup = false
         }
-        .buttonStyle(.plain)
-        .foregroundColor(.foregroundMuted)
+        .buttonStyle(SecondaryButtonStyle())
 
         Button("Enable Touch ID") {
           enableBiometric()
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(newPassword.isEmpty || confirmPassword.isEmpty)
       }
     }
   }
 
-  private func savePassword() {
-    // Verify current password if changing existing password
-    if isChangingPassword {
-      if useDbPasswordForChange {
-        // Verify using database password
-        guard currentPassword == viewModel.editingConnectionConfig.password else {
-          passwordError = "Incorrect database password"
-          return
+  private var passwordSetupContent: some View {
+    VStack(spacing: Spacing.lg) {
+      Image(systemName: "key.fill")
+        .font(.system(size: 48))
+        .foregroundColor(.accent)
+
+      VStack(spacing: Spacing.xs) {
+        Text(isChangingPassword ? "Change Password" : "Set Password")
+          .font(.heading)
+          .foregroundColor(.foreground)
+        Text(
+          isChangingPassword
+            ? "Enter your current password and choose a new one"
+            : "Choose a password to protect Safe Mode"
+        )
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+        .multilineTextAlignment(.center)
+      }
+
+      VStack(spacing: Spacing.sm) {
+        if isChangingPassword {
+          if useDbPasswordForChange {
+            SecureField("Database Password", text: $currentPassword)
+              .textFieldStyle(.plain)
+              .inputStyle()
+            Text("Using database password as fallback")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+          } else {
+            SecureField("Current Password", text: $currentPassword)
+              .textFieldStyle(.plain)
+              .inputStyle()
+            Button("Forgot password? Use database password") {
+              useDbPasswordForChange = true
+              currentPassword = ""
+            }
+            .font(.small)
+            .foregroundColor(.accent)
+            .buttonStyle(.plain)
+          }
         }
+
+        SecureField("New Password", text: $newPassword)
+          .textFieldStyle(.plain)
+          .inputStyle()
+
+        SecureField("Confirm Password", text: $confirmPassword)
+          .textFieldStyle(.plain)
+          .inputStyle()
+      }
+
+      if let error = passwordError {
+        Text(error)
+          .font(.small)
+          .foregroundColor(.destructive)
+      }
+
+      HStack(spacing: Spacing.md) {
+        Button("Cancel") {
+          showPasswordSetup = false
+        }
+        .buttonStyle(SecondaryButtonStyle())
+
+        Button(isChangingPassword ? "Change" : "Set Password") {
+          setPassword()
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(newPassword.isEmpty || confirmPassword.isEmpty)
+      }
+    }
+  }
+
+  // MARK: - Authentication Sheet
+
+  private var authenticationSheet: some View {
+    VStack(spacing: Spacing.lg) {
+      Image(systemName: appSettings.isBiometricEnabled ? "touchid" : "lock.fill")
+        .font(.system(size: 48))
+        .foregroundColor(.accent)
+
+      VStack(spacing: Spacing.xs) {
+        Text("Authentication Required")
+          .font(.heading)
+          .foregroundColor(.foreground)
+        Text(authenticationMessage)
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+          .multilineTextAlignment(.center)
+      }
+
+      if appSettings.isBiometricEnabled && !useDbPasswordForAuth {
+        Button("Use Touch ID") {
+          authenticateWithBiometric()
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(isAuthenticating)
+
+        Button("Use password instead") {
+          useDbPasswordForAuth = true
+        }
+        .font(.small)
+        .foregroundColor(.accent)
+        .buttonStyle(.plain)
       } else {
-        // Verify using Safe Mode password
-        guard appSettings.verifySafeModePassword(currentPassword) else {
-          passwordError = "Current password is incorrect"
-          return
+        VStack(spacing: Spacing.sm) {
+          if useDbPasswordForAuth && !appSettings.hasCustomPasswordSet {
+            SecureField("Database Password", text: $authPassword)
+              .textFieldStyle(.plain)
+              .inputStyle()
+            Text("Using database password as fallback")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+          } else {
+            SecureField("Password", text: $authPassword)
+              .textFieldStyle(.plain)
+              .inputStyle()
+            if !appSettings.isBiometricEnabled {
+              Button("Forgot password? Use database password") {
+                useDbPasswordForAuth = true
+                authPassword = ""
+              }
+              .font(.small)
+              .foregroundColor(.accent)
+              .buttonStyle(.plain)
+            }
+          }
+        }
+
+        if let error = authError {
+          Text(error)
+            .font(.small)
+            .foregroundColor(.destructive)
+        }
+
+        HStack(spacing: Spacing.md) {
+          Button("Cancel") {
+            showAuthSheet = false
+            pendingAction = nil
+          }
+          .buttonStyle(SecondaryButtonStyle())
+
+          Button("Verify") {
+            verifyPassword()
+          }
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(authPassword.isEmpty || isAuthenticating)
         }
       }
     }
+    .padding(Spacing.xl)
+    .frame(width: 350)
+    .background(Color.appBackground)
+  }
 
-    guard !newPassword.isEmpty else {
-      passwordError = "Password cannot be empty"
-      return
+  private var authenticationMessage: String {
+    switch pendingAction {
+    case .changeSafeMode:
+      return "Verify your identity to change Safe Mode level"
+    case .removeProtection:
+      return "Verify your identity to remove password protection"
+    case .switchToPassword:
+      return "Verify your identity to switch to password authentication"
+    case .switchToBiometric:
+      return "Verify your identity to enable Touch ID"
+    case .none:
+      return "Verify your identity to continue"
     }
+  }
 
+  // MARK: - Authentication Methods
+
+  private func enableBiometric() {
     guard newPassword == confirmPassword else {
-      passwordError = "Passwords do not match"
+      passwordError = "Passwords don't match"
       return
     }
-
     guard newPassword.count >= 4 else {
       passwordError = "Password must be at least 4 characters"
       return
     }
 
+    // Set backup password for biometric
     appSettings.safeModePassword = newPassword
-    showPasswordSetup = false
-    isChangingPassword = false
-    useDbPasswordForChange = false
-    // Force UI refresh to show updated password status
-    refreshTrigger = UUID()
-  }
 
-  private func enableBiometric() {
+    // Enable biometric authentication
     Task {
       do {
         try await appSettings.enableBiometricAuth()
         await MainActor.run {
-          showPasswordSetup = false
-          // Force UI refresh to show updated password status
           refreshTrigger = UUID()
+          showPasswordSetup = false
+          newPassword = ""
+          confirmPassword = ""
+          passwordError = nil
         }
       } catch {
         await MainActor.run {
-          // Check if user cancelled authentication
-          // LAError codes: userCancel = -2, systemCancel = -4, appCancel = -9
-          let nsError = error as NSError
-          let isCancelled =
-            nsError.code == -2 || nsError.code == -4 || nsError.code == -9
-            || nsError.localizedDescription.lowercased().contains("cancel")
-
-          if isCancelled {
-            // User cancelled - show message prompting to try again (don't close dialog)
-            passwordError = "Authentication cancelled. Tap 'Enable Touch ID' to try again."
-            return
-          }
-          // Show other errors
-          passwordError = error.localizedDescription
+          passwordError = "Failed to enable Touch ID: \(error.localizedDescription)"
         }
       }
     }
   }
 
-  // MARK: - Authentication Sheet for Protected Actions
-
-  private var authenticationSheet: some View {
-    VStack(spacing: Spacing.lg) {
-      // Header with action-specific message
-      HStack {
-        Image(systemName: "lock.shield.fill")
-          .font(.title)
-          .foregroundColor(.accent)
-        Text(authenticationTitle)
-          .font(.heading)
-          .foregroundColor(.foreground)
-      }
-
-      // Authentication options
-      if appSettings.isBiometricEnabled && !useDbPasswordForAuth {
-        // Touch ID / Biometric option
-        VStack(spacing: Spacing.md) {
-          Button(action: {
-            authenticateForAction()
-          }) {
-            HStack(spacing: Spacing.sm) {
-              if isAuthenticating {
-                ProgressView()
-                  .scaleEffect(0.8)
-              } else {
-                Image(systemName: "touchid")
-                  .font(.title)
-              }
-              Text(isAuthenticating ? "Authenticating..." : "Use Touch ID")
-                .font(.bodyText)
-            }
-            .foregroundColor(.accent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Spacing.md)
-            .background(Color.accent.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-          }
-          .buttonStyle(.plain)
-          .disabled(isAuthenticating)
-
-          // Forgot password option for biometric - switch to database password
-          if viewModel.connectionState == .connected {
-            Button(action: {
-              useDbPasswordForAuth = true
-              authError = nil
-            }) {
-              Text("Use Database Password Instead")
-                .font(.small)
-                .foregroundColor(.accent)
-            }
-            .buttonStyle(.plain)
-          }
-
-          if let error = authError {
-            Text(error)
-              .font(.small)
-              .foregroundColor(.destructive)
-          }
-        }
-      } else {
-        // Password entry (Safe Mode password or database password)
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-          HStack {
-            Text(
-              useDbPasswordForAuth
-                ? "Enter database password:" : "Enter Safe Mode password:"
-            )
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-
-            Spacer()
-
-            // Forgot password option - only show when connected and not already using db password
-            if viewModel.connectionState == .connected && !appSettings.isBiometricEnabled {
-              Button(action: {
-                useDbPasswordForAuth.toggle()
-                authPassword = ""
-                authError = nil
-              }) {
-                Text(useDbPasswordForAuth ? "Use Safe Mode Password" : "Forgot Password?")
-                  .font(.small)
-                  .foregroundColor(.accent)
-              }
-              .buttonStyle(.plain)
-            }
-          }
-
-          SecureField("Password", text: $authPassword)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit {
-              verifyPasswordForAction()
-            }
-
-          if useDbPasswordForAuth {
-            Text("Using database connection password to verify your identity.")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
-
-          if let error = authError {
-            Text(error)
-              .font(.small)
-              .foregroundColor(.destructive)
-          }
-        }
-      }
-
-      // Buttons
-      HStack(spacing: Spacing.md) {
-        Button("Cancel") {
-          showAuthSheet = false
-          pendingAction = nil
-          authPassword = ""
-          authError = nil
-          useDbPasswordForAuth = false
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(.foregroundMuted)
-
-        // Show Confirm button when not using biometric OR using database password fallback
-        if !appSettings.isBiometricEnabled || useDbPasswordForAuth {
-          Button("Confirm") {
-            verifyPasswordForAction()
-          }
-          .buttonStyle(.borderedProminent)
-          .tint(.destructive)
-          .disabled(authPassword.isEmpty)
-        }
-      }
+  private func setPassword() {
+    guard newPassword == confirmPassword else {
+      passwordError = "Passwords don't match"
+      return
     }
-    .padding(Spacing.xl)
-    .frame(width: 400)
-    .background(Color.appBackground)
-  }
-
-  private var authenticationTitle: String {
-    switch pendingAction {
-    case .changeSafeMode:
-      return "Change Safe Mode"
-    case .removeProtection:
-      return "Remove Protection"
-    case .switchToPassword:
-      return "Switch to Password"
-    case .switchToBiometric:
-      return "Switch to Touch ID"
-    case .none:
-      return "Authentication Required"
+    guard newPassword.count >= 4 else {
+      passwordError = "Password must be at least 4 characters"
+      return
     }
-  }
 
-  private func verifyPasswordForAction() {
-    if useDbPasswordForAuth {
-      // Verify using database password
-      guard authPassword == viewModel.editingConnectionConfig.password else {
-        authError = "Incorrect database password"
-        return
-      }
-    } else {
-      // Verify using Safe Mode password
-      guard appSettings.verifySafeModePassword(authPassword) else {
-        authError = "Incorrect password"
+    if isChangingPassword {
+      let dbPassword = viewModel.notebook.connectionConfig?.password ?? ""
+      let isValid =
+        useDbPasswordForChange
+        ? (currentPassword == dbPassword)
+        : appSettings.verifySafeModePassword(currentPassword)
+
+      guard isValid else {
+        passwordError =
+          useDbPasswordForChange ? "Invalid database password" : "Current password is incorrect"
         return
       }
     }
 
-    executeProtectedAction()
+    // Set password (this also clears biometric if it was enabled)
+    appSettings.safeModePassword = newPassword
+    appSettings.clearSafeModePassword()  // Clear biometric flag
+    appSettings.safeModePassword = newPassword  // Re-set password after clearing
+
+    refreshTrigger = UUID()
+    showPasswordSetup = false
+    currentPassword = ""
+    newPassword = ""
+    confirmPassword = ""
+    passwordError = nil
+    isChangingPassword = false
+    useDbPasswordForChange = false
   }
 
-  private func authenticateForAction() {
+  private func authenticateWithBiometric() {
     isAuthenticating = true
-    authError = nil
-
     Task {
       do {
         let success = try await appSettings.verifyBiometric()
         await MainActor.run {
           isAuthenticating = false
           if success {
-            executeProtectedAction()
+            executePendingAction()
           } else {
-            authError = "Authentication failed"
+            authError = "Touch ID authentication failed"
           }
         }
       } catch {
         await MainActor.run {
           isAuthenticating = false
-          // Check if user cancelled
-          let nsError = error as NSError
-          let isCancelled =
-            nsError.code == -2 || nsError.code == -4 || nsError.code == -9
-            || nsError.localizedDescription.lowercased().contains("cancel")
-
-          if isCancelled {
-            authError = "Authentication cancelled. Try again."
-          } else {
-            authError = error.localizedDescription
-          }
+          authError = "Touch ID error: \(error.localizedDescription)"
         }
       }
     }
   }
 
-  private func executeProtectedAction() {
-    guard let action = pendingAction else { return }
+  private func verifyPassword() {
+    let dbPassword = viewModel.notebook.connectionConfig?.password ?? ""
+    let isValid =
+      useDbPasswordForAuth
+      ? (authPassword == dbPassword)
+      : appSettings.verifySafeModePassword(authPassword)
 
-    // Common cleanup for all actions
-    let cleanup = {
+    if isValid {
+      executePendingAction()
+    } else {
+      authError = useDbPasswordForAuth ? "Invalid database password" : "Invalid password"
+    }
+  }
+
+  private func executePendingAction() {
+    func cleanup() {
       showAuthSheet = false
-      pendingAction = nil
       authPassword = ""
       authError = nil
       useDbPasswordForAuth = false
+      pendingAction = nil
+    }
+
+    guard let action = pendingAction else {
+      cleanup()
+      return
     }
 
     switch action {
@@ -771,19 +709,17 @@ struct SafeModePicker: View {
 
     case .switchToPassword:
       cleanup()
-      // Open password setup
       dialogMode = .password
       currentPassword = ""
       newPassword = ""
       confirmPassword = ""
       passwordError = nil
-      isChangingPassword = false  // Switching from Touch ID, not changing password
+      isChangingPassword = false
       useDbPasswordForChange = false
       showPasswordSetup = true
 
     case .switchToBiometric:
       cleanup()
-      // Open biometric setup
       dialogMode = .biometric
       newPassword = ""
       confirmPassword = ""
@@ -791,4 +727,20 @@ struct SafeModePicker: View {
       showPasswordSetup = true
     }
   }
+}
+
+// MARK: - Dialog Enums
+
+/// Dialog mode for password setup sheet
+private enum PasswordDialogMode {
+  case password
+  case biometric
+}
+
+/// Action that requires authentication
+private enum ProtectedAction {
+  case changeSafeMode(SafeMode)
+  case removeProtection
+  case switchToPassword  // Switch from Touch ID to password
+  case switchToBiometric  // Switch from password to Touch ID
 }
