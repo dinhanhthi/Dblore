@@ -102,14 +102,12 @@ struct SafeModeSection: View {
   var viewModel: NotebookViewModel
   @State private var selectedConnectionMode: SafeMode?
 
-  // Password management states (moved from SafeModePicker)
+  // Password management states
   @State private var showPasswordSetup: Bool = false
   @State private var currentPassword: String = ""
   @State private var newPassword: String = ""
   @State private var confirmPassword: String = ""
   @State private var passwordError: String?
-  @State private var dialogMode: PasswordDialogMode = .password
-  @State private var activeDialogMode: PasswordDialogMode = .password
   @State private var refreshTrigger: UUID = UUID()
   @State private var isChangingPassword: Bool = false
   @State private var useDbPasswordForChange: Bool = false
@@ -140,9 +138,6 @@ struct SafeModeSection: View {
     .id(refreshTrigger)
     .sheet(isPresented: $showPasswordSetup) {
       passwordSetupSheet
-        .onAppear {
-          activeDialogMode = dialogMode
-        }
     }
     .sheet(isPresented: $showAuthSheet) {
       authenticationSheet
@@ -179,7 +174,9 @@ struct SafeModeSection: View {
       Picker("", selection: $selectedConnectionMode) {
         Text("Use Global").tag(SafeMode?.none)
         ForEach(SafeMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(Optional(mode))
+          (Text(mode.displayName)
+            + Text(mode.requiresPassword ? " \(Image(systemName: "lock.fill"))" : ""))
+            .tag(Optional(mode))
         }
       }
       .pickerStyle(.menu)
@@ -214,7 +211,9 @@ struct SafeModeSection: View {
           )
         ) {
           ForEach(SafeMode.allCases, id: \.self) { mode in
-            Text(mode.displayName).tag(mode)
+            (Text(mode.displayName)
+              + Text(mode.requiresPassword ? " \(Image(systemName: "lock.fill"))" : ""))
+              .tag(mode)
           }
         }
         .pickerStyle(.menu)
@@ -274,7 +273,6 @@ struct SafeModeSection: View {
             pendingAction = .switchToPassword
             showAuthSheet = true
           } else {
-            dialogMode = .password
             currentPassword = ""
             newPassword = ""
             confirmPassword = ""
@@ -299,11 +297,8 @@ struct SafeModeSection: View {
               pendingAction = .switchToBiometric
               showAuthSheet = true
             } else {
-              dialogMode = .biometric
-              newPassword = ""
-              confirmPassword = ""
-              passwordError = nil
-              showPasswordSetup = true
+              // Directly enable biometric - system password is the backup
+              enableBiometricDirectly()
             }
           }) {
             HStack(spacing: Spacing.xs) {
@@ -339,67 +334,11 @@ struct SafeModeSection: View {
 
   private var passwordSetupSheet: some View {
     VStack(spacing: Spacing.lg) {
-      switch activeDialogMode {
-      case .biometric:
-        biometricSetupContent
-      case .password:
-        passwordSetupContent
-      }
+      passwordSetupContent
     }
     .padding(Spacing.xl)
     .frame(width: 350)
     .background(Color.appBackground)
-  }
-
-  private var biometricSetupContent: some View {
-    VStack(spacing: Spacing.lg) {
-      Image(systemName: "touchid")
-        .font(.system(size: 48))
-        .foregroundColor(.accent)
-
-      VStack(spacing: Spacing.xs) {
-        Text("Enable Touch ID")
-          .font(.heading)
-          .foregroundColor(.foreground)
-        Text("Use Touch ID to quickly unlock Safe Mode")
-          .font(.bodyText)
-          .foregroundColor(.foregroundMuted)
-          .multilineTextAlignment(.center)
-      }
-
-      VStack(spacing: Spacing.sm) {
-        SecureField("Backup Password", text: $newPassword)
-          .textFieldStyle(.plain)
-          .inputStyle()
-
-        SecureField("Confirm Password", text: $confirmPassword)
-          .textFieldStyle(.plain)
-          .inputStyle()
-
-        Text("A backup password is required in case Touch ID is unavailable.")
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
-      }
-
-      if let error = passwordError {
-        Text(error)
-          .font(.small)
-          .foregroundColor(.destructive)
-      }
-
-      HStack(spacing: Spacing.md) {
-        Button("Cancel") {
-          showPasswordSetup = false
-        }
-        .buttonStyle(SecondaryButtonStyle())
-
-        Button("Enable Touch ID") {
-          enableBiometric()
-        }
-        .buttonStyle(PrimaryButtonStyle())
-        .disabled(newPassword.isEmpty || confirmPassword.isEmpty)
-      }
-    }
   }
 
   private var passwordSetupContent: some View {
@@ -574,34 +513,18 @@ struct SafeModeSection: View {
 
   // MARK: - Authentication Methods
 
-  private func enableBiometric() {
-    guard newPassword == confirmPassword else {
-      passwordError = "Passwords don't match"
-      return
-    }
-    guard newPassword.count >= 4 else {
-      passwordError = "Password must be at least 4 characters"
-      return
-    }
-
-    // Set backup password for biometric
-    appSettings.safeModePassword = newPassword
-
-    // Enable biometric authentication
+  /// Enable Touch ID directly without requiring a backup password
+  /// The system password is used as the backup (handled by deviceOwnerAuthentication)
+  private func enableBiometricDirectly() {
     Task {
       do {
         try await appSettings.enableBiometricAuth()
         await MainActor.run {
           refreshTrigger = UUID()
-          showPasswordSetup = false
-          newPassword = ""
-          confirmPassword = ""
-          passwordError = nil
         }
       } catch {
-        await MainActor.run {
-          passwordError = "Failed to enable Touch ID: \(error.localizedDescription)"
-        }
+        // Show error in a toast or alert if needed
+        print("Failed to enable Touch ID: \(error.localizedDescription)")
       }
     }
   }
@@ -709,7 +632,6 @@ struct SafeModeSection: View {
 
     case .switchToPassword:
       cleanup()
-      dialogMode = .password
       currentPassword = ""
       newPassword = ""
       confirmPassword = ""
@@ -720,22 +642,13 @@ struct SafeModeSection: View {
 
     case .switchToBiometric:
       cleanup()
-      dialogMode = .biometric
-      newPassword = ""
-      confirmPassword = ""
-      passwordError = nil
-      showPasswordSetup = true
+      // Enable biometric directly - system password is the backup
+      enableBiometricDirectly()
     }
   }
 }
 
 // MARK: - Dialog Enums
-
-/// Dialog mode for password setup sheet
-private enum PasswordDialogMode {
-  case password
-  case biometric
-}
 
 /// Action that requires authentication
 private enum ProtectedAction {
