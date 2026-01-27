@@ -11,6 +11,7 @@ import SwiftUI
 struct ResultTableView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
+  @Bindable var appSettings = AppSettings.shared
   let cellId: UUID?  // ID of the cell that produced this result
   var showBorderRadius: Bool = true  // Whether to show border radius (disabled in editor mode)
   var enableVerticalScrolling: Bool = false  // Whether to enable vertical scrolling (enabled in editor mode)
@@ -36,7 +37,13 @@ struct ResultTableView: View {
   private let minColumnWidth: CGFloat = 100  // Minimum width when resizing
   private let maxColumnWidth: CGFloat = 500  // Maximum width when resizing
   private let rowHeight: CGFloat = 32  // Approximate row height
-  private let headerHeight: CGFloat = 48  // Approximate header height
+  private let headerHeightWithType: CGFloat = 48  // Header height when showing column type
+  private let headerHeightWithoutType: CGFloat = 32  // Header height when hiding column type
+
+  /// Dynamic header height based on hideColumnTypes setting
+  private var headerHeight: CGFloat {
+    appSettings.hideColumnTypes ? headerHeightWithoutType : headerHeightWithType
+  }
   // Note: Row limiting is handled at database level via AppSettings.maxRowLimit/editorMaxRowLimit
   // All rows from result are rendered since DB already limits to max 100/200 rows
 
@@ -59,6 +66,7 @@ struct ResultTableView: View {
       }
       .scrollDisabled(true)  // Disable direct scrolling - synced via HorizontalScrollableContent
       .frame(height: headerHeight)
+      .animation(.easeInOut(duration: 0.15), value: appSettings.hideColumnTypes)
       .scrollPosition($headerScrollPosition)
 
       // Content area - wrapped in custom NSScrollView for horizontal scrolling
@@ -213,11 +221,14 @@ struct ResultTableView: View {
             }
           }
 
-          Text(column.type)
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-            .lineLimit(1)
-            .truncationMode(.tail)
+          // Show column type unless hideColumnTypes is enabled
+          if !appSettings.hideColumnTypes {
+            Text(column.type)
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
         }
 
         Spacer()

@@ -142,6 +142,14 @@ struct SettingsContent: View {
       if viewModel.viewMode == .notebook {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
           VStack(alignment: .leading, spacing: Spacing.lg) {
+            // Hide Column Types toggle
+            SettingsToggle(
+              title: "Hide Column Types",
+              description:
+                "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names.",
+              isOn: $appSettings.hideColumnTypes
+            )
+
             // Hide Run with Query Section toggle
             SettingsToggle(
               title: "Hide Run with Query Section",
@@ -186,6 +194,14 @@ struct SettingsContent: View {
       if viewModel.viewMode == .editor {
         settingsSection(title: "Result Table", icon: "tablecells.fill") {
           VStack(alignment: .leading, spacing: Spacing.lg) {
+            // Hide Column Types toggle
+            SettingsToggle(
+              title: "Hide Column Types",
+              description:
+                "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names.",
+              isOn: $appSettings.hideColumnTypes
+            )
+
             // Hide Run with Query Section toggle
             SettingsToggle(
               title: "Hide Run with Query Section",

@@ -134,6 +134,7 @@ class AppSettings {
     static let editorSimpleMode = "app.settings.editorSimpleMode"
     static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
     static let accentColor = "app.settings.accentColor"
+    static let hideColumnTypes = "app.settings.hideColumnTypes"
   }
 
   // MARK: - Settings Properties
@@ -300,6 +301,15 @@ class AppSettings {
     }
   }
 
+  /// Hide column types in result table headers
+  /// When enabled, only column names are shown (not the type like VARCHAR, INTEGER, etc.)
+  /// Default: false (show column types)
+  var hideColumnTypes: Bool = false {
+    didSet {
+      UserDefaults.standard.set(hideColumnTypes, forKey: Keys.hideColumnTypes)
+    }
+  }
+
   // MARK: - Thread-safe accessors for non-MainActor contexts
 
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
@@ -406,6 +416,11 @@ class AppSettings {
     {
       accentColor = accent
     }
+
+    // Load hide column types setting
+    if UserDefaults.standard.object(forKey: Keys.hideColumnTypes) != nil {
+      hideColumnTypes = UserDefaults.standard.bool(forKey: Keys.hideColumnTypes)
+    }
   }
 
   // MARK: - Reset to Defaults
@@ -428,5 +443,6 @@ class AppSettings {
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
     accentColor = .purple
+    hideColumnTypes = false
   }
 }
