@@ -129,31 +129,42 @@ extension NotebookViewModel {
         // Clear pagination state for multi-statement queries
         editorStatementPaginationInfo.removeAll()
 
-        // Convert to StatementResult array
-        editorStatementResults = statementResults.enumerated().map { index, tuple in
-          StatementResult(
-            queryText: tuple.queryText,
-            result: CellResult(
-              columns: tuple.result.columns,
-              rows: tuple.result.rows,
-              executionTime: tuple.result.executionTime,
-              rowCount: tuple.result.rows.count,
-              timestamp: Date(),
-              error: nil,
-              wasLimited: tuple.result.wasLimited,
-              sourceQuery: tuple.queryText,
-              tableName: nil,
-              primaryKeyColumns: [],
-              rowIdentifiers: tuple.result.rowIdentifiers,
-              userLimitExceeded: tuple.result.userLimitExceeded,
-              userRequestedLimit: tuple.result.userRequestedLimit,
-              affectedRows: tuple.result.affectedRows,
-              limitWasCapped: tuple.result.limitWasCapped,
-              actualLimitUsed: tuple.result.actualLimitUsed
-            ),
-            statementIndex: index
-          )
+        // Convert to StatementResult array with primary key columns
+        var results: [StatementResult] = []
+        for (index, tuple) in statementResults.enumerated() {
+          // Extract table name and fetch primary key columns
+          let tableName = extractTableName(from: tuple.queryText)
+          var primaryKeyColumns: [String] = []
+          if let tableName = tableName {
+            primaryKeyColumns =
+              (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+          }
+
+          results.append(
+            StatementResult(
+              queryText: tuple.queryText,
+              result: CellResult(
+                columns: tuple.result.columns,
+                rows: tuple.result.rows,
+                executionTime: tuple.result.executionTime,
+                rowCount: tuple.result.rows.count,
+                timestamp: Date(),
+                error: nil,
+                wasLimited: tuple.result.wasLimited,
+                sourceQuery: tuple.queryText,
+                tableName: tableName,
+                primaryKeyColumns: primaryKeyColumns,
+                rowIdentifiers: tuple.result.rowIdentifiers,
+                userLimitExceeded: tuple.result.userLimitExceeded,
+                userRequestedLimit: tuple.result.userRequestedLimit,
+                affectedRows: tuple.result.affectedRows,
+                limitWasCapped: tuple.result.limitWasCapped,
+                actualLimitUsed: tuple.result.actualLimitUsed
+              ),
+              statementIndex: index
+            ))
         }
+        editorStatementResults = results
 
         // Build pagination info for each statement with LIMIT
         for statementResult in editorStatementResults {
@@ -191,6 +202,16 @@ extension NotebookViewModel {
         selectedStatementIndex = 0
         totalExecutionTime = executionTime
 
+        // Extract table name from query (simple SELECT parsing)
+        let tableName = extractTableName(from: query)
+
+        // Fetch primary key columns if we have a table name
+        var primaryKeyColumns: [String] = []
+        if let tableName = tableName {
+          primaryKeyColumns =
+            (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
+        }
+
         let cellResult = CellResult(
           columns: result.columns,
           rows: result.rows,
@@ -200,8 +221,8 @@ extension NotebookViewModel {
           error: nil,
           wasLimited: result.wasLimited,
           sourceQuery: query,
-          tableName: nil,  // Not available from QueryResult
-          primaryKeyColumns: [],
+          tableName: tableName,
+          primaryKeyColumns: primaryKeyColumns,
           rowIdentifiers: result.rowIdentifiers,
           userLimitExceeded: result.userLimitExceeded,
           userRequestedLimit: result.userRequestedLimit,
@@ -286,6 +307,10 @@ extension NotebookViewModel {
   ) async {
     let startTime = Date()
 
+    // Preserve primary key columns from previous result (they don't change between pages)
+    let existingPrimaryKeyColumns = editorResult?.primaryKeyColumns ?? []
+    let existingTableName = editorResult?.tableName
+
     do {
       let result = try await connectionManager.executeQuery(
         query, maxRows: AppSettings.shared.editorMaxRowLimit)
@@ -309,8 +334,8 @@ extension NotebookViewModel {
         error: nil,
         wasLimited: false,
         sourceQuery: query,
-        tableName: nil,
-        primaryKeyColumns: [],
+        tableName: existingTableName,
+        primaryKeyColumns: existingPrimaryKeyColumns,
         rowIdentifiers: result.rowIdentifiers,
         userLimitExceeded: false,
         userRequestedLimit: paginationInfo.rowsPerPage,
@@ -341,6 +366,12 @@ extension NotebookViewModel {
   ) async {
     let startTime = Date()
 
+    // Preserve primary key columns from previous result (they don't change between pages)
+    let existingIndex = editorStatementResults.firstIndex(where: { $0.id == statementId })
+    let existingPrimaryKeyColumns =
+      existingIndex.map { editorStatementResults[$0].result.primaryKeyColumns } ?? []
+    let existingTableName = existingIndex.flatMap { editorStatementResults[$0].result.tableName }
+
     do {
       let result = try await connectionManager.executeQuery(
         query, maxRows: AppSettings.shared.editorMaxRowLimit)
@@ -365,8 +396,8 @@ extension NotebookViewModel {
           error: nil,
           wasLimited: false,
           sourceQuery: query,
-          tableName: nil,
-          primaryKeyColumns: [],
+          tableName: existingTableName,
+          primaryKeyColumns: existingPrimaryKeyColumns,
           rowIdentifiers: result.rowIdentifiers,
           userLimitExceeded: false,
           userRequestedLimit: paginationInfo.rowsPerPage,
