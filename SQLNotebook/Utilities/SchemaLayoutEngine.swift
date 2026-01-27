@@ -146,7 +146,7 @@ final class SchemaLayoutEngine {
     var velocities: [CGPoint] = Array(repeating: .zero, count: graph.nodes.count)
 
     // Build node rects cache for edge-node intersection checking
-    let nodeRects: [CGRect] = graph.nodes.map { nodeRect(for: $0) }
+    _ = graph.nodes.map { nodeRect(for: $0) }
 
     for iteration in 0..<iterations {
       var forces: [CGPoint] = Array(repeating: .zero, count: graph.nodes.count)
@@ -380,7 +380,7 @@ final class SchemaLayoutEngine {
     let maxPasses = 100
     let margin: CGFloat = minHorizontalDistance / 2
 
-    for pass in 0..<maxPasses {
+    for _ in 0..<maxPasses {
       var hasOverlap = false
       var maxOverlap: CGFloat = 0
 

@@ -1595,7 +1595,20 @@ class SchemaGraphNSView: NSView {
       return
     }
 
+    // Check if clicking on a node first (nodes are rendered on top of connection lines)
+    if let node = hitTestNode(at: point) {
+      isDraggingNode = true
+      isDraggingCanvas = false
+      draggedNodeId = node.id
+      selectedEdgeId = nil  // Clear edge selection when selecting node
+      selectedColumnConnectionEdgeId = nil  // Clear column connection selection
+      onNodeSelected?(node.id)
+      needsDisplay = true
+      return
+    }
+
     // Check if clicking on a column connection line (only when column connections are visible)
+    // Only check when not clicking on a node (handled above)
     if showColumnConnections, let edgeId = hitTestColumnConnection(at: point) {
       // Select/deselect column connection
       if selectedColumnConnectionEdgeId == edgeId {
@@ -1611,6 +1624,7 @@ class SchemaGraphNSView: NSView {
     }
 
     // Check if clicking on an edge (only when table connections are visible)
+    // Only check when not clicking on a node (handled above)
     if showTableConnections, let edge = hitTestEdge(at: point) {
       // Select/deselect edge
       if selectedEdgeId == edge.id {
@@ -1625,21 +1639,13 @@ class SchemaGraphNSView: NSView {
       return
     }
 
-    if let node = hitTestNode(at: point) {
-      isDraggingNode = true
-      isDraggingCanvas = false
-      draggedNodeId = node.id
-      selectedEdgeId = nil  // Clear edge selection when selecting node
-      selectedColumnConnectionEdgeId = nil  // Clear column connection selection
-      onNodeSelected?(node.id)
-    } else {
-      isDraggingCanvas = true
-      isDraggingNode = false
-      draggedNodeId = nil
-      selectedEdgeId = nil  // Clear edge selection when clicking canvas
-      selectedColumnConnectionEdgeId = nil  // Clear column connection selection
-      onNodeSelected?(nil)
-    }
+    // Clicking on empty canvas
+    isDraggingCanvas = true
+    isDraggingNode = false
+    draggedNodeId = nil
+    selectedEdgeId = nil  // Clear edge selection when clicking canvas
+    selectedColumnConnectionEdgeId = nil  // Clear column connection selection
+    onNodeSelected?(nil)
     needsDisplay = true
   }
 
@@ -1771,6 +1777,8 @@ class SchemaGraphNSView: NSView {
     }
 
     // Check if hovering over a node (for hover effect)
+    // Use local variable to determine if cursor is over a node for blocking line hover
+    let isOverNode = hitTestNode(at: point) != nil
     if let node = hitTestNode(at: point) {
       if hoveredNodeId != node.id {
         hoveredNodeId = node.id
@@ -1782,7 +1790,8 @@ class SchemaGraphNSView: NSView {
     }
 
     // Check if hovering over an edge (only when table connections are visible)
-    if showTableConnections {
+    // Skip edge hover detection if cursor is over a node (tables are rendered on top of lines)
+    if showTableConnections && !isOverNode {
       if let edge = hitTestEdge(at: point) {
         if hoveredEdgeId != edge.id {
           hoveredEdgeId = edge.id
@@ -1809,7 +1818,7 @@ class SchemaGraphNSView: NSView {
         needsRedraw = true
       }
     } else if hoveredEdgeId != nil {
-      // Clear edge hover state when table connections are hidden
+      // Clear edge hover state when table connections are hidden or cursor is over a node
       hoveredEdgeId = nil
       highlightedEdgeId = nil
       edgeHoverTimer?.invalidate()
@@ -1818,7 +1827,8 @@ class SchemaGraphNSView: NSView {
     }
 
     // Check if hovering over a column connection line (only when column connections are visible)
-    if showColumnConnections {
+    // Skip column connection hover detection if cursor is over a node (tables are rendered on top of lines)
+    if showColumnConnections && !isOverNode {
       if let edgeId = hitTestColumnConnection(at: point) {
         if hoveredColumnConnectionEdgeId != edgeId {
           hoveredColumnConnectionEdgeId = edgeId
@@ -1828,6 +1838,10 @@ class SchemaGraphNSView: NSView {
         hoveredColumnConnectionEdgeId = nil
         needsRedraw = true
       }
+    } else if hoveredColumnConnectionEdgeId != nil {
+      // Clear column connection hover state when cursor is over a node or connections hidden
+      hoveredColumnConnectionEdgeId = nil
+      needsRedraw = true
     }
 
     if needsRedraw {
