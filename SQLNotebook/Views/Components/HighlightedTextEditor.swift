@@ -273,6 +273,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     private var clearObserver: NSObjectProtocol?
     private var unfocusObserver: NSObjectProtocol?
     private var syntaxHighlightObserver: NSObjectProtocol?
+    private var accentColorObserver: NSObjectProtocol?
 
     init(
       text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>
@@ -539,6 +540,19 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         Task { @MainActor [weak self] in
           guard let self = self else { return }
           // Reapply highlighting with new setting
+          self.reapplyHighlighting()
+        }
+      }
+
+      // Listen for accent color changes to update syntax highlighting colors
+      accentColorObserver = NotificationCenter.default.addObserver(
+        forName: .accentColorChanged,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          // Reapply highlighting with new accent color
           self.reapplyHighlighting()
         }
       }
