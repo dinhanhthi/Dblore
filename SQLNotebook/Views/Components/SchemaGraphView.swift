@@ -187,6 +187,9 @@ class SchemaGraphNSView: NSView {
   private var hoveredResizeHandleNodeId: UUID?
   private var hoveredLeftResizeHandleNodeId: UUID?
 
+  // Edge router for avoiding node intersections
+  private let edgeRouter = SchemaEdgeRouter()
+
   // MARK: - Initialization
 
   override init(frame frameRect: NSRect) {
@@ -369,6 +372,9 @@ class SchemaGraphNSView: NSView {
   // MARK: - Edge Drawing
 
   private func drawEdges(_ context: CGContext) {
+    // Collect all node rects for obstacle avoidance
+    let allNodeRects: [CGRect] = graph.nodes.map { nodeRect(for: $0) }
+
     for edge in graph.edges {
       guard
         let sourceNode = graph.node(withId: edge.sourceNodeId),
@@ -389,70 +395,40 @@ class SchemaGraphNSView: NSView {
       let sourceRect = nodeRect(for: sourceNode)
       let targetRect = nodeRect(for: targetNode)
 
-      // Draw orthogonal path with 90-degree turns
+      // Draw orthogonal path with obstacle avoidance
       drawOrthogonalEdge(
         context,
         edge: edge,
         from: sourceRect,
         to: targetRect,
-        highlighted: isHighlighted
+        highlighted: isHighlighted,
+        obstacleRects: allNodeRects
       )
     }
   }
 
-  /// Draw orthogonal edge with proper 90-degree turns
+  /// Draw orthogonal edge with obstacle avoidance
   private func drawOrthogonalEdge(
     _ context: CGContext,
     edge: SchemaEdge,
     from sourceRect: CGRect,
     to targetRect: CGRect,
-    highlighted: Bool
+    highlighted: Bool,
+    obstacleRects: [CGRect]
   ) {
-    let sourceCenter = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
-    let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+    // Use edge router to find a path that avoids other nodes
+    let routedPath = edgeRouter.routeEdge(
+      from: sourceRect,
+      to: targetRect,
+      avoiding: obstacleRects,
+      edgeId: edge.id
+    )
 
-    let dx = targetCenter.x - sourceCenter.x
-    let dy = targetCenter.y - sourceCenter.y
-
-    var startPoint: CGPoint
-    var endPoint: CGPoint
-    var midPoint1: CGPoint
-    var midPoint2: CGPoint
-
-    if abs(dx) > abs(dy) {
-      // Horizontal dominant
-      if dx > 0 {
-        startPoint = CGPoint(x: sourceRect.maxX, y: sourceRect.midY)
-        endPoint = CGPoint(x: targetRect.minX, y: targetRect.midY)
-      } else {
-        startPoint = CGPoint(x: sourceRect.minX, y: sourceRect.midY)
-        endPoint = CGPoint(x: targetRect.maxX, y: targetRect.midY)
-      }
-      let midX = (startPoint.x + endPoint.x) / 2
-      midPoint1 = CGPoint(x: midX, y: startPoint.y)
-      midPoint2 = CGPoint(x: midX, y: endPoint.y)
-    } else {
-      // Vertical dominant
-      if dy > 0 {
-        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.maxY)
-        endPoint = CGPoint(x: targetRect.midX, y: targetRect.minY)
-      } else {
-        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.minY)
-        endPoint = CGPoint(x: targetRect.midX, y: targetRect.maxY)
-      }
-      let midY = (startPoint.y + endPoint.y) / 2
-      midPoint1 = CGPoint(x: startPoint.x, y: midY)
-      midPoint2 = CGPoint(x: endPoint.x, y: midY)
-    }
+    let points = routedPath.points
+    guard points.count >= 2 else { return }
 
     // Store edge path for hit testing
-    let edgePath = EdgePath(
-      id: edge.id,
-      startPoint: startPoint,
-      midPoint1: midPoint1,
-      midPoint2: midPoint2,
-      endPoint: endPoint
-    )
+    let edgePath = EdgePath(id: edge.id, points: points)
     cachedEdgePaths[edge.id] = edgePath
 
     // Determine line width and color based on highlight state
@@ -469,10 +445,10 @@ class SchemaGraphNSView: NSView {
       )
       context.setStrokeColor(edgeHighlightColor.cgColor)
       context.setLineWidth(2.5)
-      context.move(to: startPoint)
-      context.addLine(to: midPoint1)
-      context.addLine(to: midPoint2)
-      context.addLine(to: endPoint)
+      context.move(to: points[0])
+      for i in 1..<points.count {
+        context.addLine(to: points[i])
+      }
       context.strokePath()
       context.restoreGState()
     }
@@ -481,24 +457,29 @@ class SchemaGraphNSView: NSView {
     context.setStrokeColor(strokeColor.cgColor)
     context.setLineWidth(lineWidth)
 
-    context.move(to: startPoint)
-    context.addLine(to: midPoint1)
-    context.addLine(to: midPoint2)
-    context.addLine(to: endPoint)
+    context.move(to: points[0])
+    for i in 1..<points.count {
+      context.addLine(to: points[i])
+    }
     context.strokePath()
 
     // Draw ER notation symbols
+    let startPoint = edgePath.startPoint
+    let secondPoint = edgePath.secondPoint
+    let endPoint = edgePath.endPoint
+    let secondToLastPoint = edgePath.secondToLastPoint
+
     // Source side: "many" (crow's foot) - FK table can have many rows referencing one PK
     // Also draw zero circle to indicate "zero or many" (optional relationship)
     drawZeroCircle(
-      context, at: startPoint, from: midPoint1, highlighted: highlighted, offsetDistance: 16)
-    drawCrowsFoot(context, at: startPoint, toward: midPoint1, highlighted: highlighted)
+      context, at: startPoint, from: secondPoint, highlighted: highlighted, offsetDistance: 16)
+    drawCrowsFoot(context, at: startPoint, toward: secondPoint, highlighted: highlighted)
 
     // Target side: "one" (single line) - PK table has one row being referenced
     // Also draw zero circle to indicate "zero or one" possibility
     drawZeroCircle(
-      context, at: endPoint, from: midPoint2, highlighted: highlighted, offsetDistance: 14)
-    drawOneNotation(context, at: endPoint, from: midPoint2, highlighted: highlighted)
+      context, at: endPoint, from: secondToLastPoint, highlighted: highlighted, offsetDistance: 14)
+    drawOneNotation(context, at: endPoint, from: secondToLastPoint, highlighted: highlighted)
   }
 
   private func drawCrowsFoot(
@@ -628,22 +609,39 @@ class SchemaGraphNSView: NSView {
 
   private struct EdgePath {
     let id: UUID
-    let startPoint: CGPoint
-    let midPoint1: CGPoint
-    let midPoint2: CGPoint
-    let endPoint: CGPoint
+    let points: [CGPoint]  // All waypoints including start and end
+
+    // Legacy accessors for compatibility
+    var startPoint: CGPoint { points.first ?? .zero }
+    var endPoint: CGPoint { points.last ?? .zero }
+    var midPoint1: CGPoint { points.count > 1 ? points[1] : startPoint }
+    var midPoint2: CGPoint { points.count > 2 ? points[points.count - 2] : endPoint }
+
+    /// Second point for direction calculation (for ER notation at start)
+    var secondPoint: CGPoint { points.count > 1 ? points[1] : startPoint }
+
+    /// Second-to-last point for direction calculation (for ER notation at end)
+    var secondToLastPoint: CGPoint { points.count > 1 ? points[points.count - 2] : endPoint }
+
+    init(id: UUID, points: [CGPoint]) {
+      self.id = id
+      self.points = points
+    }
+
+    // Legacy initializer for compatibility
+    init(id: UUID, startPoint: CGPoint, midPoint1: CGPoint, midPoint2: CGPoint, endPoint: CGPoint) {
+      self.id = id
+      self.points = [startPoint, midPoint1, midPoint2, endPoint]
+    }
 
     /// Check if a point is near this edge path
     func contains(_ point: CGPoint, threshold: CGFloat = 8) -> Bool {
-      // Check distance to each segment
-      let segments = [
-        (startPoint, midPoint1),
-        (midPoint1, midPoint2),
-        (midPoint2, endPoint),
-      ]
+      guard points.count >= 2 else { return false }
 
-      for (p1, p2) in segments {
-        if distanceToSegment(point: point, segmentStart: p1, segmentEnd: p2) < threshold {
+      for i in 0..<(points.count - 1) {
+        if distanceToSegment(point: point, segmentStart: points[i], segmentEnd: points[i + 1])
+          < threshold
+        {
           return true
         }
       }
@@ -2044,6 +2042,9 @@ class SchemaGraphNSView: NSView {
 
   /// Draw edges for export (without hover/selection states)
   private func drawEdgesForExport(_ context: CGContext) {
+    // Collect all node rects for obstacle avoidance
+    let allNodeRects: [CGRect] = graph.nodes.map { nodeRect(for: $0) }
+
     for edge in graph.edges {
       guard
         let sourceNode = graph.node(withId: edge.sourceNodeId),
@@ -2057,68 +2058,53 @@ class SchemaGraphNSView: NSView {
         context,
         edge: edge,
         from: sourceRect,
-        to: targetRect
+        to: targetRect,
+        obstacleRects: allNodeRects
       )
     }
   }
 
-  /// Draw orthogonal edge for export (always non-highlighted style)
+  /// Draw orthogonal edge for export with obstacle avoidance
   private func drawOrthogonalEdgeForExport(
     _ context: CGContext,
     edge: SchemaEdge,
     from sourceRect: CGRect,
-    to targetRect: CGRect
+    to targetRect: CGRect,
+    obstacleRects: [CGRect]
   ) {
-    let sourceCenter = CGPoint(x: sourceRect.midX, y: sourceRect.midY)
-    let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+    // Use edge router to find a path that avoids other nodes
+    let routedPath = edgeRouter.routeEdge(
+      from: sourceRect,
+      to: targetRect,
+      avoiding: obstacleRects,
+      edgeId: edge.id
+    )
 
-    let dx = targetCenter.x - sourceCenter.x
-    let dy = targetCenter.y - sourceCenter.y
-
-    var startPoint: CGPoint
-    var endPoint: CGPoint
-    var midPoint1: CGPoint
-    var midPoint2: CGPoint
-
-    if abs(dx) > abs(dy) {
-      if dx > 0 {
-        startPoint = CGPoint(x: sourceRect.maxX, y: sourceRect.midY)
-        endPoint = CGPoint(x: targetRect.minX, y: targetRect.midY)
-      } else {
-        startPoint = CGPoint(x: sourceRect.minX, y: sourceRect.midY)
-        endPoint = CGPoint(x: targetRect.maxX, y: targetRect.midY)
-      }
-      let midX = (startPoint.x + endPoint.x) / 2
-      midPoint1 = CGPoint(x: midX, y: startPoint.y)
-      midPoint2 = CGPoint(x: midX, y: endPoint.y)
-    } else {
-      if dy > 0 {
-        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.maxY)
-        endPoint = CGPoint(x: targetRect.midX, y: targetRect.minY)
-      } else {
-        startPoint = CGPoint(x: sourceRect.midX, y: sourceRect.minY)
-        endPoint = CGPoint(x: targetRect.midX, y: targetRect.maxY)
-      }
-      let midY = (startPoint.y + endPoint.y) / 2
-      midPoint1 = CGPoint(x: startPoint.x, y: midY)
-      midPoint2 = CGPoint(x: endPoint.x, y: midY)
-    }
+    let points = routedPath.points
+    guard points.count >= 2 else { return }
 
     // Draw main path (non-highlighted style)
     context.setStrokeColor(edgeColor.cgColor)
     context.setLineWidth(0.75)
 
-    context.move(to: startPoint)
-    context.addLine(to: midPoint1)
-    context.addLine(to: midPoint2)
-    context.addLine(to: endPoint)
+    context.move(to: points[0])
+    for i in 1..<points.count {
+      context.addLine(to: points[i])
+    }
     context.strokePath()
 
     // Draw ER notation symbols
-    drawZeroCircle(context, at: startPoint, from: midPoint1, highlighted: false, offsetDistance: 16)
-    drawCrowsFoot(context, at: startPoint, toward: midPoint1, highlighted: false)
-    drawZeroCircle(context, at: endPoint, from: midPoint2, highlighted: false, offsetDistance: 14)
-    drawOneNotation(context, at: endPoint, from: midPoint2, highlighted: false)
+    let startPoint = routedPath.startPoint
+    let secondPoint = routedPath.secondPoint
+    let endPoint = routedPath.endPoint
+    let secondToLastPoint = routedPath.secondToLastPoint
+
+    drawZeroCircle(
+      context, at: startPoint, from: secondPoint, highlighted: false, offsetDistance: 16)
+    drawCrowsFoot(context, at: startPoint, toward: secondPoint, highlighted: false)
+    drawZeroCircle(
+      context, at: endPoint, from: secondToLastPoint, highlighted: false, offsetDistance: 14)
+    drawOneNotation(context, at: endPoint, from: secondToLastPoint, highlighted: false)
   }
 
   /// Draw nodes for export (without hover/selection states)
