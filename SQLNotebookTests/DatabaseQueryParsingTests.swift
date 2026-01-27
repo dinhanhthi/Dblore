@@ -885,6 +885,167 @@ struct DatabaseQueryParsingTests {
     }
   }
 
+  // MARK: - hasWhereClause Tests
+
+  @Suite("hasWhereClause - WHERE Clause Detection")
+  struct HasWhereClauseTests {
+
+    @Test("DELETE with WHERE returns true")
+    func deleteWithWhereReturnsTrue() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "DELETE FROM users WHERE id = 1",
+        "DELETE FROM users WHERE name = 'John'",
+        "delete from users where active = false",
+      ]
+      for query in queries {
+        let result = manager.hasWhereClause(query)
+        #expect(result == true, "Should detect WHERE in: \(query)")
+      }
+    }
+
+    @Test("DELETE without WHERE returns false")
+    func deleteWithoutWhereReturnsFalse() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "DELETE FROM users",
+        "DELETE FROM users;",
+        "delete from users",
+      ]
+      for query in queries {
+        let result = manager.hasWhereClause(query)
+        #expect(result == false, "Should not detect WHERE in: \(query)")
+      }
+    }
+
+    @Test("UPDATE with WHERE returns true")
+    func updateWithWhereReturnsTrue() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "UPDATE users SET name = 'John' WHERE id = 1",
+        "UPDATE accounts SET balance = 0 WHERE active = false",
+        "update users set name = 'x' where id = 1",
+      ]
+      for query in queries {
+        let result = manager.hasWhereClause(query)
+        #expect(result == true, "Should detect WHERE in: \(query)")
+      }
+    }
+
+    @Test("UPDATE without WHERE returns false")
+    func updateWithoutWhereReturnsFalse() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "UPDATE users SET name = 'John'",
+        "UPDATE accounts SET balance = 0",
+        "update users set active = false",
+      ]
+      for query in queries {
+        let result = manager.hasWhereClause(query)
+        #expect(result == false, "Should not detect WHERE in: \(query)")
+      }
+    }
+
+    @Test("SELECT query returns true (not applicable)")
+    func selectQueryReturnsTrue() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.hasWhereClause("SELECT * FROM users")
+      #expect(result == true, "SELECT should return true (not applicable)")
+    }
+
+    @Test("INSERT query returns true (not applicable)")
+    func insertQueryReturnsTrue() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.hasWhereClause("INSERT INTO users VALUES (1)")
+      #expect(result == true, "INSERT should return true (not applicable)")
+    }
+
+    @Test("WHERE in comment is ignored")
+    func whereInCommentIsIgnored() throws {
+      let manager = DatabaseConnectionManager()
+      let query = "-- WHERE id = 1\nDELETE FROM users"
+      let result = manager.hasWhereClause(query)
+      #expect(result == false, "Should ignore WHERE in comment")
+    }
+  }
+
+  // MARK: - affectsAllRows Tests
+
+  @Suite("affectsAllRows - All Rows Detection")
+  struct AffectsAllRowsTests {
+
+    @Test("DELETE without WHERE affects all rows")
+    func deleteWithoutWhereAffectsAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "DELETE FROM users",
+        "DELETE FROM users;",
+        "delete from accounts",
+      ]
+      for query in queries {
+        let result = manager.affectsAllRows(query)
+        #expect(result == true, "Should affect all rows: \(query)")
+      }
+    }
+
+    @Test("DELETE with WHERE does not affect all rows")
+    func deleteWithWhereDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.affectsAllRows("DELETE FROM users WHERE id = 1")
+      #expect(result == false, "Should not affect all rows with WHERE")
+    }
+
+    @Test("UPDATE without WHERE affects all rows")
+    func updateWithoutWhereAffectsAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let queries = [
+        "UPDATE users SET active = false",
+        "UPDATE accounts SET balance = 0",
+      ]
+      for query in queries {
+        let result = manager.affectsAllRows(query)
+        #expect(result == true, "Should affect all rows: \(query)")
+      }
+    }
+
+    @Test("UPDATE with WHERE does not affect all rows")
+    func updateWithWhereDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.affectsAllRows("UPDATE users SET name = 'x' WHERE id = 1")
+      #expect(result == false, "Should not affect all rows with WHERE")
+    }
+
+    @Test("SELECT does not affect all rows")
+    func selectDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.affectsAllRows("SELECT * FROM users")
+      #expect(result == false, "SELECT should not affect all rows")
+    }
+
+    @Test("INSERT does not affect all rows")
+    func insertDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.affectsAllRows("INSERT INTO users VALUES (1)")
+      #expect(result == false, "INSERT should not affect all rows")
+    }
+
+    @Test("DROP does not affect all rows (different concern)")
+    func dropDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      let result = manager.affectsAllRows("DROP TABLE users")
+      #expect(result == false, "DROP is not DELETE/UPDATE, different concern")
+    }
+
+    @Test("TRUNCATE does not use affectsAllRows (handled separately)")
+    func truncateDoesNotAffectAllRows() throws {
+      let manager = DatabaseConnectionManager()
+      // TRUNCATE always affects all rows but it's a schema operation
+      // It doesn't have WHERE clause syntax
+      let result = manager.affectsAllRows("TRUNCATE TABLE users")
+      #expect(result == false, "TRUNCATE is not DELETE/UPDATE")
+    }
+  }
+
   // MARK: - SQL Syntax Behavior Tests
 
   @Suite("SQL Syntax Behavior - Alias and Typos")

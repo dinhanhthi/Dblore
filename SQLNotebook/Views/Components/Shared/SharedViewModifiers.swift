@@ -83,8 +83,14 @@ extension View {
       }
     } message: {
       VStack(alignment: .leading, spacing: 8) {
-        Text("This query will modify data in your database:")
-          .font(.body)
+        if viewModel.queryConfirmationState.affectsAllRows {
+          Text("⚠️ WARNING: This query has no WHERE clause and will affect ALL rows in the table!")
+            .font(.body.bold())
+            .foregroundStyle(.red)
+        } else {
+          Text("This query will modify data in your database:")
+            .font(.body)
+        }
         Text(viewModel.queryConfirmationState.pendingQuery)
           .font(.system(.body, design: .monospaced))
           .lineLimit(5)

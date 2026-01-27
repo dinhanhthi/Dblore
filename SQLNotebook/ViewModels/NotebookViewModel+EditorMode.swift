@@ -98,6 +98,8 @@ extension NotebookViewModel {
       // Show confirmation dialog
       queryConfirmationState.pendingQuery = query
       queryConfirmationState.pendingCellId = nil  // No cell ID in editor mode
+      // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
+      queryConfirmationState.affectsAllRows = connectionManager.affectsAllRows(query)
       queryConfirmationState.showDialog = true
       return
     }

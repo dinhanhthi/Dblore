@@ -283,6 +283,8 @@ class NotebookViewModel {
         // Show confirmation dialog
         queryConfirmationState.pendingCellId = id
         queryConfirmationState.pendingQuery = query
+        // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
+        queryConfirmationState.affectsAllRows = connectionManager.affectsAllRows(query)
         queryConfirmationState.showDialog = true
       }
     } else {

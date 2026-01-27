@@ -61,6 +61,7 @@ struct QueryConfirmationState: Equatable, Sendable {
   var showDialog: Bool = false
   var pendingCellId: UUID?
   var pendingQuery: String = ""
+  var affectsAllRows: Bool = false  // True if DELETE/UPDATE without WHERE clause
 
   // Run All Cells destructive query confirmation
   var showRunAllConfirmation: Bool = false
@@ -71,6 +72,7 @@ struct QueryConfirmationState: Equatable, Sendable {
     showDialog = false
     pendingCellId = nil
     pendingQuery = ""
+    affectsAllRows = false
   }
 
   mutating func clearRunAll() {
@@ -84,6 +86,7 @@ struct QueryConfirmationState: Equatable, Sendable {
     lhs.showDialog == rhs.showDialog
       && lhs.pendingCellId == rhs.pendingCellId
       && lhs.pendingQuery == rhs.pendingQuery
+      && lhs.affectsAllRows == rhs.affectsAllRows
       && lhs.showRunAllConfirmation == rhs.showRunAllConfirmation
       && lhs.runAllDestructiveCount == rhs.runAllDestructiveCount
       && lhs.runAllPendingCells.count == rhs.runAllPendingCells.count
