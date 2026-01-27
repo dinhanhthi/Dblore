@@ -1,21 +1,23 @@
 ---
+name: todo
 description: Verify implementation status and update TODO.md - verification only, no implementation
 argument-hint: [what to verify or update]
 allowed-tools: Read, Write, Edit, Grep, Glob, TodoWrite, WebSearch
+disable-model-invocation: true
 ---
 
 # Todo: $ARGUMENTS
 
-## ⚠️ CRITICAL: VERIFICATION ONLY - DO NOT IMPLEMENT
+## CRITICAL: VERIFICATION ONLY - DO NOT IMPLEMENT
 
 You are **verifying task completion**, NOT implementing features.
 
-- ❌ **NEVER IMPLEMENT FEATURES** - Your job is to verify, not to code
-- ❌ **NEVER WRITE CODE** - Only read and analyze existing code
-- ❌ **NEVER MODIFY SOURCE FILES** - Only update `docs/TODO.md`
-- ✅ **ONLY VERIFY** what's already implemented in the codebase
-- ✅ **ONLY UPDATE** `docs/TODO.md` status markers (checkboxes)
-- ✅ **ONLY REPORT** findings and recommend next priorities
+- **NEVER IMPLEMENT FEATURES** - Your job is to verify, not to code
+- **NEVER WRITE CODE** - Only read and analyze existing code
+- **NEVER MODIFY SOURCE FILES** - Only update `docs/TODO.md`
+- **ONLY VERIFY** what's already implemented in the codebase
+- **ONLY UPDATE** `docs/TODO.md` status markers (checkboxes)
+- **ONLY REPORT** findings and recommend next priorities
 
 ## Workflow
 
@@ -23,9 +25,9 @@ You are **verifying task completion**, NOT implementing features.
 2. **Search for implementation** using Grep (e.g., class/function names)
 3. **Read actual code** to verify it matches the requirement
 4. **Determine status**:
-   - ✅ Complete: Implementation exists and works as specified
-   - 🚧 In-progress: Partial implementation found
-   - ❌ Not started: No implementation found
+   - Complete: Implementation exists and works as specified
+   - In-progress: Partial implementation found
+   - Not started: No implementation found
 5. **Update TODO.md checkbox** accordingly
 6. **Search for TODO/FIXME comments** in codebase (add to TODO.md if missing)
 7. **Report findings** to user
@@ -54,12 +56,12 @@ Search for these to verify completion:
 
 ### Status Markers
 
-- ✅ **Complete**: Implementation exists and works as specified
-- 🚧 **In-Progress**: Partial implementation found
-- ❌ **Not Started**: No implementation found
-- 🆕 **Newly Discovered**: Found in code comments but not in TODO.md
-- ⚠️ **Blocked**: Implementation issues or dependencies
-- 🎯 **Recommended Next**: Suggested priority (but don't implement it!)
+- **Complete**: Implementation exists and works as specified
+- **In-Progress**: Partial implementation found
+- **Not Started**: No implementation found
+- **Newly Discovered**: Found in code comments but not in TODO.md
+- **Blocked**: Implementation issues or dependencies
+- **Recommended Next**: Suggested priority (but don't implement it!)
 
 ### Guidelines
 
@@ -76,22 +78,22 @@ Provide structured report:
 ```
 ## Verification Results
 
-### ✅ Verified Complete
+### Verified Complete
 - Task name - Implemented in `FileName.swift:123`
 
-### 🚧 In-Progress
+### In-Progress
 - Task name - Partial implementation in `FileName.swift:45`
 
-### ❌ Not Started
+### Not Started
 - Task name - No implementation found
 
-### 🆕 Newly Discovered
+### Newly Discovered
 - TODO comment in `FileName.swift:78`: "Add feature X"
 
-### 🎯 Recommended Next Priority
+### Recommended Next Priority
 - Task name (but DO NOT implement it)
 
-### 📋 TODO.md Updates
+### TODO.md Updates
 - Updated X tasks to completed
 - Added Y new tasks from code comments
 ```

@@ -1,7 +1,9 @@
 ---
+name: fix
 description: Quick fix for a bug or issue in SQLNotebook
 argument-hint: [brief issue description]
 allowed-tools: Read, Edit, Grep, Bash
+disable-model-invocation: true
 ---
 
 # Fix: $ARGUMENTS

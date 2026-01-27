@@ -1,7 +1,9 @@
 ---
+name: doc
 description: Create clear documentation and implementation summaries for SQLNotebook
 argument-hint: [what to document]
 allowed-tools: Read, Write, Edit, Grep, Glob, WebSearch
+disable-model-invocation: true
 ---
 
 # Doc: $ARGUMENTS
@@ -11,8 +13,8 @@ allowed-tools: Read, Write, Edit, Grep, Glob, WebSearch
 ## Critical Rules
 
 1. **File Naming**: All files in `docs/implementation/` MUST use `snake_case.md` (e.g., `mode_switching.md`, `bug_fix_name.md`)
-   - ❌ NEVER use SCREAMING_SNAKE_CASE or kebab-case
-   - ✅ Use: `feature_name.md`, `bug_fix_description.md`
+   - NEVER use SCREAMING_SNAKE_CASE or kebab-case
+   - Use: `feature_name.md`, `bug_fix_description.md`
 
 2. **File Organization**:
    - `docs/implementation/` - Implementation summaries, bug fixes, feature docs
@@ -54,33 +56,33 @@ Create concise summaries (1-2 pages max) in `docs/implementation/`:
 - `path/to/file.swift:line` - What was changed
 
 ## Already Tried (if applicable)
-- ❌ Approach A - Why it didn't work
-- ❌ Approach B - Why it didn't work
+- Approach A - Why it didn't work
+- Approach B - Why it didn't work
 
 ## Remaining Issues (if applicable)
 - [ ] Issue 1 - Description
 - [ ] Issue 2 - Description
 
 ## Testing
-- ✅ Test case 1 passed
-- ✅ Test case 2 passed
+- Test case 1 passed
+- Test case 2 passed
 
 ## Notes
 [Any important context or decisions]
 ```
 
 **What to Include:**
-- ✅ Problem statement (brief)
-- ✅ Solution approach (high-level)
-- ✅ Key file changes with line numbers
-- ✅ Failed approaches (helps avoid repeating mistakes)
-- ✅ Remaining issues (what's not done yet)
-- ✅ Test results
+- Problem statement (brief)
+- Solution approach (high-level)
+- Key file changes with line numbers
+- Failed approaches (helps avoid repeating mistakes)
+- Remaining issues (what's not done yet)
+- Test results
 
 **What to Exclude:**
-- ❌ Detailed code snippets (just reference files)
-- ❌ Step-by-step debugging process
-- ❌ Conversational details
+- Detailed code snippets (just reference files)
+- Step-by-step debugging process
+- Conversational details
 
 ## Code Documentation Standards
 
@@ -145,8 +147,8 @@ docs/
 ## Output Report
 
 When done, report:
-- ✅ What was documented
-- ✅ File location (with proper snake_case naming)
-- ✅ Documentation type (implementation summary vs general docs)
-- ✅ Code examples included
-- ✅ Links to related docs
+- What was documented
+- File location (with proper snake_case naming)
+- Documentation type (implementation summary vs general docs)
+- Code examples included
+- Links to related docs
