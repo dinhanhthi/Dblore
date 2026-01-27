@@ -323,6 +323,35 @@ struct ConnectionFormContent: View {
         .tint(.accent)
         .scaleEffect(0.8)
     }
+
+    // Security Level (Safe Mode) Picker
+    HStack(alignment: .top) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Security level")
+          .font(.body)
+        if let mode = viewModel.editingConnectionConfig.safeMode {
+          Text(mode.shortDescription)
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        } else {
+          Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+      }
+
+      Spacer()
+
+      Picker("", selection: $viewModel.editingConnectionConfig.safeMode) {
+        Text("Use Global").tag(SafeMode?.none)
+        ForEach(SafeMode.allCases, id: \.self) { mode in
+          Text(mode.displayName).tag(Optional(mode))
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .frame(width: 130)
+    }
   }
 
   @ViewBuilder
@@ -422,6 +451,35 @@ struct ConnectionFormContent: View {
         .toggleStyle(.switch)
         .tint(.accent)
         .scaleEffect(0.8)
+    }
+
+    // Security Level (Safe Mode) Picker
+    HStack(alignment: .top) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Security level")
+          .font(.body)
+        if let mode = viewModel.editingConnectionConfig.safeMode {
+          Text(mode.shortDescription)
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        } else {
+          Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+      }
+
+      Spacer()
+
+      Picker("", selection: $viewModel.editingConnectionConfig.safeMode) {
+        Text("Use Global").tag(SafeMode?.none)
+        ForEach(SafeMode.allCases, id: \.self) { mode in
+          Text(mode.displayName).tag(Optional(mode))
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .frame(width: 130)
     }
   }
 
@@ -624,9 +682,24 @@ extension ConnectionFormContent {
             loadConnection(entry)
           }) {
             HStack {
-              // Just show the connection name
+              // Connection name
               Text(entry.config.name)
                 .font(.body)
+
+              // Security indicators
+              if let mode = entry.config.safeMode, mode != .silent {
+                Image(
+                  systemName: mode.requiresPassword
+                    ? "lock.shield.fill" : "exclamationmark.triangle.fill"
+                )
+                .foregroundColor(mode.requiresPassword ? .accent : .warning)
+                .font(.caption)
+              }
+              if entry.config.readOnly {
+                Image(systemName: "eye")
+                  .foregroundColor(.secondary)
+                  .font(.caption)
+              }
 
               Spacer()
 

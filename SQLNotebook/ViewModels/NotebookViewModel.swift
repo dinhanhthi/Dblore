@@ -286,7 +286,8 @@ class NotebookViewModel {
       }
     }
 
-    let safeMode = AppSettings.shared.safeMode
+    // Use per-connection SafeMode if set, otherwise fall back to global setting
+    let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
     let isModification = isModificationQuery(query)
 
     // Determine if confirmation is needed based on Safe Mode level

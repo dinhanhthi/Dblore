@@ -1129,4 +1129,121 @@ struct ViewModelTests {
     #expect(allCases.contains(.safeRead))
     #expect(allCases.contains(.safeAll))
   }
+
+  // MARK: - Per-Connection SafeMode Tests
+
+  @Test("ConnectionConfig safeMode defaults to nil")
+  func connectionConfigSafeModeDefaultsToNil() {
+    let config = ConnectionConfig()
+    #expect(config.safeMode == nil)
+  }
+
+  @Test("ConnectionConfig safeMode can be set")
+  func connectionConfigSafeModeCanBeSet() {
+    var config = ConnectionConfig()
+    config.safeMode = .safeRead
+    #expect(config.safeMode == .safeRead)
+
+    config.safeMode = .silent
+    #expect(config.safeMode == .silent)
+
+    config.safeMode = nil
+    #expect(config.safeMode == nil)
+  }
+
+  @Test("Per-connection SafeMode overrides global setting")
+  @MainActor
+  func perConnectionSafeModeOverridesGlobal() {
+    // Setup: Set global SafeMode to alertAll
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertAll
+
+    // Create connection with per-connection SafeMode override
+    var config = ConnectionConfig()
+    config.safeMode = .silent
+
+    // The effective SafeMode should be the per-connection setting
+    let effectiveSafeMode = config.safeMode ?? AppSettings.shared.safeMode
+    #expect(effectiveSafeMode == .silent)
+
+    // Cleanup
+    AppSettings.shared.safeMode = previousSafeMode
+  }
+
+  @Test("Nil per-connection SafeMode falls back to global")
+  @MainActor
+  func nilPerConnectionSafeModeFallsBackToGlobal() {
+    // Setup: Set global SafeMode
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .safeRead
+
+    // Create connection without per-connection override
+    let config = ConnectionConfig()
+    #expect(config.safeMode == nil)
+
+    // The effective SafeMode should be the global setting
+    let effectiveSafeMode = config.safeMode ?? AppSettings.shared.safeMode
+    #expect(effectiveSafeMode == .safeRead)
+
+    // Cleanup
+    AppSettings.shared.safeMode = previousSafeMode
+  }
+
+  @Test("SafeMode is Codable")
+  func safeModeIsCodable() throws {
+    // Test encoding/decoding SafeMode values
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+
+    for mode in SafeMode.allCases {
+      let encoded = try encoder.encode(mode)
+      let decoded = try decoder.decode(SafeMode.self, from: encoded)
+      #expect(decoded == mode)
+    }
+  }
+
+  @Test("ConnectionConfig with safeMode is Codable")
+  func connectionConfigWithSafeModeIsCodable() throws {
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+
+    // Test with safeMode set
+    var configWithSafeMode = ConnectionConfig()
+    configWithSafeMode.safeMode = .safeAll
+    configWithSafeMode.name = "Test Connection"
+
+    let encoded = try encoder.encode(configWithSafeMode)
+    let decoded = try decoder.decode(ConnectionConfig.self, from: encoded)
+
+    #expect(decoded.safeMode == .safeAll)
+    #expect(decoded.name == "Test Connection")
+  }
+
+  @Test("ConnectionConfig without safeMode decodes to nil")
+  func connectionConfigWithoutSafeModeDecodesToNil() throws {
+    // Simulate old JSON without safeMode field (migration scenario)
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "user",
+        "password": "pass",
+        "sslMode": "prefer",
+        "rememberConnection": false,
+        "timeoutSeconds": 30,
+        "readOnly": false,
+        "name": "Old Connection"
+      }
+      """
+
+    let decoder = JSONDecoder()
+    let data = json.data(using: .utf8)!
+    let decoded = try decoder.decode(ConnectionConfig.self, from: data)
+
+    // safeMode should be nil for old connections without the field
+    #expect(decoded.safeMode == nil)
+    #expect(decoded.name == "Old Connection")
+  }
 }

@@ -28,6 +28,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var timeoutSeconds: Int
   var readOnly: Bool
   var name: String  // Optional label for the connection
+  var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
 
   nonisolated init(
     databaseType: DatabaseType = .postgresql,
@@ -40,7 +41,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     rememberConnection: Bool = false,
     timeoutSeconds: Int = 30,
     readOnly: Bool = false,
-    name: String = ""
+    name: String = "",
+    safeMode: SafeMode? = nil
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -53,6 +55,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.timeoutSeconds = timeoutSeconds
     self.readOnly = readOnly
     self.name = name
+    self.safeMode = safeMode
   }
 
   /// Display string for connection info
