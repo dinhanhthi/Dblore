@@ -257,6 +257,21 @@ class NotebookViewModel {
     return false
   }
 
+  /// Check if a query should be blocked in read-only mode
+  /// Includes all modification queries + CREATE (schema creation)
+  func isBlockedInReadOnlyMode(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    // All modification queries are blocked
+    if isModificationQuery(query) {
+      return true
+    }
+    // CREATE is also blocked in read-only mode (schema creation)
+    if trimmed.hasPrefix("CREATE") {
+      return true
+    }
+    return false
+  }
+
   /// Show confirmation dialog before executing a destructive query
   func confirmAndRunCell(id: UUID) {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
@@ -264,9 +279,9 @@ class NotebookViewModel {
 
     // Check if connection is in read-only mode
     if let config = notebook.connectionConfig, config.readOnly {
-      // Block modification queries in read-only mode
-      if isModificationQuery(query) {
-        showToast("Cannot execute modification queries in read-only mode", type: .error)
+      // Block modification and schema queries in read-only mode
+      if isBlockedInReadOnlyMode(query) {
+        showToast("Cannot execute this query in read-only mode", type: .error)
         return
       }
     }

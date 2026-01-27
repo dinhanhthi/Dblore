@@ -92,6 +92,14 @@ extension NotebookViewModel {
       return
     }
 
+    // Check if connection is in read-only mode
+    if let config = notebook.connectionConfig, config.readOnly {
+      if isBlockedInReadOnlyMode(query) {
+        showToast("Cannot execute this query in read-only mode", type: .error)
+        return
+      }
+    }
+
     // Check for modification queries and show confirmation if needed
     let isModification = isModificationQuery(query)
     if isModification && !AppSettings.shared.bypassDestructiveQueryConfirmation {
