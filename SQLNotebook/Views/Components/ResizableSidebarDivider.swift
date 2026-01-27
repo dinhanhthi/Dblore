@@ -13,7 +13,7 @@ struct ResizableSidebarDivider: View {
   let side: Side
 
   @State private var isDragging = false
-  @State private var dragOffset: CGFloat = 0
+  @State private var startWidth: CGFloat = 0
 
   enum Side {
     case left
@@ -40,28 +40,25 @@ struct ResizableSidebarDivider: View {
         }
       }
       .gesture(
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
           .onChanged { value in
             if !isDragging {
               isDragging = true
+              startWidth = sidebarWidth
             }
 
             // Calculate new width based on drag direction and sidebar side
             let delta = side == .left ? value.translation.width : -value.translation.width
-            let newWidth = sidebarWidth + delta - dragOffset
+            let newWidth = startWidth + delta
 
-            // Clamp to min/max
+            // Clamp to min/max and update without animation
             let clampedWidth = min(max(newWidth, minWidth), maxWidth)
-
-            // Update width
-            sidebarWidth = clampedWidth
-
-            // Track offset for smooth dragging
-            dragOffset = delta
+            withTransaction(Transaction(animation: nil)) {
+              sidebarWidth = clampedWidth
+            }
           }
           .onEnded { _ in
             isDragging = false
-            dragOffset = 0
           }
       )
   }
