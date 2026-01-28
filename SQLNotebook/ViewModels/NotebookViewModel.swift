@@ -241,35 +241,29 @@ class NotebookViewModel {
 
   // MARK: - Query Confirmation
 
-  /// Check if a query is a destructive modification statement
+  /// Check if a query is a modification statement (non-SELECT)
   /// Includes: UPDATE, DELETE, INSERT (data modification)
-  /// And: DROP, TRUNCATE, ALTER (schema modification)
+  /// And: CREATE, DROP, TRUNCATE, ALTER (schema modification)
+  /// This is used by Safe Mode to determine if confirmation is needed
   func isModificationQuery(_ query: String) -> Bool {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     // Data modification
     if trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT") {
       return true
     }
-    // Schema modification (destructive)
-    if trimmed.hasPrefix("DROP") || trimmed.hasPrefix("TRUNCATE") || trimmed.hasPrefix("ALTER") {
+    // Schema modification (including CREATE for Safe Mode consistency with TablePlus)
+    if trimmed.hasPrefix("CREATE") || trimmed.hasPrefix("DROP") || trimmed.hasPrefix("TRUNCATE")
+      || trimmed.hasPrefix("ALTER")
+    {
       return true
     }
     return false
   }
 
   /// Check if a query should be blocked in read-only mode
-  /// Includes all modification queries + CREATE (schema creation)
+  /// Now equivalent to isModificationQuery since CREATE is included there
   func isBlockedInReadOnlyMode(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    // All modification queries are blocked
-    if isModificationQuery(query) {
-      return true
-    }
-    // CREATE is also blocked in read-only mode (schema creation)
-    if trimmed.hasPrefix("CREATE") {
-      return true
-    }
-    return false
+    isModificationQuery(query)
   }
 
   /// Check if a query is a schema change (DDL) operation
