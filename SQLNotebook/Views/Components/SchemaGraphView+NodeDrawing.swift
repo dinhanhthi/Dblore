@@ -63,17 +63,23 @@ extension SchemaGraphNSView {
       let isHighlightedByEdge = isNodeHighlightedByEdge(node.id)
       let isConnectedToSelected = isNodeConnectedToSelectedNode(node.id)
 
-      // Draw shadow (stronger when highlighted by edge or hovered)
-      // Connected-to-selected nodes use normal shadow (no extra shadow like hover)
+      // Draw shadow (stronger when highlighted by edge, hovered, or connected to selected)
+      let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
       context.saveGState()
       if isHighlightedByEdge {
         context.setShadow(
           offset: CGSize(width: 0, height: 3), blur: 8,
           color: edgeHighlightColor.withAlphaComponent(0.4).cgColor)
-      } else if isHovered && !isSelected {
+      } else if isHovered && !isSelected || isConnectedToSelected {
+        // Emphasized shadow for hovered and connected-to-selected nodes
+        // Dark mode: white glow, Light mode: stronger dark shadow
+        let shadowColor =
+          isDarkMode
+          ? NSColor.white.withAlphaComponent(0.2)
+          : NSColor.black.withAlphaComponent(0.35)
         context.setShadow(
-          offset: CGSize(width: 0, height: 3), blur: 6,
-          color: NSColor.white.withAlphaComponent(0.2).cgColor)
+          offset: CGSize(width: 0, height: 3), blur: isDarkMode ? 6 : 8,
+          color: shadowColor.cgColor)
       } else {
         context.setShadow(
           offset: CGSize(width: 0, height: 2), blur: 4,
@@ -119,13 +125,13 @@ extension SchemaGraphNSView {
       if isSelected || isHighlightedByEdge {
         borderColor = nodeSelectedBorderColor
         borderWidth = 2
-      } else if isConnectedToSelected {
-        // Blue border for cards connected to selected node
-        borderColor = NSColor.systemBlue
-        borderWidth = 1.5
-      } else if isHovered {
-        // Lighter border on hover (more visible in dark mode)
-        borderColor = nodeBorderColor.blended(withFraction: 0.5, of: .white) ?? nodeBorderColor
+      } else if isConnectedToSelected || isHovered {
+        // Emphasized border for connected-to-selected and hovered nodes
+        // Dark mode: lighter (white-blended), Light mode: darker (black-blended)
+        borderColor =
+          isDarkMode
+          ? (nodeBorderColor.blended(withFraction: 0.5, of: .white) ?? nodeBorderColor)
+          : (nodeBorderColor.blended(withFraction: 0.4, of: .black) ?? nodeBorderColor)
         borderWidth = 1.5
       } else {
         borderColor = nodeBorderColor
@@ -183,6 +189,25 @@ extension SchemaGraphNSView {
 
       // Draw ALL columns
       drawColumns(context, node: node, rect: rect)
+
+      // Draw dim overlay for unconnected cards when a node is selected
+      // Skip if this node is selected, connected to selected, or highlighted by edge
+      if selectedNodeId != nil && !isSelected && !isConnectedToSelected && !isHighlightedByEdge {
+        context.saveGState()
+        let dimPath = CGPath(
+          roundedRect: rect, cornerWidth: nodeCornerRadius, cornerHeight: nodeCornerRadius,
+          transform: nil)
+        context.addPath(dimPath)
+        // Semi-transparent overlay to dim unconnected cards
+        // Use different colors for dark/light mode for better appearance
+        let dimColor =
+          isDarkMode
+          ? NSColor.black.withAlphaComponent(0.5)
+          : NSColor.white.withAlphaComponent(0.6)
+        context.setFillColor(dimColor.cgColor)
+        context.fillPath()
+        context.restoreGState()
+      }
     }
   }
 
