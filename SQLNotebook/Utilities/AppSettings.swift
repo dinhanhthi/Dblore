@@ -81,6 +81,18 @@ enum SafeMode: Int, Codable, CaseIterable, Sendable {
     }
   }
 
+  /// Short text for badge display in header (e.g., "Read" or "All")
+  var badgeText: String {
+    switch self {
+    case .silent:
+      return ""
+    case .alertRead, .safeRead:
+      return "Read"
+    case .alertAll, .safeAll:
+      return "All"
+    }
+  }
+
   /// Returns true if this mode requires confirmation for SELECT queries
   var requiresConfirmationForSelect: Bool {
     self == .alertAll || self == .safeAll
@@ -263,11 +275,11 @@ class AppSettings {
   }
 
   /// Width of the left sidebar (database schema) in points
-  /// Default: 250, Min: 200, Max: 40% of window width
-  var leftSidebarWidth: CGFloat = 250.0 {
+  /// Default: 300, Min: 250, Max: 40% of window width
+  var leftSidebarWidth: CGFloat = 300.0 {
     didSet {
-      // Clamp between 200 and reasonable max (will be further clamped by view based on window width)
-      let clampedValue = max(leftSidebarWidth, 200)
+      // Clamp between 250 and reasonable max (will be further clamped by view based on window width)
+      let clampedValue = max(leftSidebarWidth, 250)
       if clampedValue != leftSidebarWidth {
         leftSidebarWidth = clampedValue
         return  // Avoid triggering didSet again

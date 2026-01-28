@@ -65,6 +65,27 @@ struct ConnectionInfoContent: View {
             }
           }
 
+          // Schema protection indicator
+          if config.blockSchemaChanges {
+            HStack(spacing: Spacing.xs) {
+              Image(systemName: "hammer.fill")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+              Text("Schema changes blocked")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+              Spacer()
+            }
+            .padding(Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+              RoundedRectangle(cornerRadius: CornerRadius.md)
+                .fill(Color.secondary.opacity(0.1))
+            )
+          }
+
           // Connection name (if provided)
           if !config.name.isEmpty {
             infoRow(label: "Connection Name", value: config.name)

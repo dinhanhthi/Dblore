@@ -100,6 +100,14 @@ extension NotebookViewModel {
       }
     }
 
+    // Check if schema changes are blocked (independent from read-only mode)
+    if let config = notebook.connectionConfig, config.blockSchemaChanges {
+      if isSchemaChangeQuery(query) {
+        showToast("Schema changes are blocked for this connection", type: .error)
+        return
+      }
+    }
+
     // Use per-connection SafeMode if set, otherwise fall back to global setting
     let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
     let isModification = isModificationQuery(query)

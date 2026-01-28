@@ -324,6 +324,25 @@ struct ConnectionFormContent: View {
         .scaleEffect(0.8)
     }
 
+    // Block Schema Changes Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Block schema changes")
+          .font(.body)
+        Text("Prevent CREATE/DROP/ALTER/TRUNCATE operations")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.blockSchemaChanges)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
+
     // Security Level (Safe Mode) Picker
     HStack(alignment: .top) {
       VStack(alignment: .leading, spacing: 2) {
@@ -447,6 +466,25 @@ struct ConnectionFormContent: View {
       Spacer()
 
       Toggle("", isOn: $viewModel.editingConnectionConfig.readOnly)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
+
+    // Block Schema Changes Toggle
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Block schema changes")
+          .font(.body)
+        Text("Prevent CREATE/DROP/ALTER/TRUNCATE operations")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $viewModel.editingConnectionConfig.blockSchemaChanges)
         .labelsHidden()
         .toggleStyle(.switch)
         .tint(.accent)
@@ -697,6 +735,11 @@ extension ConnectionFormContent {
               }
               if entry.config.readOnly {
                 Image(systemName: "eye")
+                  .foregroundColor(.secondary)
+                  .font(.caption)
+              }
+              if entry.config.blockSchemaChanges {
+                Image(systemName: "hammer.fill")
                   .foregroundColor(.secondary)
                   .font(.caption)
               }

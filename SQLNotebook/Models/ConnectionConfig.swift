@@ -27,8 +27,34 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var readOnly: Bool
+  var blockSchemaChanges: Bool  // Block CREATE/DROP/ALTER/TRUNCATE (independent from readOnly)
   var name: String  // Optional label for the connection
   var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
+
+  // Custom CodingKeys for backward compatibility
+  private enum CodingKeys: String, CodingKey {
+    case databaseType, host, port, database, username, password, sslMode
+    case rememberConnection, timeoutSeconds, readOnly, blockSchemaChanges, name, safeMode
+  }
+
+  // Custom decoder for backward compatibility (blockSchemaChanges may be missing in old data)
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    databaseType = try container.decode(DatabaseType.self, forKey: .databaseType)
+    host = try container.decode(String.self, forKey: .host)
+    port = try container.decode(Int.self, forKey: .port)
+    database = try container.decode(String.self, forKey: .database)
+    username = try container.decode(String.self, forKey: .username)
+    password = try container.decode(String.self, forKey: .password)
+    sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
+    rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
+    timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
+    readOnly = try container.decode(Bool.self, forKey: .readOnly)
+    blockSchemaChanges =
+      try container.decodeIfPresent(Bool.self, forKey: .blockSchemaChanges) ?? false
+    name = try container.decode(String.self, forKey: .name)
+    safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
+  }
 
   nonisolated init(
     databaseType: DatabaseType = .postgresql,
@@ -41,6 +67,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     rememberConnection: Bool = false,
     timeoutSeconds: Int = 30,
     readOnly: Bool = false,
+    blockSchemaChanges: Bool = false,
     name: String = "",
     safeMode: SafeMode? = nil
   ) {
@@ -54,6 +81,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
     self.readOnly = readOnly
+    self.blockSchemaChanges = blockSchemaChanges
     self.name = name
     self.safeMode = safeMode
   }

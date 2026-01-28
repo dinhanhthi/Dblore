@@ -62,6 +62,11 @@ struct FooterView: View {
             }
         }
 
+        // Schema protected badge
+        if viewModel.notebook.connectionConfig?.blockSchemaChanges == true {
+          schemaProtectedBadge
+        }
+
         // Window dimensions (for debugging)
         WindowDimensionsView()
       }
@@ -230,6 +235,23 @@ struct FooterView: View {
         NSCursor.pop()
       }
     }
+  }
+
+  // MARK: - Schema Protected Badge
+
+  private var schemaProtectedBadge: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "hammer.fill")
+        .font(.system(size: 9))
+      Text("Schema protected")
+        .font(.small)
+    }
+    .foregroundColor(.secondary)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, 2)
+    .background(Color.secondary.opacity(0.15))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .help("Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked")
   }
 
   // MARK: - File Size Helpers

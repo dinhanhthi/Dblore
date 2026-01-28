@@ -575,7 +575,7 @@ struct SafeModeIndicator: View {
             .font(.system(size: 12))
             .foregroundColor(safeModeColor)
 
-          Text(safeMode.displayName)
+          Text(safeMode.badgeText)
             .font(.small)
             .foregroundColor(safeModeColor)
         }
@@ -585,10 +585,14 @@ struct SafeModeIndicator: View {
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
       }
       .buttonStyle(.plain)
-      .help(
-        isPerConnectionOverride
-          ? "Per-connection Safe Mode (click to edit)" : "Click to open Safe Mode settings")
+      .help(helpText)
     }
+  }
+
+  private var helpText: String {
+    let modeDescription = effectiveSafeMode.shortDescription
+    let source = isPerConnectionOverride ? "Per-connection" : "Global"
+    return "\(source): \(modeDescription)\nClick to open settings"
   }
 
   private var safeModeIcon: String {
@@ -609,7 +613,8 @@ struct SafeModeIndicator: View {
     case .alertRead, .alertAll:
       return .warning
     case .safeRead, .safeAll:
-      return .accent
+      // Always use purple/violet for Safe mode, independent of app accent color
+      return .purple
     }
   }
 }

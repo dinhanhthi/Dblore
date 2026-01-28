@@ -272,6 +272,15 @@ class NotebookViewModel {
     return false
   }
 
+  /// Check if a query is a schema change (DDL) operation
+  /// Includes: CREATE, DROP, ALTER, TRUNCATE
+  /// Note: This is independent from read-only mode and data modifications
+  func isSchemaChangeQuery(_ query: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    return trimmed.hasPrefix("CREATE") || trimmed.hasPrefix("DROP")
+      || trimmed.hasPrefix("ALTER") || trimmed.hasPrefix("TRUNCATE")
+  }
+
   /// Show confirmation dialog before executing a query based on Safe Mode level
   func confirmAndRunCell(id: UUID) {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
@@ -282,6 +291,14 @@ class NotebookViewModel {
       // Block modification and schema queries in read-only mode
       if isBlockedInReadOnlyMode(query) {
         showToast("Cannot execute this query in read-only mode", type: .error)
+        return
+      }
+    }
+
+    // Check if schema changes are blocked (independent from read-only mode)
+    if let config = notebook.connectionConfig, config.blockSchemaChanges {
+      if isSchemaChangeQuery(query) {
+        showToast("Schema changes are blocked for this connection", type: .error)
         return
       }
     }

@@ -240,4 +240,124 @@ struct ViewModelTests {
     // Assert
     #expect(viewModel.selectedCellId == nonExistentId)
   }
+
+  // MARK: - Schema Change Query Detection Tests
+
+  @Test("isSchemaChangeQuery detects CREATE statements")
+  func isSchemaChangeQueryDetectsCREATE() {
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    #expect(viewModel.isSchemaChangeQuery("CREATE TABLE users (id INT)") == true)
+    #expect(viewModel.isSchemaChangeQuery("create table users (id int)") == true)
+    #expect(viewModel.isSchemaChangeQuery("  CREATE INDEX idx ON users(id)") == true)
+    #expect(viewModel.isSchemaChangeQuery("CREATE VIEW v AS SELECT 1") == true)
+  }
+
+  @Test("isSchemaChangeQuery detects DROP statements")
+  func isSchemaChangeQueryDetectsDROP() {
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    #expect(viewModel.isSchemaChangeQuery("DROP TABLE users") == true)
+    #expect(viewModel.isSchemaChangeQuery("drop table users cascade") == true)
+    #expect(viewModel.isSchemaChangeQuery("  DROP INDEX idx") == true)
+    #expect(viewModel.isSchemaChangeQuery("DROP VIEW v") == true)
+  }
+
+  @Test("isSchemaChangeQuery detects ALTER statements")
+  func isSchemaChangeQueryDetectsALTER() {
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    #expect(viewModel.isSchemaChangeQuery("ALTER TABLE users ADD COLUMN name VARCHAR") == true)
+    #expect(viewModel.isSchemaChangeQuery("alter table users drop column name") == true)
+    #expect(viewModel.isSchemaChangeQuery("  ALTER INDEX idx RENAME TO idx2") == true)
+  }
+
+  @Test("isSchemaChangeQuery detects TRUNCATE statements")
+  func isSchemaChangeQueryDetectsTRUNCATE() {
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    #expect(viewModel.isSchemaChangeQuery("TRUNCATE TABLE users") == true)
+    #expect(viewModel.isSchemaChangeQuery("truncate users") == true)
+    #expect(viewModel.isSchemaChangeQuery("  TRUNCATE users CASCADE") == true)
+  }
+
+  @Test("isSchemaChangeQuery allows SELECT and data modification queries")
+  func isSchemaChangeQueryAllowsDataQueries() {
+    let notebook = createTestNotebook()
+    let viewModel = NotebookViewModel(notebook: notebook)
+
+    // SELECT is allowed
+    #expect(viewModel.isSchemaChangeQuery("SELECT * FROM users") == false)
+    #expect(viewModel.isSchemaChangeQuery("select 1") == false)
+
+    // Data modification is allowed (not schema change)
+    #expect(viewModel.isSchemaChangeQuery("INSERT INTO users VALUES (1)") == false)
+    #expect(viewModel.isSchemaChangeQuery("UPDATE users SET name = 'test'") == false)
+    #expect(viewModel.isSchemaChangeQuery("DELETE FROM users WHERE id = 1") == false)
+  }
+
+  // MARK: - blockSchemaChanges Property Tests
+
+  @Test("ConnectionConfig blockSchemaChanges defaults to false")
+  func connectionConfigBlockSchemaChangesDefault() {
+    let config = ConnectionConfig()
+    #expect(config.blockSchemaChanges == false)
+  }
+
+  @Test("ConnectionConfig blockSchemaChanges can be set to true")
+  func connectionConfigBlockSchemaChangesCanBeSet() {
+    let config = ConnectionConfig(blockSchemaChanges: true)
+    #expect(config.blockSchemaChanges == true)
+  }
+
+  @Test("ConnectionConfig with blockSchemaChanges is Codable")
+  func connectionConfigBlockSchemaChangesCodable() throws {
+    let config = ConnectionConfig(
+      host: "localhost",
+      port: 5432,
+      database: "test",
+      username: "user",
+      password: "pass",
+      blockSchemaChanges: true
+    )
+
+    let encoder = JSONEncoder()
+    let data = try encoder.encode(config)
+
+    let decoder = JSONDecoder()
+    let decoded = try decoder.decode(ConnectionConfig.self, from: data)
+
+    #expect(decoded.blockSchemaChanges == true)
+  }
+
+  @Test("ConnectionConfig without blockSchemaChanges decodes to false (migration)")
+  func connectionConfigBlockSchemaChangesMigration() throws {
+    // Simulate old config without blockSchemaChanges field
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "user",
+        "password": "pass",
+        "sslMode": "prefer",
+        "rememberConnection": false,
+        "timeoutSeconds": 30,
+        "readOnly": false,
+        "name": "Test"
+      }
+      """
+    let data = json.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    let config = try decoder.decode(ConnectionConfig.self, from: data)
+
+    // Should default to false for old configs
+    #expect(config.blockSchemaChanges == false)
+  }
 }
