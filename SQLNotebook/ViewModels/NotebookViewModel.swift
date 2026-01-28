@@ -280,20 +280,23 @@ class NotebookViewModel {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     let query = notebook.cells[index].content
 
-    // Check if connection is in read-only mode
-    if let config = notebook.connectionConfig, config.readOnly {
-      // Block modification and schema queries in read-only mode
-      if isBlockedInReadOnlyMode(query) {
-        showToast("Cannot execute this query in read-only mode", type: .error)
-        return
-      }
-    }
-
-    // Check if schema changes are blocked (independent from read-only mode)
-    if let config = notebook.connectionConfig, config.blockSchemaChanges {
-      if isSchemaChangeQuery(query) {
-        showToast("Schema changes are blocked for this connection", type: .error)
-        return
+    // Check connection protection level
+    if let config = notebook.connectionConfig {
+      switch config.protectionLevel {
+      case .readOnly:
+        // Block all modification queries in read-only mode
+        if isModificationQuery(query) {
+          showToast("Cannot execute this query in read-only mode", type: .error)
+          return
+        }
+      case .schemaOnly:
+        // Block only schema changes
+        if isSchemaChangeQuery(query) {
+          showToast("Schema changes are blocked for this connection", type: .error)
+          return
+        }
+      case .none:
+        break  // No protection
       }
     }
 

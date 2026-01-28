@@ -158,7 +158,7 @@ struct RightSidebarView: View {
             cellId: cellId
           )
         },
-        isReadOnly: viewModel.notebook.connectionConfig?.readOnly ?? false
+        isReadOnly: viewModel.notebook.connectionConfig?.isReadOnly ?? false
       )
       .environment(viewModel)
     case .executedQuery(let query, let cellId, let limitWasCapped, let actualLimit):

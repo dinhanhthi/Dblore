@@ -300,29 +300,32 @@ struct ViewModelTests {
     #expect(viewModel.isSchemaChangeQuery("DELETE FROM users WHERE id = 1") == false)
   }
 
-  // MARK: - blockSchemaChanges Property Tests
+  // MARK: - ConnectionProtectionLevel Property Tests
 
-  @Test("ConnectionConfig blockSchemaChanges defaults to false")
-  func connectionConfigBlockSchemaChangesDefault() {
+  @Test("ConnectionConfig protectionLevel defaults to none")
+  func connectionConfigProtectionLevelDefault() {
     let config = ConnectionConfig()
-    #expect(config.blockSchemaChanges == false)
+    #expect(config.protectionLevel == .none)
+    #expect(config.blocksSchemaChanges == false)
   }
 
-  @Test("ConnectionConfig blockSchemaChanges can be set to true")
-  func connectionConfigBlockSchemaChangesCanBeSet() {
-    let config = ConnectionConfig(blockSchemaChanges: true)
-    #expect(config.blockSchemaChanges == true)
+  @Test("ConnectionConfig protectionLevel can be set to schemaOnly")
+  func connectionConfigProtectionLevelCanBeSetToSchemaOnly() {
+    let config = ConnectionConfig(protectionLevel: .schemaOnly)
+    #expect(config.protectionLevel == .schemaOnly)
+    #expect(config.blocksSchemaChanges == true)
+    #expect(config.isReadOnly == false)
   }
 
-  @Test("ConnectionConfig with blockSchemaChanges is Codable")
-  func connectionConfigBlockSchemaChangesCodable() throws {
+  @Test("ConnectionConfig with protectionLevel is Codable")
+  func connectionConfigProtectionLevelCodable() throws {
     let config = ConnectionConfig(
       host: "localhost",
       port: 5432,
       database: "test",
       username: "user",
       password: "pass",
-      blockSchemaChanges: true
+      protectionLevel: .schemaOnly
     )
 
     let encoder = JSONEncoder()
@@ -331,12 +334,69 @@ struct ViewModelTests {
     let decoder = JSONDecoder()
     let decoded = try decoder.decode(ConnectionConfig.self, from: data)
 
-    #expect(decoded.blockSchemaChanges == true)
+    #expect(decoded.protectionLevel == .schemaOnly)
   }
 
-  @Test("ConnectionConfig without blockSchemaChanges decodes to false (migration)")
-  func connectionConfigBlockSchemaChangesMigration() throws {
-    // Simulate old config without blockSchemaChanges field
+  @Test("ConnectionConfig migrates legacy readOnly to protectionLevel")
+  func connectionConfigMigrateLegacyReadOnly() throws {
+    // Simulate old config with readOnly=true
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "user",
+        "password": "pass",
+        "sslMode": "prefer",
+        "rememberConnection": false,
+        "timeoutSeconds": 30,
+        "readOnly": true,
+        "name": "Test"
+      }
+      """
+    let data = json.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    let config = try decoder.decode(ConnectionConfig.self, from: data)
+
+    // Should migrate to readOnly protection level
+    #expect(config.protectionLevel == .readOnly)
+    #expect(config.isReadOnly == true)
+  }
+
+  @Test("ConnectionConfig migrates legacy blockSchemaChanges to protectionLevel")
+  func connectionConfigMigrateLegacyBlockSchemaChanges() throws {
+    // Simulate old config with blockSchemaChanges=true
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "user",
+        "password": "pass",
+        "sslMode": "prefer",
+        "rememberConnection": false,
+        "timeoutSeconds": 30,
+        "readOnly": false,
+        "blockSchemaChanges": true,
+        "name": "Test"
+      }
+      """
+    let data = json.data(using: .utf8)!
+
+    let decoder = JSONDecoder()
+    let config = try decoder.decode(ConnectionConfig.self, from: data)
+
+    // Should migrate to schemaOnly protection level
+    #expect(config.protectionLevel == .schemaOnly)
+    #expect(config.blocksSchemaChanges == true)
+  }
+
+  @Test("ConnectionConfig defaults to none for old configs without protection")
+  func connectionConfigDefaultsToNoneForOldConfigs() throws {
+    // Simulate old config without any protection
     let json = """
       {
         "databaseType": "PostgreSQL",
@@ -357,7 +417,7 @@ struct ViewModelTests {
     let decoder = JSONDecoder()
     let config = try decoder.decode(ConnectionConfig.self, from: data)
 
-    // Should default to false for old configs
-    #expect(config.blockSchemaChanges == false)
+    // Should default to none for old configs
+    #expect(config.protectionLevel == .none)
   }
 }

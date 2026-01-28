@@ -15,6 +15,11 @@ struct SecuritySettingsSection: View {
   var body: some View {
     SettingsSection(title: "Security", icon: "lock.shield.fill") {
       VStack(alignment: .leading, spacing: Spacing.lg) {
+        // Protection Level Warning (at top for visibility)
+        if viewModel.editingConnectionConfig.protectionLevel != .none {
+          protectionWarning
+        }
+
         // Combined Safe Mode Section
         SafeModeSection(appSettings: appSettings, viewModel: viewModel)
           .id("safeModeSection")
@@ -38,58 +43,51 @@ struct SecuritySettingsSection: View {
           .font(.small)
           .foregroundColor(.foregroundSubtle)
         }
-
-        // Read-only Mode Warning
-        if viewModel.editingConnectionConfig.readOnly {
-          readOnlyWarning
-        }
       }
     }
-    .confirmationDialog(
-      "Disable Read-only Mode?",
+    .protectionLevelDialog(
       isPresented: $showDisableReadOnlyConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Disable Read-only Mode", role: .destructive) {
-        Task {
-          await viewModel.disableReadOnlyMode()
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
-      )
-    }
+      currentLevel: viewModel.editingConnectionConfig.protectionLevel,
+      onDisableProtection: { await viewModel.disableProtection() },
+      onEnableSchemaProtection: { await viewModel.enableSchemaProtection() },
+      onEnableReadOnly: { await viewModel.enableReadOnlyMode() }
+    )
   }
 
-  private var readOnlyWarning: some View {
-    HStack(alignment: .top, spacing: Spacing.sm) {
-      Image(systemName: "lock.fill")
-        .foregroundColor(.warning)
+  private var protectionWarning: some View {
+    let level = viewModel.editingConnectionConfig.protectionLevel
+    return HStack(alignment: .top, spacing: Spacing.sm) {
+      Image(systemName: level.iconName)
+        .foregroundColor(level == .readOnly ? .warning : .secondary)
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        Text("Read-Only Mode Active")
+        Text(level == .readOnly ? "Read-Only Mode Active" : "Schema Protection Active")
           .font(.subheading)
-          .foregroundColor(.warning)
-        Text("Modification queries are blocked regardless of Safe Mode level.")
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
+          .foregroundColor(level == .readOnly ? .warning : .secondary)
+        Text(
+          level == .readOnly
+            ? "Modification queries are blocked regardless of Safe Mode level."
+            : "Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked."
+        )
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
         Button(action: {
           showDisableReadOnlyConfirmation = true
         }) {
-          Text("Disable Read-only Mode")
+          Text("Change Protection")
             .font(.small)
             .foregroundColor(.white)
             .padding(.horizontal, Spacing.sm)
             .padding(.vertical, Spacing.xs)
-            .background(Color.warning)
+            .background(level == .readOnly ? Color.warning : Color.secondary)
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
         }
         .buttonStyle(.plain)
       }
+      Spacer()
     }
     .padding(Spacing.md)
-    .background(Color.warning.opacity(0.1))
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background((level == .readOnly ? Color.warning : Color.secondary).opacity(0.1))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 }

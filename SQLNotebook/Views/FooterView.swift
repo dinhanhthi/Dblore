@@ -54,18 +54,24 @@ struct FooterView: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
 
-        // Read-only mode badge (clickable)
-        if viewModel.notebook.connectionConfig?.readOnly == true {
-          readOnlyBadge
+        // Protection level badge (clickable)
+        if let protectionLevel = viewModel.notebook.connectionConfig?.protectionLevel,
+          protectionLevel != .none
+        {
+          protectionBadge(for: protectionLevel)
             .onTapGesture {
               showDisableReadOnlyConfirmation = true
             }
         }
 
-        // Schema protected badge
-        if viewModel.notebook.connectionConfig?.blockSchemaChanges == true {
-          schemaProtectedBadge
-        }
+        // Safe Mode indicator (clickable to open settings)
+        SafeModeIndicator(
+          connectionConfig: viewModel.connectionState.isConnected
+            ? viewModel.notebook.connectionConfig : nil,
+          onTap: {
+            viewModel.showSafeModeSettings()
+          }
+        )
 
         // Window dimensions (for debugging)
         WindowDimensionsView()
@@ -133,22 +139,10 @@ struct FooterView: View {
     .overlay(alignment: .top) {
       Divider()
     }
-    .confirmationDialog(
-      "Disable Read-only Mode?",
+    .protectionLevelDialog(
       isPresented: $showDisableReadOnlyConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Disable Read-only Mode", role: .destructive) {
-        Task {
-          await viewModel.disableReadOnlyMode()
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
-      )
-    }
+      viewModel: viewModel
+    )
   }
 
   @ViewBuilder
@@ -213,21 +207,25 @@ struct FooterView: View {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
   }
 
-  // MARK: - Read-only Badge
+  // MARK: - Protection Badge
 
-  private var readOnlyBadge: some View {
+  private func protectionBadge(for level: ConnectionProtectionLevel) -> some View {
     HStack(spacing: 4) {
-      Image(systemName: "lock.fill")
+      Image(systemName: level.iconName)
         .font(.system(size: 9))
-      Text("Read-only")
+      Text(level.displayName)
         .font(.small)
     }
-    .foregroundColor(.warning)
+    .foregroundColor(level == .readOnly ? .warning : .secondary)
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, 2)
-    .background(Color.warning.opacity(0.15))
+    .background((level == .readOnly ? Color.warning : Color.secondary).opacity(0.15))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-    .help("Click to disable read-only mode")
+    .help(
+      level == .readOnly
+        ? "Click to change protection level"
+        : "Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked"
+    )
     .onHover { hovering in
       if hovering {
         NSCursor.pointingHand.push()
@@ -235,23 +233,6 @@ struct FooterView: View {
         NSCursor.pop()
       }
     }
-  }
-
-  // MARK: - Schema Protected Badge
-
-  private var schemaProtectedBadge: some View {
-    HStack(spacing: 4) {
-      Image(systemName: "hammer.fill")
-        .font(.system(size: 9))
-      Text("Schema protected")
-        .font(.small)
-    }
-    .foregroundColor(.secondary)
-    .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, 2)
-    .background(Color.secondary.opacity(0.15))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-    .help("Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked")
   }
 
   // MARK: - File Size Helpers

@@ -295,8 +295,9 @@ extension NotebookViewModel {
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
     try? await Task.sleep(for: .milliseconds(50))
 
-    // Check if connection is in read-only mode
-    let isReadOnly = notebook.connectionConfig?.readOnly ?? false
+    // Check connection protection level
+    let protectionLevel = notebook.connectionConfig?.protectionLevel ?? .none
+    let isReadOnly = protectionLevel == .readOnly
 
     // Collect all SQL cells with their destructive status
     var pendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []

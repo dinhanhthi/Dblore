@@ -15,6 +15,56 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   }
 }
 
+/// Protection level for database connections
+/// Combines the previous readOnly and blockSchemaChanges into a single setting
+enum ConnectionProtectionLevel: String, Codable, CaseIterable, Sendable {
+  /// No protection - all queries allowed
+  case none
+  /// Block schema changes only (CREATE/DROP/ALTER/TRUNCATE)
+  /// Data modifications (INSERT/UPDATE/DELETE) are allowed
+  case schemaOnly = "schema"
+  /// Full read-only mode - block all modifications including data and schema
+  case readOnly = "readonly"
+
+  var displayName: String {
+    switch self {
+    case .none: return "None"
+    case .schemaOnly: return "Schema Protected"
+    case .readOnly: return "Read-Only"
+    }
+  }
+
+  var description: String {
+    switch self {
+    case .none:
+      return "All queries allowed"
+    case .schemaOnly:
+      return "Block CREATE, DROP, ALTER, TRUNCATE"
+    case .readOnly:
+      return "Block all data and schema modifications"
+    }
+  }
+
+  /// Icon for UI display
+  var iconName: String {
+    switch self {
+    case .none: return "lock.open"
+    case .schemaOnly: return "tablecells.badge.ellipsis"
+    case .readOnly: return "lock.fill"
+    }
+  }
+
+  /// Whether this level blocks schema changes
+  var blocksSchemaChanges: Bool {
+    self == .schemaOnly || self == .readOnly
+  }
+
+  /// Whether this level blocks data modifications
+  var blocksDataModifications: Bool {
+    self == .readOnly
+  }
+}
+
 /// Configuration for database connection
 struct ConnectionConfig: Codable, Equatable, Sendable {
   var databaseType: DatabaseType
@@ -26,18 +76,21 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var sslMode: SSLMode
   var rememberConnection: Bool
   var timeoutSeconds: Int
-  var readOnly: Bool
-  var blockSchemaChanges: Bool  // Block CREATE/DROP/ALTER/TRUNCATE (independent from readOnly)
+  var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
   var name: String  // Optional label for the connection
   var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode
-    case rememberConnection, timeoutSeconds, readOnly, blockSchemaChanges, name, safeMode
+    case rememberConnection, timeoutSeconds, name, safeMode
+    // New key
+    case protectionLevel
+    // Legacy keys (for reading old data)
+    case readOnly, blockSchemaChanges
   }
 
-  // Custom decoder for backward compatibility (blockSchemaChanges may be missing in old data)
+  // Custom decoder for backward compatibility with old readOnly/blockSchemaChanges format
   nonisolated init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     databaseType = try container.decode(DatabaseType.self, forKey: .databaseType)
@@ -49,11 +102,45 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
-    readOnly = try container.decode(Bool.self, forKey: .readOnly)
-    blockSchemaChanges =
-      try container.decodeIfPresent(Bool.self, forKey: .blockSchemaChanges) ?? false
     name = try container.decode(String.self, forKey: .name)
     safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
+
+    // Try to decode new protectionLevel first, fall back to legacy fields
+    if let level = try container.decodeIfPresent(
+      ConnectionProtectionLevel.self, forKey: .protectionLevel)
+    {
+      protectionLevel = level
+    } else {
+      // Migrate from legacy readOnly/blockSchemaChanges
+      let readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+      let blockSchemaChanges =
+        try container.decodeIfPresent(Bool.self, forKey: .blockSchemaChanges) ?? false
+
+      if readOnly {
+        protectionLevel = .readOnly
+      } else if blockSchemaChanges {
+        protectionLevel = .schemaOnly
+      } else {
+        protectionLevel = .none
+      }
+    }
+  }
+
+  // Custom encoder - only encode new format
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(databaseType, forKey: .databaseType)
+    try container.encode(host, forKey: .host)
+    try container.encode(port, forKey: .port)
+    try container.encode(database, forKey: .database)
+    try container.encode(username, forKey: .username)
+    try container.encode(password, forKey: .password)
+    try container.encode(sslMode, forKey: .sslMode)
+    try container.encode(rememberConnection, forKey: .rememberConnection)
+    try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+    try container.encode(protectionLevel, forKey: .protectionLevel)
+    try container.encode(name, forKey: .name)
+    try container.encodeIfPresent(safeMode, forKey: .safeMode)
   }
 
   nonisolated init(
@@ -66,8 +153,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode: SSLMode = .prefer,
     rememberConnection: Bool = false,
     timeoutSeconds: Int = 30,
-    readOnly: Bool = false,
-    blockSchemaChanges: Bool = false,
+    protectionLevel: ConnectionProtectionLevel = .none,
     name: String = "",
     safeMode: SafeMode? = nil
   ) {
@@ -80,10 +166,21 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.sslMode = sslMode
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
-    self.readOnly = readOnly
-    self.blockSchemaChanges = blockSchemaChanges
+    self.protectionLevel = protectionLevel
     self.name = name
     self.safeMode = safeMode
+  }
+
+  // MARK: - Convenience accessors (for easier migration)
+
+  /// Whether this connection blocks all modifications (read-only mode)
+  var isReadOnly: Bool {
+    protectionLevel == .readOnly
+  }
+
+  /// Whether this connection blocks schema changes
+  var blocksSchemaChanges: Bool {
+    protectionLevel.blocksSchemaChanges
   }
 
   /// Display string for connection info

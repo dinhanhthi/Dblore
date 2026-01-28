@@ -305,42 +305,26 @@ struct ConnectionFormContent: View {
         .scaleEffect(0.8)
     }
 
-    // Read-Only Mode Toggle
-    HStack {
+    // Protection Level Picker
+    HStack(alignment: .top) {
       VStack(alignment: .leading, spacing: 2) {
-        Text("Read-only mode")
+        Text("Protection level")
           .font(.body)
-        Text("Prevent accidental data modifications (UPDATE/DELETE/INSERT)")
+        Text(viewModel.editingConnectionConfig.protectionLevel.description)
           .font(.caption)
           .foregroundColor(.foregroundMuted)
       }
 
       Spacer()
 
-      Toggle("", isOn: $viewModel.editingConnectionConfig.readOnly)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
-
-    // Block Schema Changes Toggle
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Block schema changes")
-          .font(.body)
-        Text("Prevent CREATE/DROP/ALTER/TRUNCATE operations")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+      Picker("", selection: $viewModel.editingConnectionConfig.protectionLevel) {
+        ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
+          Label(level.displayName, systemImage: level.iconName).tag(level)
+        }
       }
-
-      Spacer()
-
-      Toggle("", isOn: $viewModel.editingConnectionConfig.blockSchemaChanges)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .frame(width: 160)
     }
 
     // Security Level (Safe Mode) Picker
@@ -453,42 +437,26 @@ struct ConnectionFormContent: View {
         .scaleEffect(0.8)
     }
 
-    // Read-Only Mode Toggle
-    HStack {
+    // Protection Level Picker
+    HStack(alignment: .top) {
       VStack(alignment: .leading, spacing: 2) {
-        Text("Read-only mode")
+        Text("Protection level")
           .font(.body)
-        Text("Prevent accidental data modifications (UPDATE/DELETE/INSERT)")
+        Text(viewModel.editingConnectionConfig.protectionLevel.description)
           .font(.caption)
           .foregroundColor(.foregroundMuted)
       }
 
       Spacer()
 
-      Toggle("", isOn: $viewModel.editingConnectionConfig.readOnly)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
-
-    // Block Schema Changes Toggle
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Block schema changes")
-          .font(.body)
-        Text("Prevent CREATE/DROP/ALTER/TRUNCATE operations")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+      Picker("", selection: $viewModel.editingConnectionConfig.protectionLevel) {
+        ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
+          Label(level.displayName, systemImage: level.iconName).tag(level)
+        }
       }
-
-      Spacer()
-
-      Toggle("", isOn: $viewModel.editingConnectionConfig.blockSchemaChanges)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
+      .labelsHidden()
+      .pickerStyle(.menu)
+      .frame(width: 160)
     }
 
     // Security Level (Safe Mode) Picker
@@ -733,14 +701,11 @@ extension ConnectionFormContent {
                 .foregroundColor(mode.requiresPassword ? .accent : .warning)
                 .font(.caption)
               }
-              if entry.config.readOnly {
-                Image(systemName: "eye")
-                  .foregroundColor(.secondary)
-                  .font(.caption)
-              }
-              if entry.config.blockSchemaChanges {
-                Image(systemName: "hammer.fill")
-                  .foregroundColor(.secondary)
+              if entry.config.protectionLevel != .none {
+                Image(systemName: entry.config.protectionLevel.iconName)
+                  .foregroundColor(
+                    entry.config.protectionLevel == .readOnly ? .warning : .secondary
+                  )
                   .font(.caption)
               }
 

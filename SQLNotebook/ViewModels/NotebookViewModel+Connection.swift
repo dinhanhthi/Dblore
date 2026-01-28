@@ -84,59 +84,48 @@ extension NotebookViewModel {
     }
   }
 
-  /// Disable read-only mode for the current connection
-  /// This updates both the editing config and notebook config, then reconnects
-  func disableReadOnlyMode() async {
+  /// Set protection level for the current connection
+  /// This updates both the editing config and notebook config
+  func setProtectionLevel(_ level: ConnectionProtectionLevel) async {
+    let oldLevel = editingConnectionConfig.protectionLevel
+
     // Update both configs
-    editingConnectionConfig.readOnly = false
-    notebook.connectionConfig?.readOnly = false
+    editingConnectionConfig.protectionLevel = level
+    notebook.connectionConfig?.protectionLevel = level
 
     // Log the action
     await AppLogger.shared.info(
-      "Read-only mode disabled for connection: \(editingConnectionConfig.safeDisplayString)",
+      "Protection level changed from \(oldLevel.displayName) to \(level.displayName) for connection: \(editingConnectionConfig.safeDisplayString)",
       category: "Connection")
 
-    // Reconnect if currently connected to apply the change
-    if case .connected = connectionState {
-      do {
-        try await connect()
-        showToast("Read-only mode disabled", type: .success)
-      } catch {
-        showToast("Failed to reconnect: \(error.localizedDescription)", type: .error)
-      }
-    } else {
-      showToast("Read-only mode disabled", type: .success)
+    // Show appropriate toast
+    let message: String
+    switch level {
+    case .none:
+      message = "Protection disabled"
+    case .schemaOnly:
+      message = "Schema protection enabled"
+    case .readOnly:
+      message = "Read-only mode enabled"
     }
+    showToast(message, type: .success)
 
     // Sync document to save the change
     onDocumentChanged?()
   }
 
+  /// Disable protection (set to none)
+  func disableProtection() async {
+    await setProtectionLevel(.none)
+  }
+
   /// Enable read-only mode for the current connection
-  /// This updates both the editing config and notebook config, then reconnects
   func enableReadOnlyMode() async {
-    // Update both configs
-    editingConnectionConfig.readOnly = true
-    notebook.connectionConfig?.readOnly = true
+    await setProtectionLevel(.readOnly)
+  }
 
-    // Log the action
-    await AppLogger.shared.info(
-      "Read-only mode enabled for connection: \(editingConnectionConfig.safeDisplayString)",
-      category: "Connection")
-
-    // Reconnect if currently connected to apply the change
-    if case .connected = connectionState {
-      do {
-        try await connect()
-        showToast("Switched to read-only mode", type: .success)
-      } catch {
-        showToast("Failed to reconnect: \(error.localizedDescription)", type: .error)
-      }
-    } else {
-      showToast("Switched to read-only mode", type: .success)
-    }
-
-    // Sync document to save the change
-    onDocumentChanged?()
+  /// Enable schema-only protection for the current connection
+  func enableSchemaProtection() async {
+    await setProtectionLevel(.schemaOnly)
   }
 }

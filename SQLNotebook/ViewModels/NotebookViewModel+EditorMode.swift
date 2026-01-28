@@ -92,19 +92,21 @@ extension NotebookViewModel {
       return
     }
 
-    // Check if connection is in read-only mode
-    if let config = notebook.connectionConfig, config.readOnly {
-      if isBlockedInReadOnlyMode(query) {
-        showToast("Cannot execute this query in read-only mode", type: .error)
-        return
-      }
-    }
-
-    // Check if schema changes are blocked (independent from read-only mode)
-    if let config = notebook.connectionConfig, config.blockSchemaChanges {
-      if isSchemaChangeQuery(query) {
-        showToast("Schema changes are blocked for this connection", type: .error)
-        return
+    // Check connection protection level
+    if let config = notebook.connectionConfig {
+      switch config.protectionLevel {
+      case .readOnly:
+        if isModificationQuery(query) {
+          showToast("Cannot execute this query in read-only mode", type: .error)
+          return
+        }
+      case .schemaOnly:
+        if isSchemaChangeQuery(query) {
+          showToast("Schema changes are blocked for this connection", type: .error)
+          return
+        }
+      case .none:
+        break
       }
     }
 

@@ -19,23 +19,26 @@ struct ConnectionInfoContent: View {
     if let config {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          // Read-only mode indicator (at top for visibility)
-          if config.readOnly {
+          // Protection level indicator (at top for visibility)
+          if config.protectionLevel != .none {
             HStack(spacing: Spacing.xs) {
-              Image(systemName: "lock.fill")
+              Image(systemName: config.protectionLevel.iconName)
                 .font(.caption)
-                .foregroundColor(.warning)
+                .foregroundColor(config.protectionLevel == .readOnly ? .warning : .secondary)
 
-              Text("Read-only mode enabled")
-                .font(.caption)
-                .foregroundColor(.warning)
+              Text(
+                config.protectionLevel == .readOnly
+                  ? "Read-only mode enabled" : "Schema changes blocked"
+              )
+              .font(.caption)
+              .foregroundColor(config.protectionLevel == .readOnly ? .warning : .secondary)
 
               Spacer()
 
               Button(action: {
                 showDisableReadOnlyConfirmation = true
               }) {
-                Text("Disable")
+                Text("Change")
                   .font(.caption)
                   .foregroundColor(.accent)
               }
@@ -45,45 +48,40 @@ struct ConnectionInfoContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
               RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(Color.warning.opacity(0.1))
+                .fill(
+                  config.protectionLevel == .readOnly
+                    ? Color.warning.opacity(0.1) : Color.secondary.opacity(0.1))
             )
             .confirmationDialog(
-              "Disable Read-only Mode?",
+              "Change Protection Level?",
               isPresented: $showDisableReadOnlyConfirmation,
               titleVisibility: .visible
             ) {
-              Button("Disable Read-only Mode", role: .destructive) {
+              Button("Disable Protection", role: .destructive) {
                 Task {
-                  await viewModel.disableReadOnlyMode()
+                  await viewModel.disableProtection()
+                }
+              }
+              if config.protectionLevel == .readOnly {
+                Button("Schema Protection Only") {
+                  Task {
+                    await viewModel.enableSchemaProtection()
+                  }
+                }
+              }
+              if config.protectionLevel == .schemaOnly {
+                Button("Enable Read-Only Mode") {
+                  Task {
+                    await viewModel.enableReadOnlyMode()
+                  }
                 }
               }
               Button("Cancel", role: .cancel) {}
             } message: {
               Text(
-                "Are you sure you want to disable read-only mode? This will allow data modification queries (INSERT, UPDATE, DELETE, etc.) to execute."
+                "Choose a new protection level for this connection."
               )
             }
-          }
-
-          // Schema protection indicator
-          if config.blockSchemaChanges {
-            HStack(spacing: Spacing.xs) {
-              Image(systemName: "hammer.fill")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-              Text("Schema changes blocked")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-              Spacer()
-            }
-            .padding(Spacing.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(Color.secondary.opacity(0.1))
-            )
           }
 
           // Connection name (if provided)

@@ -44,7 +44,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -64,7 +64,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -84,7 +84,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -104,7 +104,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "SELECT * FROM users"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Ensure SafeMode is alertRead (only confirms modification queries, not SELECT)
     let previousSafeMode = AppSettings.shared.safeMode
@@ -134,7 +134,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
 
     // Set connection config with read-only mode disabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: false)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .none)
 
     // Disable bypass confirmation to ensure dialog is shown
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
@@ -159,7 +159,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "DROP TABLE users"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -179,7 +179,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "TRUNCATE TABLE users"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -199,7 +199,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "ALTER TABLE users ADD COLUMN age INT"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -219,7 +219,7 @@ struct ViewModelReadOnlyTests {
     viewModel.notebook.cells[0].content = "CREATE TABLE new_users (id INT)"
 
     // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(readOnly: true)
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -230,24 +230,37 @@ struct ViewModelReadOnlyTests {
     #expect(viewModel.toastState.currentToast?.type == .error)
   }
 
-  // MARK: - ConnectionConfig Read-Only Property Tests
+  // MARK: - ConnectionConfig Protection Level Property Tests
 
-  @Test("ConnectionConfig readOnly property defaults to false")
-  func connectionConfigReadOnlyDefaultsToFalse() {
+  @Test("ConnectionConfig protectionLevel property defaults to none")
+  func connectionConfigProtectionLevelDefaultsToNone() {
     // Arrange & Act
     let config = ConnectionConfig()
 
     // Assert
-    #expect(config.readOnly == false)
+    #expect(config.protectionLevel == .none)
+    #expect(config.isReadOnly == false)
   }
 
-  @Test("ConnectionConfig readOnly property can be set to true")
-  func connectionConfigReadOnlyCanBeSetToTrue() {
+  @Test("ConnectionConfig protectionLevel can be set to readOnly")
+  func connectionConfigProtectionLevelCanBeSetToReadOnly() {
     // Arrange & Act
-    let config = ConnectionConfig(readOnly: true)
+    let config = ConnectionConfig(protectionLevel: .readOnly)
 
     // Assert
-    #expect(config.readOnly == true)
+    #expect(config.protectionLevel == .readOnly)
+    #expect(config.isReadOnly == true)
+  }
+
+  @Test("ConnectionConfig protectionLevel can be set to schemaOnly")
+  func connectionConfigProtectionLevelCanBeSetToSchemaOnly() {
+    // Arrange & Act
+    let config = ConnectionConfig(protectionLevel: .schemaOnly)
+
+    // Assert
+    #expect(config.protectionLevel == .schemaOnly)
+    #expect(config.isReadOnly == false)
+    #expect(config.blocksSchemaChanges == true)
   }
 
   // MARK: - isBlockedInReadOnlyMode Tests

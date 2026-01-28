@@ -189,16 +189,6 @@ struct HeaderView: View {
         )
         .help("Settings")
 
-        // Safe Mode Indicator (clickable to open settings)
-        // Shows per-connection SafeMode if set, otherwise global
-        SafeModeIndicator(
-          connectionConfig: viewModel.connectionState.isConnected
-            ? viewModel.notebook.connectionConfig : nil,
-          onTap: {
-            viewModel.showSafeModeSettings()
-          }
-        )
-
         Divider()
           .frame(height: 20)
 
@@ -396,7 +386,7 @@ struct ConnectionButton: View {
 
   /// Check if connection is in read-only mode
   private var isReadOnly: Bool {
-    connectionConfig?.readOnly ?? false
+    connectionConfig?.isReadOnly ?? false
   }
 
   var body: some View {
@@ -545,79 +535,7 @@ private struct ConnectionIconView: View {
   }
 }
 
-/// MARK: - Safe Mode Indicator
-
-/// Shows current Safe Mode level in the header - clickable to open settings
-/// Shows per-connection SafeMode if set, otherwise shows global SafeMode
-struct SafeModeIndicator: View {
-  @Bindable private var appSettings = AppSettings.shared
-  var connectionConfig: ConnectionConfig?  // Current connection's config (if connected)
-  var onTap: () -> Void
-
-  /// The effective SafeMode - per-connection override or global setting
-  private var effectiveSafeMode: SafeMode {
-    connectionConfig?.safeMode ?? appSettings.safeMode
-  }
-
-  /// Whether showing per-connection override vs global setting
-  private var isPerConnectionOverride: Bool {
-    connectionConfig?.safeMode != nil
-  }
-
-  var body: some View {
-    let safeMode = effectiveSafeMode
-
-    // Only show indicator for non-Silent modes
-    if safeMode != .silent {
-      Button(action: onTap) {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: safeModeIcon)
-            .font(.system(size: 12))
-            .foregroundColor(safeModeColor)
-
-          Text(safeMode.badgeText)
-            .font(.small)
-            .foregroundColor(safeModeColor)
-        }
-        .padding(.horizontal, Spacing.sm)
-        .padding(.vertical, Spacing.xs)
-        .background(safeModeColor.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-      }
-      .buttonStyle(.plain)
-      .help(helpText)
-    }
-  }
-
-  private var helpText: String {
-    let modeDescription = effectiveSafeMode.shortDescription
-    let source = isPerConnectionOverride ? "Per-connection" : "Global"
-    return "\(source): \(modeDescription)\nClick to open settings"
-  }
-
-  private var safeModeIcon: String {
-    switch effectiveSafeMode {
-    case .silent:
-      return "bolt.fill"
-    case .alertRead, .alertAll:
-      return "exclamationmark.triangle.fill"
-    case .safeRead, .safeAll:
-      return "lock.shield.fill"
-    }
-  }
-
-  private var safeModeColor: Color {
-    switch effectiveSafeMode {
-    case .silent:
-      return .foregroundMuted
-    case .alertRead, .alertAll:
-      return .warning
-    case .safeRead, .safeAll:
-      // Always use purple/violet for Safe mode, independent of app accent color
-      return .purple
-    }
-  }
-}
+// SafeModeIndicator moved to Components/Shared/SafeModeIndicator.swift
 
 #Preview("Connect") {
   HeaderView(viewModel: NotebookViewModel())
