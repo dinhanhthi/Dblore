@@ -2,6 +2,8 @@
 //  ConnectionFormContent.swift
 //  SQLNotebook
 //
+//  Connection form for database configuration
+//
 
 import SwiftUI
 
@@ -25,6 +27,8 @@ struct ConnectionFormContent: View {
   @State private var showDeleteConfirmation = false
   @State private var entryToDelete: UUID?
 
+  // MARK: - Types
+
   enum TestResult {
     case success
     case failure(String)
@@ -34,6 +38,8 @@ struct ConnectionFormContent: View {
     case form = "Form"
     case connectionString = "Connection String"
   }
+
+  // MARK: - Body
 
   var body: some View {
     VStack(spacing: 0) {
@@ -77,51 +83,136 @@ struct ConnectionFormContent: View {
       }
 
       // Fixed Footer at bottom
-      VStack(spacing: 0) {
-        // Status messages below buttons
-        if let error = parseError {
-          errorView(error)
-        }
-
-        if let result = testResult {
-          testResultView(result)
-        }
-
-        // Action Buttons
-        HStack(spacing: Spacing.md) {
-          Button(action: testConnection) {
-            HStack(spacing: Spacing.sm) {
-              if isTesting {
-                ProgressView()
-                  .controlSize(.mini)
-                  .tint(.accent)
-                  .frame(width: 14, height: 14)
-              }
-              Text("Test Connection")
-                .frame(maxWidth: .infinity)
-            }
-          }
-          .buttonStyle(SecondaryButtonStyle())
-          .disabled(isTesting || !isFormValid)
-
-          Button(action: connect) {
-            HStack(spacing: Spacing.sm) {
-              if isConnecting {
-                ProgressView()
-                  .controlSize(.mini)
-                  .tint(.accent)
-                  .frame(width: 14, height: 14)
-              }
-              Text("Connect")
-                .frame(maxWidth: .infinity)
-            }
-          }
-          .buttonStyle(PrimaryButtonStyle())
-          .disabled(isConnecting || !isFormValid)
-        }.padding(.top, Spacing.md)
-      }.padding(Spacing.md)
+      footerView()
     }
   }
+
+  // MARK: - State Accessors (for extensions)
+
+  var connectionStringBinding: Binding<String> {
+    $connectionString
+  }
+
+  var connectionStringSSLModeBinding: Binding<SSLMode> {
+    $connectionStringSSLMode
+  }
+
+  var showDeleteConfirmationBinding: Binding<Bool> {
+    $showDeleteConfirmation
+  }
+
+  func getIsPasswordVisible() -> Bool {
+    _isPasswordVisible.wrappedValue
+  }
+
+  func getConnectionHistory() -> [ConnectionHistoryEntry] {
+    connectionHistory
+  }
+
+  func setConnectionHistory(_ history: [ConnectionHistoryEntry]) {
+    connectionHistory = history
+  }
+
+  func getSelectedHistoryId() -> UUID? {
+    selectedHistoryId
+  }
+
+  func setSelectedHistoryId(_ id: UUID?) {
+    selectedHistoryId = id
+  }
+
+  func getEntryToDelete() -> UUID? {
+    entryToDelete
+  }
+
+  func prepareDeleteConnection(_ id: UUID) {
+    entryToDelete = id
+    showDeleteConfirmation = true
+  }
+
+  func getInputMode() -> ConnectionInputMode {
+    inputMode
+  }
+
+  func setConnectionString(_ value: String) {
+    connectionString = value
+  }
+
+  func updateConnectionStringSSLMode(_ mode: SSLMode) {
+    connectionStringSSLMode = mode
+  }
+
+  func setParseError(_ error: String?) {
+    parseError = error
+  }
+
+  func clearParseError() {
+    parseError = nil
+  }
+
+  func clearTestResult() {
+    testResult = nil
+  }
+
+  func clearParseErrorAndTestResult() {
+    parseError = nil
+    testResult = nil
+  }
+
+  func togglePasswordVisibility() {
+    _isPasswordVisible.wrappedValue.toggle()
+  }
+
+  // MARK: - Footer
+
+  @ViewBuilder
+  private func footerView() -> some View {
+    VStack(spacing: 0) {
+      // Status messages below buttons
+      if let error = parseError {
+        errorView(error)
+      }
+
+      if let result = testResult {
+        testResultView(result)
+      }
+
+      // Action Buttons
+      HStack(spacing: Spacing.md) {
+        Button(action: testConnection) {
+          HStack(spacing: Spacing.sm) {
+            if isTesting {
+              ProgressView()
+                .controlSize(.mini)
+                .tint(.accent)
+                .frame(width: 14, height: 14)
+            }
+            Text("Test Connection")
+              .frame(maxWidth: .infinity)
+          }
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .disabled(isTesting || !isFormValid)
+
+        Button(action: connect) {
+          HStack(spacing: Spacing.sm) {
+            if isConnecting {
+              ProgressView()
+                .controlSize(.mini)
+                .tint(.accent)
+                .frame(width: 14, height: 14)
+            }
+            Text("Connect")
+              .frame(maxWidth: .infinity)
+          }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(isConnecting || !isFormValid)
+      }.padding(.top, Spacing.md)
+    }.padding(Spacing.md)
+  }
+
+  // MARK: - Validation
 
   private var isFormValid: Bool {
     if inputMode == .connectionString {
@@ -131,6 +222,8 @@ struct ConnectionFormContent: View {
       && !viewModel.editingConnectionConfig.database.isEmpty
       && !viewModel.editingConnectionConfig.username.isEmpty
   }
+
+  // MARK: - Tab Picker
 
   @ViewBuilder
   private func customTabPicker() -> some View {
@@ -190,388 +283,7 @@ struct ConnectionFormContent: View {
     .frame(height: 32)
   }
 
-  @ViewBuilder
-  private func formFields() -> some View {
-    // Connection Name (required)
-    FormField(label: "Connection Name") {
-      TextField(
-        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
-      )
-      .textFieldStyle(.plain)
-      .inputStyle()
-    }
-
-    // Host and Port
-    HStack(spacing: Spacing.md) {
-      FormField(label: "Host") {
-        TextField("localhost", text: $viewModel.editingConnectionConfig.host)
-          .textFieldStyle(.plain)
-          .inputStyle()
-      }
-
-      FormField(label: "Port") {
-        TextField(
-          "5432", value: $viewModel.editingConnectionConfig.port, format: .number.grouping(.never)
-        )
-        .textFieldStyle(.plain)
-        .inputStyle()
-        .frame(width: 80)
-      }
-    }
-
-    // Database
-    FormField(label: "Database") {
-      TextField("database_name", text: $viewModel.editingConnectionConfig.database)
-        .textFieldStyle(.plain)
-        .inputStyle()
-    }
-
-    // Username
-    FormField(label: "Username") {
-      TextField("username", text: $viewModel.editingConnectionConfig.username)
-        .textFieldStyle(.plain)
-        .inputStyle()
-    }
-
-    // Password
-    FormField(label: "Password") {
-      HStack(spacing: 0) {
-        if isPasswordVisible {
-          TextField("password", text: $viewModel.editingConnectionConfig.password)
-            .textFieldStyle(.plain)
-        } else {
-          SecureField("password", text: $viewModel.editingConnectionConfig.password)
-            .textFieldStyle(.plain)
-        }
-
-        Button(action: { isPasswordVisible.toggle() }) {
-          Image(systemName: isPasswordVisible ? "eye.slash.fill" : "eye.fill")
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 20, height: 20)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
-        .padding(.trailing, Spacing.sm)
-      }
-      .inputStyle()
-    }
-
-    // SSL Mode
-    FormField(label: "SSL Mode") {
-      Picker(selection: $viewModel.editingConnectionConfig.sslMode) {
-        ForEach(SSLMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(mode)
-        }
-      } label: {
-        EmptyView()
-      }
-      .pickerStyle(.menu)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // Timeout
-    FormField(label: "Timeout (seconds)") {
-      TextField(
-        "30", value: $viewModel.editingConnectionConfig.timeoutSeconds,
-        format: .number.grouping(.never)
-      )
-      .textFieldStyle(.plain)
-      .inputStyle()
-      .frame(width: 80)
-    }
-
-    // Remember Connection Toggle
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Remember connection")
-          .font(.body)
-        Text("Automatically reconnect when you reopen the app")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-
-      Spacer()
-
-      Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
-
-    // Protection Level Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Protection level")
-          .font(.body)
-        Text(viewModel.editingConnectionConfig.protectionLevel.description)
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-
-      Spacer()
-
-      Picker("", selection: $viewModel.editingConnectionConfig.protectionLevel) {
-        ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
-          Label(level.displayName, systemImage: level.iconName).tag(level)
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 160)
-    }
-
-    // Security Level (Safe Mode) Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Security level")
-          .font(.body)
-        if let mode = viewModel.editingConnectionConfig.safeMode {
-          Text(mode.shortDescription)
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        } else {
-          Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-      }
-
-      Spacer()
-
-      Picker("", selection: $viewModel.editingConnectionConfig.safeMode) {
-        Text("Use Global").tag(SafeMode?.none)
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(Optional(mode))
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 130)
-    }
-  }
-
-  @ViewBuilder
-  private func connectionStringFields() -> some View {
-    // Connection Name (required)
-    FormField(label: "Connection Name") {
-      TextField(
-        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
-      )
-      .textFieldStyle(.plain)
-      .inputStyle()
-    }
-
-    FormField(label: "Connection String") {
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        TextField(
-          "postgresql://username:password@localhost:5432/database", text: $connectionString,
-          axis: .vertical
-        )
-        .textFieldStyle(.plain)
-        .font(.system(.body, design: .monospaced))
-        .lineLimit(3...6)
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .fill(Color.inputBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-        .onChange(of: connectionString) { _, newValue in
-          parseError = nil
-          testResult = nil
-          if !newValue.isEmpty {
-            parseConnectionString(newValue)
-          }
-        }
-
-        Text("Example: postgresql://username:password@localhost:5432/database?sslmode=require")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-    }
-
-    // SSL Mode picker for connection string mode
-    FormField(label: "SSL Mode") {
-      Picker(selection: $connectionStringSSLMode) {
-        ForEach(SSLMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(mode)
-        }
-      } label: {
-        EmptyView()
-      }
-      .pickerStyle(.menu)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .onChange(of: connectionStringSSLMode) { _, newMode in
-        // Update the config when SSL mode changes
-        viewModel.editingConnectionConfig.sslMode = newMode
-        testResult = nil
-      }
-    }
-
-    // Remember Connection Toggle
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Remember connection")
-          .font(.body)
-        Text("Automatically reconnect when you reopen the app")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-
-      Spacer()
-
-      Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
-
-    // Protection Level Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Protection level")
-          .font(.body)
-        Text(viewModel.editingConnectionConfig.protectionLevel.description)
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-
-      Spacer()
-
-      Picker("", selection: $viewModel.editingConnectionConfig.protectionLevel) {
-        ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
-          Label(level.displayName, systemImage: level.iconName).tag(level)
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 160)
-    }
-
-    // Security Level (Safe Mode) Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Security level")
-          .font(.body)
-        if let mode = viewModel.editingConnectionConfig.safeMode {
-          Text(mode.shortDescription)
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        } else {
-          Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-      }
-
-      Spacer()
-
-      Picker("", selection: $viewModel.editingConnectionConfig.safeMode) {
-        Text("Use Global").tag(SafeMode?.none)
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(Optional(mode))
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 130)
-    }
-  }
-
-  private func generateConnectionString() -> String {
-    let config = viewModel.editingConnectionConfig
-    var components = URLComponents()
-    components.scheme = "postgresql"
-    components.user = config.username
-    components.password = config.password.isEmpty ? nil : config.password
-    components.host = config.host
-    components.port = config.port
-    components.path = "/\(config.database)"
-    components.queryItems = [URLQueryItem(name: "sslmode", value: config.sslMode.rawValue)]
-
-    return components.url?.absoluteString ?? ""
-  }
-
-  private func parseConnectionString(_ connectionStr: String) {
-    // Support both postgresql:// and postgres:// schemes
-    let normalizedStr = connectionStr.replacingOccurrences(of: "postgres://", with: "postgresql://")
-
-    guard let url = URL(string: normalizedStr),
-      let scheme = url.scheme,
-      scheme == "postgresql" || scheme == "postgres"
-    else {
-      parseError = "Invalid connection string format"
-      return
-    }
-
-    guard let host = url.host else {
-      parseError = "Missing host in connection string"
-      return
-    }
-
-    let port = url.port ?? 5432
-    let database = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let username = url.user ?? ""
-    let password = url.password ?? ""
-
-    // Parse SSL mode from query parameters
-    var sslMode: SSLMode = .prefer
-    var hasExplicitSSLMode = false
-    if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-      let queryItems = components.queryItems
-    {
-      for item in queryItems {
-        if item.name == "sslmode", let value = item.value {
-          sslMode = SSLMode(rawValue: value) ?? .prefer
-          hasExplicitSSLMode = true
-        }
-      }
-    }
-
-    // Smart default: Detect cloud database providers and require SSL
-    if !hasExplicitSSLMode {
-      let hostLower = host.lowercased()
-      if hostLower.contains("supabase.com") || hostLower.contains("aws")
-        || hostLower.contains("azure") || hostLower.contains("gcp") || hostLower.contains("cloud")
-      {
-        sslMode = .require
-      }
-    }
-
-    if database.isEmpty {
-      parseError = "Missing database name in connection string"
-      return
-    }
-
-    if username.isEmpty {
-      parseError = "Missing username in connection string"
-      return
-    }
-
-    // Update the config
-    viewModel.editingConnectionConfig.host = host
-    viewModel.editingConnectionConfig.port = port
-    viewModel.editingConnectionConfig.database = database
-    viewModel.editingConnectionConfig.username = username
-    viewModel.editingConnectionConfig.password = password
-    viewModel.editingConnectionConfig.sslMode = sslMode
-
-    // Sync the state for the SSL mode picker
-    connectionStringSSLMode = sslMode
-
-    parseError = nil
-  }
+  // MARK: - Status Views
 
   @ViewBuilder
   private func errorView(_ message: String) -> some View {
@@ -617,6 +329,8 @@ struct ConnectionFormContent: View {
         .fill(result.isSuccess ? Color.success.opacity(0.1) : Color.destructive.opacity(0.1))
     )
   }
+
+  // MARK: - Actions
 
   private func testConnection() {
     // Validate connection name is not empty
@@ -664,145 +378,12 @@ struct ConnectionFormContent: View {
   }
 }
 
+// MARK: - TestResult Extension
+
 extension ConnectionFormContent.TestResult {
   var isSuccess: Bool {
     if case .success = self { return true }
     return false
-  }
-}
-
-// MARK: - Connection History Helpers
-
-extension ConnectionFormContent {
-  /// Connection history dropdown section
-  @ViewBuilder
-  private func connectionHistorySection() -> some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      Text("Recent Connections")
-        .font(.caption)
-        .foregroundColor(.foregroundMuted)
-
-      Menu {
-        ForEach(connectionHistory) { entry in
-          Button(action: {
-            loadConnection(entry)
-          }) {
-            HStack {
-              // Connection name
-              Text(entry.config.name)
-                .font(.body)
-
-              // Security indicators
-              if let mode = entry.config.safeMode, mode != .silent {
-                Image(
-                  systemName: mode.requiresPassword
-                    ? "lock.shield.fill" : "exclamationmark.triangle.fill"
-                )
-                .foregroundColor(mode.requiresPassword ? .accent : .warning)
-                .font(.caption)
-              }
-              if entry.config.protectionLevel != .none {
-                Image(systemName: entry.config.protectionLevel.iconName)
-                  .foregroundColor(
-                    entry.config.protectionLevel == .readOnly ? .warning : .secondary
-                  )
-                  .font(.caption)
-              }
-
-              Spacer()
-
-              Button(action: {
-                entryToDelete = entry.id
-                showDeleteConfirmation = true
-              }) {
-                Image(systemName: "trash")
-                  .foregroundColor(.destructive)
-              }
-              .buttonStyle(.plain)
-            }
-          }
-        }
-
-        Divider()
-
-        Button("Clear All History", role: .destructive) {
-          clearAllHistory()
-        }
-      } label: {
-        HStack {
-          Text(selectedHistoryEntry?.config.name ?? "Select a connection")
-            .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
-          Spacer()
-          Image(systemName: "chevron.down")
-            .foregroundColor(.foregroundMuted)
-        }
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .fill(Color.inputBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-      }
-      .buttonStyle(.plain)
-    }
-    .confirmationDialog(
-      "Delete Connection?",
-      isPresented: $showDeleteConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Delete", role: .destructive) {
-        if let id = entryToDelete {
-          deleteConnection(id)
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("This will remove the connection from history and delete the saved password.")
-    }
-  }
-
-  private var selectedHistoryEntry: ConnectionHistoryEntry? {
-    connectionHistory.first { $0.id == selectedHistoryId }
-  }
-
-  private func loadConnectionHistory() {
-    connectionHistory = SessionManager.loadHistory()
-    if let mostRecent = connectionHistory.first {
-      selectedHistoryId = mostRecent.id
-      loadConnection(mostRecent)
-    }
-  }
-
-  private func loadConnection(_ entry: ConnectionHistoryEntry) {
-    selectedHistoryId = entry.id
-    viewModel.editingConnectionConfig = entry.config
-
-    if inputMode == .connectionString {
-      connectionString = generateConnectionString()
-    }
-    connectionStringSSLMode = entry.config.sslMode
-    testResult = nil
-    parseError = nil
-  }
-
-  private func deleteConnection(_ id: UUID) {
-    SessionManager.removeConnection(id: id)
-    loadConnectionHistory()
-
-    if selectedHistoryId == id {
-      selectedHistoryId = nil
-      viewModel.editingConnectionConfig = ConnectionConfig()
-    }
-  }
-
-  private func clearAllHistory() {
-    SessionManager.clearAllHistory()
-    loadConnectionHistory()
-    selectedHistoryId = nil
-    viewModel.editingConnectionConfig = ConnectionConfig()
   }
 }
 
