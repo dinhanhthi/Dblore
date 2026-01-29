@@ -159,6 +159,53 @@ enum TabNavigationDirection {
   case left, right
 }
 
+/// View modifier to detect middle mouse click (for closing tabs like Chrome/VSCode)
+struct MiddleClickModifier: ViewModifier {
+  let action: () -> Void
+
+  func body(content: Content) -> some View {
+    content.overlay(
+      MiddleClickDetector(action: action)
+    )
+  }
+}
+
+/// NSViewRepresentable to detect middle mouse button click
+struct MiddleClickDetector: NSViewRepresentable {
+  let action: () -> Void
+
+  func makeNSView(context: Context) -> MiddleClickNSView {
+    let view = MiddleClickNSView()
+    view.action = action
+    return view
+  }
+
+  func updateNSView(_ nsView: MiddleClickNSView, context: Context) {
+    nsView.action = action
+  }
+}
+
+/// Custom NSView that detects middle mouse button clicks
+class MiddleClickNSView: NSView {
+  var action: (() -> Void)?
+
+  override func otherMouseDown(with event: NSEvent) {
+    // Button number 2 is the middle mouse button
+    if event.buttonNumber == 2 {
+      action?()
+    } else {
+      super.otherMouseDown(with: event)
+    }
+  }
+}
+
+extension View {
+  /// Add middle mouse click handler (like Chrome/VSCode tab closing)
+  func onMiddleClick(perform action: @escaping () -> Void) -> some View {
+    modifier(MiddleClickModifier(action: action))
+  }
+}
+
 /// Fixed arrow button for navigating between tabs
 struct TabNavigationArrowButton: View {
   let direction: TabNavigationDirection
@@ -217,6 +264,7 @@ struct TitleBarTabItem: View {
     .overlay(tabBorderOverlay)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
+    .onMiddleClick { onClose() }
     .onHover { isHovering = $0 }
   }
 
