@@ -265,6 +265,7 @@ struct DraggableTitleBarTabItem: View {
     .shadow(color: isDragging ? Color.black.opacity(0.2) : Color.clear, radius: 4, y: 2)
     .onTapGesture { onSelect() }
     .onMiddleClick { onClose() }
+    .blockDoubleClickZoom()
     .onHover { isHovering = $0 }
     .animation(.easeInOut(duration: 0.15), value: isDragging)
   }

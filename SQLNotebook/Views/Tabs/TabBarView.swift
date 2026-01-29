@@ -236,6 +236,41 @@ extension View {
   func onMiddleClick(perform action: @escaping () -> Void) -> some View {
     modifier(MiddleClickModifier(action: action))
   }
+
+  /// Block double-click from triggering window zoom (for tabs)
+  func blockDoubleClickZoom() -> some View {
+    modifier(BlockDoubleClickZoomModifier())
+  }
+}
+
+/// View modifier to block double-click from zooming the window
+/// Used on tabs to prevent double-click on tab from maximizing window
+struct BlockDoubleClickZoomModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    content.overlay(
+      DoubleClickBlocker()
+    )
+  }
+}
+
+/// NSViewRepresentable that blocks double-click from propagating to window
+struct DoubleClickBlocker: NSViewRepresentable {
+  func makeNSView(context: Context) -> DoubleClickBlockerNSView {
+    DoubleClickBlockerNSView()
+  }
+
+  func updateNSView(_ nsView: DoubleClickBlockerNSView, context: Context) {}
+}
+
+/// Custom NSView that marks its area as "double-click should not zoom"
+/// Used as an overlay on tabs to signal to WindowDragView to skip zoom
+@MainActor
+class DoubleClickBlockerNSView: NSView {
+  // Return nil to allow all clicks to pass through
+  // This view is just a marker that WindowDragView checks for
+  override nonisolated func hitTest(_ point: NSPoint) -> NSView? {
+    nil
+  }
 }
 
 /// Fixed arrow button for navigating between tabs
@@ -256,6 +291,7 @@ struct TabNavigationArrowButton: View {
     }
     .buttonStyle(.plain)
     .disabled(!isEnabled)
+    .blockDoubleClickZoom()
     .onHover { isHovering = $0 }
     .help(direction == .left ? "Previous tab" : "Next tab")
   }
@@ -438,10 +474,34 @@ class WindowDragView: NSView {
 
       // Only zoom if click is within our bounds
       if self.bounds.contains(locationInView) {
+        // Check if click is on a tab (marked by DoubleClickBlockerNSView)
+        // Walk up the view hierarchy from the hit view to check for blocker
+        if let contentView = window.contentView {
+          if self.isClickOnBlockedArea(point: locationInWindow, in: contentView) {
+            return event
+          }
+        }
         window.zoom(nil)
       }
       return event
     }
+  }
+
+  /// Check if the point is within any DoubleClickBlockerNSView
+  private func isClickOnBlockedArea(point: NSPoint, in view: NSView) -> Bool {
+    // Recursively check all subviews
+    for subview in view.subviews {
+      let pointInSubview = subview.convert(point, from: nil)
+      if subview.bounds.contains(pointInSubview) {
+        if subview is DoubleClickBlockerNSView {
+          return true
+        }
+        if isClickOnBlockedArea(point: point, in: subview) {
+          return true
+        }
+      }
+    }
+    return false
   }
 
   private func removeDoubleClickMonitor() {
