@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-/// Individual tab in the tab bar
+/// Individual tab in the tab bar - Chrome-style with seamless active tab
 struct TabItemView: View {
   let tab: TabItem
   let isActive: Bool
@@ -34,14 +34,23 @@ struct TabItemView: View {
     .padding(.vertical, Spacing.xs)
     .frame(height: 28)
     .background(backgroundColor)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .clipShape(tabShape)
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.sm)
+      tabShape
         .stroke(isActive ? Color.border : Color.clear, lineWidth: 1)
     )
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
     .onHover { isHovering = $0 }
+  }
+
+  /// Tab shape: rounded top, flat bottom for active tab (seamless with content)
+  private var tabShape: some Shape {
+    if isActive {
+      return AnyShape(TabTopRoundedShape(radius: CornerRadius.sm))
+    } else {
+      return AnyShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    }
   }
 
   private var displayTitle: String {
@@ -50,7 +59,7 @@ struct TabItemView: View {
 
   private var backgroundColor: Color {
     if isActive {
-      return Color.cardBackground
+      return Color.appBackground
     } else if isHovering {
       return Color.cellBackgroundHover.opacity(0.5)
     } else {
@@ -80,29 +89,93 @@ struct TabItemView: View {
   }
 }
 
-#Preview {
-  HStack(spacing: 4) {
-    TabItemView(
-      tab: TabItem(documentType: .notebook, title: "Untitled"),
-      isActive: true,
-      onSelect: {},
-      onClose: {}
+/// Custom shape with rounded top corners and flat bottom (for seamless tab)
+struct TabTopRoundedShape: Shape {
+  let radius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+
+    // Start from bottom-left
+    path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+
+    // Line up to top-left corner start
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+
+    // Top-left corner
+    path.addQuadCurve(
+      to: CGPoint(x: rect.minX + radius, y: rect.minY),
+      control: CGPoint(x: rect.minX, y: rect.minY)
     )
 
-    TabItemView(
-      tab: TabItem(documentType: .sqlFile, title: "query", isDirty: true),
-      isActive: false,
-      onSelect: {},
-      onClose: {}
+    // Line to top-right corner start
+    path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+
+    // Top-right corner
+    path.addQuadCurve(
+      to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+      control: CGPoint(x: rect.maxX, y: rect.minY)
     )
 
-    TabItemView(
-      tab: TabItem(documentType: .notebook, title: "analytics"),
-      isActive: false,
-      onSelect: {},
-      onClose: {}
-    )
+    // Line down to bottom-right
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+
+    // Flat bottom (no corner rounding)
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+
+    path.closeSubpath()
+    return path
   }
-  .padding()
-  .background(Color.appBackground)
+}
+
+/// Type-erased shape wrapper for conditional shapes
+struct AnyShape: Shape, @unchecked Sendable {
+  private let pathBuilder: @Sendable (CGRect) -> Path
+
+  init<S: Shape>(_ shape: S) {
+    let shapeCopy = shape
+    pathBuilder = { rect in
+      shapeCopy.path(in: rect)
+    }
+  }
+
+  func path(in rect: CGRect) -> Path {
+    pathBuilder(rect)
+  }
+}
+
+#Preview {
+  VStack(spacing: 0) {
+    HStack(spacing: 4) {
+      TabItemView(
+        tab: TabItem(documentType: .notebook, title: "Untitled"),
+        isActive: true,
+        onSelect: {},
+        onClose: {}
+      )
+
+      TabItemView(
+        tab: TabItem(documentType: .sqlFile, title: "query", isDirty: true),
+        isActive: false,
+        onSelect: {},
+        onClose: {}
+      )
+
+      TabItemView(
+        tab: TabItem(documentType: .notebook, title: "analytics"),
+        isActive: false,
+        onSelect: {},
+        onClose: {}
+      )
+    }
+    .padding(.horizontal)
+    .padding(.top, Spacing.sm)
+    .background(Color.cardBackground)
+
+    // Content area to show seamless effect
+    Rectangle()
+      .fill(Color.appBackground)
+      .frame(height: 100)
+  }
+  .background(Color.cardBackground)
 }
