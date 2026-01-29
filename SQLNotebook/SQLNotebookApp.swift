@@ -273,13 +273,11 @@ struct TabCommands: Commands {
       Divider()
 
       // Tab shortcuts 1-9 (only show if tabs exist)
-      if !tabManager.tabs.isEmpty {
-        ForEach(1...min(9, tabManager.tabs.count), id: \.self) { index in
-          Button("Tab \(index): \(tabManager.tabs[index - 1].title)") {
-            tabManager.selectTab(atIndex: index)
-          }
-          .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+      ForEach(Array(tabManager.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
+        Button("Tab \(index + 1): \(tab.title)") {
+          tabManager.selectTab(atIndex: index + 1)
         }
+        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
       }
     }
   }
