@@ -121,6 +121,7 @@ struct EditorModeView: View {
           isSelected: true,
           isFocused: isFocused,
           onFocus: { isFocused = true },
+          onTextChanged: { viewModel.onDocumentChanged?() },
           textViewRef: $textViewRef,
           autocompleteProvider: viewModel.autocompleteProvider,
           viewModelId: viewModel.id,

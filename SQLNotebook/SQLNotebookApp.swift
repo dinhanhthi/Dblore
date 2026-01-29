@@ -7,8 +7,30 @@ import AppKit
 @preconcurrency import SQLite3
 import SwiftUI
 
+// MARK: - App Delegate for file handling
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+  func application(_ application: NSApplication, open urls: [URL]) {
+    Task { @MainActor in
+      for url in urls {
+        try? await TabStateManager.shared.openFile(url: url)
+      }
+    }
+  }
+
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    return false  // Keep app running even when all windows are closed
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    TabStateManager.shared.saveState()
+  }
+}
+
 @main
 struct SQLNotebookApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
   init() {
     // Migrate from single session to connection history (one-time operation)
     SessionManager.migrateIfNeeded()
@@ -18,31 +40,20 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    // Scene 1: Notebook documents (.sqlnb)
-    DocumentGroup(newDocument: { SQLNotebookDocument() }) { file in
-      NotebookContentView(document: file.document)
+    // Main window with tabs in titlebar (Chrome-style)
+    WindowGroup {
+      TabContainerView(tabManager: TabStateManager.shared)
         .frame(minWidth: 800, minHeight: 600)
     }
+    .windowStyle(.hiddenTitleBar)
     .commands {
-      // Shared commands (About, Settings) - chỉ add ở scene đầu tiên
       SharedCommands()
-      // New Document commands (File > New...) - chỉ add ở scene đầu tiên
-      NewDocumentCommands()
-      // Notebook-specific commands (Cell menu, sidebars, search)
+      TabCommands(tabManager: TabStateManager.shared)
       NotebookCommands()
-    }
-    .defaultSize(width: 1200, height: 800)
-
-    // Scene 2: SQL Editor documents (.sql)
-    DocumentGroup(newDocument: { SQLEditorDocument() }) { file in
-      EditorContentView(document: file.document)
-        .frame(minWidth: 800, minHeight: 600)
-    }
-    .commands {
-      // Editor-specific commands (chỉ có sidebar toggle)
       EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
+    .handlesExternalEvents(matching: ["sqlnb", "sql", "*"])
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
@@ -57,52 +68,71 @@ struct SQLNotebookApp: App {
 
 // MARK: - FocusedValues Extension
 
-/// Represents the document type/mode of the currently focused window.
-///
-/// Used to dynamically show/hide menu commands based on whether a Notebook (.sqlnb)
-/// or Editor (.sql) window is currently focused. When user switches between windows,
-/// this value automatically updates, causing menus to update without needing to
-/// re-render the entire app.
-///
-/// Example:
-/// ```
-/// // In NotebookContentView
-/// .focusedSceneValue(\.documentMode, .notebook)
-///
-/// // In NotebookCommands
-/// @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-/// if documentMode == .notebook { ... }  // Show Cell menu only for notebook
-/// ```
+/// Represents the document type/mode of the currently focused window/tab.
 enum DocumentMode {
   case notebook  // Notebook mode (.sqlnb files) - has Cell menu, custom Find
   case editor  // Editor mode (.sql files) - uses native macOS menus
 }
 
 /// FocusedValue key for tracking document mode across the app.
-/// See: https://developer.apple.com/documentation/swiftui/focusedvaluekey
 struct DocumentModeFocusedValueKey: FocusedValueKey {
   typealias Value = DocumentMode
 }
 
+/// FocusedValue key for tracking active tab ID
+struct ActiveTabIdKey: FocusedValueKey {
+  typealias Value = UUID
+}
+
+/// FocusedValue key for accessing active tab's ViewModel
+struct ActiveViewModelKey: FocusedValueKey {
+  typealias Value = NotebookViewModel
+}
+
 extension FocusedValues {
-  /// Accessed by menu command structs to determine which commands to show.
-  /// Value is automatically set by NotebookContentView and EditorContentView
-  /// via `.focusedSceneValue(\.documentMode, ...)` modifier.
+  /// Document mode of the active tab
   var documentMode: DocumentMode? {
     get { self[DocumentModeFocusedValueKey.self] }
     set { self[DocumentModeFocusedValueKey.self] = newValue }
   }
 
-  /// Action to toggle the left sidebar in the focused window.
+  /// Active tab ID
+  var activeTabId: UUID? {
+    get { self[ActiveTabIdKey.self] }
+    set { self[ActiveTabIdKey.self] = newValue }
+  }
+
+  /// Active tab's ViewModel
+  var activeViewModel: NotebookViewModel? {
+    get { self[ActiveViewModelKey.self] }
+    set { self[ActiveViewModelKey.self] = newValue }
+  }
+
+  /// Action to toggle the left sidebar in the focused tab.
   var toggleLeftSidebarAction: (() -> Void)? {
     get { self[ToggleLeftSidebarActionKey.self] }
     set { self[ToggleLeftSidebarActionKey.self] = newValue }
   }
 
-  /// Action to toggle the right sidebar in the focused window.
+  /// Action to toggle the right sidebar in the focused tab.
   var toggleRightSidebarAction: (() -> Void)? {
     get { self[ToggleRightSidebarActionKey.self] }
     set { self[ToggleRightSidebarActionKey.self] = newValue }
+  }
+
+  var openSearchAction: (() -> Void)? {
+    get { self[OpenSearchActionKey.self] }
+    set { self[OpenSearchActionKey.self] = newValue }
+  }
+
+  var findNextAction: (() -> Void)? {
+    get { self[FindNextActionKey.self] }
+    set { self[FindNextActionKey.self] = newValue }
+  }
+
+  var findPreviousAction: (() -> Void)? {
+    get { self[FindPreviousActionKey.self] }
+    set { self[FindPreviousActionKey.self] = newValue }
   }
 }
 
@@ -131,24 +161,7 @@ struct FindPreviousActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
-extension FocusedValues {
-  var openSearchAction: (() -> Void)? {
-    get { self[OpenSearchActionKey.self] }
-    set { self[OpenSearchActionKey.self] = newValue }
-  }
-
-  var findNextAction: (() -> Void)? {
-    get { self[FindNextActionKey.self] }
-    set { self[FindNextActionKey.self] = newValue }
-  }
-
-  var findPreviousAction: (() -> Void)? {
-    get { self[FindPreviousActionKey.self] }
-    set { self[FindPreviousActionKey.self] = newValue }
-  }
-}
-
-// MARK: - Shared Commands (cho cả Notebook và Editor)
+// MARK: - Shared Commands
 
 struct SharedCommands: Commands {
   var body: some Commands {
@@ -180,14 +193,132 @@ struct SharedCommands: Commands {
   }
 }
 
+// MARK: - Tab Commands
+
+struct TabCommands: Commands {
+  let tabManager: TabStateManager
+
+  var body: some Commands {
+    // File menu - New documents
+    CommandGroup(replacing: .newItem) {
+      Button {
+        tabManager.newNotebook()
+      } label: {
+        Label("New Notebook", systemImage: "doc.badge.plus")
+      }
+      .keyboardShortcut("n", modifiers: [.command, .shift])
+
+      Button {
+        tabManager.newSQLFile()
+      } label: {
+        Label("New SQL File", systemImage: "doc.text")
+      }
+      .keyboardShortcut("j", modifiers: [.command, .shift])
+
+      Divider()
+
+      Button {
+        openFile()
+      } label: {
+        Label("Open...", systemImage: "folder")
+      }
+      .keyboardShortcut("o", modifiers: .command)
+    }
+
+    // File menu - Save
+    CommandGroup(replacing: .saveItem) {
+      Button {
+        saveActiveTab()
+      } label: {
+        Text("Save")
+      }
+      .keyboardShortcut("s", modifiers: .command)
+      .disabled(tabManager.activeTabId == nil)
+
+      Button {
+        saveActiveTabAs()
+      } label: {
+        Text("Save As...")
+      }
+      .keyboardShortcut("s", modifiers: [.command, .shift])
+      .disabled(tabManager.activeTabId == nil)
+    }
+
+    // Window menu - Tab navigation
+    CommandGroup(after: .windowArrangement) {
+      Divider()
+
+      Button("Close Tab") {
+        if let id = tabManager.activeTabId {
+          tabManager.requestCloseTab(id: id)
+        }
+      }
+      .keyboardShortcut("w", modifiers: .command)
+      .disabled(tabManager.activeTabId == nil)
+
+      Divider()
+
+      Button("Next Tab") {
+        tabManager.selectNextTab()
+      }
+      .keyboardShortcut("]", modifiers: [.command, .shift])
+      .disabled(tabManager.tabs.count < 2)
+
+      Button("Previous Tab") {
+        tabManager.selectPreviousTab()
+      }
+      .keyboardShortcut("[", modifiers: [.command, .shift])
+      .disabled(tabManager.tabs.count < 2)
+
+      Divider()
+
+      // Tab shortcuts 1-9 (only show if tabs exist)
+      ForEach(Array(tabManager.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
+        Button("Tab \(index + 1): \(tab.title)") {
+          tabManager.selectTab(atIndex: index + 1)
+        }
+        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+      }
+    }
+  }
+
+  private func openFile() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.sqlNotebook, .sql]
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+
+    panel.begin { response in
+      guard response == .OK else { return }
+      Task { @MainActor in
+        for url in panel.urls {
+          try? await tabManager.openFile(url: url)
+        }
+      }
+    }
+  }
+
+  private func saveActiveTab() {
+    guard let id = tabManager.activeTabId else { return }
+    Task {
+      try? await tabManager.saveTab(id: id)
+    }
+  }
+
+  private func saveActiveTabAs() {
+    guard let id = tabManager.activeTabId else { return }
+    // For Save As, we clear the fileURL first to force save panel
+    if let index = tabManager.tabs.firstIndex(where: { $0.id == id }) {
+      tabManager.tabs[index].fileURL = nil
+    }
+    Task {
+      try? await tabManager.saveTab(id: id)
+    }
+  }
+}
+
 // MARK: - Notebook Commands (chỉ cho Notebook mode)
 
-/// Menu commands that appear only when a Notebook window (.sqlnb) is focused.
-///
-/// Includes Cell menu, custom sidebar toggles, and search commands (Find in Notebook).
-/// These commands are hidden when an Editor window (.sql) is focused.
-///
-/// Key: Uses @FocusedValue to dynamically show/hide based on `documentMode`
 struct NotebookCommands: Commands {
   @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
   @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
@@ -199,7 +330,6 @@ struct NotebookCommands: Commands {
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
-    // This conditional is the key to preventing duplicate menus in Editor mode
     if documentMode == .notebook {
       // Cell commands
       CommandMenu("Cell") {
@@ -252,7 +382,7 @@ struct NotebookCommands: Commands {
         .keyboardShortcut("d", modifiers: .command)
       }
 
-      // View commands (notebook-specific) - use focused actions for window-specific behavior
+      // View commands - use focused actions for tab-specific behavior
       CommandGroup(after: .sidebar) {
         Button {
           toggleLeftSidebarAction?()
@@ -269,7 +399,7 @@ struct NotebookCommands: Commands {
         .keyboardShortcut(",", modifiers: [.command])
       }
 
-      // Edit commands (notebook-specific) - use focused actions for window-specific behavior
+      // Edit commands - use focused actions for tab-specific behavior
       CommandMenu("Edit") {
         Button("Find in Notebook") {
           openSearchAction?()
@@ -289,9 +419,6 @@ struct NotebookCommands: Commands {
         .keyboardShortcut("g", modifiers: [.command, .shift])
       }
     }
-
-    // Note: We don't replace .undoRedo here to preserve native undo/redo for TextEditor
-    // Custom undo/redo handling is done via key event monitoring in ContentView
   }
 }
 
@@ -316,7 +443,7 @@ struct EditorCommands: Commands {
         .keyboardShortcut("r", modifiers: .command)
       }
 
-      // Edit commands (editor-specific search) - use focused actions for window-specific behavior
+      // Edit commands - use focused actions for tab-specific behavior
       CommandMenu("Edit") {
         Button("Find") {
           openSearchAction?()
@@ -336,7 +463,7 @@ struct EditorCommands: Commands {
         .keyboardShortcut("g", modifiers: [.command, .shift])
       }
 
-      // View Menu - Sidebar toggles - use focused actions for window-specific behavior
+      // View Menu - Sidebar toggles
       CommandGroup(after: .sidebar) {
         Button {
           toggleLeftSidebarAction?()
@@ -366,78 +493,6 @@ struct EditorCommands: Commands {
         .keyboardShortcut("z", modifiers: .option)
       }
     }
-  }
-}
-
-// MARK: - New Document Commands
-
-struct NewDocumentCommands: Commands {
-  var body: some Commands {
-    CommandGroup(replacing: .newItem) {
-      Button {
-        NSDocumentController.shared.newDocument(nil)
-      } label: {
-        Label("New Notebook", systemImage: "doc.badge.plus")
-      }
-      .keyboardShortcut("n", modifiers: [.command, .shift])
-
-      Button {
-        createNewSQLFile()
-      } label: {
-        Label("New SQL File", systemImage: "doc.text")
-      }
-      .keyboardShortcut("j", modifiers: [.command, .shift])
-    }
-
-    // Save As command
-    CommandGroup(after: .saveItem) {
-      Button {
-        saveCurrentDocumentAs()
-      } label: {
-        Text("Save As...")
-      }
-      .keyboardShortcut("s", modifiers: [.command, .shift])
-    }
-  }
-
-  private func createNewSQLFile() {
-    // Create a new SQLEditorDocument and show save panel
-    let savePanel = NSSavePanel()
-    savePanel.allowedContentTypes = [.sql]
-    savePanel.nameFieldStringValue = "Untitled.sql"
-    savePanel.message = "Create a new SQL file"
-
-    savePanel.begin { response in
-      guard response == .OK, let url = savePanel.url else { return }
-
-      Task { @MainActor in
-        do {
-          // Create empty SQL file
-          try "".write(to: url, atomically: true, encoding: .utf8)
-
-          // Open the file
-          NSDocumentController.shared.openDocument(withContentsOf: url, display: true) {
-            _, _, error in
-            if let error = error {
-              print("Failed to open SQL file: \(error)")
-            }
-          }
-        } catch {
-          print("Failed to create SQL file: \(error)")
-        }
-      }
-    }
-  }
-
-  private func saveCurrentDocumentAs() {
-    // Get the current document
-    guard let currentDocument = NSDocumentController.shared.currentDocument else {
-      return
-    }
-
-    // Use the built-in runModalSavePanel to show Save As dialog
-    currentDocument.runModalSavePanel(
-      for: .saveAsOperation, delegate: nil, didSave: nil, contextInfo: nil)
   }
 }
 

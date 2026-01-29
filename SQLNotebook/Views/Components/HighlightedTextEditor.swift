@@ -48,6 +48,7 @@ class PassthroughScrollView: NSScrollView {
 struct HighlightedTextEditor: View {
   @Binding var text: String
   var onFocus: (() -> Void)?
+  var onTextChanged: (() -> Void)?  // Called when user types in the editor
   @Binding var textViewRef: SQLTextView?
   @Binding var isEmpty: Bool
   @State private var height: CGFloat = 40
@@ -65,6 +66,7 @@ struct HighlightedTextEditor: View {
       height: $height,
       isEmpty: $isEmpty,
       onFocus: onFocus,
+      onTextChanged: onTextChanged,
       textViewRef: $textViewRef,
       autocompleteProvider: autocompleteProvider,
       cellId: cellId,
@@ -82,6 +84,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   @Binding var height: CGFloat
   @Binding var isEmpty: Bool
   var onFocus: (() -> Void)?
+  var onTextChanged: (() -> Void)?  // Called when user types in the editor
   @Binding var textViewRef: SQLTextView?
   var autocompleteProvider: SQLAutocompleteProvider?
   var cellId: UUID?
@@ -187,6 +190,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       coordinator?.text.wrappedValue = newText
     }
 
+    // Update onTextChanged callback in coordinator (for dirty state tracking)
+    context.coordinator.onTextChanged = onTextChanged
+
     // Update autocomplete provider
     textView.autocompleteProvider = autocompleteProvider
 
@@ -246,7 +252,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
-      text: $text, height: $height, isEmpty: $isEmpty
+      text: $text, height: $height, isEmpty: $isEmpty, onTextChanged: onTextChanged
     )
   }
 
@@ -255,6 +261,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     var text: Binding<String>
     var height: Binding<CGFloat>
     var isEmpty: Binding<Bool>
+    var onTextChanged: (() -> Void)?  // Called when user types in the editor
 
     // Weak reference to text view for search highlighting
     weak var textView: NSTextView?
@@ -276,11 +283,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     private var accentColorObserver: NSObjectProtocol?
 
     init(
-      text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>
+      text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>,
+      onTextChanged: (() -> Void)?
     ) {
       self.text = text
       self.height = height
       self.isEmpty = isEmpty
+      self.onTextChanged = onTextChanged
       super.init()
 
       // Setup notification observers
@@ -310,6 +319,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       // Update text binding IMMEDIATELY for document persistence
       // This is critical for ReferenceFileDocument to have the latest content when saving
       text.wrappedValue = textView.string
+
+      // Notify that text has changed (for dirty state tracking)
+      onTextChanged?()
     }
 
     @MainActor
