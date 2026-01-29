@@ -49,7 +49,7 @@ struct TitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      .padding(.top, 4)
+      // .padding(.top, 4)
       .padding(.trailing, Spacing.xs)
 
       // Scrollable tabs area
@@ -111,6 +111,24 @@ struct TitleBarTabsView: View {
           tabManager.newSQLFile()
         } label: {
           Label("New SQL File", systemImage: "doc")
+        }
+
+        Divider()
+
+        Button {
+          Task {
+            await tabManager.openNotebookWithPanel()
+          }
+        } label: {
+          Label("Open Notebook...", systemImage: "folder")
+        }
+
+        Button {
+          Task {
+            await tabManager.openSQLFileWithPanel()
+          }
+        } label: {
+          Label("Open SQL File...", systemImage: "folder")
         }
       } label: {
         Image(systemName: "plus")
@@ -405,6 +423,24 @@ struct TabBarView: View {
           tabManager.newSQLFile()
         } label: {
           Label("New SQL File", systemImage: "doc")
+        }
+
+        Divider()
+
+        Button {
+          Task {
+            await tabManager.openNotebookWithPanel()
+          }
+        } label: {
+          Label("Open Notebook...", systemImage: "folder")
+        }
+
+        Button {
+          Task {
+            await tabManager.openSQLFileWithPanel()
+          }
+        } label: {
+          Label("Open SQL File...", systemImage: "folder")
         }
       } label: {
         Image(systemName: "plus")

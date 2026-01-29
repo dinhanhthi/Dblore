@@ -386,6 +386,44 @@ class TabStateManager {
     selectTab(id: tabs[prevIndex].id)
   }
 
+  /// Show open panel for notebook files
+  func openNotebookWithPanel() async {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.sqlNotebook]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.message = "Select a notebook file to open"
+
+    let response = await panel.beginSheetModal(for: NSApp.keyWindow!)
+
+    if response == .OK, let url = panel.url {
+      do {
+        try await openFile(url: url)
+      } catch {
+        print("Failed to open notebook: \(error)")
+      }
+    }
+  }
+
+  /// Show open panel for SQL files
+  func openSQLFileWithPanel() async {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.sql]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.message = "Select a SQL file to open"
+
+    let response = await panel.beginSheetModal(for: NSApp.keyWindow!)
+
+    if response == .OK, let url = panel.url {
+      do {
+        try await openFile(url: url)
+      } catch {
+        print("Failed to open SQL file: \(error)")
+      }
+    }
+  }
+
   /// Select tab by index (1-based for keyboard shortcuts)
   func selectTab(atIndex index: Int) {
     guard index > 0, index <= tabs.count else { return }
