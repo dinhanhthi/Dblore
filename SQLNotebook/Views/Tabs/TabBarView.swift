@@ -159,40 +159,30 @@ enum TabNavigationDirection {
   case left, right
 }
 
-/// View modifier to detect middle mouse click (for closing tabs like Chrome/VSCode)
-struct MiddleClickModifier: ViewModifier {
-  let action: () -> Void
+/// Wrapper view that handles middle mouse click while allowing normal clicks through
+struct MiddleClickableView<Content: View>: NSViewRepresentable {
+  let content: Content
+  let onMiddleClick: () -> Void
 
-  func body(content: Content) -> some View {
-    content.overlay(
-      MiddleClickDetector(action: action)
-    )
-  }
-}
-
-/// NSViewRepresentable to detect middle mouse button click
-struct MiddleClickDetector: NSViewRepresentable {
-  let action: () -> Void
-
-  func makeNSView(context: Context) -> MiddleClickNSView {
-    let view = MiddleClickNSView()
-    view.action = action
+  func makeNSView(context: Context) -> MiddleClickHostingView<Content> {
+    let view = MiddleClickHostingView(rootView: content)
+    view.onMiddleClick = onMiddleClick
     return view
   }
 
-  func updateNSView(_ nsView: MiddleClickNSView, context: Context) {
-    nsView.action = action
+  func updateNSView(_ nsView: MiddleClickHostingView<Content>, context: Context) {
+    nsView.rootView = content
+    nsView.onMiddleClick = onMiddleClick
   }
 }
 
-/// Custom NSView that detects middle mouse button clicks
-class MiddleClickNSView: NSView {
-  var action: (() -> Void)?
+/// Custom hosting view that intercepts middle mouse clicks
+class MiddleClickHostingView<Content: View>: NSHostingView<Content> {
+  var onMiddleClick: (() -> Void)?
 
   override func otherMouseDown(with event: NSEvent) {
-    // Button number 2 is the middle mouse button
     if event.buttonNumber == 2 {
-      action?()
+      onMiddleClick?()
     } else {
       super.otherMouseDown(with: event)
     }
@@ -202,7 +192,7 @@ class MiddleClickNSView: NSView {
 extension View {
   /// Add middle mouse click handler (like Chrome/VSCode tab closing)
   func onMiddleClick(perform action: @escaping () -> Void) -> some View {
-    modifier(MiddleClickModifier(action: action))
+    MiddleClickableView(content: self, onMiddleClick: action)
   }
 }
 
