@@ -35,7 +35,7 @@ struct TabItem: Identifiable, Equatable {
   static func newNotebook() -> TabItem {
     TabItem(
       documentType: .notebook,
-      title: "Untitled"
+      title: "Untitled.sqlnb"
     )
   }
 
@@ -43,7 +43,7 @@ struct TabItem: Identifiable, Equatable {
   static func newSQLFile() -> TabItem {
     TabItem(
       documentType: .sqlFile,
-      title: "Untitled"
+      title: "Untitled.sql"
     )
   }
 }

@@ -148,21 +148,21 @@ struct AnyShape: Shape, @unchecked Sendable {
   VStack(spacing: 0) {
     HStack(spacing: 4) {
       TabItemView(
-        tab: TabItem(documentType: .notebook, title: "Untitled"),
+        tab: TabItem(documentType: .notebook, title: "Untitled.sqlnb"),
         isActive: true,
         onSelect: {},
         onClose: {}
       )
 
       TabItemView(
-        tab: TabItem(documentType: .sqlFile, title: "query", isDirty: true),
+        tab: TabItem(documentType: .sqlFile, title: "query.sql", isDirty: true),
         isActive: false,
         onSelect: {},
         onClose: {}
       )
 
       TabItemView(
-        tab: TabItem(documentType: .notebook, title: "analytics"),
+        tab: TabItem(documentType: .notebook, title: "analytics.sqlnb"),
         isActive: false,
         onSelect: {},
         onClose: {}

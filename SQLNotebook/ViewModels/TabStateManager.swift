@@ -135,7 +135,7 @@ class TabStateManager {
     }
 
     let data = try Data(contentsOf: url)
-    let title = url.deletingPathExtension().lastPathComponent
+    let title = url.lastPathComponent
 
     let tab = TabItem(
       fileURL: url,
@@ -351,7 +351,7 @@ class TabStateManager {
     // Update tab with new URL and title
     if let index = tabs.firstIndex(where: { $0.id == tabId }) {
       tabs[index].fileURL = url
-      tabs[index].title = url.deletingPathExtension().lastPathComponent
+      tabs[index].title = url.lastPathComponent
     }
 
     // Set file URL on document
