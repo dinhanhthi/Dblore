@@ -10,6 +10,9 @@ import SwiftUI
 struct TabContainerView: View {
   @Bindable var tabManager: TabStateManager
 
+  /// Height of the tab bar - must match TitleBarTabsView.tabBarHeight
+  private let tabBarHeight: CGFloat = 33
+
   var body: some View {
     VStack(spacing: 0) {
       // Tab bar in titlebar area
@@ -31,6 +34,7 @@ struct TabContainerView: View {
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
+    .background(TrafficLightPositioner(tabBarHeight: tabBarHeight))
     .confirmationDialog(
       "Save changes?",
       isPresented: $tabManager.showingCloseConfirmation,
@@ -346,4 +350,101 @@ struct DocumentTypeCard: View {
     overrideRecentFiles: []
   )
   .frame(width: 800, height: 500)
+}
+
+// MARK: - Traffic Light Positioner
+
+/// Adjusts traffic light button positions to vertically center them with the tab bar
+struct TrafficLightPositioner: NSViewRepresentable {
+  let tabBarHeight: CGFloat
+
+  func makeNSView(context: Context) -> NSView {
+    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight)
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    if let adjuster = nsView as? TrafficLightAdjusterView {
+      adjuster.adjustTrafficLights()
+    }
+  }
+}
+
+/// Custom NSView that adjusts traffic light positions when added to window
+class TrafficLightAdjusterView: NSView {
+  let tabBarHeight: CGFloat
+  private var layoutObserver: NSObjectProtocol?
+
+  init(tabBarHeight: CGFloat) {
+    self.tabBarHeight = tabBarHeight
+    super.init(frame: .zero)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+
+    if let window = window {
+      adjustTrafficLights()
+
+      // Observe window layout changes to re-adjust buttons
+      if layoutObserver == nil {
+        layoutObserver = NotificationCenter.default.addObserver(
+          forName: NSWindow.didResizeNotification,
+          object: window,
+          queue: .main
+        ) { [weak self] _ in
+          Task { @MainActor in
+            self?.adjustTrafficLights()
+          }
+        }
+      }
+    } else {
+      // Remove observer when removed from window
+      if let observer = layoutObserver {
+        NotificationCenter.default.removeObserver(observer)
+        layoutObserver = nil
+      }
+    }
+  }
+
+  func adjustTrafficLights() {
+    guard let window = window,
+      let closeButton = window.standardWindowButton(.closeButton),
+      let superview = closeButton.superview
+    else { return }
+
+    // Traffic light buttons are 12pt tall
+    let buttonHeight: CGFloat = 12
+
+    // Fine-tune vertical offset (positive = move down, negative = move up)
+    let verticalAdjustment: CGFloat = -3
+
+    // The superview contains all three buttons in a container
+    // We need to center this container vertically in the tab bar area
+    // In macOS coordinates, Y=0 is at the bottom of the superview
+
+    // Calculate where the center of buttons should be (from top of window content)
+    // tabBarHeight / 2 = center of tab bar from top
+    let centerFromTop = tabBarHeight / 2
+
+    // In the titlebar container, we want buttons centered
+    // The container's coordinate system has Y increasing upward
+    // So we need to position relative to the container's height
+    let containerHeight = superview.bounds.height
+    let newY = containerHeight - centerFromTop - (buttonHeight / 2) + verticalAdjustment
+
+    // Adjust each button's Y position
+    let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+    for buttonType in buttons {
+      guard let button = window.standardWindowButton(buttonType) else { continue }
+      var frame = button.frame
+      frame.origin.y = newY
+      button.setFrameOrigin(frame.origin)
+    }
+  }
 }
