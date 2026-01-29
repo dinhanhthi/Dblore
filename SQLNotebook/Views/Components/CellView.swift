@@ -189,6 +189,7 @@ struct CellView: View {
       isSelected: isSelected,
       isFocused: isEditorFocused,
       onFocus: { viewModel.selectedCellId = cell.id },
+      onTextChanged: { viewModel.onDocumentChanged?() },
       textViewRef: $textViewRef,
       autocompleteProvider: viewModel.autocompleteProvider,
       cellId: cell.id,

@@ -12,6 +12,7 @@ struct SQLEditorView: View {
   let isSelected: Bool
   let isFocused: Bool
   var onFocus: (() -> Void)?
+  var onTextChanged: (() -> Void)?  // Called when user types in the editor (for dirty state)
   @Binding var textViewRef: SQLTextView?
   @State private var isTextEmpty: Bool = true
 
@@ -51,6 +52,7 @@ struct SQLEditorView: View {
       HighlightedTextEditor(
         text: $content,
         onFocus: onFocus,
+        onTextChanged: onTextChanged,
         textViewRef: $textViewRef,
         isEmpty: $isTextEmpty,
         autocompleteProvider: autocompleteProvider,

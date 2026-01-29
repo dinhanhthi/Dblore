@@ -25,14 +25,21 @@ struct TabContentView: View {
       .focusedSceneValue(\.findNextAction, findNextAction)
       .focusedSceneValue(\.findPreviousAction, findPreviousAction)
       .onAppear {
-        // Set up callback to mark tab dirty when document changes
-        viewModel.onDocumentChanged = { [tabManager, tabId] in
-          tabManager.markDirty(tabId: tabId)
-        }
+        setupDocumentChangedCallback()
+      }
+      .onChange(of: tabId) { _, _ in
+        // Re-setup callback when tab changes (view may be reused)
+        setupDocumentChangedCallback()
       }
       .onDisappear {
         viewModel.onDocumentChanged = nil
       }
+  }
+
+  private func setupDocumentChangedCallback() {
+    viewModel.onDocumentChanged = { [tabManager, tabId] in
+      tabManager.markDirty(tabId: tabId)
+    }
   }
 
   @ViewBuilder

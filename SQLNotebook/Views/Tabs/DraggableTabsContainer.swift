@@ -243,13 +243,20 @@ struct DraggableTitleBarTabItem: View {
         .font(.system(size: 11))
         .foregroundColor(isActive ? .foreground : .foregroundMuted)
 
-      // Title with dirty indicator
-      Text(displayTitle)
+      // Title
+      Text(tab.title)
         .font(.system(size: 12))
         .lineLimit(1)
         .foregroundColor(isActive ? .foreground : .foregroundMuted)
 
-      // Close button
+      // Dirty indicator dot (separate from close button)
+      if tab.isDirty {
+        Circle()
+          .fill(Color.foregroundMuted)
+          .frame(width: 6, height: 6)
+      }
+
+      // Close button (always X)
       closeButton
     }
     .padding(.horizontal, Spacing.md)
@@ -287,10 +294,6 @@ struct DraggableTitleBarTabItem: View {
     }
   }
 
-  private var displayTitle: String {
-    tab.isDirty ? "\(tab.title) \u{2022}" : tab.title
-  }
-
   private var backgroundColor: Color {
     if isActive {
       return Color.appBackground
@@ -303,18 +306,18 @@ struct DraggableTitleBarTabItem: View {
 
   @ViewBuilder
   private var closeButton: some View {
-    if isHovering || isActive || tab.isDirty {
+    if isHovering || isActive {
       Button {
         onClose()
       } label: {
-        Image(systemName: tab.isDirty ? "circle.fill" : "xmark")
-          .font(.system(size: tab.isDirty ? 6 : 8, weight: .medium))
+        Image(systemName: "xmark")
+          .font(.system(size: 8, weight: .medium))
           .foregroundColor(.foregroundMuted)
           .frame(width: 14, height: 14)
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .help(tab.isDirty ? "Unsaved changes" : "Close tab")
+      .help("Close tab")
     } else {
       Color.clear
         .frame(width: 14, height: 14)
