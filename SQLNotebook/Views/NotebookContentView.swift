@@ -522,24 +522,50 @@ private struct UndoRedoHandlerModifier: ViewModifier {
   }
 
   private func handleUndo() {
-    if let textView = focusedTextView, let undoManager = textView.undoManager {
-      // Editor is focused - use editor's undo manager
+    // SAFETY: Check that textView is still valid and attached to a window
+    // before using its undoManager. This prevents crashes when the textView
+    // has been deallocated or removed from the view hierarchy.
+    if let textView = focusedTextView,
+      textView.window != nil,
+      let undoManager = textView.undoManager,
+      undoManager.canUndo
+    {
+      // Editor is focused and valid - use editor's undo manager
       undoManager.undo()
     } else {
-      // No editor focused - use cell-level undo manager
-      viewModel.undoManager.undo()
-      syncDocument()
+      // Clear invalid reference
+      if focusedTextView != nil && focusedTextView?.window == nil {
+        focusedTextView = nil
+      }
+      // No valid editor focused - use cell-level undo manager
+      if viewModel.undoManager.canUndo {
+        viewModel.undoManager.undo()
+        syncDocument()
+      }
     }
   }
 
   private func handleRedo() {
-    if let textView = focusedTextView, let undoManager = textView.undoManager {
-      // Editor is focused - use editor's undo manager
+    // SAFETY: Check that textView is still valid and attached to a window
+    // before using its undoManager. This prevents crashes when the textView
+    // has been deallocated or removed from the view hierarchy.
+    if let textView = focusedTextView,
+      textView.window != nil,
+      let undoManager = textView.undoManager,
+      undoManager.canRedo
+    {
+      // Editor is focused and valid - use editor's undo manager
       undoManager.redo()
     } else {
-      // No editor focused - use cell-level undo manager
-      viewModel.undoManager.redo()
-      syncDocument()
+      // Clear invalid reference
+      if focusedTextView != nil && focusedTextView?.window == nil {
+        focusedTextView = nil
+      }
+      // No valid editor focused - use cell-level undo manager
+      if viewModel.undoManager.canRedo {
+        viewModel.undoManager.redo()
+        syncDocument()
+      }
     }
   }
 }
