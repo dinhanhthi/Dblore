@@ -13,7 +13,7 @@ struct TitleBarTabsView: View {
 
   /// Space for traffic light buttons (close, minimize, zoom) + padding
   private let trafficLightWidth: CGFloat = 80
-  private let tabBarHeight: CGFloat = 33
+  private let tabBarHeight: CGFloat = 38
 
   /// Whether can navigate to previous/next tab
   private var canGoToPreviousTab: Bool {
@@ -323,10 +323,7 @@ struct TitleBarTabItem: View {
       // Close button
       closeButton
     }
-    .padding(.leading, Spacing.sm)
-    .padding(.trailing, Spacing.xs)
-    .padding(.vertical, Spacing.xs)
-    .frame(height: 28)
+//    .frame(height: 42)
     .background(backgroundColor)
     .clipShape(tabClipShape)
     .overlay(tabBorderOverlay)
@@ -389,6 +386,61 @@ struct TitleBarTabItem: View {
       Color.clear
         .frame(width: 14, height: 14)
     }
+  }
+}
+
+/// Custom shape with rounded top corners and flat bottom (for seamless tab)
+struct TabTopRoundedShape: Shape {
+  let radius: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+
+    // Start from bottom-left
+    path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+
+    // Line up to top-left corner start
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+
+    // Top-left corner
+    path.addQuadCurve(
+      to: CGPoint(x: rect.minX + radius, y: rect.minY),
+      control: CGPoint(x: rect.minX, y: rect.minY)
+    )
+
+    // Line to top-right corner start
+    path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+
+    // Top-right corner
+    path.addQuadCurve(
+      to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+      control: CGPoint(x: rect.maxX, y: rect.minY)
+    )
+
+    // Line down to bottom-right
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+
+    // Flat bottom (no corner rounding)
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+
+    path.closeSubpath()
+    return path
+  }
+}
+
+/// Type-erased shape wrapper for conditional shapes
+struct AnyShape: Shape, @unchecked Sendable {
+  private let pathBuilder: @Sendable (CGRect) -> Path
+
+  init<S: Shape>(_ shape: S) {
+    let shapeCopy = shape
+    pathBuilder = { rect in
+      shapeCopy.path(in: rect)
+    }
+  }
+
+  func path(in rect: CGRect) -> Path {
+    pathBuilder(rect)
   }
 }
 
@@ -514,82 +566,6 @@ class WindowDragView: NSView {
   deinit {
     if let monitor = doubleClickMonitor {
       NSEvent.removeMonitor(monitor)
-    }
-  }
-}
-
-/// Standard tab bar (non-titlebar version)
-struct TabBarView: View {
-  @Bindable var tabManager: TabStateManager
-
-  var body: some View {
-    HStack(spacing: 0) {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: Spacing.xxs) {
-          ForEach(tabManager.tabs) { tab in
-            TabItemView(
-              tab: tab,
-              isActive: tab.id == tabManager.activeTabId,
-              onSelect: { tabManager.selectTab(id: tab.id) },
-              onClose: { tabManager.requestCloseTab(id: tab.id) }
-            )
-          }
-        }
-        .padding(.horizontal, Spacing.sm)
-        .padding(.vertical, Spacing.xs)
-      }
-
-      Divider()
-        .frame(height: 16)
-        .padding(.horizontal, Spacing.xs)
-
-      Menu {
-        Button {
-          tabManager.newNotebook()
-        } label: {
-          Label("New Notebook", systemImage: "doc.text")
-        }
-
-        Button {
-          tabManager.newSQLFile()
-        } label: {
-          Label("New SQL File", systemImage: "doc")
-        }
-
-        Divider()
-
-        Button {
-          Task {
-            await tabManager.openNotebookWithPanel()
-          }
-        } label: {
-          Label("Open Notebook...", systemImage: "folder")
-        }
-
-        Button {
-          Task {
-            await tabManager.openSQLFileWithPanel()
-          }
-        } label: {
-          Label("Open SQL File...", systemImage: "folder")
-        }
-      } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
-      }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .padding(.trailing, Spacing.sm)
-      .help("New tab")
-    }
-    .frame(height: 36)
-    .background(Color.appBackground)
-    .overlay(alignment: .bottom) {
-      Divider()
     }
   }
 }

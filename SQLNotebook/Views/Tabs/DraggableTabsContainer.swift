@@ -252,10 +252,8 @@ struct DraggableTitleBarTabItem: View {
       // Close button
       closeButton
     }
-    .padding(.leading, Spacing.sm)
-    .padding(.trailing, Spacing.xs)
-    .padding(.vertical, Spacing.xs)
-    .frame(height: 28)
+    .padding(.horizontal, Spacing.md)
+    .frame(height: 34)
     .background(backgroundColor)
     .clipShape(tabClipShape)
     .overlay(tabBorderOverlay)
