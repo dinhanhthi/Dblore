@@ -177,40 +177,91 @@ enum TabNavigationDirection {
   case left, right
 }
 
-/// Wrapper view that handles middle mouse click while allowing normal clicks through
-struct MiddleClickableView<Content: View>: NSViewRepresentable {
-  let content: Content
-  let onMiddleClick: () -> Void
+/// View modifier to detect middle mouse click (for closing tabs like Chrome/VSCode)
+/// Uses an invisible overlay to avoid layout issues with NSHostingView
+struct MiddleClickModifier: ViewModifier {
+  let action: () -> Void
 
-  func makeNSView(context: Context) -> MiddleClickHostingView<Content> {
-    let view = MiddleClickHostingView(rootView: content)
-    view.onMiddleClick = onMiddleClick
-    return view
-  }
-
-  func updateNSView(_ nsView: MiddleClickHostingView<Content>, context: Context) {
-    nsView.rootView = content
-    nsView.onMiddleClick = onMiddleClick
+  func body(content: Content) -> some View {
+    content.overlay(
+      MiddleClickDetector(action: action)
+    )
   }
 }
 
-/// Custom hosting view that intercepts middle mouse clicks
-class MiddleClickHostingView<Content: View>: NSHostingView<Content> {
-  var onMiddleClick: (() -> Void)?
+/// NSViewRepresentable to detect middle mouse button click
+/// Uses a transparent NSView overlay that doesn't affect layout
+struct MiddleClickDetector: NSViewRepresentable {
+  let action: () -> Void
 
-  override func otherMouseDown(with event: NSEvent) {
-    if event.buttonNumber == 2 {
-      onMiddleClick?()
+  func makeNSView(context: Context) -> MiddleClickNSView {
+    let view = MiddleClickNSView()
+    view.action = action
+    return view
+  }
+
+  func updateNSView(_ nsView: MiddleClickNSView, context: Context) {
+    nsView.action = action
+  }
+}
+
+/// Custom NSView that detects middle mouse button clicks
+/// Uses local event monitor to capture middle clicks without blocking other events
+class MiddleClickNSView: NSView {
+  var action: (() -> Void)?
+  private var monitor: Any?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil {
+      setupMonitor()
     } else {
-      super.otherMouseDown(with: event)
+      removeMonitor()
     }
+  }
+
+  private func setupMonitor() {
+    guard monitor == nil else { return }
+    monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
+      guard let self = self,
+        event.buttonNumber == 2,
+        let window = self.window,
+        event.window == window
+      else {
+        return event
+      }
+
+      // Check if click is within this view's bounds
+      let locationInWindow = event.locationInWindow
+      let locationInView = self.convert(locationInWindow, from: nil)
+      if self.bounds.contains(locationInView) {
+        self.action?()
+      }
+      return event
+    }
+  }
+
+  private func removeMonitor() {
+    if let monitor = monitor {
+      NSEvent.removeMonitor(monitor)
+      self.monitor = nil
+    }
+  }
+
+  deinit {
+    removeMonitor()
+  }
+
+  // Allow all mouse events to pass through - this view is transparent to clicks
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    nil
   }
 }
 
 extension View {
   /// Add middle mouse click handler (like Chrome/VSCode tab closing)
   func onMiddleClick(perform action: @escaping () -> Void) -> some View {
-    MiddleClickableView(content: self, onMiddleClick: action)
+    modifier(MiddleClickModifier(action: action))
   }
 }
 
