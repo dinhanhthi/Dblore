@@ -49,44 +49,13 @@ struct TitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      // .padding(.top, 4)
+      .padding(.top, 4)
       .padding(.trailing, Spacing.xs)
 
-      // Scrollable tabs area
+      // Scrollable tabs area with Chrome-like drag reordering
       ScrollViewReader { proxy in
         ScrollView(.horizontal, showsIndicators: false) {
-          HStack(alignment: .bottom, spacing: Spacing.xxs) {
-            ForEach(tabManager.tabs) { tab in
-              TitleBarTabItem(
-                tab: tab,
-                isActive: tab.id == tabManager.activeTabId,
-                onSelect: { tabManager.selectTab(id: tab.id) },
-                onClose: { tabManager.requestCloseTab(id: tab.id) }
-              )
-              .id(tab.id)
-              .draggable(tab.id.uuidString) {
-                TabItemView(
-                  tab: tab,
-                  isActive: true,
-                  onSelect: {},
-                  onClose: {}
-                )
-              }
-              .dropDestination(for: String.self) { items, _ in
-                guard let draggedIdString = items.first,
-                  let draggedId = UUID(uuidString: draggedIdString),
-                  let fromIndex = tabManager.tabs.firstIndex(where: { $0.id == draggedId }),
-                  let toIndex = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
-                else { return false }
-
-                withAnimation(.easeInOut(duration: 0.2)) {
-                  tabManager.moveTab(from: fromIndex, to: toIndex)
-                }
-                return true
-              }
-            }
-          }
-          .frame(maxHeight: .infinity, alignment: .bottom)
+          DraggableTabsContainer(tabManager: tabManager)
         }
         .contentMargins(.horizontal, 0, for: .scrollContent)
         .scrollContentBackground(.hidden)
@@ -207,9 +176,11 @@ struct MiddleClickDetector: NSViewRepresentable {
 
 /// Custom NSView that detects middle mouse button clicks
 /// Uses local event monitor to capture middle clicks without blocking other events
+@MainActor
 class MiddleClickNSView: NSView {
   var action: (() -> Void)?
-  private var monitor: Any?
+  // nonisolated(unsafe) allows access from deinit
+  nonisolated(unsafe) private var monitor: Any?
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -223,7 +194,7 @@ class MiddleClickNSView: NSView {
   private func setupMonitor() {
     guard monitor == nil else { return }
     monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
-      guard let self = self,
+      guard let self,
         event.buttonNumber == 2,
         let window = self.window,
         event.window == window
@@ -249,11 +220,13 @@ class MiddleClickNSView: NSView {
   }
 
   deinit {
-    removeMonitor()
+    if let monitor = monitor {
+      NSEvent.removeMonitor(monitor)
+    }
   }
 
   // Allow all mouse events to pass through - this view is transparent to clicks
-  override func hitTest(_ point: NSPoint) -> NSView? {
+  override nonisolated func hitTest(_ point: NSPoint) -> NSView? {
     nil
   }
 }
@@ -430,10 +403,12 @@ struct WindowDragArea: NSViewRepresentable {
 }
 
 /// Custom NSView that enables window dragging and double-click to zoom
+@MainActor
 class WindowDragView: NSView {
-  override var mouseDownCanMoveWindow: Bool { true }
+  override nonisolated var mouseDownCanMoveWindow: Bool { true }
 
-  private var doubleClickMonitor: Any?
+  // nonisolated(unsafe) allows access from deinit
+  nonisolated(unsafe) private var doubleClickMonitor: Any?
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -448,7 +423,7 @@ class WindowDragView: NSView {
     guard doubleClickMonitor == nil else { return }
     doubleClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) {
       [weak self] event in
-      guard let self = self,
+      guard let self,
         event.clickCount == 2,
         let window = self.window,
         event.window == window
@@ -477,7 +452,9 @@ class WindowDragView: NSView {
   }
 
   deinit {
-    removeDoubleClickMonitor()
+    if let monitor = doubleClickMonitor {
+      NSEvent.removeMonitor(monitor)
+    }
   }
 }
 
