@@ -68,49 +68,76 @@ struct TabContainerView: View {
 /// View shown when no tabs are open
 struct EmptyTabView: View {
   let tabManager: TabStateManager
+  /// Optional override for recent files (used in previews)
+  var overrideRecentFiles: [URL]?
+
+  /// Recent files filtered to only .sqlnb and .sql
+  private var recentFiles: [URL] {
+    if let override = overrideRecentFiles {
+      return override
+    }
+    return NSDocumentController.shared.recentDocumentURLs.filter { url in
+      let ext = url.pathExtension.lowercased()
+      return ext == "sqlnb" || ext == "sql"
+    }
+  }
 
   var body: some View {
-    VStack(spacing: Spacing.xl) {
-      // Header
-      VStack(spacing: Spacing.sm) {
-        Image(systemName: "tablecells.badge.ellipsis")
-          .font(.system(size: 56))
-          .foregroundColor(.accent)
+    GeometryReader { geometry in
+      ScrollView {
+        VStack(spacing: Spacing.lg) {
+          // Header
+          VStack(spacing: Spacing.xs) {
+            Image(systemName: "tablecells.badge.ellipsis")
+              .font(.system(size: 36))
+              .foregroundColor(.accent)
 
-        Text("Welcome to SQLNotebook")
-          .font(.title)
-          .fontWeight(.semibold)
-          .foregroundColor(.foreground)
+            Text("Welcome to SQLNotebook")
+              .font(.title2)
+              .fontWeight(.semibold)
+              .foregroundColor(.foreground)
 
-        Text("Create a new document or open an existing one")
-          .font(.subheadline)
-          .foregroundColor(.foregroundMuted)
+            Text("Create a new document or open an existing one")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+
+          // Cards
+          HStack(spacing: Spacing.lg) {
+            // Notebook Card
+            DocumentTypeCard(
+              icon: "doc.text.fill",
+              title: "Notebook",
+              description: "Interactive SQL with multiple cells and inline results",
+              accentColor: .accent,
+              onNew: { tabManager.newNotebook() },
+              onOpen: { openFile(type: .notebook) }
+            )
+
+            // SQL File Card
+            DocumentTypeCard(
+              icon: "doc.fill",
+              title: "SQL File",
+              description: "Simple SQL script editor for queries",
+              accentColor: .syntaxFunction,
+              onNew: { tabManager.newSQLFile() },
+              onOpen: { openFile(type: .sqlFile) }
+            )
+          }
+          .padding(.top, Spacing.sm)
+
+          // Recent Files Section (only show if there are recent files)
+          if !recentFiles.isEmpty {
+            RecentFilesSection(
+              recentFiles: recentFiles,
+              tabManager: tabManager
+            )
+            .padding(.top, Spacing.lg)
+          }
+        }
+        .padding(.vertical, Spacing.xl)
+        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
       }
-
-      // Cards
-      HStack(spacing: Spacing.xl) {
-        // Notebook Card
-        DocumentTypeCard(
-          icon: "doc.text.fill",
-          title: "Notebook",
-          description:
-            "Interactive SQL notebook with multiple cells, markdown support, and inline results",
-          accentColor: .accent,
-          onNew: { tabManager.newNotebook() },
-          onOpen: { openFile(type: .notebook) }
-        )
-
-        // SQL File Card
-        DocumentTypeCard(
-          icon: "doc.fill",
-          title: "SQL File",
-          description: "Simple SQL script editor for writing and executing queries",
-          accentColor: .syntaxFunction,
-          onNew: { tabManager.newSQLFile() },
-          onOpen: { openFile(type: .sqlFile) }
-        )
-      }
-      .padding(.top, Spacing.lg)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.appBackground)
@@ -139,7 +166,94 @@ struct EmptyTabView: View {
   }
 }
 
-/// Card for each document type in the welcome screen
+/// Section showing recent files
+struct RecentFilesSection: View {
+  let recentFiles: [URL]
+  let tabManager: TabStateManager
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      // Section header
+      Text("Recent")
+        .font(.subheadline)
+        .fontWeight(.medium)
+        .foregroundColor(.foregroundMuted)
+        .padding(.horizontal, Spacing.xs)
+
+      // File list - compact, no spacing between items
+      VStack(spacing: 0) {
+        ForEach(recentFiles.prefix(10), id: \.self) { url in
+          RecentFileRow(url: url) {
+            Task {
+              try? await tabManager.openFile(url: url)
+            }
+          }
+        }
+      }
+    }
+    .frame(width: 480)
+  }
+}
+
+/// Single row for a recent file - compact design
+struct RecentFileRow: View {
+  let url: URL
+  let onOpen: () -> Void
+
+  @State private var isHovering = false
+
+  private var fileType: TabDocumentType? {
+    TabDocumentType.from(url: url)
+  }
+
+  private var icon: String {
+    fileType?.icon ?? "doc"
+  }
+
+  private var iconColor: Color {
+    switch fileType {
+    case .notebook: return .accent
+    case .sqlFile: return .syntaxFunction
+    case nil: return .foregroundMuted
+    }
+  }
+
+  var body: some View {
+    Button {
+      onOpen()
+    } label: {
+      HStack(spacing: Spacing.sm) {
+        Image(systemName: icon)
+          .font(.system(size: 12))
+          .foregroundColor(iconColor)
+          .frame(width: 16)
+
+        Text(url.lastPathComponent)
+          .font(.callout)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+
+        Text(url.deletingLastPathComponent().path)
+          .font(.caption)
+          .foregroundColor(.foregroundSubtle)
+          .lineLimit(1)
+          .truncationMode(.middle)
+
+        Spacer()
+      }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(isHovering ? Color.cellBackgroundHover : Color.clear)
+      .cornerRadius(CornerRadius.sm)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering in
+      isHovering = hovering
+    }
+  }
+}
+
+/// Card for each document type in the welcome screen - compact design
 struct DocumentTypeCard: View {
   let icon: String
   let title: String
@@ -151,57 +265,59 @@ struct DocumentTypeCard: View {
   @State private var isHovering = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.lg) {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
       // Icon and Title
-      HStack(spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
         Image(systemName: icon)
-          .font(.system(size: 32))
+          .font(.system(size: 20))
           .foregroundColor(accentColor)
 
         Text(title)
-          .font(.title2)
-          .fontWeight(.semibold)
+          .font(.headline)
           .foregroundColor(.foreground)
       }
 
       // Description
       Text(description)
-        .font(.subheadline)
+        .font(.caption)
         .foregroundColor(.foregroundMuted)
-        .lineLimit(3)
+        .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)
 
-      Spacer()
-
-      // Buttons
-      HStack(spacing: Spacing.md) {
+      // Buttons - compact
+      HStack(spacing: Spacing.sm) {
         Button {
           onNew()
         } label: {
           Label("New", systemImage: "plus")
+            .font(.callout)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
         .tint(accentColor)
+        .controlSize(.small)
 
         Button {
           onOpen()
         } label: {
           Label("Open", systemImage: "folder")
+            .font(.callout)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.bordered)
+        .controlSize(.small)
       }
+      .padding(.top, Spacing.xs)
     }
-    .padding(Spacing.xl)
-    .frame(width: 280, height: 220)
+    .padding(Spacing.lg)
+    .frame(width: 220, height: 140)
     .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.xl)
+    .cornerRadius(CornerRadius.lg)
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.xl)
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
         .stroke(isHovering ? accentColor.opacity(0.5) : Color.border, lineWidth: 1)
     )
-    .shadow(color: .black.opacity(isHovering ? 0.1 : 0.05), radius: isHovering ? 8 : 4, y: 2)
+    .shadow(color: .black.opacity(isHovering ? 0.08 : 0.04), radius: isHovering ? 6 : 3, y: 1)
     .scaleEffect(isHovering ? 1.02 : 1.0)
     .animation(.easeInOut(duration: 0.15), value: isHovering)
     .onHover { hovering in
@@ -210,9 +326,23 @@ struct DocumentTypeCard: View {
   }
 }
 
-#Preview {
-  let manager = TabStateManager()
+#Preview("With Recent Files") {
+  EmptyTabView(
+    tabManager: TabStateManager(),
+    overrideRecentFiles: [
+      URL(fileURLWithPath: "/Users/demo/Documents/projects/analytics.sqlnb"),
+      URL(fileURLWithPath: "/Users/demo/Documents/queries/report.sql"),
+      URL(fileURLWithPath: "/Users/demo/Desktop/test.sqlnb"),
+      URL(fileURLWithPath: "/Users/demo/Documents/backup/migration.sql"),
+    ]
+  )
+  .frame(width: 800, height: 500)
+}
 
-  TabContainerView(tabManager: manager)
-    .frame(width: 1200, height: 800)
+#Preview("Without Recent Files") {
+  EmptyTabView(
+    tabManager: TabStateManager(),
+    overrideRecentFiles: []
+  )
+  .frame(width: 800, height: 500)
 }
