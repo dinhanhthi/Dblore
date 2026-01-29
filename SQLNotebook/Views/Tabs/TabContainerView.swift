@@ -93,9 +93,10 @@ struct EmptyTabView: View {
         VStack(spacing: Spacing.lg) {
           // Header
           VStack(spacing: Spacing.xs) {
-            Image(systemName: "tablecells.badge.ellipsis")
-              .font(.system(size: 36))
-              .foregroundColor(.accent)
+            Image(nsImage: NSApp.applicationIconImage)
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+              .frame(width: 64, height: 64)
 
             Text("Welcome to SQLNotebook")
               .font(.title2)

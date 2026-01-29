@@ -3,6 +3,7 @@
 //  SQLNotebook
 //
 
+import AppKit
 import SwiftUI
 
 struct AboutView: View {
@@ -10,8 +11,9 @@ struct AboutView: View {
     VStack(spacing: Spacing.xl) {
       // App Icon and Name
       VStack(spacing: Spacing.md) {
-        Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
+        Image(nsImage: NSApp.applicationIconImage)
           .resizable()
+          .aspectRatio(contentMode: .fit)
           .frame(width: 80, height: 80)
 
         Text("SQLNotebook")
@@ -19,7 +21,7 @@ struct AboutView: View {
           .fontWeight(.semibold)
 
         Text("Version \(appVersion)")
-          .font(.subheading)
+          .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
 
         Link(
