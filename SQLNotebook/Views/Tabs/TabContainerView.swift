@@ -12,8 +12,8 @@ struct TabContainerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Tab bar
-      TabBarView(tabManager: tabManager)
+      // Tab bar in titlebar area
+      TitleBarTabsView(tabManager: tabManager)
 
       // Content area
       if let activeTabId = tabManager.activeTabId,
@@ -30,6 +30,7 @@ struct TabContainerView: View {
     }
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
+    .ignoresSafeArea(.all, edges: .top)
     .confirmationDialog(
       "Save changes?",
       isPresented: $tabManager.showingCloseConfirmation,

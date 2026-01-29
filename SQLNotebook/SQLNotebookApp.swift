@@ -40,11 +40,12 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    // Main window with tabs
+    // Main window with tabs in titlebar (Chrome-style)
     WindowGroup {
       TabContainerView(tabManager: TabStateManager.shared)
         .frame(minWidth: 800, minHeight: 600)
     }
+    .windowStyle(.hiddenTitleBar)
     .commands {
       SharedCommands()
       TabCommands(tabManager: TabStateManager.shared)

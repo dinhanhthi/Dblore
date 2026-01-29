@@ -3,16 +3,23 @@
 //  SQLNotebook
 //
 
+import AppKit
 import SwiftUI
 
-/// Tab bar showing all open tabs with support for selection, closing, and reordering
-struct TabBarView: View {
+/// Tab bar that sits in the titlebar area with traffic light buttons
+/// Uses NSHostingView to properly integrate with window titlebar
+struct TitleBarTabsView: View {
   @Bindable var tabManager: TabStateManager
 
-  @State private var showNewTabMenu = false
+  /// Space for traffic light buttons (close, minimize, zoom)
+  private let trafficLightWidth: CGFloat = 78
 
   var body: some View {
     HStack(spacing: 0) {
+      // Left padding for traffic light buttons
+      Color.clear
+        .frame(width: trafficLightWidth, height: 38)
+
       // Scrollable tabs area
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: Spacing.xxs) {
@@ -24,7 +31,6 @@ struct TabBarView: View {
               onClose: { tabManager.requestCloseTab(id: tab.id) }
             )
             .draggable(tab.id.uuidString) {
-              // Drag preview
               TabItemView(
                 tab: tab,
                 isActive: true,
@@ -47,6 +53,83 @@ struct TabBarView: View {
           }
         }
         .padding(.horizontal, Spacing.sm)
+      }
+      .frame(height: 38)
+
+      Divider()
+        .frame(height: 16)
+        .padding(.horizontal, Spacing.xs)
+
+      // New tab button
+      Menu {
+        Button {
+          tabManager.newNotebook()
+        } label: {
+          Label("New Notebook", systemImage: "doc.text")
+        }
+
+        Button {
+          tabManager.newSQLFile()
+        } label: {
+          Label("New SQL File", systemImage: "doc")
+        }
+      } label: {
+        Image(systemName: "plus")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .padding(.trailing, Spacing.sm)
+      .help("New tab")
+    }
+    .frame(height: 38)
+    .frame(maxWidth: .infinity)
+    .background(WindowDragArea())
+    .background(Color.appBackground)
+  }
+}
+
+/// Invisible view that allows window dragging (like native titlebar)
+struct WindowDragArea: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView {
+    let view = WindowDragView()
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Custom NSView that enables window dragging
+class WindowDragView: NSView {
+  override var mouseDownCanMoveWindow: Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    window?.performDrag(with: event)
+  }
+}
+
+/// Standard tab bar (non-titlebar version)
+struct TabBarView: View {
+  @Bindable var tabManager: TabStateManager
+
+  var body: some View {
+    HStack(spacing: 0) {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: Spacing.xxs) {
+          ForEach(tabManager.tabs) { tab in
+            TabItemView(
+              tab: tab,
+              isActive: tab.id == tabManager.activeTabId,
+              onSelect: { tabManager.selectTab(id: tab.id) },
+              onClose: { tabManager.requestCloseTab(id: tab.id) }
+            )
+          }
+        }
+        .padding(.horizontal, Spacing.sm)
         .padding(.vertical, Spacing.xs)
       }
 
@@ -54,7 +137,6 @@ struct TabBarView: View {
         .frame(height: 16)
         .padding(.horizontal, Spacing.xs)
 
-      // New tab button
       Menu {
         Button {
           tabManager.newNotebook()
@@ -88,14 +170,15 @@ struct TabBarView: View {
   }
 }
 
-#Preview {
+#Preview("TitleBar Tabs") {
   let manager = TabStateManager()
 
   VStack(spacing: 0) {
-    TabBarView(tabManager: manager)
+    TitleBarTabsView(tabManager: manager)
+    Divider()
     Spacer()
   }
-  .frame(width: 600, height: 400)
+  .frame(width: 800, height: 400)
   .task {
     manager.newNotebook()
     manager.newSQLFile()
