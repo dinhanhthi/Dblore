@@ -11,9 +11,24 @@ import SwiftUI
 struct TitleBarTabsView: View {
   @Bindable var tabManager: TabStateManager
 
-  /// Space for traffic light buttons (close, minimize, zoom)
-  private let trafficLightWidth: CGFloat = 78
+  /// Space for traffic light buttons (close, minimize, zoom) + padding
+  private let trafficLightWidth: CGFloat = 80
   private let tabBarHeight: CGFloat = 33
+
+  /// Whether can navigate to previous/next tab
+  private var canGoToPreviousTab: Bool {
+    guard let activeId = tabManager.activeTabId,
+      let currentIndex = tabManager.tabs.firstIndex(where: { $0.id == activeId })
+    else { return false }
+    return currentIndex > 0
+  }
+
+  private var canGoToNextTab: Bool {
+    guard let activeId = tabManager.activeTabId,
+      let currentIndex = tabManager.tabs.firstIndex(where: { $0.id == activeId })
+    else { return false }
+    return currentIndex < tabManager.tabs.count - 1
+  }
 
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
@@ -21,46 +36,68 @@ struct TitleBarTabsView: View {
       Color.clear
         .frame(width: trafficLightWidth)
 
-      // Scrollable tabs area
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(alignment: .bottom, spacing: Spacing.xxs) {
-          ForEach(tabManager.tabs) { tab in
-            TitleBarTabItem(
-              tab: tab,
-              isActive: tab.id == tabManager.activeTabId,
-              onSelect: { tabManager.selectTab(id: tab.id) },
-              onClose: { tabManager.requestCloseTab(id: tab.id) }
-            )
-            .draggable(tab.id.uuidString) {
-              TabItemView(
-                tab: tab,
-                isActive: true,
-                onSelect: {},
-                onClose: {}
-              )
-            }
-            .dropDestination(for: String.self) { items, _ in
-              guard let draggedIdString = items.first,
-                let draggedId = UUID(uuidString: draggedIdString),
-                let fromIndex = tabManager.tabs.firstIndex(where: { $0.id == draggedId }),
-                let toIndex = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
-              else { return false }
+      // Fixed navigation arrows
+      HStack(spacing: 2) {
+        TabNavigationArrowButton(
+          direction: .left,
+          isEnabled: canGoToPreviousTab,
+          action: goToPreviousTab
+        )
+        TabNavigationArrowButton(
+          direction: .right,
+          isEnabled: canGoToNextTab,
+          action: goToNextTab
+        )
+      }
+      .padding(.top, 4)
+      .padding(.trailing, Spacing.xs)
 
-              withAnimation(.easeInOut(duration: 0.2)) {
-                tabManager.moveTab(from: fromIndex, to: toIndex)
+      // Scrollable tabs area
+      ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(alignment: .bottom, spacing: Spacing.xxs) {
+            ForEach(tabManager.tabs) { tab in
+              TitleBarTabItem(
+                tab: tab,
+                isActive: tab.id == tabManager.activeTabId,
+                onSelect: { tabManager.selectTab(id: tab.id) },
+                onClose: { tabManager.requestCloseTab(id: tab.id) }
+              )
+              .id(tab.id)
+              .draggable(tab.id.uuidString) {
+                TabItemView(
+                  tab: tab,
+                  isActive: true,
+                  onSelect: {},
+                  onClose: {}
+                )
               }
-              return true
+              .dropDestination(for: String.self) { items, _ in
+                guard let draggedIdString = items.first,
+                  let draggedId = UUID(uuidString: draggedIdString),
+                  let fromIndex = tabManager.tabs.firstIndex(where: { $0.id == draggedId }),
+                  let toIndex = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
+                else { return false }
+
+                withAnimation(.easeInOut(duration: 0.2)) {
+                  tabManager.moveTab(from: fromIndex, to: toIndex)
+                }
+                return true
+              }
+            }
+          }
+          .frame(maxHeight: .infinity, alignment: .bottom)
+        }
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        .scrollContentBackground(.hidden)
+        .onChange(of: tabManager.activeTabId) { _, newTabId in
+          if let newTabId {
+            withAnimation(.easeInOut(duration: 0.2)) {
+              proxy.scrollTo(newTabId, anchor: .center)
             }
           }
         }
-        .padding(.horizontal, Spacing.sm)
-        .frame(maxHeight: .infinity, alignment: .bottom)
       }
-      .scrollContentBackground(.hidden)
-
-      Divider()
-        .frame(height: 16)
-        .padding(.horizontal, Spacing.xs)
 
       // New tab button
       Menu {
@@ -85,13 +122,63 @@ struct TitleBarTabsView: View {
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
-      .padding(.trailing, Spacing.sm)
+      .padding(.horizontal, Spacing.md)
       .help("New tab")
     }
     .frame(height: tabBarHeight)
     .frame(maxWidth: .infinity)
     .background(Color.cardBackground)
     .background(WindowDragArea())
+  }
+
+  /// Navigate to previous tab
+  private func goToPreviousTab() {
+    guard let activeId = tabManager.activeTabId,
+      let currentIndex = tabManager.tabs.firstIndex(where: { $0.id == activeId }),
+      currentIndex > 0
+    else { return }
+
+    let previousTab = tabManager.tabs[currentIndex - 1]
+    tabManager.selectTab(id: previousTab.id)
+  }
+
+  /// Navigate to next tab
+  private func goToNextTab() {
+    guard let activeId = tabManager.activeTabId,
+      let currentIndex = tabManager.tabs.firstIndex(where: { $0.id == activeId }),
+      currentIndex < tabManager.tabs.count - 1
+    else { return }
+
+    let nextTab = tabManager.tabs[currentIndex + 1]
+    tabManager.selectTab(id: nextTab.id)
+  }
+}
+
+/// Direction for tab navigation arrows
+enum TabNavigationDirection {
+  case left, right
+}
+
+/// Fixed arrow button for navigating between tabs
+struct TabNavigationArrowButton: View {
+  let direction: TabNavigationDirection
+  let isEnabled: Bool
+  let action: () -> Void
+
+  @State private var isHovering = false
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(isEnabled ? .foregroundMuted : .foregroundMuted.opacity(0.3))
+        .frame(width: 18, height: 18)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    .onHover { isHovering = $0 }
+    .help(direction == .left ? "Previous tab" : "Next tab")
   }
 }
 
@@ -121,7 +208,8 @@ struct TitleBarTabItem: View {
       // Close button
       closeButton
     }
-    .padding(.horizontal, Spacing.sm)
+    .padding(.leading, Spacing.sm)
+    .padding(.trailing, Spacing.xs)
     .padding(.vertical, Spacing.xs)
     .frame(height: 28)
     .background(backgroundColor)
@@ -145,10 +233,10 @@ struct TitleBarTabItem: View {
   @ViewBuilder
   private var tabBorderOverlay: some View {
     if isActive {
-      TabTopRoundedBorder(radius: CornerRadius.sm)
+      TabTopRoundedBorder(radius: CornerRadius.md)
         .stroke(Color.border, lineWidth: 1)
     } else {
-      RoundedRectangle(cornerRadius: CornerRadius.sm)
+      RoundedRectangle(cornerRadius: CornerRadius.md)
         .stroke(Color.clear, lineWidth: 1)
     }
   }

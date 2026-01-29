@@ -421,8 +421,11 @@ class TrafficLightAdjusterView: NSView {
     // Traffic light buttons are 12pt tall
     let buttonHeight: CGFloat = 12
 
-    // Fine-tune vertical offset (positive = move down, negative = move up)
+    // Fine-tune vertical offset (negative = move down in screen coords)
     let verticalAdjustment: CGFloat = -3
+
+    // Horizontal padding from left edge of window
+    let horizontalPadding: CGFloat = 13
 
     // The superview contains all three buttons in a container
     // We need to center this container vertically in the tab bar area
@@ -438,12 +441,18 @@ class TrafficLightAdjusterView: NSView {
     let containerHeight = superview.bounds.height
     let newY = containerHeight - centerFromTop - (buttonHeight / 2) + verticalAdjustment
 
-    // Adjust each button's Y position
+    // Adjust each button's position
     let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-    for buttonType in buttons {
+    for (index, buttonType) in buttons.enumerated() {
       guard let button = window.standardWindowButton(buttonType) else { continue }
       var frame = button.frame
+
+      // Adjust Y position
       frame.origin.y = newY
+
+      // Adjust X position: add left padding, buttons are 12pt wide with 8pt spacing
+      frame.origin.x = horizontalPadding + CGFloat(index) * (frame.width + 8)
+
       button.setFrameOrigin(frame.origin)
     }
   }
