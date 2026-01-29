@@ -258,6 +258,17 @@ class TabStateManager {
       }
     }
 
+    // Disconnect database connection before removing viewModel
+    // This prevents PostgresConnection from being deinitialized before being closed
+    // We need to capture the connectionManager and await disconnect in a Task
+    // to ensure the connection is properly closed before the viewModel is deallocated
+    if let viewModel = viewModels[id] {
+      let connectionManager = viewModel.connectionManager
+      Task {
+        await connectionManager.disconnect()
+      }
+    }
+
     // Remove tab and clean up
     tabs.remove(at: index)
     viewModels.removeValue(forKey: id)

@@ -99,12 +99,12 @@ struct EmptyTabView: View {
               .frame(width: 64, height: 64)
 
             Text("Welcome to SQLNotebook")
-              .font(.title2)
+              .font(.title)
               .fontWeight(.semibold)
               .foregroundColor(.foreground)
 
             Text("Create a new document or open an existing one")
-              .font(.caption)
+              .font(.labelText)
               .foregroundColor(.foregroundMuted)
           }
 
@@ -197,7 +197,7 @@ struct RecentFilesSection: View {
         }
       }
     }
-    .frame(width: 480)
+    .frame(width: 460)
   }
 }
 
@@ -279,13 +279,13 @@ struct DocumentTypeCard: View {
           .foregroundColor(accentColor)
 
         Text(title)
-          .font(.headline)
+          .font(.bodyText)
           .foregroundColor(.foreground)
       }
 
       // Description
       Text(description)
-        .font(.caption)
+        .font(.small)
         .foregroundColor(.foregroundMuted)
         .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)

@@ -287,10 +287,10 @@ struct DraggableTitleBarTabItem: View {
   private var tabBorderOverlay: some View {
     if isActive {
       TabTopRoundedBorder(radius: CornerRadius.md)
-        .stroke(Color.border, lineWidth: 1)
+        .stroke(Color.border, lineWidth: 0)
     } else {
       RoundedRectangle(cornerRadius: CornerRadius.md)
-        .stroke(Color.clear, lineWidth: 1)
+        .stroke(Color.clear, lineWidth: 0)
     }
   }
 
