@@ -429,12 +429,55 @@ struct WindowDragArea: NSViewRepresentable {
   func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// Custom NSView that enables window dragging
+/// Custom NSView that enables window dragging and double-click to zoom
 class WindowDragView: NSView {
   override var mouseDownCanMoveWindow: Bool { true }
 
-  override func mouseDown(with event: NSEvent) {
-    window?.performDrag(with: event)
+  private var doubleClickMonitor: Any?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil {
+      setupDoubleClickMonitor()
+    } else {
+      removeDoubleClickMonitor()
+    }
+  }
+
+  private func setupDoubleClickMonitor() {
+    guard doubleClickMonitor == nil else { return }
+    doubleClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) {
+      [weak self] event in
+      guard let self = self,
+        event.clickCount == 2,
+        let window = self.window,
+        event.window == window
+      else {
+        return event
+      }
+
+      // Check if click is within the tab bar area (this view's window)
+      // and not on interactive elements (tabs, buttons)
+      let locationInWindow = event.locationInWindow
+      let locationInView = self.convert(locationInWindow, from: nil)
+
+      // Only zoom if click is within our bounds
+      if self.bounds.contains(locationInView) {
+        window.zoom(nil)
+      }
+      return event
+    }
+  }
+
+  private func removeDoubleClickMonitor() {
+    if let monitor = doubleClickMonitor {
+      NSEvent.removeMonitor(monitor)
+      doubleClickMonitor = nil
+    }
+  }
+
+  deinit {
+    removeDoubleClickMonitor()
   }
 }
 
