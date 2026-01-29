@@ -13,6 +13,11 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 class TabStateManager {
+  // MARK: - Shared Instance
+
+  /// Shared instance for app-wide access
+  static let shared = TabStateManager()
+
   // MARK: - Public State
 
   /// All open tabs

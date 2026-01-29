@@ -7,9 +7,29 @@ import AppKit
 @preconcurrency import SQLite3
 import SwiftUI
 
+// MARK: - App Delegate for file handling
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+  func application(_ application: NSApplication, open urls: [URL]) {
+    Task { @MainActor in
+      for url in urls {
+        try? await TabStateManager.shared.openFile(url: url)
+      }
+    }
+  }
+
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    return false  // Keep app running even when all windows are closed
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    TabStateManager.shared.saveState()
+  }
+}
+
 @main
 struct SQLNotebookApp: App {
-  @State private var tabManager = TabStateManager()
+  @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
   init() {
     // Migrate from single session to connection history (one-time operation)
@@ -22,12 +42,12 @@ struct SQLNotebookApp: App {
   var body: some Scene {
     // Main window with tabs
     WindowGroup {
-      TabContainerView(tabManager: tabManager)
+      TabContainerView(tabManager: TabStateManager.shared)
         .frame(minWidth: 800, minHeight: 600)
     }
     .commands {
       SharedCommands()
-      TabCommands(tabManager: tabManager)
+      TabCommands(tabManager: TabStateManager.shared)
       NotebookCommands()
       EditorCommands()
     }
