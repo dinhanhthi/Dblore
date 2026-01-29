@@ -208,9 +208,15 @@ struct NotebookContentView: View {
 
     // Register undo action to mark document as dirty
     // This is critical for ReferenceFileDocument to know the document has changed
+    // SAFETY: Use NSObject proxy as target and weak document capture to avoid crash
     if let undoManager = undoManager {
-      undoManager.registerUndo(withTarget: document) { [oldNotebook] doc in
-        doc.notebook = oldNotebook
+      let proxy = UndoProxy()
+      undoManager.registerUndo(withTarget: proxy) { [weak document, oldNotebook] _ in
+        // CRITICAL: Execute on main thread to avoid concurrency crash
+        MainActor.assumeIsolated {
+          guard let document = document else { return }
+          document.notebook = oldNotebook
+        }
       }
     }
 
@@ -537,6 +543,12 @@ private struct UndoRedoHandlerModifier: ViewModifier {
     }
   }
 }
+
+// MARK: - Undo Proxy
+
+/// Proxy object for UndoManager target (struct cannot be undo target)
+/// This is a lightweight NSObject that exists only to satisfy UndoManager's class requirement
+private class UndoProxy: NSObject {}
 
 // MARK: - Previews
 

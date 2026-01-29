@@ -326,6 +326,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     @MainActor
     func applyHighlighting(to textView: NSTextView, text: String) {
+      // SAFETY: Guard against deallocated textView or invalid state
+      guard textView.window != nil,
+        let textStorage = textView.textStorage
+      else { return }
+
       let attributed: NSAttributedString
       if isSearchActive {
         // Get current match range from NotebookViewModel's search state
@@ -344,9 +349,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       let undoManager = textView.undoManager
       undoManager?.disableUndoRegistration()
 
-      textView.textStorage?.beginEditing()
-      textView.textStorage?.setAttributedString(attributed)
-      textView.textStorage?.endEditing()
+      textStorage.beginEditing()
+      textStorage.setAttributedString(attributed)
+      textStorage.endEditing()
 
       // Re-enable undo registration
       undoManager?.enableUndoRegistration()
@@ -356,7 +361,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     /// This prevents undo/redo lag when typing
     @MainActor
     func applyHighlightingWithoutUndo(to textView: NSTextView, text: String) {
-      guard let textStorage = textView.textStorage else { return }
+      // SAFETY: Guard against deallocated textView or invalid state
+      guard textView.window != nil,
+        let textStorage = textView.textStorage
+      else { return }
 
       let attributed: NSAttributedString
       if isSearchActive {
