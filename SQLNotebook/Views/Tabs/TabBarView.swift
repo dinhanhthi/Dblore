@@ -126,6 +126,7 @@ struct TitleBarTabsView: View {
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
+      .blockDoubleClickZoom()
       .padding(.horizontal, Spacing.md)
       .help("New tab")
     }

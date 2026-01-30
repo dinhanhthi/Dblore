@@ -23,6 +23,7 @@ struct SidebarToggleButton: View {
         .frame(width: 16, height: 16)
     }
     .buttonStyle(.plain)
+    .blockDoubleClickZoom()
     .help(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
   }
 }

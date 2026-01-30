@@ -455,6 +455,7 @@ struct SidebarTopArea: View {
               .foregroundColor(.accent)
           }
           .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
+          .blockDoubleClickZoom()
           .help(
             viewModel.isSchemaVisualizerActive
               ? "Close Schema Visualizer" : "Visualize Schema Relationships")
@@ -471,6 +472,7 @@ struct SidebarTopArea: View {
             .foregroundColor(.foregroundMuted)
           }
           .buttonStyle(SidebarHeaderButtonStyle())
+          .blockDoubleClickZoom()
           .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
         }
 
@@ -486,6 +488,7 @@ struct SidebarTopArea: View {
               .foregroundColor(.foregroundMuted)
           }
           .buttonStyle(SidebarHeaderButtonStyle())
+          .blockDoubleClickZoom()
           .disabled(viewModel.isLoadingSchema)
           .help("Refresh schema")
         }
