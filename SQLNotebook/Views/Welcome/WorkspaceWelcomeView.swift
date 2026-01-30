@@ -19,6 +19,15 @@ struct WorkspaceWelcomeView: View {
     }
   }
 
+  /// Display name for workspace - shows "Untitled Workspace" if not saved
+  private var workspaceDisplayName: String {
+    if workspaceManager.workspace.isSaved {
+      return workspaceManager.workspace.name
+    } else {
+      return "Untitled Workspace"
+    }
+  }
+
   var body: some View {
     GeometryReader { geometry in
       ScrollView {
@@ -30,7 +39,7 @@ struct WorkspaceWelcomeView: View {
               .aspectRatio(contentMode: .fit)
               .frame(width: 56, height: 56)
 
-            Text(workspaceManager.workspace.name)
+            Text(workspaceDisplayName)
               .font(.title2)
               .fontWeight(.semibold)
               .foregroundColor(.foreground)
@@ -156,7 +165,11 @@ struct ConnectionStatusView: View {
   private var statusText: String {
     switch workspaceManager.connectionState {
     case .connected:
-      return workspaceManager.workspace.connectionConfig?.displayString ?? "Connected"
+      // Use connection name if available, otherwise fall back to displayString
+      if let config = workspaceManager.workspace.connectionConfig {
+        return config.name.isEmpty ? config.displayString : config.name
+      }
+      return "Connected"
     case .connecting:
       return "Connecting..."
     case .disconnected:

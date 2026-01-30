@@ -27,13 +27,3 @@ struct SidebarToggleButton: View {
     .help(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
   }
 }
-
-#Preview("Sidebar Visible") {
-  SidebarToggleButton(isSidebarVisible: true) {}
-    .padding()
-}
-
-#Preview("Sidebar Hidden") {
-  SidebarToggleButton(isSidebarVisible: false) {}
-    .padding()
-}
