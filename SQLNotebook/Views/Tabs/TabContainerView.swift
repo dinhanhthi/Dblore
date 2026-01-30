@@ -10,9 +10,6 @@ import SwiftUI
 struct TabContainerView: View {
   @Bindable var tabManager: TabStateManager
 
-  /// Height of the tab bar - must match TitleBarTabsView.tabBarHeight
-  private let tabBarHeight: CGFloat = 38
-
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
     guard let activeTabId = tabManager.activeTabId else { return nil }
@@ -21,35 +18,47 @@ struct TabContainerView: View {
 
   var body: some View {
     GeometryReader { geometry in
-      HStack(spacing: 0) {
-        // Left sidebar (full height, covers traffic light area)
-        FullHeightLeftSidebar(
-          viewModel: activeViewModel,
-          tabBarHeight: tabBarHeight,
-          maxWidth: geometry.size.width * 0.35
-        )
-
-        // Main content area (tabs + content)
-        VStack(spacing: 0) {
-          // Tab bar in titlebar area
-          TitleBarTabsView(
-            tabManager: tabManager,
-            hasLeftSidebar: activeViewModel?.isLeftSidebarVisible ?? false,
-            toggleLeftSidebar: { activeViewModel?.toggleLeftSidebar() }
+      ZStack(alignment: .topLeading) {
+        // Main layout
+        HStack(spacing: 0) {
+          // Left sidebar (full height, covers traffic light area)
+          FullHeightLeftSidebar(
+            viewModel: activeViewModel,
+            tabBarHeight: ComponentSize.tabBarHeight,
+            maxWidth: geometry.size.width * 0.35
           )
 
-          // Content area
-          if let activeTabId = tabManager.activeTabId,
-            let viewModel = tabManager.viewModel(for: activeTabId)
-          {
-            TabContentView(
-              tabId: activeTabId,
+          // Main content area (tabs + content)
+          VStack(spacing: 0) {
+            // Tab bar in titlebar area
+            TitleBarTabsView(
               tabManager: tabManager,
-              viewModel: viewModel
+              hasLeftSidebar: activeViewModel?.isLeftSidebarVisible ?? false
             )
-          } else {
-            EmptyTabView(tabManager: tabManager)
+
+            // Content area
+            if let activeTabId = tabManager.activeTabId,
+              let viewModel = tabManager.viewModel(for: activeTabId)
+            {
+              TabContentView(
+                tabId: activeTabId,
+                tabManager: tabManager,
+                viewModel: viewModel
+              )
+            } else {
+              EmptyTabView(tabManager: tabManager)
+            }
           }
+        }
+
+        // Fixed sidebar toggle button - always in the same position
+        // Positioned right after traffic light buttons
+        if activeViewModel != nil {
+          SidebarToggleButton(isSidebarVisible: activeViewModel?.isLeftSidebarVisible ?? false) {
+            activeViewModel?.toggleLeftSidebar()
+          }
+          .padding(.leading, ComponentSize.trafficLightWidth)
+          .padding(.top, (ComponentSize.tabBarHeight - 16) / 2)  // Center vertically in tab bar
         }
       }
     }
@@ -59,7 +68,9 @@ struct TabContainerView: View {
     .animation(.easeInOut(duration: 0.2), value: activeViewModel?.isLeftSidebarVisible)
     .background(
       TrafficLightPositioner(
-        tabBarHeight: tabBarHeight, hasSidebar: activeViewModel?.isLeftSidebarVisible ?? false)
+        tabBarHeight: ComponentSize.tabBarHeight,
+        hasSidebar: activeViewModel?.isLeftSidebarVisible ?? false
+      )
     )
     .confirmationDialog(
       "Save changes?",
@@ -419,27 +430,18 @@ struct FullHeightLeftSidebar: View {
 }
 
 /// Top area of the sidebar that aligns with traffic lights
-/// Contains all sidebar action buttons (schema visualizer, expand/collapse, refresh, close)
+/// Contains action buttons (schema visualizer, expand/collapse, refresh)
+/// Note: Sidebar toggle button is rendered in TabContainerView at fixed position
 struct SidebarTopArea: View {
   let viewModel: NotebookViewModel
   let height: CGFloat
 
-  /// Width reserved for traffic light buttons (close, minimize, zoom) + padding
-  private let trafficLightWidth: CGFloat = 80
-
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
-      // Left area: traffic light padding + toggle sidebar button
-      HStack(alignment: .center, spacing: Spacing.sm) {
-        // Left padding for traffic light buttons
-        Color.clear
-          .frame(width: trafficLightWidth)
-
-        // Sidebar toggle button (fixed position next to traffic lights)
-        SidebarToggleButton(isSidebarVisible: true) {
-          viewModel.toggleLeftSidebar()
-        }
-      }
+      // Left area: space for traffic light buttons + sidebar toggle button
+      // The sidebar toggle button is rendered in TabContainerView at fixed position
+      Color.clear
+        .frame(width: ComponentSize.trafficLightAndToggleWidth)
 
       Spacer()
 

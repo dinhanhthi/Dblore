@@ -14,10 +14,6 @@ struct TitleBarTabsView: View {
   /// Whether the left sidebar is visible (affects traffic light padding)
   var hasLeftSidebar: Bool = false
 
-  /// Space for traffic light buttons (close, minimize, zoom) + padding
-  private let trafficLightWidth: CGFloat = 80
-  private let tabBarHeight: CGFloat = 38
-
   /// Whether can navigate to previous/next tab
   private var canGoToPreviousTab: Bool {
     guard let activeId = tabManager.activeTabId,
@@ -33,25 +29,13 @@ struct TitleBarTabsView: View {
     return currentIndex < tabManager.tabs.count - 1
   }
 
-  /// Action to toggle the left sidebar
-  var toggleLeftSidebar: (() -> Void)?
-
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
-      // Traffic light area + sidebar toggle button (only when sidebar is hidden)
-      // When sidebar is visible, the toggle button is in SidebarTopArea
-      HStack(alignment: .center, spacing: Spacing.sm) {
-        // Sidebar toggle button (only shown when sidebar is hidden)
-        // When sidebar is visible, this button is in SidebarTopArea instead
-        if !hasLeftSidebar {
-          // Space for traffic light buttons (always present)
-          Color.clear
-            .frame(width: trafficLightWidth)  // Make sure this width is the same as the width set in TabContainerView.swift
-
-          SidebarToggleButton(isSidebarVisible: false) {
-            toggleLeftSidebar?()
-          }.padding(.trailing, Spacing.xs)
-        }
+      // Space for traffic light buttons + sidebar toggle button (when sidebar is hidden)
+      // The sidebar toggle button is rendered in TabContainerView at fixed position
+      if !hasLeftSidebar {
+        Color.clear
+          .frame(width: ComponentSize.trafficLightAndToggleWidth)
       }
 
       // Fixed navigation arrows
@@ -130,7 +114,7 @@ struct TitleBarTabsView: View {
       .padding(.horizontal, Spacing.md)
       .help("New tab")
     }
-    .frame(height: tabBarHeight)
+    .frame(height: ComponentSize.tabBarHeight)
     .frame(maxWidth: .infinity)
     .background(Color.cardBackground)
     .background(WindowDragArea())
