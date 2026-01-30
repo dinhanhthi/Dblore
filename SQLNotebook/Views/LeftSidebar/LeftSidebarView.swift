@@ -16,12 +16,7 @@ struct LeftSidebarView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Header
-      sidebarHeader
-
-      Divider()
-
-      // Tab selector
+      // Tab selector (header buttons moved to SidebarTopArea in TabContainerView)
       if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
         tabSelector
         Divider()
@@ -40,73 +35,6 @@ struct LeftSidebarView: View {
     .overlay(alignment: .trailing) {
       Divider()
     }
-  }
-
-  private var sidebarHeader: some View {
-    HStack {
-      Text("Database")
-        .font(.subheading)
-        .foregroundColor(.foreground)
-
-      Spacer()
-
-      HStack(spacing: Spacing.sm) {
-        // Expand/Collapse all button
-        if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
-          // Schema Visualizer button
-          Button(action: {
-            viewModel.toggleSchemaVisualizer()
-          }) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-              .font(.system(size: 12, weight: .medium))
-              .foregroundColor(.accent)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
-          .help(
-            viewModel.isSchemaVisualizerActive
-              ? "Close Schema Visualizer" : "Visualize Schema Relationships")
-
-          Button(action: {
-            viewModel.toggleExpandCollapseAll()
-          }) {
-            Image(
-              systemName: viewModel.areAllEntitiesExpanded
-                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-            )
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
-        }
-
-        // Refresh button
-        if viewModel.connectionState.isConnected {
-          Button(action: {
-            Task { @MainActor [viewModel] in
-              await viewModel.refreshDatabaseSchema()
-            }
-          }) {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .semibold))
-              .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .disabled(viewModel.isLoadingSchema)
-        }
-
-        // Close button
-        Button(action: { viewModel.toggleLeftSidebar() }) {
-          Image(systemName: "xmark")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-        }
-        .buttonStyle(SidebarHeaderButtonStyle())
-      }
-    }
-    .padding(.horizontal, Spacing.md)
-    .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardHeaderBackground)
   }
 
   private var tabSelector: some View {

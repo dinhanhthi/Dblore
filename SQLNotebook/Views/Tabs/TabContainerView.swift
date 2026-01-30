@@ -13,28 +13,53 @@ struct TabContainerView: View {
   /// Height of the tab bar - must match TitleBarTabsView.tabBarHeight
   private let tabBarHeight: CGFloat = 33
 
-  var body: some View {
-    VStack(spacing: 0) {
-      // Tab bar in titlebar area
-      TitleBarTabsView(tabManager: tabManager)
+  /// Get the active view model (if any tab is active)
+  private var activeViewModel: NotebookViewModel? {
+    guard let activeTabId = tabManager.activeTabId else { return nil }
+    return tabManager.viewModel(for: activeTabId)
+  }
 
-      // Content area
-      if let activeTabId = tabManager.activeTabId,
-        let viewModel = tabManager.viewModel(for: activeTabId)
-      {
-        TabContentView(
-          tabId: activeTabId,
-          tabManager: tabManager,
-          viewModel: viewModel
+  var body: some View {
+    GeometryReader { geometry in
+      HStack(spacing: 0) {
+        // Left sidebar (full height, covers traffic light area)
+        FullHeightLeftSidebar(
+          viewModel: activeViewModel,
+          tabBarHeight: tabBarHeight,
+          maxWidth: geometry.size.width * 0.35
         )
-      } else {
-        EmptyTabView(tabManager: tabManager)
+
+        // Main content area (tabs + content)
+        VStack(spacing: 0) {
+          // Tab bar in titlebar area
+          TitleBarTabsView(
+            tabManager: tabManager,
+            hasLeftSidebar: activeViewModel?.isLeftSidebarVisible ?? false,
+            toggleLeftSidebar: { activeViewModel?.toggleLeftSidebar() }
+          )
+
+          // Content area
+          if let activeTabId = tabManager.activeTabId,
+            let viewModel = tabManager.viewModel(for: activeTabId)
+          {
+            TabContentView(
+              tabId: activeTabId,
+              tabManager: tabManager,
+              viewModel: viewModel
+            )
+          } else {
+            EmptyTabView(tabManager: tabManager)
+          }
+        }
       }
     }
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
-    .background(TrafficLightPositioner(tabBarHeight: tabBarHeight))
+    .background(
+      TrafficLightPositioner(
+        tabBarHeight: tabBarHeight, hasSidebar: activeViewModel?.isLeftSidebarVisible ?? false)
+    )
     .confirmationDialog(
       "Save changes?",
       isPresented: $tabManager.showingCloseConfirmation,
@@ -353,19 +378,135 @@ struct DocumentTypeCard: View {
   .frame(width: 800, height: 500)
 }
 
+// MARK: - Full Height Left Sidebar
+
+/// Left sidebar that spans the full window height, including traffic light area
+struct FullHeightLeftSidebar: View {
+  let viewModel: NotebookViewModel?
+  let tabBarHeight: CGFloat
+  let maxWidth: CGFloat
+  @Bindable private var appSettings = AppSettings.shared
+
+  var body: some View {
+    if let viewModel = viewModel, viewModel.isLeftSidebarVisible {
+      let constrainedWidth = min(appSettings.leftSidebarWidth, maxWidth)
+
+      VStack(spacing: 0) {
+        // Top area - aligned with traffic lights and tab bar
+        SidebarTopArea(viewModel: viewModel, height: tabBarHeight)
+
+        // Main sidebar content
+        LeftSidebarView(viewModel: viewModel)
+      }
+      .frame(width: constrainedWidth)
+      .background(Color.cardBackground)
+      .transition(.move(edge: .leading))
+      .overlay(alignment: .trailing) {
+        ResizableSidebarDivider(
+          sidebarWidth: $appSettings.leftSidebarWidth,
+          minWidth: 320,
+          maxWidth: maxWidth,
+          side: .left
+        )
+        .offset(x: 4)
+      }
+      .overlay(alignment: .trailing) {
+        Divider()
+      }
+    }
+  }
+}
+
+/// Top area of the sidebar that aligns with traffic lights
+/// Contains all sidebar action buttons (schema visualizer, expand/collapse, refresh, close)
+struct SidebarTopArea: View {
+  let viewModel: NotebookViewModel
+  let height: CGFloat
+
+  /// Width reserved for traffic light buttons (close, minimize, zoom) + padding
+  private let trafficLightWidth: CGFloat = 80
+
+  var body: some View {
+    HStack(spacing: 0) {
+      // Left padding for traffic light buttons
+      Color.clear
+        .frame(width: trafficLightWidth)
+
+      Spacer()
+
+      // Action buttons (toggle sidebar moved to tab bar)
+      HStack(spacing: Spacing.sm) {
+        // Schema Visualizer button (only when connected and not loading)
+        if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
+          Button {
+            viewModel.toggleSchemaVisualizer()
+          } label: {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+              .font(.system(size: 12, weight: .medium))
+              .foregroundColor(.accent)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
+          .help(
+            viewModel.isSchemaVisualizerActive
+              ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+
+          // Expand/Collapse all button
+          Button {
+            viewModel.toggleExpandCollapseAll()
+          } label: {
+            Image(
+              systemName: viewModel.areAllEntitiesExpanded
+                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+            )
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle())
+          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
+        }
+
+        // Refresh button (only when connected)
+        if viewModel.connectionState.isConnected {
+          Button {
+            Task { @MainActor [viewModel] in
+              await viewModel.refreshDatabaseSchema()
+            }
+          } label: {
+            Image(systemName: "arrow.clockwise")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle())
+          .disabled(viewModel.isLoadingSchema)
+          .help("Refresh schema")
+        }
+      }
+      .padding(.trailing, Spacing.sm)
+    }
+    .frame(height: height)
+    .background(Color.cardBackground)
+    .background(WindowDragArea())
+    .overlay(alignment: .bottom) {
+      Divider()
+    }
+  }
+}
+
 // MARK: - Traffic Light Positioner
 
 /// Adjusts traffic light button positions to vertically center them with the tab bar
 struct TrafficLightPositioner: NSViewRepresentable {
   let tabBarHeight: CGFloat
+  let hasSidebar: Bool
 
   func makeNSView(context: Context) -> NSView {
-    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight)
+    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight, hasSidebar: hasSidebar)
     return view
   }
 
   func updateNSView(_ nsView: NSView, context: Context) {
     if let adjuster = nsView as? TrafficLightAdjusterView {
+      adjuster.hasSidebar = hasSidebar
       adjuster.adjustTrafficLights()
     }
   }
@@ -374,10 +515,12 @@ struct TrafficLightPositioner: NSViewRepresentable {
 /// Custom NSView that adjusts traffic light positions when added to window
 class TrafficLightAdjusterView: NSView {
   let tabBarHeight: CGFloat
+  var hasSidebar: Bool
   private var layoutObserver: NSObjectProtocol?
 
-  init(tabBarHeight: CGFloat) {
+  init(tabBarHeight: CGFloat, hasSidebar: Bool) {
     self.tabBarHeight = tabBarHeight
+    self.hasSidebar = hasSidebar
     super.init(frame: .zero)
   }
 

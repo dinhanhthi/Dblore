@@ -24,12 +24,10 @@ struct NotebookLayoutView<Content: View>: View {
         // Header and search panel
         HeaderWithSearchPanel(viewModel: viewModel)
 
-        // Main content area with sidebars
+        // Main content area with right sidebar only
+        // (Left sidebar is now rendered at TabContainerView level for full height)
         GeometryReader { geometry in
           HStack(spacing: 0) {
-            // Left sidebar (conditionally shown)
-            ResizableLeftSidebar(viewModel: viewModel, maxWidth: geometry.size.width * 0.35)
-
             // Main content (passed from parent) or Schema Visualizer
             // with search panel overlay
             ZStack(alignment: .top) {

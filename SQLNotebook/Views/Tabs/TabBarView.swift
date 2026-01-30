@@ -11,6 +11,9 @@ import SwiftUI
 struct TitleBarTabsView: View {
   @Bindable var tabManager: TabStateManager
 
+  /// Whether the left sidebar is visible (affects traffic light padding)
+  var hasLeftSidebar: Bool = false
+
   /// Space for traffic light buttons (close, minimize, zoom) + padding
   private let trafficLightWidth: CGFloat = 80
   private let tabBarHeight: CGFloat = 38
@@ -30,11 +33,28 @@ struct TitleBarTabsView: View {
     return currentIndex < tabManager.tabs.count - 1
   }
 
+  /// Action to toggle the left sidebar
+  var toggleLeftSidebar: (() -> Void)?
+
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
-      // Left padding for traffic light buttons
-      Color.clear
-        .frame(width: trafficLightWidth)
+      // Left padding for traffic light buttons (only when no sidebar)
+      if !hasLeftSidebar {
+        Color.clear
+          .frame(width: trafficLightWidth)
+      }
+
+      // Sidebar toggle button
+      Button {
+        toggleLeftSidebar?()
+      } label: {
+        Image(systemName: "sidebar.left")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(hasLeftSidebar ? .accent : .foregroundMuted)
+      }
+      .buttonStyle(SidebarHeaderButtonStyle(isActive: hasLeftSidebar))
+      .help(hasLeftSidebar ? "Hide sidebar" : "Show sidebar")
+      .padding(.leading, Spacing.sm)
 
       // Fixed navigation arrows
       HStack(spacing: 2) {
