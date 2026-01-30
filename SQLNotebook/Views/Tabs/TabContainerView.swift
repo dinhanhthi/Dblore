@@ -56,6 +56,7 @@ struct TabContainerView: View {
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
+    .animation(.easeInOut(duration: 0.2), value: activeViewModel?.isLeftSidebarVisible)
     .background(
       TrafficLightPositioner(
         tabBarHeight: tabBarHeight, hasSidebar: activeViewModel?.isLeftSidebarVisible ?? false)
