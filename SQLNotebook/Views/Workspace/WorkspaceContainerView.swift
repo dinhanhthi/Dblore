@@ -19,7 +19,7 @@ struct WorkspaceContainerView: View {
   var body: some View {
     GeometryReader { geometry in
       ZStack(alignment: .topLeading) {
-        // Main layout
+        // Main layout (z-index 0 - lowest)
         HStack(spacing: 0) {
           // Left sidebar (full height, covers traffic light area)
           WorkspaceLeftSidebar(
@@ -50,23 +50,43 @@ struct WorkspaceContainerView: View {
             }
           }
         }
+        .zIndex(0)
 
-        // Right sidebar overlay (floating, not pushing layout)
+        // Right sidebar overlay (floating, not pushing layout) - z-index 1
         if workspaceManager.isRightSidebarVisible {
           HStack {
             Spacer()
             RightSidebarOverlay(workspaceManager: workspaceManager)
           }
           .transition(.move(edge: .trailing))
+          .zIndex(1)
         }
 
-        // Fixed sidebar toggle button - always in the same position
-        // Positioned right after traffic light buttons
-        SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
-          workspaceManager.toggleLeftSidebar()
+        // Traffic light area background + toggle button (z-index 2 - highest)
+        // This covers sidebar buttons during animation
+        HStack(spacing: 0) {
+          // Background for traffic light area + toggle button
+          Color.cardBackground
+            .frame(
+              width: ComponentSize.trafficLightAndToggleWidth + Spacing.md,
+              height: ComponentSize.tabBarHeight
+            )
+            .overlay(alignment: .trailing) {
+              // Toggle button positioned at trailing edge of background
+              SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
+                workspaceManager.toggleLeftSidebar()
+              }
+              .padding(.trailing, Spacing.md)
+            }
+
+          Spacer()
         }
-        .padding(.leading, ComponentSize.trafficLightWidth)
-        .padding(.top, (ComponentSize.tabBarHeight - 16) / 2)
+        .frame(height: ComponentSize.tabBarHeight)
+        // Border bottom - overlay to match title bar's divider
+        .overlay(alignment: .bottom) {
+          Divider()
+        }
+        .zIndex(2)
       }
     }
     .frame(minWidth: 800, minHeight: 600)
@@ -257,9 +277,6 @@ struct WorkspaceTitleBarTabsView: View {
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.cardBackground)
     .background(WindowDragArea())
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
   }
 }
 
