@@ -1,12 +1,17 @@
 //
-//  LeftSidebarView.swift
+//  WorkspaceLeftSidebarContent.swift
 //  SQLNotebook
+//
+//  Left sidebar content that displays schema directly from WorkspaceManager
+//  Used when workspace is connected but no document is open
 //
 
 import SwiftUI
 
-struct LeftSidebarView: View {
-  @Bindable var viewModel: NotebookViewModel
+/// Left sidebar content that shows schema from WorkspaceManager
+/// Used when connected but no active tab exists
+struct WorkspaceLeftSidebarContent: View {
+  @Bindable var workspaceManager: WorkspaceManager
   @State private var selectedTab: SidebarTab = .public
 
   enum SidebarTab: String, CaseIterable {
@@ -16,25 +21,22 @@ struct LeftSidebarView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Tab selector (header buttons moved to SidebarTopArea in TabContainerView)
-      if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
+      // Tab selector (only when connected and not loading)
+      if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
         tabSelector
         Divider()
       }
 
       // Content
-      if !viewModel.connectionState.isConnected {
+      if !workspaceManager.connectionState.isConnected {
         emptyState
-      } else if viewModel.isLoadingSchema {
+      } else if workspaceManager.isLoadingSchema {
         loadingState
       } else {
         contentForSelectedTab
       }
     }
     .background(Color.cardBackground)
-    .overlay(alignment: .trailing) {
-      Divider()
-    }
   }
 
   private var tabSelector: some View {
@@ -114,19 +116,19 @@ struct LeftSidebarView: View {
         // Tables section
         EntitySection(
           title: "Tables",
-          count: viewModel.databaseTables.count,
+          count: workspaceManager.databaseTables.count,
           icon: "tablecells",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseTables) { table in
+          ForEach(workspaceManager.databaseTables) { table in
             TableRowView(
               table: table,
               isExpanded: table.isExpanded,
               onToggle: {
-                viewModel.toggleTableExpansion(tableId: table.id)
+                workspaceManager.toggleTableExpansion(tableId: table.id)
               },
-              onColumnClick: { columnName in
-                viewModel.insertTextIntoSelectedCell(columnName)
+              onColumnClick: { _ in
+                // No active cell to insert into when no document is open
               }
             )
           }
@@ -135,19 +137,19 @@ struct LeftSidebarView: View {
         // Views section
         EntitySection(
           title: "Views",
-          count: viewModel.databaseViews.count,
+          count: workspaceManager.databaseViews.count,
           icon: "eye",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseViews) { view in
+          ForEach(workspaceManager.databaseViews) { view in
             ViewRowView(
               view: view,
               isExpanded: view.isExpanded,
               onToggle: {
-                viewModel.toggleViewExpansion(viewId: view.id)
+                workspaceManager.toggleViewExpansion(viewId: view.id)
               },
-              onColumnClick: { columnName in
-                viewModel.insertTextIntoSelectedCell(columnName)
+              onColumnClick: { _ in
+                // No active cell to insert into when no document is open
               }
             )
           }
@@ -156,16 +158,16 @@ struct LeftSidebarView: View {
         // Functions section
         EntitySection(
           title: "Functions",
-          count: viewModel.databaseFunctions.count,
+          count: workspaceManager.databaseFunctions.count,
           icon: "function",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseFunctions) { function in
+          ForEach(workspaceManager.databaseFunctions) { function in
             FunctionRowView(
               function: function,
               isExpanded: function.isExpanded,
               onToggle: {
-                viewModel.toggleFunctionExpansion(functionId: function.id)
+                workspaceManager.toggleFunctionExpansion(functionId: function.id)
               }
             )
           }
@@ -174,16 +176,16 @@ struct LeftSidebarView: View {
         // Procedures section
         EntitySection(
           title: "Procedures",
-          count: viewModel.databaseProcedures.count,
+          count: workspaceManager.databaseProcedures.count,
           icon: "gearshape.2",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseProcedures) { procedure in
+          ForEach(workspaceManager.databaseProcedures) { procedure in
             ProcedureRowView(
               procedure: procedure,
               isExpanded: procedure.isExpanded,
               onToggle: {
-                viewModel.toggleProcedureExpansion(procedureId: procedure.id)
+                workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
               }
             )
           }
@@ -200,16 +202,16 @@ struct LeftSidebarView: View {
         // Users section
         EntitySection(
           title: "Users",
-          count: viewModel.databaseUsers.count,
+          count: workspaceManager.databaseUsers.count,
           icon: "person",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseUsers) { user in
+          ForEach(workspaceManager.databaseUsers) { user in
             UserRowView(
               user: user,
               isExpanded: user.isExpanded,
               onToggle: {
-                viewModel.toggleUserExpansion(userId: user.id)
+                workspaceManager.toggleUserExpansion(userId: user.id)
               }
             )
           }
@@ -218,16 +220,16 @@ struct LeftSidebarView: View {
         // Roles section
         EntitySection(
           title: "Roles",
-          count: viewModel.databaseRoles.count,
+          count: workspaceManager.databaseRoles.count,
           icon: "person.2",
           isExpanded: true
         ) {
-          ForEach(viewModel.databaseRoles) { role in
+          ForEach(workspaceManager.databaseRoles) { role in
             RoleRowView(
               role: role,
               isExpanded: role.isExpanded,
               onToggle: {
-                viewModel.toggleRoleExpansion(roleId: role.id)
+                workspaceManager.toggleRoleExpansion(roleId: role.id)
               }
             )
           }
@@ -239,18 +241,10 @@ struct LeftSidebarView: View {
   }
 
   private var emptyState: some View {
-    VStack(spacing: Spacing.md) {
-      Image(systemName: "cylinder")
-        .font(.system(size: 32))
-        .foregroundColor(.foregroundSubtle)
-
-      Text("Connect to a database to view schema")
-        .font(.caption)
-        .foregroundColor(.foregroundMuted)
-        .multilineTextAlignment(.center)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .padding(Spacing.xl)
+    SidebarEmptyState(
+      isConnected: false,
+      onConnect: { workspaceManager.showConnectionForm() }
+    )
   }
 
   private var loadingState: some View {
@@ -265,100 +259,4 @@ struct LeftSidebarView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
-}
-
-// MARK: - Preview
-
-#Preview("Empty State") {
-  let viewModel = NotebookViewModel()
-
-  return HStack {
-    LeftSidebarView(viewModel: viewModel)
-    Spacer()
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Loading State") {
-  let viewModel = NotebookViewModel()
-  viewModel.connectionState = .connected
-  viewModel.isLoadingSchema = true
-
-  return HStack {
-    LeftSidebarView(viewModel: viewModel)
-    Spacer()
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("With Schema") {
-  let viewModel = NotebookViewModel()
-  viewModel.connectionState = .connected
-
-  // Create sample tables
-  let usersTable = DatabaseTable(
-    schema: "public",
-    name: "users",
-    columns: [
-      DatabaseColumn(name: "id", type: "integer", isNullable: false, isPrimaryKey: true),
-      DatabaseColumn(name: "email", type: "varchar", isNullable: false),
-      DatabaseColumn(name: "name", type: "varchar", isNullable: true),
-    ],
-    isExpanded: true,
-    rowCount: 1234
-  )
-
-  let postsTable = DatabaseTable(
-    schema: "public",
-    name: "posts",
-    columns: [
-      DatabaseColumn(name: "id", type: "bigserial", isNullable: false, isPrimaryKey: true),
-      DatabaseColumn(name: "user_id", type: "integer", isNullable: false),
-      DatabaseColumn(name: "title", type: "varchar", isNullable: false),
-    ],
-    isExpanded: false,
-    rowCount: 5678
-  )
-
-  viewModel.databaseTables = [usersTable, postsTable]
-
-  // Create sample views
-  viewModel.databaseViews = [
-    DatabaseView(schema: "public", name: "active_users"),
-    DatabaseView(schema: "public", name: "recent_posts"),
-  ]
-
-  // Create sample functions
-  viewModel.databaseFunctions = [
-    DatabaseFunction(
-      schema: "public", name: "calculate_age", returnType: "integer", arguments: "birth_date date"
-    ),
-    DatabaseFunction(
-      schema: "public", name: "get_user_posts", returnType: "SETOF posts", arguments: "user_id int"
-    ),
-  ]
-
-  // Create sample users
-  viewModel.databaseUsers = [
-    DatabaseUser(name: "postgres", canLogin: true, isSuperuser: true),
-    DatabaseUser(name: "app_user", canLogin: true),
-  ]
-
-  // Create sample roles
-  viewModel.databaseRoles = [
-    DatabaseRole(name: "read_only", members: ["app_user"]),
-    DatabaseRole(name: "admin", canCreateDB: true, members: ["postgres"]),
-  ]
-
-  return HStack {
-    LeftSidebarView(viewModel: viewModel)
-    Spacer()
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
 }

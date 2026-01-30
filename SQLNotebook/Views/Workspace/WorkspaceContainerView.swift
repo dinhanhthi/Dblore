@@ -130,32 +130,28 @@ struct WorkspaceContainerView: View {
 // MARK: - Left Sidebar for Workspace
 
 /// Left sidebar that uses workspace's shared connection state
+/// Reuses shared components from Views/LeftSidebar/
 struct WorkspaceLeftSidebar: View {
   @Bindable var workspaceManager: WorkspaceManager
   let tabBarHeight: CGFloat
   let maxWidth: CGFloat
 
-  /// Get active viewModel to pass to LeftSidebarView
-  private var activeViewModel: NotebookViewModel? {
-    guard let activeTabId = workspaceManager.activeTabId else { return nil }
-    return workspaceManager.viewModel(for: activeTabId)
+  /// Effective sidebar width from workspace settings or app settings
+  private var effectiveSidebarWidth: CGFloat {
+    workspaceManager.workspace.settings.leftSidebarWidth
+      ?? CGFloat(AppSettings.shared.leftSidebarWidth)
   }
 
   var body: some View {
     if workspaceManager.isLeftSidebarVisible {
-      let constrainedWidth = min(workspaceManager.settingsResolver.leftSidebarWidth, maxWidth)
+      let constrainedWidth = min(effectiveSidebarWidth, maxWidth)
 
       VStack(spacing: 0) {
-        // Top area - aligned with traffic lights and tab bar
+        // Top area with workspace controls
         WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
 
-        // Main sidebar content - reuse LeftSidebarView
-        if let viewModel = activeViewModel {
-          LeftSidebarView(viewModel: viewModel)
-        } else {
-          // No active tab - show empty state
-          WorkspaceEmptySidebarView(workspaceManager: workspaceManager)
-        }
+        // Main sidebar content - always use workspace schema
+        WorkspaceLeftSidebarContent(workspaceManager: workspaceManager)
       }
       .frame(width: constrainedWidth)
       .background(Color.cardBackground)
@@ -163,7 +159,7 @@ struct WorkspaceLeftSidebar: View {
       .overlay(alignment: .trailing) {
         ResizableSidebarDivider(
           sidebarWidth: Binding(
-            get: { workspaceManager.settingsResolver.leftSidebarWidth },
+            get: { effectiveSidebarWidth },
             set: { newValue in
               workspaceManager.workspace.settings.leftSidebarWidth = newValue
               workspaceManager.isDirty = true
@@ -178,98 +174,6 @@ struct WorkspaceLeftSidebar: View {
       .overlay(alignment: .trailing) {
         Divider()
       }
-    }
-  }
-}
-
-/// Empty sidebar view when no tab is active
-struct WorkspaceEmptySidebarView: View {
-  @Bindable var workspaceManager: WorkspaceManager
-
-  var body: some View {
-    VStack(spacing: Spacing.md) {
-      if workspaceManager.connectionState == .disconnected {
-        Image(systemName: "server.rack")
-          .font(.largeTitle)
-          .foregroundColor(.foregroundSubtle)
-
-        Text("Not Connected")
-          .font(.headline)
-          .foregroundColor(.foregroundMuted)
-
-        Button("Connect") {
-          workspaceManager.showConnectionForm()
-        }
-        .buttonStyle(.bordered)
-      } else {
-        Image(systemName: "doc.text")
-          .font(.largeTitle)
-          .foregroundColor(.foregroundSubtle)
-
-        Text("No document open")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.cardBackground)
-  }
-}
-
-/// Top area of the workspace sidebar
-struct WorkspaceSidebarTopArea: View {
-  @Bindable var workspaceManager: WorkspaceManager
-  let height: CGFloat
-
-  var body: some View {
-    HStack(alignment: .center, spacing: 0) {
-      Color.clear
-        .frame(width: ComponentSize.trafficLightAndToggleWidth)
-
-      Spacer()
-
-      HStack(spacing: Spacing.sm) {
-        if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
-          // Expand/Collapse all button
-          Button {
-            workspaceManager.toggleExpandCollapseAll()
-          } label: {
-            Image(
-              systemName: workspaceManager.areAllEntitiesExpanded
-                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-            )
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .help(workspaceManager.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
-        }
-
-        // Refresh button
-        if workspaceManager.connectionState.isConnected {
-          Button {
-            Task {
-              await workspaceManager.refreshDatabaseSchema()
-            }
-          } label: {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .semibold))
-              .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .disabled(workspaceManager.isLoadingSchema)
-          .help("Refresh schema")
-        }
-      }
-      .padding(.trailing, Spacing.sm)
-    }
-    .frame(height: height)
-    .background(Color.cardBackground)
-    .background(WindowDragArea())
-    .overlay(alignment: .bottom) {
-      Divider()
     }
   }
 }

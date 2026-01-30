@@ -16,7 +16,7 @@ extension ConnectionFormContent {
     // Connection Name (required)
     FormField(label: "Connection Name") {
       TextField(
-        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
+        "e.g., Production DB, Development Server", text: $connectionConfig.name
       )
       .textFieldStyle(.plain)
       .inputStyle()
@@ -25,14 +25,14 @@ extension ConnectionFormContent {
     // Host and Port
     HStack(spacing: Spacing.md) {
       FormField(label: "Host") {
-        TextField("localhost", text: $viewModel.editingConnectionConfig.host)
+        TextField("localhost", text: $connectionConfig.host)
           .textFieldStyle(.plain)
           .inputStyle()
       }
 
       FormField(label: "Port") {
         TextField(
-          "5432", value: $viewModel.editingConnectionConfig.port, format: .number.grouping(.never)
+          "5432", value: $connectionConfig.port, format: .number.grouping(.never)
         )
         .textFieldStyle(.plain)
         .inputStyle()
@@ -42,14 +42,14 @@ extension ConnectionFormContent {
 
     // Database
     FormField(label: "Database") {
-      TextField("database_name", text: $viewModel.editingConnectionConfig.database)
+      TextField("database_name", text: $connectionConfig.database)
         .textFieldStyle(.plain)
         .inputStyle()
     }
 
     // Username
     FormField(label: "Username") {
-      TextField("username", text: $viewModel.editingConnectionConfig.username)
+      TextField("username", text: $connectionConfig.username)
         .textFieldStyle(.plain)
         .inputStyle()
     }
@@ -58,10 +58,10 @@ extension ConnectionFormContent {
     FormField(label: "Password") {
       HStack(spacing: 0) {
         if getIsPasswordVisible() {
-          TextField("password", text: $viewModel.editingConnectionConfig.password)
+          TextField("password", text: $connectionConfig.password)
             .textFieldStyle(.plain)
         } else {
-          SecureField("password", text: $viewModel.editingConnectionConfig.password)
+          SecureField("password", text: $connectionConfig.password)
             .textFieldStyle(.plain)
         }
 
@@ -85,7 +85,7 @@ extension ConnectionFormContent {
 
     // SSL Mode
     FormField(label: "SSL Mode") {
-      Picker(selection: $viewModel.editingConnectionConfig.sslMode) {
+      Picker(selection: $connectionConfig.sslMode) {
         ForEach(SSLMode.allCases, id: \.self) { mode in
           Text(mode.displayName).tag(mode)
         }
@@ -99,7 +99,7 @@ extension ConnectionFormContent {
     // Timeout
     FormField(label: "Timeout (seconds)") {
       TextField(
-        "30", value: $viewModel.editingConnectionConfig.timeoutSeconds,
+        "30", value: $connectionConfig.timeoutSeconds,
         format: .number.grouping(.never)
       )
       .textFieldStyle(.plain)
@@ -116,7 +116,7 @@ extension ConnectionFormContent {
     // Connection Name (required)
     FormField(label: "Connection Name") {
       TextField(
-        "e.g., Production DB, Development Server", text: $viewModel.editingConnectionConfig.name
+        "e.g., Production DB, Development Server", text: $connectionConfig.name
       )
       .textFieldStyle(.plain)
       .inputStyle()
@@ -166,7 +166,7 @@ extension ConnectionFormContent {
       .frame(maxWidth: .infinity, alignment: .leading)
       .onChange(of: connectionStringSSLModeBinding.wrappedValue) { _, newMode in
         // Update the config when SSL mode changes
-        viewModel.editingConnectionConfig.sslMode = newMode
+        connectionConfig.sslMode = newMode
         clearTestResult()
       }
     }
@@ -190,7 +190,7 @@ extension ConnectionFormContent {
 
       Spacer()
 
-      Toggle("", isOn: $viewModel.editingConnectionConfig.rememberConnection)
+      Toggle("", isOn: $connectionConfig.rememberConnection)
         .labelsHidden()
         .toggleStyle(.switch)
         .tint(.accent)
@@ -202,14 +202,14 @@ extension ConnectionFormContent {
       VStack(alignment: .leading, spacing: 2) {
         Text("Protection level")
           .font(.body)
-        Text(viewModel.editingConnectionConfig.protectionLevel.description)
+        Text(connectionConfig.protectionLevel.description)
           .font(.caption)
           .foregroundColor(.foregroundMuted)
       }
 
       Spacer()
 
-      Picker("", selection: $viewModel.editingConnectionConfig.protectionLevel) {
+      Picker("", selection: $connectionConfig.protectionLevel) {
         ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
           Label(level.displayName, systemImage: level.iconName).tag(level)
         }
@@ -224,7 +224,7 @@ extension ConnectionFormContent {
       VStack(alignment: .leading, spacing: 2) {
         Text("Security level")
           .font(.body)
-        if let mode = viewModel.editingConnectionConfig.safeMode {
+        if let mode = connectionConfig.safeMode {
           Text(mode.shortDescription)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
@@ -237,7 +237,7 @@ extension ConnectionFormContent {
 
       Spacer()
 
-      Picker("", selection: $viewModel.editingConnectionConfig.safeMode) {
+      Picker("", selection: $connectionConfig.safeMode) {
         Text("Use Global").tag(SafeMode?.none)
         ForEach(SafeMode.allCases, id: \.self) { mode in
           Text(mode.displayName).tag(Optional(mode))

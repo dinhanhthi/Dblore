@@ -7,69 +7,43 @@ import AppKit
 import SwiftUI
 
 /// Main container view that holds the tab bar and active tab content
+/// Note: This is legacy code. App now uses WorkspaceContainerView.
 struct TabContainerView: View {
   @Bindable var tabManager: TabStateManager
 
-  /// Get the active view model (if any tab is active)
-  private var activeViewModel: NotebookViewModel? {
-    guard let activeTabId = tabManager.activeTabId else { return nil }
-    return tabManager.viewModel(for: activeTabId)
-  }
-
   var body: some View {
-    GeometryReader { geometry in
+    GeometryReader { _ in
       ZStack(alignment: .topLeading) {
-        // Main layout
-        HStack(spacing: 0) {
-          // Left sidebar (full height, covers traffic light area)
-          FullHeightLeftSidebar(
-            viewModel: activeViewModel,
-            tabBarHeight: ComponentSize.tabBarHeight,
-            maxWidth: geometry.size.width * 0.35
+        // Main layout - no sidebar (sidebar is now workspace-level only)
+        VStack(spacing: 0) {
+          // Tab bar in titlebar area
+          TitleBarTabsView(
+            tabManager: tabManager,
+            hasLeftSidebar: false
           )
 
-          // Main content area (tabs + content)
-          VStack(spacing: 0) {
-            // Tab bar in titlebar area
-            TitleBarTabsView(
+          // Content area
+          if let activeTabId = tabManager.activeTabId,
+            let viewModel = tabManager.viewModel(for: activeTabId)
+          {
+            TabContentView(
+              tabId: activeTabId,
               tabManager: tabManager,
-              hasLeftSidebar: activeViewModel?.isLeftSidebarVisible ?? false
+              viewModel: viewModel
             )
-
-            // Content area
-            if let activeTabId = tabManager.activeTabId,
-              let viewModel = tabManager.viewModel(for: activeTabId)
-            {
-              TabContentView(
-                tabId: activeTabId,
-                tabManager: tabManager,
-                viewModel: viewModel
-              )
-            } else {
-              EmptyTabView(tabManager: tabManager)
-            }
+          } else {
+            EmptyTabView(tabManager: tabManager)
           }
-        }
-
-        // Fixed sidebar toggle button - always in the same position
-        // Positioned right after traffic light buttons
-        if activeViewModel != nil {
-          SidebarToggleButton(isSidebarVisible: activeViewModel?.isLeftSidebarVisible ?? false) {
-            activeViewModel?.toggleLeftSidebar()
-          }
-          .padding(.leading, ComponentSize.trafficLightWidth)
-          .padding(.top, (ComponentSize.tabBarHeight - 16) / 2)  // Center vertically in tab bar
         }
       }
     }
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
-    .animation(.easeInOut(duration: 0.2), value: activeViewModel?.isLeftSidebarVisible)
     .background(
       TrafficLightPositioner(
         tabBarHeight: ComponentSize.tabBarHeight,
-        hasSidebar: activeViewModel?.isLeftSidebarVisible ?? false
+        hasSidebar: false
       )
     )
     .confirmationDialog(
@@ -388,122 +362,6 @@ struct DocumentTypeCard: View {
     overrideRecentFiles: []
   )
   .frame(width: 800, height: 500)
-}
-
-// MARK: - Full Height Left Sidebar
-
-/// Left sidebar that spans the full window height, including traffic light area
-struct FullHeightLeftSidebar: View {
-  let viewModel: NotebookViewModel?
-  let tabBarHeight: CGFloat
-  let maxWidth: CGFloat
-  @Bindable private var appSettings = AppSettings.shared
-
-  var body: some View {
-    if let viewModel = viewModel, viewModel.isLeftSidebarVisible {
-      let constrainedWidth = min(appSettings.leftSidebarWidth, maxWidth)
-
-      VStack(spacing: 0) {
-        // Top area - aligned with traffic lights and tab bar
-        SidebarTopArea(viewModel: viewModel, height: tabBarHeight)
-
-        // Main sidebar content
-        LeftSidebarView(viewModel: viewModel)
-      }
-      .frame(width: constrainedWidth)
-      .background(Color.cardBackground)
-      .transition(.move(edge: .leading))
-      .overlay(alignment: .trailing) {
-        ResizableSidebarDivider(
-          sidebarWidth: $appSettings.leftSidebarWidth,
-          minWidth: 320,
-          maxWidth: maxWidth,
-          side: .left
-        )
-        .offset(x: 4)
-      }
-      .overlay(alignment: .trailing) {
-        Divider()
-      }
-    }
-  }
-}
-
-/// Top area of the sidebar that aligns with traffic lights
-/// Contains action buttons (schema visualizer, expand/collapse, refresh)
-/// Note: Sidebar toggle button is rendered in TabContainerView at fixed position
-struct SidebarTopArea: View {
-  let viewModel: NotebookViewModel
-  let height: CGFloat
-
-  var body: some View {
-    HStack(alignment: .center, spacing: 0) {
-      // Left area: space for traffic light buttons + sidebar toggle button
-      // The sidebar toggle button is rendered in TabContainerView at fixed position
-      Color.clear
-        .frame(width: ComponentSize.trafficLightAndToggleWidth)
-
-      Spacer()
-
-      // Action buttons (right side)
-      HStack(spacing: Spacing.sm) {
-        // Schema Visualizer button (only when connected and not loading)
-        if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
-          Button {
-            viewModel.toggleSchemaVisualizer()
-          } label: {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-              .font(.system(size: 12, weight: .medium))
-              .foregroundColor(.accent)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
-          .blockDoubleClickZoom()
-          .help(
-            viewModel.isSchemaVisualizerActive
-              ? "Close Schema Visualizer" : "Visualize Schema Relationships")
-
-          // Expand/Collapse all button
-          Button {
-            viewModel.toggleExpandCollapseAll()
-          } label: {
-            Image(
-              systemName: viewModel.areAllEntitiesExpanded
-                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-            )
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
-        }
-
-        // Refresh button (only when connected)
-        if viewModel.connectionState.isConnected {
-          Button {
-            Task { @MainActor [viewModel] in
-              await viewModel.refreshDatabaseSchema()
-            }
-          } label: {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .semibold))
-              .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .disabled(viewModel.isLoadingSchema)
-          .help("Refresh schema")
-        }
-      }
-      .padding(.trailing, Spacing.sm)
-    }
-    .frame(height: height)
-    .background(Color.cardBackground)
-    .background(WindowDragArea())
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
-  }
 }
 
 // MARK: - Traffic Light Positioner

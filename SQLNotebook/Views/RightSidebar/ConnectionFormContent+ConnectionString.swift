@@ -12,7 +12,7 @@ import SwiftUI
 extension ConnectionFormContent {
 
   func generateConnectionString() -> String {
-    let config = viewModel.editingConnectionConfig
+    let config = connectionConfig
     var components = URLComponents()
     components.scheme = "postgresql"
     components.user = config.username
@@ -82,12 +82,12 @@ extension ConnectionFormContent {
     }
 
     // Update the config
-    viewModel.editingConnectionConfig.host = host
-    viewModel.editingConnectionConfig.port = port
-    viewModel.editingConnectionConfig.database = database
-    viewModel.editingConnectionConfig.username = username
-    viewModel.editingConnectionConfig.password = password
-    viewModel.editingConnectionConfig.sslMode = sslMode
+    connectionConfig.host = host
+    connectionConfig.port = port
+    connectionConfig.database = database
+    connectionConfig.username = username
+    connectionConfig.password = password
+    connectionConfig.sslMode = sslMode
 
     // Sync the state for the SSL mode picker
     updateConnectionStringSSLMode(sslMode)

@@ -171,7 +171,21 @@ struct RightSidebarView: View {
     case .connectionDetails:
       ConnectionInfoContent(viewModel: viewModel)
     case .connectionForm:
-      ConnectionFormContent(viewModel: viewModel)
+      ConnectionFormContent(
+        connectionConfig: Binding(
+          get: { viewModel.editingConnectionConfig },
+          set: { viewModel.editingConnectionConfig = $0 }
+        ),
+        onTestConnection: { _ in
+          try await viewModel.testConnection()
+        },
+        onConnect: { _ in
+          try await viewModel.connect()
+        },
+        onConnectionSuccess: {
+          viewModel.closeSidebar()
+        }
+      )
     case .settings:
       SettingsContent(viewModel: viewModel)
     }

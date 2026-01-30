@@ -114,7 +114,7 @@ extension ConnectionFormContent {
 
   func loadConnection(_ entry: ConnectionHistoryEntry) {
     setSelectedHistoryId(entry.id)
-    viewModel.editingConnectionConfig = entry.config
+    connectionConfig = entry.config
 
     if getInputMode() == .connectionString {
       setConnectionString(generateConnectionString())
@@ -130,7 +130,7 @@ extension ConnectionFormContent {
 
     if getSelectedHistoryId() == id {
       setSelectedHistoryId(nil)
-      viewModel.editingConnectionConfig = ConnectionConfig()
+      connectionConfig = ConnectionConfig()
     }
   }
 
@@ -138,6 +138,6 @@ extension ConnectionFormContent {
     SessionManager.clearAllHistory()
     loadConnectionHistory()
     setSelectedHistoryId(nil)
-    viewModel.editingConnectionConfig = ConnectionConfig()
+    connectionConfig = ConnectionConfig()
   }
 }

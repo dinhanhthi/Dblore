@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Workspace Persistence
@@ -124,6 +125,7 @@ extension WorkspaceManager {
     isLoadingSchema = true
 
     do {
+      // Fetch basic schema info in parallel
       async let tablesTask = connectionManager.fetchTables()
       async let viewsTask = connectionManager.fetchViews()
       async let functionsTask = connectionManager.fetchFunctions()
@@ -132,9 +134,46 @@ extension WorkspaceManager {
       async let rolesTask = connectionManager.fetchRoles()
       async let foreignKeysTask = connectionManager.fetchForeignKeys()
 
-      let (tables, views, functions, procedures, users, roles, foreignKeys) = try await (
+      var (tables, views, functions, procedures, users, roles, foreignKeys) = try await (
         tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask, foreignKeysTask
       )
+
+      // Fetch columns and row count for each table
+      for index in tables.indices {
+        let table = tables[index]
+        do {
+          let columns = try await connectionManager.fetchColumns(
+            tableSchema: table.schema,
+            tableName: table.name
+          )
+          tables[index].columns = columns
+
+          // Fetch row count
+          let rowCount = try await connectionManager.fetchRowCount(
+            tableSchema: table.schema,
+            tableName: table.name
+          )
+          tables[index].rowCount = rowCount
+        } catch {
+          await AppLogger.shared.warning(
+            "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
+        }
+      }
+
+      // Fetch columns for each view
+      for index in views.indices {
+        let view = views[index]
+        do {
+          let columns = try await connectionManager.fetchColumns(
+            tableSchema: view.schema,
+            tableName: view.name
+          )
+          views[index].columns = columns
+        } catch {
+          await AppLogger.shared.warning(
+            "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema")
+        }
+      }
 
       databaseTables = tables
       databaseViews = views
@@ -168,7 +207,85 @@ extension WorkspaceManager {
 
   /// Toggle expand/collapse all entities
   func toggleExpandCollapseAll() {
-    areAllEntitiesExpanded.toggle()
+    withAnimation(.snappy(duration: 0.25)) {
+      areAllEntitiesExpanded.toggle()
+
+      // Update all entities
+      for i in databaseTables.indices {
+        databaseTables[i].isExpanded = areAllEntitiesExpanded
+      }
+      for i in databaseViews.indices {
+        databaseViews[i].isExpanded = areAllEntitiesExpanded
+      }
+      for i in databaseFunctions.indices {
+        databaseFunctions[i].isExpanded = areAllEntitiesExpanded
+      }
+      for i in databaseProcedures.indices {
+        databaseProcedures[i].isExpanded = areAllEntitiesExpanded
+      }
+      for i in databaseUsers.indices {
+        databaseUsers[i].isExpanded = areAllEntitiesExpanded
+      }
+      for i in databaseRoles.indices {
+        databaseRoles[i].isExpanded = areAllEntitiesExpanded
+      }
+    }
+  }
+
+  // MARK: - Entity Expansion Toggle Methods
+
+  /// Toggle table expansion state
+  func toggleTableExpansion(tableId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseTables.firstIndex(where: { $0.id == tableId }) {
+        databaseTables[index].isExpanded.toggle()
+      }
+    }
+  }
+
+  /// Toggle view expansion state
+  func toggleViewExpansion(viewId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseViews.firstIndex(where: { $0.id == viewId }) {
+        databaseViews[index].isExpanded.toggle()
+      }
+    }
+  }
+
+  /// Toggle function expansion state
+  func toggleFunctionExpansion(functionId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseFunctions.firstIndex(where: { $0.id == functionId }) {
+        databaseFunctions[index].isExpanded.toggle()
+      }
+    }
+  }
+
+  /// Toggle procedure expansion state
+  func toggleProcedureExpansion(procedureId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseProcedures.firstIndex(where: { $0.id == procedureId }) {
+        databaseProcedures[index].isExpanded.toggle()
+      }
+    }
+  }
+
+  /// Toggle user expansion state
+  func toggleUserExpansion(userId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseUsers.firstIndex(where: { $0.id == userId }) {
+        databaseUsers[index].isExpanded.toggle()
+      }
+    }
+  }
+
+  /// Toggle role expansion state
+  func toggleRoleExpansion(roleId: UUID) {
+    withAnimation(.snappy(duration: 0.2)) {
+      if let index = databaseRoles.firstIndex(where: { $0.id == roleId }) {
+        databaseRoles[index].isExpanded.toggle()
+      }
+    }
   }
 
   /// Show right sidebar with content

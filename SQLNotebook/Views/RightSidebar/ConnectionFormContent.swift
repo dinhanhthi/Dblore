@@ -10,7 +10,17 @@ import SwiftUI
 // MARK: - Connection Form Content
 
 struct ConnectionFormContent: View {
-  @Bindable var viewModel: NotebookViewModel
+  /// Connection configuration binding - the single source of truth
+  @Binding var connectionConfig: ConnectionConfig
+
+  /// Callback to test connection - returns true if successful
+  var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
+
+  /// Callback to connect - called when user clicks Connect button
+  var onConnect: ((ConnectionConfig) async throws -> Void)?
+
+  /// Callback when connection is successful (optional, for closing sidebar etc.)
+  var onConnectionSuccess: (() -> Void)?
 
   @State private var isTesting = false
   @State private var testResult: TestResult?
@@ -39,6 +49,38 @@ struct ConnectionFormContent: View {
     case connectionString = "Connection String"
   }
 
+  // MARK: - Convenience Initializers
+
+  /// Initialize with WorkspaceManager
+  init(workspaceManager: WorkspaceManager) {
+    self._connectionConfig = Binding(
+      get: { workspaceManager.editingConnectionConfig },
+      set: { workspaceManager.editingConnectionConfig = $0 }
+    )
+    self.onTestConnection = { config in
+      try await workspaceManager.testConnection()
+    }
+    self.onConnect = { config in
+      try await workspaceManager.connect(config: config)
+    }
+    self.onConnectionSuccess = {
+      workspaceManager.hideRightSidebar()
+    }
+  }
+
+  /// Initialize with binding and callbacks (most flexible)
+  init(
+    connectionConfig: Binding<ConnectionConfig>,
+    onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
+    onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
+    onConnectionSuccess: (() -> Void)? = nil
+  ) {
+    self._connectionConfig = connectionConfig
+    self.onTestConnection = onTestConnection
+    self.onConnect = onConnect
+    self.onConnectionSuccess = onConnectionSuccess
+  }
+
   // MARK: - Body
 
   var body: some View {
@@ -58,7 +100,7 @@ struct ConnectionFormContent: View {
               testResult = nil
               if newMode == .connectionString {
                 // Generate connection string from current config only if we have valid data
-                let config = viewModel.editingConnectionConfig
+                let config = connectionConfig
                 if !config.username.isEmpty && !config.database.isEmpty {
                   connectionString = generateConnectionString()
                 } else {
@@ -66,7 +108,7 @@ struct ConnectionFormContent: View {
                   connectionString = ""
                 }
                 // Sync SSL mode state with current config
-                connectionStringSSLMode = viewModel.editingConnectionConfig.sslMode
+                connectionStringSSLMode = connectionConfig.sslMode
               }
             }
 
@@ -218,9 +260,9 @@ struct ConnectionFormContent: View {
     if inputMode == .connectionString {
       return !connectionString.isEmpty
     }
-    return !viewModel.editingConnectionConfig.host.isEmpty
-      && !viewModel.editingConnectionConfig.database.isEmpty
-      && !viewModel.editingConnectionConfig.username.isEmpty
+    return !connectionConfig.host.isEmpty
+      && !connectionConfig.database.isEmpty
+      && !connectionConfig.username.isEmpty
   }
 
   // MARK: - Tab Picker
@@ -334,18 +376,23 @@ struct ConnectionFormContent: View {
 
   private func testConnection() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
       testResult = .failure("Connection name is required")
+      return
+    }
+
+    guard let onTest = onTestConnection else {
+      testResult = .failure("Test connection not available")
       return
     }
 
     isTesting = true
     testResult = nil
 
-    Task { @MainActor [viewModel] in
+    Task { @MainActor in
       do {
-        let success = try await viewModel.testConnection()
+        let success = try await onTest(connectionConfig)
         isTesting = false
         testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
@@ -357,19 +404,24 @@ struct ConnectionFormContent: View {
 
   private func connect() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
       testResult = .failure("Connection name is required")
       return
     }
 
+    guard let onConnectCallback = onConnect else {
+      testResult = .failure("Connect not available")
+      return
+    }
+
     isConnecting = true
 
-    Task { @MainActor [viewModel] in
+    Task { @MainActor in
       do {
-        try await viewModel.connect()
+        try await onConnectCallback(connectionConfig)
         isConnecting = false
-        viewModel.closeSidebar()
+        onConnectionSuccess?()
       } catch {
         isConnecting = false
         testResult = .failure(error.localizedDescription)

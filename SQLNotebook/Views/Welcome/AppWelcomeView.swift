@@ -11,51 +11,75 @@ import SwiftUI
 struct AppWelcomeView: View {
   @Bindable var recentManager = RecentManager.shared
 
+  // State for connection form sidebar (before workspace is created)
+  @State private var isShowingConnectionSidebar = false
+  @State private var editingConnectionConfig = ConnectionConfig()
+
   var body: some View {
-    GeometryReader { geometry in
-      ScrollView {
-        VStack(spacing: Spacing.xl) {
-          // Header
-          WelcomeHeader()
+    ZStack {
+      // Main content
+      GeometryReader { geometry in
+        ScrollView {
+          VStack(spacing: Spacing.xl) {
+            // Header
+            WelcomeHeader()
 
-          // Two columns for recent items
-          if recentManager.hasRecentItems {
-            HStack(alignment: .top, spacing: Spacing.xl) {
-              // Recent Workspaces column
-              if !recentManager.recentWorkspaces.isEmpty {
-                RecentWorkspacesColumn(
-                  workspaces: recentManager.recentWorkspaces,
-                  onSelect: openWorkspace,
-                  onNew: createNewWorkspace,
-                  fullWidth: recentManager.hasOnlyWorkspaces
-                )
-              }
+            // Two columns for recent items
+            if recentManager.hasRecentItems {
+              HStack(alignment: .top, spacing: Spacing.xl) {
+                // Recent Workspaces column
+                if !recentManager.recentWorkspaces.isEmpty {
+                  RecentWorkspacesColumn(
+                    workspaces: recentManager.recentWorkspaces,
+                    onSelect: openWorkspace,
+                    onNew: createNewWorkspace,
+                    fullWidth: recentManager.hasOnlyWorkspaces
+                  )
+                }
 
-              // Recent Connections column
-              if !recentManager.recentConnections.isEmpty {
-                RecentConnectionsColumn(
-                  connections: recentManager.recentConnections,
-                  onSelect: openConnectionAsWorkspace,
-                  onNew: connectToNewDatabase,
-                  fullWidth: recentManager.hasOnlyConnections
-                )
+                // Recent Connections column
+                if !recentManager.recentConnections.isEmpty {
+                  RecentConnectionsColumn(
+                    connections: recentManager.recentConnections,
+                    onSelect: openConnectionAsWorkspace,
+                    onNew: showConnectionForm,
+                    fullWidth: recentManager.hasOnlyConnections
+                  )
+                }
               }
+              .frame(maxWidth: 900)
+            } else {
+              // No recent items - show action buttons
+              EmptyWelcomeActions(
+                onNewWorkspace: createNewWorkspace,
+                onConnect: showConnectionForm
+              )
             }
-            .frame(maxWidth: 900)
-          } else {
-            // No recent items - show action buttons
-            EmptyWelcomeActions(
-              onNewWorkspace: createNewWorkspace,
-              onConnect: connectToNewDatabase
-            )
           }
+          .padding(.vertical, Spacing.xxl)
+          .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
         }
-        .padding(.vertical, Spacing.xxl)
-        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.appBackground)
+
+      // Connection sidebar overlay
+      if isShowingConnectionSidebar {
+        HStack(spacing: 0) {
+          Spacer()
+          AppWelcomeConnectionSidebar(
+            connectionConfig: $editingConnectionConfig,
+            onClose: { isShowingConnectionSidebar = false },
+            onConnectSuccess: { config in
+              // Create workspace and connect
+              createWorkspaceWithConnection(config)
+            }
+          )
+          .transition(.move(edge: .trailing))
+        }
+        .animation(.easeInOut(duration: 0.2), value: isShowingConnectionSidebar)
       }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.appBackground)
   }
 
   // MARK: - Actions
@@ -88,10 +112,90 @@ struct AppWelcomeView: View {
     }
   }
 
-  private func connectToNewDatabase() {
-    // Create new workspace and show connection form
-    let manager = WorkspaceWindowManager.shared.newWorkspace()
-    manager.showConnectionForm()
+  private func showConnectionForm() {
+    // Reset config and show sidebar
+    editingConnectionConfig = ConnectionConfig()
+    isShowingConnectionSidebar = true
+  }
+
+  private func createWorkspaceWithConnection(_ config: ConnectionConfig) {
+    // Close sidebar first
+    isShowingConnectionSidebar = false
+
+    // Create workspace with connection and auto-connect
+    let manager = WorkspaceWindowManager.shared.newWorkspace(connection: config)
+    Task {
+      do {
+        try await manager.connect(config: config)
+      } catch {
+        await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+      }
+    }
+  }
+}
+
+// MARK: - App Welcome Connection Sidebar
+
+/// Connection sidebar used in AppWelcomeView before any workspace is created
+struct AppWelcomeConnectionSidebar: View {
+  @Binding var connectionConfig: ConnectionConfig
+  let onClose: () -> Void
+  let onConnectSuccess: (ConnectionConfig) -> Void
+
+  @State private var width: CGFloat = 380
+
+  private let minWidth: CGFloat = 320
+  private let maxWidth: CGFloat = 600
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // Header
+      RightSidebarOverlayHeader(
+        title: "Connect to Database",
+        onClose: onClose
+      )
+
+      // Connection form - using the unified ConnectionFormContent
+      ConnectionFormContent(
+        connectionConfig: $connectionConfig,
+        onTestConnection: testConnection,
+        onConnect: connectAndCreateWorkspace,
+        onConnectionSuccess: nil  // We handle success in onConnect
+      )
+    }
+    .frame(width: width)
+    .background(Color.cardBackground)
+    .overlay(alignment: .leading) {
+      Rectangle()
+        .fill(Color.border)
+        .frame(width: 1)
+    }
+    .shadow(color: .black.opacity(0.15), radius: 12, x: -4, y: 0)
+    .overlay(alignment: .leading) {
+      ResizeHandle(
+        width: $width,
+        minWidth: minWidth,
+        maxWidth: maxWidth
+      )
+    }
+  }
+
+  private func testConnection(_ config: ConnectionConfig) async throws -> Bool {
+    // Create temporary connection manager for testing
+    let tempManager = DatabaseConnectionManager()
+    return try await tempManager.testConnection(config: config)
+  }
+
+  private func connectAndCreateWorkspace(_ config: ConnectionConfig) async throws {
+    // Test connection first
+    let tempManager = DatabaseConnectionManager()
+    let success = try await tempManager.testConnection(config: config)
+    if success {
+      // Call success handler on main thread
+      await MainActor.run {
+        onConnectSuccess(config)
+      }
+    }
   }
 }
 
