@@ -38,23 +38,21 @@ struct TitleBarTabsView: View {
 
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
-      // Left padding for traffic light buttons (only when no sidebar)
-      if !hasLeftSidebar {
-        Color.clear
-          .frame(width: trafficLightWidth)
-      }
+      // Traffic light area + sidebar toggle button (only when sidebar is hidden)
+      // When sidebar is visible, the toggle button is in SidebarTopArea
+      HStack(alignment: .center, spacing: Spacing.sm) {
+        // Sidebar toggle button (only shown when sidebar is hidden)
+        // When sidebar is visible, this button is in SidebarTopArea instead
+        if !hasLeftSidebar {
+          // Space for traffic light buttons (always present)
+          Color.clear
+            .frame(width: trafficLightWidth)  // Make sure this width is the same as the width set in TabContainerView.swift
 
-      // Sidebar toggle button
-      Button {
-        toggleLeftSidebar?()
-      } label: {
-        Image(systemName: "sidebar.left")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(hasLeftSidebar ? .accent : .foregroundMuted)
+          SidebarToggleButton(isSidebarVisible: false) {
+            toggleLeftSidebar?()
+          }.padding(.trailing, Spacing.xs)
+        }
       }
-      .buttonStyle(SidebarHeaderButtonStyle(isActive: hasLeftSidebar))
-      .help(hasLeftSidebar ? "Hide sidebar" : "Show sidebar")
-      .padding(.leading, Spacing.sm)
 
       // Fixed navigation arrows
       HStack(spacing: 2) {
@@ -69,8 +67,7 @@ struct TitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      .padding(.top, 4)
-      .padding(.trailing, Spacing.xs)
+      .padding(.horizontal, Spacing.sm)
 
       // Scrollable tabs area with Chrome-like drag reordering
       ScrollViewReader { proxy in
@@ -304,7 +301,7 @@ struct TabNavigationArrowButton: View {
   var body: some View {
     Button(action: action) {
       Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
-        .font(.system(size: 10, weight: .medium))
+        .font(.system(size: 14, weight: .medium))
         .foregroundColor(isEnabled ? .foregroundMuted : .foregroundMuted.opacity(0.3))
         .frame(width: 18, height: 18)
         .contentShape(Rectangle())

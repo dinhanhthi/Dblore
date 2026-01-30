@@ -11,7 +11,7 @@ struct TabContainerView: View {
   @Bindable var tabManager: TabStateManager
 
   /// Height of the tab bar - must match TitleBarTabsView.tabBarHeight
-  private let tabBarHeight: CGFloat = 33
+  private let tabBarHeight: CGFloat = 38
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -427,14 +427,22 @@ struct SidebarTopArea: View {
   private let trafficLightWidth: CGFloat = 80
 
   var body: some View {
-    HStack(spacing: 0) {
-      // Left padding for traffic light buttons
-      Color.clear
-        .frame(width: trafficLightWidth)
+    HStack(alignment: .center, spacing: 0) {
+      // Left area: traffic light padding + toggle sidebar button
+      HStack(alignment: .center, spacing: Spacing.sm) {
+        // Left padding for traffic light buttons
+        Color.clear
+          .frame(width: trafficLightWidth)
+
+        // Sidebar toggle button (fixed position next to traffic lights)
+        SidebarToggleButton(isSidebarVisible: true) {
+          viewModel.toggleLeftSidebar()
+        }
+      }
 
       Spacer()
 
-      // Action buttons (toggle sidebar moved to tab bar)
+      // Action buttons (right side)
       HStack(spacing: Spacing.sm) {
         // Schema Visualizer button (only when connected and not loading)
         if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
@@ -566,7 +574,7 @@ class TrafficLightAdjusterView: NSView {
     let buttonHeight: CGFloat = 12
 
     // Fine-tune vertical offset (negative = move down in screen coords)
-    let verticalAdjustment: CGFloat = -3
+    let verticalAdjustment: CGFloat = -1.5
 
     // Horizontal padding from left edge of window
     let horizontalPadding: CGFloat = 13

@@ -15,13 +15,6 @@ struct HeaderView: View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
       HStack(spacing: Spacing.xs) {
-        // Left sidebar toggle (common to both modes)
-        Button(action: { viewModel.toggleLeftSidebar() }) {
-          Image(systemName: "sidebar.left")
-        }
-        .buttonStyle(ToolbarButtonStyle(isActive: viewModel.isLeftSidebarVisible, iconOnly: true))
-        .help("Toggle Sidebar (⌘⇧L)")
-
         // Schema Visualizer mode buttons (replaces normal buttons when active)
         if viewModel.isSchemaVisualizerActive {
           Divider()
