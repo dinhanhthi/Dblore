@@ -209,6 +209,13 @@ class SessionManager {
 
   // MARK: - Keychain Helpers
 
+  /// Get password from keychain for a specific key
+  /// - Parameter key: The keychain key (format: host:port:database:username)
+  /// - Returns: The password if found, nil otherwise
+  static func getPasswordFromKeychain(for key: String) -> String? {
+    return loadPasswordFromKeychain(key: key)
+  }
+
   private static func keychainKey(for config: ConnectionConfig) -> String {
     // Create a unique key based on host, port, database, and username
     return "\(config.host):\(config.port):\(config.database):\(config.username)"

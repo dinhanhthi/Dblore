@@ -1,0 +1,475 @@
+//
+//  WorkspaceContainerView.swift
+//  SQLNotebook
+//
+
+import AppKit
+import SwiftUI
+
+/// Main container view for a workspace with tabs, sidebars, and content
+struct WorkspaceContainerView: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  /// Get the active view model (if any tab is active)
+  private var activeViewModel: NotebookViewModel? {
+    guard let activeTabId = workspaceManager.activeTabId else { return nil }
+    return workspaceManager.viewModel(for: activeTabId)
+  }
+
+  var body: some View {
+    GeometryReader { geometry in
+      ZStack(alignment: .topLeading) {
+        // Main layout
+        HStack(spacing: 0) {
+          // Left sidebar (full height, covers traffic light area)
+          WorkspaceLeftSidebar(
+            workspaceManager: workspaceManager,
+            tabBarHeight: ComponentSize.tabBarHeight,
+            maxWidth: geometry.size.width * 0.35
+          )
+
+          // Main content area (tabs + content)
+          VStack(spacing: 0) {
+            // Tab bar in titlebar area
+            WorkspaceTitleBarTabsView(
+              workspaceManager: workspaceManager,
+              hasLeftSidebar: workspaceManager.isLeftSidebarVisible
+            )
+
+            // Content area
+            if let activeTabId = workspaceManager.activeTabId,
+              let viewModel = workspaceManager.viewModel(for: activeTabId)
+            {
+              WorkspaceTabContentView(
+                tabId: activeTabId,
+                workspaceManager: workspaceManager,
+                viewModel: viewModel
+              )
+            } else {
+              WorkspaceWelcomeView(workspaceManager: workspaceManager)
+            }
+          }
+        }
+
+        // Right sidebar overlay (floating, not pushing layout)
+        if workspaceManager.isRightSidebarVisible {
+          HStack {
+            Spacer()
+            RightSidebarOverlay(workspaceManager: workspaceManager)
+          }
+          .transition(.move(edge: .trailing))
+        }
+
+        // Fixed sidebar toggle button - always in the same position
+        // Positioned right after traffic light buttons
+        SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
+          workspaceManager.toggleLeftSidebar()
+        }
+        .padding(.leading, ComponentSize.trafficLightWidth)
+        .padding(.top, (ComponentSize.tabBarHeight - 16) / 2)
+      }
+    }
+    .frame(minWidth: 800, minHeight: 600)
+    .background(Color.appBackground)
+    .ignoresSafeArea(.all, edges: .top)
+    .animation(.easeInOut(duration: 0.2), value: workspaceManager.isLeftSidebarVisible)
+    .animation(.easeInOut(duration: 0.2), value: workspaceManager.isRightSidebarVisible)
+    .background(
+      TrafficLightPositioner(
+        tabBarHeight: ComponentSize.tabBarHeight,
+        hasSidebar: workspaceManager.isLeftSidebarVisible
+      )
+    )
+    .confirmationDialog(
+      "Save changes?",
+      isPresented: $workspaceManager.showingCloseConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Save") {
+        Task {
+          await workspaceManager.saveAndCloseTab()
+        }
+      }
+      Button("Don't Save", role: .destructive) {
+        workspaceManager.closeTabWithoutSaving()
+      }
+      Button("Cancel", role: .cancel) {
+        workspaceManager.cancelClose()
+      }
+    } message: {
+      if let tabId = workspaceManager.tabToClose,
+        let tab = workspaceManager.tabs.first(where: { $0.id == tabId })
+      {
+        Text("Do you want to save changes to \"\(tab.title)\"?")
+      }
+    }
+    .onOpenURL { url in
+      Task {
+        // Handle different file types
+        let ext = url.pathExtension.lowercased()
+        if ext == "sqlws" {
+          // Open workspace
+          _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
+        } else {
+          // Open file in current workspace
+          try? await workspaceManager.openFile(url: url)
+        }
+      }
+    }
+    // Focused actions for keyboard shortcuts (Cmd+B, Cmd+Shift+B, etc.)
+    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+      workspaceManager.toggleLeftSidebar()
+    }
+    .focusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
+      workspaceManager.toggleRightSidebar()
+    }
+    .focusedSceneValue(\.activeViewModel, activeViewModel)
+  }
+}
+
+// MARK: - Left Sidebar for Workspace
+
+/// Left sidebar that uses workspace's shared connection state
+struct WorkspaceLeftSidebar: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  let tabBarHeight: CGFloat
+  let maxWidth: CGFloat
+
+  /// Get active viewModel to pass to LeftSidebarView
+  private var activeViewModel: NotebookViewModel? {
+    guard let activeTabId = workspaceManager.activeTabId else { return nil }
+    return workspaceManager.viewModel(for: activeTabId)
+  }
+
+  var body: some View {
+    if workspaceManager.isLeftSidebarVisible {
+      let constrainedWidth = min(workspaceManager.settingsResolver.leftSidebarWidth, maxWidth)
+
+      VStack(spacing: 0) {
+        // Top area - aligned with traffic lights and tab bar
+        WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
+
+        // Main sidebar content - reuse LeftSidebarView
+        if let viewModel = activeViewModel {
+          LeftSidebarView(viewModel: viewModel)
+        } else {
+          // No active tab - show empty state
+          WorkspaceEmptySidebarView(workspaceManager: workspaceManager)
+        }
+      }
+      .frame(width: constrainedWidth)
+      .background(Color.cardBackground)
+      .transition(.move(edge: .leading))
+      .overlay(alignment: .trailing) {
+        ResizableSidebarDivider(
+          sidebarWidth: Binding(
+            get: { workspaceManager.settingsResolver.leftSidebarWidth },
+            set: { newValue in
+              workspaceManager.workspace.settings.leftSidebarWidth = newValue
+              workspaceManager.isDirty = true
+            }
+          ),
+          minWidth: 320,
+          maxWidth: maxWidth,
+          side: .left
+        )
+        .offset(x: 4)
+      }
+      .overlay(alignment: .trailing) {
+        Divider()
+      }
+    }
+  }
+}
+
+/// Empty sidebar view when no tab is active
+struct WorkspaceEmptySidebarView: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    VStack(spacing: Spacing.md) {
+      if workspaceManager.connectionState == .disconnected {
+        Image(systemName: "server.rack")
+          .font(.largeTitle)
+          .foregroundColor(.foregroundSubtle)
+
+        Text("Not Connected")
+          .font(.headline)
+          .foregroundColor(.foregroundMuted)
+
+        Button("Connect") {
+          workspaceManager.showConnectionForm()
+        }
+        .buttonStyle(.bordered)
+      } else {
+        Image(systemName: "doc.text")
+          .font(.largeTitle)
+          .foregroundColor(.foregroundSubtle)
+
+        Text("No document open")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.cardBackground)
+  }
+}
+
+/// Top area of the workspace sidebar
+struct WorkspaceSidebarTopArea: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  let height: CGFloat
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 0) {
+      Color.clear
+        .frame(width: ComponentSize.trafficLightAndToggleWidth)
+
+      Spacer()
+
+      HStack(spacing: Spacing.sm) {
+        if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
+          // Expand/Collapse all button
+          Button {
+            workspaceManager.toggleExpandCollapseAll()
+          } label: {
+            Image(
+              systemName: workspaceManager.areAllEntitiesExpanded
+                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
+            )
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle())
+          .blockDoubleClickZoom()
+          .help(workspaceManager.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
+        }
+
+        // Refresh button
+        if workspaceManager.connectionState.isConnected {
+          Button {
+            Task {
+              await workspaceManager.refreshDatabaseSchema()
+            }
+          } label: {
+            Image(systemName: "arrow.clockwise")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(SidebarHeaderButtonStyle())
+          .blockDoubleClickZoom()
+          .disabled(workspaceManager.isLoadingSchema)
+          .help("Refresh schema")
+        }
+      }
+      .padding(.trailing, Spacing.sm)
+    }
+    .frame(height: height)
+    .background(Color.cardBackground)
+    .background(WindowDragArea())
+    .overlay(alignment: .bottom) {
+      Divider()
+    }
+  }
+}
+
+// MARK: - Tab Content View for Workspace
+
+/// Wrapper for tab content that connects to workspace
+struct WorkspaceTabContentView: View {
+  let tabId: UUID
+  @Bindable var workspaceManager: WorkspaceManager
+  @Bindable var viewModel: NotebookViewModel
+
+  var body: some View {
+    // Use existing TabContentView but with workspace connection
+    TabContentView(
+      tabId: tabId,
+      tabManager: TabStateManager.shared,
+      viewModel: viewModel
+    )
+    .onAppear {
+      // Setup document changed callback to use workspace manager instead of TabStateManager
+      viewModel.onDocumentChanged = { [workspaceManager, tabId] in
+        workspaceManager.markDirty(tabId: tabId)
+      }
+      // Sync workspace connection to viewModel
+      syncConnectionState()
+    }
+    .onChange(of: workspaceManager.connectionState) { _, _ in
+      syncConnectionState()
+    }
+  }
+
+  private func syncConnectionState() {
+    viewModel.connectionState = workspaceManager.connectionState
+    viewModel.databaseTables = workspaceManager.databaseTables
+    viewModel.databaseViews = workspaceManager.databaseViews
+    viewModel.databaseFunctions = workspaceManager.databaseFunctions
+    viewModel.databaseProcedures = workspaceManager.databaseProcedures
+    viewModel.databaseUsers = workspaceManager.databaseUsers
+    viewModel.databaseRoles = workspaceManager.databaseRoles
+    viewModel.databaseForeignKeys = workspaceManager.databaseForeignKeys
+  }
+}
+
+// MARK: - Title Bar Tabs View for Workspace
+
+/// Tab bar view adapted for workspace
+struct WorkspaceTitleBarTabsView: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  let hasLeftSidebar: Bool
+
+  var body: some View {
+    // Reuse existing TitleBarTabsView pattern
+    // This is a simplified version - full implementation would match TitleBarTabsView.swift
+    HStack(spacing: 0) {
+      if !hasLeftSidebar {
+        Color.clear
+          .frame(width: ComponentSize.trafficLightAndToggleWidth)
+      }
+
+      // Tabs
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 1) {
+          ForEach(workspaceManager.tabs) { tab in
+            WorkspaceTabItemView(
+              tab: tab,
+              isActive: workspaceManager.activeTabId == tab.id,
+              workspaceManager: workspaceManager
+            )
+          }
+        }
+        .padding(.horizontal, Spacing.xs)
+      }
+
+      Spacer()
+
+      // Connection status indicator
+      WorkspaceConnectionBadge(workspaceManager: workspaceManager)
+        .padding(.trailing, Spacing.sm)
+    }
+    .frame(height: ComponentSize.tabBarHeight)
+    .background(Color.cardBackground)
+    .background(WindowDragArea())
+    .overlay(alignment: .bottom) {
+      Divider()
+    }
+  }
+}
+
+/// Single tab item view for workspace
+struct WorkspaceTabItemView: View {
+  let tab: TabItem
+  let isActive: Bool
+  @Bindable var workspaceManager: WorkspaceManager
+
+  @State private var isHovering = false
+
+  var body: some View {
+    Button {
+      workspaceManager.selectTab(id: tab.id)
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Image(systemName: tab.documentType.icon)
+          .font(.system(size: 11))
+          .foregroundColor(isActive ? .accent : .foregroundMuted)
+
+        Text(tab.title)
+          .font(.caption)
+          .foregroundColor(isActive ? .foreground : .foregroundMuted)
+          .lineLimit(1)
+
+        if tab.isDirty {
+          Circle()
+            .fill(Color.foregroundMuted)
+            .frame(width: 6, height: 6)
+        }
+
+        if isHovering {
+          Button {
+            workspaceManager.requestCloseTab(id: tab.id)
+          } label: {
+            Image(systemName: "xmark")
+              .font(.system(size: 9, weight: .medium))
+              .foregroundColor(.foregroundMuted)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(
+        isActive ? Color.cellBackgroundHover : (isHovering ? Color.cellBackground : Color.clear)
+      )
+      .cornerRadius(CornerRadius.sm)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering in
+      isHovering = hovering
+    }
+  }
+}
+
+/// Connection status badge in tab bar
+struct WorkspaceConnectionBadge: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    Button {
+      workspaceManager.showConnectionForm()
+    } label: {
+      HStack(spacing: Spacing.xxs) {
+        Circle()
+          .fill(statusColor)
+          .frame(width: 6, height: 6)
+
+        Text(statusText)
+          .font(.caption2)
+          .foregroundColor(.foregroundMuted)
+      }
+      .padding(.horizontal, Spacing.xs)
+      .padding(.vertical, 3)
+      .background(Color.cardBackground.opacity(0.5))
+      .cornerRadius(CornerRadius.sm)
+    }
+    .buttonStyle(.plain)
+    .help(connectionHelp)
+  }
+
+  private var statusColor: Color {
+    switch workspaceManager.connectionState {
+    case .connected: return .green
+    case .connecting: return .orange
+    case .disconnected: return .foregroundSubtle
+    case .error: return .red
+    }
+  }
+
+  private var statusText: String {
+    switch workspaceManager.connectionState {
+    case .connected:
+      return workspaceManager.workspace.connectionConfig?.displayString ?? "Connected"
+    case .connecting:
+      return "Connecting..."
+    case .disconnected:
+      return "Not connected"
+    case .error(let message):
+      return "Error: \(message)"
+    }
+  }
+
+  private var connectionHelp: String {
+    switch workspaceManager.connectionState {
+    case .connected:
+      return "Click to manage connection"
+    case .connecting:
+      return "Connecting to database..."
+    case .disconnected:
+      return "Click to connect"
+    case .error:
+      return "Connection error - click to retry"
+    }
+  }
+}

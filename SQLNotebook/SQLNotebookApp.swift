@@ -13,7 +13,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func application(_ application: NSApplication, open urls: [URL]) {
     Task { @MainActor in
       for url in urls {
-        try? await TabStateManager.shared.openFile(url: url)
+        let ext = url.pathExtension.lowercased()
+        if ext == "sqlws" {
+          // Open workspace file
+          _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
+        } else {
+          // Open file in active workspace or create new one
+          if let activeManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+            try? await activeManager.openFile(url: url)
+          } else {
+            // Fallback to TabStateManager for legacy support
+            try? await TabStateManager.shared.openFile(url: url)
+          }
+        }
       }
     }
   }
@@ -23,6 +35,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    // Save all workspace states
+    Task { @MainActor in
+      for manager in WorkspaceWindowManager.shared.workspaceManagers {
+        try? await manager.saveWorkspace()
+      }
+    }
+    // Legacy: save tab state
     TabStateManager.shared.saveState()
   }
 }
@@ -40,20 +59,21 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    // Main window with tabs in titlebar (Chrome-style)
+    // Main window - shows AppWelcomeView when no workspace, or WorkspaceContainerView
     WindowGroup {
-      TabContainerView(tabManager: TabStateManager.shared)
+      AppRootView()
         .frame(minWidth: 800, minHeight: 600)
     }
     .windowStyle(.hiddenTitleBar)
     .commands {
       SharedCommands()
+      WorkspaceCommands()
       TabCommands(tabManager: TabStateManager.shared)
       NotebookCommands()
       EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
-    .handlesExternalEvents(matching: ["sqlnb", "sql", "*"])
+    .handlesExternalEvents(matching: ["sqlws", "sqlnb", "sql", "*"])
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
@@ -199,17 +219,64 @@ struct TabCommands: Commands {
   let tabManager: TabStateManager
 
   var body: some Commands {
-    // File menu - New documents
+    // File menu - New documents (includes workspace commands)
     CommandGroup(replacing: .newItem) {
+      // Workspace commands first
       Button {
-        tabManager.newNotebook()
+        _ = WorkspaceWindowManager.shared.newWorkspace()
+      } label: {
+        Label("New Workspace", systemImage: "folder.badge.plus")
+      }
+      .keyboardShortcut("n", modifiers: [.command, .control])
+
+      Button {
+        Task {
+          await WorkspaceWindowManager.shared.openWorkspaceWithPanel()
+        }
+      } label: {
+        Label("Open Workspace...", systemImage: "folder")
+      }
+      .keyboardShortcut("o", modifiers: [.command, .option])
+
+      // Recent Workspaces submenu
+      Menu("Open Recent Workspace") {
+        ForEach(RecentManager.shared.recentWorkspaces.prefix(10)) { workspace in
+          Button(workspace.displayString) {
+            Task {
+              try? await WorkspaceWindowManager.shared.openWorkspace(url: workspace.fileURL)
+            }
+          }
+        }
+
+        if !RecentManager.shared.recentWorkspaces.isEmpty {
+          Divider()
+          Button("Clear Recent Workspaces") {
+            RecentManager.shared.clearWorkspaces()
+          }
+        }
+      }
+      .disabled(RecentManager.shared.recentWorkspaces.isEmpty)
+
+      Divider()
+
+      // Document commands
+      Button {
+        if let manager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+          manager.newNotebook()
+        } else {
+          tabManager.newNotebook()
+        }
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
       .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button {
-        tabManager.newSQLFile()
+        if let manager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+          manager.newSQLFile()
+        } else {
+          tabManager.newSQLFile()
+        }
       } label: {
         Label("New SQL File", systemImage: "doc.text")
       }
