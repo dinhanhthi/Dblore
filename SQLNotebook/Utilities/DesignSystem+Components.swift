@@ -150,11 +150,11 @@ private struct BaseButtonStyleView: View {
         if iconOnly {
           Circle()
             .fill(
-              variant.backgroundColor(isPressed: configuration.isPressed, isHovering: isHovering))
+              variant.backgroundColor(isPressed: isHovering, isHovering: isHovering))
         } else {
           Capsule()
             .fill(
-              variant.backgroundColor(isPressed: configuration.isPressed, isHovering: isHovering))
+              variant.backgroundColor(isPressed: isHovering, isHovering: isHovering))
         }
       }
       .overlay {
@@ -170,7 +170,9 @@ private struct BaseButtonStyleView: View {
       }
       .contentShape(iconOnly ? AnyShape(Circle()) : AnyShape(Capsule()))
       .opacity(isEnabled ? 1 : 0.5)
+      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
       .onHover { hovering in
         isHovering = hovering
       }
