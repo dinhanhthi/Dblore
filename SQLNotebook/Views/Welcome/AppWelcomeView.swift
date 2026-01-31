@@ -80,6 +80,10 @@ struct AppWelcomeView: View {
         .animation(.easeInOut(duration: 0.2), value: isShowingConnectionSidebar)
       }
     }
+    .ignoresSafeArea(.all, edges: .top)
+    .background(
+      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
+    )
   }
 
   // MARK: - Actions

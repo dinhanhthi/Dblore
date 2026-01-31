@@ -98,10 +98,7 @@ struct WorkspaceContainerView: View {
     .animation(.easeInOut(duration: 0.2), value: workspaceManager.isLeftSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: workspaceManager.isRightSidebarVisible)
     .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight,
-        hasSidebar: workspaceManager.isLeftSidebarVisible
-      )
+      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
     .confirmationDialog(
       "Save changes?",

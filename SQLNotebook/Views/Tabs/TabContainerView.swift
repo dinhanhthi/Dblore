@@ -41,10 +41,7 @@ struct TabContainerView: View {
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
     .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight,
-        hasSidebar: false
-      )
+      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
     .confirmationDialog(
       "Save changes?",
@@ -366,19 +363,18 @@ struct DocumentTypeCard: View {
 
 // MARK: - Traffic Light Positioner
 
-/// Adjusts traffic light button positions to vertically center them with the tab bar
+/// Adjusts traffic light button positions to vertically center them with the tab bar.
+/// Position is always fixed regardless of sidebar state.
 struct TrafficLightPositioner: NSViewRepresentable {
   let tabBarHeight: CGFloat
-  let hasSidebar: Bool
 
   func makeNSView(context: Context) -> NSView {
-    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight, hasSidebar: hasSidebar)
+    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight)
     return view
   }
 
   func updateNSView(_ nsView: NSView, context: Context) {
     if let adjuster = nsView as? TrafficLightAdjusterView {
-      adjuster.hasSidebar = hasSidebar
       adjuster.adjustTrafficLights()
     }
   }
@@ -387,12 +383,10 @@ struct TrafficLightPositioner: NSViewRepresentable {
 /// Custom NSView that adjusts traffic light positions when added to window
 class TrafficLightAdjusterView: NSView {
   let tabBarHeight: CGFloat
-  var hasSidebar: Bool
   private var layoutObserver: NSObjectProtocol?
 
-  init(tabBarHeight: CGFloat, hasSidebar: Bool) {
+  init(tabBarHeight: CGFloat) {
     self.tabBarHeight = tabBarHeight
-    self.hasSidebar = hasSidebar
     super.init(frame: .zero)
   }
 
