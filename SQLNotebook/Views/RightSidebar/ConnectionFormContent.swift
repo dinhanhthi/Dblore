@@ -213,7 +213,6 @@ struct ConnectionFormContent: View {
                 .frame(width: 14, height: 14)
             }
             Text("Test Connection")
-              .frame(maxWidth: .infinity)
           }
         }
         .buttonStyle(SecondaryButtonStyle())
@@ -228,12 +227,13 @@ struct ConnectionFormContent: View {
                 .frame(width: 14, height: 14)
             }
             Text("Connect")
-              .frame(maxWidth: .infinity)
           }
         }
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isConnecting || !isFormValid)
-      }.padding(.top, Spacing.md)
+      }
+      .frame(maxWidth: .infinity, alignment: .center)
+      .padding(.top, Spacing.md)
     }.padding(Spacing.md)
   }
 

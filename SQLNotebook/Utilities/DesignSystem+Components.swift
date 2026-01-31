@@ -9,87 +9,167 @@
 
 import SwiftUI
 
-// MARK: - Button Styles
+// MARK: - Button Style Variant
 
+enum ButtonStyleVariant {
+  case primary
+  case secondary
+  case danger
+  case ghost
+
+  func backgroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
+    switch self {
+    case .primary:
+      return isPressed ? Color.accentMuted : Color.accent
+    case .secondary:
+      return isPressed ? Color.cellBackgroundHover : Color.clear
+    case .danger:
+      return isPressed ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
+    case .ghost:
+      if isPressed {
+        return Color.cellBackgroundHover
+      } else if isHovering {
+        return Color.cellBackgroundHover.opacity(0.5)
+      } else {
+        return Color.clear
+      }
+    }
+  }
+
+  var hasBorder: Bool {
+    self == .secondary
+  }
+
+  var foregroundColor: Color {
+    .foreground
+  }
+
+  func foregroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
+    switch self {
+    case .ghost:
+      return isPressed || isHovering ? .foreground : .foregroundMuted
+    default:
+      return .foreground
+    }
+  }
+}
+
+// MARK: - Button Styles
 struct PrimaryButtonStyle: ButtonStyle {
-  @Environment(\.isEnabled) private var isEnabled
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.subheadline, weight: .medium))
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(configuration.isPressed ? Color.accentMuted : Color.accent)
-      )
-      .opacity(isEnabled ? 1 : 0.5)
-      .cursor(.pointingHand)
+    BaseButtonStyleView(variant: .primary, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
-  @Environment(\.isEnabled) private var isEnabled
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.subheadline, weight: .medium))
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .stroke(Color.border, lineWidth: 1)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.sm)
-              .fill(configuration.isPressed ? Color.cellBackgroundHover : Color.clear)
-          )
-      )
-      .opacity(isEnabled ? 1 : 0.5)
-      .cursor(.pointingHand)
+    BaseButtonStyleView(variant: .secondary, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
 struct DangerButtonStyle: ButtonStyle {
-  @Environment(\.isEnabled) private var isEnabled
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.subheadline, weight: .medium))
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(
-            configuration.isPressed
-              ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
-          )
-      )
-      .opacity(isEnabled ? 1 : 0.5)
-      .cursor(.pointingHand)
+    BaseButtonStyleView(variant: .danger, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
 struct GhostButtonStyle: ButtonStyle {
-  @State private var isHovering = false
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
+    BaseButtonStyleView(variant: .ghost, iconOnly: iconOnly, configuration: configuration)
+  }
+}
+
+/// Internal view that properly receives environment values
+private struct BaseButtonStyleView: View {
+  let variant: ButtonStyleVariant
+  var iconOnly: Bool = false
+  let configuration: ButtonStyleConfiguration
+  @Environment(\.isEnabled) private var isEnabled
+  @Environment(\.controlSize) private var controlSize
+  @State private var isHovering = false
+
+  private var font: Font {
+    switch controlSize {
+    case .mini:
+      return .system(.caption2, weight: .medium)
+    case .small:
+      return .system(.caption, weight: .medium)
+    case .large, .extraLarge:
+      return .system(.body, weight: .medium)
+    default:  // .regular
+      return .system(.callout, weight: .medium)
+    }
+  }
+
+  private var horizontalPadding: CGFloat {
+    if iconOnly {
+      return verticalPadding
+    }
+    switch controlSize {
+    case .mini:
+      return Spacing.xs
+    case .small:
+      return Spacing.md
+    case .large, .extraLarge:
+      return Spacing.xl
+    default:  // .regular
+      return (Spacing.md + Spacing.lg) / 2
+    }
+  }
+
+  private var verticalPadding: CGFloat {
+    switch controlSize {
+    case .mini:
+      return Spacing.xxs
+    case .small:
+      return iconOnly ? Spacing.sm - 2 : Spacing.xs
+    case .large, .extraLarge:
+      return Spacing.md
+    default:  // .regular
+      return iconOnly ? Spacing.sm : (Spacing.xs + Spacing.sm) / 2
+    }
+  }
+
+  var body: some View {
     configuration.label
-      .font(.system(.subheadline, weight: .medium))
-      .foregroundColor(configuration.isPressed ? .foreground : .foregroundMuted)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.sm)
-      .contentShape(Rectangle())
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(
-            configuration.isPressed
-              ? Color.cellBackgroundHover
-              : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
+      .font(font)
+      .foregroundColor(
+        variant.foregroundColor(isPressed: configuration.isPressed, isHovering: isHovering)
       )
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
+      .background {
+        if iconOnly {
+          Circle()
+            .fill(
+              variant.backgroundColor(isPressed: configuration.isPressed, isHovering: isHovering))
+        } else {
+          Capsule()
+            .fill(
+              variant.backgroundColor(isPressed: configuration.isPressed, isHovering: isHovering))
+        }
+      }
+      .overlay {
+        if variant.hasBorder {
+          if iconOnly {
+            Circle()
+              .stroke(Color.border, lineWidth: 1)
+          } else {
+            Capsule()
+              .stroke(Color.border, lineWidth: 1)
+          }
+        }
+      }
+      .contentShape(iconOnly ? AnyShape(Circle()) : AnyShape(Capsule()))
+      .opacity(isEnabled ? 1 : 0.5)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering

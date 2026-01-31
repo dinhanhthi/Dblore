@@ -296,9 +296,8 @@ struct RecentConnectionsColumn: View {
           onNew()
         } label: {
           Label("Connect", systemImage: "plus")
-            .font(.callout)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(PrimaryButtonStyle())
         .controlSize(.small)
       }
 
