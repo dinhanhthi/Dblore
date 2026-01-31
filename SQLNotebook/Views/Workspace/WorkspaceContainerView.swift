@@ -62,19 +62,22 @@ struct WorkspaceContainerView: View {
           .zIndex(1)
         }
 
-        // Traffic light area background + toggle button (z-index 2 - highest)
+        // Traffic light area background + toggle button + connection button (z-index 2 - highest)
         // This covers sidebar buttons during animation
         HStack(spacing: 0) {
-          // Background for traffic light area + toggle button
+          // Background for traffic light area + buttons
           Color.cardBackground
             .frame(
-              width: ComponentSize.trafficLightAndToggleWidth + Spacing.md,
+              width: ComponentSize.trafficLightAndToggleWidth + 40,
               height: ComponentSize.tabBarHeight
             )
             .overlay(alignment: .trailing) {
-              // Toggle button positioned at trailing edge of background
-              SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
-                workspaceManager.toggleLeftSidebar()
+              // Buttons positioned at trailing edge of background
+              HStack(spacing: Spacing.lg) {
+                SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
+                  workspaceManager.toggleLeftSidebar()
+                }
+                DatabaseConnectionButton(workspaceManager: workspaceManager)
               }
               .padding(.trailing, Spacing.md)
             }
@@ -269,10 +272,6 @@ struct WorkspaceTitleBarTabsView: View {
       }
 
       Spacer()
-
-      // Connection status indicator
-      WorkspaceConnectionBadge(workspaceManager: workspaceManager)
-        .padding(.trailing, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.cardBackground)
@@ -333,64 +332,32 @@ struct WorkspaceTabItemView: View {
   }
 }
 
-/// Connection status badge in tab bar
-struct WorkspaceConnectionBadge: View {
+/// Database connection button with bolt icon
+struct DatabaseConnectionButton: View {
   @Bindable var workspaceManager: WorkspaceManager
+
+  private var isConnected: Bool {
+    if case .connected = workspaceManager.connectionState {
+      return true
+    }
+    return false
+  }
 
   var body: some View {
     Button {
-      workspaceManager.showConnectionForm()
-    } label: {
-      HStack(spacing: Spacing.xxs) {
-        Circle()
-          .fill(statusColor)
-          .frame(width: 6, height: 6)
-
-        Text(statusText)
-          .font(.caption2)
-          .foregroundColor(.foregroundMuted)
+      if isConnected {
+        Task {
+          await workspaceManager.disconnect()
+        }
+      } else {
+        workspaceManager.showConnectionForm()
       }
-      .padding(.horizontal, Spacing.xs)
-      .padding(.vertical, 3)
-      .background(Color.cardBackground.opacity(0.5))
-      .cornerRadius(CornerRadius.sm)
+    } label: {
+      Image(systemName: isConnected ? "bolt.fill" : "bolt.slash")
+        .font(.system(size: 12))
+        .foregroundColor(isConnected ? .green : .foregroundMuted)
     }
     .buttonStyle(.plain)
-    .help(connectionHelp)
-  }
-
-  private var statusColor: Color {
-    switch workspaceManager.connectionState {
-    case .connected: return .green
-    case .connecting: return .orange
-    case .disconnected: return .foregroundSubtle
-    case .error: return .red
-    }
-  }
-
-  private var statusText: String {
-    switch workspaceManager.connectionState {
-    case .connected:
-      return workspaceManager.workspace.connectionConfig?.displayString ?? "Connected"
-    case .connecting:
-      return "Connecting..."
-    case .disconnected:
-      return "Not connected"
-    case .error(let message):
-      return "Error: \(message)"
-    }
-  }
-
-  private var connectionHelp: String {
-    switch workspaceManager.connectionState {
-    case .connected:
-      return "Click to manage connection"
-    case .connecting:
-      return "Connecting to database..."
-    case .disconnected:
-      return "Click to connect"
-    case .error:
-      return "Connection error - click to retry"
-    }
+    .help(isConnected ? "Disconnect from database" : "Connect to database")
   }
 }
