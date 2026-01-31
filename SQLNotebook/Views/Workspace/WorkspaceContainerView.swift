@@ -144,6 +144,7 @@ struct WorkspaceContainerView: View {
       workspaceManager.toggleRightSidebar()
     }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
+    .connectionFormModal(workspaceManager: workspaceManager)
   }
 }
 

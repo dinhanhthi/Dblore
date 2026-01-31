@@ -305,9 +305,9 @@ extension WorkspaceManager {
     isRightSidebarVisible.toggle()
   }
 
-  /// Show connection form in right sidebar
+  /// Show connection form modal
   func showConnectionForm() {
-    showRightSidebar(content: .connectionForm)
+    isConnectionFormModalVisible = true
   }
 
   /// Show settings in right sidebar

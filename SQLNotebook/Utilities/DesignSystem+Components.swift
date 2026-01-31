@@ -16,7 +16,7 @@ struct PrimaryButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(.body, weight: .medium))
+      .font(.system(.callout, weight: .medium))
       .foregroundColor(.foreground)
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)

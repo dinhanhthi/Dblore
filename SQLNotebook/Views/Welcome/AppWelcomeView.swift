@@ -63,23 +63,13 @@ struct AppWelcomeView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.appBackground)
 
-      // Connection sidebar overlay
-      if isShowingConnectionSidebar {
-        HStack(spacing: 0) {
-          Spacer()
-          AppWelcomeConnectionSidebar(
-            connectionConfig: $editingConnectionConfig,
-            onClose: { isShowingConnectionSidebar = false },
-            onConnectSuccess: { config in
-              // Create workspace and connect
-              createWorkspaceWithConnection(config)
-            }
-          )
-          .transition(.move(edge: .trailing))
-        }
-        .animation(.easeInOut(duration: 0.2), value: isShowingConnectionSidebar)
-      }
     }
+    .connectionFormModal(
+      isPresented: $isShowingConnectionSidebar,
+      connectionConfig: $editingConnectionConfig,
+      onTestConnection: testConnectionForWelcome,
+      onConnect: connectAndCreateWorkspaceForWelcome
+    )
     .ignoresSafeArea(.all, edges: .top)
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
@@ -123,7 +113,7 @@ struct AppWelcomeView: View {
   }
 
   private func createWorkspaceWithConnection(_ config: ConnectionConfig) {
-    // Close sidebar first
+    // Close modal first
     isShowingConnectionSidebar = false
 
     // Create workspace with connection and auto-connect
@@ -136,68 +126,18 @@ struct AppWelcomeView: View {
       }
     }
   }
-}
 
-// MARK: - App Welcome Connection Sidebar
-
-/// Connection sidebar used in AppWelcomeView before any workspace is created
-struct AppWelcomeConnectionSidebar: View {
-  @Binding var connectionConfig: ConnectionConfig
-  let onClose: () -> Void
-  let onConnectSuccess: (ConnectionConfig) -> Void
-
-  @State private var width: CGFloat = 380
-
-  private let minWidth: CGFloat = 320
-  private let maxWidth: CGFloat = 600
-
-  var body: some View {
-    VStack(spacing: 0) {
-      // Header
-      RightSidebarOverlayHeader(
-        title: "Connect to Database",
-        onClose: onClose
-      )
-
-      // Connection form - using the unified ConnectionFormContent
-      ConnectionFormContent(
-        connectionConfig: $connectionConfig,
-        onTestConnection: testConnection,
-        onConnect: connectAndCreateWorkspace,
-        onConnectionSuccess: nil  // We handle success in onConnect
-      )
-    }
-    .frame(width: width)
-    .background(Color.cardBackground)
-    .overlay(alignment: .leading) {
-      Rectangle()
-        .fill(Color.border)
-        .frame(width: 1)
-    }
-    .shadow(color: .black.opacity(0.15), radius: 12, x: -4, y: 0)
-    .overlay(alignment: .leading) {
-      ResizeHandle(
-        width: $width,
-        minWidth: minWidth,
-        maxWidth: maxWidth
-      )
-    }
-  }
-
-  private func testConnection(_ config: ConnectionConfig) async throws -> Bool {
-    // Create temporary connection manager for testing
+  private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
     let tempManager = DatabaseConnectionManager()
     return try await tempManager.testConnection(config: config)
   }
 
-  private func connectAndCreateWorkspace(_ config: ConnectionConfig) async throws {
-    // Test connection first
+  private func connectAndCreateWorkspaceForWelcome(_ config: ConnectionConfig) async throws {
     let tempManager = DatabaseConnectionManager()
     let success = try await tempManager.testConnection(config: config)
     if success {
-      // Call success handler on main thread
       await MainActor.run {
-        onConnectSuccess(config)
+        createWorkspaceWithConnection(config)
       }
     }
   }

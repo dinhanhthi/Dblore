@@ -49,26 +49,9 @@ struct ConnectionFormContent: View {
     case connectionString = "Connection String"
   }
 
-  // MARK: - Convenience Initializers
+  // MARK: - Initializer
 
-  /// Initialize with WorkspaceManager
-  init(workspaceManager: WorkspaceManager) {
-    self._connectionConfig = Binding(
-      get: { workspaceManager.editingConnectionConfig },
-      set: { workspaceManager.editingConnectionConfig = $0 }
-    )
-    self.onTestConnection = { config in
-      try await workspaceManager.testConnection()
-    }
-    self.onConnect = { config in
-      try await workspaceManager.connect(config: config)
-    }
-    self.onConnectionSuccess = {
-      workspaceManager.hideRightSidebar()
-    }
-  }
-
-  /// Initialize with binding and callbacks (most flexible)
+  /// Initialize with binding and callbacks
   init(
     connectionConfig: Binding<ConnectionConfig>,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,

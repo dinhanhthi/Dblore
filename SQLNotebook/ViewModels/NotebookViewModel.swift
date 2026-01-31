@@ -29,7 +29,6 @@ enum SidebarContent: Equatable {
   case executedQuery(
     query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
   case connectionDetails
-  case connectionForm
   case settings
 }
 
@@ -73,8 +72,9 @@ class NotebookViewModel {
   var showTableConnections: Bool = true  // Show relationship lines between tables (default: true)
   var showColumnConnections: Bool = false  // Show dashed lines connecting FK columns
 
-  // Connection config for the sheet
+  // Connection config for the modal
   var editingConnectionConfig: ConnectionConfig
+  var isConnectionFormModalVisible: Bool = false
 
   // Database connection manager
   let connectionManager = DatabaseConnectionManager()

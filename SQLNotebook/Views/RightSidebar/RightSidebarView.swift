@@ -17,10 +17,8 @@ struct RightSidebarView: View {
 
       // Content
       if let content = viewModel.rightSidebarContent {
-        // ConnectionFormContent handles its own layout with ScrollView and fixed footer
-        if case .connectionForm = content {
-          contentView(for: content)
-        } else if case .settings = content {
+        // SettingsContent handles its own ScrollView
+        if case .settings = content {
           // SettingsContent handles its own ScrollView
           ScrollView {
             contentView(for: content)
@@ -106,8 +104,6 @@ struct RightSidebarView: View {
       return "Executed Query"
     case .connectionDetails:
       return "Connection"
-    case .connectionForm:
-      return "Database Connection"
     case .settings:
       return "Settings"
     }
@@ -119,8 +115,6 @@ struct RightSidebarView: View {
     }
 
     switch content {
-    case .connectionForm:
-      return 360
     case .settings:
       return 360
     default:
@@ -170,22 +164,6 @@ struct RightSidebarView: View {
       )
     case .connectionDetails:
       ConnectionInfoContent(viewModel: viewModel)
-    case .connectionForm:
-      ConnectionFormContent(
-        connectionConfig: Binding(
-          get: { viewModel.editingConnectionConfig },
-          set: { viewModel.editingConnectionConfig = $0 }
-        ),
-        onTestConnection: { _ in
-          try await viewModel.testConnection()
-        },
-        onConnect: { _ in
-          try await viewModel.connect()
-        },
-        onConnectionSuccess: {
-          viewModel.closeSidebar()
-        }
-      )
     case .settings:
       SettingsContent(viewModel: viewModel)
     }
@@ -213,19 +191,6 @@ struct RightSidebarView: View {
   HStack {
     Spacer()
     RightSidebarView(viewModel: NotebookViewModel())
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Connection Form") {
-  let viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .connectionForm
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
   }
   .frame(height: 600)
   .background(Color.appBackground)

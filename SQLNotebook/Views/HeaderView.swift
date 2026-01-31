@@ -190,14 +190,8 @@ struct HeaderView: View {
           connectionConfig: viewModel.notebook.connectionConfig,
           isSchemaVisualizerActive: viewModel.isSchemaVisualizerActive,
           onConnect: {
-            // Toggle sidebar if already showing connection form
-            if viewModel.isRightSidebarVisible,
-              case .connectionForm = viewModel.rightSidebarContent
-            {
-              viewModel.closeSidebar()
-            } else {
-              viewModel.showConnectionForm()
-            }
+            // Toggle modal visibility
+            viewModel.isConnectionFormModalVisible.toggle()
           },
           onDisconnect: { viewModel.disconnect() },
           onShowDetails: {

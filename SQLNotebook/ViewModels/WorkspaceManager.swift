@@ -45,6 +45,10 @@ class WorkspaceManager: Identifiable {
   var showingCloseConfirmation = false
   var tabToClose: UUID?
 
+  // MARK: - Connection Form Modal
+
+  var isConnectionFormModalVisible: Bool = false
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver

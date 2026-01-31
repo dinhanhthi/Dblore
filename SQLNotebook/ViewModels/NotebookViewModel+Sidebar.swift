@@ -51,11 +51,9 @@ extension NotebookViewModel {
     handleSidebarConflict(opening: .right)
   }
 
-  /// Show connection form in sidebar
+  /// Show connection form modal
   func showConnectionForm() {
-    rightSidebarContent = .connectionForm
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
+    isConnectionFormModalVisible = true
   }
 
   /// Show settings in sidebar

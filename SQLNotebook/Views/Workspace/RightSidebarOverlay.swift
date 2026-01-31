@@ -52,7 +52,6 @@ struct RightSidebarOverlay: View {
   private var headerTitle: String {
     guard let content = workspaceManager.rightSidebarContent else { return "" }
     switch content {
-    case .connectionForm: return "Connection"
     case .connectionDetails: return "Connection Details"
     case .settings: return "Settings"
     case .jsonViewer: return "JSON Viewer"
@@ -64,10 +63,6 @@ struct RightSidebarOverlay: View {
   @ViewBuilder
   private func rightSidebarContent(for content: SidebarContent) -> some View {
     switch content {
-    case .connectionForm:
-      // Use the unified ConnectionFormContent with WorkspaceManager
-      ConnectionFormContent(workspaceManager: workspaceManager)
-
     case .connectionDetails:
       WorkspaceConnectionDetailsView(workspaceManager: workspaceManager)
 
