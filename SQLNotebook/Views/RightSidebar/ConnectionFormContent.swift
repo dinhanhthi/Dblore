@@ -234,7 +234,11 @@ struct ConnectionFormContent: View {
       }
       .frame(maxWidth: .infinity, alignment: .center)
       .padding(.top, Spacing.md)
-    }.padding(Spacing.md)
+    }
+    .padding(.bottom, Spacing.md)
+    .overlay(alignment: .top) {
+      Divider()
+    }
   }
 
   // MARK: - Validation
