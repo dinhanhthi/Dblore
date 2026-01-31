@@ -44,10 +44,6 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if case .connectionDetails = content {
-          // ConnectionDetails handles its own padding and scrolling
-          contentView(for: content)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -102,8 +98,6 @@ struct RightSidebarView: View {
       return "Cell Value"
     case .executedQuery:
       return "Executed Query"
-    case .connectionDetails:
-      return "Connection"
     case .settings:
       return "Settings"
     }
@@ -162,8 +156,6 @@ struct RightSidebarView: View {
         limitWasCapped: limitWasCapped,
         actualLimit: actualLimit
       )
-    case .connectionDetails:
-      ConnectionInfoContent(viewModel: viewModel)
     case .settings:
       SettingsContent(viewModel: viewModel)
     }

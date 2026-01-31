@@ -69,18 +69,18 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isLeftSidebarVisible == !initialState)
   }
 
-  @Test("Show connection details in sidebar")
-  func showSidebarContent() {
+  @Test("Show settings in sidebar")
+  func showSettingsInSidebar() {
     // Arrange
     let notebook = createTestNotebook()
     let viewModel = NotebookViewModel(notebook: notebook)
 
     // Act
-    viewModel.showConnectionDetails()
+    viewModel.showSettings()
 
     // Assert
     #expect(viewModel.isRightSidebarVisible == true)
-    #expect(viewModel.rightSidebarContent == .connectionDetails)
+    #expect(viewModel.rightSidebarContent == .settings)
   }
 
   // MARK: - Connection State Tests

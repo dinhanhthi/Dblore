@@ -145,6 +145,7 @@ struct WorkspaceContainerView: View {
     }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
+    .connectionInfoModal(workspaceManager: workspaceManager)
   }
 }
 
@@ -344,9 +345,8 @@ struct DatabaseConnectionButton: View {
   var body: some View {
     Button {
       if isConnected {
-        Task {
-          await workspaceManager.disconnect()
-        }
+        // Show connection info modal instead of disconnecting immediately
+        workspaceManager.isConnectionInfoModalVisible = true
       } else {
         workspaceManager.showConnectionForm()
       }
@@ -356,6 +356,6 @@ struct DatabaseConnectionButton: View {
         .foregroundColor(isConnected ? .green : .foregroundMuted)
     }
     .buttonStyle(.plain)
-    .help(isConnected ? "Disconnect from database" : "Connect to database")
+    .help(isConnected ? "Connection Details" : "Connect to database")
   }
 }

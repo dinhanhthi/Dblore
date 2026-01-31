@@ -127,35 +127,30 @@ struct ConnectionInfoContent: View {
 }
 
 #Preview("Connection - Not Configured") {
-  let viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .connectionDetails
+  @Previewable @State var viewModel = NotebookViewModel()
 
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
+  ConnectionInfoContent(viewModel: viewModel)
+    .frame(width: 350, height: 400)
+    .background(Color.cardBackground)
+    .preferredColorScheme(.dark)
 }
 
 #Preview("Connection - Connected") {
-  let viewModel = NotebookViewModel()
-  viewModel.notebook.connectionConfig = ConnectionConfig(
-    host: "db.example.com",
-    port: 5432,
-    database: "my_database",
-    username: "admin_user",
-    password: "secret123",
-    sslMode: .require
-  )
-  viewModel.rightSidebarContent = .connectionDetails
+  @Previewable @State var viewModel: NotebookViewModel = {
+    let vm = NotebookViewModel()
+    vm.notebook.connectionConfig = ConnectionConfig(
+      host: "db.example.com",
+      port: 5432,
+      database: "my_database",
+      username: "admin_user",
+      password: "secret123",
+      sslMode: .require
+    )
+    return vm
+  }()
 
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
+  ConnectionInfoContent(viewModel: viewModel)
+    .frame(width: 350, height: 400)
+    .background(Color.cardBackground)
+    .preferredColorScheme(.dark)
 }

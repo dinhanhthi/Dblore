@@ -52,7 +52,6 @@ struct RightSidebarOverlay: View {
   private var headerTitle: String {
     guard let content = workspaceManager.rightSidebarContent else { return "" }
     switch content {
-    case .connectionDetails: return "Connection Details"
     case .settings: return "Settings"
     case .jsonViewer: return "JSON Viewer"
     case .cellInfo: return "Cell Info"
@@ -63,9 +62,6 @@ struct RightSidebarOverlay: View {
   @ViewBuilder
   private func rightSidebarContent(for content: SidebarContent) -> some View {
     switch content {
-    case .connectionDetails:
-      WorkspaceConnectionDetailsView(workspaceManager: workspaceManager)
-
     case .settings:
       WorkspaceSettingsContent(workspaceManager: workspaceManager)
 
@@ -159,30 +155,5 @@ struct ResizeHandle: View {
             .frame(width: 2)
         }
       }
-  }
-}
-
-// MARK: - Connection Details View
-
-struct WorkspaceConnectionDetailsView: View {
-  @Bindable var workspaceManager: WorkspaceManager
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        if let config = workspaceManager.workspace.connectionConfig {
-          LabeledContent("Database Type", value: config.databaseType.displayName)
-          LabeledContent("Host", value: config.host)
-          LabeledContent("Port", value: "\(config.port)")
-          LabeledContent("Database", value: config.database)
-          LabeledContent("Username", value: config.username)
-          LabeledContent("SSL Mode", value: config.sslMode.displayName)
-        } else {
-          Text("Not connected")
-            .foregroundColor(.foregroundMuted)
-        }
-      }
-      .padding(Spacing.md)
-    }
   }
 }

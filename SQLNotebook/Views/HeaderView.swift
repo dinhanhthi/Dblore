@@ -193,23 +193,11 @@ struct HeaderView: View {
             // Toggle modal visibility
             viewModel.isConnectionFormModalVisible.toggle()
           },
-          onDisconnect: { viewModel.disconnect() },
-          onShowDetails: {
-            // Toggle sidebar if already showing connection details
-            if viewModel.isRightSidebarVisible,
-              case .connectionDetails = viewModel.rightSidebarContent
-            {
-              viewModel.closeSidebar()
-            } else {
-              viewModel.showConnectionDetails()
-            }
+          onShowConnectionInfo: {
+            // Show connection info modal
+            viewModel.isConnectionInfoModalVisible = true
           },
-          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() },
-          onSwitchToReadOnly: {
-            Task {
-              await viewModel.enableReadOnlyMode()
-            }
-          }
+          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() }
         )
       }
     }
@@ -362,26 +350,17 @@ struct ConnectionButton: View {
   let connectionConfig: ConnectionConfig?
   let isSchemaVisualizerActive: Bool
   let onConnect: () -> Void
-  let onDisconnect: () -> Void
-  let onShowDetails: () -> Void
+  let onShowConnectionInfo: () -> Void
   let onToggleSchemaVisualizer: () -> Void
-  let onSwitchToReadOnly: () -> Void
 
-  @State private var showDisconnectConfirmation = false
-  @State private var isHoveringDisconnect = false
-  @State private var isHoveringInfo = false
-
-  /// Check if connection is in read-only mode
-  private var isReadOnly: Bool {
-    connectionConfig?.isReadOnly ?? false
-  }
+  @State private var isHoveringConnection = false
 
   var body: some View {
     if connectionState.isConnected {
       // Connected state - no button style, green text, with info icon
       HStack(spacing: Spacing.xs) {
         HStack(spacing: 0) {
-          Button(action: { showDisconnectConfirmation = true }) {
+          Button(action: onShowConnectionInfo) {
             HStack(spacing: Spacing.xs) {
               connectionIcon
               Text(connectionText)
@@ -391,30 +370,15 @@ struct ConnectionButton: View {
             .padding(.vertical, Spacing.xs)
             .background(
               RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(isHoveringDisconnect ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+                .fill(isHoveringConnection ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
             )
             .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .help("Click to Disconnect")
-          .animation(.easeInOut(duration: 0.15), value: isHoveringDisconnect)
-          .onHover { hovering in
-            isHoveringDisconnect = hovering
-            if hovering {
-              NSCursor.pointingHand.push()
-            } else {
-              NSCursor.pop()
-            }
-          }
-
-          Button(action: onShowDetails) {
-            Image(systemName: "info.circle")
-          }
-          .buttonStyle(ToolbarButtonStyle(iconOnly: true))
           .help("Connection Details")
-          .animation(.easeInOut(duration: 0.15), value: isHoveringInfo)
+          .animation(.easeInOut(duration: 0.15), value: isHoveringConnection)
           .onHover { hovering in
-            isHoveringInfo = hovering
+            isHoveringConnection = hovering
             if hovering {
               NSCursor.pointingHand.push()
             } else {
@@ -433,33 +397,9 @@ struct ConnectionButton: View {
           isSchemaVisualizerActive
             ? "Close Schema Visualizer" : "Visualize Schema Relationships")
       }
-      .confirmationDialog(
-        disconnectDialogTitle,
-        isPresented: $showDisconnectConfirmation,
-        titleVisibility: .visible
-      ) {
-        Button("Disconnect", role: .destructive) {
-          onDisconnect()
-        }
-        // Show "Switch to Read-only" only when not already in read-only mode
-        if !isReadOnly {
-          Button("Switch to Read-only") {
-            onSwitchToReadOnly()
-          }
-        }
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text("This will close the database connection and you won't be able to run queries.")
-      }
     } else {
       // Other states - use button style
-      Button(action: {
-        if connectionState.isConnected {
-          onDisconnect()
-        } else {
-          onConnect()
-        }
-      }) {
+      Button(action: onConnect) {
         HStack(spacing: Spacing.sm) {
           connectionIcon
           Text(connectionText)
@@ -491,13 +431,6 @@ struct ConnectionButton: View {
       // The icon will indicate the actual state
       return "Connect"
     }
-  }
-
-  private var disconnectDialogTitle: String {
-    if let config = connectionConfig, !config.name.isEmpty {
-      return "Disconnect from database \(config.name)?"
-    }
-    return "Disconnect from database?"
   }
 }
 

@@ -16,12 +16,12 @@ struct PrimaryButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(.callout, weight: .medium))
+      .font(.system(.subheadline, weight: .medium))
       .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.md)
+      .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.sm)
       .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
           .fill(configuration.isPressed ? Color.accentMuted : Color.accent)
       )
       .opacity(isEnabled ? 1 : 0.5)
@@ -34,16 +34,37 @@ struct SecondaryButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(.body, weight: .medium))
+      .font(.system(.subheadline, weight: .medium))
       .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.md)
+      .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.sm)
       .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
           .stroke(Color.border, lineWidth: 1)
           .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
+            RoundedRectangle(cornerRadius: CornerRadius.sm)
               .fill(configuration.isPressed ? Color.cellBackgroundHover : Color.clear)
+          )
+      )
+      .opacity(isEnabled ? 1 : 0.5)
+      .cursor(.pointingHand)
+  }
+}
+
+struct DangerButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) private var isEnabled
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(.subheadline, weight: .medium))
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
+          .fill(
+            configuration.isPressed
+              ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
           )
       )
       .opacity(isEnabled ? 1 : 0.5)
@@ -56,11 +77,13 @@ struct GhostButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(.body, weight: .medium))
+      .font(.system(.subheadline, weight: .medium))
       .foregroundColor(configuration.isPressed ? .foreground : .foregroundMuted)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.sm)
       .contentShape(Rectangle())
       .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+        RoundedRectangle(cornerRadius: CornerRadius.sm)
           .fill(
             configuration.isPressed
               ? Color.cellBackgroundHover
@@ -114,7 +137,7 @@ struct ToolbarButtonStyle: ButtonStyle {
         isActive ? .accent : (configuration.isPressed ? .foreground : .foregroundMuted)
       )
       .padding(.horizontal, iconOnly ? Spacing.xs : Spacing.sm)
-      .padding(.vertical, Spacing.xs)
+      .padding(.vertical, Spacing.sm)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .fill(

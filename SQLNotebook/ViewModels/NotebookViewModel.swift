@@ -28,7 +28,6 @@ enum SidebarContent: Equatable {
   )
   case executedQuery(
     query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
-  case connectionDetails
   case settings
 }
 
@@ -75,6 +74,7 @@ class NotebookViewModel {
   // Connection config for the modal
   var editingConnectionConfig: ConnectionConfig
   var isConnectionFormModalVisible: Bool = false
+  var isConnectionInfoModalVisible: Bool = false
 
   // Database connection manager
   let connectionManager = DatabaseConnectionManager()
