@@ -135,9 +135,6 @@ struct WorkspaceSidebarTopArea: View {
     .frame(height: height)
     .background(Color.cardBackground)
     .background(WindowDragArea())
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
   }
 }
 

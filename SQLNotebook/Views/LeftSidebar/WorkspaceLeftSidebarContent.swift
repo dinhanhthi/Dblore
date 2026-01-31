@@ -95,9 +95,7 @@ struct WorkspaceLeftSidebarContent: View {
       }
     }
     .frame(height: 28)
-    .padding(.horizontal, Spacing.sm)
-    .padding(.top, Spacing.sm)
-    .padding(.bottom, Spacing.xs)
+    .padding(Spacing.sm)
   }
 
   @ViewBuilder
