@@ -40,61 +40,11 @@ struct WorkspaceLeftSidebarContent: View {
   }
 
   private var tabSelector: some View {
-    let selectedIndex = SidebarTab.allCases.firstIndex(of: selectedTab) ?? 0
-
-    return ZStack {
-      // Background
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(Color.inputBackground)
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-
-      // Content with padding
-      GeometryReader { geometry in
-        let inset: CGFloat = 3
-        let availableWidth = geometry.size.width - (inset * 2)
-        let tabWidth = availableWidth / CGFloat(SidebarTab.allCases.count)
-
-        ZStack(alignment: .leading) {
-          // Sliding indicator
-          RoundedRectangle(cornerRadius: CornerRadius.md - 2)
-            .fill(Color.accent)
-            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
-            .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selectedTab)
-
-          // Tab buttons
-          HStack(spacing: 0) {
-            ForEach(SidebarTab.allCases, id: \.self) { tab in
-              Button(action: {
-                withAnimation {
-                  selectedTab = tab
-                }
-              }) {
-                Text(tab.rawValue)
-                  .font(.body)
-                  .fontWeight(selectedTab == tab ? .semibold : .regular)
-                  .foregroundColor(selectedTab == tab ? .white : .foreground)
-                  .frame(maxWidth: .infinity, maxHeight: .infinity)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(PlainButtonStyle())
-              .onHover { hovering in
-                if hovering {
-                  NSCursor.pointingHand.push()
-                } else {
-                  NSCursor.pop()
-                }
-              }
-            }
-          }
-        }
-        .padding(inset)
-      }
-    }
-    .frame(height: 28)
+    CapsuleTabPicker(
+      selection: $selectedTab,
+      tabs: SidebarTab.allCases,
+      height: 28
+    )
     .padding(Spacing.sm)
   }
 

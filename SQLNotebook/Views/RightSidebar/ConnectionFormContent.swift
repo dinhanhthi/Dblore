@@ -257,60 +257,11 @@ struct ConnectionFormContent: View {
 
   @ViewBuilder
   private func customTabPicker() -> some View {
-    let selectedIndex = ConnectionInputMode.allCases.firstIndex(of: inputMode) ?? 0
-
-    ZStack {
-      // Background
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(Color.inputBackground)
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-
-      // Content with padding
-      GeometryReader { geometry in
-        let inset: CGFloat = 3
-        let availableWidth = geometry.size.width - (inset * 2)
-        let tabWidth = availableWidth / CGFloat(ConnectionInputMode.allCases.count)
-
-        ZStack(alignment: .leading) {
-          // Sliding indicator
-          RoundedRectangle(cornerRadius: CornerRadius.md - 2)
-            .fill(Color.accent)
-            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
-            .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: inputMode)
-
-          // Tab buttons
-          HStack(spacing: 0) {
-            ForEach(ConnectionInputMode.allCases, id: \.self) { mode in
-              Button(action: {
-                withAnimation {
-                  inputMode = mode
-                }
-              }) {
-                Text(mode.rawValue)
-                  .font(.body)
-                  .fontWeight(inputMode == mode ? .semibold : .regular)
-                  .foregroundColor(inputMode == mode ? .white : .foreground)
-                  .frame(maxWidth: .infinity, maxHeight: .infinity)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(PlainButtonStyle())
-              .onHover { hovering in
-                if hovering {
-                  NSCursor.pointingHand.push()
-                } else {
-                  NSCursor.pop()
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    .frame(height: 32)
+    CapsuleTabPicker(
+      selection: $inputMode,
+      tabs: ConnectionInputMode.allCases,
+      height: 32
+    )
   }
 
   // MARK: - Status Views
