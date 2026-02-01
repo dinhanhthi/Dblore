@@ -412,17 +412,29 @@ extension View {
   func inputStyle() -> some View {
     padding(Spacing.sm)
       .background(Color.inputBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+        RoundedRectangle(cornerRadius: CornerRadius.xxl)
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
+  /// Capsule style for input fields
+  func inputCapsuleStyle() -> some View {
+    padding(.vertical, Spacing.sm)
+      .padding(.horizontal, Spacing.md)
+      .background(Color.inputBackground)
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
           .stroke(Color.border, lineWidth: 1)
       )
   }
 
   /// Capsule style for dropdown menus and pickers
   func dropdownCapsuleStyle() -> some View {
-    padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs + 2)
+    padding(.vertical, Spacing.sm)
+      .padding(.horizontal, Spacing.sm + 2)
       .background(Color.inputBackground)
       .clipShape(Capsule())
       .overlay(

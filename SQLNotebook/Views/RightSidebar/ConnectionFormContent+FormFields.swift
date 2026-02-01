@@ -19,7 +19,7 @@ extension ConnectionFormContent {
         "e.g., Production DB, Development Server", text: $connectionConfig.name
       )
       .textFieldStyle(.plain)
-      .inputStyle()
+      .inputCapsuleStyle()
     }
 
     // Host and Port
@@ -27,7 +27,7 @@ extension ConnectionFormContent {
       FormField(label: "Host") {
         TextField("localhost", text: $connectionConfig.host)
           .textFieldStyle(.plain)
-          .inputStyle()
+          .inputCapsuleStyle()
       }
 
       FormField(label: "Port") {
@@ -35,7 +35,7 @@ extension ConnectionFormContent {
           "5432", value: $connectionConfig.port, format: .number.grouping(.never)
         )
         .textFieldStyle(.plain)
-        .inputStyle()
+        .inputCapsuleStyle()
         .frame(width: 80)
       }
     }
@@ -44,14 +44,14 @@ extension ConnectionFormContent {
     FormField(label: "Database") {
       TextField("database_name", text: $connectionConfig.database)
         .textFieldStyle(.plain)
-        .inputStyle()
+        .inputCapsuleStyle()
     }
 
     // Username
     FormField(label: "Username") {
       TextField("username", text: $connectionConfig.username)
         .textFieldStyle(.plain)
-        .inputStyle()
+        .inputCapsuleStyle()
     }
 
     // Password
@@ -80,7 +80,7 @@ extension ConnectionFormContent {
         }
         .padding(.trailing, Spacing.sm)
       }
-      .inputStyle()
+      .inputCapsuleStyle()
     }
 
     // SSL Mode
@@ -112,7 +112,7 @@ extension ConnectionFormContent {
         format: .number.grouping(.never)
       )
       .textFieldStyle(.plain)
-      .inputStyle()
+      .inputCapsuleStyle()
       .frame(width: 80)
     }
 
@@ -128,7 +128,7 @@ extension ConnectionFormContent {
         "e.g., Production DB, Development Server", text: $connectionConfig.name
       )
       .textFieldStyle(.plain)
-      .inputStyle()
+      .inputCapsuleStyle()
     }
 
     FormField(label: "Connection String") {
