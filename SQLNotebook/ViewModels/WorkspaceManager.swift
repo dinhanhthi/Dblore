@@ -103,7 +103,9 @@ class WorkspaceManager: Identifiable {
   /// Load workspace from URL
   static func load(from url: URL) async throws -> WorkspaceManager {
     let data = try Data(contentsOf: url)
-    var workspace = try JSONDecoder().decode(Workspace.self, from: data)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    var workspace = try decoder.decode(Workspace.self, from: data)
     workspace.fileURL = url
     workspace.lastOpenedAt = Date()
 
