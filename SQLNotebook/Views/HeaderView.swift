@@ -15,13 +15,7 @@ struct HeaderView: View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
       HStack(spacing: Spacing.xs) {
-        // Schema Visualizer mode buttons (replaces normal buttons when active)
-        if viewModel.isSchemaVisualizerActive {
-          Divider()
-            .frame(height: 20)
-
-          schemaVisualizerButtons
-        } else if viewModel.viewMode == .notebook {
+        if viewModel.viewMode == .notebook {
           // Notebook mode buttons
           Divider()
             .frame(height: 20)
@@ -38,7 +32,7 @@ struct HeaderView: View {
           }) {
             Label("New", systemImage: "plus")
           }
-          .buttonStyle(ToolbarButtonStyle())
+          .buttonStyle(GhostButtonStyle())
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘N)")
@@ -48,7 +42,7 @@ struct HeaderView: View {
           }) {
             Label("Run All", systemImage: "play.fill")
           }
-          .buttonStyle(ToolbarButtonStyle())
+          .buttonStyle(GhostButtonStyle())
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
           .confirmationDialog(
@@ -93,7 +87,7 @@ struct HeaderView: View {
           }) {
             Label("Clear All Outputs", systemImage: "trash")
           }
-          .buttonStyle(ToolbarButtonStyle())
+          .buttonStyle(GhostButtonStyle())
           .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
@@ -122,7 +116,7 @@ struct HeaderView: View {
           } label: {
             Label("Results", systemImage: "eye")
           }
-          .buttonStyle(ToolbarButtonStyle())
+          .buttonStyle(GhostButtonStyle())
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
@@ -136,7 +130,7 @@ struct HeaderView: View {
           }) {
             Label("Run", systemImage: "play.fill")
           }
-          .buttonStyle(ToolbarButtonStyle())
+          .buttonStyle(GhostButtonStyle())
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
           .help(editorRunButtonHelp)
         }
@@ -153,7 +147,7 @@ struct HeaderView: View {
           Image(systemName: "magnifyingglass")
         }
         .buttonStyle(
-          ToolbarButtonStyle(
+          GhostButtonStyle(
             isActive: viewModel.isSearchPanelVisible,
             iconOnly: true
           )
@@ -174,7 +168,7 @@ struct HeaderView: View {
           Image(systemName: "gearshape")
         }
         .buttonStyle(
-          ToolbarButtonStyle(
+          GhostButtonStyle(
             isActive: viewModel.isRightSidebarVisible
               && (viewModel.rightSidebarContent == .settings),
             iconOnly: true
@@ -188,7 +182,6 @@ struct HeaderView: View {
         ConnectionButton(
           connectionState: viewModel.connectionState,
           connectionConfig: viewModel.notebook.connectionConfig,
-          isSchemaVisualizerActive: viewModel.isSchemaVisualizerActive,
           onConnect: {
             // Toggle modal visibility
             viewModel.isConnectionFormModalVisible.toggle()
@@ -196,8 +189,7 @@ struct HeaderView: View {
           onShowConnectionInfo: {
             // Show connection info modal
             viewModel.isConnectionInfoModalVisible = true
-          },
-          onToggleSchemaVisualizer: { viewModel.toggleSchemaVisualizer() }
+          }
         )
       }
     }
@@ -216,111 +208,6 @@ struct HeaderView: View {
       return "Run query (⌘R / ⌘Enter) - runs selection, or query at cursor"
     } else {
       return "Run query (⌘R / ⌘Enter) - runs selection, or entire file"
-    }
-  }
-
-  // MARK: - Schema Visualizer Buttons
-
-  private var schemaVisualizerButtons: some View {
-    HStack(spacing: Spacing.sm) {
-      // Back button
-      Button(action: { viewModel.hideSchemaVisualizer() }) {
-        Label("Back", systemImage: "chevron.left")
-      }
-      .buttonStyle(ToolbarButtonStyle())
-      .help("Back to \(viewModel.viewMode == .notebook ? "Notebook" : "Editor")")
-
-      Divider()
-        .frame(height: 20)
-
-      // Zoom controls grouped together (tight spacing inside)
-      HStack(spacing: 0) {
-        Button(action: { viewModel.zoomOutVisualizer() }) {
-          Image(systemName: "minus.magnifyingglass")
-        }
-        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-        .help("Zoom Out")
-
-        Text("\(Int(viewModel.visualizerScale * 100))%")
-          .font(.monoSmall)
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 45)
-
-        Button(action: { viewModel.zoomInVisualizer() }) {
-          Image(systemName: "plus.magnifyingglass")
-        }
-        .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-        .help("Zoom In")
-      }
-      .padding(.horizontal, Spacing.xs)
-      .padding(.vertical, Spacing.xxs)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(Color.inputBackground)
-      )
-
-      Divider()
-        .frame(height: 20)
-
-      // Reset view button
-      Button(action: { viewModel.resetVisualizerView() }) {
-        Image(systemName: "arrow.counterclockwise")
-      }
-      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .help("Reset View")
-
-      // Reset layout button
-      Button(action: {
-        Task {
-          await viewModel.resetSchemaLayout()
-        }
-      }) {
-        Image(systemName: "rectangle.3.group")
-      }
-      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .help("Reset Layout to Default")
-      .disabled(viewModel.isLoadingSchemaGraph)
-
-      // Toggle table connection lines (ER diagram lines)
-      Button(action: { viewModel.showTableConnections.toggle() }) {
-        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-      }
-      .buttonStyle(ToolbarButtonStyle(isActive: viewModel.showTableConnections, iconOnly: true))
-      .help(
-        viewModel.showTableConnections
-          ? "Hide Table Connections" : "Show Table Connections")
-
-      // Toggle column connection lines
-      Button(action: { viewModel.showColumnConnections.toggle() }) {
-        Image(systemName: "arrow.triangle.branch")
-      }
-      .buttonStyle(ToolbarButtonStyle(isActive: viewModel.showColumnConnections, iconOnly: true))
-      .help(
-        viewModel.showColumnConnections
-          ? "Hide Column Connections" : "Show Column Connections")
-
-      Divider()
-        .frame(height: 20)
-
-      // Export as PNG button
-      Button(action: { viewModel.exportSchemaAsImage() }) {
-        Image(systemName: "square.and.arrow.up")
-      }
-      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .help("Export as PNG")
-      .disabled(viewModel.schemaGraph?.isEmpty ?? true)
-
-      // Refresh button
-      Button(action: {
-        Task {
-          await viewModel.refreshSchemaGraph()
-        }
-      }) {
-        Image(systemName: "arrow.clockwise")
-      }
-      .buttonStyle(ToolbarButtonStyle(iconOnly: true))
-      .help("Refresh Schema")
-      .disabled(viewModel.isLoadingSchemaGraph)
     }
   }
 
@@ -348,54 +235,40 @@ struct HeaderView: View {
 struct ConnectionButton: View {
   let connectionState: ConnectionState
   let connectionConfig: ConnectionConfig?
-  let isSchemaVisualizerActive: Bool
   let onConnect: () -> Void
   let onShowConnectionInfo: () -> Void
-  let onToggleSchemaVisualizer: () -> Void
 
   @State private var isHoveringConnection = false
 
   var body: some View {
     if connectionState.isConnected {
       // Connected state - no button style, green text, with info icon
-      HStack(spacing: Spacing.xs) {
-        HStack(spacing: 0) {
-          Button(action: onShowConnectionInfo) {
-            HStack(spacing: Spacing.xs) {
-              connectionIcon
-              Text(connectionText)
-                .foregroundColor(.success)
-            }
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xs)
-            .background(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .fill(isHoveringConnection ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-            )
-            .contentShape(Rectangle())
+      HStack(spacing: 0) {
+        Button(action: onShowConnectionInfo) {
+          HStack(spacing: Spacing.xs) {
+            connectionIcon
+            Text(connectionText)
+              .foregroundColor(.success)
           }
-          .buttonStyle(.plain)
-          .help("Connection Details")
-          .animation(.easeInOut(duration: 0.15), value: isHoveringConnection)
-          .onHover { hovering in
-            isHoveringConnection = hovering
-            if hovering {
-              NSCursor.pointingHand.push()
-            } else {
-              NSCursor.pop()
-            }
+          .padding(.horizontal, Spacing.sm)
+          .padding(.vertical, Spacing.xs)
+          .background(
+            RoundedRectangle(cornerRadius: CornerRadius.md)
+              .fill(isHoveringConnection ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          )
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Connection Details")
+        .animation(.easeInOut(duration: 0.15), value: isHoveringConnection)
+        .onHover { hovering in
+          isHoveringConnection = hovering
+          if hovering {
+            NSCursor.pointingHand.push()
+          } else {
+            NSCursor.pop()
           }
         }
-
-        // Schema Visualizer button
-        Button(action: onToggleSchemaVisualizer) {
-          Image(systemName: "point.3.connected.trianglepath.dotted")
-            .foregroundColor(.accent)
-        }
-        .buttonStyle(ToolbarButtonStyle(isActive: isSchemaVisualizerActive, iconOnly: true))
-        .help(
-          isSchemaVisualizerActive
-            ? "Close Schema Visualizer" : "Visualize Schema Relationships")
       }
     } else {
       // Other states - use button style
@@ -406,7 +279,7 @@ struct ConnectionButton: View {
         }
         .contentShape(Rectangle())
       }
-      .buttonStyle(ToolbarButtonStyle())
+      .buttonStyle(GhostButtonStyle())
       .help("Connect to Database")
       .onHover { hovering in
         if hovering {

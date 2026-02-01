@@ -60,6 +60,18 @@ class WorkspaceManager: Identifiable {
   var isRightSidebarVisible: Bool = false
   var rightSidebarContent: SidebarContent?
 
+  // Schema Visualizer state (workspace-level)
+  var isSchemaVisualizerActive: Bool = false
+  var schemaGraph: SchemaGraph?
+  var visualizerScale: CGFloat = 1.0
+  var visualizerOffset: CGPoint = .zero
+  var selectedGraphNodeId: UUID?
+  var isLoadingSchemaGraph: Bool = false
+  weak var schemaGraphNSView: SchemaGraphNSView?
+  var showTableConnections: Bool = true
+  var showColumnConnections: Bool = false
+  var schemaSearchState: SchemaSearchState = SchemaSearchState()
+
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []
   var databaseViews: [DatabaseView] = []
@@ -626,5 +638,239 @@ class WorkspaceManager: Identifiable {
         await AppLogger.shared.error("Failed to open SQL file: \(error)", category: "Workspace")
       }
     }
+  }
+
+  // MARK: - Schema Visualizer
+
+  /// Toggle the schema visualizer visibility
+  func toggleSchemaVisualizer() {
+    isSchemaVisualizerActive.toggle()
+
+    if isSchemaVisualizerActive {
+      showSchemaVisualizer()
+    } else {
+      hideSchemaVisualizer()
+    }
+  }
+
+  /// Show the schema visualizer
+  func showSchemaVisualizer() {
+    isSchemaVisualizerActive = true
+
+    // Load graph if not already loaded
+    if schemaGraph == nil {
+      Task {
+        await loadSchemaGraph()
+      }
+    }
+  }
+
+  /// Hide the schema visualizer
+  func hideSchemaVisualizer() {
+    isSchemaVisualizerActive = false
+  }
+
+  /// Load and calculate the schema graph layout
+  func loadSchemaGraph() async {
+    guard connectionState.isConnected else {
+      schemaGraph = nil
+      return
+    }
+
+    isLoadingSchemaGraph = true
+
+    // Build graph from existing data
+    let layoutEngine = SchemaLayoutEngine()
+
+    // Calculate canvas size based on number of tables
+    let tableCount = databaseTables.count
+    let canvasWidth = max(800, CGFloat(tableCount) * 100)
+    let canvasHeight = max(600, CGFloat(tableCount) * 80)
+    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
+
+    // Calculate layout
+    var graph = layoutEngine.calculateLayout(
+      tables: databaseTables,
+      foreignKeys: databaseForeignKeys,
+      canvasSize: canvasSize
+    )
+
+    // Restore saved positions if available from local storage
+    if let config = workspace.connectionConfig {
+      let key = SchemaPositionsStore.connectionKey(from: config)
+      let savedPositions = SchemaPositionsStore.loadPositions(forConnection: key)
+      if !savedPositions.isEmpty {
+        graph.applyPositions(savedPositions)
+      }
+    }
+
+    schemaGraph = graph
+
+    // Reset view state
+    visualizerScale = 1.0
+    visualizerOffset = .zero
+    selectedGraphNodeId = nil
+
+    isLoadingSchemaGraph = false
+  }
+
+  /// Save current schema node positions to local storage
+  func saveSchemaNodePositions() {
+    guard let graph = schemaGraph,
+      let config = workspace.connectionConfig
+    else { return }
+
+    let key = SchemaPositionsStore.connectionKey(from: config)
+    let positions = graph.exportPositions()
+    SchemaPositionsStore.savePositions(positions, forConnection: key)
+  }
+
+  /// Reset schema layout to default (recalculate positions)
+  func resetSchemaLayout() async {
+    guard connectionState.isConnected else { return }
+
+    isLoadingSchemaGraph = true
+
+    // Clear saved positions from local storage
+    if let config = workspace.connectionConfig {
+      let key = SchemaPositionsStore.connectionKey(from: config)
+      SchemaPositionsStore.clearPositions(forConnection: key)
+    }
+
+    // Recalculate layout
+    let layoutEngine = SchemaLayoutEngine()
+    let tableCount = databaseTables.count
+    let canvasWidth = max(800, CGFloat(tableCount) * 100)
+    let canvasHeight = max(600, CGFloat(tableCount) * 80)
+    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
+
+    schemaGraph = layoutEngine.calculateLayout(
+      tables: databaseTables,
+      foreignKeys: databaseForeignKeys,
+      canvasSize: canvasSize
+    )
+
+    // Reset view state but keep current zoom level
+    visualizerOffset = .zero
+    selectedGraphNodeId = nil
+
+    isLoadingSchemaGraph = false
+  }
+
+  /// Refresh the schema graph
+  func refreshSchemaGraph() async {
+    // Reload schema data first
+    await loadDatabaseSchema()
+    // Then rebuild graph
+    await loadSchemaGraph()
+  }
+
+  // MARK: - Schema Visualizer Controls
+
+  /// Zoom in the visualizer
+  func zoomInVisualizer() {
+    visualizerScale = min(visualizerScale + 0.1, 3.0)
+  }
+
+  /// Zoom out the visualizer
+  func zoomOutVisualizer() {
+    visualizerScale = max(visualizerScale - 0.1, 0.3)
+  }
+
+  /// Reset visualizer view (zoom and offset)
+  func resetVisualizerView() {
+    visualizerScale = 1.0
+    visualizerOffset = .zero
+  }
+
+  /// Export schema as PNG image
+  func exportSchemaAsImage() {
+    guard let nsView = schemaGraphNSView else {
+      Task { @MainActor in
+        await AppLogger.shared.warning(
+          "Cannot export: Schema view not available",
+          category: "SchemaVisualizer"
+        )
+      }
+      return
+    }
+
+    // Create save panel
+    let savePanel = NSSavePanel()
+    savePanel.allowedContentTypes = [.png]
+    savePanel.nameFieldStringValue = "schema_diagram.png"
+    savePanel.title = "Export Schema Diagram"
+    savePanel.message = "Choose a location to save the schema diagram"
+
+    savePanel.begin { response in
+      guard response == .OK, let url = savePanel.url else { return }
+
+      // Capture image from NSView using bitmapImageRepForCachingDisplay
+      Task { @MainActor in
+        let bounds = nsView.bounds
+        guard
+          let bitmapRep = nsView.bitmapImageRepForCachingDisplay(in: bounds)
+        else {
+          await AppLogger.shared.error(
+            "Failed to create bitmap representation",
+            category: "SchemaVisualizer"
+          )
+          return
+        }
+
+        nsView.cacheDisplay(in: bounds, to: bitmapRep)
+
+        if let pngData = bitmapRep.representation(using: .png, properties: [:]) {
+          do {
+            try pngData.write(to: url)
+            await AppLogger.shared.info(
+              "Schema diagram exported to \(url.path)",
+              category: "SchemaVisualizer"
+            )
+          } catch {
+            await AppLogger.shared.error(
+              "Failed to export schema: \(error)",
+              category: "SchemaVisualizer"
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+// MARK: - Preview Support
+
+extension WorkspaceManager {
+  /// Create a WorkspaceManager instance for SwiftUI previews
+  static func preview(
+    isSchemaVisualizerActive: Bool = true,
+    isConnected: Bool = true
+  ) -> WorkspaceManager {
+    let manager = WorkspaceManager(workspace: Workspace())
+    manager.isSchemaVisualizerActive = isSchemaVisualizerActive
+
+    if isConnected {
+      manager.connectionState = .connected
+      // Add sample tables for preview
+      manager.databaseTables = [
+        DatabaseTable(
+          schema: "public", name: "users",
+          columns: [
+            DatabaseColumn(name: "id", type: "integer", isPrimaryKey: true),
+            DatabaseColumn(name: "name", type: "varchar"),
+            DatabaseColumn(name: "email", type: "varchar"),
+          ]),
+        DatabaseTable(
+          schema: "public", name: "posts",
+          columns: [
+            DatabaseColumn(name: "id", type: "integer", isPrimaryKey: true),
+            DatabaseColumn(name: "user_id", type: "integer"),
+            DatabaseColumn(name: "title", type: "varchar"),
+          ]),
+      ]
+    }
+
+    return manager
   }
 }

@@ -28,14 +28,10 @@ struct NotebookLayoutView<Content: View>: View {
         // (Left sidebar is now rendered at TabContainerView level for full height)
         GeometryReader { geometry in
           HStack(spacing: 0) {
-            // Main content (passed from parent) or Schema Visualizer
-            // with search panel overlay
+            // Main content (passed from parent) with search panel overlay
+            // Note: Schema Visualizer is now handled at WorkspaceContainerView level
             ZStack(alignment: .top) {
-              if viewModel.isSchemaVisualizerActive {
-                SchemaVisualizerContent(viewModel: viewModel)
-              } else {
-                content
-              }
+              content
 
               // Search panel overlay (slides from top, floating right)
               if viewModel.isSearchPanelVisible {

@@ -22,23 +22,10 @@ struct SidebarTopArea: View {
       Spacer()
 
       // Action buttons (right side)
+      // Note: Schema Visualizer button is now in WorkspaceContainerView traffic light area
       HStack(spacing: Spacing.sm) {
-        // Schema Visualizer button (only when connected and not loading)
+        // Expand/Collapse all button (only when connected and not loading)
         if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
-          Button {
-            viewModel.toggleSchemaVisualizer()
-          } label: {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-              .font(.system(size: 12, weight: .medium))
-              .foregroundColor(.accent)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle(isActive: viewModel.isSchemaVisualizerActive))
-          .blockDoubleClickZoom()
-          .help(
-            viewModel.isSchemaVisualizerActive
-              ? "Close Schema Visualizer" : "Visualize Schema Relationships")
-
-          // Expand/Collapse all button
           Button {
             viewModel.toggleExpandCollapseAll()
           } label: {

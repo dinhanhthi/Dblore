@@ -44,12 +44,12 @@ enum ButtonStyleVariant {
     .foreground
   }
 
-  func foregroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
+  func foregroundColor(isPressed: Bool, isHovering: Bool = false, isActive: Bool = false) -> Color {
     switch self {
     case .ghost:
-      return isPressed || isHovering ? .foreground : .foregroundMuted
+      return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
     default:
-      return .foreground
+      return isActive ? .accent : .foreground
     }
   }
 }
@@ -80,17 +80,26 @@ struct DangerButtonStyle: ButtonStyle {
 }
 
 struct GhostButtonStyle: ButtonStyle {
+  var isActive: Bool = false
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
-    BaseButtonStyleView(variant: .ghost, iconOnly: iconOnly, configuration: configuration)
+    BaseButtonStyleView(
+      variant: .ghost, isActive: isActive, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
   }
 }
 
 /// Internal view that properly receives environment values
 private struct BaseButtonStyleView: View {
   let variant: ButtonStyleVariant
+  var isActive: Bool = false
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
   let configuration: ButtonStyleConfiguration
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.controlSize) private var controlSize
@@ -110,6 +119,7 @@ private struct BaseButtonStyleView: View {
   }
 
   private var horizontalPadding: CGFloat {
+    if let hPadding { return hPadding }
     if iconOnly {
       return verticalPadding
     }
@@ -126,6 +136,7 @@ private struct BaseButtonStyleView: View {
   }
 
   private var verticalPadding: CGFloat {
+    if let vPadding { return vPadding }
     switch controlSize {
     case .mini:
       return Spacing.xxs
@@ -142,7 +153,8 @@ private struct BaseButtonStyleView: View {
     configuration.label
       .font(font)
       .foregroundColor(
-        variant.foregroundColor(isPressed: configuration.isPressed, isHovering: isHovering)
+        variant.foregroundColor(
+          isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, verticalPadding)
@@ -150,11 +162,11 @@ private struct BaseButtonStyleView: View {
         if iconOnly {
           Circle()
             .fill(
-              variant.backgroundColor(isPressed: isHovering, isHovering: isHovering))
+              variant.backgroundColor(isPressed: isHovering || isActive, isHovering: isHovering))
         } else {
           Capsule()
             .fill(
-              variant.backgroundColor(isPressed: isHovering, isHovering: isHovering))
+              variant.backgroundColor(isPressed: isHovering || isActive, isHovering: isHovering))
         }
       }
       .overlay {
@@ -199,38 +211,6 @@ struct SidebarHeaderButtonStyle: ButtonStyle {
       )
       .contentShape(Rectangle())
       .animation(.easeInOut(duration: 0.1), value: isHovering)
-      .onHover { hovering in
-        isHovering = hovering
-      }
-      .cursor(.pointingHand)
-  }
-}
-
-struct ToolbarButtonStyle: ButtonStyle {
-  var isActive: Bool = false
-  var iconOnly: Bool = false
-  @State private var isHovering = false
-  @Environment(\.isEnabled) private var isEnabled
-
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.body, weight: .medium))
-      .foregroundColor(
-        isActive ? .accent : (configuration.isPressed ? .foreground : .foregroundMuted)
-      )
-      .padding(.horizontal, iconOnly ? Spacing.xs : Spacing.sm)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(
-            configuration.isPressed || isActive
-              ? Color.cellBackgroundHover
-              : (isHovering && isEnabled ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
-      )
-      .contentShape(Rectangle())
-      .opacity(isEnabled ? 1.0 : 0.4)
-      .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
       }

@@ -37,7 +37,10 @@ struct WorkspaceContainerView: View {
             )
 
             // Content area
-            if let activeTabId = workspaceManager.activeTabId,
+            if workspaceManager.isSchemaVisualizerActive {
+              // Schema visualizer at workspace level (overlays everything)
+              WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
+            } else if let activeTabId = workspaceManager.activeTabId,
               let viewModel = workspaceManager.viewModel(for: activeTabId)
             {
               WorkspaceTabContentView(
@@ -68,16 +71,36 @@ struct WorkspaceContainerView: View {
           // Background for traffic light area + buttons
           Color.cardBackground
             .frame(
-              width: ComponentSize.trafficLightAndToggleWidth + 40,
+              width: ComponentSize.trafficLightAndToggleWidth + 75,
               height: ComponentSize.tabBarHeight
             )
             .overlay(alignment: .trailing) {
               // Buttons positioned at trailing edge of background
-              HStack(spacing: Spacing.lg) {
+              HStack(spacing: Spacing.xxs) {
                 SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
                   workspaceManager.toggleLeftSidebar()
                 }
+
                 DatabaseConnectionButton(workspaceManager: workspaceManager)
+
+                // Schema Visualizer button (only show when connected)
+                if case .connected = workspaceManager.connectionState {
+                  Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                      .font(.system(size: 12))
+                      .foregroundColor(.accent)
+                  }
+                  .buttonStyle(
+                    GhostButtonStyle(
+                      isActive: workspaceManager.isSchemaVisualizerActive, iconOnly: true
+                    )
+                  )
+                  .controlSize(.small)
+                  .blockDoubleClickZoom()
+                  .help(
+                    workspaceManager.isSchemaVisualizerActive
+                      ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+                }
               }
               .padding(.trailing, Spacing.md)
             }
@@ -353,9 +376,15 @@ struct DatabaseConnectionButton: View {
     } label: {
       Image(systemName: isConnected ? "bolt.fill" : "bolt.slash")
         .font(.system(size: 12))
-        .foregroundColor(isConnected ? .green : .foregroundMuted)
+        .foregroundColor(isConnected ? .green : nil)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(
+      GhostButtonStyle(
+        iconOnly: true
+      )
+    )
+    .controlSize(.small)
+    .blockDoubleClickZoom()
     .help(isConnected ? "Connection Details" : "Connect to database")
   }
 }

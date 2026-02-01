@@ -60,17 +60,6 @@ class NotebookViewModel {
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false  // Track expand/collapse state
 
-  // Schema visualizer state
-  var schemaGraph: SchemaGraph?
-  var visualizerScale: CGFloat = 1.0
-  var visualizerOffset: CGPoint = .zero
-  var selectedGraphNodeId: UUID?
-  var isLoadingSchemaGraph: Bool = false
-  var isSchemaVisualizerActive: Bool = false  // Show visualizer in main body instead of cells/editor
-  weak var schemaGraphNSView: SchemaGraphNSView?  // Reference for export functionality
-  var showTableConnections: Bool = true  // Show relationship lines between tables (default: true)
-  var showColumnConnections: Bool = false  // Show dashed lines connecting FK columns
-
   // Connection config for the modal
   var editingConnectionConfig: ConnectionConfig
   var isConnectionFormModalVisible: Bool = false
@@ -107,10 +96,6 @@ class NotebookViewModel {
   @ObservationIgnored var searchTask: Task<Void, Never>?  // Task for cancellation support
   @ObservationIgnored var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
   @ObservationIgnored var previousFirstResponder: NSResponder?  // Store previous responder
-
-  // Schema search state (for schema visualizer)
-  var schemaSearchState: SchemaSearchState = SchemaSearchState()
-  @ObservationIgnored var schemaSearchTask: Task<Void, Never>?
 
   // MARK: - Query Confirmation State (10.3.2 optimization)
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()

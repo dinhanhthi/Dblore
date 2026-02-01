@@ -24,8 +24,6 @@ private struct AllButtonsPreview: View {
         Divider()
         ghostSection
         Divider()
-        toolbarSection
-        Divider()
         sidebarHeaderSection
         Divider()
         floatingActionSection
@@ -105,23 +103,10 @@ private struct AllButtonsPreview: View {
         } label: {
           Image(systemName: "gear")
         }.buttonStyle(GhostButtonStyle(iconOnly: true))
-      }
-    }
-  }
-
-  private var toolbarSection: some View {
-    Group {
-      Text("Toolbar").font(.headline)
-      HStack(spacing: Spacing.md) {
-        Button("Toolbar") {}.buttonStyle(ToolbarButtonStyle())
-        Button {
-        } label: {
-          Image(systemName: "play.fill")
-        }.buttonStyle(ToolbarButtonStyle(iconOnly: true))
         Button {
         } label: {
           Image(systemName: "stop.fill")
-        }.buttonStyle(ToolbarButtonStyle(isActive: true, iconOnly: true))
+        }.buttonStyle(GhostButtonStyle(isActive: true, iconOnly: true))
       }
     }
   }
