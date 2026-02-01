@@ -71,7 +71,8 @@ struct WorkspaceContainerView: View {
           // Background for traffic light area + buttons
           Color.cardBackground
             .frame(
-              width: ComponentSize.trafficLightAndToggleWidth + 75,
+              width: ComponentSize.trafficLightAndToggleWidth
+                + (workspaceManager.connectionState.isConnected ? 75 : 44),
               height: ComponentSize.tabBarHeight
             )
             .overlay(alignment: .trailing) {
