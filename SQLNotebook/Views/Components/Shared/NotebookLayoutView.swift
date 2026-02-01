@@ -21,8 +21,8 @@ struct NotebookLayoutView<Content: View>: View {
         .ignoresSafeArea()
 
       VStack(spacing: 0) {
-        // Header and search panel
-        HeaderWithSearchPanel(viewModel: viewModel)
+        // Header
+        HeaderView(viewModel: viewModel)
 
         // Main content area with right sidebar only
         // (Left sidebar is now rendered at TabContainerView level for full height)
