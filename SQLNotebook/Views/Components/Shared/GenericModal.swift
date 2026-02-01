@@ -142,7 +142,12 @@ extension View {
             .ignoresSafeArea()
             .transition(.opacity)
             .onTapGesture {
-              isPresented.wrappedValue = false
+              // Use async to properly release focus/responder chain on macOS
+              DispatchQueue.main.async {
+                isPresented.wrappedValue = false
+                // Force window to become key and restore responder chain
+                NSApp.keyWindow?.makeFirstResponder(nil)
+              }
             }
         }
 
@@ -152,6 +157,7 @@ extension View {
             .transition(.scale(scale: 0.8).combined(with: .opacity))
         }
       }
+      .allowsHitTesting(isPresented.wrappedValue)
       .animation(.easeInOut(duration: 0.15), value: isPresented.wrappedValue)
     }
   }
