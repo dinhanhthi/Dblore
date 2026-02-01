@@ -28,7 +28,7 @@ struct NotebookContentView: View {
   }
 
   var body: some View {
-    NotebookLayoutView(
+    DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
       isEditorMode: false

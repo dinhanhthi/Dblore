@@ -1,5 +1,5 @@
 //
-//  NotebookLayoutView.swift
+//  DocumentLayoutView.swift
 //  SQLNotebook
 //
 
@@ -7,7 +7,7 @@ import SwiftUI
 
 /// Shared layout structure for both Editor and Notebook modes
 /// Contains common UI elements: header, sidebars, footer, toast
-struct NotebookLayoutView<Content: View>: View {
+struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
   @Binding var lastSaved: Date?
   let isEditorMode: Bool
