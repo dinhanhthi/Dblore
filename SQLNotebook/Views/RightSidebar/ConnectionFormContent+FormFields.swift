@@ -140,15 +140,7 @@ extension ConnectionFormContent {
         .textFieldStyle(.plain)
         .font(.system(.body, design: .monospaced))
         .lineLimit(3...6)
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .fill(Color.inputBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
+        .textAreaCapsuleStyle()
         .onChange(of: connectionStringBinding.wrappedValue) { _, newValue in
           clearParseErrorAndTestResult()
           if !newValue.isEmpty {

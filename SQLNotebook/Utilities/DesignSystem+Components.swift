@@ -443,6 +443,17 @@ extension View {
       )
   }
 
+  /// Rounded style for multiline text fields with capsule-like radius
+  func textAreaCapsuleStyle() -> some View {
+    padding(Spacing.sm)
+      .background(Color.inputBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxxl))
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.xxxl)
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
   @ViewBuilder
   func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
     if condition {
