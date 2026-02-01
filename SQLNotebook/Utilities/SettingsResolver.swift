@@ -139,10 +139,6 @@ class SettingsResolver {
     userSettings.accentColor
   }
 
-  var maxConnectionHistorySize: Int {
-    userSettings.maxConnectionHistorySize
-  }
-
   var bypassDestructiveQueryConfirmation: Bool {
     userSettings.bypassDestructiveQueryConfirmation
   }

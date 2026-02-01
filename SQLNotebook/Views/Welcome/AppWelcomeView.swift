@@ -33,7 +33,10 @@ struct AppWelcomeView: View {
                     workspaces: recentManager.recentWorkspaces,
                     onSelect: openWorkspace,
                     onNew: createNewWorkspace,
-                    fullWidth: recentManager.hasOnlyWorkspaces
+                    columnWidth: columnWidth(
+                      containerWidth: geometry.size.width,
+                      hasBothColumns: recentManager.hasBothLists
+                    )
                   )
                 }
 
@@ -43,11 +46,13 @@ struct AppWelcomeView: View {
                     connections: recentManager.recentConnections,
                     onSelect: openConnectionAsWorkspace,
                     onNew: showConnectionForm,
-                    fullWidth: recentManager.hasOnlyConnections
+                    columnWidth: columnWidth(
+                      containerWidth: geometry.size.width,
+                      hasBothColumns: recentManager.hasBothLists
+                    )
                   )
                 }
               }
-              .frame(maxWidth: 900)
             } else {
               // No recent items - show action buttons
               EmptyWelcomeActions(
@@ -74,6 +79,19 @@ struct AppWelcomeView: View {
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
+  }
+
+  // MARK: - Layout Helpers
+
+  /// Calculate column width based on container width and whether both columns are shown
+  /// - When only one column: 500px (fixed)
+  /// - When both columns and container < 900px: 350px each
+  /// - When both columns and container >= 900px: 400px each
+  private func columnWidth(containerWidth: CGFloat, hasBothColumns: Bool) -> CGFloat {
+    if !hasBothColumns {
+      return 500
+    }
+    return containerWidth < 900 ? 350 : 400
   }
 
   // MARK: - Actions
@@ -172,7 +190,7 @@ struct RecentWorkspacesColumn: View {
   let workspaces: [WorkspaceHistoryEntry]
   let onSelect: (WorkspaceHistoryEntry) -> Void
   let onNew: () -> Void
-  let fullWidth: Bool
+  let columnWidth: CGFloat
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -188,15 +206,14 @@ struct RecentWorkspacesColumn: View {
           onNew()
         } label: {
           Label("New", systemImage: "plus")
-            .font(.callout)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(PrimaryButtonStyle())
         .controlSize(.small)
       }
 
       // Workspace list
       VStack(spacing: 0) {
-        ForEach(workspaces.prefix(8)) { workspace in
+        ForEach(workspaces.prefix(6)) { workspace in
           RecentWorkspaceRow(workspace: workspace, onSelect: onSelect)
         }
       }
@@ -207,7 +224,7 @@ struct RecentWorkspacesColumn: View {
           .stroke(Color.border, lineWidth: 1)
       )
     }
-    .frame(width: fullWidth ? 500 : 400)
+    .frame(width: columnWidth)
   }
 }
 
@@ -223,7 +240,7 @@ struct RecentWorkspaceRow: View {
     Button {
       onSelect(workspace)
     } label: {
-      HStack(spacing: Spacing.sm) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
         // Workspace icon
         Image(systemName: "folder.badge.gearshape")
           .font(.system(size: 16))
@@ -231,40 +248,54 @@ struct RecentWorkspaceRow: View {
           .frame(width: 24)
 
         VStack(alignment: .leading, spacing: 2) {
-          Text(workspace.name)
-            .font(.callout)
-            .fontWeight(.medium)
-            .foregroundColor(.foreground)
-            .lineLimit(1)
+          // First line: workspace name + tab count badge (right-aligned)
+          HStack(spacing: Spacing.xs) {
+            Text(workspace.name)
+              .font(.callout)
+              .fontWeight(.medium)
+              .foregroundColor(.foreground)
+              .lineLimit(1)
+              .truncationMode(.tail)
 
+            Spacer(minLength: Spacing.xs)
+
+            // Tab count badge
+            if workspace.tabCount > 0 {
+              Text("\(workspace.tabCount)")
+                .font(.caption2)
+                .foregroundColor(.foregroundMuted)
+                .padding(.horizontal, Spacing.xs)
+                .padding(.vertical, 2)
+                .background(Color.inputBackground)
+                .cornerRadius(CornerRadius.sm)
+                .layoutPriority(1)
+                .help("Number of tabs open in this workspace")
+            }
+          }
+
+          // Second line: connection string + date (right-aligned)
           HStack(spacing: Spacing.xs) {
             if let conn = workspace.connectionDisplayString {
               Text(conn)
                 .font(.caption)
                 .foregroundColor(.foregroundMuted)
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
+
+            Spacer(minLength: Spacing.xs)
 
             Text(workspace.formattedLastOpened)
               .font(.caption)
               .foregroundColor(.foregroundSubtle)
+              .layoutPriority(1)
+              .help("Last opened date")
           }
         }
 
-        Spacer()
-
-        // Tab count badge
-        if workspace.tabCount > 0 {
-          Text("\(workspace.tabCount)")
-            .font(.caption2)
-            .foregroundColor(.foregroundMuted)
-            .padding(.horizontal, Spacing.xs)
-            .padding(.vertical, 2)
-            .background(Color.cellBackground)
-            .cornerRadius(CornerRadius.sm)
-        }
+        Spacer(minLength: 0)
       }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
+      .padding(Spacing.sm)
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
@@ -280,7 +311,7 @@ struct RecentConnectionsColumn: View {
   let connections: [ConnectionHistoryEntry]
   let onSelect: (ConnectionHistoryEntry) -> Void
   let onNew: () -> Void
-  let fullWidth: Bool
+  let columnWidth: CGFloat
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -303,7 +334,7 @@ struct RecentConnectionsColumn: View {
 
       // Connection list
       VStack(spacing: 0) {
-        ForEach(connections.prefix(8)) { connection in
+        ForEach(connections.prefix(6)) { connection in
           RecentConnectionRow(connection: connection, onSelect: onSelect)
         }
       }
@@ -314,7 +345,7 @@ struct RecentConnectionsColumn: View {
           .stroke(Color.border, lineWidth: 1)
       )
     }
-    .frame(width: fullWidth ? 500 : 400)
+    .frame(width: columnWidth)
   }
 }
 
@@ -330,39 +361,43 @@ struct RecentConnectionRow: View {
     Button {
       onSelect(connection)
     } label: {
-      HStack(spacing: Spacing.sm) {
-        // Database icon
-        Image(systemName: "server.rack")
-          .font(.system(size: 16))
+      HStack(alignment: .top, spacing: Spacing.sm) {
+        // Database type icon (from simpleicons.org)
+        Image(connection.config.databaseType.iconAssetName)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 16, height: 16)
           .foregroundColor(.syntaxFunction)
           .frame(width: 24)
 
         VStack(alignment: .leading, spacing: 2) {
-          Text(connection.shortDisplayName)
-            .font(.callout)
-            .fontWeight(.medium)
-            .foregroundColor(.foreground)
-            .lineLimit(1)
+          // First line: shortDisplayName + date (right-aligned)
+          HStack(spacing: Spacing.xs) {
+            Text(connection.shortDisplayName)
+              .font(.callout)
+              .fontWeight(.medium)
+              .foregroundColor(.foreground)
+              .lineLimit(1)
+              .truncationMode(.tail)
 
-          Text(connection.displayString)
+            Spacer(minLength: Spacing.xs)
+
+            Text(connection.formattedLastUsedDate)
+              .font(.caption)
+              .foregroundColor(.foregroundSubtle)
+              .layoutPriority(1)
+          }
+
+          // Second line: connection string (e.g., "mydb@localhost:5432")
+          Text(connection.config.displayString)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
             .lineLimit(1)
         }
 
-        Spacer()
-
-        // Database type badge
-        Text(connection.config.databaseType.displayName)
-          .font(.caption2)
-          .foregroundColor(.foregroundMuted)
-          .padding(.horizontal, Spacing.xs)
-          .padding(.vertical, 2)
-          .background(Color.cellBackground)
-          .cornerRadius(CornerRadius.sm)
+        Spacer(minLength: 0)
       }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
+      .padding(Spacing.sm)
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
@@ -461,4 +496,232 @@ struct ActionCard: View {
       isHovering = hovering
     }
   }
+}
+
+// MARK: - Preview Helpers
+
+private enum PreviewData {
+  static func makeWorkspaces() -> [WorkspaceHistoryEntry] {
+    [
+      WorkspaceHistoryEntry(
+        fileURL: URL(fileURLWithPath: "/Users/dev/Projects/analytics.sqlnb"),
+        name: "Analytics Dashboard",
+        connectionDisplayString: "analytics@prod-db:5432",
+        lastOpenedAt: Date().addingTimeInterval(-3600),  // 1 hour ago
+        tabCount: 5
+      ),
+      WorkspaceHistoryEntry(
+        fileURL: URL(fileURLWithPath: "/Users/dev/Projects/users-migration.sqlnb"),
+        name: "Users Migration",
+        connectionDisplayString: "users@localhost:5432",
+        lastOpenedAt: Date().addingTimeInterval(-86400),  // 1 day ago
+        tabCount: 3
+      ),
+      WorkspaceHistoryEntry(
+        fileURL: URL(fileURLWithPath: "/Users/dev/Projects/reporting.sqlnb"),
+        name: "Reporting Queries",
+        connectionDisplayString: nil,
+        lastOpenedAt: Date().addingTimeInterval(-172_800),  // 2 days ago
+        tabCount: 0
+      ),
+    ]
+  }
+
+  static func makeConnections() -> [ConnectionHistoryEntry] {
+    [
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql,
+          host: "prod-db.example.com",
+          port: 5432,
+          database: "analytics",
+          username: "analyst",
+          name: "Production Analytics"
+        )
+      ),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql,
+          host: "localhost",
+          port: 5432,
+          database: "development",
+          username: "dev",
+          name: "Local Dev"
+        )
+      ),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .sqlite,
+          host: "",
+          port: 0,
+          database: "/Users/dev/data.sqlite",
+          username: "",
+          name: "Local SQLite"
+        )
+      ),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .sqlite,
+          host: "",
+          port: 0,
+          database: "/Users/dev/data.sqlite",
+          username: "",
+          name: "Local SQLite"
+        )
+      ),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .sqlite,
+          host: "",
+          port: 0,
+          database: "/Users/dev/data.sqlite",
+          username: "",
+          name: "Local SQLite"
+        )
+      ),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .sqlite,
+          host: "",
+          port: 0,
+          database: "/Users/dev/data.sqlite",
+          username: "",
+          name: "Local SQLite"
+        )
+      ),
+    ]
+  }
+}
+
+// MARK: - Preview RecentManager
+
+@MainActor
+@Observable
+private class PreviewRecentManager {
+  var recentWorkspaces: [WorkspaceHistoryEntry]
+  var recentConnections: [ConnectionHistoryEntry]
+
+  init(
+    workspaces: [WorkspaceHistoryEntry] = [],
+    connections: [ConnectionHistoryEntry] = []
+  ) {
+    self.recentWorkspaces = workspaces
+    self.recentConnections = connections
+  }
+
+  var hasRecentItems: Bool {
+    !recentWorkspaces.isEmpty || !recentConnections.isEmpty
+  }
+
+  var hasOnlyWorkspaces: Bool {
+    !recentWorkspaces.isEmpty && recentConnections.isEmpty
+  }
+
+  var hasOnlyConnections: Bool {
+    recentWorkspaces.isEmpty && !recentConnections.isEmpty
+  }
+
+  var hasBothLists: Bool {
+    !recentWorkspaces.isEmpty && !recentConnections.isEmpty
+  }
+}
+
+// MARK: - Preview AppWelcomeView
+
+private struct PreviewAppWelcomeView: View {
+  let previewManager: PreviewRecentManager
+
+  /// Calculate column width based on container width and whether both columns are shown
+  private func columnWidth(containerWidth: CGFloat, hasBothColumns: Bool) -> CGFloat {
+    if !hasBothColumns {
+      return 500
+    }
+    return containerWidth < 900 ? 350 : 400
+  }
+
+  var body: some View {
+    ZStack {
+      GeometryReader { geometry in
+        ScrollView {
+          VStack(spacing: Spacing.xl) {
+            WelcomeHeader()
+
+            if previewManager.hasRecentItems {
+              HStack(alignment: .top, spacing: Spacing.xl) {
+                if !previewManager.recentWorkspaces.isEmpty {
+                  RecentWorkspacesColumn(
+                    workspaces: previewManager.recentWorkspaces,
+                    onSelect: { _ in },
+                    onNew: {},
+                    columnWidth: columnWidth(
+                      containerWidth: geometry.size.width,
+                      hasBothColumns: previewManager.hasBothLists
+                    )
+                  )
+                }
+
+                if !previewManager.recentConnections.isEmpty {
+                  RecentConnectionsColumn(
+                    connections: previewManager.recentConnections,
+                    onSelect: { _ in },
+                    onNew: {},
+                    columnWidth: columnWidth(
+                      containerWidth: geometry.size.width,
+                      hasBothColumns: previewManager.hasBothLists
+                    )
+                  )
+                }
+              }
+            } else {
+              EmptyWelcomeActions(
+                onNewWorkspace: {},
+                onConnect: {}
+              )
+            }
+          }
+          .padding(.vertical, Spacing.xxl)
+          .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.appBackground)
+    }
+  }
+}
+
+// MARK: - Previews
+
+#Preview("Both Workspaces and Connections") {
+  PreviewAppWelcomeView(
+    previewManager: PreviewRecentManager(
+      workspaces: PreviewData.makeWorkspaces(),
+      connections: PreviewData.makeConnections()
+    )
+  )
+  .frame(width: 800, height: 600)
+}
+
+#Preview("Empty - No Recent Items") {
+  PreviewAppWelcomeView(
+    previewManager: PreviewRecentManager()
+  )
+  .frame(width: 800, height: 600)
+}
+
+#Preview("Only Workspaces") {
+  PreviewAppWelcomeView(
+    previewManager: PreviewRecentManager(
+      workspaces: PreviewData.makeWorkspaces()
+    )
+  )
+  .frame(width: 800, height: 600)
+}
+
+#Preview("Only Connections") {
+  PreviewAppWelcomeView(
+    previewManager: PreviewRecentManager(
+      connections: PreviewData.makeConnections()
+    )
+  )
+  .frame(width: 800, height: 600)
 }

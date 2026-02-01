@@ -17,7 +17,7 @@ class RecentManager {
   // MARK: - Storage Keys
 
   private nonisolated static let workspacesKey = "com.sqlnotebook.recentWorkspaces"
-  private nonisolated static let maxWorkspaces = 10
+  private nonisolated static let maxWorkspaces = 6
 
   // MARK: - State
 

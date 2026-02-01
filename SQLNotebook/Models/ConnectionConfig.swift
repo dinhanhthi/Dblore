@@ -13,6 +13,16 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   var displayName: String {
     rawValue
   }
+
+  /// Asset catalog image name for the database type icon (from simpleicons.org)
+  var iconAssetName: String {
+    switch self {
+    case .postgresql:
+      return "postgresql"
+    case .sqlite:
+      return "sqlite"
+    }
+  }
 }
 
 /// Protection level for database connections

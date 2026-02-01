@@ -213,7 +213,6 @@ class AppSettings {
       "app.settings.bypassDestructiveQueryConfirmation"
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
     static let showLineNumbers = "app.settings.showLineNumbers"
-    static let maxConnectionHistorySize = "app.settings.maxConnectionHistorySize"
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
@@ -317,28 +316,6 @@ class AppSettings {
   var showLineNumbers: Bool = true {
     didSet {
       UserDefaults.standard.set(showLineNumbers, forKey: Keys.showLineNumbers)
-    }
-  }
-
-  /// Maximum number of connection history entries to store (0-5)
-  /// 0 = disabled (no history saved), 5 = maximum
-  /// Default: 5
-  var maxConnectionHistorySize: Int = 5 {
-    didSet {
-      // Clamp value between 0 and 5
-      let clampedValue = min(max(maxConnectionHistorySize, 0), 5)
-      if clampedValue != maxConnectionHistorySize {
-        maxConnectionHistorySize = clampedValue
-        return  // Avoid triggering didSet again
-      }
-      UserDefaults.standard.set(maxConnectionHistorySize, forKey: Keys.maxConnectionHistorySize)
-
-      // If size decreased, trim history immediately
-      Task {
-        await MainActor.run {
-          SessionManager.trimHistoryToSize(clampedValue)
-        }
-      }
     }
   }
 
@@ -588,15 +565,6 @@ class AppSettings {
       showLineNumbers = UserDefaults.standard.bool(forKey: Keys.showLineNumbers)
     }
 
-    // Load connection history size setting
-    let savedHistorySize = UserDefaults.standard.integer(forKey: Keys.maxConnectionHistorySize)
-    if UserDefaults.standard.object(forKey: Keys.maxConnectionHistorySize) != nil {
-      maxConnectionHistorySize = min(max(savedHistorySize, 0), 5)
-    } else {
-      // Default to 5 if not set
-      maxConnectionHistorySize = 5
-    }
-
     // Load word wrap enabled setting
     if UserDefaults.standard.object(forKey: Keys.wordWrapEnabled) != nil {
       wordWrapEnabled = UserDefaults.standard.bool(forKey: Keys.wordWrapEnabled)
@@ -657,7 +625,6 @@ class AppSettings {
     bypassDestructiveQueryConfirmation = false
     isAutoCompleteEnabled = true
     showLineNumbers = true
-    maxConnectionHistorySize = 5
     wordWrapEnabled = true
     hideRunWithQuerySection = false
     editorSimpleMode = false
