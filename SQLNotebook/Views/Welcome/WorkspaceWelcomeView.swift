@@ -266,3 +266,15 @@ struct WorkspaceRecentFileRow: View {
     }
   }
 }
+
+// MARK: - Preview
+
+#Preview("Welcome - Disconnected") {
+  WorkspaceWelcomeView(workspaceManager: .preview(isConnected: false))
+    .frame(width: 800, height: 600)
+}
+
+#Preview("Welcome - Connected") {
+  WorkspaceWelcomeView(workspaceManager: .preview(isConnected: true))
+    .frame(width: 800, height: 600)
+}

@@ -357,11 +357,11 @@ struct DocumentTypeCard: View {
   @State private var isHovering = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.lg) {
+    VStack(alignment: .leading, spacing: Spacing.md) {
       // Icon and Title
-      HStack(spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
         Image(systemName: icon)
-          .font(.system(size: 32))
+          .font(.system(size: 28))
           .foregroundColor(accentColor)
 
         Text(title)
@@ -400,7 +400,7 @@ struct DocumentTypeCard: View {
       }
     }
     .padding(Spacing.xl)
-    .frame(width: 280, height: 220)
+    .frame(width: 250, height: 180)
     .background(Color.cardBackground)
     .cornerRadius(CornerRadius.xl)
     .overlay(
