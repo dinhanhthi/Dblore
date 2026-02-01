@@ -85,14 +85,23 @@ extension ConnectionFormContent {
 
     // SSL Mode
     FormField(label: "SSL Mode") {
-      Picker(selection: $connectionConfig.sslMode) {
+      Menu {
         ForEach(SSLMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(mode)
+          Button(mode.displayName) {
+            connectionConfig.sslMode = mode
+          }
         }
       } label: {
-        EmptyView()
+        HStack {
+          Text(connectionConfig.sslMode.displayName)
+          Spacer()
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+        .dropdownCapsuleStyle()
       }
-      .pickerStyle(.menu)
+      .buttonStyle(.plain)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -155,20 +164,27 @@ extension ConnectionFormContent {
 
     // SSL Mode picker for connection string mode
     FormField(label: "SSL Mode") {
-      Picker(selection: connectionStringSSLModeBinding) {
+      Menu {
         ForEach(SSLMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(mode)
+          Button(mode.displayName) {
+            connectionStringSSLModeBinding.wrappedValue = mode
+            // Update the config when SSL mode changes
+            connectionConfig.sslMode = mode
+            clearTestResult()
+          }
         }
       } label: {
-        EmptyView()
+        HStack {
+          Text(connectionStringSSLModeBinding.wrappedValue.displayName)
+          Spacer()
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+        .dropdownCapsuleStyle()
       }
-      .pickerStyle(.menu)
+      .buttonStyle(.plain)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .onChange(of: connectionStringSSLModeBinding.wrappedValue) { _, newMode in
-        // Update the config when SSL mode changes
-        connectionConfig.sslMode = newMode
-        clearTestResult()
-      }
     }
 
     // Common toggles and pickers
@@ -209,14 +225,26 @@ extension ConnectionFormContent {
 
       Spacer()
 
-      Picker("", selection: $connectionConfig.protectionLevel) {
+      Menu {
         ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
-          Label(level.displayName, systemImage: level.iconName).tag(level)
+          Button {
+            connectionConfig.protectionLevel = level
+          } label: {
+            Label(level.displayName, systemImage: level.iconName)
+          }
         }
+      } label: {
+        HStack(spacing: Spacing.xs) {
+          Image(systemName: connectionConfig.protectionLevel.iconName)
+            .font(.caption)
+          Text(connectionConfig.protectionLevel.displayName)
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+        .dropdownCapsuleStyle()
       }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 160)
+      .buttonStyle(.plain)
     }
 
     // Security Level (Safe Mode) Picker
@@ -237,15 +265,25 @@ extension ConnectionFormContent {
 
       Spacer()
 
-      Picker("", selection: $connectionConfig.safeMode) {
-        Text("Use Global").tag(SafeMode?.none)
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          Text(mode.displayName).tag(Optional(mode))
+      Menu {
+        Button("Use Global") {
+          connectionConfig.safeMode = nil
         }
+        ForEach(SafeMode.allCases, id: \.self) { mode in
+          Button(mode.displayName) {
+            connectionConfig.safeMode = mode
+          }
+        }
+      } label: {
+        HStack(spacing: Spacing.xs) {
+          Text(connectionConfig.safeMode?.displayName ?? "Use Global")
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+        .dropdownCapsuleStyle()
       }
-      .labelsHidden()
-      .pickerStyle(.menu)
-      .frame(width: 130)
+      .buttonStyle(.plain)
     }
   }
 }

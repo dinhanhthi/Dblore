@@ -69,18 +69,11 @@ extension ConnectionFormContent {
           Text(selectedHistoryEntry?.config.name ?? "Select a connection")
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
           Spacer()
-          Image(systemName: "chevron.down")
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
             .foregroundColor(.foregroundMuted)
         }
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .fill(Color.inputBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
+        .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
     }

@@ -419,6 +419,18 @@ extension View {
       )
   }
 
+  /// Capsule style for dropdown menus and pickers
+  func dropdownCapsuleStyle() -> some View {
+    padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs + 2)
+      .background(Color.inputBackground)
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
   @ViewBuilder
   func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
     if condition {
