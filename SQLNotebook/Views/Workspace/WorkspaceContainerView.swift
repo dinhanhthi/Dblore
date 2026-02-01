@@ -266,92 +266,195 @@ struct WorkspaceTabContentView: View {
 
 // MARK: - Title Bar Tabs View for Workspace
 
-/// Tab bar view adapted for workspace
+/// Tab bar view adapted for workspace with Chrome-like drag-and-drop
 struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
 
+  /// Whether can navigate to previous tab
+  private var canGoToPreviousTab: Bool {
+    guard let activeId = workspaceManager.activeTabId,
+      let currentIndex = workspaceManager.tabs.firstIndex(where: { $0.id == activeId })
+    else { return false }
+    return currentIndex > 0
+  }
+
+  /// Whether can navigate to next tab
+  private var canGoToNextTab: Bool {
+    guard let activeId = workspaceManager.activeTabId,
+      let currentIndex = workspaceManager.tabs.firstIndex(where: { $0.id == activeId })
+    else { return false }
+    return currentIndex < workspaceManager.tabs.count - 1
+  }
+
   var body: some View {
-    // Reuse existing TitleBarTabsView pattern
-    // This is a simplified version - full implementation would match TitleBarTabsView.swift
-    HStack(spacing: 0) {
+    HStack(alignment: .center, spacing: 0) {
       if !hasLeftSidebar {
         Color.clear
-          .frame(width: ComponentSize.trafficLightAndToggleWidth)
+          .frame(
+            width: ComponentSize.trafficLightAndToggleWidth
+              + (workspaceManager.connectionState.isConnected ? 75 : 44))
+      } else {
+        Color.clear.frame(width: 10)
       }
 
-      // Tabs
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 1) {
-          ForEach(workspaceManager.tabs) { tab in
-            WorkspaceTabItemView(
-              tab: tab,
-              isActive: workspaceManager.activeTabId == tab.id,
-              workspaceManager: workspaceManager
-            )
+      // Navigation arrows
+      HStack(spacing: 2) {
+        TabNavigationArrowButton(
+          direction: .left,
+          isEnabled: canGoToPreviousTab,
+          action: goToPreviousTab
+        )
+        TabNavigationArrowButton(
+          direction: .right,
+          isEnabled: canGoToNextTab,
+          action: goToNextTab
+        )
+      }
+      .padding(.top, 4)
+      .padding(.trailing, Spacing.xs)
+
+      // Scrollable tabs area with Chrome-like drag reordering
+      ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
+          WorkspaceDraggableTabsContainer(workspaceManager: workspaceManager)
+            .padding(.horizontal, Spacing.xs)
+        }
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        .scrollContentBackground(.hidden)
+        .onChange(of: workspaceManager.activeTabId) { _, newTabId in
+          if let newTabId {
+            withAnimation(.easeInOut(duration: 0.2)) {
+              proxy.scrollTo(newTabId, anchor: .center)
+            }
           }
         }
-        .padding(.horizontal, Spacing.xs)
       }
 
-      Spacer()
+      // New tab button
+      Menu {
+        Button {
+          workspaceManager.newNotebook()
+        } label: {
+          Label("New Notebook", systemImage: "doc.text")
+        }
+
+        Button {
+          workspaceManager.newSQLFile()
+        } label: {
+          Label("New SQL File", systemImage: "doc")
+        }
+
+        Divider()
+
+        Button {
+          openNotebookWithPanel()
+        } label: {
+          Label("Open Notebook...", systemImage: "folder")
+        }
+
+        Button {
+          openSQLFileWithPanel()
+        } label: {
+          Label("Open SQL File...", systemImage: "folder")
+        }
+      } label: {
+        Image(systemName: "plus")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .blockDoubleClickZoom()
+      .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.cardBackground)
     .background(WindowDragArea())
   }
+
+  private func goToPreviousTab() {
+    guard let activeId = workspaceManager.activeTabId,
+      let currentIndex = workspaceManager.tabs.firstIndex(where: { $0.id == activeId }),
+      currentIndex > 0
+    else { return }
+    let previousTab = workspaceManager.tabs[currentIndex - 1]
+    workspaceManager.selectTab(id: previousTab.id)
+  }
+
+  private func goToNextTab() {
+    guard let activeId = workspaceManager.activeTabId,
+      let currentIndex = workspaceManager.tabs.firstIndex(where: { $0.id == activeId }),
+      currentIndex < workspaceManager.tabs.count - 1
+    else { return }
+    let nextTab = workspaceManager.tabs[currentIndex + 1]
+    workspaceManager.selectTab(id: nextTab.id)
+  }
+
+  private func openNotebookWithPanel() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.allowedContentTypes = [.sqlNotebook]
+
+    panel.begin { response in
+      guard response == .OK else { return }
+      Task { @MainActor in
+        for url in panel.urls {
+          try? await workspaceManager.openFile(url: url)
+        }
+      }
+    }
+  }
+
+  private func openSQLFileWithPanel() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.allowedContentTypes = [.sql]
+
+    panel.begin { response in
+      guard response == .OK else { return }
+      Task { @MainActor in
+        for url in panel.urls {
+          try? await workspaceManager.openFile(url: url)
+        }
+      }
+    }
+  }
 }
 
-/// Single tab item view for workspace
-struct WorkspaceTabItemView: View {
-  let tab: TabItem
-  let isActive: Bool
-  @Bindable var workspaceManager: WorkspaceManager
+// MARK: - Tab Navigation
+
+/// Direction for tab navigation arrows
+enum TabNavigationDirection {
+  case left, right
+}
+
+/// Fixed arrow button for navigating between tabs
+struct TabNavigationArrowButton: View {
+  let direction: TabNavigationDirection
+  let isEnabled: Bool
+  let action: () -> Void
 
   @State private var isHovering = false
 
   var body: some View {
-    Button {
-      workspaceManager.selectTab(id: tab.id)
-    } label: {
-      HStack(spacing: Spacing.xs) {
-        Image(systemName: tab.documentType.icon)
-          .font(.system(size: 11))
-          .foregroundColor(isActive ? .accent : .foregroundMuted)
-
-        Text(tab.title)
-          .font(.caption)
-          .foregroundColor(isActive ? .foreground : .foregroundMuted)
-          .lineLimit(1)
-
-        if tab.isDirty {
-          Circle()
-            .fill(Color.foregroundMuted)
-            .frame(width: 6, height: 6)
-        }
-
-        if isHovering {
-          Button {
-            workspaceManager.requestCloseTab(id: tab.id)
-          } label: {
-            Image(systemName: "xmark")
-              .font(.system(size: 9, weight: .medium))
-              .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(.plain)
-        }
-      }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(
-        isActive ? Color.cellBackgroundHover : (isHovering ? Color.cellBackground : Color.clear)
-      )
-      .cornerRadius(CornerRadius.sm)
+    Button(action: action) {
+      Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(isEnabled ? .foregroundMuted : .foregroundMuted.opacity(0.3))
+        .frame(width: 18, height: 18)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .onHover { hovering in
-      isHovering = hovering
-    }
+    .disabled(!isEnabled)
+    .blockDoubleClickZoom()
+    .onHover { isHovering = $0 }
+    .help(direction == .left ? "Previous tab" : "Next tab")
   }
 }
 

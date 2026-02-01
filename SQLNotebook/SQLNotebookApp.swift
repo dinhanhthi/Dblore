@@ -324,37 +324,69 @@ struct TabCommands: Commands {
       Divider()
 
       Button("Close Tab") {
-        if let id = tabManager.activeTabId {
+        // Use workspace manager if available, otherwise fallback to tabManager
+        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+          let id = workspaceManager.activeTabId
+        {
+          workspaceManager.requestCloseTab(id: id)
+        } else if let id = tabManager.activeTabId {
           tabManager.requestCloseTab(id: id)
         }
       }
       .keyboardShortcut("w", modifiers: .command)
-      .disabled(tabManager.activeTabId == nil)
+      .disabled(activeTabId == nil)
 
       Divider()
 
       Button("Next Tab") {
-        tabManager.selectNextTab()
+        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+          workspaceManager.selectNextTab()
+        } else {
+          tabManager.selectNextTab()
+        }
       }
       .keyboardShortcut("]", modifiers: [.command, .shift])
-      .disabled(tabManager.tabs.count < 2)
+      .disabled(activeTabCount < 2)
 
       Button("Previous Tab") {
-        tabManager.selectPreviousTab()
+        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+          workspaceManager.selectPreviousTab()
+        } else {
+          tabManager.selectPreviousTab()
+        }
       }
       .keyboardShortcut("[", modifiers: [.command, .shift])
-      .disabled(tabManager.tabs.count < 2)
+      .disabled(activeTabCount < 2)
 
       Divider()
 
       // Tab shortcuts 1-9 (only show if tabs exist)
-      ForEach(Array(tabManager.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
+      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
         Button("Tab \(index + 1): \(tab.title)") {
-          tabManager.selectTab(atIndex: index + 1)
+          if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+            workspaceManager.selectTab(atIndex: index + 1)
+          } else {
+            tabManager.selectTab(atIndex: index + 1)
+          }
         }
         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
       }
     }
+  }
+
+  /// Get active tab ID from workspace or tab manager
+  private var activeTabId: UUID? {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.activeTabId ?? tabManager.activeTabId
+  }
+
+  /// Get tab count from workspace or tab manager
+  private var activeTabCount: Int {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs.count ?? tabManager.tabs.count
+  }
+
+  /// Get tabs from workspace or tab manager
+  private var activeTabs: [TabItem] {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs ?? tabManager.tabs
   }
 
   private func openFile() {
