@@ -15,11 +15,12 @@ struct ConnectionFormModal: View {
   var onConnect: ((ConnectionConfig) async throws -> Void)?
 
   var body: some View {
-    VStack(spacing: 0) {
-      // Header
-      ConnectionFormModalHeader(onClose: { isPresented = false })
-
-      // Content
+    GenericModal(
+      title: "Connect to Database",
+      width: 420,
+      height: 580,
+      isPresented: $isPresented
+    ) {
       ConnectionFormContent(
         connectionConfig: $connectionConfig,
         onTestConnection: onTestConnection,
@@ -27,40 +28,6 @@ struct ConnectionFormModal: View {
         onConnectionSuccess: { isPresented = false }
       )
     }
-    .frame(width: 420, height: 580)
-    .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.xxl)
-  }
-}
-
-// MARK: - Modal Header
-
-struct ConnectionFormModalHeader: View {
-  let onClose: () -> Void
-
-  var body: some View {
-    HStack {
-      Text("Connect to Database")
-        .font(.subheading)
-        .foregroundColor(.foreground)
-
-      Spacer()
-
-      Button(action: onClose) {
-        Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
-      }
-      .buttonStyle(.plain)
-      .keyboardShortcut(.escape, modifiers: [])
-    }
-    .padding(.horizontal, Spacing.md)
-    .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardBackground)
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
-
   }
 }
 
@@ -74,30 +41,13 @@ extension View {
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil
   ) -> some View {
-    self.overlay {
-      ZStack {
-        // Dimmed background
-        if isPresented.wrappedValue {
-          Color.black.opacity(0.4)
-            .ignoresSafeArea()
-            .transition(.opacity)
-            .onTapGesture {
-              isPresented.wrappedValue = false
-            }
-        }
-
-        // Modal content with zoom animation
-        if isPresented.wrappedValue {
-          ConnectionFormModal(
-            isPresented: isPresented,
-            connectionConfig: connectionConfig,
-            onTestConnection: onTestConnection,
-            onConnect: onConnect
-          )
-          .transition(.scale(scale: 0.8).combined(with: .opacity))
-        }
-      }
-      .animation(.easeInOut(duration: 0.15), value: isPresented.wrappedValue)
+    modalOverlay(isPresented: isPresented) {
+      ConnectionFormModal(
+        isPresented: isPresented,
+        connectionConfig: connectionConfig,
+        onTestConnection: onTestConnection,
+        onConnect: onConnect
+      )
     }
   }
 }

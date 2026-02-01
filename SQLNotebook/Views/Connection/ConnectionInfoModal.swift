@@ -11,125 +11,78 @@ struct ConnectionInfoModal: View {
   @Bindable var viewModel: NotebookViewModel
   @Binding var isPresented: Bool
 
-  var body: some View {
-    VStack(spacing: 0) {
-      // Header
-      ConnectionInfoModalHeader(
-        connectionConfig: viewModel.notebook.connectionConfig,
-        onClose: { isPresented = false }
-      )
-
-      // Content
-      ConnectionInfoContent(viewModel: viewModel)
-
-      // Footer with Disconnect button
-      ConnectionInfoModalFooter(
-        onDisconnect: {
-          viewModel.disconnect()
-          isPresented = false
-        }
-      )
-    }
-    .frame(width: 380, height: 420)
-    .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.sm)
-  }
-}
-
-// MARK: - Modal Header
-
-struct ConnectionInfoModalHeader: View {
-  let connectionConfig: ConnectionConfig?
-  let onClose: () -> Void
-
-  var body: some View {
-    HStack {
-      HStack(spacing: Spacing.xs) {
-        Image(systemName: "bolt.fill")
-          .foregroundColor(.success)
-
-        Text(headerTitle)
-          .font(.subheading)
-          .foregroundColor(.foreground)
-      }
-
-      Spacer()
-
-      Button(action: onClose) {
-        Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
-      }
-      .buttonStyle(.plain)
-      .keyboardShortcut(.escape, modifiers: [])
-    }
-    .padding(.horizontal, Spacing.md)
-    .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardBackground)
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
-  }
-
   private var headerTitle: String {
-    if let config = connectionConfig, !config.name.isEmpty {
+    if let config = viewModel.notebook.connectionConfig, !config.name.isEmpty {
       return config.name
     }
     return "Connection Details"
   }
+
+  var body: some View {
+    GenericModal(
+      title: headerTitle,
+      titleIcon: "bolt.fill",
+      titleIconColor: .success,
+      width: 380,
+      height: 420,
+      isPresented: $isPresented
+    ) {
+      ConnectionInfoContent(viewModel: viewModel)
+    } footer: {
+      GenericModalFooter {
+        Spacer()
+        ConnectionInfoDisconnectButton(
+          onDisconnect: {
+            viewModel.disconnect()
+            isPresented = false
+          }
+        )
+      }
+    }
+  }
 }
 
-// MARK: - Modal Footer
+// MARK: - Disconnect Button
 
-struct ConnectionInfoModalFooter: View {
+struct ConnectionInfoDisconnectButton: View {
   let onDisconnect: () -> Void
 
   @State private var showDisconnectConfirmation = false
 
   var body: some View {
-    VStack(spacing: 0) {
-      Divider()
-
-      HStack {
-        Spacer()
-
-        Button(action: {
-          showDisconnectConfirmation = true
-        }) {
-          HStack(spacing: Spacing.xs) {
-            Image(systemName: "bolt.slash")
-            Text("Disconnect")
-          }
-        }
-        .buttonStyle(DangerButtonStyle())
-        .confirmationDialog(
-          "Disconnect from database?",
-          isPresented: $showDisconnectConfirmation,
-          titleVisibility: .visible
-        ) {
-          Button("Disconnect", role: .destructive) {
-            onDisconnect()
-          }
-          Button("Cancel", role: .cancel) {}
-        } message: {
-          Text("This will close the database connection and you won't be able to run queries.")
-        }
+    Button(action: {
+      showDisconnectConfirmation = true
+    }) {
+      HStack(spacing: Spacing.xs) {
+        Image(systemName: "bolt.slash")
+        Text("Disconnect")
       }
-      .padding(Spacing.md)
     }
-    .background(Color.cardBackground)
+    .buttonStyle(DangerButtonStyle())
+    .confirmationDialog(
+      "Disconnect from database?",
+      isPresented: $showDisconnectConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Disconnect", role: .destructive) {
+        onDisconnect()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This will close the database connection and you won't be able to run queries.")
+    }
   }
 }
 
 // MARK: - View Extension for Connection Info Modal
 
 extension View {
-  /// Shows a connection info modal
+  /// Shows a connection info modal with zoom animation
   func connectionInfoModal(
     isPresented: Binding<Bool>,
     viewModel: NotebookViewModel
   ) -> some View {
-    self.sheet(isPresented: isPresented) {
+    modalOverlay(isPresented: isPresented) {
       ConnectionInfoModal(
         viewModel: viewModel,
         isPresented: isPresented
@@ -160,30 +113,36 @@ struct WorkspaceConnectionInfoModal: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Binding var isPresented: Bool
 
-  var body: some View {
-    VStack(spacing: 0) {
-      // Header
-      ConnectionInfoModalHeader(
-        connectionConfig: workspaceManager.workspace.connectionConfig,
-        onClose: { isPresented = false }
-      )
-
-      // Content
-      WorkspaceConnectionInfoContent(workspaceManager: workspaceManager)
-
-      // Footer with Disconnect button
-      ConnectionInfoModalFooter(
-        onDisconnect: {
-          Task {
-            await workspaceManager.disconnect()
-          }
-          isPresented = false
-        }
-      )
+  private var headerTitle: String {
+    if let config = workspaceManager.workspace.connectionConfig, !config.name.isEmpty {
+      return config.name
     }
-    .frame(width: 380, height: 420)
-    .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.sm)
+    return "Connection Details"
+  }
+
+  var body: some View {
+    GenericModal(
+      title: headerTitle,
+      titleIcon: "bolt.fill",
+      titleIconColor: .success,
+      width: 380,
+      height: 420,
+      isPresented: $isPresented
+    ) {
+      WorkspaceConnectionInfoContent(workspaceManager: workspaceManager)
+    } footer: {
+      GenericModalFooter {
+        Spacer()
+        ConnectionInfoDisconnectButton(
+          onDisconnect: {
+            Task {
+              await workspaceManager.disconnect()
+            }
+            isPresented = false
+          }
+        )
+      }
+    }
   }
 }
 
@@ -245,20 +204,17 @@ struct WorkspaceConnectionInfoContent: View {
 // MARK: - WorkspaceManager Connection Info Modal Extension
 
 extension View {
-  /// Shows a connection info modal bound to a WorkspaceManager
+  /// Shows a connection info modal bound to a WorkspaceManager with zoom animation
   func connectionInfoModal(workspaceManager: WorkspaceManager) -> some View {
-    self.sheet(
-      isPresented: Binding(
-        get: { workspaceManager.isConnectionInfoModalVisible },
-        set: { workspaceManager.isConnectionInfoModalVisible = $0 }
-      )
-    ) {
+    let isPresented = Binding(
+      get: { workspaceManager.isConnectionInfoModalVisible },
+      set: { workspaceManager.isConnectionInfoModalVisible = $0 }
+    )
+
+    return modalOverlay(isPresented: isPresented) {
       WorkspaceConnectionInfoModal(
         workspaceManager: workspaceManager,
-        isPresented: Binding(
-          get: { workspaceManager.isConnectionInfoModalVisible },
-          set: { workspaceManager.isConnectionInfoModalVisible = $0 }
-        )
+        isPresented: isPresented
       )
     }
   }
