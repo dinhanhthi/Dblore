@@ -232,8 +232,9 @@ struct ConnectionFormContent: View {
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isConnecting || !isFormValid)
       }
-      .frame(maxWidth: .infinity, alignment: .center)
+      .frame(maxWidth: .infinity, alignment: .trailing)
       .padding(.top, Spacing.md)
+      .padding(.horizontal, Spacing.md)
     }
     .padding(.bottom, Spacing.md)
     .overlay(alignment: .top) {
