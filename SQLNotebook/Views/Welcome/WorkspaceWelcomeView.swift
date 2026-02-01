@@ -22,7 +22,7 @@ struct WorkspaceWelcomeView: View {
   /// Display name for workspace - shows "Untitled Workspace" if not saved
   private var workspaceDisplayName: String {
     if workspaceManager.workspace.isSaved {
-      return workspaceManager.workspace.name
+      return "Welcome to workspace \"\(workspaceManager.workspace.name)\""
     } else {
       return "Untitled Workspace"
     }

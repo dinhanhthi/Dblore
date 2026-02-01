@@ -295,20 +295,28 @@ struct TabCommands: Commands {
     // File menu - Save
     CommandGroup(replacing: .saveItem) {
       Button {
-        saveActiveTab()
+        // If no active tab, save workspace instead
+        if tabManager.activeTabId != nil {
+          saveActiveTab()
+        } else {
+          saveActiveWorkspace()
+        }
       } label: {
         Text("Save")
       }
       .keyboardShortcut("s", modifiers: .command)
-      .disabled(tabManager.activeTabId == nil)
 
       Button {
-        saveActiveTabAs()
+        // If no active tab, save workspace as instead
+        if tabManager.activeTabId != nil {
+          saveActiveTabAs()
+        } else {
+          saveActiveWorkspaceAs()
+        }
       } label: {
         Text("Save As...")
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
-      .disabled(tabManager.activeTabId == nil)
     }
 
     // Window menu - Tab navigation
@@ -380,6 +388,20 @@ struct TabCommands: Commands {
     }
     Task {
       try? await tabManager.saveTab(id: id)
+    }
+  }
+
+  private func saveActiveWorkspace() {
+    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    Task {
+      try? await workspace.saveWorkspace()
+    }
+  }
+
+  private func saveActiveWorkspaceAs() {
+    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    Task {
+      try? await workspace.saveWorkspaceWithPanel()
     }
   }
 }
