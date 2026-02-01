@@ -31,6 +31,10 @@ struct ConnectionInfoModal: View {
     } footer: {
       GenericModalFooter {
         Spacer()
+        Button("Cancel") {
+          isPresented = false
+        }
+        .buttonStyle(SecondaryButtonStyle())
         ConnectionInfoDisconnectButton(
           onDisconnect: {
             viewModel.disconnect()
@@ -133,6 +137,10 @@ struct WorkspaceConnectionInfoModal: View {
     } footer: {
       GenericModalFooter {
         Spacer()
+        Button("Cancel") {
+          isPresented = false
+        }
+        .buttonStyle(SecondaryButtonStyle())
         ConnectionInfoDisconnectButton(
           onDisconnect: {
             Task {
