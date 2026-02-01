@@ -143,7 +143,10 @@ struct WorkspaceSchemaVisualizerContent: View {
 
   @ViewBuilder
   private var graphContent: some View {
-    if workspaceManager.isLoadingSchemaGraph {
+    if !workspaceManager.connectionState.isConnected {
+      // Show disconnected state first - this takes priority
+      emptyStateView(message: "Connect to a database to visualize schema")
+    } else if workspaceManager.isLoadingSchemaGraph {
       loadingView
     } else if let graph = workspaceManager.schemaGraph {
       if graph.isEmpty {
@@ -153,8 +156,6 @@ struct WorkspaceSchemaVisualizerContent: View {
       } else {
         graphView(graph: graph)
       }
-    } else if !workspaceManager.connectionState.isConnected {
-      emptyStateView(message: "Connect to a database to visualize schema")
     } else {
       emptyStateView(message: "Loading schema...")
     }
