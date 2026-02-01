@@ -89,7 +89,7 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Initialization
 
-  init(workspace: Workspace) {
+  init(workspace: Workspace, restoreTabs: Bool = true) {
     self.id = workspace.id
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionConfig()
@@ -99,11 +99,14 @@ class WorkspaceManager: Identifiable {
     // Set connection manager for autocomplete
     autocompleteProvider.setConnectionManager(connectionManager)
 
-    // Restore tabs from workspace
-    for tabRef in workspace.tabs {
-      tabs.append(tabRef.toTabItem())
+    // Only restore tabs for new workspaces (not loading from disk)
+    // When loading from disk, load() will handle tab restoration with proper viewModels
+    if restoreTabs {
+      for tabRef in workspace.tabs {
+        tabs.append(tabRef.toTabItem())
+      }
+      activeTabId = workspace.activeTabId
     }
-    activeTabId = workspace.activeTabId
   }
 
   /// Create a new untitled workspace
@@ -121,15 +124,16 @@ class WorkspaceManager: Identifiable {
     workspace.fileURL = url
     workspace.lastOpenedAt = Date()
 
-    let manager = WorkspaceManager(workspace: workspace)
+    // Don't restore tabs in init - we'll do it here with proper viewModels
+    let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
 
-    // Restore tabs from saved workspace
+    // Restore tabs from saved workspace with their original IDs
     for tabRef in workspace.tabs {
       if let fileURL = tabRef.fileURL,
         FileManager.default.fileExists(atPath: fileURL.path)
       {
         do {
-          try await manager.openFile(url: fileURL, selectTab: false)
+          try await manager.restoreTab(tabRef: tabRef)
         } catch {
           // Log error but continue loading other tabs
           await AppLogger.shared.warning(
@@ -144,9 +148,9 @@ class WorkspaceManager: Identifiable {
     if let activeId = workspace.activeTabId,
       manager.tabs.contains(where: { $0.id == activeId })
     {
-      manager.selectTab(id: activeId)
+      manager.activeTabId = activeId
     } else if let firstTab = manager.tabs.first {
-      manager.selectTab(id: firstTab.id)
+      manager.activeTabId = firstTab.id
     }
 
     // Auto-connect if connection config exists
@@ -318,6 +322,51 @@ class WorkspaceManager: Identifiable {
 
     selectTab(id: tab.id)
     return tab.id
+  }
+
+  /// Restore a tab from workspace with its original ID (used when loading from disk)
+  private func restoreTab(tabRef: WorkspaceTabReference) async throws {
+    guard let fileURL = tabRef.fileURL else {
+      throw CocoaError(.fileReadNoSuchFile)
+    }
+
+    // Create tab with original ID from workspace
+    let tab = tabRef.toTabItem()
+    let data = try Data(contentsOf: fileURL)
+
+    switch tabRef.documentType {
+    case .notebook:
+      var decodedNotebook = try DocumentCoder.decode(from: data)
+      decodedNotebook.documentType = .notebook
+
+      let document = SQLNotebookDocument(notebook: decodedNotebook)
+      document.setFileURL(fileURL)
+
+      let viewModel = createViewModel(for: document.notebook)
+      viewModel.viewMode = .notebook
+
+      tabs.append(tab)
+      viewModels[tab.id] = viewModel
+      notebookDocuments[tab.id] = document
+
+    case .sqlFile:
+      guard let content = String(data: data, encoding: .utf8) else {
+        throw CocoaError(.fileReadCorruptFile)
+      }
+
+      let document = SQLEditorDocument(content: content)
+      document.setFileURL(fileURL)
+
+      let cell = NotebookCell(cellType: .sql, content: content)
+      let notebook = SQLNotebook(cells: [cell], documentType: .script)
+      let viewModel = createViewModel(for: notebook)
+      viewModel.viewMode = .editor
+      viewModel.editorContent = content
+
+      tabs.append(tab)
+      viewModels[tab.id] = viewModel
+      editorDocuments[tab.id] = document
+    }
   }
 
   func openFile(url: URL, selectTab: Bool = true) async throws {
