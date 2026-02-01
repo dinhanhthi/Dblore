@@ -5,47 +5,6 @@
 
 import SwiftUI
 
-/// Modal wrapper for ConnectionInfoContent
-/// Shows connection details and disconnect button when connected
-struct ConnectionInfoModal: View {
-  @Bindable var viewModel: NotebookViewModel
-  @Binding var isPresented: Bool
-
-  private var headerTitle: String {
-    if let config = viewModel.notebook.connectionConfig, !config.name.isEmpty {
-      return config.name
-    }
-    return "Connection Details"
-  }
-
-  var body: some View {
-    GenericModal(
-      title: headerTitle,
-      titleIcon: "bolt.fill",
-      titleIconColor: .success,
-      width: 380,
-      height: 420,
-      isPresented: $isPresented
-    ) {
-      ConnectionInfoContent(viewModel: viewModel)
-    } footer: {
-      GenericModalFooter {
-        Spacer()
-        Button("Cancel") {
-          isPresented = false
-        }
-        .buttonStyle(SecondaryButtonStyle())
-        ConnectionInfoDisconnectButton(
-          onDisconnect: {
-            viewModel.disconnect()
-            isPresented = false
-          }
-        )
-      }
-    }
-  }
-}
-
 // MARK: - Disconnect Button
 
 struct ConnectionInfoDisconnectButton: View {
@@ -75,38 +34,6 @@ struct ConnectionInfoDisconnectButton: View {
     } message: {
       Text("This will close the database connection and you won't be able to run queries.")
     }
-  }
-}
-
-// MARK: - View Extension for Connection Info Modal
-
-extension View {
-  /// Shows a connection info modal with zoom animation
-  func connectionInfoModal(
-    isPresented: Binding<Bool>,
-    viewModel: NotebookViewModel
-  ) -> some View {
-    modalOverlay(isPresented: isPresented) {
-      ConnectionInfoModal(
-        viewModel: viewModel,
-        isPresented: isPresented
-      )
-    }
-  }
-}
-
-// MARK: - NotebookViewModel Connection Info Modal Extension
-
-extension View {
-  /// Shows a connection info modal bound to a NotebookViewModel
-  func connectionInfoModal(viewModel: NotebookViewModel) -> some View {
-    self.connectionInfoModal(
-      isPresented: Binding(
-        get: { viewModel.isConnectionInfoModalVisible },
-        set: { viewModel.isConnectionInfoModalVisible = $0 }
-      ),
-      viewModel: viewModel
-    )
   }
 }
 
@@ -230,27 +157,25 @@ extension View {
 
 // MARK: - Preview
 
-#Preview("Connection Info Modal") {
-  @Previewable @State var viewModel: NotebookViewModel = {
-    let vm = NotebookViewModel()
-    vm.notebook.connectionConfig = ConnectionConfig(
-      host: "db.example.com",
-      port: 5432,
-      database: "my_database",
-      username: "admin_user",
-      password: "secret123",
-      sslMode: .require,
-      protectionLevel: .readOnly,
-      name: "Production DB"
-    )
-    vm.connectionState = .connected
-    return vm
-  }()
+#Preview("Connection Info Modal - Workspace") {
+  @Previewable @State var workspaceManager = WorkspaceManager(workspace: Workspace())
 
   Color.appBackground
+    .onAppear {
+      workspaceManager.workspace.connectionConfig = ConnectionConfig(
+        host: "db.example.com",
+        port: 5432,
+        database: "my_database",
+        username: "admin_user",
+        password: "secret123",
+        sslMode: .require,
+        protectionLevel: .readOnly,
+        name: "Production DB"
+      )
+    }
     .sheet(isPresented: .constant(true)) {
-      ConnectionInfoModal(
-        viewModel: viewModel,
+      WorkspaceConnectionInfoModal(
+        workspaceManager: workspaceManager,
         isPresented: .constant(true)
       )
     }

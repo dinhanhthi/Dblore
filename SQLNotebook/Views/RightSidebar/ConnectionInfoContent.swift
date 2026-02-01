@@ -58,22 +58,19 @@ struct ConnectionInfoContent: View {
               titleVisibility: .visible
             ) {
               Button("Disable Protection", role: .destructive) {
-                Task {
-                  await viewModel.disableProtection()
-                }
+                viewModel.notebook.connectionConfig?.protectionLevel = .none
+                viewModel.onDocumentChanged?()
               }
               if config.protectionLevel == .readOnly {
                 Button("Schema Protection Only") {
-                  Task {
-                    await viewModel.enableSchemaProtection()
-                  }
+                  viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
+                  viewModel.onDocumentChanged?()
                 }
               }
               if config.protectionLevel == .schemaOnly {
                 Button("Enable Read-Only Mode") {
-                  Task {
-                    await viewModel.enableReadOnlyMode()
-                  }
+                  viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
+                  viewModel.onDocumentChanged?()
                 }
               }
               Button("Cancel", role: .cancel) {}

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
+  @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
   @State private var showRunAllConfirmation = false
   @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
@@ -183,12 +184,12 @@ struct HeaderView: View {
           connectionState: viewModel.connectionState,
           connectionConfig: viewModel.notebook.connectionConfig,
           onConnect: {
-            // Toggle modal visibility
-            viewModel.isConnectionFormModalVisible.toggle()
+            // Toggle modal visibility at workspace level
+            workspaceManager?.isConnectionFormModalVisible.toggle()
           },
           onShowConnectionInfo: {
-            // Show connection info modal
-            viewModel.isConnectionInfoModalVisible = true
+            // Show connection info modal at workspace level
+            workspaceManager?.isConnectionInfoModalVisible = true
           }
         )
       }

@@ -76,8 +76,7 @@ struct DocumentLayoutView<Content: View>: View {
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
-    .connectionFormModal(viewModel: viewModel)
-    .connectionInfoModal(viewModel: viewModel)
+    // Note: Connection modals are now handled at workspace level (WorkspaceContainerView)
   }
 
   // MARK: - Responsive Sidebar Logic

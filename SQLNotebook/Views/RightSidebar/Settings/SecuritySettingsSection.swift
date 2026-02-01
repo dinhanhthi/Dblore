@@ -12,11 +12,15 @@ struct SecuritySettingsSection: View {
   @Bindable var viewModel: NotebookViewModel
   @Binding var showDisableReadOnlyConfirmation: Bool
 
+  private var currentProtectionLevel: ConnectionProtectionLevel {
+    viewModel.notebook.connectionConfig?.protectionLevel ?? .none
+  }
+
   var body: some View {
     SettingsSection(title: "Security", icon: "lock.shield.fill") {
       VStack(alignment: .leading, spacing: Spacing.lg) {
         // Protection Level Warning (at top for visibility)
-        if viewModel.editingConnectionConfig.protectionLevel != .none {
+        if currentProtectionLevel != .none {
           protectionWarning
         }
 
@@ -27,15 +31,24 @@ struct SecuritySettingsSection: View {
     }
     .protectionLevelDialog(
       isPresented: $showDisableReadOnlyConfirmation,
-      currentLevel: viewModel.editingConnectionConfig.protectionLevel,
-      onDisableProtection: { await viewModel.disableProtection() },
-      onEnableSchemaProtection: { await viewModel.enableSchemaProtection() },
-      onEnableReadOnly: { await viewModel.enableReadOnlyMode() }
+      currentLevel: currentProtectionLevel,
+      onDisableProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .none
+        viewModel.onDocumentChanged?()
+      },
+      onEnableSchemaProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
+        viewModel.onDocumentChanged?()
+      },
+      onEnableReadOnly: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
+        viewModel.onDocumentChanged?()
+      }
     )
   }
 
   private var protectionWarning: some View {
-    let level = viewModel.editingConnectionConfig.protectionLevel
+    let level = currentProtectionLevel
     return HStack(alignment: .top, spacing: Spacing.sm) {
       Image(systemName: level.iconName)
         .foregroundColor(level == .readOnly ? .warning : .secondary)

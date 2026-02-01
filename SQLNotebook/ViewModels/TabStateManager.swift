@@ -8,16 +8,13 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Manages all open tabs in the application.
-/// Each tab has its own ViewModel and Document, maintaining independent state and database connections.
+/// Legacy tab manager - now superseded by WorkspaceManager
+/// Each workspace has its own tab management via WorkspaceManager
+/// This class is kept for backward compatibility with some legacy views
+/// but the singleton pattern has been removed
 @MainActor
 @Observable
 class TabStateManager {
-  // MARK: - Shared Instance
-
-  /// Shared instance for app-wide access
-  static let shared = TabStateManager()
-
   // MARK: - Public State
 
   /// All open tabs
@@ -258,16 +255,8 @@ class TabStateManager {
       }
     }
 
-    // Disconnect database connection before removing viewModel
-    // This prevents PostgresConnection from being deinitialized before being closed
-    // We need to capture the connectionManager and await disconnect in a Task
-    // to ensure the connection is properly closed before the viewModel is deallocated
-    if let viewModel = viewModels[id] {
-      let connectionManager = viewModel.connectionManager
-      Task {
-        await connectionManager.disconnect()
-      }
-    }
+    // Note: Connection is now managed at workspace level (WorkspaceManager)
+    // No need to disconnect per-tab connections
 
     // Remove tab and clean up
     tabs.remove(at: index)

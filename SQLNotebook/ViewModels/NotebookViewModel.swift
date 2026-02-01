@@ -60,13 +60,12 @@ class NotebookViewModel {
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false  // Track expand/collapse state
 
-  // Connection config for the modal
-  var editingConnectionConfig: ConnectionConfig
-  var isConnectionFormModalVisible: Bool = false
-  var isConnectionInfoModalVisible: Bool = false
+  // Note: Connection is now managed at workspace level (WorkspaceManager)
+  // These properties are synced from WorkspaceManager for backward compatibility
 
-  // Database connection manager
-  let connectionManager = DatabaseConnectionManager()
+  // Connection manager reference from workspace (synced from WorkspaceManager)
+  // This allows NotebookViewModel extensions to execute queries without refactoring
+  var connectionManager: DatabaseConnectionManager?
 
   // Autocomplete provider
   let autocompleteProvider = SQLAutocompleteProvider()
@@ -123,15 +122,11 @@ class NotebookViewModel {
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
-    editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
 
     // Initialize execution queue with execution handler
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
     }
-
-    // Set connection manager for autocomplete provider
-    autocompleteProvider.setConnectionManager(connectionManager)
 
     // Restore pagination state from cells
     for cell in notebook.cells {
@@ -309,7 +304,7 @@ class NotebookViewModel {
       queryConfirmationState.pendingQuery = query
       // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
       queryConfirmationState.affectsAllRows =
-        isModification && connectionManager.affectsAllRows(query)
+        isModification && (connectionManager?.affectsAllRows(query) ?? false)
       queryConfirmationState.requiresPassword = safeMode.requiresPassword
       queryConfirmationState.showDialog = true
     } else {

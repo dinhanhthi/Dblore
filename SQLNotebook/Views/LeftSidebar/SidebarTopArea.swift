@@ -5,69 +5,8 @@
 
 import SwiftUI
 
-/// Top area of the sidebar that aligns with traffic lights
-/// Contains action buttons (schema visualizer, expand/collapse, refresh)
-/// Note: Sidebar toggle button is rendered in container view at fixed position
-struct SidebarTopArea: View {
-  let viewModel: NotebookViewModel
-  let height: CGFloat
-
-  var body: some View {
-    HStack(alignment: .center, spacing: 0) {
-      // Left area: space for traffic light buttons + sidebar toggle button
-      // The sidebar toggle button is rendered in container view at fixed position
-      Color.clear
-        .frame(width: ComponentSize.trafficLightAndToggleWidth)
-
-      Spacer()
-
-      // Action buttons (right side)
-      // Note: Schema Visualizer button is now in WorkspaceContainerView traffic light area
-      HStack(spacing: Spacing.sm) {
-        // Expand/Collapse all button (only when connected and not loading)
-        if viewModel.connectionState.isConnected && !viewModel.isLoadingSchema {
-          Button {
-            viewModel.toggleExpandCollapseAll()
-          } label: {
-            Image(
-              systemName: viewModel.areAllEntitiesExpanded
-                ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
-            )
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .help(viewModel.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
-        }
-
-        // Refresh button (only when connected)
-        if viewModel.connectionState.isConnected {
-          Button {
-            Task { @MainActor [viewModel] in
-              await viewModel.refreshDatabaseSchema()
-            }
-          } label: {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .semibold))
-              .foregroundColor(.foregroundMuted)
-          }
-          .buttonStyle(SidebarHeaderButtonStyle())
-          .blockDoubleClickZoom()
-          .disabled(viewModel.isLoadingSchema)
-          .help("Refresh schema")
-        }
-      }
-      .padding(.trailing, Spacing.sm)
-    }
-    .frame(height: height)
-    .background(Color.cardBackground)
-    .background(WindowDragArea())
-    .overlay(alignment: .bottom) {
-      Divider()
-    }
-  }
-}
+// Note: Legacy SidebarTopArea struct (NotebookViewModel-based) has been removed
+// Use WorkspaceSidebarTopArea for workspace-level controls
 
 /// Top area of the sidebar for workspace-level controls
 /// Used when connected but no document is open

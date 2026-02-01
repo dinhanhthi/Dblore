@@ -18,12 +18,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           // Open workspace file
           _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
         } else {
-          // Open file in active workspace or create new one
+          // Open file in active workspace or create new untitled workspace
           if let activeManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
             try? await activeManager.openFile(url: url)
           } else {
-            // Fallback to TabStateManager for legacy support
-            try? await TabStateManager.shared.openFile(url: url)
+            // Create new untitled workspace and open file in it
+            let newManager = WorkspaceWindowManager.shared.newWorkspace()
+            try? await newManager.openFile(url: url)
           }
         }
       }
@@ -41,8 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         try? await manager.saveWorkspace()
       }
     }
-    // Legacy: save tab state
-    TabStateManager.shared.saveState()
+    // Note: Tab state is now saved per-workspace in saveWorkspace() above
   }
 }
 
@@ -68,7 +68,7 @@ struct SQLNotebookApp: App {
     .commands {
       SharedCommands()
       WorkspaceCommands()
-      TabCommands(tabManager: TabStateManager.shared)
+      TabCommands()
       NotebookCommands()
       EditorCommands()
     }
@@ -216,7 +216,8 @@ struct SharedCommands: Commands {
 // MARK: - Tab Commands
 
 struct TabCommands: Commands {
-  let tabManager: TabStateManager
+  // Note: All tab operations now go through WorkspaceManager
+  // No fallback to legacy TabStateManager.shared
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -259,24 +260,18 @@ struct TabCommands: Commands {
 
       Divider()
 
-      // Document commands
+      // Document commands - create workspace if needed
       Button {
-        if let manager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-          manager.newNotebook()
-        } else {
-          tabManager.newNotebook()
-        }
+        let manager = activeWorkspaceOrNew
+        manager.newNotebook()
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
       .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button {
-        if let manager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-          manager.newSQLFile()
-        } else {
-          tabManager.newSQLFile()
-        }
+        let manager = activeWorkspaceOrNew
+        manager.newSQLFile()
       } label: {
         Label("New SQL File", systemImage: "doc.text")
       }
@@ -295,8 +290,8 @@ struct TabCommands: Commands {
     // File menu - Save
     CommandGroup(replacing: .saveItem) {
       Button {
-        // If no active tab, save workspace instead
-        if tabManager.activeTabId != nil {
+        // If active tab, save tab; otherwise save workspace
+        if activeTabId != nil {
           saveActiveTab()
         } else {
           saveActiveWorkspace()
@@ -307,8 +302,8 @@ struct TabCommands: Commands {
       .keyboardShortcut("s", modifiers: .command)
 
       Button {
-        // If no active tab, save workspace as instead
-        if tabManager.activeTabId != nil {
+        // If active tab, save as; otherwise save workspace as
+        if activeTabId != nil {
           saveActiveTabAs()
         } else {
           saveActiveWorkspaceAs()
@@ -324,13 +319,10 @@ struct TabCommands: Commands {
       Divider()
 
       Button("Close Tab") {
-        // Use workspace manager if available, otherwise fallback to tabManager
         if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager,
           let id = workspaceManager.activeTabId
         {
           workspaceManager.requestCloseTab(id: id)
-        } else if let id = tabManager.activeTabId {
-          tabManager.requestCloseTab(id: id)
         }
       }
       .keyboardShortcut("w", modifiers: .command)
@@ -339,21 +331,13 @@ struct TabCommands: Commands {
       Divider()
 
       Button("Next Tab") {
-        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-          workspaceManager.selectNextTab()
-        } else {
-          tabManager.selectNextTab()
-        }
+        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectNextTab()
       }
       .keyboardShortcut("]", modifiers: [.command, .shift])
       .disabled(activeTabCount < 2)
 
       Button("Previous Tab") {
-        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-          workspaceManager.selectPreviousTab()
-        } else {
-          tabManager.selectPreviousTab()
-        }
+        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectPreviousTab()
       }
       .keyboardShortcut("[", modifiers: [.command, .shift])
       .disabled(activeTabCount < 2)
@@ -361,32 +345,34 @@ struct TabCommands: Commands {
       Divider()
 
       // Tab shortcuts 1-9 (only show if tabs exist)
-      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
-        Button("Tab \(index + 1): \(tab.title)") {
-          if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-            workspaceManager.selectTab(atIndex: index + 1)
-          } else {
-            tabManager.selectTab(atIndex: index + 1)
-          }
+      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, _ in
+        Button("Tab \(index + 1): \(activeTabs[index].title)") {
+          WorkspaceWindowManager.shared.activeWorkspaceManager?.selectTab(atIndex: index + 1)
         }
         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
       }
     }
   }
 
-  /// Get active tab ID from workspace or tab manager
+  /// Get active workspace or create new one
+  private var activeWorkspaceOrNew: WorkspaceManager {
+    WorkspaceWindowManager.shared.activeWorkspaceManager
+      ?? WorkspaceWindowManager.shared.newWorkspace()
+  }
+
+  /// Get active tab ID from workspace manager
   private var activeTabId: UUID? {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.activeTabId ?? tabManager.activeTabId
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.activeTabId
   }
 
-  /// Get tab count from workspace or tab manager
+  /// Get tab count from workspace manager
   private var activeTabCount: Int {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs.count ?? tabManager.tabs.count
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs.count ?? 0
   }
 
-  /// Get tabs from workspace or tab manager
+  /// Get tabs from workspace manager
   private var activeTabs: [TabItem] {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs ?? tabManager.tabs
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs ?? []
   }
 
   private func openFile() {
@@ -398,28 +384,34 @@ struct TabCommands: Commands {
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
+        let manager =
+          WorkspaceWindowManager.shared.activeWorkspaceManager
+          ?? WorkspaceWindowManager.shared.newWorkspace()
         for url in panel.urls {
-          try? await tabManager.openFile(url: url)
+          try? await manager.openFile(url: url)
         }
       }
     }
   }
 
   private func saveActiveTab() {
-    guard let id = tabManager.activeTabId else { return }
+    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+      let id = manager.activeTabId
+    else { return }
     Task {
-      try? await tabManager.saveTab(id: id)
+      try? await manager.saveTab(id: id)
     }
   }
 
   private func saveActiveTabAs() {
-    guard let id = tabManager.activeTabId else { return }
+    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+      let id = manager.activeTabId,
+      let index = manager.tabs.firstIndex(where: { $0.id == id })
+    else { return }
     // For Save As, we clear the fileURL first to force save panel
-    if let index = tabManager.tabs.firstIndex(where: { $0.id == id }) {
-      tabManager.tabs[index].fileURL = nil
-    }
+    manager.tabs[index].fileURL = nil
     Task {
-      try? await tabManager.saveTab(id: id)
+      try? await manager.saveTab(id: id)
     }
   }
 

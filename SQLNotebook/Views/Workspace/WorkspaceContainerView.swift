@@ -227,33 +227,140 @@ struct WorkspaceLeftSidebar: View {
 // MARK: - Tab Content View for Workspace
 
 /// Wrapper for tab content that connects to workspace
+/// Note: This replaces the need for TabStateManager by using WorkspaceManager directly
 struct WorkspaceTabContentView: View {
   let tabId: UUID
   @Bindable var workspaceManager: WorkspaceManager
   @Bindable var viewModel: NotebookViewModel
 
+  @State private var lastSaved: Date?
+
   var body: some View {
-    // Use existing TabContentView but with workspace connection
-    TabContentView(
-      tabId: tabId,
-      tabManager: TabStateManager.shared,
-      viewModel: viewModel
-    )
-    .onAppear {
-      // Setup document changed callback to use workspace manager instead of TabStateManager
-      viewModel.onDocumentChanged = { [workspaceManager, tabId] in
-        workspaceManager.markDirty(tabId: tabId)
+    contentView
+      .focusedSceneValue(\.documentMode, documentMode)
+      .focusedSceneValue(\.activeTabId, tabId)
+      .focusedSceneValue(\.activeViewModel, viewModel)
+      .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebarAction)
+      .focusedSceneValue(\.toggleRightSidebarAction, toggleRightSidebarAction)
+      .focusedSceneValue(\.openSearchAction, openSearchAction)
+      .focusedSceneValue(\.findNextAction, findNextAction)
+      .focusedSceneValue(\.findPreviousAction, findPreviousAction)
+      .onAppear {
+        setupDocumentChangedCallback()
+        syncConnectionState()
       }
-      // Sync workspace connection to viewModel
-      syncConnectionState()
+      .onChange(of: tabId) { _, _ in
+        setupDocumentChangedCallback()
+      }
+      .onChange(of: workspaceManager.connectionState) { _, _ in
+        syncConnectionState()
+      }
+      .onDisappear {
+        viewModel.onDocumentChanged = nil
+      }
+  }
+
+  private func setupDocumentChangedCallback() {
+    viewModel.onDocumentChanged = { [workspaceManager, tabId] in
+      workspaceManager.markDirty(tabId: tabId)
     }
-    .onChange(of: workspaceManager.connectionState) { _, _ in
-      syncConnectionState()
+  }
+
+  @ViewBuilder
+  private var contentView: some View {
+    if viewModel.viewMode == .notebook {
+      notebookContent
+    } else {
+      editorContent
     }
+  }
+
+  private var documentMode: DocumentMode {
+    viewModel.viewMode == .notebook ? .notebook : .editor
+  }
+
+  private var toggleLeftSidebarAction: () -> Void {
+    { [viewModel] in viewModel.toggleLeftSidebar() }
+  }
+
+  private var toggleRightSidebarAction: () -> Void {
+    { [viewModel] in viewModel.toggleSidebar() }
+  }
+
+  private var openSearchAction: () -> Void {
+    { [viewModel] in viewModel.openSearch() }
+  }
+
+  private var findNextAction: () -> Void {
+    { [viewModel] in viewModel.navigateToNextMatch() }
+  }
+
+  private var findPreviousAction: () -> Void {
+    { [viewModel] in viewModel.navigateToPreviousMatch() }
+  }
+
+  // MARK: - Notebook Content
+
+  @ViewBuilder
+  private var notebookContent: some View {
+    DocumentLayoutView(
+      viewModel: viewModel,
+      lastSaved: $lastSaved,
+      isEditorMode: false
+    ) {
+      NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
+    }
+    .modifier(
+      WorkspaceNotebookNotificationHandler(
+        tabId: tabId,
+        workspaceManager: workspaceManager,
+        viewModel: viewModel,
+        syncDocument: syncNotebookDocument
+      )
+    )
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncNotebookDocument)
+    .searchNotifications(viewModel: viewModel)
+  }
+
+  // MARK: - Editor Content
+
+  @ViewBuilder
+  private var editorContent: some View {
+    DocumentLayoutView(
+      viewModel: viewModel,
+      lastSaved: $lastSaved,
+      isEditorMode: true
+    ) {
+      EditorModeView(viewModel: viewModel)
+    }
+    .modifier(
+      WorkspaceEditorNotificationHandler(
+        tabId: tabId,
+        workspaceManager: workspaceManager,
+        viewModel: viewModel,
+        syncDocument: syncEditorDocument
+      )
+    )
+    .searchNotifications(viewModel: viewModel)
+  }
+
+  // MARK: - Document Sync
+
+  private func syncNotebookDocument() {
+    guard let document = workspaceManager.notebookDocument(for: tabId) else { return }
+    document.notebook = viewModel.notebook
+    lastSaved = Date()
+  }
+
+  private func syncEditorDocument() {
+    guard let document = workspaceManager.editorDocument(for: tabId) else { return }
+    document.content = viewModel.editorContent
+    lastSaved = Date()
   }
 
   private func syncConnectionState() {
     viewModel.connectionState = workspaceManager.connectionState
+    viewModel.connectionManager = workspaceManager.connectionManager
     viewModel.databaseTables = workspaceManager.databaseTables
     viewModel.databaseViews = workspaceManager.databaseViews
     viewModel.databaseFunctions = workspaceManager.databaseFunctions
@@ -261,6 +368,114 @@ struct WorkspaceTabContentView: View {
     viewModel.databaseUsers = workspaceManager.databaseUsers
     viewModel.databaseRoles = workspaceManager.databaseRoles
     viewModel.databaseForeignKeys = workspaceManager.databaseForeignKeys
+  }
+}
+
+// MARK: - Workspace Notification Handlers
+
+/// Handles notifications for notebook mode in workspace context
+struct WorkspaceNotebookNotificationHandler: ViewModifier {
+  let tabId: UUID
+  let workspaceManager: WorkspaceManager
+  let viewModel: NotebookViewModel
+  let syncDocument: () -> Void
+
+  @State private var showRunAllConfirmation = false
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        viewModel.addCell(type: .sql)
+        syncDocument()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.confirmAndRunCell(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.confirmAndRunCell(id: id)
+          viewModel.selectNextCell(createIfNeeded: true)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.confirmAndRunCell(id: id)
+          viewModel.insertCellBelow(type: .sql)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        showRunAllConfirmation = true
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.clearCellOutput(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        viewModel.clearAllOutputs()
+        syncDocument()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.deleteCell(id: id)
+          syncDocument()
+        }
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        if let id = viewModel.selectedCellId {
+          viewModel.duplicateCell(id: id)
+          syncDocument()
+        }
+      }
+      .confirmationDialog(
+        "Run all cells?",
+        isPresented: $showRunAllConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Run All Cells", role: .none) {
+          Task { @MainActor in
+            await viewModel.runAllCells()
+            syncDocument()
+          }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
+      }
+  }
+}
+
+/// Handles notifications for editor mode in workspace context
+struct WorkspaceEditorNotificationHandler: ViewModifier {
+  let tabId: UUID
+  let workspaceManager: WorkspaceManager
+  let viewModel: NotebookViewModel
+  let syncDocument: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .onReceive(NotificationCenter.default.publisher(for: .runEditorQuery)) { _ in
+        guard workspaceManager.activeTabId == tabId else { return }
+        Task {
+          await viewModel.runEditorQuery()
+          syncDocument()
+        }
+      }
   }
 }
 

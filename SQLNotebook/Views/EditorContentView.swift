@@ -111,18 +111,13 @@ struct EditorContentView: View {
         viewModel.notebook.metadata = document.metadata
       }
 
-      // Auto-connect to saved session if available
-      viewModel.autoConnectIfNeeded()
+      // Note: Auto-connect is now handled at workspace level (WorkspaceManager)
     }
     .onDisappear {
       removeKeyEventMonitor()
       viewModel.onDocumentChanged = nil
       document.onExternalReload = nil
-
-      // Disconnect from database when window closes to prevent connection leaks
-      Task {
-        await viewModel.connectionManager.disconnect()
-      }
+      // Note: Connection is now managed at workspace level (WorkspaceManager)
     }
   }
 

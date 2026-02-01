@@ -76,30 +76,6 @@ extension View {
   }
 }
 
-// MARK: - NotebookViewModel Connection Form Modal Extension
-
-extension View {
-  /// Shows a connection form modal bound to a NotebookViewModel
-  func connectionFormModal(viewModel: NotebookViewModel) -> some View {
-    self.connectionFormModal(
-      isPresented: Binding(
-        get: { viewModel.isConnectionFormModalVisible },
-        set: { viewModel.isConnectionFormModalVisible = $0 }
-      ),
-      connectionConfig: Binding(
-        get: { viewModel.editingConnectionConfig },
-        set: { viewModel.editingConnectionConfig = $0 }
-      ),
-      onTestConnection: { _ in
-        try await viewModel.testConnection()
-      },
-      onConnect: { _ in
-        try await viewModel.connect()
-      }
-    )
-  }
-}
-
 // MARK: - Preview
 
 #Preview("Connection Form Modal") {

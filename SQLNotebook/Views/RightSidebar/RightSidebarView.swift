@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RightSidebarView: View {
   @Bindable var viewModel: NotebookViewModel
+  @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -133,7 +134,7 @@ struct RightSidebarView: View {
         columnName: columnName,
         columnType: columnType,
         value: value,
-        onSave: { newValue in
+        onSave: { [workspaceManager] newValue in
           viewModel.handleCellValueEdit(
             columnName: columnName,
             columnType: columnType,
@@ -143,7 +144,8 @@ struct RightSidebarView: View {
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
             rowIdentifier: rowIdentifier,
-            cellId: cellId
+            cellId: cellId,
+            connectionManager: workspaceManager?.connectionManager
           )
         },
         isReadOnly: viewModel.notebook.connectionConfig?.isReadOnly ?? false
