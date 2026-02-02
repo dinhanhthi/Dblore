@@ -11,14 +11,22 @@ import SwiftUI
 
 /// Main view for each app window
 /// Shows Welcome when no workspace is assigned, or WorkspaceContainer when workspace exists
+/// When files are opened from Finder and workspaces exist, shows a chooser dialog
 struct AppWindowView: View {
-  /// Window-local workspace ID - nil means show Welcome
+  /// Window-local workspace ID - nil means show Welcome or FileOpenChooser
   @State private var workspaceId: UUID?
+  /// Flag to close this window after file open is handled
+  @State private var shouldCloseWindow = false
   @Bindable private var windowManager = WorkspaceWindowManager.shared
+  @Bindable private var pendingFileOpen = PendingFileOpen.shared
 
   var body: some View {
     Group {
-      if let id = workspaceId,
+      if shouldCloseWindow {
+        // Empty view - window will close itself
+        Color.clear
+          .frame(width: 1, height: 1)
+      } else if let id = workspaceId,
         let manager = windowManager.workspace(for: id)
       {
         // Show workspace
@@ -26,6 +34,19 @@ struct AppWindowView: View {
           .onAppear {
             windowManager.setActiveWorkspace(id)
           }
+      } else if pendingFileOpen.hasPendingFiles && !windowManager.workspaces.isEmpty {
+        // Show file open chooser when files are waiting and workspaces exist
+        FileOpenChooserView(
+          onWorkspaceSelected: { selectedManager in
+            openFilesInWorkspace(selectedManager)
+          },
+          onNewWorkspace: {
+            openFilesInNewWorkspace()
+          },
+          onCancel: {
+            cancelFileOpen()
+          }
+        )
       } else {
         // Show welcome - pass callback so welcome can set workspace for this window
         AppWelcomeView(
@@ -39,6 +60,50 @@ struct AppWindowView: View {
     // Listen for workspace open requests from menu
     .onReceive(NotificationCenter.default.publisher(for: .openWindowForWorkspace)) { notification in
       handleOpenWorkspaceNotification(notification)
+    }
+  }
+
+  /// Open pending files in the selected workspace
+  private func openFilesInWorkspace(_ manager: WorkspaceManager) {
+    let files = pendingFileOpen.takePendingFiles()
+    Task {
+      for url in files {
+        try? await manager.openFile(url: url)
+      }
+      // Bring the workspace window to front
+      windowManager.setActiveWorkspace(manager.id)
+      // Close this chooser window
+      closeWindow()
+    }
+  }
+
+  /// Open pending files in a new workspace
+  private func openFilesInNewWorkspace() {
+    let files = pendingFileOpen.takePendingFiles()
+    let newManager = windowManager.newWorkspace()
+    Task {
+      for url in files {
+        try? await newManager.openFile(url: url)
+      }
+      // Use this window for the new workspace
+      workspaceId = newManager.id
+    }
+  }
+
+  /// Cancel file open and close window
+  private func cancelFileOpen() {
+    pendingFileOpen.clearPendingFiles()
+    closeWindow()
+  }
+
+  /// Close this window
+  private func closeWindow() {
+    shouldCloseWindow = true
+    // Find and close the NSWindow
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+      if let window = NSApp.windows.first(where: { $0.isKeyWindow }) {
+        window.close()
+      }
     }
   }
 
@@ -158,7 +223,10 @@ class NewWindowStore {
       queue: .main
     ) { [weak self] notification in
       guard let window = notification.object as? NSWindow else { return }
-      self?.windowControllers.removeAll { $0.window == window }
+      // Dispatch to MainActor to safely access @MainActor properties
+      Task { @MainActor in
+        self?.windowControllers.removeAll { $0.window == window }
+      }
     }
   }
 

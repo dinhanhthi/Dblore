@@ -16,21 +16,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
+    // Separate workspace files from document files
+    var workspaceURLs: [URL] = []
+    var documentURLs: [URL] = []
+
+    for url in urls {
+      let ext = url.pathExtension.lowercased()
+      if ext == "sqlws" {
+        workspaceURLs.append(url)
+      } else {
+        documentURLs.append(url)
+      }
+    }
+
     Task { @MainActor in
-      for url in urls {
-        let ext = url.pathExtension.lowercased()
-        if ext == "sqlws" {
-          // Open workspace file
-          _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
-        } else {
-          // Open file in active workspace or create new untitled workspace
-          if let activeManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
-            try? await activeManager.openFile(url: url)
-          } else {
-            // Create new untitled workspace and open file in it
-            let newManager = WorkspaceWindowManager.shared.newWorkspace()
+      // Open workspace files directly
+      for url in workspaceURLs {
+        _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
+      }
+
+      // For document files, check if we have existing workspaces
+      if !documentURLs.isEmpty {
+        let existingWorkspaces = WorkspaceWindowManager.shared.allWorkspaces
+
+        if existingWorkspaces.isEmpty {
+          // No existing workspaces - create new one and open files
+          let newManager = WorkspaceWindowManager.shared.newWorkspace()
+          for url in documentURLs {
             try? await newManager.openFile(url: url)
           }
+        } else {
+          // Have existing workspaces - store URLs for chooser dialog
+          // The new window SwiftUI creates will show the chooser
+          PendingFileOpen.shared.addFiles(documentURLs)
         }
       }
     }
@@ -48,6 +66,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     // Note: Tab state is now saved per-workspace in saveWorkspace() above
+  }
+}
+
+// MARK: - Pending File Open Manager
+
+/// Manages files that are waiting to be opened when user chooses a workspace
+@MainActor
+@Observable
+class PendingFileOpen {
+  static let shared = PendingFileOpen()
+
+  /// Files waiting to be opened
+  private(set) var pendingFiles: [URL] = []
+
+  /// Whether there are pending files
+  var hasPendingFiles: Bool {
+    !pendingFiles.isEmpty
+  }
+
+  private init() {}
+
+  /// Add files to pending list
+  func addFiles(_ urls: [URL]) {
+    pendingFiles.append(contentsOf: urls)
+  }
+
+  /// Take all pending files (clears the list)
+  func takePendingFiles() -> [URL] {
+    let files = pendingFiles
+    pendingFiles = []
+    return files
+  }
+
+  /// Clear pending files without opening
+  func clearPendingFiles() {
+    pendingFiles = []
   }
 }
 
@@ -79,8 +133,8 @@ struct SQLNotebookApp: App {
       EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
-    // Note: External events (opening files) are handled by AppDelegate.application(_:open:)
-    // Don't use handlesExternalEvents with NSApplicationDelegateAdaptor
+    // Note: handlesExternalEvents doesn't work for file open events
+    // Duplicate windows are closed in AppDelegate.application(_:open:)
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
