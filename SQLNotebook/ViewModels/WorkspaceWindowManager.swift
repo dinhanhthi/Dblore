@@ -59,25 +59,23 @@ class WorkspaceWindowManager {
   // MARK: - Workspace Operations
 
   /// Create a new empty workspace
+  /// Note: Caller should open window using openWindow(value: manager.id) after calling this
   @discardableResult
   func newWorkspace(connection: ConnectionConfig? = nil) -> WorkspaceManager {
     let manager = WorkspaceManager.createNew(connection: connection)
     workspaces[manager.id] = manager
     activeWorkspaceId = manager.id
-
-    // Open new window for this workspace
-    openWindowForWorkspace(manager)
-
     return manager
   }
 
   /// Open workspace from file URL
+  /// Note: Caller should open window using openWindow(value: manager.id)
   @discardableResult
   func openWorkspace(url: URL) async throws -> WorkspaceManager {
-    // Check if already open
+    // Check if already open - just return existing, caller will handle window activation
     if let existing = workspaces.values.first(where: { $0.workspace.fileURL == url }) {
       activeWorkspaceId = existing.id
-      activateWindowForWorkspace(existing)
+      // Note: Window activation is handled by the view layer via notification
       return existing
     }
 
@@ -90,9 +88,7 @@ class WorkspaceWindowManager {
       RecentManager.shared.addWorkspace(entry)
     }
 
-    // Open new window
-    openWindowForWorkspace(manager)
-
+    // Note: Caller should open window using openWindow(value: manager.id)
     return manager
   }
 
@@ -165,16 +161,8 @@ class WorkspaceWindowManager {
   }
 
   // MARK: - Window Management
-
-  private func openWindowForWorkspace(_ manager: WorkspaceManager) {
-    // This will be implemented when integrating with SwiftUI WindowGroup
-    // For now, the window opening is handled by the app's WindowGroup
-  }
-
-  private func activateWindowForWorkspace(_ manager: WorkspaceManager) {
-    // Bring the window to front
-    // This will be implemented when integrating with SwiftUI WindowGroup
-  }
+  // Note: Window opening is now handled by view layer using openWindow(value: workspaceId)
+  // The WorkspaceWindowManager only manages workspace state, not windows
 
   // MARK: - App Lifecycle
 

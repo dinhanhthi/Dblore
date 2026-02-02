@@ -10,6 +10,11 @@ import SwiftUI
 // MARK: - App Delegate for file handling
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    // Disable automatic window tabbing - each workspace gets its own window
+    NSWindow.allowsAutomaticWindowTabbing = false
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     Task { @MainActor in
       for url in urls {
@@ -59,9 +64,10 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    // Main window - shows AppWelcomeView when no workspace, or WorkspaceContainerView
+    // Main window group - each window can show Welcome or a Workspace
+    // Window-local state determines what to show
     WindowGroup {
-      AppRootView()
+      AppWindowView()
         .frame(minWidth: 800, minHeight: 600)
     }
     .windowStyle(.hiddenTitleBar)
@@ -73,7 +79,8 @@ struct SQLNotebookApp: App {
       EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
-    .handlesExternalEvents(matching: ["sqlws", "sqlnb", "sql", "*"])
+    // Note: External events (opening files) are handled by AppDelegate.application(_:open:)
+    // Don't use handlesExternalEvents with NSApplicationDelegateAdaptor
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
@@ -230,7 +237,15 @@ struct TabCommands: Commands {
     CommandGroup(replacing: .newItem) {
       // Workspace commands first
       Button {
-        _ = WorkspaceWindowManager.shared.newWorkspace()
+        // Create workspace and post notification
+        let manager = WorkspaceWindowManager.shared.newWorkspace()
+        // If no active workspace, this opens in current window
+        // If active workspace exists, this opens new window
+        NotificationCenter.default.post(
+          name: .openWindowForWorkspace,
+          object: nil,
+          userInfo: ["workspaceId": manager.id]
+        )
       } label: {
         Label("New Workspace", systemImage: "folder.badge.plus")
       }
@@ -238,7 +253,13 @@ struct TabCommands: Commands {
 
       Button {
         Task {
-          await WorkspaceWindowManager.shared.openWorkspaceWithPanel()
+          if let manager = await openWorkspaceWithPanel() {
+            NotificationCenter.default.post(
+              name: .openWindowForWorkspace,
+              object: nil,
+              userInfo: ["workspaceId": manager.id]
+            )
+          }
         }
       } label: {
         Label("Open Workspace...", systemImage: "folder")
@@ -250,7 +271,15 @@ struct TabCommands: Commands {
         ForEach(RecentManager.shared.recentWorkspaces.prefix(10)) { workspace in
           Button(workspace.displayString) {
             Task {
-              try? await WorkspaceWindowManager.shared.openWorkspace(url: workspace.fileURL)
+              if let manager = try? await WorkspaceWindowManager.shared.openWorkspace(
+                url: workspace.fileURL)
+              {
+                NotificationCenter.default.post(
+                  name: .openWindowForWorkspace,
+                  object: nil,
+                  userInfo: ["workspaceId": manager.id]
+                )
+              }
             }
           }
         }
@@ -390,14 +419,46 @@ struct TabCommands: Commands {
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
-        let manager =
-          WorkspaceWindowManager.shared.activeWorkspaceManager
-          ?? WorkspaceWindowManager.shared.newWorkspace()
+        var manager = WorkspaceWindowManager.shared.activeWorkspaceManager
+        if manager == nil {
+          manager = WorkspaceWindowManager.shared.newWorkspace()
+          // Open window for new workspace
+          NotificationCenter.default.post(
+            name: .openWindowForWorkspace,
+            object: nil,
+            userInfo: ["workspaceId": manager!.id]
+          )
+        }
         for url in panel.urls {
-          try? await manager.openFile(url: url)
+          try? await manager?.openFile(url: url)
         }
       }
     }
+  }
+
+  /// Open workspace with file panel and return the manager
+  private func openWorkspaceWithPanel() async -> WorkspaceManager? {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.sqlWorkspace]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.message = "Select a workspace file to open"
+
+    let response = await withCheckedContinuation { continuation in
+      panel.begin { result in
+        continuation.resume(returning: result)
+      }
+    }
+
+    if response == .OK, let url = panel.url {
+      do {
+        return try await WorkspaceWindowManager.shared.openWorkspace(url: url)
+      } catch {
+        await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
+        return nil
+      }
+    }
+    return nil
   }
 
   private func saveActiveTab() {
@@ -653,6 +714,9 @@ extension Notification.Name {
   static let findPrevious = Notification.Name("findPrevious")
   static let highlightSearchMatch = Notification.Name("highlightSearchMatch")
   static let clearSearchHighlights = Notification.Name("clearSearchHighlights")
+
+  // Window management notifications
+  static let openWindowForWorkspace = Notification.Name("openWindowForWorkspace")
 
   // Editor mode notifications
   static let runEditorQuery = Notification.Name("runEditorQuery")

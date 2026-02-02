@@ -9,6 +9,9 @@ import SwiftUI
 /// Welcome screen shown when no workspace is open
 /// Displays recent workspaces and recent connections in two columns
 struct AppWelcomeView: View {
+  /// Callback when a workspace is selected - opens workspace in current window
+  var onWorkspaceSelected: ((UUID) -> Void)?
+
   @Bindable var recentManager = RecentManager.shared
 
   // State for connection form sidebar (before workspace is created)
@@ -99,7 +102,9 @@ struct AppWelcomeView: View {
   private func openWorkspace(_ entry: WorkspaceHistoryEntry) {
     Task {
       do {
-        try await WorkspaceWindowManager.shared.openWorkspace(url: entry.fileURL)
+        let manager = try await WorkspaceWindowManager.shared.openWorkspace(url: entry.fileURL)
+        // Open workspace in THIS window (replace welcome)
+        onWorkspaceSelected?(manager.id)
       } catch {
         await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
       }
@@ -107,12 +112,16 @@ struct AppWelcomeView: View {
   }
 
   private func createNewWorkspace() {
-    _ = WorkspaceWindowManager.shared.newWorkspace()
+    let manager = WorkspaceWindowManager.shared.newWorkspace()
+    // Open workspace in THIS window (replace welcome)
+    onWorkspaceSelected?(manager.id)
   }
 
   private func openConnectionAsWorkspace(_ entry: ConnectionHistoryEntry) {
     // Create new workspace with this connection
     let manager = WorkspaceWindowManager.shared.newWorkspace(connection: entry.config)
+    // Open workspace in THIS window (replace welcome)
+    onWorkspaceSelected?(manager.id)
 
     // Auto-connect
     Task {
@@ -136,6 +145,9 @@ struct AppWelcomeView: View {
 
     // Create workspace with connection and auto-connect
     let manager = WorkspaceWindowManager.shared.newWorkspace(connection: config)
+    // Open workspace in THIS window (replace welcome)
+    onWorkspaceSelected?(manager.id)
+
     Task {
       do {
         try await manager.connect(config: config)
