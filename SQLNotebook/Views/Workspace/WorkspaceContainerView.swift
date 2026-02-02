@@ -239,6 +239,8 @@ struct WorkspaceTabContentView: View {
   @Bindable var viewModel: NotebookViewModel
 
   @State private var lastSaved: Date?
+  @State private var keyEventMonitor: Any?
+  @State private var monitorWindow: NSWindow?
 
   var body: some View {
     contentView
@@ -253,6 +255,7 @@ struct WorkspaceTabContentView: View {
       .onAppear {
         setupDocumentChangedCallback()
         syncConnectionState()
+        setupKeyEventMonitor()
       }
       .onChange(of: tabId) { _, _ in
         setupDocumentChangedCallback()
@@ -262,6 +265,7 @@ struct WorkspaceTabContentView: View {
       }
       .onDisappear {
         viewModel.onDocumentChanged = nil
+        removeKeyEventMonitor()
       }
   }
 
@@ -373,6 +377,80 @@ struct WorkspaceTabContentView: View {
     viewModel.databaseUsers = workspaceManager.databaseUsers
     viewModel.databaseRoles = workspaceManager.databaseRoles
     viewModel.databaseForeignKeys = workspaceManager.databaseForeignKeys
+  }
+
+  // MARK: - Keyboard Event Monitoring
+
+  private func setupKeyEventMonitor() {
+    keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+      // Only handle events for the key window
+      guard let eventWindow = event.window,
+        eventWindow == NSApplication.shared.keyWindow
+      else {
+        return event
+      }
+
+      // Store our window on first event if not set
+      if self.monitorWindow == nil {
+        self.monitorWindow = eventWindow
+      }
+
+      // Only handle if this is OUR window
+      guard eventWindow == self.monitorWindow else {
+        return event
+      }
+
+      // Only handle for active tab
+      guard workspaceManager.activeTabId == tabId else {
+        return event
+      }
+
+      // Check if a NSTextView is currently first responder (excluding search field)
+      let textViewIsFocused: Bool = {
+        guard let firstResponder = eventWindow.firstResponder else {
+          return false
+        }
+        if self.viewModel.isSearchPanelVisible {
+          return false
+        }
+        return firstResponder is NSTextView
+      }()
+
+      // Handle ESC key
+      let isEscape = event.keyCode == 53
+      if isEscape {
+        // Priority 0: If search panel is open, close it
+        if self.viewModel.isSearchPanelVisible {
+          Task { @MainActor [viewModel] in
+            viewModel.closeSearch()
+          }
+          return nil
+        }
+
+        // Priority 1: If text editor is focused, unfocus it
+        if textViewIsFocused {
+          NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+          return nil
+        }
+
+        // Priority 2: If right sidebar is open, close it
+        if self.viewModel.isRightSidebarVisible {
+          Task { @MainActor [viewModel] in
+            viewModel.closeSidebar()
+          }
+          return nil
+        }
+      }
+
+      return event
+    }
+  }
+
+  private func removeKeyEventMonitor() {
+    if let monitor = keyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+      keyEventMonitor = nil
+    }
   }
 }
 
@@ -531,7 +609,6 @@ struct WorkspaceTitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      .padding(.top, 4)
       .padding(.trailing, Spacing.xs)
 
       // Scrollable tabs area with Chrome-like drag reordering

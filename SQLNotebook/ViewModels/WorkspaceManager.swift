@@ -281,6 +281,7 @@ class WorkspaceManager: Identifiable {
   func syncConnectionStateToTabs() {
     for (_, viewModel) in viewModels {
       viewModel.connectionState = connectionState
+      viewModel.connectionManager = connectionManager
       viewModel.databaseTables = databaseTables
       viewModel.databaseViews = databaseViews
       viewModel.databaseFunctions = databaseFunctions
@@ -449,9 +450,8 @@ class WorkspaceManager: Identifiable {
     viewModel.databaseRoles = databaseRoles
     viewModel.databaseForeignKeys = databaseForeignKeys
 
-    // Override the connection manager reference
-    // Note: NotebookViewModel creates its own connectionManager, but we'll use workspace's
-    // This is handled in query execution by passing the workspace's connectionManager
+    // Share workspace's connection manager so ViewModels can execute queries
+    viewModel.connectionManager = connectionManager
 
     return viewModel
   }

@@ -560,6 +560,11 @@ struct EditorCommands: Commands {
           NotificationCenter.default.post(name: .runEditorQuery, object: nil)
         }
         .keyboardShortcut("r", modifiers: .command)
+
+        Button("Run (Alt)") {
+          NotificationCenter.default.post(name: .runEditorQuery, object: nil)
+        }
+        .keyboardShortcut(.return, modifiers: .command)
       }
 
       // Edit commands - use focused actions for tab-specific behavior
