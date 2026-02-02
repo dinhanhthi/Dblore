@@ -13,6 +13,7 @@ struct AppWelcomeView: View {
   var onWorkspaceSelected: ((UUID) -> Void)?
 
   @Bindable var recentManager = RecentManager.shared
+  @Bindable var windowManager = WorkspaceWindowManager.shared
 
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
@@ -72,6 +73,9 @@ struct AppWelcomeView: View {
       .background(Color.appBackground)
 
     }
+    .overlay {
+      ToastOverlay()
+    }
     .connectionFormModal(
       isPresented: $isShowingConnectionSidebar,
       connectionConfig: $editingConnectionConfig,
@@ -105,8 +109,24 @@ struct AppWelcomeView: View {
         let manager = try await WorkspaceWindowManager.shared.openWorkspace(url: entry.fileURL)
         // Open workspace in THIS window (replace welcome)
         onWorkspaceSelected?(manager.id)
-      } catch {
+      } catch let error as NSError {
         await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
+        // Show user-friendly toast message
+        await MainActor.run {
+          if error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError {
+            windowManager.showToast(
+              "Workspace file not found: \(entry.name)",
+              type: .error
+            )
+            // Remove from recent list since file doesn't exist
+            RecentManager.shared.removeWorkspace(url: entry.fileURL)
+          } else {
+            windowManager.showToast(
+              "Failed to open workspace: \(error.localizedDescription)",
+              type: .error
+            )
+          }
+        }
       }
     }
   }

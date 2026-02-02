@@ -24,6 +24,40 @@ class WorkspaceWindowManager {
   /// Currently active workspace ID
   var activeWorkspaceId: UUID?
 
+  // MARK: - Toast Notifications (App Level)
+
+  /// Toast state for app-level notifications (e.g., when no workspace is open)
+  var toastState: ToastState = ToastState()
+  private var toastDismissTask: Task<Void, Never>?
+
+  /// Show a toast notification at app level
+  func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
+    toastState.show(message, type: type)
+    startToastDismissTimer()
+  }
+
+  /// Dismiss current toast
+  func dismissToast() {
+    toastState.dismiss()
+  }
+
+  /// Set toast hover state
+  func setToastHovered(_ hovered: Bool) {
+    toastState.setHovered(hovered)
+    if !hovered && toastState.currentToast != nil {
+      startToastDismissTimer()
+    }
+  }
+
+  private func startToastDismissTimer() {
+    toastDismissTask?.cancel()
+    toastDismissTask = Task { @MainActor in
+      try? await Task.sleep(for: .seconds(5))
+      guard !Task.isCancelled, !toastState.isHovered else { return }
+      toastState.dismiss()
+    }
+  }
+
   /// Whether app is showing welcome screen (no workspaces open)
   var isShowingWelcome: Bool {
     workspaces.isEmpty

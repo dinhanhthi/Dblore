@@ -69,10 +69,12 @@ struct DocumentLayoutView<Content: View>: View {
         FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: isEditorMode)
       }
 
-      // Toast notification overlay
-      ToastOverlay(viewModel: viewModel)
+      // Toast notification overlay (app-level via WorkspaceWindowManager)
+      ToastOverlay()
     }
-    .animation(.easeInOut(duration: 0.4), value: viewModel.toastState.currentToast)
+    .animation(
+      .easeInOut(duration: 0.4), value: WorkspaceWindowManager.shared.toastState.currentToast
+    )
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)

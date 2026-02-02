@@ -6,17 +6,17 @@
 import SwiftUI
 
 /// Toast notification overlay (bottom-right corner)
-/// Shared between Notebook and Editor modes
+/// Uses WorkspaceWindowManager for app-wide toast management
 struct ToastOverlay: View {
-  let viewModel: NotebookViewModel
+  @Bindable var windowManager = WorkspaceWindowManager.shared
 
   var body: some View {
-    if let toast = viewModel.toastState.currentToast {
+    if let toast = windowManager.toastState.currentToast {
       VStack {
         Spacer()
         HStack {
           Spacer()
-          ToastView(toast: toast, viewModel: viewModel)
+          ToastView(toast: toast, windowManager: windowManager)
             .padding(.horizontal, Spacing.lg)
             .padding(.vertical, Spacing.xxl)
             .transition(.move(edge: .trailing).combined(with: .opacity))

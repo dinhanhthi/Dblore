@@ -20,9 +20,10 @@ struct ToastMessage: Identifiable, Equatable {
 }
 
 /// Toast notification view (bottom-right corner)
+/// Uses WorkspaceWindowManager for app-wide toast management
 struct ToastView: View {
   let toast: ToastMessage
-  let viewModel: NotebookViewModel
+  @Bindable var windowManager: WorkspaceWindowManager
 
   @State private var isHovered = false
 
@@ -65,7 +66,7 @@ struct ToastView: View {
     .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)  // Close shadow
     .onHover { hovering in
       isHovered = hovering
-      viewModel.setToastHovered(hovering)
+      windowManager.setToastHovered(hovering)
     }
   }
 
@@ -115,7 +116,8 @@ struct ToastView: View {
 }
 
 #Preview {
-  let viewModel = NotebookViewModel()
+  let windowManager = WorkspaceWindowManager.shared
+  windowManager.showToast("Query limit enforced to 50 rows. Increase in Settings.", type: .warning)
 
   return VStack(spacing: Spacing.lg) {
     ToastView(
@@ -123,7 +125,7 @@ struct ToastView: View {
         message: "Query limit enforced to 50 rows. Increase in Settings.",
         type: .warning
       ),
-      viewModel: viewModel
+      windowManager: windowManager
     )
 
     ToastView(
@@ -131,7 +133,7 @@ struct ToastView: View {
         message: "Query executed successfully",
         type: .success
       ),
-      viewModel: viewModel
+      windowManager: windowManager
     )
 
     ToastView(
@@ -139,7 +141,7 @@ struct ToastView: View {
         message: "Connection failed",
         type: .error
       ),
-      viewModel: viewModel
+      windowManager: windowManager
     )
 
     ToastView(
@@ -147,7 +149,7 @@ struct ToastView: View {
         message: "New notebook created",
         type: .info
       ),
-      viewModel: viewModel
+      windowManager: windowManager
     )
   }
   .padding()

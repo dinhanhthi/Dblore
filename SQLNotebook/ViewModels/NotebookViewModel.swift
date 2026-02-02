@@ -78,9 +78,8 @@ class NotebookViewModel {
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
 
-  // MARK: - Toast State (10.3.2 optimization)
-  var toastState: ToastState = ToastState()
-  @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
+  // MARK: - Toast (delegated to WorkspaceWindowManager)
+  // Toast is now managed at app level via WorkspaceWindowManager.shared
 
   // MARK: - File Size State (10.3.2 optimization)
   var fileSizeState: FileSizeState = FileSizeState()
@@ -146,37 +145,11 @@ class NotebookViewModel {
     recalculateFileSize()
   }
 
-  // MARK: - Toast Notifications
+  // MARK: - Toast Notifications (delegated to WorkspaceWindowManager)
 
+  /// Show toast via app-level toast system
   func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
-    toastState.show(message, type: type)
-    startToastDismissTimer(for: message)
-  }
-
-  private func startToastDismissTimer(for message: String) {
-    // Cancel any existing dismiss task
-    toastDismissTask?.cancel()
-
-    // Auto-dismiss after 4 seconds, but only if not hovered
-    toastDismissTask = Task {
-      try? await Task.sleep(for: .seconds(4))
-
-      // Wait until toast is no longer hovered (max 20 seconds to prevent deadlock)
-      var hoverWaitTime = 0
-      while self.toastState.isHovered && hoverWaitTime < 40 {
-        try? await Task.sleep(for: .seconds(0.5))
-        hoverWaitTime += 1
-      }
-
-      // Dismiss only if the message matches (user might have shown a new toast)
-      if self.toastState.currentToast?.message == message {
-        self.toastState.dismiss()
-      }
-    }
-  }
-
-  func setToastHovered(_ hovered: Bool) {
-    toastState.setHovered(hovered)
+    WorkspaceWindowManager.shared.showToast(message, type: type)
   }
 
   // MARK: - Statistics
