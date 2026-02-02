@@ -18,9 +18,6 @@ struct HeaderView: View {
       HStack(spacing: Spacing.xs) {
         if viewModel.viewMode == .notebook {
           // Notebook mode buttons
-          Divider()
-            .frame(height: 20)
-
           Button(action: {
             if viewModel.isFileSizeLarge {
               viewModel.showToast(
@@ -103,9 +100,6 @@ struct HeaderView: View {
             Text("This will remove all query results from all cells. This action can be undone.")
           }
 
-          Divider()
-            .frame(height: 20)
-
           Menu {
             Button(action: { viewModel.hideAllResults() }) {
               Label("Hide All Results", systemImage: "eye.slash")
@@ -121,9 +115,6 @@ struct HeaderView: View {
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
-          Divider()
-            .frame(height: 20)
-
           Button(action: {
             Task { @MainActor [viewModel] in
               await viewModel.runEditorQuery()
@@ -139,7 +130,7 @@ struct HeaderView: View {
 
       Spacer()
 
-      // Trailing group - Search and Connection (common to both modes)
+      // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
       HStack(spacing: Spacing.sm) {
         // Search button
@@ -155,22 +146,6 @@ struct HeaderView: View {
           )
         )
         .help("Search (⌘F)")
-
-        Divider()
-          .frame(height: 20)
-
-        ConnectionButton(
-          connectionState: viewModel.connectionState,
-          connectionConfig: viewModel.notebook.connectionConfig,
-          onConnect: {
-            // Toggle modal visibility at workspace level
-            workspaceManager?.isConnectionFormModalVisible.toggle()
-          },
-          onShowConnectionInfo: {
-            // Show connection info modal at workspace level
-            workspaceManager?.isConnectionInfoModalVisible = true
-          }
-        )
       }
     }
     .padding(.horizontal, Spacing.sm)
@@ -212,115 +187,10 @@ struct HeaderView: View {
   }
 }
 
-struct ConnectionButton: View {
-  let connectionState: ConnectionState
-  let connectionConfig: ConnectionConfig?
-  let onConnect: () -> Void
-  let onShowConnectionInfo: () -> Void
-
-  @State private var isHoveringConnection = false
-
-  var body: some View {
-    if connectionState.isConnected {
-      // Connected state - no button style, green text, with info icon
-      HStack(spacing: 0) {
-        Button(action: onShowConnectionInfo) {
-          HStack(spacing: Spacing.xs) {
-            connectionIcon
-            Text(connectionText)
-              .foregroundColor(.success)
-          }
-          .padding(.horizontal, Spacing.sm)
-          .padding(.vertical, Spacing.xs)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .fill(isHoveringConnection ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Connection Details")
-        .animation(.easeInOut(duration: 0.15), value: isHoveringConnection)
-        .onHover { hovering in
-          isHoveringConnection = hovering
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
-      }
-    } else {
-      // Other states - use button style
-      Button(action: onConnect) {
-        HStack(spacing: Spacing.sm) {
-          connectionIcon
-          Text(connectionText)
-        }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(GhostButtonStyle())
-      .help("Connect to Database")
-      .onHover { hovering in
-        if hovering {
-          NSCursor.pointingHand.push()
-        } else {
-          NSCursor.pop()
-        }
-      }
-    }
-  }
-
-  private var connectionIcon: some View {
-    ConnectionIconView(state: connectionState)
-  }
-
-  private var connectionText: String {
-    switch connectionState {
-    case .connected:
-      return "Connected"
-    default:
-      // Show "Connect" for all other states (disconnected, connecting, error)
-      // The icon will indicate the actual state
-      return "Connect"
-    }
-  }
-}
-
-// MARK: - Connection Icon View
-
-// Extracted to reduce type complexity in ConnectionButton
-
-private struct ConnectionIconView: View {
-  let state: ConnectionState
-
-  var body: some View {
-    switch state {
-    case .connected:
-      Image(systemName: "bolt.fill")
-        .foregroundColor(.success)
-    default:
-      // Show disconnected icon for all non-connected states
-      // (.disconnected, .connecting, .error)
-      Image(systemName: "bolt.slash")
-        .foregroundColor(.foregroundMuted)
-    }
-  }
-}
-
 // SafeModeIndicator moved to Components/Shared/SafeModeIndicator.swift
 
-#Preview("Connect") {
+#Preview {
   HeaderView(viewModel: NotebookViewModel())
-    .frame(width: 850)
-    .preferredColorScheme(.dark)
-}
-
-#Preview("Connected") {
-  let viewModel = NotebookViewModel()
-  viewModel.connectionState = .connected
-
-  return HeaderView(viewModel: viewModel)
     .frame(width: 850)
     .preferredColorScheme(.dark)
 }
