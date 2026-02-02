@@ -1,15 +1,15 @@
 //
-//  DraggableTabsContainer.swift
+//  WorkspaceDraggableTabsContainer.swift
 //  SQLNotebook
 //
-//  Chrome-like tab dragging with real-time reordering animation
+//  Chrome-like tab dragging with real-time reordering animation for workspaces
 //
 
 import SwiftUI
 
-/// Container that handles Chrome-like tab dragging with real-time reorder animation
-struct DraggableTabsContainer: View {
-  @Bindable var tabManager: TabStateManager
+/// Container that handles Chrome-like tab dragging with real-time reorder animation for workspaces
+struct WorkspaceDraggableTabsContainer: View {
+  @Bindable var workspaceManager: WorkspaceManager
 
   /// Currently dragging tab ID
   @State private var draggingTabId: UUID?
@@ -29,19 +29,24 @@ struct DraggableTabsContainer: View {
   /// Original index of the dragging tab
   @State private var originalIndex: Int?
 
+  /// Namespace for matched geometry effect (capsule sliding animation)
+  @Namespace private var tabCapsuleNamespace
+
   private let tabSpacing: CGFloat = Spacing.xxs
 
   var body: some View {
-    HStack(alignment: .bottom, spacing: tabSpacing) {
-      ForEach(Array(tabManager.tabs.enumerated()), id: \.element.id) { index, tab in
+    HStack(alignment: .center, spacing: tabSpacing) {
+      ForEach(Array(workspaceManager.tabs.enumerated()), id: \.element.id) { index, tab in
         let isDragging = tab.id == draggingTabId
+        let isActive = tab.id == workspaceManager.activeTabId
 
-        DraggableTitleBarTabItem(
+        WorkspaceDraggableTabItem(
           tab: tab,
-          isActive: tab.id == tabManager.activeTabId,
+          isActive: isActive,
           isDragging: isDragging,
-          onSelect: { tabManager.selectTab(id: tab.id) },
-          onClose: { tabManager.requestCloseTab(id: tab.id) }
+          capsuleNamespace: tabCapsuleNamespace,
+          onSelect: { workspaceManager.selectTab(id: tab.id) },
+          onClose: { workspaceManager.requestCloseTab(id: tab.id) }
         )
         .id(tab.id)
         .background(
@@ -54,14 +59,14 @@ struct DraggableTabsContainer: View {
                 tabWidths[tab.id] = newWidth
               }
               .preference(
-                key: TabPositionPreferenceKey.self,
-                value: [tab.id: geo.frame(in: .named("tabContainer")).minX]
+                key: WorkspaceTabPositionPreferenceKey.self,
+                value: [tab.id: geo.frame(in: .named("workspaceTabContainer")).minX]
               )
           }
         )
         .offset(x: calculateOffset(for: tab, at: index))
         .animation(draggingTabId != nil ? .easeInOut(duration: 0.2) : nil, value: targetIndex)
-        .zIndex(isDragging ? 100 : 0)
+        .zIndex(isDragging ? 100 : (isActive ? 50 : 0))
         .gesture(
           DragGesture(minimumDistance: 5)
             .onChanged { value in
@@ -73,11 +78,12 @@ struct DraggableTabsContainer: View {
         )
       }
     }
-    .coordinateSpace(name: "tabContainer")
-    .onPreferenceChange(TabPositionPreferenceKey.self) { positions in
+    .coordinateSpace(name: "workspaceTabContainer")
+    .onPreferenceChange(WorkspaceTabPositionPreferenceKey.self) { positions in
       tabPositions = positions
     }
-    .frame(maxHeight: .infinity, alignment: .bottom)
+    .frame(maxHeight: .infinity, alignment: .center)
+    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: workspaceManager.activeTabId)
   }
 
   /// Calculate visual offset for a tab based on drag state
@@ -146,7 +152,7 @@ struct DraggableTabsContainer: View {
       return originalIndex
     }
 
-    let tabs = tabManager.tabs
+    let tabs = workspaceManager.tabs
 
     // Calculate how far we've moved in terms of tab positions
     var newIndex = originalIndex
@@ -213,12 +219,12 @@ struct DraggableTabsContainer: View {
     originalIndex = nil
 
     // Perform the actual move - SwiftUI will render new positions directly
-    tabManager.moveTab(from: originalIdx, to: targetIdx)
+    workspaceManager.moveTab(from: originalIdx, to: targetIdx)
   }
 }
 
-/// Preference key to collect tab positions
-struct TabPositionPreferenceKey: PreferenceKey {
+/// Preference key to collect tab positions for workspace tabs
+struct WorkspaceTabPositionPreferenceKey: PreferenceKey {
   static var defaultValue: [UUID: CGFloat] = [:]
 
   static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
@@ -226,11 +232,12 @@ struct TabPositionPreferenceKey: PreferenceKey {
   }
 }
 
-/// Tab item wrapper for dragging - adds visual feedback during drag
-struct DraggableTitleBarTabItem: View {
+/// Tab item wrapper for dragging - adds visual feedback during drag (workspace version)
+struct WorkspaceDraggableTabItem: View {
   let tab: TabItem
   let isActive: Bool
   let isDragging: Bool
+  let capsuleNamespace: Namespace.ID
   let onSelect: () -> Void
   let onClose: () -> Void
 
@@ -260,11 +267,19 @@ struct DraggableTitleBarTabItem: View {
       closeButton
     }
     .padding(.horizontal, Spacing.md)
-    .frame(height: 34)
-    .background(backgroundColor)
-    .clipShape(tabClipShape)
-    .overlay(tabBorderOverlay)
-    .contentShape(Rectangle())
+    .frame(height: 28)
+    .background {
+      if isActive {
+        // 3D capsule effect for active tab - slides between tabs
+        ActiveTabCapsule()
+          .matchedGeometryEffect(id: "activeTabCapsule", in: capsuleNamespace)
+      } else if isHovering || isDragging {
+        // Subtle hover state for inactive tabs
+        Capsule()
+          .fill(Color.cellBackgroundHover.opacity(0.4))
+      }
+    }
+    .contentShape(Capsule())
     .opacity(isDragging ? 0.9 : 1.0)
     .scaleEffect(isDragging ? 1.02 : 1.0)
     .shadow(color: isDragging ? Color.black.opacity(0.2) : Color.clear, radius: 4, y: 2)
@@ -273,35 +288,7 @@ struct DraggableTitleBarTabItem: View {
     .blockDoubleClickZoom()
     .onHover { isHovering = $0 }
     .animation(.easeInOut(duration: 0.15), value: isDragging)
-  }
-
-  private var tabClipShape: some Shape {
-    if isActive {
-      AnyShape(TabTopRoundedShape(radius: CornerRadius.sm))
-    } else {
-      AnyShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-    }
-  }
-
-  @ViewBuilder
-  private var tabBorderOverlay: some View {
-    if isActive {
-      TabTopRoundedBorder(radius: CornerRadius.md)
-        .stroke(Color.border, lineWidth: 0)
-    } else {
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .stroke(Color.clear, lineWidth: 0)
-    }
-  }
-
-  private var backgroundColor: Color {
-    if isActive {
-      return Color.appBackground
-    } else if isHovering || isDragging {
-      return Color.cellBackgroundHover.opacity(0.5)
-    } else {
-      return Color.clear
-    }
+    .animation(.easeInOut(duration: 0.15), value: isHovering)
   }
 
   @ViewBuilder
@@ -312,7 +299,7 @@ struct DraggableTitleBarTabItem: View {
       } label: {
         Image(systemName: "xmark")
           .font(.system(size: 8, weight: .medium))
-          .foregroundColor(.foregroundMuted)
+          .foregroundColor(isActive ? .foreground.opacity(0.7) : .foregroundMuted)
           .frame(width: 14, height: 14)
           .contentShape(Rectangle())
       }
@@ -322,5 +309,73 @@ struct DraggableTitleBarTabItem: View {
       Color.clear
         .frame(width: 14, height: 14)
     }
+  }
+}
+
+// MARK: - Active Tab Capsule with 3D Effect
+
+/// A capsule shape with 3D effect for the active tab indicator
+struct ActiveTabCapsule: View {
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Capsule()
+      .fill(capsuleGradient)
+      .overlay {
+        // Inner highlight for 3D depth
+        Capsule()
+          .stroke(highlightGradient, lineWidth: 1)
+          .padding(0.5)
+      }
+      .shadow(color: shadowColor, radius: 3, x: 0, y: 1)
+      .shadow(color: shadowColor.opacity(0.3), radius: 1, x: 0, y: 0.5)
+  }
+
+  private var capsuleGradient: LinearGradient {
+    if colorScheme == .dark {
+      LinearGradient(
+        colors: [
+          Color.white.opacity(0.12),
+          Color.white.opacity(0.08),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    } else {
+      LinearGradient(
+        colors: [
+          Color.white,
+          Color.white.opacity(0.95),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    }
+  }
+
+  private var highlightGradient: LinearGradient {
+    if colorScheme == .dark {
+      LinearGradient(
+        colors: [
+          Color.white.opacity(0.15),
+          Color.white.opacity(0.05),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    } else {
+      LinearGradient(
+        colors: [
+          Color.white.opacity(0.9),
+          Color.black.opacity(0.05),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    }
+  }
+
+  private var shadowColor: Color {
+    colorScheme == .dark ? Color.black.opacity(0.4) : Color.black.opacity(0.15)
   }
 }

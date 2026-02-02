@@ -302,7 +302,7 @@ private struct QueryConfirmationModifier: ViewModifier {
   private func verifyAndExecute() {
     if useDatabasePassword {
       // Verify using database connection password
-      guard passwordEntry == viewModel.editingConnectionConfig.password else {
+      guard passwordEntry == viewModel.notebook.connectionConfig?.password else {
         passwordError = "Incorrect database password"
         return
       }

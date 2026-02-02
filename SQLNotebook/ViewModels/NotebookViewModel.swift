@@ -28,9 +28,6 @@ enum SidebarContent: Equatable {
   )
   case executedQuery(
     query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
-  case connectionDetails
-  case connectionForm
-  case settings
 }
 
 /// Main view model for the notebook editor
@@ -62,22 +59,12 @@ class NotebookViewModel {
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false  // Track expand/collapse state
 
-  // Schema visualizer state
-  var schemaGraph: SchemaGraph?
-  var visualizerScale: CGFloat = 1.0
-  var visualizerOffset: CGPoint = .zero
-  var selectedGraphNodeId: UUID?
-  var isLoadingSchemaGraph: Bool = false
-  var isSchemaVisualizerActive: Bool = false  // Show visualizer in main body instead of cells/editor
-  weak var schemaGraphNSView: SchemaGraphNSView?  // Reference for export functionality
-  var showTableConnections: Bool = true  // Show relationship lines between tables (default: true)
-  var showColumnConnections: Bool = false  // Show dashed lines connecting FK columns
+  // Note: Connection is now managed at workspace level (WorkspaceManager)
+  // These properties are synced from WorkspaceManager for backward compatibility
 
-  // Connection config for the sheet
-  var editingConnectionConfig: ConnectionConfig
-
-  // Database connection manager
-  let connectionManager = DatabaseConnectionManager()
+  // Connection manager reference from workspace (synced from WorkspaceManager)
+  // This allows NotebookViewModel extensions to execute queries without refactoring
+  var connectionManager: DatabaseConnectionManager?
 
   // Autocomplete provider
   let autocompleteProvider = SQLAutocompleteProvider()
@@ -108,10 +95,6 @@ class NotebookViewModel {
   @ObservationIgnored var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
   @ObservationIgnored var previousFirstResponder: NSResponder?  // Store previous responder
 
-  // Schema search state (for schema visualizer)
-  var schemaSearchState: SchemaSearchState = SchemaSearchState()
-  @ObservationIgnored var schemaSearchTask: Task<Void, Never>?
-
   // MARK: - Query Confirmation State (10.3.2 optimization)
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
 
@@ -138,15 +121,11 @@ class NotebookViewModel {
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
-    editingConnectionConfig = notebook.connectionConfig ?? ConnectionConfig()
 
     // Initialize execution queue with execution handler
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
     }
-
-    // Set connection manager for autocomplete provider
-    autocompleteProvider.setConnectionManager(connectionManager)
 
     // Restore pagination state from cells
     for cell in notebook.cells {
@@ -324,7 +303,7 @@ class NotebookViewModel {
       queryConfirmationState.pendingQuery = query
       // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
       queryConfirmationState.affectsAllRows =
-        isModification && connectionManager.affectsAllRows(query)
+        isModification && (connectionManager?.affectsAllRows(query) ?? false)
       queryConfirmationState.requiresPassword = safeMode.requiresPassword
       queryConfirmationState.showDialog = true
     } else {

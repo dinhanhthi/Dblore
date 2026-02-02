@@ -13,7 +13,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func application(_ application: NSApplication, open urls: [URL]) {
     Task { @MainActor in
       for url in urls {
-        try? await TabStateManager.shared.openFile(url: url)
+        let ext = url.pathExtension.lowercased()
+        if ext == "sqlws" {
+          // Open workspace file
+          _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
+        } else {
+          // Open file in active workspace or create new untitled workspace
+          if let activeManager = WorkspaceWindowManager.shared.activeWorkspaceManager {
+            try? await activeManager.openFile(url: url)
+          } else {
+            // Create new untitled workspace and open file in it
+            let newManager = WorkspaceWindowManager.shared.newWorkspace()
+            try? await newManager.openFile(url: url)
+          }
+        }
       }
     }
   }
@@ -23,7 +36,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    TabStateManager.shared.saveState()
+    // Save all workspace states
+    Task { @MainActor in
+      for manager in WorkspaceWindowManager.shared.workspaceManagers {
+        try? await manager.saveWorkspace()
+      }
+    }
+    // Note: Tab state is now saved per-workspace in saveWorkspace() above
   }
 }
 
@@ -40,20 +59,21 @@ struct SQLNotebookApp: App {
   }
 
   var body: some Scene {
-    // Main window with tabs in titlebar (Chrome-style)
+    // Main window - shows AppWelcomeView when no workspace, or WorkspaceContainerView
     WindowGroup {
-      TabContainerView(tabManager: TabStateManager.shared)
+      AppRootView()
         .frame(minWidth: 800, minHeight: 600)
     }
     .windowStyle(.hiddenTitleBar)
     .commands {
       SharedCommands()
-      TabCommands(tabManager: TabStateManager.shared)
+      WorkspaceCommands()
+      TabCommands()
       NotebookCommands()
       EditorCommands()
     }
     .defaultSize(width: 1200, height: 800)
-    .handlesExternalEvents(matching: ["sqlnb", "sql", "*"])
+    .handlesExternalEvents(matching: ["sqlws", "sqlnb", "sql", "*"])
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
@@ -170,13 +190,19 @@ struct SharedCommands: Commands {
       Button("About SQLNotebook") {
         showAboutWindow()
       }
+    }
 
-      Divider()
+    // Settings command - replace default settings with empty to remove Cmd+,
+    // Then add our own Settings button without keyboard shortcut
+    CommandGroup(replacing: .appSettings) {
+      EmptyView()
+    }
 
-      Button("Settings") {
+    // Add Settings after About in appInfo group (no keyboard shortcut)
+    CommandGroup(after: .appInfo) {
+      Button("Settings...") {
         NotificationCenter.default.post(name: .openSettings, object: nil)
       }
-      .keyboardShortcut(",", modifiers: .command)
     }
   }
 
@@ -196,20 +222,62 @@ struct SharedCommands: Commands {
 // MARK: - Tab Commands
 
 struct TabCommands: Commands {
-  let tabManager: TabStateManager
+  // Note: All tab operations now go through WorkspaceManager
+  // No fallback to legacy TabStateManager.shared
 
   var body: some Commands {
-    // File menu - New documents
+    // File menu - New documents (includes workspace commands)
     CommandGroup(replacing: .newItem) {
+      // Workspace commands first
       Button {
-        tabManager.newNotebook()
+        _ = WorkspaceWindowManager.shared.newWorkspace()
+      } label: {
+        Label("New Workspace", systemImage: "folder.badge.plus")
+      }
+      .keyboardShortcut("n", modifiers: [.command, .control])
+
+      Button {
+        Task {
+          await WorkspaceWindowManager.shared.openWorkspaceWithPanel()
+        }
+      } label: {
+        Label("Open Workspace...", systemImage: "folder")
+      }
+      .keyboardShortcut("o", modifiers: [.command, .option])
+
+      // Recent Workspaces submenu
+      Menu("Open Recent Workspace") {
+        ForEach(RecentManager.shared.recentWorkspaces.prefix(10)) { workspace in
+          Button(workspace.displayString) {
+            Task {
+              try? await WorkspaceWindowManager.shared.openWorkspace(url: workspace.fileURL)
+            }
+          }
+        }
+
+        if !RecentManager.shared.recentWorkspaces.isEmpty {
+          Divider()
+          Button("Clear Recent Workspaces") {
+            RecentManager.shared.clearWorkspaces()
+          }
+        }
+      }
+      .disabled(RecentManager.shared.recentWorkspaces.isEmpty)
+
+      Divider()
+
+      // Document commands - create workspace if needed
+      Button {
+        let manager = activeWorkspaceOrNew
+        manager.newNotebook()
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
       .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button {
-        tabManager.newSQLFile()
+        let manager = activeWorkspaceOrNew
+        manager.newSQLFile()
       } label: {
         Label("New SQL File", systemImage: "doc.text")
       }
@@ -228,20 +296,28 @@ struct TabCommands: Commands {
     // File menu - Save
     CommandGroup(replacing: .saveItem) {
       Button {
-        saveActiveTab()
+        // If active tab, save tab; otherwise save workspace
+        if activeTabId != nil {
+          saveActiveTab()
+        } else {
+          saveActiveWorkspace()
+        }
       } label: {
         Text("Save")
       }
       .keyboardShortcut("s", modifiers: .command)
-      .disabled(tabManager.activeTabId == nil)
 
       Button {
-        saveActiveTabAs()
+        // If active tab, save as; otherwise save workspace as
+        if activeTabId != nil {
+          saveActiveTabAs()
+        } else {
+          saveActiveWorkspaceAs()
+        }
       } label: {
         Text("Save As...")
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
-      .disabled(tabManager.activeTabId == nil)
     }
 
     // Window menu - Tab navigation
@@ -249,37 +325,60 @@ struct TabCommands: Commands {
       Divider()
 
       Button("Close Tab") {
-        if let id = tabManager.activeTabId {
-          tabManager.requestCloseTab(id: id)
+        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+          let id = workspaceManager.activeTabId
+        {
+          workspaceManager.requestCloseTab(id: id)
         }
       }
       .keyboardShortcut("w", modifiers: .command)
-      .disabled(tabManager.activeTabId == nil)
+      .disabled(activeTabId == nil)
 
       Divider()
 
       Button("Next Tab") {
-        tabManager.selectNextTab()
+        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectNextTab()
       }
       .keyboardShortcut("]", modifiers: [.command, .shift])
-      .disabled(tabManager.tabs.count < 2)
+      .disabled(activeTabCount < 2)
 
       Button("Previous Tab") {
-        tabManager.selectPreviousTab()
+        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectPreviousTab()
       }
       .keyboardShortcut("[", modifiers: [.command, .shift])
-      .disabled(tabManager.tabs.count < 2)
+      .disabled(activeTabCount < 2)
 
       Divider()
 
       // Tab shortcuts 1-9 (only show if tabs exist)
-      ForEach(Array(tabManager.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
-        Button("Tab \(index + 1): \(tab.title)") {
-          tabManager.selectTab(atIndex: index + 1)
+      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, _ in
+        Button("Tab \(index + 1): \(activeTabs[index].title)") {
+          WorkspaceWindowManager.shared.activeWorkspaceManager?.selectTab(atIndex: index + 1)
         }
         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
       }
     }
+  }
+
+  /// Get active workspace or create new one
+  private var activeWorkspaceOrNew: WorkspaceManager {
+    WorkspaceWindowManager.shared.activeWorkspaceManager
+      ?? WorkspaceWindowManager.shared.newWorkspace()
+  }
+
+  /// Get active tab ID from workspace manager
+  private var activeTabId: UUID? {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.activeTabId
+  }
+
+  /// Get tab count from workspace manager
+  private var activeTabCount: Int {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs.count ?? 0
+  }
+
+  /// Get tabs from workspace manager
+  private var activeTabs: [TabItem] {
+    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs ?? []
   }
 
   private func openFile() {
@@ -291,28 +390,48 @@ struct TabCommands: Commands {
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
+        let manager =
+          WorkspaceWindowManager.shared.activeWorkspaceManager
+          ?? WorkspaceWindowManager.shared.newWorkspace()
         for url in panel.urls {
-          try? await tabManager.openFile(url: url)
+          try? await manager.openFile(url: url)
         }
       }
     }
   }
 
   private func saveActiveTab() {
-    guard let id = tabManager.activeTabId else { return }
+    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+      let id = manager.activeTabId
+    else { return }
     Task {
-      try? await tabManager.saveTab(id: id)
+      try? await manager.saveTab(id: id)
     }
   }
 
   private func saveActiveTabAs() {
-    guard let id = tabManager.activeTabId else { return }
+    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+      let id = manager.activeTabId,
+      let index = manager.tabs.firstIndex(where: { $0.id == id })
+    else { return }
     // For Save As, we clear the fileURL first to force save panel
-    if let index = tabManager.tabs.firstIndex(where: { $0.id == id }) {
-      tabManager.tabs[index].fileURL = nil
-    }
+    manager.tabs[index].fileURL = nil
     Task {
-      try? await tabManager.saveTab(id: id)
+      try? await manager.saveTab(id: id)
+    }
+  }
+
+  private func saveActiveWorkspace() {
+    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    Task {
+      try? await workspace.saveWorkspace()
+    }
+  }
+
+  private func saveActiveWorkspaceAs() {
+    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    Task {
+      try? await workspace.saveWorkspaceWithPanel()
     }
   }
 }
@@ -396,7 +515,7 @@ struct NotebookCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut(",", modifiers: [.command])
+        .keyboardShortcut("b", modifiers: [.command, .shift])
       }
 
       // Edit commands - use focused actions for tab-specific behavior
@@ -477,7 +596,7 @@ struct EditorCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut(",", modifiers: [.command])
+        .keyboardShortcut("b", modifiers: [.command, .shift])
 
         Divider()
 

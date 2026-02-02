@@ -44,37 +44,8 @@ extension NotebookViewModel {
     handleSidebarConflict(opening: .right)
   }
 
-  /// Show connection details in sidebar
-  func showConnectionDetails() {
-    rightSidebarContent = .connectionDetails
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
-  }
-
-  /// Show connection form in sidebar
-  func showConnectionForm() {
-    rightSidebarContent = .connectionForm
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
-  }
-
-  /// Show settings in sidebar
-  func showSettings() {
-    rightSidebarContent = .settings
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
-  }
-
-  /// Show settings and scroll to Safe Mode section
-  func showSafeModeSettings() {
-    showSettings()
-    // Post notification to scroll to Safe Mode section after a short delay
-    // to allow the sidebar to render first
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(100))
-      NotificationCenter.default.post(name: .scrollToSafeModeSettings, object: nil)
-    }
-  }
+  // Note: showConnectionForm() removed - connection form is now at workspace level
+  // Note: showSettings() removed - settings is now a modal at workspace level
 
   /// Toggle sidebar visibility
   func toggleSidebar() {
@@ -101,132 +72,9 @@ extension NotebookViewModel {
     }
   }
 
-  /// Load database schema (tables, views, functions, procedures, users, roles)
-  func loadDatabaseSchema() async {
-    guard connectionState.isConnected else {
-      databaseTables = []
-      databaseViews = []
-      databaseFunctions = []
-      databaseProcedures = []
-      databaseUsers = []
-      databaseRoles = []
-      databaseForeignKeys = []
-      return
-    }
-
-    isLoadingSchema = true
-
-    do {
-      // Fetch tables
-      var tables = try await connectionManager.fetchTables()
-
-      // Fetch columns and row count for each table
-      for index in tables.indices {
-        let table = tables[index]
-        do {
-          let columns = try await connectionManager.fetchColumns(
-            tableSchema: table.schema,
-            tableName: table.name
-          )
-          tables[index].columns = columns
-
-          // Fetch row count
-          let rowCount = try await connectionManager.fetchRowCount(
-            tableSchema: table.schema,
-            tableName: table.name
-          )
-          tables[index].rowCount = rowCount
-        } catch {
-          // If fetching columns fails, continue with other tables
-          await AppLogger.shared.warning(
-            "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
-        }
-      }
-
-      databaseTables = tables
-
-      // Fetch views
-      do {
-        var views = try await connectionManager.fetchViews()
-        // Fetch columns for each view
-        for index in views.indices {
-          let view = views[index]
-          do {
-            let columns = try await connectionManager.fetchColumns(
-              tableSchema: view.schema,
-              tableName: view.name
-            )
-            views[index].columns = columns
-          } catch {
-            await AppLogger.shared.warning(
-              "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema"
-            )
-          }
-        }
-        databaseViews = views
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch views: \(error)", category: "Schema")
-        databaseViews = []
-      }
-
-      // Fetch functions
-      do {
-        databaseFunctions = try await connectionManager.fetchFunctions()
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch functions: \(error)", category: "Schema")
-        databaseFunctions = []
-      }
-
-      // Fetch procedures
-      do {
-        databaseProcedures = try await connectionManager.fetchProcedures()
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch procedures: \(error)", category: "Schema")
-        databaseProcedures = []
-      }
-
-      // Fetch users
-      do {
-        databaseUsers = try await connectionManager.fetchUsers()
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch users: \(error)", category: "Schema")
-        databaseUsers = []
-      }
-
-      // Fetch roles
-      do {
-        databaseRoles = try await connectionManager.fetchRoles()
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch roles: \(error)", category: "Schema")
-        databaseRoles = []
-      }
-
-      // Fetch foreign keys for schema visualizer
-      do {
-        databaseForeignKeys = try await connectionManager.fetchForeignKeys()
-      } catch {
-        await AppLogger.shared.warning("Failed to fetch foreign keys: \(error)", category: "Schema")
-        databaseForeignKeys = []
-      }
-
-    } catch {
-      await AppLogger.shared.error("Failed to load database schema: \(error)", category: "Schema")
-      databaseTables = []
-      databaseViews = []
-      databaseFunctions = []
-      databaseProcedures = []
-      databaseUsers = []
-      databaseRoles = []
-      databaseForeignKeys = []
-    }
-
-    isLoadingSchema = false
-  }
-
-  /// Refresh database schema
-  func refreshDatabaseSchema() async {
-    await loadDatabaseSchema()
-  }
+  // Note: loadDatabaseSchema() and refreshDatabaseSchema() removed
+  // Schema loading is now handled at workspace level (WorkspaceManager)
+  // Schema data is synced to NotebookViewModel via WorkspaceTabContentView.syncConnectionState()
 
   /// Toggle table expansion state
   func toggleTableExpansion(tableId: UUID) {
@@ -388,6 +236,7 @@ extension NotebookViewModel {
   }
 
   /// Handle cell value edit from sidebar
+  /// - Parameter connectionManager: Optional connection manager from workspace for database updates
   func handleCellValueEdit(
     columnName: String,
     columnType: String,
@@ -397,7 +246,8 @@ extension NotebookViewModel {
     rowData: [String: CellValue]?,
     primaryKeyColumns: [String],
     rowIdentifier: CellValue?,
-    cellId: UUID?
+    cellId: UUID?,
+    connectionManager: DatabaseConnectionManager? = nil
   ) {
     // If tableName is missing, try to extract it from the cell's source query
     var resolvedTableName = tableName
@@ -477,8 +327,10 @@ extension NotebookViewModel {
       cellId: cellId
     )
 
-    // If we have table name and row data, attempt to update database (use resolved values)
-    if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty {
+    // If we have table name, row data, and connection manager, attempt to update database
+    if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty,
+      let connectionManager = connectionManager
+    {
       Task { @MainActor [connectionManager, weak self] in
         do {
           // Fetch primary key columns if we don't have them yet

@@ -59,7 +59,7 @@ extension NotebookViewModel {
     guard !trimmed.isEmpty else { return nil }
 
     // Check if the line contains only comments
-    if connectionManager.isCommentOnlyStatement(trimmed) {
+    if connectionManager?.isCommentOnlyStatement(trimmed) == true {
       return nil
     }
 
@@ -134,7 +134,7 @@ extension NotebookViewModel {
       queryConfirmationState.pendingCellId = nil  // No cell ID in editor mode
       // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
       queryConfirmationState.affectsAllRows =
-        isModification && connectionManager.affectsAllRows(query)
+        isModification && (connectionManager?.affectsAllRows(query) ?? false)
       queryConfirmationState.requiresPassword = safeMode.requiresPassword
       queryConfirmationState.showDialog = true
       return
@@ -152,6 +152,11 @@ extension NotebookViewModel {
 
   /// Execute query in editor mode (internal)
   private func executeEditorQuery(_ query: String) async {
+    guard let connectionManager = connectionManager else {
+      showToast("No database connection available", type: .error)
+      return
+    }
+
     let startTime = Date()
 
     do {
@@ -343,6 +348,11 @@ extension NotebookViewModel {
   private func executeEditorQueryForPagination(
     _ query: String, page: Int, paginationInfo: PaginationInfo
   ) async {
+    guard let connectionManager = connectionManager else {
+      showToast("No database connection available", type: .error)
+      return
+    }
+
     let startTime = Date()
 
     // Preserve primary key columns from previous result (they don't change between pages)
@@ -402,6 +412,11 @@ extension NotebookViewModel {
   private func executeEditorQueryForStatementPagination(
     _ query: String, statementId: UUID, page: Int, paginationInfo: PaginationInfo
   ) async {
+    guard let connectionManager = connectionManager else {
+      showToast("No database connection available", type: .error)
+      return
+    }
+
     let startTime = Date()
 
     // Preserve primary key columns from previous result (they don't change between pages)
@@ -498,7 +513,9 @@ extension NotebookViewModel {
       "Checking pagination for query: \(cleanQuery.prefix(50))...", category: "Pagination")
 
     // Only applicable for SELECT queries
-    guard connectionManager.isSelectQuery(cleanQuery) else {
+    guard let connectionManager = connectionManager,
+      connectionManager.isSelectQuery(cleanQuery)
+    else {
       await AppLogger.shared.debug(
         "Not a SELECT query, skipping pagination", category: "Pagination")
       return nil
@@ -614,7 +631,9 @@ extension NotebookViewModel {
   /// Get total row count for a query using COUNT(*)
   private func getTotalRowCount(baseQuery: String) async -> Int? {
     // Safety check: ensure connection is active
-    guard connectionState == .connected else {
+    guard connectionState == .connected,
+      let connectionManager = connectionManager
+    else {
       await AppLogger.shared.debug(
         "Connection not active, cannot get total count", category: "Pagination")
       return nil

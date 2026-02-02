@@ -95,7 +95,7 @@ struct TabContentView: View {
 
   @ViewBuilder
   private var notebookContent: some View {
-    NotebookLayoutView(
+    DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
       isEditorMode: false
@@ -118,7 +118,7 @@ struct TabContentView: View {
 
   @ViewBuilder
   private var editorContent: some View {
-    NotebookLayoutView(
+    DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
       isEditorMode: true

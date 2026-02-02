@@ -64,6 +64,14 @@ extension NotebookViewModel {
       return nil
     }
 
+    guard let connectionManager = connectionManager else {
+      let errorResult = CellResult.errorResult(
+        "No database connection available", sourceQuery: task.query)
+      notebook.cells[index].result = errorResult
+      onDocumentChanged?()
+      return errorResult
+    }
+
     notebook.cells[index].isRunning = true
 
     // INFO: Log sanitized query being executed (redact sensitive data)
@@ -79,7 +87,7 @@ extension NotebookViewModel {
         // Execute all statements with timeout (10.1.5 optimization)
         let (statementResults, totalTime) =
           try await Task.withTimeout(seconds: 60) {
-            try await self.connectionManager
+            try await connectionManager
               .executeMultipleStatementsDetailed(
                 task.query, maxRows: AppSettings.shared.maxRowLimit)
           }
@@ -156,7 +164,7 @@ extension NotebookViewModel {
         // Single statement - use original logic
         // Execute query with timeout (10.1.5 optimization)
         let queryResult = try await Task.withTimeout(seconds: 60) {
-          try await self.connectionManager.executeQuery(
+          try await connectionManager.executeQuery(
             task.query,
             maxRows: AppSettings.shared.maxRowLimit
           )

@@ -10,7 +10,17 @@ import SwiftUI
 // MARK: - Connection Form Content
 
 struct ConnectionFormContent: View {
-  @Bindable var viewModel: NotebookViewModel
+  /// Connection configuration binding - the single source of truth
+  @Binding var connectionConfig: ConnectionConfig
+
+  /// Callback to test connection - returns true if successful
+  var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
+
+  /// Callback to connect - called when user clicks Connect button
+  var onConnect: ((ConnectionConfig) async throws -> Void)?
+
+  /// Callback when connection is successful (optional, for closing sidebar etc.)
+  var onConnectionSuccess: (() -> Void)?
 
   @State private var isTesting = false
   @State private var testResult: TestResult?
@@ -39,6 +49,21 @@ struct ConnectionFormContent: View {
     case connectionString = "Connection String"
   }
 
+  // MARK: - Initializer
+
+  /// Initialize with binding and callbacks
+  init(
+    connectionConfig: Binding<ConnectionConfig>,
+    onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
+    onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
+    onConnectionSuccess: (() -> Void)? = nil
+  ) {
+    self._connectionConfig = connectionConfig
+    self.onTestConnection = onTestConnection
+    self.onConnect = onConnect
+    self.onConnectionSuccess = onConnectionSuccess
+  }
+
   // MARK: - Body
 
   var body: some View {
@@ -58,7 +83,7 @@ struct ConnectionFormContent: View {
               testResult = nil
               if newMode == .connectionString {
                 // Generate connection string from current config only if we have valid data
-                let config = viewModel.editingConnectionConfig
+                let config = connectionConfig
                 if !config.username.isEmpty && !config.database.isEmpty {
                   connectionString = generateConnectionString()
                 } else {
@@ -66,7 +91,7 @@ struct ConnectionFormContent: View {
                   connectionString = ""
                 }
                 // Sync SSL mode state with current config
-                connectionStringSSLMode = viewModel.editingConnectionConfig.sslMode
+                connectionStringSSLMode = connectionConfig.sslMode
               }
             }
 
@@ -188,7 +213,6 @@ struct ConnectionFormContent: View {
                 .frame(width: 14, height: 14)
             }
             Text("Test Connection")
-              .frame(maxWidth: .infinity)
           }
         }
         .buttonStyle(SecondaryButtonStyle())
@@ -203,13 +227,19 @@ struct ConnectionFormContent: View {
                 .frame(width: 14, height: 14)
             }
             Text("Connect")
-              .frame(maxWidth: .infinity)
           }
         }
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isConnecting || !isFormValid)
-      }.padding(.top, Spacing.md)
-    }.padding(Spacing.md)
+      }
+      .frame(maxWidth: .infinity, alignment: .trailing)
+      .padding(.top, Spacing.md)
+      .padding(.horizontal, Spacing.md)
+    }
+    .padding(.bottom, Spacing.md)
+    .overlay(alignment: .top) {
+      Divider()
+    }
   }
 
   // MARK: - Validation
@@ -218,69 +248,20 @@ struct ConnectionFormContent: View {
     if inputMode == .connectionString {
       return !connectionString.isEmpty
     }
-    return !viewModel.editingConnectionConfig.host.isEmpty
-      && !viewModel.editingConnectionConfig.database.isEmpty
-      && !viewModel.editingConnectionConfig.username.isEmpty
+    return !connectionConfig.host.isEmpty
+      && !connectionConfig.database.isEmpty
+      && !connectionConfig.username.isEmpty
   }
 
   // MARK: - Tab Picker
 
   @ViewBuilder
   private func customTabPicker() -> some View {
-    let selectedIndex = ConnectionInputMode.allCases.firstIndex(of: inputMode) ?? 0
-
-    ZStack {
-      // Background
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(Color.inputBackground)
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
-
-      // Content with padding
-      GeometryReader { geometry in
-        let inset: CGFloat = 3
-        let availableWidth = geometry.size.width - (inset * 2)
-        let tabWidth = availableWidth / CGFloat(ConnectionInputMode.allCases.count)
-
-        ZStack(alignment: .leading) {
-          // Sliding indicator
-          RoundedRectangle(cornerRadius: CornerRadius.md - 2)
-            .fill(Color.accent)
-            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
-            .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: inputMode)
-
-          // Tab buttons
-          HStack(spacing: 0) {
-            ForEach(ConnectionInputMode.allCases, id: \.self) { mode in
-              Button(action: {
-                withAnimation {
-                  inputMode = mode
-                }
-              }) {
-                Text(mode.rawValue)
-                  .font(.body)
-                  .fontWeight(inputMode == mode ? .semibold : .regular)
-                  .foregroundColor(inputMode == mode ? .white : .foreground)
-                  .frame(maxWidth: .infinity, maxHeight: .infinity)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(PlainButtonStyle())
-              .onHover { hovering in
-                if hovering {
-                  NSCursor.pointingHand.push()
-                } else {
-                  NSCursor.pop()
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    .frame(height: 32)
+    CapsuleTabPicker(
+      selection: $inputMode,
+      tabs: ConnectionInputMode.allCases,
+      height: 32
+    )
   }
 
   // MARK: - Status Views
@@ -334,18 +315,23 @@ struct ConnectionFormContent: View {
 
   private func testConnection() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
       testResult = .failure("Connection name is required")
+      return
+    }
+
+    guard let onTest = onTestConnection else {
+      testResult = .failure("Test connection not available")
       return
     }
 
     isTesting = true
     testResult = nil
 
-    Task { @MainActor [viewModel] in
+    Task { @MainActor in
       do {
-        let success = try await viewModel.testConnection()
+        let success = try await onTest(connectionConfig)
         isTesting = false
         testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
@@ -357,19 +343,24 @@ struct ConnectionFormContent: View {
 
   private func connect() {
     // Validate connection name is not empty
-    guard !viewModel.editingConnectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
       testResult = .failure("Connection name is required")
       return
     }
 
+    guard let onConnectCallback = onConnect else {
+      testResult = .failure("Connect not available")
+      return
+    }
+
     isConnecting = true
 
-    Task { @MainActor [viewModel] in
+    Task { @MainActor in
       do {
-        try await viewModel.connect()
+        try await onConnectCallback(connectionConfig)
         isConnecting = false
-        viewModel.closeSidebar()
+        onConnectionSuccess?()
       } catch {
         isConnecting = false
         testResult = .failure(error.localizedDescription)

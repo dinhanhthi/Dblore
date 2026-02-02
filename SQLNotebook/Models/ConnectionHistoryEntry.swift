@@ -41,6 +41,13 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     return config.displayString
   }
 
+  /// Formatted last used date in short form (e.g., "26 Jan 25")
+  var formattedLastUsedDate: String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "d MMM yy"
+    return formatter.string(from: lastUsedAt)
+  }
+
   /// Keychain key for password storage
   /// Format: "host:port:database:username"
   var keychainKey: String {

@@ -76,9 +76,18 @@ extension View {
     protectionLevelDialog(
       isPresented: isPresented,
       currentLevel: viewModel.notebook.connectionConfig?.protectionLevel ?? .none,
-      onDisableProtection: { await viewModel.disableProtection() },
-      onEnableSchemaProtection: { await viewModel.enableSchemaProtection() },
-      onEnableReadOnly: { await viewModel.enableReadOnlyMode() }
+      onDisableProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .none
+        viewModel.onDocumentChanged?()
+      },
+      onEnableSchemaProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
+        viewModel.onDocumentChanged?()
+      },
+      onEnableReadOnly: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
+        viewModel.onDocumentChanged?()
+      }
     )
   }
 }

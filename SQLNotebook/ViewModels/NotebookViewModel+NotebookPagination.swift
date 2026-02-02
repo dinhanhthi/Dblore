@@ -90,7 +90,9 @@ extension NotebookViewModel {
     paginationInfo: PaginationInfo,
     sourceQuery: String
   ) async {
-    guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+    guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }),
+      let connectionManager = connectionManager
+    else { return }
 
     let startTime = Date()
 
@@ -176,7 +178,9 @@ extension NotebookViewModel {
     paginationInfo: PaginationInfo,
     statementQuery: String
   ) async {
-    guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+    guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }),
+      let connectionManager = connectionManager
+    else { return }
     guard
       let statementIndex = notebook.cells[index].statementResults.firstIndex(where: {
         $0.id == statementId

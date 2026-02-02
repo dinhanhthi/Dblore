@@ -89,7 +89,7 @@ extension EditorModeView {
     // Show the actual query that was sent to database
     if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
       // Replace LIMIT in query with actual limit used
-      return viewModel.connectionManager.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
+      return CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
     }
 
     // Return original query

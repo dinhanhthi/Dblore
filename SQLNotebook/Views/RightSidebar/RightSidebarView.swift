@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RightSidebarView: View {
   @Bindable var viewModel: NotebookViewModel
+  @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -17,15 +18,7 @@ struct RightSidebarView: View {
 
       // Content
       if let content = viewModel.rightSidebarContent {
-        // ConnectionFormContent handles its own layout with ScrollView and fixed footer
-        if case .connectionForm = content {
-          contentView(for: content)
-        } else if case .settings = content {
-          // SettingsContent handles its own ScrollView
-          ScrollView {
-            contentView(for: content)
-          }
-        } else if case .jsonViewer = content {
+        if case .jsonViewer = content {
           // JSONViewerContent handles its own ScrollView for both vertical and horizontal
           VStack(alignment: .leading, spacing: 0) {
             contentView(for: content)
@@ -46,10 +39,6 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if case .connectionDetails = content {
-          // ConnectionDetails handles its own padding and scrolling
-          contentView(for: content)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -64,12 +53,11 @@ struct RightSidebarView: View {
         emptyState
       }
     }
-    .frame(width: sidebarWidth)
+    .frame(width: ComponentSize.sidebarWidth)
     .background(Color.cardBackground)
     .overlay(alignment: .leading) {
       Divider()
     }
-    .animation(.easeInOut(duration: 0.2), value: sidebarWidth)
   }
 
   private var sidebarHeader: some View {
@@ -104,27 +92,6 @@ struct RightSidebarView: View {
       return "Cell Value"
     case .executedQuery:
       return "Executed Query"
-    case .connectionDetails:
-      return "Connection"
-    case .connectionForm:
-      return "Database Connection"
-    case .settings:
-      return "Settings"
-    }
-  }
-
-  private var sidebarWidth: CGFloat {
-    guard let content = viewModel.rightSidebarContent else {
-      return ComponentSize.sidebarWidth
-    }
-
-    switch content {
-    case .connectionForm:
-      return 360
-    case .settings:
-      return 360
-    default:
-      return ComponentSize.sidebarWidth
     }
   }
 
@@ -145,7 +112,7 @@ struct RightSidebarView: View {
         columnName: columnName,
         columnType: columnType,
         value: value,
-        onSave: { newValue in
+        onSave: { [workspaceManager] newValue in
           viewModel.handleCellValueEdit(
             columnName: columnName,
             columnType: columnType,
@@ -155,7 +122,8 @@ struct RightSidebarView: View {
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
             rowIdentifier: rowIdentifier,
-            cellId: cellId
+            cellId: cellId,
+            connectionManager: workspaceManager?.connectionManager
           )
         },
         isReadOnly: viewModel.notebook.connectionConfig?.isReadOnly ?? false
@@ -168,12 +136,6 @@ struct RightSidebarView: View {
         limitWasCapped: limitWasCapped,
         actualLimit: actualLimit
       )
-    case .connectionDetails:
-      ConnectionInfoContent(viewModel: viewModel)
-    case .connectionForm:
-      ConnectionFormContent(viewModel: viewModel)
-    case .settings:
-      SettingsContent(viewModel: viewModel)
     }
   }
 
@@ -199,19 +161,6 @@ struct RightSidebarView: View {
   HStack {
     Spacer()
     RightSidebarView(viewModel: NotebookViewModel())
-  }
-  .frame(height: 600)
-  .background(Color.appBackground)
-  .preferredColorScheme(.dark)
-}
-
-#Preview("Connection Form") {
-  let viewModel = NotebookViewModel()
-  viewModel.rightSidebarContent = .connectionForm
-
-  return HStack {
-    Spacer()
-    RightSidebarView(viewModel: viewModel)
   }
   .frame(height: 600)
   .background(Color.appBackground)

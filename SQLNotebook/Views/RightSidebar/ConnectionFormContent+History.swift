@@ -69,18 +69,11 @@ extension ConnectionFormContent {
           Text(selectedHistoryEntry?.config.name ?? "Select a connection")
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
           Spacer()
-          Image(systemName: "chevron.down")
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
             .foregroundColor(.foregroundMuted)
         }
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .fill(Color.inputBackground)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(Color.border, lineWidth: 1)
-        )
+        .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
     }
@@ -114,7 +107,7 @@ extension ConnectionFormContent {
 
   func loadConnection(_ entry: ConnectionHistoryEntry) {
     setSelectedHistoryId(entry.id)
-    viewModel.editingConnectionConfig = entry.config
+    connectionConfig = entry.config
 
     if getInputMode() == .connectionString {
       setConnectionString(generateConnectionString())
@@ -130,7 +123,7 @@ extension ConnectionFormContent {
 
     if getSelectedHistoryId() == id {
       setSelectedHistoryId(nil)
-      viewModel.editingConnectionConfig = ConnectionConfig()
+      connectionConfig = ConnectionConfig()
     }
   }
 
@@ -138,6 +131,6 @@ extension ConnectionFormContent {
     SessionManager.clearAllHistory()
     loadConnectionHistory()
     setSelectedHistoryId(nil)
-    viewModel.editingConnectionConfig = ConnectionConfig()
+    connectionConfig = ConnectionConfig()
   }
 }

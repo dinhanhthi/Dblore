@@ -69,7 +69,8 @@ struct FooterView: View {
           connectionConfig: viewModel.connectionState.isConnected
             ? viewModel.notebook.connectionConfig : nil,
           onTap: {
-            viewModel.showSafeModeSettings()
+            // Open settings modal at workspace level
+            NotificationCenter.default.post(name: .openSettings, object: nil)
           }
         )
 
@@ -80,43 +81,26 @@ struct FooterView: View {
       Spacer()
 
       HStack(spacing: Spacing.sm) {
-        // Schema visualizer stats (when active)
-        if viewModel.isSchemaVisualizerActive {
-          if let graph = viewModel.schemaGraph {
-            HStack(spacing: Spacing.sm) {
-              Label("\(graph.nodes.count) tables", systemImage: "tablecells")
-              Label("\(graph.edges.count) relationships", systemImage: "arrow.triangle.branch")
-            }
+        // Last saved
+        if let lastSaved {
+          Text(lastSavedText(lastSaved))
             .font(.small)
-            .foregroundColor(.foregroundMuted)
+            .foregroundColor(.foregroundSubtle)
 
-            Text("|")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
-        } else {
-          // Normal mode stats
-          // Last saved
-          if let lastSaved {
-            Text(lastSavedText(lastSaved))
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
+          Text("|")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+        }
 
-            Text("|")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
+        // Notebook stats (only in notebook mode)
+        if !isEditorMode {
+          Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
 
-          // Notebook stats (only in notebook mode)
-          if !isEditorMode {
-            Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-
-            Text("|")
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-          }
+          Text("|")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
         }
 
         // File size indicator (always visible)

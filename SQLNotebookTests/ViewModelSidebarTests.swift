@@ -69,19 +69,8 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isLeftSidebarVisible == !initialState)
   }
 
-  @Test("Show connection details in sidebar")
-  func showSidebarContent() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Act
-    viewModel.showConnectionDetails()
-
-    // Assert
-    #expect(viewModel.isRightSidebarVisible == true)
-    #expect(viewModel.rightSidebarContent == .connectionDetails)
-  }
+  // Note: Settings is now a modal at workspace level, not in the right sidebar
+  // The test for showSettings() has been removed as the functionality moved to WorkspaceManager
 
   // MARK: - Connection State Tests
 

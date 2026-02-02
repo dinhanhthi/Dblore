@@ -83,18 +83,13 @@ class SessionManager {
     }
   }
 
+  /// Maximum number of connection history entries to store
+  private static let maxConnectionHistorySize = 6
+
   /// Add or update connection in history
   static func saveConnection(_ config: ConnectionConfig) {
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
-      return
-    }
-
-    let maxSize = AppSettings.shared.maxConnectionHistorySize
-
-    // If maxSize is 0, clear history and return
-    if maxSize == 0 {
-      clearAllHistory()
       return
     }
 
@@ -117,13 +112,13 @@ class SessionManager {
     }
 
     // Trim to max size
-    if history.count > maxSize {
+    if history.count > maxConnectionHistorySize {
       // Remove oldest entries and their passwords
-      let entriesToRemove = history.suffix(history.count - maxSize)
+      let entriesToRemove = history.suffix(history.count - maxConnectionHistorySize)
       for entry in entriesToRemove {
         deletePasswordFromKeychain(key: entry.keychainKey)
       }
-      history = Array(history.prefix(maxSize))
+      history = Array(history.prefix(maxConnectionHistorySize))
     }
 
     saveHistory(history)
@@ -160,25 +155,6 @@ class SessionManager {
     }
   }
 
-  /// Trim history to specified size (used when setting changes)
-  static func trimHistoryToSize(_ maxSize: Int) {
-    if maxSize == 0 {
-      clearAllHistory()
-      return
-    }
-
-    var history = loadHistory()
-    if history.count > maxSize {
-      // Remove oldest entries and their passwords
-      let entriesToRemove = history.suffix(history.count - maxSize)
-      for entry in entriesToRemove {
-        deletePasswordFromKeychain(key: entry.keychainKey)
-      }
-      history = Array(history.prefix(maxSize))
-      saveHistory(history)
-    }
-  }
-
   // MARK: - Legacy Methods (Backward Compatibility)
 
   /// Save a connection session
@@ -208,6 +184,13 @@ class SessionManager {
   }
 
   // MARK: - Keychain Helpers
+
+  /// Get password from keychain for a specific key
+  /// - Parameter key: The keychain key (format: host:port:database:username)
+  /// - Returns: The password if found, nil otherwise
+  static func getPasswordFromKeychain(for key: String) -> String? {
+    return loadPasswordFromKeychain(key: key)
+  }
 
   private static func keychainKey(for config: ConnectionConfig) -> String {
     // Create a unique key based on host, port, database, and username

@@ -1,0 +1,179 @@
+//
+//  DesignSystem+ComponentsPreview.swift
+//  SQLNotebook
+//
+//  Preview for all button styles in the design system
+//
+
+import SwiftUI
+
+// Helper to avoid naming conflict with View.background() method
+private let previewBackground: Color = .appBackground
+
+// MARK: - All Buttons Preview
+
+private struct AllButtonsPreview: View {
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: Spacing.xl) {
+        primarySection
+        Divider()
+        secondarySection
+        Divider()
+        dangerSection
+        Divider()
+        ghostSection
+        Divider()
+        sidebarHeaderSection
+        Divider()
+        floatingActionSection
+        Divider()
+        floatingPanelSection
+      }
+      .padding(Spacing.lg)
+    }
+    .frame(width: 500, height: 700)
+    .background(previewBackground)
+  }
+
+  private var primarySection: some View {
+    Group {
+      Text("Primary").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button("Primary") {}.buttonStyle(PrimaryButtonStyle())
+        Button {
+        } label: {
+          Label("Icon", systemImage: "plus")
+        }.buttonStyle(PrimaryButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "plus")
+        }.buttonStyle(PrimaryButtonStyle(iconOnly: true))
+        Button("Disabled") {}.buttonStyle(PrimaryButtonStyle()).disabled(true)
+      }
+    }
+  }
+
+  private var secondarySection: some View {
+    Group {
+      Text("Secondary").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button("Secondary") {}.buttonStyle(SecondaryButtonStyle())
+        Button {
+        } label: {
+          Label("Icon", systemImage: "doc")
+        }.buttonStyle(SecondaryButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "doc")
+        }.buttonStyle(SecondaryButtonStyle(iconOnly: true))
+        Button("Disabled") {}.buttonStyle(SecondaryButtonStyle()).disabled(true)
+      }
+    }
+  }
+
+  private var dangerSection: some View {
+    Group {
+      Text("Danger").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button("Danger") {}.buttonStyle(DangerButtonStyle())
+        Button {
+        } label: {
+          Label("Delete", systemImage: "trash")
+        }.buttonStyle(DangerButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "trash")
+        }.buttonStyle(DangerButtonStyle(iconOnly: true))
+        Button("Disabled") {}.buttonStyle(DangerButtonStyle()).disabled(true)
+      }
+    }
+  }
+
+  private var ghostSection: some View {
+    Group {
+      Text("Ghost").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button("Ghost") {}.buttonStyle(GhostButtonStyle())
+        Button {
+        } label: {
+          Label("Settings", systemImage: "gear")
+        }.buttonStyle(GhostButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "gear")
+        }.buttonStyle(GhostButtonStyle(iconOnly: true))
+        Button {
+        } label: {
+          Image(systemName: "stop.fill")
+        }.buttonStyle(GhostButtonStyle(isActive: true, iconOnly: true))
+      }
+    }
+  }
+
+  private var sidebarHeaderSection: some View {
+    Group {
+      Text("Sidebar Header").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button {
+        } label: {
+          Image(systemName: "plus")
+        }.buttonStyle(SidebarHeaderButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "folder")
+        }.buttonStyle(SidebarHeaderButtonStyle(isActive: true))
+      }
+    }
+  }
+
+  private var floatingActionSection: some View {
+    Group {
+      Text("Floating Action").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button {
+        } label: {
+          Image(systemName: "plus")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+        }.buttonStyle(FloatingActionButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+        }.buttonStyle(FloatingActionButtonStyle())
+      }
+    }
+  }
+
+  private var floatingPanelSection: some View {
+    Group {
+      Text("Floating Panel").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button {
+        } label: {
+          Image(systemName: "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 12, weight: .medium))
+        }.buttonStyle(FloatingPanelButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "pin").font(.system(size: 12, weight: .medium))
+        }.buttonStyle(FloatingPanelToggleButtonStyle(isActive: false))
+        Button {
+        } label: {
+          Image(systemName: "pin.fill").font(.system(size: 12, weight: .medium))
+        }.buttonStyle(FloatingPanelToggleButtonStyle(isActive: true))
+      }
+    }
+  }
+}
+
+#Preview("All Buttons") {
+  AllButtonsPreview()
+}
+
+#Preview("All Buttons (Small)") {
+  AllButtonsPreview()
+    .controlSize(.small)
+}

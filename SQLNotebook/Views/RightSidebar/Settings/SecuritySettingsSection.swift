@@ -12,50 +12,43 @@ struct SecuritySettingsSection: View {
   @Bindable var viewModel: NotebookViewModel
   @Binding var showDisableReadOnlyConfirmation: Bool
 
+  private var currentProtectionLevel: ConnectionProtectionLevel {
+    viewModel.notebook.connectionConfig?.protectionLevel ?? .none
+  }
+
   var body: some View {
     SettingsSection(title: "Security", icon: "lock.shield.fill") {
       VStack(alignment: .leading, spacing: Spacing.lg) {
         // Protection Level Warning (at top for visibility)
-        if viewModel.editingConnectionConfig.protectionLevel != .none {
+        if currentProtectionLevel != .none {
           protectionWarning
         }
 
         // Combined Safe Mode Section
         SafeModeSection(appSettings: appSettings, viewModel: viewModel)
           .id("safeModeSection")
-
-        // Connection History Size Setting
-        SettingsSlider(
-          title: "Connection History Size",
-          valueText: "\(appSettings.maxConnectionHistorySize) connections",
-          value: Binding(
-            get: { Double(appSettings.maxConnectionHistorySize) },
-            set: { appSettings.maxConnectionHistorySize = Int($0) }
-          ),
-          range: 0...5,
-          step: 1
-        ) {
-          Text(
-            appSettings.maxConnectionHistorySize == 0
-              ? "Connection history is disabled. Passwords will not be saved."
-              : "Store up to \(appSettings.maxConnectionHistorySize) recent connection(s). Passwords are securely stored in Keychain."
-          )
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
-        }
       }
     }
     .protectionLevelDialog(
       isPresented: $showDisableReadOnlyConfirmation,
-      currentLevel: viewModel.editingConnectionConfig.protectionLevel,
-      onDisableProtection: { await viewModel.disableProtection() },
-      onEnableSchemaProtection: { await viewModel.enableSchemaProtection() },
-      onEnableReadOnly: { await viewModel.enableReadOnlyMode() }
+      currentLevel: currentProtectionLevel,
+      onDisableProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .none
+        viewModel.onDocumentChanged?()
+      },
+      onEnableSchemaProtection: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
+        viewModel.onDocumentChanged?()
+      },
+      onEnableReadOnly: {
+        viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
+        viewModel.onDocumentChanged?()
+      }
     )
   }
 
   private var protectionWarning: some View {
-    let level = viewModel.editingConnectionConfig.protectionLevel
+    let level = currentProtectionLevel
     return HStack(alignment: .top, spacing: Spacing.sm) {
       Image(systemName: level.iconName)
         .foregroundColor(level == .readOnly ? .warning : .secondary)

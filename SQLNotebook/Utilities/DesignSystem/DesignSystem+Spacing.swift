@@ -26,6 +26,8 @@ enum CornerRadius {
   static let md: CGFloat = 6
   static let lg: CGFloat = 8
   static let xl: CGFloat = 12
+  static let xxl: CGFloat = 16
+  static let xxxl: CGFloat = 20
 }
 
 // MARK: - Sizes
@@ -39,4 +41,11 @@ enum ComponentSize {
   static let inputHeight: CGFloat = 36
   static let maxResultHeight: CGFloat = 500
   static let minCellHeight: CGFloat = 80
+
+  // Tab bar and title bar
+  static let tabBarHeight: CGFloat = 38
+  /// Width for traffic light buttons (close, minimize, zoom) + left padding
+  static let trafficLightWidth: CGFloat = 88
+  /// Width for traffic light buttons + sidebar toggle button
+  static let trafficLightAndToggleWidth: CGFloat = 105
 }

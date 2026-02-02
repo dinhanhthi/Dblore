@@ -37,7 +37,7 @@ struct EditorContentView: View {
   }
 
   var body: some View {
-    NotebookLayoutView(
+    DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
       isEditorMode: true
@@ -111,18 +111,13 @@ struct EditorContentView: View {
         viewModel.notebook.metadata = document.metadata
       }
 
-      // Auto-connect to saved session if available
-      viewModel.autoConnectIfNeeded()
+      // Note: Auto-connect is now handled at workspace level (WorkspaceManager)
     }
     .onDisappear {
       removeKeyEventMonitor()
       viewModel.onDocumentChanged = nil
       document.onExternalReload = nil
-
-      // Disconnect from database when window closes to prevent connection leaks
-      Task {
-        await viewModel.connectionManager.disconnect()
-      }
+      // Note: Connection is now managed at workspace level (WorkspaceManager)
     }
   }
 
@@ -318,15 +313,7 @@ private struct EditorNotificationHandlerModifier: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-        // Toggle settings sidebar
-        if viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .settings {
-          viewModel.isRightSidebarVisible = false
-        } else {
-          viewModel.rightSidebarContent = .settings
-          viewModel.isRightSidebarVisible = true
-        }
-      }
+      // Note: openSettings is now handled at workspace level (WorkspaceContainerView)
       .onReceive(NotificationCenter.default.publisher(for: .runEditorQuery)) { _ in
         Task { @MainActor in
           await viewModel.runEditorQuery()

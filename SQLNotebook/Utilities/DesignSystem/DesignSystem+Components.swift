@@ -9,65 +9,182 @@
 
 import SwiftUI
 
-// MARK: - Button Styles
+// MARK: - Button Style Variant
 
+enum ButtonStyleVariant {
+  case primary
+  case secondary
+  case danger
+  case ghost
+
+  func backgroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
+    switch self {
+    case .primary:
+      return isPressed ? Color.accentMuted : Color.accent
+    case .secondary:
+      return isPressed ? Color.cellBackgroundHover : Color.clear
+    case .danger:
+      return isPressed ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
+    case .ghost:
+      if isPressed {
+        return Color.cellBackgroundHover
+      } else if isHovering {
+        return Color.cellBackgroundHover.opacity(0.5)
+      } else {
+        return Color.clear
+      }
+    }
+  }
+
+  var hasBorder: Bool {
+    self == .secondary
+  }
+
+  var foregroundColor: Color {
+    .foreground
+  }
+
+  func foregroundColor(isPressed: Bool, isHovering: Bool = false, isActive: Bool = false) -> Color {
+    switch self {
+    case .ghost:
+      return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
+    default:
+      return isActive ? .accent : .foreground
+    }
+  }
+}
+
+// MARK: - Button Styles
 struct PrimaryButtonStyle: ButtonStyle {
-  @Environment(\.isEnabled) private var isEnabled
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.body, weight: .medium))
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.md)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(configuration.isPressed ? Color.accentMuted : Color.accent)
-      )
-      .opacity(isEnabled ? 1 : 0.5)
-      .cursor(.pointingHand)
+    BaseButtonStyleView(variant: .primary, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
-  @Environment(\.isEnabled) private var isEnabled
+  var iconOnly: Bool = false
 
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.body, weight: .medium))
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.md)
-      .padding(.vertical, Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(Color.border, lineWidth: 1)
-          .background(
-            RoundedRectangle(cornerRadius: CornerRadius.md)
-              .fill(configuration.isPressed ? Color.cellBackgroundHover : Color.clear)
-          )
-      )
-      .opacity(isEnabled ? 1 : 0.5)
-      .cursor(.pointingHand)
+    BaseButtonStyleView(variant: .secondary, iconOnly: iconOnly, configuration: configuration)
+  }
+}
+
+struct DangerButtonStyle: ButtonStyle {
+  var iconOnly: Bool = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    BaseButtonStyleView(variant: .danger, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
 struct GhostButtonStyle: ButtonStyle {
-  @State private var isHovering = false
+  var isActive: Bool = false
+  var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
+    BaseButtonStyleView(
+      variant: .ghost, isActive: isActive, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
+  }
+}
+
+/// Internal view that properly receives environment values
+private struct BaseButtonStyleView: View {
+  let variant: ButtonStyleVariant
+  var isActive: Bool = false
+  var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
+  let configuration: ButtonStyleConfiguration
+  @Environment(\.isEnabled) private var isEnabled
+  @Environment(\.controlSize) private var controlSize
+  @State private var isHovering = false
+
+  private var font: Font {
+    switch controlSize {
+    case .mini:
+      return .system(.caption2, weight: .medium)
+    case .small:
+      return .system(.caption, weight: .medium)
+    case .large, .extraLarge:
+      return .system(.body, weight: .medium)
+    default:  // .regular
+      return .system(.callout, weight: .medium)
+    }
+  }
+
+  private var horizontalPadding: CGFloat {
+    if let hPadding { return hPadding }
+    if iconOnly {
+      return verticalPadding
+    }
+    switch controlSize {
+    case .mini:
+      return Spacing.xs
+    case .small:
+      return Spacing.md
+    case .large, .extraLarge:
+      return Spacing.xl
+    default:  // .regular
+      return (Spacing.md + Spacing.lg) / 2
+    }
+  }
+
+  private var verticalPadding: CGFloat {
+    if let vPadding { return vPadding }
+    switch controlSize {
+    case .mini:
+      return Spacing.xxs
+    case .small:
+      return iconOnly ? Spacing.sm - 2 : Spacing.xs
+    case .large, .extraLarge:
+      return Spacing.md
+    default:  // .regular
+      return iconOnly ? Spacing.sm : (Spacing.xs + Spacing.sm) / 2
+    }
+  }
+
+  var body: some View {
     configuration.label
-      .font(.system(.body, weight: .medium))
-      .foregroundColor(configuration.isPressed ? .foreground : .foregroundMuted)
-      .contentShape(Rectangle())
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(
-            configuration.isPressed
-              ? Color.cellBackgroundHover
-              : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
+      .font(font)
+      .foregroundColor(
+        variant.foregroundColor(
+          isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
+      .background {
+        if iconOnly {
+          Circle()
+            .fill(
+              variant.backgroundColor(isPressed: isHovering || isActive, isHovering: isHovering))
+        } else {
+          Capsule()
+            .fill(
+              variant.backgroundColor(isPressed: isHovering || isActive, isHovering: isHovering))
+        }
+      }
+      .overlay {
+        if variant.hasBorder {
+          if iconOnly {
+            Circle()
+              .stroke(Color.border, lineWidth: 1)
+          } else {
+            Capsule()
+              .stroke(Color.border, lineWidth: 1)
+          }
+        }
+      }
+      .contentShape(iconOnly ? AnyShape(Circle()) : AnyShape(Capsule()))
+      .opacity(isEnabled ? 1 : 0.5)
+      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
       .onHover { hovering in
         isHovering = hovering
       }
@@ -94,38 +211,6 @@ struct SidebarHeaderButtonStyle: ButtonStyle {
       )
       .contentShape(Rectangle())
       .animation(.easeInOut(duration: 0.1), value: isHovering)
-      .onHover { hovering in
-        isHovering = hovering
-      }
-      .cursor(.pointingHand)
-  }
-}
-
-struct ToolbarButtonStyle: ButtonStyle {
-  var isActive: Bool = false
-  var iconOnly: Bool = false
-  @State private var isHovering = false
-  @Environment(\.isEnabled) private var isEnabled
-
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .font(.system(.body, weight: .medium))
-      .foregroundColor(
-        isActive ? .accent : (configuration.isPressed ? .foreground : .foregroundMuted)
-      )
-      .padding(.horizontal, iconOnly ? Spacing.xs : Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .fill(
-            configuration.isPressed || isActive
-              ? Color.cellBackgroundHover
-              : (isHovering && isEnabled ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-          )
-      )
-      .contentShape(Rectangle())
-      .opacity(isEnabled ? 1.0 : 0.4)
-      .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
       }
@@ -307,9 +392,44 @@ extension View {
   func inputStyle() -> some View {
     padding(Spacing.sm)
       .background(Color.inputBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+        RoundedRectangle(cornerRadius: CornerRadius.xxl)
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
+  /// Capsule style for input fields
+  func inputCapsuleStyle() -> some View {
+    padding(.vertical, Spacing.sm)
+      .padding(.horizontal, Spacing.md)
+      .background(Color.inputBackground)
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
+  /// Capsule style for dropdown menus and pickers
+  func dropdownCapsuleStyle() -> some View {
+    padding(.vertical, Spacing.sm)
+      .padding(.horizontal, Spacing.sm + 2)
+      .background(Color.inputBackground)
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
+  /// Rounded style for multiline text fields with capsule-like radius
+  func textAreaCapsuleStyle() -> some View {
+    padding(Spacing.sm)
+      .background(Color.inputBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxxl))
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.xxxl)
           .stroke(Color.border, lineWidth: 1)
       )
   }

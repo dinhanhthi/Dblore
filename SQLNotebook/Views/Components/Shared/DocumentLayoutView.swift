@@ -1,5 +1,5 @@
 //
-//  NotebookLayoutView.swift
+//  DocumentLayoutView.swift
 //  SQLNotebook
 //
 
@@ -7,7 +7,7 @@ import SwiftUI
 
 /// Shared layout structure for both Editor and Notebook modes
 /// Contains common UI elements: header, sidebars, footer, toast
-struct NotebookLayoutView<Content: View>: View {
+struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
   @Binding var lastSaved: Date?
   let isEditorMode: Bool
@@ -21,23 +21,17 @@ struct NotebookLayoutView<Content: View>: View {
         .ignoresSafeArea()
 
       VStack(spacing: 0) {
-        // Header and search panel
-        HeaderWithSearchPanel(viewModel: viewModel)
+        // Header
+        HeaderView(viewModel: viewModel)
 
-        // Main content area with sidebars
+        // Main content area with right sidebar only
+        // (Left sidebar is now rendered at TabContainerView level for full height)
         GeometryReader { geometry in
           HStack(spacing: 0) {
-            // Left sidebar (conditionally shown)
-            ResizableLeftSidebar(viewModel: viewModel, maxWidth: geometry.size.width * 0.35)
-
-            // Main content (passed from parent) or Schema Visualizer
-            // with search panel overlay
+            // Main content (passed from parent) with search panel overlay
+            // Note: Schema Visualizer is now handled at WorkspaceContainerView level
             ZStack(alignment: .top) {
-              if viewModel.isSchemaVisualizerActive {
-                SchemaVisualizerContent(viewModel: viewModel)
-              } else {
-                content
-              }
+              content
 
               // Search panel overlay (slides from top, floating right)
               if viewModel.isSearchPanelVisible {
@@ -82,6 +76,7 @@ struct NotebookLayoutView<Content: View>: View {
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
+    // Note: Connection modals are now handled at workspace level (WorkspaceContainerView)
   }
 
   // MARK: - Responsive Sidebar Logic
