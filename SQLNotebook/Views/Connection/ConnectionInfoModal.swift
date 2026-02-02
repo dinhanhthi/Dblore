@@ -10,12 +10,8 @@ import SwiftUI
 struct ConnectionInfoDisconnectButton: View {
   let onDisconnect: () -> Void
 
-  @State private var showDisconnectConfirmation = false
-
   var body: some View {
-    Button(action: {
-      showDisconnectConfirmation = true
-    }) {
+    Button(action: onDisconnect) {
       HStack(spacing: Spacing.xs) {
         Image(systemName: "bolt.slash")
         Text("Disconnect")
