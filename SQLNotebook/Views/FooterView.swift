@@ -69,7 +69,8 @@ struct FooterView: View {
           connectionConfig: viewModel.connectionState.isConnected
             ? viewModel.notebook.connectionConfig : nil,
           onTap: {
-            viewModel.showSafeModeSettings()
+            // Open settings modal at workspace level
+            NotificationCenter.default.post(name: .openSettings, object: nil)
           }
         )
 

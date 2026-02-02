@@ -40,7 +40,13 @@ struct GenericModal<Content: View, Footer: View>: View {
     }
     .frame(width: width, height: height)
     .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.xxl)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.xxl)
+        .stroke(Color.border.opacity(0.5), lineWidth: 1)
+    )
+    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
+    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
   }
 }
 
@@ -128,7 +134,7 @@ struct GenericModalFooter<Content: View>: View {
 // MARK: - View Extension for Modal Overlay
 
 extension View {
-  /// Wraps any modal content with dimmed background and zoom animation
+  /// Wraps any modal content with dimmed/blurred background and zoom animation
   /// Use this to add consistent modal presentation to any custom modal view
   func modalOverlay<ModalContent: View>(
     isPresented: Binding<Bool>,
@@ -136,9 +142,9 @@ extension View {
   ) -> some View {
     self.overlay {
       ZStack {
-        // Dimmed background
+        // Dimmed and blurred background
         if isPresented.wrappedValue {
-          Color.black.opacity(0.4)
+          ModalBackdrop()
             .ignoresSafeArea()
             .transition(.opacity)
             .onTapGesture {
@@ -154,13 +160,28 @@ extension View {
         // Modal content with zoom animation
         if isPresented.wrappedValue {
           modal()
-            .transition(.scale(scale: 0.8).combined(with: .opacity))
+            .transition(.scale(scale: 0.95).combined(with: .opacity))
         }
       }
       .allowsHitTesting(isPresented.wrappedValue)
-      .animation(.easeInOut(duration: 0.15), value: isPresented.wrappedValue)
+      .animation(.easeOut(duration: 0.2), value: isPresented.wrappedValue)
     }
   }
+}
+
+// MARK: - Modal Backdrop
+
+/// Background view for modals with blur and dimming effect
+struct ModalBackdrop: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSVisualEffectView {
+    let view = NSVisualEffectView()
+    view.blendingMode = .behindWindow
+    view.state = .active
+    view.material = .hudWindow
+    return view
+  }
+
+  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - View Extension for Generic Modal

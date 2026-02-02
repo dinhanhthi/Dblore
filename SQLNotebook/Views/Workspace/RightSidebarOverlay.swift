@@ -52,7 +52,6 @@ struct RightSidebarOverlay: View {
   private var headerTitle: String {
     guard let content = workspaceManager.rightSidebarContent else { return "" }
     switch content {
-    case .settings: return "Settings"
     case .jsonViewer: return "JSON Viewer"
     case .cellInfo: return "Cell Info"
     case .executedQuery: return "Executed Query"
@@ -62,9 +61,6 @@ struct RightSidebarOverlay: View {
   @ViewBuilder
   private func rightSidebarContent(for content: SidebarContent) -> some View {
     switch content {
-    case .settings:
-      WorkspaceSettingsContent(workspaceManager: workspaceManager)
-
     case .jsonViewer(let json, let path):
       JSONViewerContent(json: json, path: path, onSave: nil)
 

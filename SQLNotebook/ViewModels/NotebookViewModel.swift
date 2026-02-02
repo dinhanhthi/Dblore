@@ -28,7 +28,6 @@ enum SidebarContent: Equatable {
   )
   case executedQuery(
     query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
-  case settings
 }
 
 /// Main view model for the notebook editor

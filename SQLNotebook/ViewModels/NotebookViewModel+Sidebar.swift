@@ -45,24 +45,7 @@ extension NotebookViewModel {
   }
 
   // Note: showConnectionForm() removed - connection form is now at workspace level
-
-  /// Show settings in sidebar
-  func showSettings() {
-    rightSidebarContent = .settings
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
-  }
-
-  /// Show settings and scroll to Safe Mode section
-  func showSafeModeSettings() {
-    showSettings()
-    // Post notification to scroll to Safe Mode section after a short delay
-    // to allow the sidebar to render first
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(100))
-      NotificationCenter.default.post(name: .scrollToSafeModeSettings, object: nil)
-    }
-  }
+  // Note: showSettings() removed - settings is now a modal at workspace level
 
   /// Toggle sidebar visibility
   func toggleSidebar() {

@@ -50,6 +50,10 @@ class WorkspaceManager: Identifiable {
   var isConnectionFormModalVisible: Bool = false
   var isConnectionInfoModalVisible: Bool = false
 
+  // MARK: - Settings Modal
+
+  var isSettingsModalVisible: Bool = false
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver

@@ -75,8 +75,7 @@ struct NotebookContentView: View {
       actions: {
         Button("OK", role: .cancel) {}
         Button("Open Settings") {
-          viewModel.rightSidebarContent = .settings
-          viewModel.isRightSidebarVisible = true
+          NotificationCenter.default.post(name: .openSettings, object: nil)
         }
       },
       message: {
@@ -95,8 +94,7 @@ struct NotebookContentView: View {
           syncDocument()
         }
         Button("Open Settings") {
-          viewModel.rightSidebarContent = .settings
-          viewModel.isRightSidebarVisible = true
+          NotificationCenter.default.post(name: .openSettings, object: nil)
         }
       },
       message: {
@@ -472,15 +470,7 @@ private struct NotebookNotificationHandlerModifier: ViewModifier {
       .onReceive(NotificationCenter.default.publisher(for: .selectPreviousCell)) { _ in
         viewModel.selectPreviousCell()
       }
-      .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-        // Toggle settings sidebar: if already showing settings, close it; otherwise show settings
-        if viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .settings {
-          viewModel.isRightSidebarVisible = false
-        } else {
-          viewModel.rightSidebarContent = .settings
-          viewModel.isRightSidebarVisible = true
-        }
-      }
+    // Note: openSettings is now handled at workspace level (WorkspaceContainerView)
   }
 }
 

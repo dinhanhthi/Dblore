@@ -69,19 +69,8 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isLeftSidebarVisible == !initialState)
   }
 
-  @Test("Show settings in sidebar")
-  func showSettingsInSidebar() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Act
-    viewModel.showSettings()
-
-    // Assert
-    #expect(viewModel.isRightSidebarVisible == true)
-    #expect(viewModel.rightSidebarContent == .settings)
-  }
+  // Note: Settings is now a modal at workspace level, not in the right sidebar
+  // The test for showSettings() has been removed as the functionality moved to WorkspaceManager
 
   // MARK: - Connection State Tests
 

@@ -190,13 +190,19 @@ struct SharedCommands: Commands {
       Button("About SQLNotebook") {
         showAboutWindow()
       }
+    }
 
-      Divider()
+    // Settings command - replace default settings with empty to remove Cmd+,
+    // Then add our own Settings button without keyboard shortcut
+    CommandGroup(replacing: .appSettings) {
+      EmptyView()
+    }
 
-      Button("Settings") {
+    // Add Settings after About in appInfo group (no keyboard shortcut)
+    CommandGroup(after: .appInfo) {
+      Button("Settings...") {
         NotificationCenter.default.post(name: .openSettings, object: nil)
       }
-      .keyboardShortcut(",", modifiers: .command)
     }
   }
 
@@ -509,7 +515,7 @@ struct NotebookCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut(",", modifiers: [.command])
+        .keyboardShortcut("b", modifiers: [.command, .shift])
       }
 
       // Edit commands - use focused actions for tab-specific behavior
@@ -590,7 +596,7 @@ struct EditorCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut(",", modifiers: [.command])
+        .keyboardShortcut("b", modifiers: [.command, .shift])
 
         Divider()
 

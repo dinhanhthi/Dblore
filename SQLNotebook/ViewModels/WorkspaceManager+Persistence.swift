@@ -310,9 +310,9 @@ extension WorkspaceManager {
     isConnectionFormModalVisible = true
   }
 
-  /// Show settings in right sidebar
+  /// Show settings modal
   func showSettings() {
-    showRightSidebar(content: .settings)
+    isSettingsModalVisible = true
   }
 }
 

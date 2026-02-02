@@ -139,7 +139,8 @@ struct HeaderView: View {
 
       Spacer()
 
-      // Trailing group - Search, Settings and Connection (common to both modes)
+      // Trailing group - Search and Connection (common to both modes)
+      // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
       HStack(spacing: Spacing.sm) {
         // Search button
         Button(action: {
@@ -154,28 +155,6 @@ struct HeaderView: View {
           )
         )
         .help("Search (⌘F)")
-
-        // Settings button
-        Button(action: {
-          // Toggle sidebar if already showing settings
-          if viewModel.isRightSidebarVisible,
-            case .settings = viewModel.rightSidebarContent
-          {
-            viewModel.closeSidebar()
-          } else {
-            viewModel.showSettings()
-          }
-        }) {
-          Image(systemName: "gearshape")
-        }
-        .buttonStyle(
-          GhostButtonStyle(
-            isActive: viewModel.isRightSidebarVisible
-              && (viewModel.rightSidebarContent == .settings),
-            iconOnly: true
-          )
-        )
-        .help("Settings")
 
         Divider()
           .frame(height: 20)

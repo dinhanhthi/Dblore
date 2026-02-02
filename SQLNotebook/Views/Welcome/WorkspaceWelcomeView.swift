@@ -44,8 +44,23 @@ struct WorkspaceWelcomeView: View {
               .fontWeight(.semibold)
               .foregroundColor(.foreground)
 
-            // Connection status
-            ConnectionStatusView(workspaceManager: workspaceManager)
+            // Connection status and Settings
+            HStack(spacing: Spacing.md) {
+              ConnectionStatusView(workspaceManager: workspaceManager)
+
+              // Settings button
+              Button {
+                workspaceManager.showSettings()
+              } label: {
+                HStack(spacing: Spacing.xs) {
+                  Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+                  Text("Settings")
+                }
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+            }
           }
 
           // Document type cards

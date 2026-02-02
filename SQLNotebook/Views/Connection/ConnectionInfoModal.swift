@@ -22,18 +22,6 @@ struct ConnectionInfoDisconnectButton: View {
       }
     }
     .buttonStyle(DangerButtonStyle())
-    .confirmationDialog(
-      "Disconnect from database?",
-      isPresented: $showDisconnectConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Disconnect", role: .destructive) {
-        onDisconnect()
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("This will close the database connection and you won't be able to run queries.")
-    }
   }
 }
 
@@ -64,10 +52,6 @@ struct WorkspaceConnectionInfoModal: View {
     } footer: {
       GenericModalFooter {
         Spacer()
-        Button("Cancel") {
-          isPresented = false
-        }
-        .buttonStyle(SecondaryButtonStyle())
         ConnectionInfoDisconnectButton(
           onDisconnect: {
             Task {
