@@ -11,12 +11,44 @@ import UniformTypeIdentifiers
 // MARK: - Workspace Persistence
 
 extension WorkspaceManager {
+  /// Auto-save debounce delay in seconds
+  private static let autoSaveDelay: TimeInterval = 1.0
+
   /// Save workspace to its file URL
   func saveWorkspace() async throws {
     if let url = workspace.fileURL {
       try await saveWorkspaceToURL(url)
     } else {
       try await saveWorkspaceWithPanel()
+    }
+  }
+
+  /// Mark workspace as dirty and schedule auto-save
+  /// Only auto-saves if workspace has been saved to a file before
+  func markDirtyAndScheduleAutoSave() {
+    isDirty = true
+
+    // Only auto-save if workspace has a file URL
+    guard workspace.fileURL != nil else { return }
+
+    // Cancel any pending auto-save task
+    autoSaveTask?.cancel()
+
+    // Schedule new auto-save with debounce
+    autoSaveTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(Self.autoSaveDelay))
+
+      guard let self, !Task.isCancelled else { return }
+
+      do {
+        try await self.saveWorkspace()
+        await AppLogger.shared.debug("Workspace auto-saved", category: "Workspace")
+      } catch {
+        await AppLogger.shared.warning(
+          "Auto-save failed: \(error.localizedDescription)",
+          category: "Workspace"
+        )
+      }
     }
   }
 
@@ -202,7 +234,7 @@ extension WorkspaceManager {
   func toggleLeftSidebar() {
     isLeftSidebarVisible.toggle()
     workspace.settings.isLeftSidebarVisible = isLeftSidebarVisible
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
   }
 
   /// Toggle expand/collapse all entities

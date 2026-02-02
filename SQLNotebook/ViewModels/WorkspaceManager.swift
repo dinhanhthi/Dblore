@@ -21,6 +21,7 @@ class WorkspaceManager: Identifiable {
 
   var workspace: Workspace
   var isDirty: Bool = false
+  var autoSaveTask: Task<Void, Never>?
 
   // MARK: - Shared Connection
 
@@ -206,7 +207,7 @@ class WorkspaceManager: Identifiable {
         "\(config.host):\(config.port):\(config.database):\(config.username)"
       editingConnectionConfig = config
       connectionState = .connected
-      isDirty = true
+      markDirtyAndScheduleAutoSave()
 
       // Save to connection history
       SessionManager.saveConnection(config)
@@ -302,7 +303,7 @@ class WorkspaceManager: Identifiable {
     tabs.append(tab)
     viewModels[tab.id] = viewModel
     notebookDocuments[tab.id] = document
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
     return tab.id
@@ -321,7 +322,7 @@ class WorkspaceManager: Identifiable {
     tabs.append(tab)
     viewModels[tab.id] = viewModel
     editorDocuments[tab.id] = document
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
     return tab.id
@@ -428,7 +429,7 @@ class WorkspaceManager: Identifiable {
       editorDocuments[tab.id] = document
     }
 
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
     if selectTab {
       self.selectTab(id: tab.id)
     }
@@ -458,7 +459,7 @@ class WorkspaceManager: Identifiable {
     guard tabs.contains(where: { $0.id == id }) else { return }
     activeTabId = id
     workspace.activeTabId = id
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
 
     if let index = tabs.firstIndex(where: { $0.id == id }) {
       tabs[index].lastAccessed = Date()
@@ -473,7 +474,7 @@ class WorkspaceManager: Identifiable {
 
     let tab = tabs.remove(at: from)
     tabs.insert(tab, at: to)
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
   }
 
   func requestCloseTab(id: UUID) {
@@ -527,7 +528,7 @@ class WorkspaceManager: Identifiable {
     viewModels.removeValue(forKey: id)
     notebookDocuments.removeValue(forKey: id)
     editorDocuments.removeValue(forKey: id)
-    isDirty = true
+    markDirtyAndScheduleAutoSave()
   }
 
   func markDirty(tabId: UUID) {
