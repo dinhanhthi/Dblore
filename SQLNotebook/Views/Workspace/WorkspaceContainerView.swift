@@ -136,19 +136,8 @@ struct WorkspaceContainerView: View {
         Text("Do you want to save changes to \"\(tab.title)\"?")
       }
     }
-    .onOpenURL { url in
-      Task {
-        // Handle different file types
-        let ext = url.pathExtension.lowercased()
-        if ext == "sqlws" {
-          // Open workspace
-          _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
-        } else {
-          // Open file in current workspace
-          try? await workspaceManager.openFile(url: url)
-        }
-      }
-    }
+    // Note: File opening is handled by AppDelegate.application(_:open:) in SQLNotebookApp.swift
+    // Don't use .onOpenURL here as it conflicts with NSApplicationDelegateAdaptor
     // Focused actions for keyboard shortcuts (Cmd+B, Cmd+Shift+B, etc.)
     .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
