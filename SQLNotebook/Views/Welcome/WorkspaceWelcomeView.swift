@@ -114,8 +114,8 @@ struct WorkspaceWelcomeView: View {
     .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
-    .focusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
-      workspaceManager.toggleRightSidebar()
+    .focusedSceneValue(\.toggleRightSidebarAction) {
+      // No-op: Right sidebar is per-tab, and welcome view has no active tab
     }
   }
 

@@ -61,8 +61,6 @@ class WorkspaceManager: Identifiable {
   // MARK: - Sidebar State
 
   var isLeftSidebarVisible: Bool = false
-  var isRightSidebarVisible: Bool = false
-  var rightSidebarContent: SidebarContent?
 
   // Schema Visualizer state (workspace-level)
   var isSchemaVisualizerActive: Bool = false

@@ -55,17 +55,7 @@ struct WorkspaceContainerView: View {
         }
         .zIndex(0)
 
-        // Right sidebar overlay (floating, not pushing layout) - z-index 1
-        if workspaceManager.isRightSidebarVisible {
-          HStack {
-            Spacer()
-            RightSidebarOverlay(workspaceManager: workspaceManager)
-          }
-          .transition(.move(edge: .trailing))
-          .zIndex(1)
-        }
-
-        // Traffic light area background + toggle button + connection button (z-index 2 - highest)
+        // Traffic light area background + toggle button + connection button (z-index 1)
         // This covers sidebar buttons during animation
         HStack(spacing: 0) {
           // Background for traffic light area + buttons
@@ -113,14 +103,13 @@ struct WorkspaceContainerView: View {
         .overlay(alignment: .bottom) {
           Divider()
         }
-        .zIndex(2)
+        .zIndex(1)
       }
     }
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: .top)
     .animation(.easeInOut(duration: 0.2), value: workspaceManager.isLeftSidebarVisible)
-    .animation(.easeInOut(duration: 0.2), value: workspaceManager.isRightSidebarVisible)
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
@@ -165,7 +154,11 @@ struct WorkspaceContainerView: View {
       workspaceManager.toggleLeftSidebar()
     }
     .focusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
-      workspaceManager.toggleRightSidebar()
+      if let activeTabId = workspaceManager.activeTabId,
+        let viewModel = workspaceManager.viewModel(for: activeTabId)
+      {
+        viewModel.toggleSidebar()
+      }
     }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)

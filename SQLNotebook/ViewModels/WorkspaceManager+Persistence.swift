@@ -288,23 +288,6 @@ extension WorkspaceManager {
     }
   }
 
-  /// Show right sidebar with content
-  func showRightSidebar(content: SidebarContent) {
-    rightSidebarContent = content
-    isRightSidebarVisible = true
-  }
-
-  /// Hide right sidebar
-  func hideRightSidebar() {
-    isRightSidebarVisible = false
-    rightSidebarContent = nil
-  }
-
-  /// Toggle right sidebar
-  func toggleRightSidebar() {
-    isRightSidebarVisible.toggle()
-  }
-
   /// Show connection form modal
   func showConnectionForm() {
     isConnectionFormModalVisible = true
