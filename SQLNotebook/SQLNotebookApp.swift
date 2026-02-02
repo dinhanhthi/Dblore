@@ -351,8 +351,8 @@ struct TabCommands: Commands {
       Divider()
 
       // Tab shortcuts 1-9 (only show if tabs exist)
-      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, _ in
-        Button("Tab \(index + 1): \(activeTabs[index].title)") {
+      ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
+        Button("Tab \(index + 1): \(tab.title)") {
           WorkspaceWindowManager.shared.activeWorkspaceManager?.selectTab(atIndex: index + 1)
         }
         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
