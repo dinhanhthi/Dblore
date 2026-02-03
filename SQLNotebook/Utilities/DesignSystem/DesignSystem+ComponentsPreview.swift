@@ -20,6 +20,8 @@ private struct AllButtonsPreview: View {
         Divider()
         secondarySection
         Divider()
+        filledSecondarySection
+        Divider()
         dangerSection
         Divider()
         ghostSection
@@ -72,6 +74,24 @@ private struct AllButtonsPreview: View {
     }
   }
 
+  private var filledSecondarySection: some View {
+    Group {
+      Text("Filled Secondary").font(.headline)
+      HStack(spacing: Spacing.md) {
+        Button("Filled") {}.buttonStyle(FilledSecondaryButtonStyle())
+        Button {
+        } label: {
+          Label("Icon", systemImage: "doc.on.doc")
+        }.buttonStyle(FilledSecondaryButtonStyle())
+        Button {
+        } label: {
+          Image(systemName: "doc.on.doc")
+        }.buttonStyle(FilledSecondaryButtonStyle(iconOnly: true))
+        Button("Disabled") {}.buttonStyle(FilledSecondaryButtonStyle()).disabled(true)
+      }
+    }
+  }
+
   private var dangerSection: some View {
     Group {
       Text("Danger").font(.headline)
@@ -102,6 +122,10 @@ private struct AllButtonsPreview: View {
         Button {
         } label: {
           Image(systemName: "gear")
+        }.buttonStyle(GhostButtonStyle(iconOnly: true))
+        Button {
+        } label: {
+          Image(systemName: "play.fill")
         }.buttonStyle(GhostButtonStyle(iconOnly: true))
         Button {
         } label: {

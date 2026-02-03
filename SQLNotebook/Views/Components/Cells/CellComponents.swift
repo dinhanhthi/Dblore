@@ -33,12 +33,9 @@ struct CellSidebarView: View {
             .frame(width: 26, height: 26)
         } else {
           Image(systemName: "play.fill")
-            .font(.system(size: 12))
-            .foregroundColor(isHovered || isSelected ? .foreground : .foregroundMuted)
-            .frame(width: 26, height: 26)
         }
       }
-      .buttonStyle(GhostButtonStyle())
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id))
 
       // Execution count
@@ -49,7 +46,6 @@ struct CellSidebarView: View {
       }
     }
     .frame(width: ComponentSize.cellSidebarWidth)
-    .padding(.top, Spacing.xs)
   }
 }
 

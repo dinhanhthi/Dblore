@@ -14,6 +14,7 @@ import SwiftUI
 enum ButtonStyleVariant {
   case primary
   case secondary
+  case filledSecondary
   case danger
   case ghost
 
@@ -23,6 +24,8 @@ enum ButtonStyleVariant {
       return isPressed ? Color.accentMuted : Color.accent
     case .secondary:
       return isPressed ? Color.cellBackgroundHover : Color.clear
+    case .filledSecondary:
+      return isPressed ? Color.cellBackgroundHover : Color.inputBackground
     case .danger:
       return isPressed ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
     case .ghost:
@@ -37,7 +40,7 @@ enum ButtonStyleVariant {
   }
 
   var hasBorder: Bool {
-    self == .secondary
+    self == .secondary || self == .filledSecondary
   }
 
   var foregroundColor: Color {
@@ -68,6 +71,14 @@ struct SecondaryButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(variant: .secondary, iconOnly: iconOnly, configuration: configuration)
+  }
+}
+
+struct FilledSecondaryButtonStyle: ButtonStyle {
+  var iconOnly: Bool = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    BaseButtonStyleView(variant: .filledSecondary, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
@@ -118,16 +129,19 @@ private struct BaseButtonStyleView: View {
     }
   }
 
-  private var iconScale: Image.Scale {
-    guard iconOnly else { return .medium }
-    return .large
-  }
-
-  /// Padding reduction to compensate for larger icon scale (keeps button size consistent)
-  private var iconScalePaddingOffset: CGFloat {
-    guard iconOnly else { return 0 }
-    // .large scale adds ~3pt to icon size, so reduce padding by ~1.5pt each side
-    return 2
+  /// Font size boost for iconOnly buttons (makes icon slightly larger)
+  private var iconFontSize: CGFloat? {
+    guard iconOnly else { return nil }
+    switch controlSize {
+    case .mini:
+      return 10  // original ~9pt
+    case .small:
+      return 12  // original ~10pt
+    case .large, .extraLarge:
+      return 15  // original ~13pt
+    default:  // .regular
+      return 14  // original ~12pt
+    }
   }
 
   private var horizontalPadding: CGFloat {
@@ -163,14 +177,13 @@ private struct BaseButtonStyleView: View {
 
   var body: some View {
     configuration.label
-      .imageScale(iconScale)
-      .font(font)
+      .font(iconFontSize.map { Font.system(size: $0) } ?? font)
       .foregroundColor(
         variant.foregroundColor(
           isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
-      .padding(.horizontal, horizontalPadding - iconScalePaddingOffset)
-      .padding(.vertical, verticalPadding - iconScalePaddingOffset)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
       .background {
         if iconOnly {
           Circle()
