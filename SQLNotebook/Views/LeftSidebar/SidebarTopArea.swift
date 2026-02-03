@@ -84,7 +84,7 @@ struct SidebarEmptyState: View {
           Button("Connect") {
             onConnect()
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FilledSecondaryButtonStyle())
         }
       } else {
         Image(systemName: "doc.text")
