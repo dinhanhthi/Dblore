@@ -31,10 +31,10 @@ struct WorkspaceSidebarTopArea: View {
               systemName: workspaceManager.areAllEntitiesExpanded
                 ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
             )
-            .font(.system(size: 12, weight: .semibold))
             .foregroundColor(.foregroundMuted)
           }
-          .buttonStyle(SidebarHeaderButtonStyle())
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
           .blockDoubleClickZoom()
           .help(workspaceManager.areAllEntitiesExpanded ? "Collapse all" : "Expand all")
         }
@@ -47,10 +47,10 @@ struct WorkspaceSidebarTopArea: View {
             }
           } label: {
             Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .semibold))
               .foregroundColor(.foregroundMuted)
           }
-          .buttonStyle(SidebarHeaderButtonStyle())
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
           .blockDoubleClickZoom()
           .disabled(workspaceManager.isLoadingSchema)
           .help("Refresh schema")

@@ -302,11 +302,11 @@ struct ResultMetadataView: View {
               .padding(.horizontal, Spacing.sm)
               .padding(.vertical, Spacing.xs)
               .background(
-                RoundedRectangle(cornerRadius: CornerRadius.md)
+                Capsule()
                   .fill(Color.inputBackground)
               )
               .overlay(
-                RoundedRectangle(cornerRadius: CornerRadius.md)
+                Capsule()
                   .stroke(Color.border, lineWidth: 1)
               )
             }

@@ -137,16 +137,16 @@ private struct AllButtonsPreview: View {
 
   private var sidebarHeaderSection: some View {
     Group {
-      Text("Sidebar Header").font(.headline)
+      Text("Ghost Icon Only").font(.headline)
       HStack(spacing: Spacing.md) {
         Button {
         } label: {
           Image(systemName: "plus")
-        }.buttonStyle(SidebarHeaderButtonStyle())
+        }.buttonStyle(GhostButtonStyle(iconOnly: true))
         Button {
         } label: {
           Image(systemName: "folder")
-        }.buttonStyle(SidebarHeaderButtonStyle(isActive: true))
+        }.buttonStyle(GhostButtonStyle(isActive: true, iconOnly: true))
       }
     }
   }

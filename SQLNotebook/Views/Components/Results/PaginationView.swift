@@ -18,7 +18,7 @@ private struct PageButtonStyle: ButtonStyle {
       .foregroundColor(isCurrentPage ? .white : .foreground)
       .frame(width: 24, height: 24)
       .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
+        Circle()
           .fill(
             isCurrentPage
               ? Color.accent
@@ -43,7 +43,7 @@ private struct ArrowButtonStyle: ButtonStyle {
     configuration.label
       .frame(width: 24, height: 24)
       .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
+        Circle()
           .fill(
             isHovering && isEnabled || configuration.isPressed
               ? Color.foregroundMuted.opacity(0.2)

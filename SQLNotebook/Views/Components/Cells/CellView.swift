@@ -321,6 +321,15 @@ struct CellDropDelegate: DropDelegate {
     .preferredColorScheme(.dark)
 }
 
+#Preview("With Result (long)") {
+  @Previewable @State var cell = PreviewData.cellWithShortResult
+  CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: true, onRun: {})
+    .padding()
+    .frame(width: 900, height: 400)
+    .background(Color.appBackground)
+    .preferredColorScheme(.dark)
+}
+
 #Preview("Error State") {
   @Previewable @State var cell = PreviewData.cellWithError
   CellView(viewModel: NotebookViewModel(), cell: $cell, isSelected: false, onRun: {})

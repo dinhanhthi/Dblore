@@ -385,18 +385,15 @@ struct DocumentTypeCard: View {
           onNew()
         } label: {
           Label("New", systemImage: "plus")
-            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(accentColor)
+        .buttonStyle(PrimaryButtonStyle())
 
         Button {
           onOpen()
         } label: {
           Label("Open", systemImage: "folder")
-            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(SecondaryButtonStyle())
       }
     }
     .padding(Spacing.xl)

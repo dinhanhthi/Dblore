@@ -54,11 +54,10 @@ struct WorkspaceWelcomeView: View {
               } label: {
                 HStack(spacing: Spacing.xs) {
                   Image(systemName: "gearshape")
-                    .font(.system(size: 12))
                   Text("Settings")
                 }
               }
-              .buttonStyle(.bordered)
+              .buttonStyle(SecondaryButtonStyle())
               .controlSize(.small)
             }
           }
@@ -148,7 +147,7 @@ struct ConnectionStatusView: View {
   @Bindable var workspaceManager: WorkspaceManager
 
   var body: some View {
-    HStack(spacing: Spacing.xs) {
+    HStack(alignment: .center, spacing: Spacing.sm) {
       Circle()
         .fill(statusColor)
         .frame(width: 8, height: 8)
@@ -161,11 +160,10 @@ struct ConnectionStatusView: View {
         Button("Connect") {
           workspaceManager.showConnectionForm()
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(SecondaryButtonStyle())
         .controlSize(.small)
       }
     }
-    .padding(.top, Spacing.xs)
   }
 
   private var statusColor: Color {

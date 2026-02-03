@@ -40,7 +40,7 @@ struct SafeModeIndicator: View {
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, 2)
         .background(safeModeColor.opacity(0.15))
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+        .clipShape(Capsule())
       }
       .buttonStyle(.plain)
       .help(helpText)

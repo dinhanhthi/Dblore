@@ -60,33 +60,53 @@ enum ButtonStyleVariant {
 // MARK: - Button Styles
 struct PrimaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
-    BaseButtonStyleView(variant: .primary, iconOnly: iconOnly, configuration: configuration)
+    BaseButtonStyleView(
+      variant: .primary, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
   }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
-    BaseButtonStyleView(variant: .secondary, iconOnly: iconOnly, configuration: configuration)
+    BaseButtonStyleView(
+      variant: .secondary, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
   }
 }
 
 struct FilledSecondaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
-    BaseButtonStyleView(variant: .filledSecondary, iconOnly: iconOnly, configuration: configuration)
+    BaseButtonStyleView(
+      variant: .filledSecondary, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
   }
 }
 
 struct DangerButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
+  var hPadding: CGFloat? = nil
+  var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
-    BaseButtonStyleView(variant: .danger, iconOnly: iconOnly, configuration: configuration)
+    BaseButtonStyleView(
+      variant: .danger, iconOnly: iconOnly, hPadding: hPadding,
+      vPadding: vPadding, configuration: configuration
+    )
   }
 }
 
@@ -134,13 +154,13 @@ private struct BaseButtonStyleView: View {
     guard iconOnly else { return nil }
     switch controlSize {
     case .mini:
-      return 10  // original ~9pt
+      return 9
     case .small:
-      return 12  // original ~10pt
+      return 11
     case .large, .extraLarge:
-      return 15  // original ~13pt
+      return 14
     default:  // .regular
-      return 14  // original ~12pt
+      return 12
     }
   }
 
@@ -211,32 +231,6 @@ private struct BaseButtonStyleView: View {
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
-      .onHover { hovering in
-        isHovering = hovering
-      }
-      .cursor(.pointingHand)
-  }
-}
-
-struct SidebarHeaderButtonStyle: ButtonStyle {
-  var isActive: Bool = false
-  @Environment(\.isEnabled) private var isEnabled
-  @State private var isHovering = false
-
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .foregroundColor(isActive ? .accent : nil)
-      .frame(width: 24, height: 24)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(
-            isActive || isHovering && isEnabled || configuration.isPressed
-              ? Color.foregroundMuted.opacity(0.2)
-              : Color.clear
-          )
-      )
-      .contentShape(Rectangle())
-      .animation(.easeInOut(duration: 0.1), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
       }
