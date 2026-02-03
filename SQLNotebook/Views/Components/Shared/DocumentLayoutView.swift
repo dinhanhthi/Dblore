@@ -20,14 +20,15 @@ struct DocumentLayoutView<Content: View>: View {
       Color.appBackground
         .ignoresSafeArea()
 
-      VStack(spacing: 0) {
-        // Header
-        HeaderView(viewModel: viewModel)
+      // Main layout: HStack with left content area + right sidebar
+      // Right sidebar now extends full height including header level
+      GeometryReader { geometry in
+        HStack(spacing: 0) {
+          // Left side: Header + Content + Footer
+          VStack(spacing: 0) {
+            // Header
+            HeaderView(viewModel: viewModel)
 
-        // Main content area with right sidebar only
-        // (Left sidebar is now rendered at TabContainerView level for full height)
-        GeometryReader { geometry in
-          HStack(spacing: 0) {
             // Main content (passed from parent) with search panel overlay
             // Note: Schema Visualizer is now handled at WorkspaceContainerView level
             ZStack(alignment: .top) {
@@ -51,22 +52,22 @@ struct DocumentLayoutView<Content: View>: View {
                 .animation(.easeOut(duration: 0.2), value: viewModel.isSearchPanelVisible)
               }
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            // Right sidebar (conditionally shown)
-            RightSidebarContainer(viewModel: viewModel)
+            // Footer
+            FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: isEditorMode)
           }
-          .onChange(of: geometry.size.width) { oldWidth, newWidth in
-            handleWindowWidthChange(newWidth)
-          }
-          .onAppear {
-            handleWindowWidthChange(geometry.size.width)
-          }
-        }
 
-        // Footer
-        FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: isEditorMode)
+          // Right sidebar (conditionally shown) - now at same level as header
+          RightSidebarContainer(viewModel: viewModel)
+        }
+        .onChange(of: geometry.size.width) { oldWidth, newWidth in
+          handleWindowWidthChange(newWidth)
+        }
+        .onAppear {
+          handleWindowWidthChange(geometry.size.width)
+        }
       }
 
       // Toast notification overlay (app-level via WorkspaceWindowManager)
