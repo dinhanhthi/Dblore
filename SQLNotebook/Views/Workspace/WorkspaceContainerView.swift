@@ -62,7 +62,7 @@ struct WorkspaceContainerView: View {
           Color.cardBackground
             .frame(
               width: ComponentSize.trafficLightAndToggleWidth
-                + (workspaceManager.connectionState.isConnected ? 75 : 44),
+                + workspaceManager.connectionState.connectionButtonsWidth,
               height: ComponentSize.tabBarHeight
             )
             .overlay(alignment: .trailing) {
@@ -573,7 +573,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: ComponentSize.trafficLightAndToggleWidth
-              + (workspaceManager.connectionState.isConnected ? 75 : 44))
+              + workspaceManager.connectionState.connectionButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
       }

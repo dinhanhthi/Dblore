@@ -281,4 +281,9 @@ enum ConnectionState: Equatable, Sendable {
     if case .connecting = self { return true }
     return false
   }
+
+  /// Width for connection buttons area (bolt + schema visualizer when connected)
+  var connectionButtonsWidth: CGFloat {
+    isConnected ? 78 : 47
+  }
 }
