@@ -9,14 +9,12 @@ import SwiftUI
 /// Welcome view shown inside a workspace when no tabs are open
 struct WorkspaceWelcomeView: View {
   @Bindable var workspaceManager: WorkspaceManager
+  @Bindable var recentManager = RecentManager.shared
   @FocusState private var isFocused: Bool
 
-  /// Recent files filtered to only .sqlnb and .sql
+  /// Recent files from RecentManager (observable)
   private var recentFiles: [URL] {
-    NSDocumentController.shared.recentDocumentURLs.filter { url in
-      let ext = url.pathExtension.lowercased()
-      return ext == "sqlnb" || ext == "sql"
-    }
+    recentManager.recentDocuments
   }
 
   /// Display name for workspace - shows "Untitled Workspace" if not saved
@@ -108,6 +106,8 @@ struct WorkspaceWelcomeView: View {
     .onAppear {
       // Request focus when view appears
       isFocused = true
+      // Refresh recent documents list
+      recentManager.refreshRecentDocuments()
     }
     // Propagate focused actions for keyboard shortcuts
     .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in

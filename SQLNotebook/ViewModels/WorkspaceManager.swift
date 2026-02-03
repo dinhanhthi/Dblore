@@ -433,6 +433,10 @@ class WorkspaceManager: Identifiable {
     if selectTab {
       self.selectTab(id: tab.id)
     }
+
+    // Add to recent documents and refresh the list
+    NSDocumentController.shared.noteNewRecentDocumentURL(url)
+    RecentManager.shared.refreshRecentDocuments()
   }
 
   /// Create a ViewModel that uses the workspace's shared connection

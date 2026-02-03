@@ -3,6 +3,7 @@
 //  SQLNotebook
 //
 
+import AppKit
 import Foundation
 
 /// Manages recent workspaces and connections for the welcome screen.
@@ -23,6 +24,10 @@ class RecentManager {
 
   var recentWorkspaces: [WorkspaceHistoryEntry] = []
 
+  /// Recent document files (.sqlnb, .sql) from NSDocumentController
+  /// This is a cached snapshot that needs to be refreshed manually
+  var recentDocuments: [URL] = []
+
   /// Recent connections (delegated to SessionManager)
   var recentConnections: [ConnectionHistoryEntry] {
     SessionManager.loadHistory()
@@ -32,6 +37,7 @@ class RecentManager {
 
   private init() {
     loadWorkspaces()
+    refreshRecentDocuments()
   }
 
   // MARK: - Workspace Management
@@ -80,6 +86,17 @@ class RecentManager {
   func clearAll() {
     clearWorkspaces()
     SessionManager.clearAllHistory()
+  }
+
+  // MARK: - Recent Documents Management
+
+  /// Refresh recent documents from NSDocumentController
+  /// Call this after opening/saving a document to update the list
+  func refreshRecentDocuments() {
+    recentDocuments = NSDocumentController.shared.recentDocumentURLs.filter { url in
+      let ext = url.pathExtension.lowercased()
+      return ext == "sqlnb" || ext == "sql"
+    }
   }
 
   // MARK: - Connection Management (Delegated to SessionManager)
