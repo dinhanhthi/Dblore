@@ -340,50 +340,6 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
   }
 }
 
-// MARK: - Custom Shapes
-
-struct RoundedLeftBorder: Shape {
-  let cornerRadius: CGFloat
-  let lineWidth: CGFloat
-
-  func path(in rect: CGRect) -> Path {
-    var path = Path()
-
-    // Start from top-left corner (accounting for line width)
-    let startX = lineWidth / 2
-    let startY = cornerRadius
-
-    // Move to start position
-    path.move(to: CGPoint(x: startX, y: startY))
-
-    // Top-left corner arc
-    // path.addArc(
-    //     center: CGPoint(x: cornerRadius, y: cornerRadius),
-    //     radius: cornerRadius - lineWidth / 2,
-    //     startAngle: .degrees(180),
-    //     endAngle: .degrees(270),
-    //     clockwise: false
-    // )
-
-    // Move back to left edge (creating the vertical line)
-    path.move(to: CGPoint(x: startX, y: cornerRadius))
-
-    // Left edge line
-    path.addLine(to: CGPoint(x: startX, y: rect.height - cornerRadius))
-
-    // Bottom-left corner arc
-    // path.addArc(
-    //     center: CGPoint(x: cornerRadius, y: rect.height - cornerRadius),
-    //     radius: cornerRadius - lineWidth / 2,
-    //     startAngle: .degrees(180),
-    //     endAngle: .degrees(90),
-    //     clockwise: true
-    // )
-
-    return path.strokedPath(StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-  }
-}
-
 // MARK: - View Extensions
 
 extension View {

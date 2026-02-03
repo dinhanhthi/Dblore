@@ -8,15 +8,6 @@
 
 import SwiftUI
 
-/// Preference key for tracking view width
-struct WidthPreferenceKey: PreferenceKey {
-  static var defaultValue: CGFloat = 0
-
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = nextValue()
-  }
-}
-
 /// A reusable component that displays a query with click-to-copy functionality and action buttons.
 ///
 /// Features:

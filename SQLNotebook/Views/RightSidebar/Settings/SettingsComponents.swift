@@ -120,47 +120,6 @@ struct SettingsToggleDescription: View {
   }
 }
 
-/// Helper view for toggle description with optional warning and action button
-struct SettingsToggleDescriptionWithAction: View {
-  let description: String
-  let warning: String?
-  let actionTitle: String?
-  let onAction: (() -> Void)?
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text(description)
-        .font(.small)
-        .foregroundColor(.foregroundSubtle)
-
-      if let warning = warning {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-          HStack(alignment: .top, spacing: Spacing.xs) {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .font(.small)
-            Text(warning)
-          }
-          .font(.small)
-          .foregroundColor(.warning)
-
-          if let actionTitle = actionTitle, let onAction = onAction {
-            Button(action: onAction) {
-              Text(actionTitle)
-                .font(.small)
-                .foregroundColor(.white)
-                .padding(.horizontal, Spacing.sm)
-                .padding(.vertical, Spacing.xs)
-                .background(Color.warning)
-                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-            }
-            .buttonStyle(.plain)
-          }
-        }
-      }
-    }
-  }
-}
-
 // MARK: - Settings Slider Component
 
 /// A reusable slider component for settings with title, value display, and description
