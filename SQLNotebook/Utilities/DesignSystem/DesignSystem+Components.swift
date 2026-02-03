@@ -118,6 +118,18 @@ private struct BaseButtonStyleView: View {
     }
   }
 
+  private var iconScale: Image.Scale {
+    guard iconOnly else { return .medium }
+    return .large
+  }
+
+  /// Padding reduction to compensate for larger icon scale (keeps button size consistent)
+  private var iconScalePaddingOffset: CGFloat {
+    guard iconOnly else { return 0 }
+    // .large scale adds ~3pt to icon size, so reduce padding by ~1.5pt each side
+    return 2
+  }
+
   private var horizontalPadding: CGFloat {
     if let hPadding { return hPadding }
     if iconOnly {
@@ -151,13 +163,14 @@ private struct BaseButtonStyleView: View {
 
   var body: some View {
     configuration.label
+      .imageScale(iconScale)
       .font(font)
       .foregroundColor(
         variant.foregroundColor(
           isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
-      .padding(.horizontal, horizontalPadding)
-      .padding(.vertical, verticalPadding)
+      .padding(.horizontal, horizontalPadding - iconScalePaddingOffset)
+      .padding(.vertical, verticalPadding - iconScalePaddingOffset)
       .background {
         if iconOnly {
           Circle()
