@@ -34,6 +34,7 @@ struct FooterView: View {
   @Bindable var viewModel: NotebookViewModel
   var lastSaved: Date?
   var isEditorMode: Bool = false
+  var connectionConfig: ConnectionConfig?
   @State private var showDisableReadOnlyConfirmation = false
 
   var body: some View {
@@ -55,7 +56,7 @@ struct FooterView: View {
           .foregroundColor(.foregroundMuted)
 
         // Protection level badge (clickable)
-        if let protectionLevel = viewModel.notebook.connectionConfig?.protectionLevel,
+        if let protectionLevel = connectionConfig?.protectionLevel,
           protectionLevel != .none
         {
           protectionBadge(for: protectionLevel)
@@ -67,7 +68,7 @@ struct FooterView: View {
         // Safe Mode indicator (clickable to open settings)
         SafeModeIndicator(
           connectionConfig: viewModel.connectionState.isConnected
-            ? viewModel.notebook.connectionConfig : nil,
+            ? connectionConfig : nil,
           onTap: {
             // Open settings modal at workspace level
             NotificationCenter.default.post(name: .openSettings, object: nil)
@@ -158,12 +159,12 @@ struct FooterView: View {
     case .connecting:
       return "Connecting..."
     case .connected:
-      if let config = viewModel.notebook.connectionConfig {
+      if let config = connectionConfig {
         // Show connection name if available, otherwise show database@host
         if !config.name.isEmpty {
-          return "Connected: \(config.name)"
+          return "Connected to \(config.name)"
         } else {
-          return "Connected: \(config.database)@\(config.host)"
+          return "Connected to \(config.database)@\(config.host)"
         }
       }
       return "Connected"
@@ -257,7 +258,8 @@ struct FooterView: View {
 #Preview {
   FooterView(
     viewModel: NotebookViewModel(),
-    lastSaved: Date()
+    lastSaved: Date(),
+    connectionConfig: ConnectionConfig(name: "My Database")
   )
   .preferredColorScheme(.dark)
 }

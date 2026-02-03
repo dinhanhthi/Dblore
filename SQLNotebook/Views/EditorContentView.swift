@@ -40,7 +40,8 @@ struct EditorContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: true
+      isEditorMode: true,
+      connectionConfig: viewModel.notebook.connectionConfig
     ) {
       // Main editor content
       EditorModeView(viewModel: viewModel)

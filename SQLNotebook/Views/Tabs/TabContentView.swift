@@ -98,7 +98,8 @@ struct TabContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: false
+      isEditorMode: false,
+      connectionConfig: viewModel.notebook.connectionConfig
     ) {
       NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
     }
@@ -121,7 +122,8 @@ struct TabContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: true
+      isEditorMode: true,
+      connectionConfig: viewModel.notebook.connectionConfig
     ) {
       EditorModeView(viewModel: viewModel)
     }

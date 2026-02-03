@@ -11,6 +11,7 @@ struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
   @Binding var lastSaved: Date?
   let isEditorMode: Bool
+  var connectionConfig: ConnectionConfig?
   @Bindable private var appSettings = AppSettings.shared
 
   @ViewBuilder let content: Content
@@ -56,7 +57,12 @@ struct DocumentLayoutView<Content: View>: View {
             .clipped()
 
             // Footer
-            FooterView(viewModel: viewModel, lastSaved: lastSaved, isEditorMode: isEditorMode)
+            FooterView(
+              viewModel: viewModel,
+              lastSaved: lastSaved,
+              isEditorMode: isEditorMode,
+              connectionConfig: connectionConfig
+            )
           }
 
           // Right sidebar (conditionally shown) - now at same level as header

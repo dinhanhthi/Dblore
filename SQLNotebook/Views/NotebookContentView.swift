@@ -31,7 +31,8 @@ struct NotebookContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: false
+      isEditorMode: false,
+      connectionConfig: viewModel.notebook.connectionConfig
     ) {
       // Main scrollable content (notebook mode)
       mainContent

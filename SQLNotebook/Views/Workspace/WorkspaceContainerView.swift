@@ -297,7 +297,8 @@ struct WorkspaceTabContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: false
+      isEditorMode: false,
+      connectionConfig: workspaceManager.workspace.connectionConfig
     ) {
       NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
     }
@@ -320,7 +321,8 @@ struct WorkspaceTabContentView: View {
     DocumentLayoutView(
       viewModel: viewModel,
       lastSaved: $lastSaved,
-      isEditorMode: true
+      isEditorMode: true,
+      connectionConfig: workspaceManager.workspace.connectionConfig
     ) {
       EditorModeView(viewModel: viewModel)
     }
