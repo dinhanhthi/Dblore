@@ -35,6 +35,7 @@ struct FooterView: View {
   var lastSaved: Date?
   var isEditorMode: Bool = false
   var connectionConfig: ConnectionConfig?
+  var onSafeModeTap: () -> Void = {}
   @State private var showDisableReadOnlyConfirmation = false
 
   var body: some View {
@@ -65,14 +66,11 @@ struct FooterView: View {
             }
         }
 
-        // Safe Mode indicator (clickable to open settings)
+        // Safe Mode indicator (clickable to open Safe Mode modal)
         SafeModeIndicator(
           connectionConfig: viewModel.connectionState.isConnected
             ? connectionConfig : nil,
-          onTap: {
-            // Open settings modal at workspace level
-            NotificationCenter.default.post(name: .openSettings, object: nil)
-          }
+          onTap: onSafeModeTap
         )
 
         // Window dimensions (for debugging)

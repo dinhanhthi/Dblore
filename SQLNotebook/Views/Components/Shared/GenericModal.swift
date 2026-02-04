@@ -106,7 +106,7 @@ struct GenericModalHeader: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardBackground)
+    .background(Color.cardHeaderBackground)
     .overlay(alignment: .bottom) {
       Divider()
     }

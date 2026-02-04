@@ -57,7 +57,7 @@ struct SafeModeIndicator: View {
   private var helpText: String {
     let modeDescription = effectiveSafeMode.shortDescription
     let source = isPerConnectionOverride ? "Per-connection" : "Global"
-    return "\(source): \(modeDescription)\nClick to open settings"
+    return "\(source): \(modeDescription)\nClick to configure"
   }
 
   private var safeModeIcon: String {

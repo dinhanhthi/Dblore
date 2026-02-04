@@ -13,6 +13,7 @@ struct DocumentLayoutView<Content: View>: View {
   let isEditorMode: Bool
   var connectionConfig: ConnectionConfig?
   @Bindable private var appSettings = AppSettings.shared
+  @State private var showSafeModeModal = false
 
   @ViewBuilder let content: Content
 
@@ -61,7 +62,8 @@ struct DocumentLayoutView<Content: View>: View {
               viewModel: viewModel,
               lastSaved: lastSaved,
               isEditorMode: isEditorMode,
-              connectionConfig: connectionConfig
+              connectionConfig: connectionConfig,
+              onSafeModeTap: { showSafeModeModal = true }
             )
           }
 
@@ -85,6 +87,7 @@ struct DocumentLayoutView<Content: View>: View {
     .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
     .animation(.easeInOut(duration: 0.2), value: viewModel.isLeftSidebarVisible)
     .windowAppearance(appSettings.themePreference.colorScheme)
+    .safeModeModal(isPresented: $showSafeModeModal)
     // Note: Connection modals are now handled at workspace level (WorkspaceContainerView)
   }
 
