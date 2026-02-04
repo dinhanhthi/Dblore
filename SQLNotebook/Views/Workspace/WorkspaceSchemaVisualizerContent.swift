@@ -20,6 +20,20 @@ struct WorkspaceSchemaVisualizerContent: View {
       graphContent
     }
     .background(Color.appBackground)
+    // Set focused values for Cmd+F, Cmd+G shortcuts in schema visualizer
+    .focusedSceneValue(\.isSchemaVisualizerActive, true)
+    .focusedSceneValue(\.openSearchAction) { [workspaceManager] in
+      workspaceManager.openSchemaSearch()
+    }
+    .focusedSceneValue(\.findNextAction) { [workspaceManager] in
+      workspaceManager.navigateToNextSchemaMatch()
+    }
+    .focusedSceneValue(\.findPreviousAction) { [workspaceManager] in
+      workspaceManager.navigateToPreviousSchemaMatch()
+    }
+    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+      workspaceManager.toggleLeftSidebar()
+    }
   }
 
   // MARK: - Header
@@ -130,6 +144,20 @@ struct WorkspaceSchemaVisualizerContent: View {
       .disabled(workspaceManager.isLoadingSchemaGraph)
 
       Spacer()
+
+      // Search button (floated to right, same style as notebook/editor)
+      Button(action: {
+        workspaceManager.openSchemaSearch()
+      }) {
+        Image(systemName: "magnifyingglass")
+      }
+      .buttonStyle(
+        GhostButtonStyle(
+          isActive: workspaceManager.isSchemaSearchPanelVisible,
+          iconOnly: true
+        )
+      )
+      .help("Search (⌘F)")
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
@@ -212,28 +240,42 @@ struct WorkspaceSchemaVisualizerContent: View {
 
   private func graphView(graph: SchemaGraph) -> some View {
     VStack(spacing: 0) {
-      SchemaGraphView(
-        graph: Binding(
-          get: { workspaceManager.schemaGraph ?? SchemaGraph() },
-          set: { workspaceManager.schemaGraph = $0 }
-        ),
-        scale: $workspaceManager.visualizerScale,
-        offset: $workspaceManager.visualizerOffset,
-        selectedNodeId: $workspaceManager.selectedGraphNodeId,
-        showTableConnections: $workspaceManager.showTableConnections,
-        showColumnConnections: $workspaceManager.showColumnConnections,
-        searchState: workspaceManager.schemaSearchState,
-        onNodeDoubleClick: { node in
-          handleNodeDoubleClick(node)
-        },
-        onNodeDragEnded: {
-          workspaceManager.saveSchemaNodePositions()
-        },
-        onViewCreated: { nsView in
-          workspaceManager.schemaGraphNSView = nsView
+      ZStack(alignment: .top) {
+        SchemaGraphView(
+          graph: Binding(
+            get: { workspaceManager.schemaGraph ?? SchemaGraph() },
+            set: { workspaceManager.schemaGraph = $0 }
+          ),
+          scale: $workspaceManager.visualizerScale,
+          offset: $workspaceManager.visualizerOffset,
+          selectedNodeId: $workspaceManager.selectedGraphNodeId,
+          showTableConnections: $workspaceManager.showTableConnections,
+          showColumnConnections: $workspaceManager.showColumnConnections,
+          searchState: workspaceManager.schemaSearchState,
+          onNodeDoubleClick: { node in
+            handleNodeDoubleClick(node)
+          },
+          onNodeDragEnded: {
+            workspaceManager.saveSchemaNodePositions()
+          },
+          onViewCreated: { nsView in
+            workspaceManager.schemaGraphNSView = nsView
+          }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        // Search panel overlay (top-right corner, same style as notebook/editor)
+        if workspaceManager.isSchemaSearchPanelVisible {
+          HStack {
+            Spacer()
+            SchemaSearchPanelView(workspaceManager: workspaceManager)
+              .frame(maxWidth: 420)
+              .padding(.trailing, Spacing.md)
+              .padding(.top, Spacing.sm)
+          }
+          .transition(.move(edge: .top).combined(with: .opacity))
         }
-      )
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
 
       // Footer legend
       schemaLegendFooter

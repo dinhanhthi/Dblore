@@ -74,6 +74,8 @@ class WorkspaceManager: Identifiable {
   var showTableConnections: Bool = true
   var showColumnConnections: Bool = false
   var schemaSearchState: SchemaSearchState = SchemaSearchState()
+  var isSchemaSearchPanelVisible: Bool = false
+  var schemaSearchFocusTrigger: UUID = UUID()  // Trigger re-focus on Cmd+F
 
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []

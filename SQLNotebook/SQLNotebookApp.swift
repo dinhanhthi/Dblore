@@ -131,6 +131,7 @@ struct SQLNotebookApp: App {
       TabCommands()
       NotebookCommands()
       EditorCommands()
+      SchemaVisualizerCommands()
     }
     .defaultSize(width: 1200, height: 800)
     // Note: handlesExternalEvents doesn't work for file open events
@@ -215,6 +216,12 @@ extension FocusedValues {
     get { self[FindPreviousActionKey.self] }
     set { self[FindPreviousActionKey.self] = newValue }
   }
+
+  /// Whether schema visualizer is active
+  var isSchemaVisualizerActive: Bool? {
+    get { self[IsSchemaVisualizerActiveKey.self] }
+    set { self[IsSchemaVisualizerActiveKey.self] = newValue }
+  }
 }
 
 /// FocusedValue key for left sidebar toggle action.
@@ -225,6 +232,11 @@ struct ToggleLeftSidebarActionKey: FocusedValueKey {
 /// FocusedValue key for right sidebar toggle action.
 struct ToggleRightSidebarActionKey: FocusedValueKey {
   typealias Value = () -> Void
+}
+
+/// FocusedValue key for schema visualizer active state.
+struct IsSchemaVisualizerActiveKey: FocusedValueKey {
+  typealias Value = Bool
 }
 
 /// FocusedValue key for opening search panel.
@@ -730,6 +742,51 @@ struct EditorCommands: Commands {
           }
         }
         .keyboardShortcut("z", modifiers: .option)
+      }
+    }
+  }
+}
+
+// MARK: - Schema Visualizer Commands
+
+struct SchemaVisualizerCommands: Commands {
+  @FocusedValue(\.isSchemaVisualizerActive) private var isSchemaVisualizerActive: Bool?
+  @FocusedValue(\.openSearchAction) private var openSearchAction
+  @FocusedValue(\.findNextAction) private var findNextAction
+  @FocusedValue(\.findPreviousAction) private var findPreviousAction
+  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+
+  var body: some Commands {
+    // Only show when schema visualizer is active
+    if isSchemaVisualizerActive == true {
+      // Edit commands for schema search
+      CommandMenu("Edit") {
+        Button("Find in Schema") {
+          openSearchAction?()
+        }
+        .keyboardShortcut("f", modifiers: .command)
+
+        Divider()
+
+        Button("Find Next") {
+          findNextAction?()
+        }
+        .keyboardShortcut("g", modifiers: .command)
+
+        Button("Find Previous") {
+          findPreviousAction?()
+        }
+        .keyboardShortcut("g", modifiers: [.command, .shift])
+      }
+
+      // View commands
+      CommandGroup(after: .sidebar) {
+        Button {
+          toggleLeftSidebarAction?()
+        } label: {
+          Label("Toggle Left Sidebar", systemImage: "sidebar.left")
+        }
+        .keyboardShortcut("b", modifiers: .command)
       }
     }
   }
