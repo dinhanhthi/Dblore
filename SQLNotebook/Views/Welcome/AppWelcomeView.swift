@@ -224,6 +224,9 @@ struct RecentWorkspacesColumn: View {
   let onNew: () -> Void
   let columnWidth: CGFloat
 
+  /// Track which workspace is currently being loaded
+  @State private var loadingWorkspaceId: UUID?
+
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
       // Header with action button
@@ -246,7 +249,15 @@ struct RecentWorkspacesColumn: View {
       // Workspace list
       VStack(spacing: 0) {
         ForEach(workspaces.prefix(6)) { workspace in
-          RecentWorkspaceRow(workspace: workspace, onSelect: onSelect)
+          RecentWorkspaceRow(
+            workspace: workspace,
+            isLoading: loadingWorkspaceId == workspace.id,
+            onSelect: { entry in
+              loadingWorkspaceId = entry.id
+              onSelect(entry)
+            }
+          )
+          .disabled(loadingWorkspaceId != nil)
         }
       }
       .background(Color.cardBackground)
@@ -264,6 +275,7 @@ struct RecentWorkspacesColumn: View {
 
 struct RecentWorkspaceRow: View {
   let workspace: WorkspaceHistoryEntry
+  let isLoading: Bool
   let onSelect: (WorkspaceHistoryEntry) -> Void
 
   @State private var isHovering = false
@@ -273,11 +285,17 @@ struct RecentWorkspaceRow: View {
       onSelect(workspace)
     } label: {
       HStack(alignment: .top, spacing: Spacing.sm) {
-        // Workspace icon
-        Image(systemName: "folder.badge.gearshape")
-          .font(.system(size: 16))
-          .foregroundColor(.accent)
-          .frame(width: 24)
+        // Workspace icon or loading indicator
+        if isLoading {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 24)
+        } else {
+          Image(systemName: "folder.badge.gearshape")
+            .font(.system(size: 16))
+            .foregroundColor(.accent)
+            .frame(width: 24)
+        }
 
         VStack(alignment: .leading, spacing: 2) {
           // First line: workspace name + tab count badge (right-aligned)
@@ -345,6 +363,9 @@ struct RecentConnectionsColumn: View {
   let onNew: () -> Void
   let columnWidth: CGFloat
 
+  /// Track which connection is currently being loaded
+  @State private var loadingConnectionId: UUID?
+
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
       // Header with action button
@@ -367,7 +388,15 @@ struct RecentConnectionsColumn: View {
       // Connection list
       VStack(spacing: 0) {
         ForEach(connections.prefix(6)) { connection in
-          RecentConnectionRow(connection: connection, onSelect: onSelect)
+          RecentConnectionRow(
+            connection: connection,
+            isLoading: loadingConnectionId == connection.id,
+            onSelect: { entry in
+              loadingConnectionId = entry.id
+              onSelect(entry)
+            }
+          )
+          .disabled(loadingConnectionId != nil)
         }
       }
       .background(Color.cardBackground)
@@ -385,6 +414,7 @@ struct RecentConnectionsColumn: View {
 
 struct RecentConnectionRow: View {
   let connection: ConnectionHistoryEntry
+  let isLoading: Bool
   let onSelect: (ConnectionHistoryEntry) -> Void
 
   @State private var isHovering = false
@@ -394,13 +424,19 @@ struct RecentConnectionRow: View {
       onSelect(connection)
     } label: {
       HStack(alignment: .top, spacing: Spacing.sm) {
-        // Database type icon (from simpleicons.org)
-        Image(connection.config.databaseType.iconAssetName)
-          .resizable()
-          .aspectRatio(contentMode: .fit)
-          .frame(width: 16, height: 16)
-          .foregroundColor(.syntaxFunction)
-          .frame(width: 24)
+        // Database type icon or loading indicator
+        if isLoading {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 24)
+        } else {
+          Image(connection.config.databaseType.iconAssetName)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 16, height: 16)
+            .foregroundColor(.syntaxFunction)
+            .frame(width: 24)
+        }
 
         VStack(alignment: .leading, spacing: 2) {
           // First line: shortDisplayName + date (right-aligned)

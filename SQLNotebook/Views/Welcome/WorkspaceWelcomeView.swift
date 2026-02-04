@@ -199,6 +199,9 @@ struct WorkspaceRecentFilesSection: View {
   let recentFiles: [URL]
   @Bindable var workspaceManager: WorkspaceManager
 
+  /// Track which file is currently being loaded
+  @State private var loadingFileURL: URL?
+
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       Text("Recent")
@@ -209,11 +212,16 @@ struct WorkspaceRecentFilesSection: View {
 
       VStack(spacing: 0) {
         ForEach(recentFiles.prefix(10), id: \.self) { url in
-          WorkspaceRecentFileRow(url: url) {
+          WorkspaceRecentFileRow(
+            url: url,
+            isLoading: loadingFileURL == url
+          ) {
+            loadingFileURL = url
             Task {
               try? await workspaceManager.openFile(url: url)
             }
           }
+          .disabled(loadingFileURL != nil)
         }
       }
     }
@@ -225,6 +233,7 @@ struct WorkspaceRecentFilesSection: View {
 
 struct WorkspaceRecentFileRow: View {
   let url: URL
+  let isLoading: Bool
   let onOpen: () -> Void
 
   @State private var isHovering = false
@@ -250,10 +259,17 @@ struct WorkspaceRecentFileRow: View {
       onOpen()
     } label: {
       HStack(spacing: Spacing.sm) {
-        Image(systemName: icon)
-          .font(.system(size: 12))
-          .foregroundColor(iconColor)
-          .frame(width: 16)
+        // File icon or loading indicator
+        if isLoading {
+          ProgressView()
+            .controlSize(.mini)
+            .frame(width: 16)
+        } else {
+          Image(systemName: icon)
+            .font(.system(size: 12))
+            .foregroundColor(iconColor)
+            .frame(width: 16)
+        }
 
         Text(url.lastPathComponent)
           .font(.callout)
