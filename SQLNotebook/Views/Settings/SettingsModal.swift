@@ -68,7 +68,7 @@ struct SettingsModal: View {
           // Keyboard Shortcuts
           SettingsModalKeyboardShortcutsSection(viewMode: effectiveViewMode)
         }
-        .padding(Spacing.md)
+        .padding(Spacing.xl)
       }
     }
     .fileExporter(

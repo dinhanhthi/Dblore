@@ -34,6 +34,7 @@ struct GenericModal<Content: View, Footer: View>: View {
 
       // Content
       content()
+      // Cannot put padding here because it will push the scrollbar to the left and there is a gap between the scrollbar and the edge of the window
 
       // Footer (if provided)
       footer()

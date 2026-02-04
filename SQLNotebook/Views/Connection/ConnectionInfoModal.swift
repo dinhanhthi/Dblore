@@ -41,7 +41,7 @@ struct WorkspaceConnectionInfoModal: View {
       titleIcon: "bolt.fill",
       titleIconColor: .success,
       width: 380,
-      height: 420,
+      height: 450,
       isPresented: $isPresented
     ) {
       WorkspaceConnectionInfoContent(workspaceManager: workspaceManager)
@@ -85,7 +85,7 @@ struct WorkspaceConnectionInfoContent: View {
           infoRow(label: "Username", value: config.username)
           infoRow(label: "SSL Mode", value: config.sslMode.displayName)
         }
-        .padding(Spacing.md)
+        .padding(Spacing.xl)
         .frame(maxWidth: .infinity, alignment: .topLeading)
       }
     } else {
@@ -139,8 +139,10 @@ extension View {
 
 #Preview("Connection Info Modal - Workspace") {
   @Previewable @State var workspaceManager = WorkspaceManager(workspace: Workspace())
+  @Previewable @State var isPresented = true
 
   Color.appBackground
+    .frame(width: 600, height: 600)
     .onAppear {
       workspaceManager.workspace.connectionConfig = ConnectionConfig(
         host: "db.example.com",
@@ -153,12 +155,10 @@ extension View {
         name: "Production DB"
       )
     }
-    .sheet(isPresented: .constant(true)) {
+    .modalOverlay(isPresented: $isPresented) {
       WorkspaceConnectionInfoModal(
         workspaceManager: workspaceManager,
-        isPresented: .constant(true)
+        isPresented: $isPresented
       )
     }
-    .frame(width: 600, height: 500)
-    .preferredColorScheme(.dark)
 }
