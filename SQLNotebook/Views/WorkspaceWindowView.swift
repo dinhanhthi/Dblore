@@ -158,8 +158,14 @@ struct AppWindowView: View {
     newWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     newWindow.titlebarAppearsTransparent = true
     newWindow.titleVisibility = .hidden
-    newWindow.setContentSize(NSSize(width: 1200, height: 800))
     newWindow.minSize = NSSize(width: 800, height: 600)
+
+    // Use the current key window's size, or fall back to default
+    if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
+      newWindow.setContentSize(currentWindow.frame.size)
+    } else {
+      newWindow.setContentSize(NSSize(width: 1200, height: 800))
+    }
     newWindow.center()
 
     // Use NSWindowController to manage the window lifecycle
