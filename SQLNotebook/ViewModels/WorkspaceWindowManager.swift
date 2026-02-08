@@ -58,6 +58,10 @@ class WorkspaceWindowManager {
     }
   }
 
+  /// Pending workspace ID to open in a window (set by menu commands)
+  /// Observed by AppWindowView to open workspace in current or new window
+  var pendingWorkspaceId: UUID?
+
   /// Whether app is showing welcome screen (no workspaces open)
   var isShowingWelcome: Bool {
     workspaces.isEmpty

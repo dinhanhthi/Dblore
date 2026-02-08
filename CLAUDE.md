@@ -181,6 +181,12 @@ guard let index = cells.firstIndex(where: { $0.id == cellId }) else { return }
 let index = cells.firstIndex(where: { $0.id == cellId })! // NO
 ```
 
+### SwiftUI Refactoring
+When making SwiftUI refactors, ensure all properties and closures remain in scope within their parent struct — avoid extracting code that breaks `ProtectedAction`, `passwordPanel`, or similar scoped bindings.
+
+### UI Debugging
+For UI component changes, verify the fix addresses the architectural issue (e.g., data not being passed through view hierarchy) rather than just the surface symptom (e.g., text formatting).
+
 ### Adding New Features
 
 **Example: Add cell metadata**

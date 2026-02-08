@@ -32,7 +32,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     Task { @MainActor in
       // Open workspace files directly
       for url in workspaceURLs {
-        _ = try? await WorkspaceWindowManager.shared.openWorkspace(url: url)
+        if let manager = try? await WorkspaceWindowManager.shared.openWorkspace(url: url) {
+          WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+        }
       }
 
       // For document files, check if we have existing workspaces
@@ -42,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if existingWorkspaces.isEmpty {
           // No existing workspaces - create new one and open files
           let newManager = WorkspaceWindowManager.shared.newWorkspace()
+          WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
           for url in documentURLs {
             try? await newManager.openFile(url: url)
           }
@@ -303,15 +306,8 @@ struct TabCommands: Commands {
     CommandGroup(replacing: .newItem) {
       // Workspace commands first
       Button {
-        // Create workspace and post notification
         let manager = WorkspaceWindowManager.shared.newWorkspace()
-        // If no active workspace, this opens in current window
-        // If active workspace exists, this opens new window
-        NotificationCenter.default.post(
-          name: .openWindowForWorkspace,
-          object: nil,
-          userInfo: ["workspaceId": manager.id]
-        )
+        WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
       } label: {
         Label("New Workspace", systemImage: "folder.badge.plus")
       }
@@ -320,11 +316,7 @@ struct TabCommands: Commands {
       Button {
         Task {
           if let manager = await openWorkspaceWithPanel() {
-            NotificationCenter.default.post(
-              name: .openWindowForWorkspace,
-              object: nil,
-              userInfo: ["workspaceId": manager.id]
-            )
+            WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
           }
         }
       } label: {
@@ -340,11 +332,7 @@ struct TabCommands: Commands {
               if let manager = try? await WorkspaceWindowManager.shared.openWorkspace(
                 url: workspace.fileURL)
               {
-                NotificationCenter.default.post(
-                  name: .openWindowForWorkspace,
-                  object: nil,
-                  userInfo: ["workspaceId": manager.id]
-                )
+                WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
               }
             }
           }
@@ -488,12 +476,7 @@ struct TabCommands: Commands {
         var manager = WorkspaceWindowManager.shared.activeWorkspaceManager
         if manager == nil {
           manager = WorkspaceWindowManager.shared.newWorkspace()
-          // Open window for new workspace
-          NotificationCenter.default.post(
-            name: .openWindowForWorkspace,
-            object: nil,
-            userInfo: ["workspaceId": manager!.id]
-          )
+          WorkspaceWindowManager.shared.pendingWorkspaceId = manager!.id
         }
         for url in panel.urls {
           try? await manager?.openFile(url: url)
@@ -825,9 +808,6 @@ extension Notification.Name {
   static let findPrevious = Notification.Name("findPrevious")
   static let highlightSearchMatch = Notification.Name("highlightSearchMatch")
   static let clearSearchHighlights = Notification.Name("clearSearchHighlights")
-
-  // Window management notifications
-  static let openWindowForWorkspace = Notification.Name("openWindowForWorkspace")
 
   // Editor mode notifications
   static let runEditorQuery = Notification.Name("runEditorQuery")

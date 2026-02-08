@@ -57,10 +57,51 @@ struct AppWindowView: View {
         )
       }
     }
-    // Listen for workspace open requests from menu
-    .onReceive(NotificationCenter.default.publisher(for: .openWindowForWorkspace)) { notification in
-      handleOpenWorkspaceNotification(notification)
+    // Observe pendingWorkspaceId changes from menu commands
+    .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
+      guard let newId else { return }
+      handlePendingWorkspace(newId)
     }
+  }
+
+  /// Handle a pending workspace open request from menu commands
+  private func handlePendingWorkspace(_ newWorkspaceId: UUID) {
+    if workspaceId == nil {
+      // This window is showing welcome - open workspace here
+      windowManager.pendingWorkspaceId = nil
+      workspaceId = newWorkspaceId
+    } else if workspaceId == newWorkspaceId {
+      // This workspace is already showing in THIS window - just focus it
+      windowManager.pendingWorkspaceId = nil
+      // Find and focus the main WindowGroup window (not a NewWindowStore window)
+      let storeWindows = Set(NewWindowStore.shared.allWindows)
+      if let mainWindow = NSApp.windows.first(where: {
+        $0.isVisible && !storeWindows.contains($0)
+      }) {
+        mainWindow.makeKeyAndOrderFront(nil)
+      }
+    } else {
+      // This window has a different workspace
+      // Only the key window should handle this to avoid duplicates
+      guard isKeyWindow else { return }
+      windowManager.pendingWorkspaceId = nil
+
+      // Check if this workspace is already open in another window - focus that window
+      if let existingWindow = NewWindowStore.shared.findWindow(for: newWorkspaceId) {
+        existingWindow.makeKeyAndOrderFront(nil)
+      } else {
+        openNewWindow(for: newWorkspaceId)
+      }
+    }
+  }
+
+  /// Check if the current NSWindow is the key window
+  private var isKeyWindow: Bool {
+    guard let keyWindow = NSApp.keyWindow else {
+      // No key window (e.g., during menu interaction) - let the first window handle it
+      return true
+    }
+    return keyWindow.isKeyWindow
   }
 
   /// Open pending files in the selected workspace
@@ -107,29 +148,6 @@ struct AppWindowView: View {
     }
   }
 
-  private func handleOpenWorkspaceNotification(_ notification: Notification) {
-    guard let newWorkspaceId = notification.userInfo?["workspaceId"] as? UUID else { return }
-
-    // Check if this notification was already handled
-    if NotificationTracker.shared.wasHandled(newWorkspaceId) { return }
-
-    if workspaceId == nil {
-      // This window is showing welcome - open workspace here
-      NotificationTracker.shared.markHandled(newWorkspaceId)
-      workspaceId = newWorkspaceId
-    } else {
-      // This window already has a workspace
-      // Only handle if this is the key window (front-most)
-      guard let keyWindow = NSApp.keyWindow,
-        keyWindow.isKeyWindow
-      else { return }
-
-      // Mark as handled and open new window
-      NotificationTracker.shared.markHandled(newWorkspaceId)
-      openNewWindow(for: newWorkspaceId)
-    }
-  }
-
   private func openNewWindow(for newWorkspaceId: UUID) {
     // Create a new NSWindow programmatically with SwiftUI content
     let newWindowView = NewWorkspaceWindowView(workspaceId: newWorkspaceId)
@@ -149,7 +167,7 @@ struct AppWindowView: View {
     windowController.showWindow(nil)
 
     // Keep a reference to prevent deallocation
-    NewWindowStore.shared.addWindow(windowController)
+    NewWindowStore.shared.addWindow(windowController, workspaceId: newWorkspaceId)
   }
 }
 
@@ -181,28 +199,12 @@ struct NewWorkspaceWindowView: View {
       }
     }
     .frame(minWidth: 800, minHeight: 600)
-  }
-}
-
-// MARK: - Notification Tracker
-
-/// Tracks which notifications have been handled to prevent duplicate handling
-@MainActor
-class NotificationTracker {
-  static let shared = NotificationTracker()
-  private var handledIds: Set<UUID> = []
-
-  private init() {}
-
-  func wasHandled(_ id: UUID) -> Bool {
-    handledIds.contains(id)
-  }
-
-  func markHandled(_ id: UUID) {
-    handledIds.insert(id)
-    // Clean up old IDs after a delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-      self?.handledIds.remove(id)
+    // Observe pendingWorkspaceId to focus this window if its workspace is re-opened
+    .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
+      guard let newId, newId == workspaceId else { return }
+      // This workspace is already showing here - just focus this window
+      windowManager.pendingWorkspaceId = nil
+      NewWindowStore.shared.findWindow(for: workspaceId)?.makeKeyAndOrderFront(nil)
     }
   }
 }
@@ -213,7 +215,7 @@ class NotificationTracker {
 @MainActor
 class NewWindowStore {
   static let shared = NewWindowStore()
-  private var windowControllers: [NSWindowController] = []
+  private var windowControllers: [(controller: NSWindowController, workspaceId: UUID)] = []
 
   private init() {
     // Listen for window close to clean up
@@ -225,12 +227,22 @@ class NewWindowStore {
       guard let window = notification.object as? NSWindow else { return }
       // Dispatch to MainActor to safely access @MainActor properties
       Task { @MainActor in
-        self?.windowControllers.removeAll { $0.window == window }
+        self?.windowControllers.removeAll { $0.controller.window == window }
       }
     }
   }
 
-  func addWindow(_ controller: NSWindowController) {
-    windowControllers.append(controller)
+  func addWindow(_ controller: NSWindowController, workspaceId: UUID) {
+    windowControllers.append((controller: controller, workspaceId: workspaceId))
+  }
+
+  /// Find the NSWindow displaying a specific workspace
+  func findWindow(for workspaceId: UUID) -> NSWindow? {
+    windowControllers.first { $0.workspaceId == workspaceId }?.controller.window
+  }
+
+  /// All managed windows
+  var allWindows: [NSWindow] {
+    windowControllers.compactMap { $0.controller.window }
   }
 }

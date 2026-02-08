@@ -74,7 +74,7 @@ struct FooterView: View {
         )
 
         // Window dimensions (for debugging)
-        WindowDimensionsView()
+        // WindowDimensionsView()
       }
 
       Spacer()
