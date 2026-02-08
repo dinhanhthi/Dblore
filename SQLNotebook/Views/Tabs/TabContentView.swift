@@ -19,7 +19,6 @@ struct TabContentView: View {
       .focusedSceneValue(\.documentMode, documentMode)
       .focusedSceneValue(\.activeTabId, tabId)
       .focusedSceneValue(\.activeViewModel, viewModel)
-      .focusedSceneValue(\.toggleLeftSidebarAction, toggleLeftSidebarAction)
       .focusedSceneValue(\.toggleRightSidebarAction, toggleRightSidebarAction)
       .focusedSceneValue(\.openSearchAction, openSearchAction)
       .focusedSceneValue(\.findNextAction, findNextAction)
@@ -53,10 +52,6 @@ struct TabContentView: View {
 
   private var documentMode: DocumentMode {
     viewModel.viewMode == .notebook ? .notebook : .editor
-  }
-
-  private var toggleLeftSidebarAction: () -> Void {
-    { [viewModel] in viewModel.toggleLeftSidebar() }
   }
 
   private var toggleRightSidebarAction: () -> Void {

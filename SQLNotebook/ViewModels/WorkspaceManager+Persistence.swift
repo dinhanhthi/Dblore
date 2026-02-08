@@ -231,8 +231,17 @@ extension WorkspaceManager {
   }
 
   /// Toggle left sidebar visibility
+  /// Animated for notebook tabs (.sqlnb), instant for editor tabs (.sql).
+  /// Editor tabs use SizeReader which recalculates on every animation frame,
+  /// causing layout flash. Notebook tabs use List which handles resize gracefully.
   func toggleLeftSidebar() {
-    isLeftSidebarVisible.toggle()
+    if activeDocumentMode == .notebook {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isLeftSidebarVisible.toggle()
+      }
+    } else {
+      isLeftSidebarVisible.toggle()
+    }
     workspace.settings.isLeftSidebarVisible = isLeftSidebarVisible
     markDirtyAndScheduleAutoSave()
   }

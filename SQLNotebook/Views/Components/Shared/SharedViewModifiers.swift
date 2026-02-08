@@ -37,9 +37,6 @@ struct FocusedSceneActions: ViewModifier {
   func body(content: Content) -> some View {
     content
       .focusedSceneValue(\.documentMode, documentMode)
-      .focusedSceneValue(\.toggleLeftSidebarAction) { [viewModel] in
-        viewModel.toggleLeftSidebar()
-      }
       .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
         viewModel.toggleSidebar()
       }

@@ -15,8 +15,10 @@ extension NotebookViewModel {
   /// Show JSON in the sidebar
   func showJSONInSidebar(json: String, path: String) {
     rightSidebarContent = .jsonViewer(json: json, path: path)
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isRightSidebarVisible = true
+    }
+    handleRightSidebarConflict()
   }
 
   /// Show cell value details in sidebar
@@ -40,8 +42,10 @@ extension NotebookViewModel {
       rowIdentifier: rowIdentifier,
       cellId: cellId
     )
-    isRightSidebarVisible = true
-    handleSidebarConflict(opening: .right)
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isRightSidebarVisible = true
+    }
+    handleRightSidebarConflict()
   }
 
   // Note: showConnectionForm() removed - connection form is now at workspace level
@@ -49,28 +53,22 @@ extension NotebookViewModel {
 
   /// Toggle sidebar visibility
   func toggleSidebar() {
-    isRightSidebarVisible.toggle()
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isRightSidebarVisible.toggle()
+    }
     if isRightSidebarVisible {
-      handleSidebarConflict(opening: .right)
+      handleRightSidebarConflict()
     }
   }
 
   /// Close the sidebar
   func closeSidebar() {
-    isRightSidebarVisible = false
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isRightSidebarVisible = false
+    }
   }
 
   // MARK: - Left Sidebar - Database Schema
-
-  /// Toggle left sidebar visibility
-  @MainActor
-  func toggleLeftSidebar() {
-    isLeftSidebarVisible.toggle()
-    AppSettings.shared.isLeftSidebarVisible = isLeftSidebarVisible
-    if isLeftSidebarVisible {
-      handleSidebarConflict(opening: .left)
-    }
-  }
 
   // Note: loadDatabaseSchema() and refreshDatabaseSchema() removed
   // Schema loading is now handled at workspace level (WorkspaceManager)
@@ -159,33 +157,18 @@ extension NotebookViewModel {
 
   // MARK: - Responsive Sidebar Management
 
-  /// Sidebar side enumeration for conflict handling
-  enum SidebarSide {
-    case left, right
-  }
-
   /// Handle sidebar conflict when window width is narrow (< 1200pt)
-  /// Automatically closes the opposite sidebar to ensure only one is open
-  func handleSidebarConflict(opening: SidebarSide) {
-    // Get current window width
+  /// When opening right sidebar on narrow window, close left sidebar
+  func handleRightSidebarConflict() {
     guard let window = NSApp.keyWindow else { return }
     let windowWidth = window.frame.size.width
     let narrowWindowThreshold: CGFloat = 1200
 
-    // Only enforce single-sidebar rule when window is narrow
     guard windowWidth < narrowWindowThreshold else { return }
 
-    // Close the opposite sidebar
-    switch opening {
-    case .left:
-      if isRightSidebarVisible {
-        isRightSidebarVisible = false
-      }
-    case .right:
-      if isLeftSidebarVisible {
-        isLeftSidebarVisible = false
-        AppSettings.shared.isLeftSidebarVisible = false
-      }
+    if isLeftSidebarVisible {
+      isLeftSidebarVisible = false
+      AppSettings.shared.isLeftSidebarVisible = false
     }
   }
 
