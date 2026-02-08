@@ -160,13 +160,20 @@ struct AppWindowView: View {
     newWindow.titleVisibility = .hidden
     newWindow.minSize = NSSize(width: 800, height: 600)
 
-    // Use the current key window's size, or fall back to default
+    // Use the current key window's size and cascade position
     if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
       newWindow.setContentSize(currentWindow.frame.size)
+      // Offset down-right from the current window (standard macOS cascade)
+      let offset: CGFloat = 22
+      let newOrigin = CGPoint(
+        x: currentWindow.frame.origin.x + offset,
+        y: currentWindow.frame.origin.y - offset
+      )
+      newWindow.setFrameOrigin(newOrigin)
     } else {
       newWindow.setContentSize(NSSize(width: 1200, height: 800))
+      newWindow.center()
     }
-    newWindow.center()
 
     // Use NSWindowController to manage the window lifecycle
     let windowController = NSWindowController(window: newWindow)
