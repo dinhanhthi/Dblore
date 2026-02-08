@@ -318,7 +318,20 @@ struct WorkspaceTabContentView: View {
       isEditorMode: true,
       connectionConfig: workspaceManager.workspace.connectionConfig
     ) {
-      EditorModeView(viewModel: viewModel)
+      // Wrap in List so it absorbs parent geometry changes gracefully
+      // during sidebar animation, just like NotebookScrollContent does.
+      // Without List, EditorModeView's SizeReader recalculates on every
+      // animation frame causing layout flash.
+      // GeometryReader captures container height so the single List row
+      // can fill the entire available space.
+      GeometryReader { geometry in
+        ScrollView {
+          EditorModeView(viewModel: viewModel)
+            .frame(height: geometry.size.height)
+        }
+        .scrollDisabled(true)
+        .scrollContentBackground(.hidden)
+      }
     }
     .modifier(
       WorkspaceEditorNotificationHandler(
