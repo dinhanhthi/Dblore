@@ -94,3 +94,40 @@ SQLNotebook/**/CLAUDE.md
 scripts/CLAUDE.md
 
 docs/implementation/CLAUDE.md
+
+# AI config files (managed by AI Sync)
+.agent/
+.agents/
+.aider*
+.claude-plugin/
+.claude/
+.copilot/
+.cursor/
+.cursorrules
+.gemini/
+.github/copilot-instructions.md
+.github/skills
+.ipynb_checkpoints
+.mcp.json
+.opencode/
+.windsurfrules
+CLAUDE.md
+GEMINI.md
+docs/learn
+docs/memory
+docs/plans
+docs/research
+# End AI Sync managed
+
+# >>> coding-friend managed
+docs/plans/
+docs/memory/
+docs/research/
+docs/sessions/
+docs/reviews/
+docs/context/
+docs/warm/
+docs/later/
+docs/learn/
+.coding-friend/
+# <<< coding-friend managed
