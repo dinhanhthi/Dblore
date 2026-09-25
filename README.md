@@ -130,4 +130,4 @@ The database includes sample tables (customers, products, orders, employees, ana
 
 ## License
 
-GPL-3.0 License - see LICENSE file for details
+SQLNotebook is licensed under [AGPL-3.0-or-later](LICENSE).
