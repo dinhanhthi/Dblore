@@ -77,6 +77,10 @@ docker/**/backups/
 .DS_Store
 docs/CLAUDE.md
 
+# docs/ is ignored by default; opt in files with "!docs/<path>"
+# (for nested paths, also un-ignore each parent dir, e.g. "!docs/sub/" then "docs/sub/*" then "!docs/sub/file.md")
+docs/*
+
 # claude-mem context files
 SQLNotebook/Database/CLAUDE.md
 SQLNotebook/Services/CLAUDE.md
