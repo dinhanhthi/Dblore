@@ -89,11 +89,18 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
   var name: String  // Optional label for the connection
   var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
+  var protectedMode: Bool  // Protected mode (ON by default, also for legacy connections)
+  var statementTimeoutSeconds: Int  // Server-side statement_timeout
+  var lockTimeoutSeconds: Int  // Server-side lock_timeout
+  var idleInTransactionTimeoutSeconds: Int  // Server-side idle_in_transaction_session_timeout
+  var rowCapOverride: Int?  // Per-connection row cap (nil = use global setting)
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode
     case rememberConnection, timeoutSeconds, name, safeMode
+    case protectedMode, statementTimeoutSeconds, lockTimeoutSeconds
+    case idleInTransactionTimeoutSeconds, rowCapOverride
     // New key
     case protectionLevel
     // Legacy keys (for reading old data)
@@ -114,6 +121,13 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
     safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
+    protectedMode = try container.decodeIfPresent(Bool.self, forKey: .protectedMode) ?? true
+    statementTimeoutSeconds =
+      try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60
+    lockTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .lockTimeoutSeconds) ?? 5
+    idleInTransactionTimeoutSeconds =
+      try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600
+    rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -151,6 +165,11 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(protectionLevel, forKey: .protectionLevel)
     try container.encode(name, forKey: .name)
     try container.encodeIfPresent(safeMode, forKey: .safeMode)
+    try container.encode(protectedMode, forKey: .protectedMode)
+    try container.encode(statementTimeoutSeconds, forKey: .statementTimeoutSeconds)
+    try container.encode(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
+    try container.encode(idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
+    try container.encodeIfPresent(rowCapOverride, forKey: .rowCapOverride)
   }
 
   nonisolated init(
@@ -165,7 +184,12 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     timeoutSeconds: Int = 30,
     protectionLevel: ConnectionProtectionLevel = .none,
     name: String = "",
-    safeMode: SafeMode? = nil
+    safeMode: SafeMode? = nil,
+    protectedMode: Bool = true,
+    statementTimeoutSeconds: Int = 60,
+    lockTimeoutSeconds: Int = 5,
+    idleInTransactionTimeoutSeconds: Int = 600,
+    rowCapOverride: Int? = nil
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -179,6 +203,11 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.protectionLevel = protectionLevel
     self.name = name
     self.safeMode = safeMode
+    self.protectedMode = protectedMode
+    self.statementTimeoutSeconds = statementTimeoutSeconds
+    self.lockTimeoutSeconds = lockTimeoutSeconds
+    self.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds
+    self.rowCapOverride = rowCapOverride
   }
 
   // MARK: - Convenience accessors (for easier migration)
