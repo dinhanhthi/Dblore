@@ -46,13 +46,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks DELETE query")
@@ -66,13 +67,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks INSERT query")
@@ -86,13 +88,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode allows SELECT query")
@@ -110,14 +113,15 @@ struct ViewModelReadOnlyTests {
     let previousSafeMode = AppSettings.shared.safeMode
     AppSettings.shared.safeMode = .alertRead
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should not show error toast or confirmation dialog for SELECT
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
     // Note: Toast may not be set to error (it could be nil or info)
-    if let toast = viewModel.toastState.currentToast {
+    if let toast = WorkspaceWindowManager.shared.toastState.currentToast {
       #expect(toast.type != .error)
     }
 
@@ -138,6 +142,11 @@ struct ViewModelReadOnlyTests {
 
     // Disable bypass confirmation to ensure dialog is shown
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
+
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -161,13 +170,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks TRUNCATE query")
@@ -181,13 +191,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks ALTER query")
@@ -201,13 +212,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks CREATE query")
@@ -221,13 +233,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   // MARK: - ConnectionConfig Protection Level Property Tests

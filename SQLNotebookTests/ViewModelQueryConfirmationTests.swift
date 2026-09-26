@@ -122,16 +122,16 @@ struct ViewModelQueryConfirmationTests {
     #expect(viewModel.isModificationQuery("alter table users add column age int"))
   }
 
-  @Test("CREATE and other DDL queries are not modifications")
-  func createAndOtherDdlQueriesAreNotModifications() {
+  @Test("Detect CREATE query as modification")
+  func detectCreateQueryAsModification() {
     // Arrange
     let notebook = createTestNotebook()
     let viewModel = NotebookViewModel(notebook: notebook)
 
-    // Act & Assert - CREATE is not destructive (doesn't modify existing data)
-    #expect(!viewModel.isModificationQuery("CREATE TABLE users (id INT)"))
-    #expect(!viewModel.isModificationQuery("CREATE INDEX idx_name ON users(name)"))
-    #expect(!viewModel.isModificationQuery("CREATE VIEW user_view AS SELECT * FROM users"))
+    // Act & Assert - CREATE is a schema modification (Safe Mode confirms it, read-only blocks it)
+    #expect(viewModel.isModificationQuery("CREATE TABLE users (id INT)"))
+    #expect(viewModel.isModificationQuery("CREATE INDEX idx_name ON users(name)"))
+    #expect(viewModel.isModificationQuery("CREATE VIEW user_view AS SELECT * FROM users"))
   }
 
   // MARK: - Confirmation Dialog Tests
@@ -143,6 +143,11 @@ struct ViewModelQueryConfirmationTests {
     let viewModel = NotebookViewModel(notebook: notebook)
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
+
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -161,6 +166,11 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
 
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
+
     // Act
     viewModel.confirmAndRunCell(id: cellId)
 
@@ -177,6 +187,11 @@ struct ViewModelQueryConfirmationTests {
     let viewModel = NotebookViewModel(notebook: notebook)
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
+
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -219,6 +234,10 @@ struct ViewModelQueryConfirmationTests {
     let viewModel = NotebookViewModel(notebook: notebook)
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "DELETE FROM users"
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
     viewModel.confirmAndRunCell(id: cellId)
     #expect(viewModel.queryConfirmationState.showDialog == true)
 

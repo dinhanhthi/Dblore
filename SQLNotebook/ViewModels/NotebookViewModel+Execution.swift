@@ -85,12 +85,13 @@ extension NotebookViewModel {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(task.query) {
         // Execute all statements with timeout (10.1.5 optimization)
-        let (statementResults, totalTime) =
-          try await Task.withTimeout(seconds: 60) {
-            try await connectionManager
-              .executeMultipleStatementsDetailed(
-                task.query, maxRows: AppSettings.shared.maxRowLimit)
-          }
+        let detailed = try await Task.withTimeout(seconds: 60) {
+          try await connectionManager
+            .executeMultipleStatementsDetailed(
+              task.query, maxRows: AppSettings.shared.maxRowLimit)
+        }
+        let statementResults = detailed.results
+        let totalTime = detailed.totalTime
 
         executionCounter += 1
 

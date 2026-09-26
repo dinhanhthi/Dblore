@@ -55,19 +55,8 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isRightSidebarVisible == initialState)
   }
 
-  @Test("Toggle left sidebar")
-  func toggleLeftSidebar() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let initialState = viewModel.isLeftSidebarVisible
-
-    // Act
-    viewModel.toggleLeftSidebar()
-
-    // Assert
-    #expect(viewModel.isLeftSidebarVisible == !initialState)
-  }
+  // Note: Left sidebar is now owned by WorkspaceManager, not NotebookViewModel
+  // The test for toggleLeftSidebar() has been removed as the functionality moved to WorkspaceManager
 
   // Note: Settings is now a modal at workspace level, not in the right sidebar
   // The test for showSettings() has been removed as the functionality moved to WorkspaceManager

@@ -114,7 +114,9 @@ struct SQLNotebookApp: App {
 
   init() {
     // Migrate from single session to connection history (one-time operation)
-    SessionManager.migrateIfNeeded()
+    if SessionManager.shouldRestoreSession() {
+      SessionManager.migrateIfNeeded()
+    }
 
     // Configure SQLite temp directory to use app's temp directory
     configureSQLiteTempDirectory()
