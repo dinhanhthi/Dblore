@@ -136,13 +136,6 @@ extension DatabaseConnectionManager {
     return withoutLeadingComments.uppercased().hasPrefix("SELECT")
   }
 
-  /// True for a plain INSERT / UPDATE / DELETE, whose affected row count is read through
-  /// `wrapModificationQueryForCount`. Uses the tokenizer, so leading comments are skipped.
-  nonisolated func countsAffectedRows(_ query: String) -> Bool {
-    let first = SQLTokenizer.tokens(query).first?.keyword ?? ""
-    return ["INSERT", "UPDATE", "DELETE"].contains(first)
-  }
-
   // MARK: - LIMIT Clause Detection
 
   /// Check if a query already has a LIMIT clause

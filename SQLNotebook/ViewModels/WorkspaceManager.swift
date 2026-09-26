@@ -33,6 +33,25 @@ class WorkspaceManager: Identifiable {
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
 
+  // MARK: - Protected Transaction (see WorkspaceManager+Transaction.swift)
+
+  /// Mirror of the actor's transaction state, refreshed after every execution in any tab
+  var pendingTransaction: TransactionState = .idle
+  var transactionOpenedAt: Date?
+  /// The tab whose execution opened the pending transaction
+  var transactionOriginTabId: UUID?
+  var isCommitConfirmationVisible = false
+  var isCommitUnlockVisible = false
+  /// Actor generation of `pendingTransaction`, and the one the Commit confirmation showed
+  @ObservationIgnored var pendingTransactionGeneration: UInt64 = 0
+  @ObservationIgnored var commitReviewedGeneration: UInt64?
+  /// A gated statement of the transaction was in flight at the last refresh
+  @ObservationIgnored var isStatementInFlight = false
+  /// A resolve prompt is open: a second resolve (or tab close) must not stack another one
+  @ObservationIgnored var isResolvingPendingTransaction = false
+  /// Asks "Commit / Roll back / Cancel"; nil = NSAlert (tests inject an answer)
+  @ObservationIgnored var pendingTransactionPrompt: PendingTransactionPrompt?
+
   // MARK: - Tabs
 
   var tabs: [TabItem] = []
@@ -217,6 +236,7 @@ class WorkspaceManager: Identifiable {
         "\(config.host):\(config.port):\(config.database):\(config.username)"
       editingConnectionConfig = config
       connectionState = .connected
+      await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
 
       // Save to connection history
@@ -233,29 +253,9 @@ class WorkspaceManager: Identifiable {
     } catch {
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
+      await refreshPendingTransaction()
       throw error
     }
-  }
-
-  func disconnect() async {
-    await connectionManager.disconnect()
-    connectionState = .disconnected
-    invalidateEditTargetsInTabs()
-
-    // Clear schema
-    databaseTables = []
-    databaseViews = []
-    databaseFunctions = []
-    databaseProcedures = []
-    databaseUsers = []
-    databaseRoles = []
-    databaseForeignKeys = []
-
-    // Clear autocomplete cache
-    autocompleteProvider.clearCache()
-
-    // Update all tab ViewModels
-    syncConnectionStateToTabs()
   }
 
   func testConnection() async throws -> Bool {
@@ -470,6 +470,7 @@ class WorkspaceManager: Identifiable {
     viewModel.connectionManager = connectionManager
     // Protection level / Safe Mode come from the workspace connection config
     shareConnectionConfig(with: viewModel)
+    attachTransactionHook(to: viewModel)
 
     return viewModel
   }
@@ -498,6 +499,8 @@ class WorkspaceManager: Identifiable {
 
   func requestCloseTab(id: UUID) {
     guard let tab = tabs.first(where: { $0.id == id }) else { return }
+    // The tab that opened a pending Protected transaction resolves it first
+    guard !deferCloseTabForPendingTransaction(id: id) else { return }
 
     if tab.isDirty {
       tabToClose = id

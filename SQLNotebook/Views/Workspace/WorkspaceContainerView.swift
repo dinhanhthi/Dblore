@@ -36,6 +36,11 @@ struct WorkspaceContainerView: View {
               hasLeftSidebar: workspaceManager.isLeftSidebarVisible
             )
 
+            // Pending Protected transaction (Commit / Rollback)
+            if !workspaceManager.pendingTransaction.isIdle {
+              PendingTransactionBanner(workspaceManager: workspaceManager)
+            }
+
             // Content area
             if workspaceManager.isSchemaVisualizerActive {
               // Schema visualizer at workspace level (overlays everything)
@@ -112,6 +117,8 @@ struct WorkspaceContainerView: View {
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
+    .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
+    .pendingTransactionDialogs(workspaceManager: workspaceManager)
     .confirmationDialog(
       "Save changes?",
       isPresented: $workspaceManager.showingCloseConfirmation,

@@ -33,6 +33,7 @@ extension NotebookViewModel {
       $0.element.cellType == .sql && !executionQueue.isInQueue(cellId: $0.element.id)
     }
     guard !candidates.isEmpty else { return }
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Protection level: fail fast, nothing runs if any cell is blocked
     for (offset, cell) in candidates {

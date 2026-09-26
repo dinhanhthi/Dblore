@@ -14,9 +14,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all tables from the database
   func fetchTables() async throws -> [DatabaseTable] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -58,16 +56,15 @@ extension DatabaseConnectionManager {
 
   /// Fetch columns for a specific table
   func fetchColumns(tableSchema: String, tableName: String) async throws -> [DatabaseColumn] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
-
     // First, fetch primary key columns for this table
     let primaryKeyColumns = try await fetchPrimaryKeyColumns(
       tableName: "\(tableSchema).\(tableName)")
 
     // Fetch unique constraint columns
     let uniqueColumns = try await fetchUniqueColumns(tableSchema: tableSchema, tableName: tableName)
+
+    // Checked after the lookups above: the app transaction may have opened meanwhile
+    let connection = try catalogConnection()
 
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
     // Include additional columns for type enrichment and identity
@@ -183,9 +180,7 @@ extension DatabaseConnectionManager {
   ) async throws -> Set<
     String
   > {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     // Query to get unique constraint columns (only single-column constraints)
     let query = """
@@ -221,9 +216,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch row count for a specific table
   func fetchRowCount(tableSchema: String, tableName: String) async throws -> Int {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     // Use COUNT(*) to get exact row count
     let query = """
@@ -260,9 +253,7 @@ extension DatabaseConnectionManager {
   /// `tableName` (`table` or `schema.table`, SQL identifier syntax) is resolved with
   /// `to_regclass` like an unqualified name in a query (search_path) and bound as a parameter.
   func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     var binds = PostgresBindings(capacity: 1)
     binds.append(tableName)
@@ -299,9 +290,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all views from the database
   func fetchViews() async throws -> [DatabaseView] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -346,9 +335,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all functions from the database
   func fetchFunctions() async throws -> [DatabaseFunction] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -408,9 +395,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all procedures from the database
   func fetchProcedures() async throws -> [DatabaseProcedure] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -467,9 +452,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all users from the database
   func fetchUsers() async throws -> [DatabaseUser] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -529,9 +512,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all roles from the database
   func fetchRoles() async throws -> [DatabaseRole] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT

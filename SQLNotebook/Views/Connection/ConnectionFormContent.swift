@@ -364,6 +364,9 @@ struct ConnectionFormContent: View {
       } catch WorkspaceConnectError.unlockRequired {
         // Held for the Safe Mode unlock sheet; the form keeps its values
         isConnecting = false
+      } catch WorkspaceConnectError.pendingTransactionKept {
+        // The user kept the pending transaction: still connected, the form keeps its values
+        isConnecting = false
       } catch {
         isConnecting = false
         testResult = .failure(error.localizedDescription)

@@ -33,6 +33,7 @@ extension NotebookViewModel {
 
   /// Navigate to a specific page for a cell's single statement result
   func navigateToPageForCell(cellId: UUID, page: Int) async {
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let paginationInfo = cellPaginationInfo[cellId] else { return }
     guard page > 0 && page <= paginationInfo.totalPages else { return }
     guard page != paginationInfo.currentPage else { return }
@@ -50,10 +51,12 @@ extension NotebookViewModel {
       paginationInfo: paginationInfo,
       sourceQuery: sourceQuery
     )
+    await onStatementsExecuted?()
   }
 
   /// Navigate to a specific page for a cell's multi-statement result
   func navigateToPageForCellStatement(cellId: UUID, statementId: UUID, page: Int) async {
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let statementsPagination = cellStatementPaginationInfo[cellId],
       let paginationInfo = statementsPagination[statementId]
     else {
@@ -78,6 +81,7 @@ extension NotebookViewModel {
       paginationInfo: paginationInfo,
       statementQuery: statementResult.queryText
     )
+    await onStatementsExecuted?()
   }
 
   // MARK: - Pagination Query Execution
@@ -99,7 +103,8 @@ extension NotebookViewModel {
     do {
       let epoch = await connectionManager.connectionEpoch
       let result = try await connectionManager.execute(
-        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit)
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit,
+        caller: id)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -189,7 +194,8 @@ extension NotebookViewModel {
 
     do {
       let result = try await connectionManager.execute(
-        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit)
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit,
+        caller: id)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page

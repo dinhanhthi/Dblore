@@ -30,6 +30,8 @@ nonisolated struct ClassifiedStatement: Sendable, Equatable {
   let kind: StatementKind
   /// RETURNING appears anywhere (including inside a data-modifying CTE)
   let hasReturning: Bool
+  /// RETURNING at the statement's own level (not inside parentheses / a CTE body)
+  let hasTopLevelReturning: Bool
   /// An UPDATE/DELETE (top-level or data-modifying CTE) has no WHERE at its own level
   let affectsAllRows: Bool
   /// Cannot run inside a transaction block (CONCURRENTLY, VACUUM, CREATE DATABASE, ...)
@@ -87,6 +89,7 @@ nonisolated enum SQLStatementClassifier {
     let ambiguous = tokens.contains { $0.isSymbol(";") || $0.kind == .backslashString }
     return ClassifiedStatement(
       text: text, kind: ambiguous ? .unknown : analysis.kind, hasReturning: analysis.hasReturning,
+      hasTopLevelReturning: analysis.hasTopLevelReturning,
       affectsAllRows: analysis.affectsAllRows, nonTransactional: analysis.nonTransactional,
       resetsSessionBrakes: analysis.resetsSessionBrakes,
       changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
@@ -119,6 +122,7 @@ nonisolated enum SQLStatementClassifier {
   private struct Analysis {
     var kind: StatementKind
     var hasReturning = false
+    var hasTopLevelReturning = false
     var affectsAllRows = false
     var nonTransactional = false
     var resetsSessionBrakes = false
@@ -140,6 +144,7 @@ nonisolated enum SQLStatementClassifier {
     return Analysis(
       kind: kind,
       hasReturning: body.contains { $0.isWord("RETURNING") },
+      hasTopLevelReturning: topWords.contains("RETURNING"),
       affectsAllRows: affectsAllRows(body),
       nonTransactional: nonTransactional(topWords),
       resetsSessionBrakes: kind == .sessionSet(touchesBrake: true) || discardsAll
@@ -335,6 +340,7 @@ nonisolated enum SQLStatementClassifier {
     guard isAnalyze else { return Analysis(kind: .explain(inner: inner.kind, analyze: false)) }
     return Analysis(
       kind: .explain(inner: inner.kind, analyze: true), hasReturning: inner.hasReturning,
+      hasTopLevelReturning: inner.hasTopLevelReturning,
       affectsAllRows: inner.affectsAllRows, nonTransactional: inner.nonTransactional,
       resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges,
       createsTable: inner.createsTable)

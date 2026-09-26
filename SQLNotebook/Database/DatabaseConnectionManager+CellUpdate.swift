@@ -245,8 +245,10 @@ extension DatabaseConnectionManager {
   /// nil if not editable: not a plain (`r`) or partitioned (`p`) table, a plain table with
   /// inheritance children (`relhassubclass`: a SELECT of the parent also returns child rows and
   /// the primary key is not unique across them), or the connection changed during the lookup.
+  /// Throws `DatabaseError.metadataPausedDuringTransaction` while the app transaction is
+  /// pending (results produced inside it use `cachedEditTable`). A resolved table is cached.
   func fetchEditTable(tableName: String) async throws -> EditTable? {
-    guard let connection = _connection else { throw DatabaseError.notConnected }
+    let connection = try catalogConnection()
     let epoch = connectionEpoch
     var binds = PostgresBindings(capacity: 1)
     binds.append(tableName)
@@ -286,9 +288,24 @@ extension DatabaseConnectionManager {
       relationKind == "p" || (relationKind == "r" && !hasSubclass)
     else { return nil }
     let primaryKey = keyPositions.sorted { $0.position < $1.position }.map(\.name)
-    return EditTable(
+    let table = EditTable(
       oid: oid, attributeNames: names, primaryKeyColumns: primaryKey, qualifiedName: qualifiedName,
       connectionEpoch: epoch, updateOnly: relationKind == "r")
+    editTableCache[oid] = table
+    return table
+  }
+
+  /// The edit table of `oid` resolved before the pending app transaction, for results read
+  /// inside it (no catalog query can be sent there). nil unless the app transaction is pending
+  /// (`.appTx`), the table was resolved on the current connection, and no statement that may
+  /// change the schema ran since (`ProtectedTransactionRules.invalidatesEditTables` clears the
+  /// cache). Column origins still come from the result's RowDescription and are checked
+  /// against it (`CellUpdateStatement.editablePrimaryKey`).
+  func cachedEditTable(oid: UInt32) -> EditTable? {
+    guard case .appTx = txState, let table = editTableCache[oid],
+      table.connectionEpoch == connectionEpoch
+    else { return nil }
+    return table
   }
 }
 

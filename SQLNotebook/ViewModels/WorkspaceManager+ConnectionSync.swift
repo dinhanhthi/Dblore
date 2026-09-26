@@ -13,6 +13,9 @@ import Foundation
 enum WorkspaceConnectError: Error, Equatable {
   /// Same database with weaker safety settings: waiting for the Safe Mode unlock
   case unlockRequired
+  /// A Protected transaction is pending and the user cancelled its resolution: still
+  /// connected, nothing changed
+  case pendingTransactionKept
 }
 
 extension WorkspaceManager {
@@ -74,15 +77,22 @@ extension WorkspaceManager {
       && normalized(lhs.username) == normalized(rhs.username)
   }
 
-  /// The single connect entry point. Compared against the workspace's current config whether
-  /// or not it is connected right now: the workspace keeps the last config after a disconnect,
-  /// so reconnecting to the same database with weaker settings needs the unlock too.
-  /// - Throws: `WorkspaceConnectError.unlockRequired` when the connect is held in
-  ///   `pendingWeakeningConnect` (nothing changed); connect with
+  /// The single connect entry point. Connecting replaces the current connection, so a pending
+  /// Protected transaction is resolved first (Commit / Roll back / Cancel, like a disconnect).
+  /// Compared against the workspace's current config whether or not it is connected right now:
+  /// the workspace keeps the last config after a disconnect, so reconnecting to the same
+  /// database with weaker settings needs the unlock too.
+  /// - Throws: `WorkspaceConnectError.pendingTransactionKept` when the pending transaction was
+  ///   not resolved (still connected, nothing changed); `WorkspaceConnectError.unlockRequired`
+  ///   when the connect is held in `pendingWeakeningConnect` (nothing changed); connect with
   ///   `completePendingWeakeningConnect()` after the unlock.
   func connect(
     config: ConnectionConfig, globalSafeMode: SafeMode = AppSettings.shared.safeMode
   ) async throws {
+    guard await resolvePendingTransaction(action: .disconnect, globalSafeMode: globalSafeMode)
+    else {
+      throw WorkspaceConnectError.pendingTransactionKept
+    }
     if Self.connectRequiresUnlock(
       current: workspace.connectionConfig, new: config, globalSafeMode: globalSafeMode)
     {

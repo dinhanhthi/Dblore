@@ -167,9 +167,17 @@ class WorkspaceWindowManager {
       guard canClose else { return false }
     }
 
-    // Disconnect if connected
+    // Disconnect if connected. A forced close answers with the first safe non-commit option
+    // (Rollback, or Discard / Disconnect while a statement / ROLLBACK runs); none (COMMIT
+    // awaited) asks.
     if manager.connectionState == .connected {
-      await manager.disconnect()
+      var resolution: PendingTransactionResolution?
+      if force {
+        await manager.refreshPendingTransaction()
+        resolution = WorkspaceTransactionRules.forcedResolution(
+          for: manager.pendingTransaction, statementInFlight: manager.isStatementInFlight)
+      }
+      guard await manager.disconnect(resolution: resolution) else { return false }
     }
 
     workspaces.removeValue(forKey: id)

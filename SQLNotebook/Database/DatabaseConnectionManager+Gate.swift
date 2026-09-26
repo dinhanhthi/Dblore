@@ -18,65 +18,98 @@ extension DatabaseConnectionManager {
 
   /// Execute user SQL (one or more statements) and return the combined result.
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
-  /// violates `policy`.
+  /// violates `policy`. Under Protected mode, writes run in the app transaction; while it is
+  /// pending, a `caller` (tab token) other than the one that opened it is refused
+  /// (`DatabaseError.transactionPendingInAnotherTab`).
   func execute(
-    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows
+    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
+    caller: UUID? = nil
   ) async throws -> QueryResult {
-    try authorize(userSQL, policy: policy)
-    return try await executeInternal(userSQL, maxRows: maxRows)
+    let (statements, protectedMode) = try authorize(userSQL, policy: policy)
+    let run = try await runUserStatements(
+      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller)
+    return Self.combined(run.results.map(\.result), totalTime: run.totalTime)
   }
 
   /// Execute user SQL and return one result per statement.
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
-  /// violates `policy`.
+  /// violates `policy`. Under Protected mode, writes run in the app transaction (same `caller`
+  /// rule as `execute`).
   func executeDetailed(
-    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows
+    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
+    caller: UUID? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
-    try authorize(userSQL, policy: policy)
-    return try await executeInternalStatementsDetailed(userSQL, maxRows: maxRows)
+    let (statements, protectedMode) = try authorize(userSQL, policy: policy)
+    return try await runUserStatements(
+      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller)
   }
 
-  /// Send an inline grid edit (app-built UPDATE, values as bind parameters) and return the
-  /// number of rows the server reports as updated (command tag, not result rows).
+  /// Send an inline grid edit (app-built UPDATE, values as bind parameters); it must update
+  /// exactly one row (command tag, not result rows), so the returned count is always 1.
   /// Throws `DatabaseError.notEditable` before anything is sent if `connectionEpoch` (of the
   /// edit target) is not the current connection's, and `DatabaseError.blockedByProtection` if
-  /// `policy` forbids it.
+  /// `policy` forbids it. Under Protected mode the edit opens / joins the app transaction
+  /// (same `caller` rule as `execute`, see `runProtectedEdit`); otherwise it is committed on its
+  /// own or runs in the user's open transaction (`runUnprotectedEdit`). Any other row count
+  /// throws `DatabaseError.editRowCountMismatch`.
   func executeGatedUpdate(
-    _ statement: CellUpdateStatement, policy: ProtectionPolicy, connectionEpoch epoch: UInt64
+    _ statement: CellUpdateStatement, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
+    caller: UUID? = nil
   )
     async throws -> Int
   {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
-    try authorize(statement.sql, policy: policy)
-    guard let connection = _connection else { throw DatabaseError.notConnected }
-    let startTime = Date()
-    do {
-      let result = try await connection.query(
-        PostgresQuery(unsafeSQL: statement.sql, binds: statement.bindings),
-        logger: Logger(label: "sqlnotebook.update")
-      ).get()
-      return result.metadata.rows ?? 0
-    } catch let error as PSQLError {
-      throw DatabaseError.queryFailed(
-        formatPostgresError(error, query: statement.sql), Date().timeIntervalSince(startTime))
-    } catch {
-      throw DatabaseError.queryFailed(
-        error.localizedDescription, Date().timeIntervalSince(startTime))
+    let (statements, protectedMode) = try authorize(statement.sql, policy: policy)
+    try refuseIfEnding()
+    try refuseIfOwnedByAnotherCaller(caller)
+    try refuseIfAborted()
+    guard _connection != nil else { throw DatabaseError.notConnected }
+    try refuseIfConnectionClosed()
+    // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
+    commitGuard.inFlight += 1
+    defer { commitGuard.inFlight -= 1 }
+    if protectedMode {
+      return try await runProtectedEdit(statement, classified: statements.first, caller: caller)
     }
+    return try await runUnprotectedEdit(statement)
+  }
+
+  /// One result for a whole script: a single statement's result as is; otherwise the last
+  /// result with the total time and the summed affected rows.
+  private static func combined(_ results: [QueryResult], totalTime: TimeInterval) -> QueryResult {
+    guard let last = results.last, results.count > 1 else {
+      return results.last ?? QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0)
+    }
+    let total = results.compactMap(\.affectedRows).reduce(0, +)
+    return QueryResult(
+      columns: last.columns, rows: last.rows, rowCount: last.rowCount, executionTime: totalTime,
+      wasLimited: last.wasLimited, rowIdentifiers: last.rowIdentifiers,
+      userLimitExceeded: last.userLimitExceeded, userRequestedLimit: last.userRequestedLimit,
+      affectedRows: total > 0 ? total : last.affectedRows)
   }
 
   // MARK: - Gate
 
   /// Classify every statement of `sql` and throw if the stricter of `policy` and the connected
   /// config's protection blocks any of them (a caller can never weaken the connection).
-  private func authorize(_ sql: String, policy: ProtectionPolicy) throws {
-    let decision = Self.evaluate(
-      SQLStatementClassifier.classify(sql), policy: policy.stricter(connectedPolicy))
-    if case .blocked(let index, let kind, let reason) = decision {
+  /// A pending app transaction keeps Protected mode rules until Commit / Rollback, even if the
+  /// toggle was turned off meanwhile.
+  /// - Returns: the classified statements and whether Protected mode applies.
+  private func authorize(
+    _ sql: String, policy: ProtectionPolicy
+  ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
+    let merged = policy.stricter(connectedPolicy)
+    let effective = ProtectionPolicy(
+      protectionLevel: merged.protectionLevel, safeMode: merged.safeMode,
+      protectedMode: merged.protectedMode || !txState.isIdle)
+    let statements = SQLStatementClassifier.classify(sql)
+    if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
+    {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
+    return (statements, effective.protectedMode)
   }
 
   /// Pure policy check: the first statement the policy forbids, or `.allowed`.
@@ -84,11 +117,15 @@ extension DatabaseConnectionManager {
   /// - `.schemaOnly`: no DDL, non-transactional, utility, unknown or table-creating statements
   ///   (also under EXPLAIN ANALYZE); DML, SET and transaction control are allowed.
   /// - `.none`: everything (Safe Mode confirmation lives in the ViewModel).
+  /// - Protected mode (any level): no transaction control and no statement that cannot run in
+  ///   a transaction (the app owns the transaction).
   nonisolated static func evaluate(
     _ statements: [ClassifiedStatement], policy: ProtectionPolicy
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {
-      if let reason = violation(statement, level: policy.protectionLevel) {
+      if let reason = violation(statement, level: policy.protectionLevel)
+        ?? (policy.protectedMode ? protectedModeViolation(statement) : nil)
+      {
         return .blocked(statementIndex: index, kind: statement.kind, reason: reason)
       }
     }
@@ -124,6 +161,19 @@ extension DatabaseConnectionManager {
       }
       return "\(what) is blocked on a schema-protected connection"
     }
+  }
+
+  private nonisolated static func protectedModeViolation(
+    _ statement: ClassifiedStatement
+  ) -> String? {
+    if statement.kind == .tcl {
+      return "Transaction control is managed by Protected mode — use Commit / Rollback"
+    }
+    if statement.nonTransactional {
+      return "This statement cannot run inside a transaction; turn Protected mode off for this "
+        + "connection to run it"
+    }
+    return nil
   }
 
   nonisolated static func describe(_ kind: StatementKind) -> String {

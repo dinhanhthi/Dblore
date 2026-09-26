@@ -67,11 +67,18 @@ class NotebookViewModel {
   // Connection manager reference from workspace (synced from WorkspaceManager)
   // This allows NotebookViewModel extensions to execute queries without refactoring
   var connectionManager: DatabaseConnectionManager?
+  /// Workspace mode: another tab opened the pending Protected transaction, so this tab runs
+  /// nothing until Commit / Rollback (the actor refuses this tab's `id` too). Set by
+  /// `WorkspaceManager`.
+  var isTransactionPendingElsewhere = false
 
   /// Workspace mode: called when the connection's protection level, Safe Mode or protected mode
   /// is changed in this tab (sidebar/footer dialogs), so the workspace, the actor and the other
   /// tabs follow. Set by `WorkspaceManager`.
   @ObservationIgnored var onConnectionProtectionChanged: ((ConnectionConfig) -> Void)?
+  /// Workspace mode: awaited after every statement execution in this tab, so the workspace
+  /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
+  @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
   /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false

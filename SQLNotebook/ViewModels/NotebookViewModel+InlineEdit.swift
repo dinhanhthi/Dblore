@@ -46,7 +46,7 @@ extension NotebookViewModel {
     epoch: UInt64
   ) async -> EditTarget? {
     guard !result.columns.isEmpty, let relation = CellUpdateStatement.singleRelation(in: query),
-      let table = try? await connectionManager.fetchEditTable(tableName: relation),
+      let table = await editTable(relation, columns: result.columns, connectionManager),
       table.connectionEpoch == epoch,
       CellUpdateStatement.isServerQualifiedName(table.qualifiedName)
     else { return nil }
@@ -55,6 +55,23 @@ extension NotebookViewModel {
     return EditTarget(
       qualifiedName: table.qualifiedName, oid: table.oid, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly)
+  }
+
+  /// `relation` resolved by the server, or, while the app transaction is pending (no catalog
+  /// query is sent), the table resolved before it for the result's source table OID.
+  private func editTable(
+    _ relation: String, columns: [ColumnInfo], _ connectionManager: DatabaseConnectionManager
+  ) async -> EditTable? {
+    do {
+      return try await connectionManager.fetchEditTable(tableName: relation)
+    } catch DatabaseError.metadataPausedDuringTransaction {
+      guard let oid = columns.first?.tableOID, columns.allSatisfy({ $0.tableOID == oid }) else {
+        return nil
+      }
+      return await connectionManager.cachedEditTable(oid: oid)
+    } catch {
+      return nil
+    }
   }
 
   /// The connection changed (connect/disconnect): no displayed result stays editable, and the
@@ -150,6 +167,7 @@ extension NotebookViewModel {
       showToast("Value copied to clipboard", type: .info)
       return
     }
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Only the live target of the result the cell was opened from; never the passed table/key
     guard let target = cellDetailEditTarget, isLiveEditTarget(target, cellId: cellId) else {
@@ -196,9 +214,10 @@ extension NotebookViewModel {
 
   /// Send a (confirmed) inline edit through the actor gate and refresh the cell.
   /// `target` must still be the live edit target of the edited result (same generation).
-  /// Anything but exactly one updated row is reported as an error.
-  /// TODO(P6): wrap in a transaction and roll back when the count is not 1.
+  /// Anything but exactly one updated row is reported as an error (the actor undoes it, see
+  /// `DatabaseConnectionManager.executeGatedUpdate`).
   func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?) async {
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let target, target.qualifiedName == edit.tableName,
       isLiveEditTarget(target, cellId: edit.cellId)
     else {
@@ -207,7 +226,8 @@ extension NotebookViewModel {
     }
     do {
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
-        edit.statement, policy: protectionPolicy, connectionEpoch: target.connectionEpoch)
+        edit.statement, policy: protectionPolicy, connectionEpoch: target.connectionEpoch,
+        caller: id)
       if rowsAffected == 1 {
         showToast("Updated '\(edit.columnName)' in '\(edit.tableName)' (1 row)", type: .success)
       } else {
@@ -223,6 +243,7 @@ extension NotebookViewModel {
       showToast(
         "Failed to update '\(edit.columnName)': \(error.localizedDescription)", type: .error)
     }
+    await onStatementsExecuted?()
   }
 
   /// The edited text as a `CellValue` of the original's type (sidebar display only)

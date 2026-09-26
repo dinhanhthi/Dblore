@@ -71,6 +71,8 @@ extension NotebookViewModel {
       onDocumentChanged?()
       return errorResult
     }
+    // Another tab's pending transaction: nothing is sent, the cell keeps its result
+    guard !refuseWhileTransactionPendingElsewhere() else { return nil }
 
     notebook.cells[index].isRunning = true
 
@@ -78,9 +80,17 @@ extension NotebookViewModel {
     let sanitizedQuery = AppLogger.shared.sanitizeQuery(task.query)
     await AppLogger.shared.info(
       "Executing query from cell \(task.cellId): `\(sanitizedQuery)`", category: "Execution")
+    // Cancelled meanwhile (e.g. the pending transaction is being resolved): send nothing
+    guard !Task.isCancelled else {
+      if let current = notebook.cells.firstIndex(where: { $0.id == task.cellId }) {
+        notebook.cells[current].isRunning = false
+      }
+      return nil
+    }
 
     var result: CellResult?
     let policy = protectionPolicy
+    let caller = id
 
     do {
       // Check if this is a multi-statement query
@@ -89,7 +99,8 @@ extension NotebookViewModel {
         let detailed = try await Task.withTimeout(seconds: 60) {
           try await connectionManager
             .executeDetailed(
-              userSQL: task.query, policy: policy, maxRows: AppSettings.shared.maxRowLimit)
+              userSQL: task.query, policy: policy, maxRows: AppSettings.shared.maxRowLimit,
+              caller: caller)
         }
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
@@ -171,7 +182,8 @@ extension NotebookViewModel {
           try await connectionManager.execute(
             userSQL: task.query,
             policy: policy,
-            maxRows: AppSettings.shared.maxRowLimit
+            maxRows: AppSettings.shared.maxRowLimit,
+            caller: caller
           )
         }
 
@@ -285,6 +297,7 @@ extension NotebookViewModel {
     }
 
     notebook.cells[index].isRunning = false
+    await onStatementsExecuted?()
 
     // Notify document changed to trigger save
     onDocumentChanged?()

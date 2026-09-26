@@ -9,43 +9,6 @@ import NIOCore
 import NIOSSL
 import PostgresNIO
 
-/// Error thrown when a task exceeds its timeout
-struct TimeoutError: Error {
-  let message: String
-}
-
-/// Execute an async operation with a timeout
-/// - Parameters:
-///   - duration: Maximum duration before timing out
-///   - operation: The async operation to execute
-/// - Returns: Result from the operation
-/// - Throws: TimeoutError if operation exceeds duration, or any error from the operation
-private func withTimeout<T: Sendable>(
-  of duration: Duration,
-  operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-  try await withThrowingTaskGroup(of: T.self) { group in
-    // Add the main operation task
-    group.addTask {
-      try await operation()
-    }
-
-    // Add the timeout task
-    group.addTask {
-      try await Task.sleep(for: duration)
-      throw TimeoutError(message: "Operation timed out after \(duration)")
-    }
-
-    // Wait for first task to complete (either operation or timeout)
-    if let result = try await group.next() {
-      group.cancelAll()
-      return result
-    }
-
-    throw TimeoutError(message: "Unexpected task group completion")
-  }
-}
-
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
   private var connection: PostgresConnection?
@@ -54,6 +17,25 @@ actor DatabaseConnectionManager {
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
+  /// Protected mode transaction state (see `DatabaseConnectionManager+Transaction.swift`)
+  var txState: TransactionState = .idle {
+    didSet {
+      if txState.isIdle { txOwner = nil }
+      if txState != oldValue { commitGuard.generation &+= 1 }
+    }
+  }
+  /// What the Commit confirmation reviewed, and gated statements in flight (`commitAppTransaction`)
+  var commitGuard = CommitGuard()
+  /// Test hook: awaited inside Commit / Rollback right after the state became `.ending`, before
+  /// COMMIT / ROLLBACK is sent (see `setTransactionEndHook`)
+  var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
+  /// Caller token (tab) that opened the app transaction: while it is pending, only this caller
+  /// may run gated statements. Claimed before BEGIN is sent, cleared when the state is idle.
+  var txOwner: UUID?
+  /// A transaction the user opened with BEGIN while Protected mode was off
+  var userTxOpen = false
+  /// Inline edit tables resolved outside any app transaction, by table OID (see `cachedEditTable`)
+  var editTableCache: [UInt32: EditTable] = [:]
 
   /// Default maximum number of rows to fetch from database to prevent memory issues
   /// This is overridden by the notebook's maxRowLimit setting
@@ -274,25 +256,30 @@ actor DatabaseConnectionManager {
 
   /// Disconnect from database
   func disconnect() async {
-    // Before any suspension point: no edit can use the closing connection's targets
+    // Before any suspension point: no edit can use the closing connection's targets, and a
+    // statement failing meanwhile sees the connection gone (state stays idle)
     connectionEpoch &+= 1
-
-    // Log disconnection if we were connected
-    if connection != nil {
-      await AppLogger.shared.info("Disconnecting from database", category: "Database")
-    }
-
-    if let conn = connection {
-      try? await conn.close()
-      connection = nil
-    }
-
-    if let group = eventLoopGroup {
-      try? await group.shutdownGracefully()
-      eventLoopGroup = nil
-    }
-
+    let closing = connection
+    let group = eventLoopGroup
+    connection = nil
+    eventLoopGroup = nil
     config = nil
+    // Closing the connection rolls back any open transaction on the server
+    txState = .idle
+    userTxOpen = false
+    editTableCache.removeAll()
+
+    if let closing {
+      await AppLogger.shared.info("Disconnecting from database", category: "Database")
+      try? await closing.close()
+    }
+    try? await group?.shutdownGracefully()
+
+    // A statement that resumed during the awaits above must not leave a stale state
+    if connection == nil {
+      txState = .idle
+      userTxOpen = false
+    }
   }
 
   /// Check if currently connected

@@ -10,32 +10,6 @@ import Logging
 import PostgresNIO
 
 extension DatabaseConnectionManager {
-  // MARK: - Modification Query Wrapping
-
-  /// Wrap a modification query (UPDATE/DELETE/INSERT) to return affected row count
-  /// Uses WITH (CTE) to capture the affected rows and count them
-  /// This is necessary because PostgresNIO 1.30.1 doesn't expose commandTag in public API
-  func wrapModificationQueryForCount(_ query: String) -> String {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Remove trailing semicolon if present
-    let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
-
-    // For UPDATE, DELETE, and INSERT, we can use RETURNING to get affected rows
-    if countsAffectedRows(trimmed) {
-      // Wrap with CTE and count
-      return """
-        WITH affected AS (
-          \(cleanQuery) RETURNING 1
-        )
-        SELECT COUNT(*) FROM affected;
-        """
-    }
-
-    // Fallback (shouldn't happen if countsAffectedRows is correct)
-    return cleanQuery
-  }
-
   // MARK: - LIMIT Wrapping
 
   /// Wrap a SELECT query with LIMIT clause to prevent fetching too many rows
@@ -156,10 +130,13 @@ extension DatabaseConnectionManager {
   // MARK: - Column Type Enrichment
 
   /// Enrich column type information with modifiers (precision, scale, length)
-  /// Uses information_schema to get detailed type info
+  /// Uses information_schema to get detailed type info. Skipped (driver types kept) while the
+  /// app transaction is pending: a failing catalog query would abort it.
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
     // Only proceed if we have columns and connection
-    guard !columns.isEmpty, let connection = _connection, databaseType == .postgresql else {
+    guard !columns.isEmpty, !isMetadataPaused, let connection = _connection,
+      databaseType == .postgresql
+    else {
       return columns
     }
 

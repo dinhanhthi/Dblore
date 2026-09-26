@@ -91,6 +91,7 @@ extension NotebookViewModel {
       showToast("Not connected to database", type: .error)
       return
     }
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Protection level is enforced by the database gate; fail fast with its message
     if let message = protectionBlockMessage(for: query) {
@@ -117,6 +118,7 @@ extension NotebookViewModel {
       showToast("No database connection available", type: .error)
       return
     }
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     let startTime = Date()
 
@@ -130,7 +132,7 @@ extension NotebookViewModel {
           try await connectionManager
           .executeDetailed(
             userSQL: query, policy: protectionPolicy,
-            maxRows: AppSettings.shared.editorMaxRowLimit)
+            maxRows: AppSettings.shared.editorMaxRowLimit, caller: id)
 
         totalExecutionTime = totalTime
 
@@ -200,7 +202,7 @@ extension NotebookViewModel {
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         let epoch = await connectionManager.connectionEpoch
         let result = try await connectionManager.execute(
-          userSQL: query, policy: protectionPolicy, maxRows: maxRows)
+          userSQL: query, policy: protectionPolicy, maxRows: maxRows, caller: id)
 
         let executionTime = Date().timeIntervalSince(startTime)
 
@@ -262,6 +264,7 @@ extension NotebookViewModel {
         sourceQuery: query
       )
     }
+    await onStatementsExecuted?()
   }
 
   /// Select a specific statement result in editor mode
@@ -278,6 +281,7 @@ extension NotebookViewModel {
 
   /// Navigate to a specific page for editor result
   func navigateToPage(_ page: Int) async {
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let paginationInfo = editorPaginationInfo else { return }
     guard page > 0 && page <= paginationInfo.totalPages else { return }
     guard page != paginationInfo.currentPage else { return }
@@ -287,10 +291,12 @@ extension NotebookViewModel {
 
     // Execute query
     await executeEditorQueryForPagination(query, page: page, paginationInfo: paginationInfo)
+    await onStatementsExecuted?()
   }
 
   /// Navigate to a specific page for a multi-statement result
   func navigateToPageForStatement(statementId: UUID, page: Int) async {
+    guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let paginationInfo = editorStatementPaginationInfo[statementId] else { return }
     guard page > 0 && page <= paginationInfo.totalPages else { return }
     guard page != paginationInfo.currentPage else { return }
@@ -301,6 +307,7 @@ extension NotebookViewModel {
     // Execute query
     await executeEditorQueryForStatementPagination(
       query, statementId: statementId, page: page, paginationInfo: paginationInfo)
+    await onStatementsExecuted?()
   }
 
   /// Execute a paginated query for editor mode
@@ -321,7 +328,8 @@ extension NotebookViewModel {
 
     do {
       let result = try await connectionManager.execute(
-        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit)
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit,
+        caller: id)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -391,7 +399,8 @@ extension NotebookViewModel {
 
     do {
       let result = try await connectionManager.execute(
-        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit)
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit,
+        caller: id)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -614,7 +623,7 @@ extension NotebookViewModel {
       // Count query only returns 1 row, but we still pass editorMaxRowLimit for consistency
       let result = try await connectionManager.execute(
         userSQL: countQuery, policy: protectionPolicy,
-        maxRows: AppSettings.shared.editorMaxRowLimit)
+        maxRows: AppSettings.shared.editorMaxRowLimit, caller: id)
 
       // Extract count from first row, first column
       guard let firstRow = result.rows.first,

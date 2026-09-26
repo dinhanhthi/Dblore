@@ -6,6 +6,7 @@
 //  Helper methods moved to:
 //  - DatabaseConnectionManager+QueryParsing.swift (query analysis)
 //  - DatabaseConnectionManager+QueryWrapping.swift (query transformation)
+//  - DatabaseConnectionManager+StatementRouting.swift (unchanged non-read statements, row reading)
 //
 
 import Foundation
@@ -166,7 +167,7 @@ extension DatabaseConnectionManager {
   /// - Parameters:
   ///   - query: Single SQL statement
   ///   - maxRows: Maximum number of rows to fetch
-  private func executeSingleStatement(_ query: String, maxRows: Int) async throws -> QueryResult {
+  func executeSingleStatement(_ query: String, maxRows: Int) async throws -> QueryResult {
     guard let connection = _connection else {
       throw DatabaseError.notConnected
     }
@@ -183,53 +184,18 @@ extension DatabaseConnectionManager {
 
     let startTime = Date()
 
-    // Check if this is a modification query (UPDATE, DELETE, INSERT)
-    let isModification = countsAffectedRows(query)
-
-    // For modification queries, we need to get affected rows count
-    if isModification {
-      do {
-        // NOTE: PostgresNIO 1.30.1 does not expose commandTag via onMetadata callback
-        // The onMetadata parameter is not available in the current version
-        // Solution: Use CTE with RETURNING to get affected rows count
-        // This is reliable and works across all PostgreSQL versions (8.2+)
-        let wrappedQuery = wrapModificationQueryForCount(query)
-
-        let stream = try await connection.query(
-          PostgresQuery(unsafeSQL: wrappedQuery),
-          logger: Logger(label: "sqlnotebook")
-        )
-
-        // The wrapped query returns a single row with count
-        var affectedRows = 0
-        for try await row in stream {
-          let randomAccess = row.makeRandomAccess()
-          // Get the first column which contains the count
-          if let cell = randomAccess.first {
-            if let count = try? cell.decode(Int64.self, context: .default) {
-              affectedRows = Int(count)
-            }
-          }
-        }
-
-        let executionTime = Date().timeIntervalSince(startTime)
-
-        return QueryResult(
-          columns: [],
-          rows: [],
-          rowCount: 0,
-          executionTime: executionTime,
-          affectedRows: affectedRows
-        )
-
-      } catch let error as PSQLError {
-        let executionTime = Date().timeIntervalSince(startTime)
-        let errorMessage = formatPostgresError(error, query: query)
-        throw DatabaseError.queryFailed(errorMessage, executionTime)
-      } catch {
-        let executionTime = Date().timeIntervalSince(startTime)
-        throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
-      }
+    // Everything but reads is sent unchanged (affected rows from the command tag or RETURNING)
+    switch StatementRoute.route(for: SQLStatementClassifier.classifyStatement(query)) {
+    case .command:
+      return try await executeCommand(query, on: connection, startTime: startTime)
+    case .returningRows:
+      return try await executeUnwrapped(
+        query, on: connection, countRows: true, startTime: startTime)
+    case .unwrappedRows:
+      return try await executeUnwrapped(
+        query, on: connection, countRows: false, startTime: startTime)
+    case .read:
+      break
     }
 
     // For SELECT queries, proceed with normal logic
@@ -263,61 +229,10 @@ extension DatabaseConnectionManager {
         logger: Logger(label: "sqlnotebook")
       )
 
-      var columns: [ColumnInfo] = []
-      var resultRows: [[CellValue]] = []
-      var rowIdentifiers: [CellValue] = []
-      var isFirstRow = true
-
+      let collected = try await collectRows(stream, fetchCtid: shouldFetchCtid)
+      let columns = collected.columns
+      let resultRows = collected.rows
       var wasLimited = false
-      var ctidColumnIndex: Int? = nil
-
-      for try await row in stream {
-        let randomAccess = row.makeRandomAccess()
-
-        // On first row, extract column metadata from PostgresCells
-        if isFirstRow {
-          // PostgresRandomAccessRow is a Sequence of PostgresCell
-          var columnIndex = 0
-          for cell in randomAccess {
-            let columnName = cell.columnName
-            // Detect ctid column (our internal identifier)
-            if shouldFetchCtid && columnName == "_sqlnb_ctid" {
-              ctidColumnIndex = columnIndex
-            } else {
-              columns.append(
-                ColumnInfo(
-                  name: columnName, type: postgresDataTypeName(cell.dataType),
-                  origin: stream.columns.dropFirst(columnIndex).first))
-            }
-            columnIndex += 1
-          }
-          isFirstRow = false
-        }
-
-        // Parse values for each cell
-        var rowValues: [CellValue] = []
-        var columnIndex = 0
-        var ctidValue: CellValue? = nil
-
-        for cell in randomAccess {
-          let value = parseCellValue(from: cell)
-
-          // If this is the ctid column, store it separately
-          if let ctidIndex = ctidColumnIndex, columnIndex == ctidIndex {
-            ctidValue = value
-          } else {
-            rowValues.append(value)
-          }
-          columnIndex += 1
-        }
-
-        resultRows.append(rowValues)
-
-        // Store ctid value if we found it
-        if let ctid = ctidValue {
-          rowIdentifiers.append(ctid)
-        }
-      }
 
       let executionTime = Date().timeIntervalSince(startTime)
 
@@ -378,7 +293,7 @@ extension DatabaseConnectionManager {
         rowCount: resultRows.count,
         executionTime: executionTime,
         wasLimited: wasLimited,
-        rowIdentifiers: rowIdentifiers,
+        rowIdentifiers: collected.rowIdentifiers,
         userLimitExceeded: finalUserLimitExceeded,
         userRequestedLimit: finalUserRequestedLimit,
         affectedRows: 0,  // SELECT queries always have 0 affected rows
@@ -386,14 +301,8 @@ extension DatabaseConnectionManager {
         actualLimitUsed: actualLimitUsed
       )
 
-    } catch let error as PSQLError {
-      let executionTime = Date().timeIntervalSince(startTime)
-      // Extract detailed error information from PostgreSQL
-      let errorMessage = formatPostgresError(error, query: query)
-      throw DatabaseError.queryFailed(errorMessage, executionTime)
     } catch {
-      let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
+      throw queryFailure(error, query: query, startTime: startTime)
     }
   }
 }

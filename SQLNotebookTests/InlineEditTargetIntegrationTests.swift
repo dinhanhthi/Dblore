@@ -73,6 +73,15 @@ struct InlineEditTargetIntegrationTests {
     #expect(
       try await manager.executeInternal("SELECT total FROM s9_orders WHERE id = 10").rows.first?
         .first == .int(150))
+    // The edit opened the Protected app transaction: no catalog lookup is sent inside it, results
+    // read meanwhile reuse the edit table resolved before it (P6); a join still is not editable
+    #expect(try await target("SELECT * FROM s9_orders", manager) == ["id"])
+    #expect(
+      try await target(
+        "SELECT s9_orders.*, s9_customers.id FROM s9_orders, s9_customers", manager
+      ).isEmpty)
+    try await manager.commitAppTransaction(
+      expectedGeneration: await manager.transactionStatus().generation)
 
     // Composite key: key order, not column order
     _ = try await manager.executeInternal("DROP TABLE IF EXISTS s9_composite")
