@@ -119,15 +119,6 @@ The database includes sample tables (customers, products, orders, employees, ana
 
 **Database for testing**: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
 
-## Documentation
-
-- [Project Architecture](docs/project.md) - Technical overview and design decisions
-- [Keyboard Shortcuts](docs/keyboard_shortcuts.md) - Complete shortcuts reference
-- [Testing Plan](docs/testing_plan.md) - Testing strategy and setup
-- [Dependencies](docs/dependencies.md) - SPM packages and version information
-- [Task Tracking](docs/TODO.md) - Roadmap and pending features
-- [Implementation Details](docs/implementation/) - Feature documentation and solutions
-
 ## License
 
 SQLNotebook is licensed under [AGPL-3.0-or-later](LICENSE).
