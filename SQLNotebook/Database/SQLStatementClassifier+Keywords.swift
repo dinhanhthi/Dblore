@@ -9,7 +9,7 @@ nonisolated extension SQLStatementClassifier {
 
   static let dmlKeywords: Set<String> = ["INSERT", "UPDATE", "DELETE", "MERGE"]
 
-  /// Matches `isSchemaChangeQuery` (CREATE/DROP/ALTER/TRUNCATE) plus COMMENT ON,
+  /// CREATE/DROP/ALTER/TRUNCATE (the former prefix-based schema check) plus COMMENT ON,
   /// which persistently changes catalog object definitions.
   static let ddlKeywords: Set<String> = ["CREATE", "DROP", "ALTER", "TRUNCATE", "COMMENT"]
 

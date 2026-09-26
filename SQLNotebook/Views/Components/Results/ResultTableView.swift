@@ -298,6 +298,7 @@ struct ResultTableView: View {
         dataCell(
           value: value,
           column: result.columns[columnIndex],
+          row: row,
           rowIndex: rowIndex
         )
       }
@@ -308,7 +309,12 @@ struct ResultTableView: View {
     }
   }
 
-  private func dataCell(value: CellValue, column: ColumnInfo, rowIndex: Int) -> some View {
+  /// `row` is the displayed row (sorted order); `rowIndex` its display position
+  private func dataCell(
+    value: CellValue, column: ColumnInfo, row: [CellValue], rowIndex: Int
+  )
+    -> some View
+  {
     HStack(spacing: 0) {
       cellContent(value: value, rowIndex: rowIndex, columnName: column.name)
         .frame(width: columnWidth(for: column.name) - Spacing.md, alignment: alignment(for: value))
@@ -316,7 +322,7 @@ struct ResultTableView: View {
         .padding(.vertical, Spacing.sm)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-          handleCellTap(value: value, column: column, rowIndex: rowIndex)
+          handleCellTap(value: value, column: column, row: row, rowIndex: rowIndex)
         }
 
       Rectangle()
@@ -366,20 +372,7 @@ struct ResultTableView: View {
 
   /// Sorted rows based on current sort column and direction
   private var sortedRows: [[CellValue]] {
-    guard let sortColumn = sortColumn,
-      let columnIndex = result.columns.firstIndex(where: { $0.name == sortColumn })
-    else {
-      return result.rows
-    }
-
-    return result.rows.sorted { row1, row2 in
-      guard columnIndex < row1.count, columnIndex < row2.count else {
-        return false
-      }
-      let value1 = row1[columnIndex]
-      let value2 = row2[columnIndex]
-      return sortAscending ? value1 < value2 : value2 < value1
-    }
+    result.sortedRows(byColumn: sortColumn, ascending: sortAscending)
   }
 
   // MARK: - Helpers
@@ -430,7 +423,10 @@ struct ResultTableView: View {
     return rowIndex % 2 == 0 ? Color.cellBackground : Color.tableRowAlternate
   }
 
-  private func handleCellTap(value: CellValue, column: ColumnInfo, rowIndex: Int) {
+  /// Row data (and so the primary key of an edit) comes from the tapped displayed `row`, never
+  /// from `result.rows[rowIndex]`: once sorted, the display index points at another row.
+  private func handleCellTap(value: CellValue, column: ColumnInfo, row: [CellValue], rowIndex: Int)
+  {
     if value.isJSON {
       if case .json(let json) = value {
         viewModel.showJSONInSidebar(
@@ -439,23 +435,10 @@ struct ResultTableView: View {
         )
       }
     } else {
-      // Build row data dictionary with all column values
-      var rowData: [String: CellValue] = [:]
-      if rowIndex < result.rows.count {
-        let row = result.rows[rowIndex]
-        for (index, column) in result.columns.enumerated() {
-          if index < row.count {
-            rowData[column.name] = row[index]
-          }
-        }
-      }
+      let rowData = CellResult.rowData(columns: result.columns, row: row)
 
-      // Get row identifier (ctid) for this row if available
-      let rowIdentifier: CellValue? =
-        rowIndex < result.rowIdentifiers.count
-        ? result.rowIdentifiers[rowIndex]
-        : nil
-
+      // No row identifier: `rowIdentifiers` is indexed by the unsorted position (and unused by
+      // the primary-key-only edit)
       viewModel.showCellDetail(
         columnName: column.name,
         columnType: column.type,
@@ -463,7 +446,8 @@ struct ResultTableView: View {
         tableName: result.tableName,
         rowData: rowData,
         primaryKeyColumns: result.primaryKeyColumns,
-        rowIdentifier: rowIdentifier,
+        rowIdentifier: nil,
+        editTarget: result.editTarget,
         cellId: cellId
       )
     }

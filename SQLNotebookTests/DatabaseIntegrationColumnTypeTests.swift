@@ -42,20 +42,20 @@ struct DatabaseIntegrationColumnTypeTests {
           description TEXT
       );
       """
-    _ = try await manager.executeQuery(createTableSQL)
+    _ = try await manager.executeInternal(createTableSQL)
 
     let insertSQL = """
       INSERT INTO \(tableName) (name, code, price, amount, created_at, updated_at, description)
       VALUES ('Test Product', 'ABC123', 99.99, 1234.5678, NOW(), NOW(), 'Sample description');
       """
-    _ = try await manager.executeQuery(insertSQL)
+    _ = try await manager.executeInternal(insertSQL)
   }
 
   func dropColumnTypeTestTable(
     manager: DatabaseConnectionManager, tableName: String = "test_column_types"
   ) async throws {
     let dropTableSQL = "DROP TABLE IF EXISTS \(tableName);"
-    _ = try await manager.executeQuery(dropTableSQL)
+    _ = try await manager.executeInternal(dropTableSQL)
   }
 
   func createNumericTestTable(
@@ -71,7 +71,7 @@ struct DatabaseIntegrationColumnTypeTests {
           negative_value NUMERIC(10,2)
       );
       """
-    _ = try await manager.executeQuery(createTableSQL)
+    _ = try await manager.executeInternal(createTableSQL)
   }
 
   func insertNumericTestData(
@@ -85,14 +85,14 @@ struct DatabaseIntegrationColumnTypeTests {
           (0.00, 0.0000, 0.00, 0.00, 0.00),
           (NULL, NULL, NULL, NULL, NULL);
       """
-    _ = try await manager.executeQuery(insertSQL)
+    _ = try await manager.executeInternal(insertSQL)
   }
 
   func dropNumericTestTable(
     manager: DatabaseConnectionManager, tableName: String
   ) async throws {
     let dropTableSQL = "DROP TABLE IF EXISTS \(tableName);"
-    _ = try await manager.executeQuery(dropTableSQL)
+    _ = try await manager.executeInternal(dropTableSQL)
   }
 
   // MARK: - Column Type Enrichment Integration Tests
@@ -107,7 +107,7 @@ struct DatabaseIntegrationColumnTypeTests {
       try await manager.connect(config: Self.testConfig)
       try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT name FROM \(tableName) LIMIT 1")
+      let result = try await manager.executeInternal("SELECT name FROM \(tableName) LIMIT 1")
 
       let columnsCount = result.columns.count
       #expect(columnsCount > 0, "Should return column metadata")
@@ -145,7 +145,7 @@ struct DatabaseIntegrationColumnTypeTests {
       try await manager.connect(config: Self.testConfig)
       try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT price FROM \(tableName) LIMIT 1")
+      let result = try await manager.executeInternal("SELECT price FROM \(tableName) LIMIT 1")
 
       let columnsCount = result.columns.count
       #expect(columnsCount > 0, "Should return column metadata")
@@ -183,7 +183,7 @@ struct DatabaseIntegrationColumnTypeTests {
       try await manager.connect(config: Self.testConfig)
       try await createColumnTypeTestTable(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery(
+      let result = try await manager.executeInternal(
         "SELECT created_at, updated_at FROM \(tableName) LIMIT 1")
 
       let columnsCount = result.columns.count
@@ -241,7 +241,7 @@ struct DatabaseIntegrationColumnTypeTests {
         INSERT INTO \(tableName) (name, code, price, amount, created_at, updated_at, description)
         VALUES ('Test', 'ABC123', 99.99, 123.4567, NOW(), NOW(), 'Test description')
         """
-      _ = try await manager.executeQuery(insertSQL)
+      _ = try await manager.executeInternal(insertSQL)
 
       let complexQuery = """
         SELECT t1.id, t2.name
@@ -250,7 +250,7 @@ struct DatabaseIntegrationColumnTypeTests {
         LIMIT 1
         """
 
-      let result = try await manager.executeQuery(complexQuery)
+      let result = try await manager.executeInternal(complexQuery)
 
       let columnsCount = result.columns.count
       #expect(columnsCount > 0, "Should return column metadata")
@@ -281,7 +281,7 @@ struct DatabaseIntegrationColumnTypeTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery(
+      let result = try await manager.executeInternal(
         "SELECT price, quantity FROM \(tableName) WHERE id = 1"
       )
 

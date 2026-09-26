@@ -2,18 +2,24 @@
 //  ProtectionLevelDialog.swift
 //  SQLNotebook
 //
-//  Reusable confirmation dialog for changing connection protection level
+//  Reusable confirmation dialog for changing connection protection level. Lowering the level
+//  while the effective Safe Mode requires a password needs the Safe Mode unlock first
+//  (`NotebookViewModel.requestProtectionLevelChange`); nothing changes until it succeeds.
 //
 
 import SwiftUI
 
-/// View modifier that adds a protection level change dialog
+/// View modifier that adds a protection level change dialog and the unlock sheet it may need
 struct ProtectionLevelDialogModifier: ViewModifier {
   @Binding var isPresented: Bool
-  var currentLevel: ConnectionProtectionLevel
-  var onDisableProtection: () async -> Void
-  var onEnableSchemaProtection: () async -> Void
-  var onEnableReadOnly: () async -> Void
+  let viewModel: NotebookViewModel
+
+  /// Level held until the Safe Mode unlock succeeds (sheet shown while non-nil)
+  @State private var pendingLevel: ConnectionProtectionLevel?
+
+  private var currentLevel: ConnectionProtectionLevel {
+    viewModel.notebook.connectionConfig?.protectionLevel ?? .none
+  }
 
   func body(content: Content) -> some View {
     content
@@ -23,71 +29,187 @@ struct ProtectionLevelDialogModifier: ViewModifier {
         titleVisibility: .visible
       ) {
         Button("Disable Protection", role: .destructive) {
-          Task {
-            await onDisableProtection()
-          }
+          request(.none)
         }
         if currentLevel == .readOnly {
           Button("Schema Protection Only") {
-            Task {
-              await onEnableSchemaProtection()
-            }
+            request(.schemaOnly)
           }
         }
         if currentLevel == .schemaOnly {
           Button("Enable Read-Only Mode") {
-            Task {
-              await onEnableReadOnly()
-            }
+            request(.readOnly)
           }
         }
         Button("Cancel", role: .cancel) {}
       } message: {
         Text("Choose a new protection level for this connection.")
       }
+      .sheet(
+        isPresented: Binding(
+          get: { pendingLevel != nil },
+          set: { if !$0 { pendingLevel = nil } }
+        )
+      ) {
+        SafeModeUnlockSheet(
+          message:
+            "Safe Mode requires verification to lower this connection's protection to \"\(pendingLevel?.displayName ?? "")\".",
+          biometricReason: "Lower the connection protection level",
+          storedDatabasePassword: viewModel.notebook.connectionConfig?.password,
+          onUnlock: completeUnlock,
+          onCancel: { pendingLevel = nil })
+      }
+  }
+
+  /// Apply now, or hold the level and ask for the Safe Mode unlock
+  private func request(_ level: ConnectionProtectionLevel) {
+    guard !viewModel.requestProtectionLevelChange(to: level) else { return }
+    pendingLevel = level
+  }
+
+  private func completeUnlock() {
+    // The sheet may have been cancelled while the Touch ID prompt was up
+    guard let level = pendingLevel else { return }
+    viewModel.applyProtectionLevel(level)
+    pendingLevel = nil
+  }
+}
+
+/// Safe Mode unlock sheet: Touch ID (when enabled), the Safe Mode password, or the database
+/// password via `acceptsDatabasePasswordFallback` only while no Safe Mode password exists.
+/// `storedDatabasePassword` must be the password of the connection being protected (never a
+/// password the user just typed into a form). `onUnlock` runs once on success.
+struct SafeModeUnlockSheet: View {
+  let message: String
+  let biometricReason: String
+  let storedDatabasePassword: String?
+  let onUnlock: () -> Void
+  let onCancel: () -> Void
+
+  @State private var password: String = ""
+  @State private var useDatabasePassword: Bool = false
+  @State private var errorMessage: String?
+  @State private var isAuthenticating: Bool = false
+
+  private var showsTouchID: Bool {
+    AppSettings.shared.isBiometricEnabled && AppSettings.shared.canUseTouchID
+  }
+
+  /// The database password is offered only while no Safe Mode password exists
+  private var offersDatabasePassword: Bool {
+    NotebookViewModel.showsDatabasePasswordFallback(
+      hasSafeModePassword: AppSettings.shared.hasCustomPasswordSet)
+  }
+
+  var body: some View {
+    VStack(spacing: Spacing.lg) {
+      Image(systemName: "lock.shield.fill")
+        .font(.system(size: 48))
+        .foregroundColor(.accent)
+
+      VStack(spacing: Spacing.xs) {
+        Text("Authentication Required")
+          .font(.heading)
+          .foregroundColor(.foreground)
+        Text(message)
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+          .multilineTextAlignment(.center)
+      }
+
+      if showsTouchID && !useDatabasePassword {
+        Button("Use Touch ID") {
+          authenticateWithBiometric()
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(isAuthenticating)
+      }
+
+      VStack(spacing: Spacing.sm) {
+        SecureField(
+          useDatabasePassword ? "Database Password" : "Safe Mode Password", text: $password
+        )
+        .textFieldStyle(.plain)
+        .inputStyle()
+        .onSubmit { verifyPassword() }
+
+        if offersDatabasePassword {
+          Button(useDatabasePassword ? "Use Safe Mode password" : "Use database password") {
+            useDatabasePassword.toggle()
+            password = ""
+            errorMessage = nil
+          }
+          .font(.small)
+          .foregroundColor(.accent)
+          .buttonStyle(.plain)
+        }
+      }
+
+      if let errorMessage {
+        Text(errorMessage)
+          .font(.small)
+          .foregroundColor(.destructive)
+      }
+
+      HStack(spacing: Spacing.md) {
+        Button("Cancel") {
+          onCancel()
+        }
+        .buttonStyle(SecondaryButtonStyle())
+
+        Button("Verify") {
+          verifyPassword()
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(password.isEmpty || isAuthenticating)
+      }
+    }
+    .padding(Spacing.xl)
+    .frame(width: 350)
+    .background(Color.appBackground)
+  }
+
+  /// Safe Mode password, or the database password via `acceptsDatabasePasswordFallback` only
+  /// when no Safe Mode password exists
+  private func verifyPassword() {
+    let hasSafeModePassword = AppSettings.shared.hasCustomPasswordSet
+    let usingDatabasePassword = useDatabasePassword && !hasSafeModePassword
+    let accepted = NotebookViewModel.settingsAcceptsCredential(
+      entry: password, usingDatabasePassword: usingDatabasePassword,
+      storedDatabasePassword: storedDatabasePassword,
+      hasSafeModePassword: hasSafeModePassword,
+      verifySafeModePassword: { AppSettings.shared.verifySafeModePassword($0) })
+    guard accepted else {
+      errorMessage = usingDatabasePassword ? "Invalid database password" : "Invalid password"
+      return
+    }
+    password = ""
+    onUnlock()
+  }
+
+  private func authenticateWithBiometric() {
+    guard !isAuthenticating else { return }
+    isAuthenticating = true
+    errorMessage = nil
+    Task { @MainActor in
+      let success = await SafeModeAuthenticator.shared.authenticate(reason: biometricReason)
+      isAuthenticating = false
+      guard success else {
+        errorMessage = "Touch ID did not unlock. Enter your password instead."
+        return
+      }
+      onUnlock()
+    }
   }
 }
 
 extension View {
-  /// Adds a confirmation dialog for changing connection protection level
-  func protectionLevelDialog(
-    isPresented: Binding<Bool>,
-    currentLevel: ConnectionProtectionLevel,
-    onDisableProtection: @escaping () async -> Void,
-    onEnableSchemaProtection: @escaping () async -> Void,
-    onEnableReadOnly: @escaping () async -> Void
-  ) -> some View {
-    modifier(
-      ProtectionLevelDialogModifier(
-        isPresented: isPresented,
-        currentLevel: currentLevel,
-        onDisableProtection: onDisableProtection,
-        onEnableSchemaProtection: onEnableSchemaProtection,
-        onEnableReadOnly: onEnableReadOnly
-      )
-    )
-  }
-
-  /// Convenience version that uses NotebookViewModel methods directly
+  /// Adds the protection level dialog for `viewModel`'s connection. Lowering the level goes
+  /// through the Safe Mode unlock when the effective Safe Mode requires a password.
   func protectionLevelDialog(
     isPresented: Binding<Bool>,
     viewModel: NotebookViewModel
   ) -> some View {
-    protectionLevelDialog(
-      isPresented: isPresented,
-      currentLevel: viewModel.notebook.connectionConfig?.protectionLevel ?? .none,
-      onDisableProtection: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .none
-        viewModel.onDocumentChanged?()
-      },
-      onEnableSchemaProtection: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
-        viewModel.onDocumentChanged?()
-      },
-      onEnableReadOnly: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
-        viewModel.onDocumentChanged?()
-      }
-    )
+    modifier(ProtectionLevelDialogModifier(isPresented: isPresented, viewModel: viewModel))
   }
 }

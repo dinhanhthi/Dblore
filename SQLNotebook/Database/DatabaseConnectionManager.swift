@@ -51,6 +51,9 @@ actor DatabaseConnectionManager {
   private var connection: PostgresConnection?
   private var eventLoopGroup: EventLoopGroup?
   private var config: ConnectionConfig?
+  /// Identity of the current connection: advanced on every disconnect and successful connect,
+  /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
+  private(set) var connectionEpoch: UInt64 = 0
 
   /// Default maximum number of rows to fetch from database to prevent memory issues
   /// This is overridden by the notebook's maxRowLimit setting
@@ -119,11 +122,9 @@ actor DatabaseConnectionManager {
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
-    // Disconnect if already connected
+    // Disconnect if already connected. Nothing of the new connection (connection, config,
+    // epoch) is published until its session brakes are applied.
     await disconnect()
-
-    // Store config
-    self.config = config
 
     // Create event loop group
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -150,14 +151,10 @@ actor DatabaseConnectionManager {
     )
 
     // Establish connection with retry logic
+    let conn: PostgresConnection
     do {
-      let conn = try await attemptConnection(
+      conn = try await attemptConnection(
         group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
-      connection = conn
-
-      // Log successful connection
-      await AppLogger.shared.info(
-        "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
     } catch let error as PSQLError {
       // Log connection failure
       await AppLogger.shared.error(
@@ -172,6 +169,48 @@ actor DatabaseConnectionManager {
       try? await group.shutdownGracefully()
       eventLoopGroup = nil
       throw DatabaseError.connectionFailed(error.localizedDescription)
+    }
+
+    // Session brakes are mandatory and applied on the local connection before it is published,
+    // so no user statement (actor reentrancy) can run before the timeouts are set. On failure
+    // the connection is closed and nothing was published.
+    do {
+      try await applySessionBrakes(on: conn, config: config)
+    } catch {
+      await AppLogger.shared.error(
+        "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
+      try? await conn.close()
+      try? await group.shutdownGracefully()
+      eventLoopGroup = nil
+      throw error
+    }
+    connection = conn
+    self.config = config
+    connectionEpoch &+= 1
+
+    await AppLogger.shared.info(
+      "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
+  }
+
+  /// Apply the session brakes (`brakeStatements`) on a connection that is not published yet.
+  /// - Throws: `DatabaseError.connectionFailed` if any statement fails.
+  private func applySessionBrakes(
+    on conn: PostgresConnection, config: ConnectionConfig
+  )
+    async throws
+  {
+    for sql in Self.brakeStatements(for: config) {
+      do {
+        _ = try await conn.query(
+          PostgresQuery(unsafeSQL: sql), logger: Logger(label: "sqlnotebook.session")
+        ).get()
+      } catch let error as PSQLError {
+        throw DatabaseError.connectionFailed(
+          "Could not apply session safety settings (\(sql)): \(formatPostgresError(error))")
+      } catch {
+        throw DatabaseError.connectionFailed(
+          "Could not apply session safety settings (\(sql)): \(error.localizedDescription)")
+      }
     }
   }
 
@@ -235,6 +274,9 @@ actor DatabaseConnectionManager {
 
   /// Disconnect from database
   func disconnect() async {
+    // Before any suspension point: no edit can use the closing connection's targets
+    connectionEpoch &+= 1
+
     // Log disconnection if we were connected
     if connection != nil {
       await AppLogger.shared.info("Disconnecting from database", category: "Database")
@@ -256,6 +298,23 @@ actor DatabaseConnectionManager {
   /// Check if currently connected
   var isConnected: Bool {
     connection != nil
+  }
+
+  // MARK: - Connected Protection
+
+  /// Protection of the config this actor connected with (`.none` when not connected).
+  /// The execution gate enforces the stricter of this and the caller's policy.
+  var connectedPolicy: ProtectionPolicy {
+    ProtectionPolicy(config: config)
+  }
+
+  /// Apply a runtime change of the connection's protection settings (protection level,
+  /// Safe Mode, protected mode) to the connected config. No-op when not connected.
+  func updateConnectedProtection(from newConfig: ConnectionConfig) {
+    guard config != nil else { return }
+    config?.protectionLevel = newConfig.protectionLevel
+    config?.safeMode = newConfig.safeMode
+    config?.protectedMode = newConfig.protectedMode
   }
 
   // MARK: - Internal Access

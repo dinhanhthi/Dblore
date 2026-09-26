@@ -80,6 +80,7 @@ extension NotebookViewModel {
       "Executing query from cell \(task.cellId): `\(sanitizedQuery)`", category: "Execution")
 
     var result: CellResult?
+    let policy = protectionPolicy
 
     do {
       // Check if this is a multi-statement query
@@ -87,8 +88,8 @@ extension NotebookViewModel {
         // Execute all statements with timeout (10.1.5 optimization)
         let detailed = try await Task.withTimeout(seconds: 60) {
           try await connectionManager
-            .executeMultipleStatementsDetailed(
-              task.query, maxRows: AppSettings.shared.maxRowLimit)
+            .executeDetailed(
+              userSQL: task.query, policy: policy, maxRows: AppSettings.shared.maxRowLimit)
         }
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
@@ -163,25 +164,23 @@ extension NotebookViewModel {
         }
       } else {
         // Single statement - use original logic
+        // Connection identity before the query: the edit target must resolve on the same one
+        let epoch = await connectionManager.connectionEpoch
         // Execute query with timeout (10.1.5 optimization)
         let queryResult = try await Task.withTimeout(seconds: 60) {
-          try await connectionManager.executeQuery(
-            task.query,
+          try await connectionManager.execute(
+            userSQL: task.query,
+            policy: policy,
             maxRows: AppSettings.shared.maxRowLimit
           )
         }
 
         executionCounter += 1
 
-        // Extract table name from query (simple SELECT parsing)
-        let tableName = extractTableName(from: task.query)
-
-        // Fetch primary key columns if we have a table name
-        var primaryKeyColumns: [String] = []
-        if let tableName = tableName {
-          primaryKeyColumns =
-            (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-        }
+        // Session-only, server-validated inline edit target (nil = not editable)
+        let target = await editTarget(
+          for: task.query, result: queryResult, connectionManager: connectionManager,
+          epoch: epoch)
 
         // Convert QueryResult to CellResult
         result = CellResult(
@@ -192,16 +191,18 @@ extension NotebookViewModel {
           timestamp: Date(),
           wasLimited: queryResult.wasLimited,
           sourceQuery: task.query,
-          tableName: tableName,
-          primaryKeyColumns: primaryKeyColumns,
+          tableName: target?.qualifiedName,
+          primaryKeyColumns: target?.primaryKeyColumns ?? [],
           rowIdentifiers: queryResult.rowIdentifiers,
           userLimitExceeded: queryResult.userLimitExceeded,
           userRequestedLimit: queryResult.userRequestedLimit,
           affectedRows: queryResult.affectedRows,
           limitWasCapped: queryResult.limitWasCapped,
-          actualLimitUsed: queryResult.actualLimitUsed
+          actualLimitUsed: queryResult.actualLimitUsed,
+          editTarget: target
         )
 
+        carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
         // Clear multi-statement data for single statement
@@ -295,97 +296,6 @@ extension NotebookViewModel {
     updateExecutedQuerySidebarIfNeeded(cellId: task.cellId, result: result)
 
     return result
-  }
-
-  /// Run all SQL cells sequentially by adding them to the queue
-  /// Checks for destructive queries and asks for confirmation if bypass setting is disabled
-  func runAllCells() async {
-    // Force blur to ensure text content is saved
-    NotificationCenter.default.post(name: .unfocusEditor, object: nil)
-    try? await Task.sleep(for: .milliseconds(50))
-
-    // Check connection protection level
-    let protectionLevel = notebook.connectionConfig?.protectionLevel ?? .none
-    let isReadOnly = protectionLevel == .readOnly
-
-    // Collect all SQL cells with their destructive status
-    var pendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
-    var destructiveCount = 0
-
-    for cell in notebook.cells where cell.cellType == .sql {
-      if !executionQueue.isInQueue(cellId: cell.id) {
-        let isDestructive = isModificationQuery(cell.content)
-        pendingCells.append((id: cell.id, query: cell.content, isDestructive: isDestructive))
-        if isDestructive {
-          destructiveCount += 1
-        }
-      }
-    }
-
-    // If no cells to run, return early
-    guard !pendingCells.isEmpty else { return }
-
-    // Check if we need to show confirmation for destructive queries
-    // Only show if: there are destructive queries AND bypass is disabled AND not read-only
-    if destructiveCount > 0 && !AppSettings.shared.bypassDestructiveQueryConfirmation && !isReadOnly
-    {
-      // Store pending cells and show confirmation dialog
-      queryConfirmationState.runAllPendingCells = pendingCells
-      queryConfirmationState.runAllDestructiveCount = destructiveCount
-      queryConfirmationState.showRunAllConfirmation = true
-      return
-    }
-
-    // Execute all cells (skip destructive queries if read-only)
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: isReadOnly)
-  }
-
-  /// Execute Run All Cells after user confirmation (allows destructive queries)
-  func executeRunAllCellsWithDestructive() async {
-    let pendingCells = queryConfirmationState.runAllPendingCells
-    queryConfirmationState.clearRunAll()
-
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: false)
-  }
-
-  /// Execute Run All Cells skipping destructive queries
-  func executeRunAllCellsSkipDestructive() async {
-    let pendingCells = queryConfirmationState.runAllPendingCells
-    let destructiveCount = queryConfirmationState.runAllDestructiveCount
-    queryConfirmationState.clearRunAll()
-
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: true)
-
-    // Show toast about skipped queries
-    if destructiveCount > 0 {
-      let queryWord = destructiveCount == 1 ? "query" : "queries"
-      showToast(
-        "\(destructiveCount) destructive \(queryWord) skipped",
-        type: .warning
-      )
-    }
-  }
-
-  /// Cancel Run All Cells operation
-  func cancelRunAllCells() {
-    queryConfirmationState.clearRunAll()
-  }
-
-  /// Internal helper to execute Run All Cells
-  private func executeRunAllCells(
-    pendingCells: [(id: UUID, query: String, isDestructive: Bool)],
-    skipDestructive: Bool
-  ) async {
-    // Reset execution counter to start counting from 1 again
-    executionCounter = 0
-
-    // Enqueue cells, optionally skipping destructive ones
-    for cell in pendingCells {
-      if skipDestructive && cell.isDestructive {
-        continue
-      }
-      executionQueue.enqueue(cellId: cell.id, query: cell.query)
-    }
   }
 
   /// Clear output from a specific cell
@@ -513,71 +423,6 @@ extension NotebookViewModel {
   }
 
   // MARK: - Helper Methods
-
-  /// Extract table name from a SQL query (simple SELECT parsing)
-  /// Works for SELECT queries with WHERE, ORDER BY, LIMIT, GROUP BY, HAVING, etc.
-  /// Returns nil for JOINs, subqueries, or other complex queries
-  func extractTableName(from query: String) -> String? {
-    // Normalize query: trim whitespace and convert to lowercase for parsing
-    let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-    // Check if it's a SELECT query
-    guard normalized.hasPrefix("select") else {
-      return nil
-    }
-
-    // Find "FROM" keyword using word boundary pattern
-    // Use regex to find FROM as a separate word (not part of another word)
-    guard let fromRange = normalized.range(of: "\\bfrom\\b", options: .regularExpression) else {
-      return nil
-    }
-
-    // Get everything after "FROM"
-    let afterFrom = String(normalized[fromRange.upperBound...])
-      .trimmingCharacters(in: .whitespaces)
-
-    // Define SQL keywords that indicate end of table name
-    let endKeywords = [
-      "where", "order", "group", "having", "limit", "offset",
-      "union", "intersect", "except", "window", "for",
-    ]
-
-    // Find the position of the first keyword or separator
-    var endPosition = afterFrom.endIndex
-
-    // Check for SQL keywords (word boundaries)
-    for keyword in endKeywords {
-      if let keywordRange = afterFrom.range(of: "\\b\(keyword)\\b", options: .regularExpression) {
-        if keywordRange.lowerBound < endPosition {
-          endPosition = keywordRange.lowerBound
-        }
-      }
-    }
-
-    // Also check for other separators (comma for multi-table, semicolon, parenthesis for subquery)
-    let separators = CharacterSet(charactersIn: ",;()")
-    if let separatorRange = afterFrom.rangeOfCharacter(from: separators) {
-      if separatorRange.lowerBound < endPosition {
-        endPosition = separatorRange.lowerBound
-      }
-    }
-
-    // Extract table name (everything from start to endPosition)
-    let tableName = String(afterFrom[..<endPosition])
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Return nil if empty or if it contains JOIN keyword (multi-table query)
-    if tableName.isEmpty || tableName.contains("join") {
-      return nil
-    }
-
-    // Handle quoted identifiers (strip quotes)
-    let cleanedTableName =
-      tableName
-      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
-
-    return cleanedTableName.isEmpty ? nil : cleanedTableName
-  }
 
   // MARK: - Sidebar Update
 

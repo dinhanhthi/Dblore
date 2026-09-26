@@ -68,14 +68,10 @@ extension EditorModeView {
       return .foregroundSubtle
     }
 
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-
-    if trimmed.hasPrefix("DELETE") {
-      return .red
-    } else if trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE") {
-      return .green
-    } else {
-      return .foregroundSubtle
+    switch SQLTokenizer.tokens(query).first?.keyword {
+    case "DELETE": return .red
+    case "INSERT", "UPDATE": return .green
+    default: return .foregroundSubtle
     }
   }
 

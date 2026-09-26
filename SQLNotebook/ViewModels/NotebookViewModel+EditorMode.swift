@@ -92,53 +92,14 @@ extension NotebookViewModel {
       return
     }
 
-    // Check connection protection level
-    if let config = notebook.connectionConfig {
-      switch config.protectionLevel {
-      case .readOnly:
-        if isModificationQuery(query) {
-          showToast("Cannot execute this query in read-only mode", type: .error)
-          return
-        }
-      case .schemaOnly:
-        if isSchemaChangeQuery(query) {
-          showToast("Schema changes are blocked for this connection", type: .error)
-          return
-        }
-      case .none:
-        break
-      }
-    }
-
-    // Use per-connection SafeMode if set, otherwise fall back to global setting
-    let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
-    let isModification = isModificationQuery(query)
-
-    // Determine if confirmation is needed based on Safe Mode level
-    let needsConfirmation: Bool
-    switch safeMode {
-    case .silent:
-      // No confirmation needed for any query
-      needsConfirmation = false
-    case .alertRead, .safeRead:
-      // Only confirm modification queries
-      needsConfirmation = isModification
-    case .alertAll, .safeAll:
-      // Confirm all queries
-      needsConfirmation = true
-    }
-
-    if needsConfirmation {
-      // Show confirmation dialog
-      queryConfirmationState.pendingQuery = query
-      queryConfirmationState.pendingCellId = nil  // No cell ID in editor mode
-      // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
-      queryConfirmationState.affectsAllRows =
-        isModification && (connectionManager?.affectsAllRows(query) ?? false)
-      queryConfirmationState.requiresPassword = safeMode.requiresPassword
-      queryConfirmationState.showDialog = true
+    // Protection level is enforced by the database gate; fail fast with its message
+    if let message = protectionBlockMessage(for: query) {
+      showToast(message, type: .error)
       return
     }
+
+    // Safe Mode: confirm based on every statement (see statementsNeedingConfirmation)
+    if presentConfirmationIfNeeded(for: query, cellId: nil) { return }
 
     await executeEditorQuery(query)
   }
@@ -162,10 +123,14 @@ extension NotebookViewModel {
     do {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(query) {
+        // Connection identity before the query: edit targets must resolve on the same one
+        let epoch = await connectionManager.connectionEpoch
         // Execute all statements and get detailed results
         let (statementResults, totalTime) =
           try await connectionManager
-          .executeMultipleStatementsDetailed(query, maxRows: AppSettings.shared.editorMaxRowLimit)
+          .executeDetailed(
+            userSQL: query, policy: protectionPolicy,
+            maxRows: AppSettings.shared.editorMaxRowLimit)
 
         totalExecutionTime = totalTime
 
@@ -175,13 +140,10 @@ extension NotebookViewModel {
         // Convert to StatementResult array with primary key columns
         var results: [StatementResult] = []
         for (index, tuple) in statementResults.enumerated() {
-          // Extract table name and fetch primary key columns
-          let tableName = extractTableName(from: tuple.queryText)
-          var primaryKeyColumns: [String] = []
-          if let tableName = tableName {
-            primaryKeyColumns =
-              (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-          }
+          // Session-only inline edit target (nil = not editable)
+          let target = await editTarget(
+            for: tuple.queryText, result: tuple.result, connectionManager: connectionManager,
+            epoch: epoch)
 
           results.append(
             StatementResult(
@@ -195,14 +157,15 @@ extension NotebookViewModel {
                 error: nil,
                 wasLimited: tuple.result.wasLimited,
                 sourceQuery: tuple.queryText,
-                tableName: tableName,
-                primaryKeyColumns: primaryKeyColumns,
+                tableName: target?.qualifiedName,
+                primaryKeyColumns: target?.primaryKeyColumns ?? [],
                 rowIdentifiers: tuple.result.rowIdentifiers,
                 userLimitExceeded: tuple.result.userLimitExceeded,
                 userRequestedLimit: tuple.result.userRequestedLimit,
                 affectedRows: tuple.result.affectedRows,
                 limitWasCapped: tuple.result.limitWasCapped,
-                actualLimitUsed: tuple.result.actualLimitUsed
+                actualLimitUsed: tuple.result.actualLimitUsed,
+                editTarget: target
               ),
               statementIndex: index
             ))
@@ -235,8 +198,9 @@ extension NotebookViewModel {
         let maxRows = AppSettings.shared.editorMaxRowLimit
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
-        let result = try await connectionManager.executeQuery(
-          query, maxRows: maxRows)
+        let epoch = await connectionManager.connectionEpoch
+        let result = try await connectionManager.execute(
+          userSQL: query, policy: protectionPolicy, maxRows: maxRows)
 
         let executionTime = Date().timeIntervalSince(startTime)
 
@@ -245,15 +209,9 @@ extension NotebookViewModel {
         selectedStatementIndex = 0
         totalExecutionTime = executionTime
 
-        // Extract table name from query (simple SELECT parsing)
-        let tableName = extractTableName(from: query)
-
-        // Fetch primary key columns if we have a table name
-        var primaryKeyColumns: [String] = []
-        if let tableName = tableName {
-          primaryKeyColumns =
-            (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-        }
+        // Session-only inline edit target (nil = not editable)
+        let target = await editTarget(
+          for: query, result: result, connectionManager: connectionManager, epoch: epoch)
 
         let cellResult = CellResult(
           columns: result.columns,
@@ -264,14 +222,15 @@ extension NotebookViewModel {
           error: nil,
           wasLimited: result.wasLimited,
           sourceQuery: query,
-          tableName: tableName,
-          primaryKeyColumns: primaryKeyColumns,
+          tableName: target?.qualifiedName,
+          primaryKeyColumns: target?.primaryKeyColumns ?? [],
           rowIdentifiers: result.rowIdentifiers,
           userLimitExceeded: result.userLimitExceeded,
           userRequestedLimit: result.userRequestedLimit,
           affectedRows: result.affectedRows,
           limitWasCapped: result.limitWasCapped,
-          actualLimitUsed: result.actualLimitUsed
+          actualLimitUsed: result.actualLimitUsed,
+          editTarget: target
         )
 
         await AppLogger.shared.debug(
@@ -358,10 +317,11 @@ extension NotebookViewModel {
     // Preserve primary key columns from previous result (they don't change between pages)
     let existingPrimaryKeyColumns = editorResult?.primaryKeyColumns ?? []
     let existingTableName = editorResult?.tableName
+    let existingEditTarget = editorResult?.editTarget
 
     do {
-      let result = try await connectionManager.executeQuery(
-        query, maxRows: AppSettings.shared.editorMaxRowLimit)
+      let result = try await connectionManager.execute(
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -389,7 +349,8 @@ extension NotebookViewModel {
         userRequestedLimit: paginationInfo.rowsPerPage,
         affectedRows: nil,
         limitWasCapped: false,
-        actualLimitUsed: paginationInfo.rowsPerPage
+        actualLimitUsed: paginationInfo.rowsPerPage,
+        editTarget: existingEditTarget
       )
 
       // Update the View Query sidebar if it's currently open for editor mode
@@ -424,10 +385,13 @@ extension NotebookViewModel {
     let existingPrimaryKeyColumns =
       existingIndex.map { editorStatementResults[$0].result.primaryKeyColumns } ?? []
     let existingTableName = existingIndex.flatMap { editorStatementResults[$0].result.tableName }
+    let existingEditTarget = existingIndex.flatMap {
+      editorStatementResults[$0].result.editTarget
+    }
 
     do {
-      let result = try await connectionManager.executeQuery(
-        query, maxRows: AppSettings.shared.editorMaxRowLimit)
+      let result = try await connectionManager.execute(
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.editorMaxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -456,7 +420,8 @@ extension NotebookViewModel {
           userRequestedLimit: paginationInfo.rowsPerPage,
           affectedRows: nil,
           limitWasCapped: false,
-          actualLimitUsed: paginationInfo.rowsPerPage
+          actualLimitUsed: paginationInfo.rowsPerPage,
+          editTarget: existingEditTarget
         )
 
         editorStatementResults[index] = StatementResult(
@@ -647,8 +612,9 @@ extension NotebookViewModel {
 
     do {
       // Count query only returns 1 row, but we still pass editorMaxRowLimit for consistency
-      let result = try await connectionManager.executeQuery(
-        countQuery, maxRows: AppSettings.shared.editorMaxRowLimit)
+      let result = try await connectionManager.execute(
+        userSQL: countQuery, policy: protectionPolicy,
+        maxRows: AppSettings.shared.editorMaxRowLimit)
 
       // Extract count from first row, first column
       guard let firstRow = result.rows.first,

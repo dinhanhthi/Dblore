@@ -3,9 +3,7 @@
 //  SQLNotebook
 //
 
-import CommonCrypto
 import Foundation
-import LocalAuthentication
 import SwiftUI
 
 /// Theme preference enum
@@ -220,8 +218,6 @@ class AppSettings {
     static let accentColor = "app.settings.accentColor"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
-    static let safeModePassword = "app.settings.safeModePassword"
-    static let safeModeBiometricEnabled = "app.settings.safeModeBiometricEnabled"
   }
 
   // MARK: - Settings Properties
@@ -294,7 +290,10 @@ class AppSettings {
     }
   }
 
-  /// Bypass confirmation dialog for destructive queries (UPDATE/DELETE/INSERT)
+  /// Bypass the Run All confirmation dialog for cells that may modify the database
+  /// (DML, DDL, DO/CALL/COPY and other utility or unrecognized statements).
+  /// Cells that change the session brakes (`SET statement_timeout`, `RESET ALL`, ...) or
+  /// role/privileges are ALWAYS confirmed, even when this is on.
   /// Default: false (show confirmation)
   var bypassDestructiveQueryConfirmation: Bool = false {
     didSet {
@@ -383,115 +382,51 @@ class AppSettings {
     }
   }
 
-  /// Password for Safe Mode (used in safeRead and safeAll levels)
-  /// Stored in UserDefaults as simple hash (not production-secure, but sufficient for local app)
-  /// Default: empty string (no password set)
-  var safeModePassword: String = "" {
-    didSet {
-      // Store hashed password (SHA256)
-      let hashedPassword = safeModePassword.isEmpty ? "" : hashPassword(safeModePassword)
-      UserDefaults.standard.set(hashedPassword, forKey: Keys.safeModePassword)
-    }
-  }
+  // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
-  /// Check if Safe Mode password is set (password or biometric)
-  var isSafeModePasswordSet: Bool {
-    let hasPassword =
-      !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
-    let hasBiometric = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
-    return hasPassword || hasBiometric
-  }
+  private var safeModeAuth: SafeModeAuthenticator { .shared }
 
-  /// Check if Safe Mode has a custom password set (not biometric)
-  var hasCustomPasswordSet: Bool {
-    !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
-  }
+  /// Safe Mode has an unlock configured (password or Touch ID)
+  var isSafeModePasswordSet: Bool { safeModeAuth.isProtected }
 
-  /// Verify Safe Mode password
-  /// Returns true if password matches stored hash
+  /// Safe Mode has a password (Touch ID may also be on)
+  var hasCustomPasswordSet: Bool { safeModeAuth.hasPassword }
+
+  /// Touch ID is enabled for Safe Mode (the password stays the fallback)
+  var isBiometricEnabled: Bool { safeModeAuth.isBiometricEnabled }
+
+  /// Touch ID is enrolled and usable right now (never prompts)
+  var canUseTouchID: Bool { safeModeAuth.canUseBiometrics }
+
+  /// True if `password` is the Safe Mode password (false when none is set)
   func verifySafeModePassword(_ password: String) -> Bool {
-    let storedHash = UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? ""
-    if storedHash.isEmpty {
-      return true  // No password set, allow access
-    }
-    return hashPassword(password) == storedHash
+    safeModeAuth.verify(password: password)
   }
 
-  /// Hash password using SHA256
-  private func hashPassword(_ password: String) -> String {
-    guard let data = password.data(using: .utf8) else { return "" }
-    let hash = data.withUnsafeBytes { bytes -> [UInt8] in
-      var hash = [UInt8](repeating: 0, count: 32)
-      CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
-      return hash
-    }
-    return hash.map { String(format: "%02x", $0) }.joined()
+  /// Sets the Safe Mode password and switches the unlock to password (Touch ID off).
+  /// False (nothing changed) if the password could not be stored.
+  @discardableResult
+  func setSafeModePassword(_ password: String) -> Bool {
+    guard safeModeAuth.setPassword(password) else { return false }
+    safeModeAuth.disableBiometrics()
+    return true
   }
 
-  // MARK: - Biometric Authentication
-
-  /// Observable property for biometric enabled state
-  /// This property triggers SwiftUI refresh when biometric state changes
-  private(set) var biometricEnabledState: Bool = false
-
-  /// Check if biometric authentication is enabled for Safe Mode
-  var isBiometricEnabled: Bool {
-    biometricEnabledState
-  }
-
-  /// Check if Safe Mode has any protection (password or biometric)
-  var isSafeModeProtected: Bool {
-    isSafeModePasswordSet || isBiometricEnabled
-  }
-
-  /// Enable biometric/system authentication for Safe Mode
-  /// Uses deviceOwnerAuthentication which supports Touch ID, Face ID, or macOS password
+  /// Turns Touch ID on after a successful prompt; the password is kept as fallback
   func enableBiometricAuth() async throws {
-    let context = LAContext()
-    var error: NSError?
-
-    // Check if device owner authentication is available (Touch ID, Face ID, or password)
-    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-      throw error
-        ?? NSError(
-          domain: "SafeMode", code: -1,
-          userInfo: [
-            NSLocalizedDescriptionKey:
-              "System authentication is not available. Please set up Touch ID or a system password."
-          ])
-    }
-
-    // Authenticate using Touch ID, Face ID, or macOS password
-    let success = try await context.evaluatePolicy(
-      .deviceOwnerAuthentication,
-      localizedReason: "Enable system authentication for Safe Mode query authorization")
-
-    if success {
-      await MainActor.run {
-        // Clear any existing password and enable biometric/system auth
-        UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
-        UserDefaults.standard.set(true, forKey: Keys.safeModeBiometricEnabled)
-        // Update observable property to trigger UI refresh
-        biometricEnabledState = true
-      }
+    guard
+      await safeModeAuth.enableBiometrics(
+        reason: "Enable Touch ID for Safe Mode query authorization")
+    else {
+      throw NSError(
+        domain: "SafeMode", code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "Touch ID is not available or was not confirmed."])
     }
   }
 
-  /// Verify using biometric authentication
+  /// Touch ID prompt; false means "use the password"
   func verifyBiometric() async throws -> Bool {
-    let context = LAContext()
-
-    // Use biometrics or device passcode as fallback
-    return try await context.evaluatePolicy(
-      .deviceOwnerAuthentication,
-      localizedReason: "Authorize query execution in Safe Mode")
-  }
-
-  /// Disable biometric authentication
-  func disableBiometricAuth() {
-    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
-    // Update observable property to trigger UI refresh
-    biometricEnabledState = false
+    await safeModeAuth.authenticate(reason: "Authorize query execution in Safe Mode")
   }
 
   // MARK: - Thread-safe accessors for non-MainActor contexts
@@ -604,11 +539,7 @@ class AppSettings {
     {
       safeMode = mode
     }
-    // Note: safeModePassword is not loaded directly - it's stored as hash
-    // and only verified via verifySafeModePassword()
-
-    // Load biometric enabled state
-    biometricEnabledState = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
+    // The Safe Mode password lives in SafeModeAuthenticator (Keychain), never in UserDefaults
   }
 
   // MARK: - Reset to Defaults
@@ -632,14 +563,13 @@ class AppSettings {
     accentColor = .purple
     hideColumnTypes = false
     safeMode = .alertRead
-    // Note: Don't reset safeModePassword on general reset for security
+    // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
+    // goes through the shared authenticator's store (in-memory under XCTest)
+    clearSafeModePassword()
   }
 
-  /// Clear Safe Mode password and biometric (separate from general reset)
+  /// Clear the Safe Mode password (Keychain and legacy UserDefaults hash) and Touch ID
   func clearSafeModePassword() {
-    UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
-    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
-    // Update observable property to trigger UI refresh
-    biometricEnabledState = false
+    safeModeAuth.removePassword()
   }
 }

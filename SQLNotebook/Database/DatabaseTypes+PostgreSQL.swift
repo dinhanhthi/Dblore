@@ -302,32 +302,4 @@ extension DatabaseConnectionManager {
     }.joined(separator: ", ")
     return .string("[\(formattedValues)]")
   }
-
-  /// Convert CellValue to SQL literal string
-  func cellValueToSQL(_ value: CellValue) -> String {
-    switch value {
-    case .null:
-      return "NULL"
-    case .int(let i):
-      return String(i)
-    case .double(let d):
-      return String(d)
-    case .bool(let b):
-      return b ? "TRUE" : "FALSE"
-    case .string(let s):
-      // Escape single quotes by doubling them
-      let escaped = s.replacingOccurrences(of: "'", with: "''")
-      return "'\(escaped)'"
-    case .json(let j):
-      let escaped = j.replacingOccurrences(of: "'", with: "''")
-      return "'\(escaped)'::jsonb"
-    case .date(let d):
-      let iso = ISO8601DateFormatter().string(from: d)
-      return "'\(iso)'::timestamp"
-    case .data(let data):
-      // Convert to hex format for bytea
-      let hex = data.map { String(format: "%02x", $0) }.joined()
-      return "'\\x\(hex)'::bytea"
-    }
-  }
 }

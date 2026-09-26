@@ -17,15 +17,12 @@ extension DatabaseConnectionManager {
   /// This is necessary because PostgresNIO 1.30.1 doesn't expose commandTag in public API
   func wrapModificationQueryForCount(_ query: String) -> String {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    let upperQuery = trimmed.uppercased()
 
     // Remove trailing semicolon if present
     let cleanQuery = trimmed.hasSuffix(";") ? String(trimmed.dropLast()) : trimmed
 
     // For UPDATE, DELETE, and INSERT, we can use RETURNING to get affected rows
-    if upperQuery.hasPrefix("UPDATE") || upperQuery.hasPrefix("DELETE")
-      || upperQuery.hasPrefix("INSERT")
-    {
+    if countsAffectedRows(trimmed) {
       // Wrap with CTE and count
       return """
         WITH affected AS (
@@ -35,7 +32,7 @@ extension DatabaseConnectionManager {
         """
     }
 
-    // Fallback (shouldn't happen if isModificationQuery is correct)
+    // Fallback (shouldn't happen if countsAffectedRows is correct)
     return cleanQuery
   }
 
@@ -254,7 +251,9 @@ extension DatabaseConnectionManager {
       // Update columns with enriched type info
       return columns.map { column in
         if let enrichedType = typeMap[column.name] {
-          return ColumnInfo(name: column.name, type: enrichedType)
+          return ColumnInfo(
+            name: column.name, type: enrichedType, tableOID: column.tableOID,
+            attributeNumber: column.attributeNumber)
         }
         return column
       }

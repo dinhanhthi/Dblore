@@ -245,59 +245,44 @@ struct ViewModelTests {
 
   @Test("isSchemaChangeQuery detects CREATE statements")
   func isSchemaChangeQueryDetectsCREATE() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.isSchemaChangeQuery("CREATE TABLE users (id INT)") == true)
-    #expect(viewModel.isSchemaChangeQuery("create table users (id int)") == true)
-    #expect(viewModel.isSchemaChangeQuery("  CREATE INDEX idx ON users(id)") == true)
-    #expect(viewModel.isSchemaChangeQuery("CREATE VIEW v AS SELECT 1") == true)
+    #expect(isSchemaChangeQuery("CREATE TABLE users (id INT)") == true)
+    #expect(isSchemaChangeQuery("create table users (id int)") == true)
+    #expect(isSchemaChangeQuery("  CREATE INDEX idx ON users(id)") == true)
+    #expect(isSchemaChangeQuery("CREATE VIEW v AS SELECT 1") == true)
   }
 
   @Test("isSchemaChangeQuery detects DROP statements")
   func isSchemaChangeQueryDetectsDROP() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.isSchemaChangeQuery("DROP TABLE users") == true)
-    #expect(viewModel.isSchemaChangeQuery("drop table users cascade") == true)
-    #expect(viewModel.isSchemaChangeQuery("  DROP INDEX idx") == true)
-    #expect(viewModel.isSchemaChangeQuery("DROP VIEW v") == true)
+    #expect(isSchemaChangeQuery("DROP TABLE users") == true)
+    #expect(isSchemaChangeQuery("drop table users cascade") == true)
+    #expect(isSchemaChangeQuery("  DROP INDEX idx") == true)
+    #expect(isSchemaChangeQuery("DROP VIEW v") == true)
   }
 
   @Test("isSchemaChangeQuery detects ALTER statements")
   func isSchemaChangeQueryDetectsALTER() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.isSchemaChangeQuery("ALTER TABLE users ADD COLUMN name VARCHAR") == true)
-    #expect(viewModel.isSchemaChangeQuery("alter table users drop column name") == true)
-    #expect(viewModel.isSchemaChangeQuery("  ALTER INDEX idx RENAME TO idx2") == true)
+    #expect(isSchemaChangeQuery("ALTER TABLE users ADD COLUMN name VARCHAR") == true)
+    #expect(isSchemaChangeQuery("alter table users drop column name") == true)
+    #expect(isSchemaChangeQuery("  ALTER INDEX idx RENAME TO idx2") == true)
   }
 
   @Test("isSchemaChangeQuery detects TRUNCATE statements")
   func isSchemaChangeQueryDetectsTRUNCATE() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.isSchemaChangeQuery("TRUNCATE TABLE users") == true)
-    #expect(viewModel.isSchemaChangeQuery("truncate users") == true)
-    #expect(viewModel.isSchemaChangeQuery("  TRUNCATE users CASCADE") == true)
+    #expect(isSchemaChangeQuery("TRUNCATE TABLE users") == true)
+    #expect(isSchemaChangeQuery("truncate users") == true)
+    #expect(isSchemaChangeQuery("  TRUNCATE users CASCADE") == true)
   }
 
   @Test("isSchemaChangeQuery allows SELECT and data modification queries")
   func isSchemaChangeQueryAllowsDataQueries() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
     // SELECT is allowed
-    #expect(viewModel.isSchemaChangeQuery("SELECT * FROM users") == false)
-    #expect(viewModel.isSchemaChangeQuery("select 1") == false)
+    #expect(isSchemaChangeQuery("SELECT * FROM users") == false)
+    #expect(isSchemaChangeQuery("select 1") == false)
 
     // Data modification is allowed (not schema change)
-    #expect(viewModel.isSchemaChangeQuery("INSERT INTO users VALUES (1)") == false)
-    #expect(viewModel.isSchemaChangeQuery("UPDATE users SET name = 'test'") == false)
-    #expect(viewModel.isSchemaChangeQuery("DELETE FROM users WHERE id = 1") == false)
+    #expect(isSchemaChangeQuery("INSERT INTO users VALUES (1)") == false)
+    #expect(isSchemaChangeQuery("UPDATE users SET name = 'test'") == false)
+    #expect(isSchemaChangeQuery("DELETE FROM users WHERE id = 1") == false)
   }
 
   // MARK: - ConnectionProtectionLevel Property Tests
@@ -420,4 +405,9 @@ struct ViewModelTests {
     // Should default to none for old configs
     #expect(config.protectionLevel == .none)
   }
+}
+
+/// Classifier-based replacement for the removed prefix-based `NotebookViewModel.isSchemaChangeQuery`
+private func isSchemaChangeQuery(_ query: String) -> Bool {
+  SQLStatementClassifier.summary(SQLStatementClassifier.classify(query)).hasSchemaChange
 }

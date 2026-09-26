@@ -163,6 +163,15 @@ struct CellResult: Codable, Sendable {
   let limitWasCapped: Bool
   /// The actual LIMIT used in executed query (after capping)
   let actualLimitUsed: Int?
+  /// Validated inline-edit target of a live execution. Session-only: not coded, so a result
+  /// read from a file is read-only until the cell is run again.
+  var editTarget: EditTarget? = nil
+
+  private enum CodingKeys: String, CodingKey {
+    case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
+    case tableName, primaryKeyColumns, rowIdentifiers, userLimitExceeded, userRequestedLimit
+    case affectedRows, limitWasCapped, actualLimitUsed
+  }
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -180,7 +189,8 @@ struct CellResult: Codable, Sendable {
     userRequestedLimit: Int? = nil,
     affectedRows: Int? = nil,
     limitWasCapped: Bool = false,
-    actualLimitUsed: Int? = nil
+    actualLimitUsed: Int? = nil,
+    editTarget: EditTarget? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -198,6 +208,7 @@ struct CellResult: Codable, Sendable {
     self.affectedRows = affectedRows
     self.limitWasCapped = limitWasCapped
     self.actualLimitUsed = actualLimitUsed
+    self.editTarget = editTarget
   }
 
   /// Creates an error result
@@ -220,6 +231,20 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated var id: String { name }
   nonisolated let name: String
   nonisolated let type: String
+  /// Source table OID from the server's RowDescription (0 = not a plain table column,
+  /// nil = unknown). Used to decide whether inline edit may target the row.
+  nonisolated let tableOID: UInt32?
+  /// Source column attribute number from the RowDescription (0 = not a table column)
+  nonisolated let attributeNumber: Int16?
+
+  nonisolated init(
+    name: String, type: String, tableOID: UInt32? = nil, attributeNumber: Int16? = nil
+  ) {
+    self.name = name
+    self.type = type
+    self.tableOID = tableOID
+    self.attributeNumber = attributeNumber
+  }
 }
 
 /// A value in a result cell, supporting multiple SQL types

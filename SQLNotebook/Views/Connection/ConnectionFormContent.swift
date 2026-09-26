@@ -361,6 +361,9 @@ struct ConnectionFormContent: View {
         try await onConnectCallback(connectionConfig)
         isConnecting = false
         onConnectionSuccess?()
+      } catch WorkspaceConnectError.unlockRequired {
+        // Held for the Safe Mode unlock sheet; the form keeps its values
+        isConnecting = false
       } catch {
         isConnecting = false
         testResult = .failure(error.localizedDescription)

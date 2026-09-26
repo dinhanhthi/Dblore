@@ -97,8 +97,9 @@ extension NotebookViewModel {
     let startTime = Date()
 
     do {
-      let result = try await connectionManager.executeQuery(
-        query, maxRows: AppSettings.shared.maxRowLimit)
+      let epoch = await connectionManager.connectionEpoch
+      let result = try await connectionManager.execute(
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page
@@ -111,15 +112,9 @@ extension NotebookViewModel {
       // Sync pagination info to cell for persistence
       notebook.cells[index].paginationInfo = cellPaginationInfo[cellId]
 
-      // Extract table name from original query (not the paginated query)
-      let tableName = extractTableName(from: sourceQuery)
-
-      // Fetch primary key columns if we have a table name
-      var primaryKeyColumns: [String] = []
-      if let tableName = tableName {
-        primaryKeyColumns =
-          (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-      }
+      // Inline edit target, checked on the statement that produced these rows
+      let target = await editTarget(
+        for: query, result: result, connectionManager: connectionManager, epoch: epoch)
 
       // Update cell result - use paginated query as sourceQuery for View Query sidebar
       let cellResult = CellResult(
@@ -131,14 +126,15 @@ extension NotebookViewModel {
         error: nil,
         wasLimited: false,
         sourceQuery: query,  // Use paginated query (with LIMIT/OFFSET) for sidebar
-        tableName: tableName,
-        primaryKeyColumns: primaryKeyColumns,
+        tableName: target?.qualifiedName,
+        primaryKeyColumns: target?.primaryKeyColumns ?? [],
         rowIdentifiers: result.rowIdentifiers,
         userLimitExceeded: false,
         userRequestedLimit: paginationInfo.rowsPerPage,
         affectedRows: nil,
         limitWasCapped: false,
-        actualLimitUsed: paginationInfo.rowsPerPage
+        actualLimitUsed: paginationInfo.rowsPerPage,
+        editTarget: target
       )
 
       notebook.cells[index].result = cellResult
@@ -192,8 +188,8 @@ extension NotebookViewModel {
     let startTime = Date()
 
     do {
-      let result = try await connectionManager.executeQuery(
-        query, maxRows: AppSettings.shared.maxRowLimit)
+      let result = try await connectionManager.execute(
+        userSQL: query, policy: protectionPolicy, maxRows: AppSettings.shared.maxRowLimit)
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Update pagination info with new page

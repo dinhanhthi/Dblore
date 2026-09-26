@@ -56,6 +56,41 @@ struct FileSizeState: Equatable, Sendable {
 
 // MARK: - Query Confirmation State
 
+/// One statement of a cell that the Safe Mode confirmation dialog lists
+nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
+  let index: Int  // 0-based position in the cell (shown as index + 1)
+  let preview: String  // First line of the statement, truncated
+  let kindLabel: String
+  let affectsAllRows: Bool  // UPDATE/DELETE without WHERE
+  let touchesBrake: Bool  // Can change session brakes (timeouts, read-only)
+  let changesPrivileges: Bool  // SET ROLE / SESSION AUTHORIZATION / DISCARD ALL
+
+  var id: Int { index }
+
+  /// Badge texts explaining why the statement needs attention
+  var reasons: [String] {
+    var reasons: [String] = []
+    if affectsAllRows { reasons.append("No WHERE — affects all rows") }
+    if touchesBrake { reasons.append("Changes session safety settings") }
+    if changesPrivileges { reasons.append("Changes role/privileges") }
+    return reasons
+  }
+}
+
+/// One SQL cell queued by Run All, with the statements that need confirmation (empty if none)
+nonisolated struct RunAllCell: Equatable, Sendable {
+  let id: UUID
+  let number: Int  // 1-based position in the notebook
+  let query: String
+  let statements: [StatementConfirmation]
+
+  /// True if Run All's "Don't Allow" skips this cell
+  var needsConfirmation: Bool { !statements.isEmpty }
+
+  /// Changes session brakes or privileges: always confirmed, even with the destructive bypass
+  var isSafetyCritical: Bool { statements.contains { $0.touchesBrake || $0.changesPrivileges } }
+}
+
 /// Query confirmation dialog state (grouped for 10.3.2 optimization)
 struct QueryConfirmationState: Equatable, Sendable {
   var showDialog: Bool = false
@@ -63,11 +98,18 @@ struct QueryConfirmationState: Equatable, Sendable {
   var pendingQuery: String = ""
   var affectsAllRows: Bool = false  // True if DELETE/UPDATE without WHERE clause
   var requiresPassword: Bool = false  // True for Safe Mode levels 3-4
+  var statements: [StatementConfirmation] = []  // Statements that need confirmation
+  /// Inline grid edit waiting for this confirmation (nil when a cell/editor query is pending)
+  var pendingInlineEdit: PendingInlineEdit?
 
-  // Run All Cells destructive query confirmation
+  // Run All Cells confirmation (destructive or safety-critical cells)
   var showRunAllConfirmation: Bool = false
-  var runAllDestructiveCount: Int = 0
-  var runAllPendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
+  var runAllPendingCells: [RunAllCell] = []
+  /// Run All waits for the Safe Mode unlock (password sheet) under safeRead/safeAll
+  var runAllAwaitingUnlock: Bool = false
+
+  /// Cells the Run All dialog lists ("Don't Allow" skips them)
+  var runAllConfirmCells: [RunAllCell] { runAllPendingCells.filter(\.needsConfirmation) }
 
   mutating func clear() {
     showDialog = false
@@ -75,24 +117,29 @@ struct QueryConfirmationState: Equatable, Sendable {
     pendingQuery = ""
     affectsAllRows = false
     requiresPassword = false
+    statements = []
+    pendingInlineEdit = nil
+    runAllAwaitingUnlock = false
   }
 
   mutating func clearRunAll() {
     showRunAllConfirmation = false
-    runAllDestructiveCount = 0
     runAllPendingCells = []
   }
+}
 
-  // Custom Equatable implementation since tuples aren't Equatable
-  static func == (lhs: QueryConfirmationState, rhs: QueryConfirmationState) -> Bool {
-    lhs.showDialog == rhs.showDialog
-      && lhs.pendingCellId == rhs.pendingCellId
-      && lhs.pendingQuery == rhs.pendingQuery
-      && lhs.affectsAllRows == rhs.affectsAllRows
-      && lhs.requiresPassword == rhs.requiresPassword
-      && lhs.showRunAllConfirmation == rhs.showRunAllConfirmation
-      && lhs.runAllDestructiveCount == rhs.runAllDestructiveCount
-      && lhs.runAllPendingCells.count == rhs.runAllPendingCells.count
+/// An inline grid edit held until the Safe Mode confirmation is accepted
+struct PendingInlineEdit: Equatable, Sendable {
+  let statement: CellUpdateStatement
+  let columnName: String
+  let tableName: String
+  let cellId: UUID?
+  let connectionManager: DatabaseConnectionManager
+
+  static func == (lhs: PendingInlineEdit, rhs: PendingInlineEdit) -> Bool {
+    lhs.statement == rhs.statement && lhs.columnName == rhs.columnName
+      && lhs.tableName == rhs.tableName && lhs.cellId == rhs.cellId
+      && lhs.connectionManager === rhs.connectionManager
   }
 }
 

@@ -192,6 +192,212 @@ struct ViewModelSafeModeTests {
     AppSettings.shared.safeMode = previousSafeMode
   }
 
+  // MARK: - Classifier-driven confirmation (every statement of the cell)
+
+  /// Runs `confirmAndRunCell` on a single-cell notebook with the global SafeMode pinned.
+  private func confirm(_ sql: String, safeMode: SafeMode) -> NotebookViewModel {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let cellId = viewModel.notebook.cells[0].id
+    viewModel.notebook.cells[0].content = sql
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = safeMode
+    defer { AppSettings.shared.safeMode = previousSafeMode }
+    viewModel.confirmAndRunCell(id: cellId)
+    return viewModel
+  }
+
+  @Test("alertRead confirms a DELETE without WHERE after a SELECT and lists it")
+  func alertReadConfirmsLaterDelete() {
+    let state = confirm("SELECT 1; DELETE FROM t", safeMode: .alertRead).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.affectsAllRows)
+    #expect(state.statements.map(\.index) == [1])
+    #expect(state.statements.first?.affectsAllRows == true)
+    #expect(state.statements.first?.preview == "DELETE FROM t")
+  }
+
+  @Test("alertRead does not confirm a cell of reads only")
+  func alertReadSkipsReadsOnly() {
+    let state = confirm("SELECT 1; SELECT 2", safeMode: .alertRead).queryConfirmationState
+
+    #expect(!state.showDialog)
+    #expect(state.statements.isEmpty)
+  }
+
+  @Test("silent confirms a SET of a brake GUC")
+  func silentConfirmsBrakeSet() {
+    let state = confirm("SET statement_timeout = 0", safeMode: .silent).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.statements.count == 1)
+    #expect(state.statements.first?.touchesBrake == true)
+    #expect(state.statements.first?.reasons.contains("Changes session safety settings") == true)
+  }
+
+  @Test("silent confirms SET ROLE")
+  func silentConfirmsSetRole() {
+    let state = confirm("SELECT 1; SET ROLE admin", safeMode: .silent).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.statements.map(\.index) == [1])
+    #expect(state.statements.first?.changesPrivileges == true)
+    #expect(state.statements.first?.reasons == ["Changes role/privileges"])
+  }
+
+  @Test("alertRead confirms DO blocks (fail closed)")
+  func alertReadConfirmsDoBlock() {
+    let state = confirm(
+      "DO $$ BEGIN DELETE FROM t; END $$", safeMode: .alertRead
+    ).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.statements.map(\.index) == [0])
+    #expect(!state.affectsAllRows)
+  }
+
+  @Test("alertAll confirms a SELECT and lists every statement")
+  func alertAllConfirmsSelect() {
+    let state = confirm("SELECT 1", safeMode: .alertAll).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.statements.map(\.index) == [0])
+    #expect(state.statements.first?.reasons.isEmpty == true)
+  }
+
+  @Test("safeRead: a DELETE cell requires the Safe Mode unlock (global Safe Mode pinned)")
+  func safeReadDeleteRequiresPassword() {
+    let state = confirm("DELETE FROM t WHERE id = 1", safeMode: .safeRead).queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.requiresPassword)
+    #expect(state.statements.map(\.index) == [0])
+  }
+
+  @Test("safeRead: a SELECT cell needs no unlock")
+  func safeReadSelectNeedsNoUnlock() {
+    let state = confirm("SELECT 1", safeMode: .safeRead).queryConfirmationState
+
+    #expect(!state.showDialog)
+    #expect(!state.requiresPassword)
+  }
+
+  // MARK: - Run All under Safe Mode password levels
+
+  /// Runs `runAllCells` with one SQL cell per entry. Safe Mode is pinned per connection
+  /// (not the global setting): Run All awaits, and parallel tests mutate the global setting.
+  private func runAll(
+    _ contents: [String], safeMode: SafeMode, bypass: Bool = false
+  ) async
+    -> NotebookViewModel
+  {
+    WorkspaceWindowManager.shared.dismissToast()
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    viewModel.notebook.cells = contents.map {
+      NotebookCell(id: UUID(), cellType: .sql, content: $0, executionCount: 0, result: nil)
+    }
+    viewModel.notebook.connectionConfig = ConnectionConfig(
+      protectionLevel: .none, safeMode: safeMode)
+    await viewModel.runAllCells(bypass: bypass)
+    return viewModel
+  }
+
+  private func nothingQueued(_ viewModel: NotebookViewModel) -> Bool {
+    viewModel.executionQueue.tasks.isEmpty
+  }
+
+  @Test("Run All under safeRead with a DELETE cell requires the unlock before queueing")
+  func runAllSafeReadRequiresUnlock() async {
+    let viewModel = await runAll(["SELECT 1", "DELETE FROM t"], safeMode: .safeRead)
+    let state = viewModel.queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.requiresPassword)
+    #expect(state.runAllAwaitingUnlock)
+    #expect(!state.showRunAllConfirmation)
+    #expect(state.affectsAllRows)
+    #expect(state.statements.count == 1)
+    #expect(state.statements.first?.preview == "Cell 2: DELETE FROM t")
+    #expect(nothingQueued(viewModel))
+  }
+
+  @Test("Run All under safeRead ignores the destructive bypass for the unlock")
+  func runAllSafeReadUnlockDespiteBypass() async {
+    let viewModel = await runAll(["DELETE FROM t WHERE id = 1"], safeMode: .safeRead, bypass: true)
+
+    #expect(viewModel.queryConfirmationState.requiresPassword)
+    #expect(viewModel.queryConfirmationState.runAllAwaitingUnlock)
+    #expect(nothingQueued(viewModel))
+  }
+
+  @Test("Run All under safeAll requires the unlock even for SELECT only, ids unique")
+  func runAllSafeAllRequiresUnlock() async {
+    let viewModel = await runAll(["SELECT 1", "SELECT 2; SELECT 3"], safeMode: .safeAll)
+    let state = viewModel.queryConfirmationState
+
+    #expect(state.showDialog)
+    #expect(state.requiresPassword)
+    #expect(state.runAllAwaitingUnlock)
+    #expect(state.statements.count == 3)
+    #expect(Set(state.statements.map(\.id)).count == 3)
+    #expect(nothingQueued(viewModel))
+  }
+
+  @Test("Run All under safeRead with reads only runs without unlock")
+  func runAllSafeReadReadsOnlyRuns() async {
+    let viewModel = await runAll(["SELECT 1"], safeMode: .safeRead)
+
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    #expect(!viewModel.queryConfirmationState.runAllAwaitingUnlock)
+  }
+
+  @Test("Run All under alertRead keeps the Allow/Don't Allow dialog (no password)")
+  func runAllAlertReadKeepsDialog() async {
+    let viewModel = await runAll(["DELETE FROM t"], safeMode: .alertRead)
+    let state = viewModel.queryConfirmationState
+
+    #expect(state.showRunAllConfirmation)
+    #expect(!state.showDialog)
+    #expect(!state.runAllAwaitingUnlock)
+  }
+
+  @Test("Cancelling the Run All unlock clears it and queues nothing")
+  func runAllUnlockCancel() async {
+    let viewModel = await runAll(["DELETE FROM t"], safeMode: .safeAll)
+
+    viewModel.cancelPendingQuery()
+
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    #expect(!viewModel.queryConfirmationState.runAllAwaitingUnlock)
+    #expect(viewModel.queryConfirmationState.runAllPendingCells.isEmpty)
+    #expect(nothingQueued(viewModel))
+  }
+
+  @Test("After the unlock, Run All clears the sheet state and hands the cells to the queue")
+  func runAllUnlockThenRuns() async {
+    let viewModel = await runAll(["SELECT 1", "DELETE FROM t"], safeMode: .safeRead)
+    let pending = viewModel.queryConfirmationState.runAllPendingCells.map(\.id)
+    #expect(pending == viewModel.notebook.cells.map(\.id))
+
+    await viewModel.executePendingQuery()
+
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    #expect(!viewModel.queryConfirmationState.runAllAwaitingUnlock)
+    #expect(viewModel.queryConfirmationState.runAllPendingCells.isEmpty)
+    // Every cell was enqueued (tasks stay in the history even once they ran)
+    #expect(viewModel.executionQueue.tasks.map(\.cellId) == pending)
+  }
+
+  @Test("Cancel clears the statement list")
+  func cancelClearsStatements() {
+    let viewModel = confirm("DELETE FROM t", safeMode: .alertRead)
+    #expect(!viewModel.queryConfirmationState.statements.isEmpty)
+
+    viewModel.cancelPendingQuery()
+
+    #expect(viewModel.queryConfirmationState.statements.isEmpty)
+  }
+
   @Test("Reset settings resets Safe Mode to alertRead")
   func resetSettingsResetsSafeMode() {
     // Arrange

@@ -169,20 +169,21 @@ struct HeaderView: View {
   // MARK: - Run All Destructive Dialog
 
   private var runAllDestructiveDialogTitle: String {
-    let count = viewModel.queryConfirmationState.runAllDestructiveCount
-    let queryWord = count == 1 ? "query" : "queries"
-    return "Run All contains \(count) destructive \(queryWord)"
+    let cells = viewModel.queryConfirmationState.runAllConfirmCells
+    if cells.contains(where: \.isSafetyCritical) {
+      return "Run All changes session safety settings"
+    }
+    let cellWord = cells.count == 1 ? "cell" : "cells"
+    return "Run All contains \(cells.count) \(cellWord) that may modify your database"
   }
 
   private var runAllDestructiveDialogMessage: String {
-    let count = viewModel.queryConfirmationState.runAllDestructiveCount
-    let queryWord = count == 1 ? "query" : "queries"
+    let cells = viewModel.queryConfirmationState.runAllConfirmCells
     return """
-      This batch contains \(count) destructive \(queryWord) (UPDATE, DELETE, INSERT) \
-      that will modify your database.
+      \(NotebookViewModel.runAllSummary(cells))
 
-      • Allow: Execute all queries including destructive ones
-      • Don't Allow: Skip destructive queries and run the rest
+      • Allow: Execute all cells
+      • Don't Allow: Skip the cells listed above and run the rest
       """
   }
 }

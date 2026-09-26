@@ -65,6 +65,10 @@ enum DatabaseError: LocalizedError {
   case connectionFailed(String)
   case queryFailed(String, TimeInterval)
   case emptyQuery
+  /// The execution gate refused the whole script before sending anything
+  case blockedByProtection(statementIndex: Int, kind: StatementKind, reason: String)
+  /// An inline grid edit cannot be targeted at exactly one row (no primary key, ...)
+  case notEditable(String)
 
   var errorDescription: String? {
     switch self {
@@ -76,6 +80,11 @@ enum DatabaseError: LocalizedError {
       return "Query failed: \(message)"
     case .emptyQuery:
       return "Query is empty"
+    case .blockedByProtection(let statementIndex, _, let reason):
+      return
+        "Blocked by connection protection (statement \(statementIndex + 1)): \(reason). Nothing was executed."
+    case .notEditable(let reason):
+      return "Cannot edit this value: \(reason). Nothing was executed."
     }
   }
 

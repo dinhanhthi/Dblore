@@ -29,22 +29,8 @@ struct SecuritySettingsSection: View {
           .id("safeModeSection")
       }
     }
-    .protectionLevelDialog(
-      isPresented: $showDisableReadOnlyConfirmation,
-      currentLevel: currentProtectionLevel,
-      onDisableProtection: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .none
-        viewModel.onDocumentChanged?()
-      },
-      onEnableSchemaProtection: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
-        viewModel.onDocumentChanged?()
-      },
-      onEnableReadOnly: {
-        viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
-        viewModel.onDocumentChanged?()
-      }
-    )
+    // Lowering goes through the Safe Mode unlock (see ProtectionLevelDialogModifier)
+    .protectionLevelDialog(isPresented: $showDisableReadOnlyConfirmation, viewModel: viewModel)
   }
 
   private var protectionWarning: some View {
@@ -173,8 +159,7 @@ struct SafeModeSection: View {
       .pickerStyle(.menu)
       .frame(width: 140)
       .onChange(of: selectedConnectionMode) { _, newValue in
-        viewModel.notebook.connectionConfig?.safeMode = newValue
-        viewModel.onDocumentChanged?()
+        handleConnectionSafeModeChange(to: newValue)
       }
     }
   }
@@ -223,7 +208,25 @@ struct SafeModeSection: View {
     }
   }
 
+  /// "Use database password" is offered only while no Safe Mode password exists
+  private var showsDatabasePasswordFallback: Bool {
+    NotebookViewModel.showsDatabasePasswordFallback(
+      hasSafeModePassword: appSettings.hasCustomPasswordSet)
+  }
+
   // MARK: - Safe Mode Change Handler
+
+  /// Per-connection Safe Mode: a weakening under a password Safe Mode is applied only after the
+  /// unlock (the picker snaps back until then); anything else applies now.
+  private func handleConnectionSafeModeChange(to newMode: SafeMode?) {
+    let current = viewModel.notebook.connectionConfig?.safeMode
+    guard newMode != current, !viewModel.requestConnectionSafeModeChange(to: newMode) else {
+      return
+    }
+    selectedConnectionMode = current
+    pendingAction = .changeConnectionSafeMode(newMode)
+    showAuthSheet = true
+  }
 
   private func handleSafeModeChange(to newMode: SafeMode) {
     if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
@@ -269,6 +272,7 @@ struct SafeModeSection: View {
             confirmPassword = ""
             passwordError = nil
             isChangingPassword = appSettings.hasCustomPasswordSet
+            useDbPasswordForChange = false
             showPasswordSetup = true
           }
         }) {
@@ -365,13 +369,15 @@ struct SafeModeSection: View {
             SecureField("Current Password", text: $currentPassword)
               .textFieldStyle(.plain)
               .inputStyle()
-            Button("Forgot password? Use database password") {
-              useDbPasswordForChange = true
-              currentPassword = ""
+            if showsDatabasePasswordFallback {
+              Button("Forgot password? Use database password") {
+                useDbPasswordForChange = true
+                currentPassword = ""
+              }
+              .font(.small)
+              .foregroundColor(.accent)
+              .buttonStyle(.plain)
             }
-            .font(.small)
-            .foregroundColor(.accent)
-            .buttonStyle(.plain)
           }
         }
 
@@ -449,7 +455,7 @@ struct SafeModeSection: View {
             SecureField("Password", text: $authPassword)
               .textFieldStyle(.plain)
               .inputStyle()
-            if !appSettings.isBiometricEnabled {
+            if !appSettings.isBiometricEnabled && showsDatabasePasswordFallback {
               Button("Forgot password? Use database password") {
                 useDbPasswordForAuth = true
                 authPassword = ""
@@ -491,6 +497,8 @@ struct SafeModeSection: View {
     switch pendingAction {
     case .changeSafeMode:
       return "Verify your identity to change Safe Mode level"
+    case .changeConnectionSafeMode:
+      return "Verify your identity to lower this connection's Safe Mode"
     case .removeProtection:
       return "Verify your identity to remove password protection"
     case .switchToPassword:
@@ -531,23 +539,19 @@ struct SafeModeSection: View {
     }
 
     if isChangingPassword {
-      let dbPassword = viewModel.notebook.connectionConfig?.password ?? ""
-      let isValid =
-        useDbPasswordForChange
-        ? (currentPassword == dbPassword)
-        : appSettings.verifySafeModePassword(currentPassword)
-
-      guard isValid else {
+      guard credentialAccepted(currentPassword, usingDatabasePassword: useDbPasswordForChange)
+      else {
         passwordError =
           useDbPasswordForChange ? "Invalid database password" : "Current password is incorrect"
         return
       }
     }
 
-    // Set password (this also clears biometric if it was enabled)
-    appSettings.safeModePassword = newPassword
-    appSettings.clearSafeModePassword()  // Clear biometric flag
-    appSettings.safeModePassword = newPassword  // Re-set password after clearing
+    // Store the password (Keychain, salted hash); switches the unlock to password
+    guard appSettings.setSafeModePassword(newPassword) else {
+      passwordError = "Could not store the password"
+      return
+    }
 
     refreshTrigger = UUID()
     showPasswordSetup = false
@@ -581,17 +585,28 @@ struct SafeModeSection: View {
     }
   }
 
+  /// Database password only via `acceptsDatabasePasswordFallback` (never with a Safe Mode
+  /// password set, never empty, constant time); otherwise the Safe Mode password.
+  private func credentialAccepted(_ entry: String, usingDatabasePassword: Bool) -> Bool {
+    NotebookViewModel.settingsAcceptsCredential(
+      entry: entry, usingDatabasePassword: usingDatabasePassword,
+      storedDatabasePassword: viewModel.notebook.connectionConfig?.password,
+      hasSafeModePassword: appSettings.hasCustomPasswordSet,
+      verifySafeModePassword: { appSettings.verifySafeModePassword($0) })
+  }
+
   private func verifyPassword() {
-    let dbPassword = viewModel.notebook.connectionConfig?.password ?? ""
-    let isValid =
-      useDbPasswordForAuth
-      ? (authPassword == dbPassword)
-      : appSettings.verifySafeModePassword(authPassword)
+    // The database password field is shown only when no Safe Mode password exists
+    let isValid = credentialAccepted(
+      authPassword,
+      usingDatabasePassword: useDbPasswordForAuth && !appSettings.hasCustomPasswordSet)
 
     if isValid {
       executePendingAction()
     } else {
-      authError = useDbPasswordForAuth ? "Invalid database password" : "Invalid password"
+      authError =
+        useDbPasswordForAuth && !appSettings.hasCustomPasswordSet
+        ? "Invalid database password" : "Invalid password"
     }
   }
 
@@ -614,6 +629,11 @@ struct SafeModeSection: View {
       withAnimation(.snappy(duration: 0.2)) {
         appSettings.safeMode = newMode
       }
+      cleanup()
+
+    case .changeConnectionSafeMode(let newMode):
+      viewModel.applyConnectionSafeMode(newMode)
+      selectedConnectionMode = newMode
       cleanup()
 
     case .removeProtection:
@@ -644,6 +664,7 @@ struct SafeModeSection: View {
 /// Action that requires authentication
 private enum ProtectedAction {
   case changeSafeMode(SafeMode)
+  case changeConnectionSafeMode(SafeMode?)  // Per-connection weakening (nil = use global)
   case removeProtection
   case switchToPassword  // Switch from Touch ID to password
   case switchToBiometric  // Switch from password to Touch ID

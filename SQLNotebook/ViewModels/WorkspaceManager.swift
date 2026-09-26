@@ -29,6 +29,9 @@ class WorkspaceManager: Identifiable {
   let connectionManager = DatabaseConnectionManager()
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
+  /// Connect to the same database with weaker safety settings, held until the Safe Mode
+  /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
+  var pendingWeakeningConnect: ConnectionConfig?
 
   // MARK: - Tabs
 
@@ -37,7 +40,7 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Tab Storage
 
-  private var viewModels: [UUID: NotebookViewModel] = [:]
+  private(set) var viewModels: [UUID: NotebookViewModel] = [:]
   private var notebookDocuments: [UUID: SQLNotebookDocument] = [:]
   private var editorDocuments: [UUID: SQLEditorDocument] = [:]
 
@@ -199,11 +202,16 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Connection Operations
 
-  func connect(config: ConnectionConfig) async throws {
+  /// Connect without the weakening check. Only `connect(config:globalSafeMode:)` and
+  /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) may call this.
+  func connectWithoutUnlockCheck(config: ConnectionConfig) async throws {
     connectionState = .connecting
+    // The actor disconnects first, so current edit targets die even if the connect fails
+    invalidateEditTargetsInTabs()
 
     do {
       try await connectionManager.connect(config: config)
+      invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
       workspace.connectionKeychainKey =
         "\(config.host):\(config.port):\(config.database):\(config.username)"
@@ -224,6 +232,7 @@ class WorkspaceManager: Identifiable {
       syncConnectionStateToTabs()
     } catch {
       connectionState = .disconnected
+      invalidateEditTargetsInTabs()
       throw error
     }
   }
@@ -231,6 +240,7 @@ class WorkspaceManager: Identifiable {
   func disconnect() async {
     await connectionManager.disconnect()
     connectionState = .disconnected
+    invalidateEditTargetsInTabs()
 
     // Clear schema
     databaseTables = []
@@ -283,6 +293,7 @@ class WorkspaceManager: Identifiable {
     for (_, viewModel) in viewModels {
       viewModel.connectionState = connectionState
       viewModel.connectionManager = connectionManager
+      viewModel.applyWorkspaceConnectionConfig(workspace.connectionConfig)
       viewModel.databaseTables = databaseTables
       viewModel.databaseViews = databaseViews
       viewModel.databaseFunctions = databaseFunctions
@@ -457,6 +468,8 @@ class WorkspaceManager: Identifiable {
 
     // Share workspace's connection manager so ViewModels can execute queries
     viewModel.connectionManager = connectionManager
+    // Protection level / Safe Mode come from the workspace connection config
+    shareConnectionConfig(with: viewModel)
 
     return viewModel
   }

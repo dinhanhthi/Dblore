@@ -292,7 +292,8 @@ enum DocumentCoder {
     let wasLimited = dict["wasLimited"] as? Bool ?? false
     let affectedRows = dict["affectedRows"] as? Int
 
-    // Decode new fields added for inline editing and metadata
+    // Decode new fields added for inline editing and metadata. Old files may carry tableName /
+    // primaryKeyColumns: display only, never an edit target (no `editTarget` is decoded).
     let sourceQuery = dict["sourceQuery"] as? String
     let tableName = dict["tableName"] as? String
     let primaryKeyColumns = dict["primaryKeyColumns"] as? [String] ?? []
@@ -365,13 +366,8 @@ enum DocumentCoder {
       dict["sourceQuery"] = sourceQuery
     }
 
-    if let tableName = result.tableName {
-      dict["tableName"] = tableName
-    }
-
-    if !result.primaryKeyColumns.isEmpty {
-      dict["primaryKeyColumns"] = result.primaryKeyColumns
-    }
+    // tableName / primaryKeyColumns are not written: the inline-edit target is session-only
+    // (`CellResult.editTarget`), re-resolved by the server on each live run.
 
     if !result.rowIdentifiers.isEmpty {
       let rowIdentifiersArray = result.rowIdentifiers.map { cellValue in

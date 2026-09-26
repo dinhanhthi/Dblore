@@ -15,12 +15,16 @@ import PostgresNIO
 extension DatabaseConnectionManager {
   // MARK: - Query Execution
 
-  /// Execute a SQL query and return results
+  /// Execute APP-OWNED SQL (no protection gate) and return results.
+  /// Never pass user text here: user SQL must go through `execute(userSQL:policy:maxRows:)`.
   /// Automatically handles multiple statements separated by semicolons
   /// - Parameters:
   ///   - query: The SQL query to execute (may contain multiple statements)
   ///   - maxRows: Maximum number of rows to fetch (defaults to defaultMaxFetchRows)
-  func executeQuery(_ query: String, maxRows: Int = defaultMaxFetchRows) async throws -> QueryResult
+  func executeInternal(
+    _ query: String, maxRows: Int = defaultMaxFetchRows
+  ) async throws
+    -> QueryResult
   {
     guard _connection != nil else {
       throw DatabaseError.notConnected
@@ -39,12 +43,13 @@ extension DatabaseConnectionManager {
     return try await executeSingleStatement(query, maxRows: maxRows)
   }
 
-  /// Execute multiple SQL statements sequentially and return detailed results for each
+  /// Execute multiple APP-OWNED SQL statements (no protection gate) sequentially and return
+  /// detailed results for each. User SQL must go through `executeDetailed(userSQL:policy:maxRows:)`.
   /// - Parameters:
   ///   - query: SQL string containing multiple statements
   ///   - maxRows: Maximum number of rows to fetch
   /// - Returns: Tuple of (array of results for each statement, total execution time)
-  func executeMultipleStatementsDetailed(
+  func executeInternalStatementsDetailed(
     _ query: String, maxRows: Int = defaultMaxFetchRows
   )
     async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval)
@@ -179,7 +184,7 @@ extension DatabaseConnectionManager {
     let startTime = Date()
 
     // Check if this is a modification query (UPDATE, DELETE, INSERT)
-    let isModification = isModificationQuery(query)
+    let isModification = countsAffectedRows(query)
 
     // For modification queries, we need to get affected rows count
     if isModification {
@@ -281,9 +286,8 @@ extension DatabaseConnectionManager {
             } else {
               columns.append(
                 ColumnInfo(
-                  name: columnName,
-                  type: postgresDataTypeName(cell.dataType)
-                ))
+                  name: columnName, type: postgresDataTypeName(cell.dataType),
+                  origin: stream.columns.dropFirst(columnIndex).first))
             }
             columnIndex += 1
           }
@@ -392,117 +396,4 @@ extension DatabaseConnectionManager {
       throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
     }
   }
-
-  /// Execute an UPDATE statement for a single cell value
-  /// - Parameters:
-  ///   - tableName: The name of the table to update
-  ///   - columnName: The column to update
-  ///   - newValue: The new value as CellValue
-  ///   - rowData: All column values for the row (used to build WHERE clause)
-  ///   - rowIdentifier: Optional row identifier (ctid for PostgreSQL, rowid for SQLite)
-  /// - Returns: Number of rows affected
-  func updateCellValue(
-    tableName: String,
-    columnName: String,
-    newValue: CellValue,
-    rowData: [String: CellValue],
-    primaryKeyColumns: [String],
-    rowIdentifier: CellValue?
-  ) async throws -> Int {
-    guard _connection != nil else {
-      throw DatabaseError.notConnected
-    }
-
-    // Build WHERE clause with priority strategy:
-    // 1. Use primary key columns if available (most reliable and portable)
-    // 2. Use row identifier (ctid for PostgreSQL) if available
-    // 3. Fall back to all columns (current approach)
-    var whereConditions: [String] = []
-
-    // Priority 1: Use primary key columns if available
-    if !primaryKeyColumns.isEmpty {
-      var pkConditionsValid = true
-      for pkColumn in primaryKeyColumns {
-        if let pkValue = rowData[pkColumn] {
-          let sqlValue = cellValueToSQL(pkValue)
-          whereConditions.append("\"\(pkColumn)\" = \(sqlValue)")
-        } else {
-          // PK column not found in rowData, cannot use PK approach
-          pkConditionsValid = false
-          whereConditions = []
-          break
-        }
-      }
-      // If we successfully built PK conditions, we're done
-      if pkConditionsValid {
-        // Successfully used primary key
-      }
-    }
-
-    // Priority 2: Use row identifier (ctid) for PostgreSQL if no PK available
-    if whereConditions.isEmpty, let rowId = rowIdentifier, let dbType = databaseType {
-      switch dbType {
-      case .postgresql:
-        // Use ctid for PostgreSQL
-        let tidValue = cellValueToSQL(rowId)
-        whereConditions.append("ctid = \(tidValue)::tid")
-      case .sqlite:
-        // SQLite rowid support planned for phase 5
-        break
-      }
-    }
-
-    // Priority 3 (Fallback): Use all columns if no PK and no row identifier
-    if whereConditions.isEmpty {
-      for (col, val) in rowData {
-        let sqlValue = cellValueToSQL(val)
-        whereConditions.append("\"\(col)\" = \(sqlValue)")
-      }
-    }
-
-    let whereClause = whereConditions.joined(separator: " AND ")
-
-    // Build UPDATE query
-    let newSQLValue = cellValueToSQL(newValue)
-    let updateQuery = """
-      UPDATE "\(tableName)"
-      SET "\(columnName)" = \(newSQLValue)
-      WHERE \(whereClause)
-      """
-
-    let startTime = Date()
-
-    do {
-      guard let connection = _connection else {
-        throw DatabaseError.notConnected
-      }
-
-      // Execute UPDATE
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: updateQuery),
-        logger: Logger(label: "sqlnotebook.update")
-      )
-
-      // Count affected rows
-      var rowsAffected = 0
-      for try await _ in stream {
-        rowsAffected += 1
-      }
-
-      return rowsAffected
-
-    } catch let error as PSQLError {
-      let executionTime = Date().timeIntervalSince(startTime)
-      // Extract detailed error information from PostgreSQL
-      let errorMessage = formatPostgresError(error, query: updateQuery)
-      throw DatabaseError.queryFailed(errorMessage, executionTime)
-    } catch {
-      let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
-    }
-  }
-
-  // MARK: - Query Helpers
-
-  /// Check if a query is a SELECT statement
 }

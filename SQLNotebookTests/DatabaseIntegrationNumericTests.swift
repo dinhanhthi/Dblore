@@ -38,7 +38,7 @@ struct DatabaseIntegrationNumericTests {
           negative_value NUMERIC(10,2)
       );
       """
-    _ = try await manager.executeQuery(createTableSQL)
+    _ = try await manager.executeInternal(createTableSQL)
   }
 
   func insertNumericTestData(
@@ -52,14 +52,14 @@ struct DatabaseIntegrationNumericTests {
           (0.00, 0.0000, 0.00, 0.00, 0.00),
           (NULL, NULL, NULL, NULL, NULL);
       """
-    _ = try await manager.executeQuery(insertSQL)
+    _ = try await manager.executeInternal(insertSQL)
   }
 
   func dropNumericTestTable(
     manager: DatabaseConnectionManager, tableName: String = "test_numeric_values"
   ) async throws {
     let dropTableSQL = "DROP TABLE IF EXISTS \(tableName);"
-    _ = try await manager.executeQuery(dropTableSQL)
+    _ = try await manager.executeInternal(dropTableSQL)
   }
 
   // MARK: - NUMERIC Decoding Integration Tests
@@ -74,7 +74,7 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 1")
+      let result = try await manager.executeInternal("SELECT price FROM \(tableName) WHERE id = 1")
 
       let rowsCount = result.rows.count
       let firstRowColumnsCount = result.rows.first?.count ?? 0
@@ -110,7 +110,8 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT quantity FROM \(tableName) WHERE id = 1")
+      let result = try await manager.executeInternal(
+        "SELECT quantity FROM \(tableName) WHERE id = 1")
 
       let rowsCount = result.rows.count
       let quantityValue = result.rows.first?.first
@@ -142,7 +143,7 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 4")
+      let result = try await manager.executeInternal("SELECT price FROM \(tableName) WHERE id = 4")
 
       let rowsCount = result.rows.count
       let priceValue = result.rows.first?.first
@@ -180,7 +181,7 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery(
+      let result = try await manager.executeInternal(
         "SELECT negative_value FROM \(tableName) WHERE id = 1")
 
       let rowsCount = result.rows.count
@@ -214,7 +215,7 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery("SELECT price FROM \(tableName) WHERE id = 3")
+      let result = try await manager.executeInternal("SELECT price FROM \(tableName) WHERE id = 3")
 
       let rowsCount = result.rows.count
       let priceValue = result.rows.first?.first
@@ -246,7 +247,7 @@ struct DatabaseIntegrationNumericTests {
       try await createNumericTestTable(manager: manager, tableName: tableName)
       try await insertNumericTestData(manager: manager, tableName: tableName)
 
-      let result = try await manager.executeQuery(
+      let result = try await manager.executeInternal(
         "SELECT large_number FROM \(tableName) WHERE id = 1")
 
       let rowsCount = result.rows.count

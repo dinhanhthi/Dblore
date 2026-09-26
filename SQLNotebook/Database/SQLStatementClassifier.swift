@@ -40,6 +40,8 @@ nonisolated struct ClassifiedStatement: Sendable, Equatable {
   /// Switches the privilege context: SET [SESSION | LOCAL] ROLE, SET SESSION AUTHORIZATION,
   /// RESET ROLE, RESET SESSION AUTHORIZATION, SET role / session_authorization, DISCARD ALL
   let changesPrivileges: Bool
+  /// SELECT ... INTO / WITH ... SELECT ... INTO (creates a table like CREATE TABLE AS)
+  let createsTable: Bool
 
   /// True only for statements that cannot modify anything: reads and plain EXPLAIN of a
   /// recognized statement.
@@ -87,7 +89,7 @@ nonisolated enum SQLStatementClassifier {
       text: text, kind: ambiguous ? .unknown : analysis.kind, hasReturning: analysis.hasReturning,
       affectsAllRows: analysis.affectsAllRows, nonTransactional: analysis.nonTransactional,
       resetsSessionBrakes: analysis.resetsSessionBrakes,
-      changesPrivileges: analysis.changesPrivileges)
+      changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
   }
 
   /// Aggregate flags. `EXPLAIN ANALYZE` counts as its inner statement; plain EXPLAIN as a read.
@@ -102,7 +104,9 @@ nonisolated enum SQLStatementClassifier {
       changesPrivileges: statements.contains(where: \.changesPrivileges))
   }
 
-  private static func effectiveKind(_ kind: StatementKind) -> StatementKind {
+  /// What a statement runs: `EXPLAIN ANALYZE` counts as its inner statement; plain EXPLAIN as a
+  /// read, or `.unknown` when the inner statement is unrecognized.
+  static func effectiveKind(_ kind: StatementKind) -> StatementKind {
     switch kind {
     case .explain(let inner, analyze: true): effectiveKind(inner)
     case .explain(let inner, analyze: false): inner == .unknown ? .unknown : .read
@@ -119,6 +123,7 @@ nonisolated enum SQLStatementClassifier {
     var nonTransactional = false
     var resetsSessionBrakes = false
     var changesPrivileges = false
+    var createsTable = false
   }
 
   private static func analyze(_ tokens: ArraySlice<SQLToken>) -> Analysis {
@@ -139,7 +144,8 @@ nonisolated enum SQLStatementClassifier {
       nonTransactional: nonTransactional(topWords),
       resetsSessionBrakes: kind == .sessionSet(touchesBrake: true) || discardsAll
         || beginsReadWrite(topWords),
-      changesPrivileges: discardsAll || changesPrivileges(body))
+      changesPrivileges: discardsAll || changesPrivileges(body),
+      createsTable: createsTable(body, kind: kind))
   }
 
   private static func kind(
@@ -212,6 +218,23 @@ nonisolated enum SQLStatementClassifier {
       let depth = body[start].depth
       let scope = body[body.index(after: start)...].prefix { $0.depth >= depth }
       return !scope.contains { $0.depth == depth && $0.isWord("WHERE") }
+    }
+  }
+
+  /// A DML SELECT / VALUES / TABLE / WITH with an INTO that is not `INSERT INTO` / `MERGE INTO`
+  /// starting a statement or CTE body (after `(` or `)`). Fails closed: an INTO after a column
+  /// named `insert`, or an INSERT after a SEARCH / CYCLE clause, counts.
+  private static func createsTable(_ body: ArraySlice<SQLToken>, kind: StatementKind) -> Bool {
+    guard kind == .dml, ["SELECT", "VALUES", "TABLE", "WITH"].contains(body.first?.keyword ?? "")
+    else { return false }
+    return body.indices.contains { index in
+      guard body[index].isWord("INTO") else { return false }
+      let before = body[..<index].suffix(2)
+      guard before.count == 2, let verb = before.last, let opener = before.first else {
+        return true
+      }
+      let startsWrite = verb.isWord("INSERT") || verb.isWord("MERGE")
+      return !(startsWrite && (opener.isSymbol("(") || opener.isSymbol(")")))
     }
   }
 
@@ -313,7 +336,8 @@ nonisolated enum SQLStatementClassifier {
     return Analysis(
       kind: .explain(inner: inner.kind, analyze: true), hasReturning: inner.hasReturning,
       affectsAllRows: inner.affectsAllRows, nonTransactional: inner.nonTransactional,
-      resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges)
+      resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges,
+      createsTable: inner.createsTable)
   }
 
   private static func isAnalyzeWord(_ token: SQLToken) -> Bool {

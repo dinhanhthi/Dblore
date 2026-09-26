@@ -73,6 +73,62 @@ extension View {
         try await workspaceManager.connect(config: config)
       }
     )
+    .sheet(
+      isPresented: Binding(
+        get: { workspaceManager.pendingWeakeningConnect != nil },
+        set: { if !$0 { workspaceManager.cancelPendingWeakeningConnect() } }
+      )
+    ) {
+      WorkspaceConnectUnlockSheet(workspaceManager: workspaceManager)
+    }
+  }
+}
+
+/// Safe Mode unlock before connecting to the same database with weaker safety settings.
+/// Cancel: nothing connects, the form keeps its values. Unlock: connect, then close the form.
+private struct WorkspaceConnectUnlockSheet: View {
+  let workspaceManager: WorkspaceManager
+
+  @State private var isConnecting = false
+  @State private var connectError: String?
+
+  private var message: String {
+    let base =
+      "Safe Mode requires verification to reconnect to this database with weaker protection or Safe Mode settings."
+    guard let connectError else { return base }
+    return "Connection failed: \(connectError)\n\nVerify again to retry."
+  }
+
+  var body: some View {
+    if isConnecting {
+      ProgressView("Connecting...")
+        .padding(Spacing.xl)
+        .frame(width: 350)
+        .background(Color.appBackground)
+    } else {
+      SafeModeUnlockSheet(
+        message: message,
+        biometricReason: "Reconnect with weaker protection",
+        // The current connection's password, never the one typed into the form
+        storedDatabasePassword: workspaceManager.workspace.connectionConfig?.password,
+        onUnlock: connect,
+        onCancel: { workspaceManager.cancelPendingWeakeningConnect() })
+    }
+  }
+
+  private func connect() {
+    guard !isConnecting else { return }
+    isConnecting = true
+    connectError = nil
+    Task { @MainActor in
+      do {
+        try await workspaceManager.completePendingWeakeningConnect()
+        workspaceManager.isConnectionFormModalVisible = false
+      } catch {
+        connectError = error.localizedDescription
+      }
+      isConnecting = false
+    }
   }
 }
 

@@ -136,73 +136,11 @@ extension DatabaseConnectionManager {
     return withoutLeadingComments.uppercased().hasPrefix("SELECT")
   }
 
-  /// Check if a query is a destructive modification statement
-  /// Includes: UPDATE, DELETE, INSERT (data modification)
-  /// And: DROP, TRUNCATE, ALTER (schema modification)
-  func isModificationQuery(_ query: String) -> Bool {
-    let withoutLeadingComments = stripLeadingComments(query).uppercased()
-    // Data modification
-    if withoutLeadingComments.hasPrefix("UPDATE") || withoutLeadingComments.hasPrefix("DELETE")
-      || withoutLeadingComments.hasPrefix("INSERT")
-    {
-      return true
-    }
-    // Schema modification (destructive)
-    if withoutLeadingComments.hasPrefix("DROP") || withoutLeadingComments.hasPrefix("TRUNCATE")
-      || withoutLeadingComments.hasPrefix("ALTER")
-    {
-      return true
-    }
-    return false
-  }
-
-  /// Check if a query is a DELETE statement
-  func isDeleteQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.uppercased().hasPrefix("DELETE")
-  }
-
-  /// Check if a DELETE or UPDATE query has a WHERE clause
-  /// Returns true if WHERE clause exists, false otherwise
-  /// For non-DELETE/UPDATE queries, returns true (not applicable)
-  nonisolated func hasWhereClause(_ query: String) -> Bool {
-    let withoutComments = stripAllComments(query)
-    let uppercased = withoutComments.uppercased()
-
-    // Only check DELETE and UPDATE queries
-    let isDeleteOrUpdate =
-      uppercased.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("DELETE")
-      || uppercased.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("UPDATE")
-
-    if !isDeleteOrUpdate {
-      return true  // Not applicable for other query types
-    }
-
-    // Use word boundary regex to find WHERE clause
-    return uppercased.range(of: "\\bWHERE\\b", options: .regularExpression) != nil
-  }
-
-  /// Check if a query affects all rows (DELETE/UPDATE without WHERE)
-  /// Returns true if the query will affect ALL rows in the table
-  nonisolated func affectsAllRows(_ query: String) -> Bool {
-    let withoutComments = stripAllComments(query)
-    let uppercased = withoutComments.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Only DELETE and UPDATE can affect all rows
-    let isDeleteOrUpdate = uppercased.hasPrefix("DELETE") || uppercased.hasPrefix("UPDATE")
-
-    if !isDeleteOrUpdate {
-      return false
-    }
-
-    // Check if WHERE clause is missing
-    return !hasWhereClause(query)
-  }
-
-  /// Check if a query is an INSERT or UPDATE statement
-  func isInsertOrUpdateQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    return trimmed.hasPrefix("INSERT") || trimmed.hasPrefix("UPDATE")
+  /// True for a plain INSERT / UPDATE / DELETE, whose affected row count is read through
+  /// `wrapModificationQueryForCount`. Uses the tokenizer, so leading comments are skipped.
+  nonisolated func countsAffectedRows(_ query: String) -> Bool {
+    let first = SQLTokenizer.tokens(query).first?.keyword ?? ""
+    return ["INSERT", "UPDATE", "DELETE"].contains(first)
   }
 
   // MARK: - LIMIT Clause Detection

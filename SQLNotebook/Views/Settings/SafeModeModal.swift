@@ -30,6 +30,7 @@ struct SafeModeModal: View {
   @State private var authPassword: String = ""
   @State private var authError: String?
   @State private var isAuthenticating: Bool = false
+  @State private var usePasswordForAuth: Bool = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -80,6 +81,7 @@ struct SafeModeModal: View {
           authPassword = ""
           authError = nil
           isAuthenticating = false
+          usePasswordForAuth = !appSettings.canUseTouchID
         }
     }
   }
@@ -351,7 +353,7 @@ struct SafeModeModal: View {
           .multilineTextAlignment(.center)
       }
 
-      if appSettings.isBiometricEnabled {
+      if appSettings.isBiometricEnabled && !usePasswordForAuth {
         Button("Use Touch ID") {
           authenticateWithBiometric()
         }
@@ -359,8 +361,9 @@ struct SafeModeModal: View {
         .disabled(isAuthenticating)
 
         Button("Use password instead") {
-          // Will need password fallback
+          usePasswordForAuth = true
         }
+        .disabled(!appSettings.hasCustomPasswordSet)
         .font(.small)
         .foregroundColor(.accent)
         .buttonStyle(.plain)
@@ -461,10 +464,11 @@ struct SafeModeModal: View {
       }
     }
 
-    // Set password (this also clears biometric if it was enabled)
-    appSettings.safeModePassword = newPassword
-    appSettings.clearSafeModePassword()
-    appSettings.safeModePassword = newPassword
+    // Store the password (Keychain, salted hash); switches the unlock to password
+    guard appSettings.setSafeModePassword(newPassword) else {
+      passwordError = "Could not store the password"
+      return
+    }
 
     refreshTrigger = UUID()
     showPasswordSetup = false

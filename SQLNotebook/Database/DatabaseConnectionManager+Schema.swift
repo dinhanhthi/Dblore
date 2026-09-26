@@ -256,41 +256,28 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Fetch primary key column names for a table
-  /// Returns array of column names that form the primary key (empty if no PK)
+  /// Fetch primary key column names for a table, in key order (empty if no PK).
+  /// `tableName` (`table` or `schema.table`, SQL identifier syntax) is resolved with
+  /// `to_regclass` like an unqualified name in a query (search_path) and bound as a parameter.
   func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
-    guard _connection != nil else {
+    guard let connection = _connection else {
       throw DatabaseError.notConnected
     }
 
-    // Parse table name to handle schema.table format
-    let parts = tableName.split(separator: ".")
-    let schema: String
-    let table: String
-
-    if parts.count == 2 {
-      schema = String(parts[0])
-      table = String(parts[1])
-    } else {
-      schema = "public"
-      table = tableName
-    }
-
-    // Query to get primary key columns from PostgreSQL system catalogs
-    let pkQuery = """
-      SELECT a.attname AS column_name
-      FROM pg_index i
-      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-      WHERE i.indrelid = '\(schema).\(table)'::regclass
-        AND i.indisprimary
-      ORDER BY array_position(i.indkey, a.attnum)
-      """
+    var binds = PostgresBindings(capacity: 1)
+    binds.append(tableName)
+    let pkQuery = PostgresQuery(
+      unsafeSQL: """
+        SELECT a.attname::text AS column_name
+        FROM pg_index i
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = to_regclass($1)
+          AND i.indisprimary
+        ORDER BY array_position(i.indkey, a.attnum)
+        """, binds: binds)
 
     do {
-      let stream = try await _connection!.query(
-        PostgresQuery(unsafeSQL: pkQuery),
-        logger: Logger(label: "sqlnotebook.pk")
-      )
+      let stream = try await connection.query(pkQuery, logger: Logger(label: "sqlnotebook.pk"))
 
       var pkColumns: [String] = []
       for try await row in stream {
@@ -303,7 +290,7 @@ extension DatabaseConnectionManager {
       return pkColumns
 
     } catch {
-      // If query fails (table doesn't exist, permissions, etc.), return empty array
+      // If query fails (invalid name, permissions, etc.), return empty array
       return []
     }
   }
