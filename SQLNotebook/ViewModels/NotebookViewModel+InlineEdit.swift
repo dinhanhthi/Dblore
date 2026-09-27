@@ -161,10 +161,7 @@ extension NotebookViewModel {
       cellId: cellId
     )
 
-    guard let connectionManager, let rowData else {
-      showToast("Value copied to clipboard", type: .info)
-      return
-    }
+    guard let connectionManager, let rowData else { return }
     guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Only the live target of the result the cell was opened from; never the passed table/key
@@ -229,15 +226,8 @@ extension NotebookViewModel {
             protectionLevel: policy.protectionLevel, safeMode: policy.safeMode,
             protectedMode: true),
         connectionEpoch: target.connectionEpoch, caller: id, commitImmediately: autoCommit)
-      // Staged in the app transaction: nothing is saved until Commit in the banner
-      let pending = !(await edit.connectionManager.transactionSnapshot().isIdle)
-      if rowsAffected == 1, pending {
-        showToast(
-          "Edited '\(edit.columnName)' in '\(edit.tableName)' (1 row): pending until Commit",
-          type: .info)
-      } else if rowsAffected == 1 {
-        showToast("Updated '\(edit.columnName)' in '\(edit.tableName)' (1 row)", type: .success)
-      } else {
+      // Success needs no toast: the refreshed cell (and the pending banner) shows it
+      if rowsAffected != 1 {
         showToast(
           "Expected to update 1 row, updated \(rowsAffected) ('\(edit.columnName)' in '\(edit.tableName)')",
           type: .error)
