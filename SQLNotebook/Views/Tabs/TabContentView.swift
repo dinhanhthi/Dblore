@@ -12,8 +12,6 @@ struct TabContentView: View {
   @Bindable var tabManager: TabStateManager
   @Bindable var viewModel: NotebookViewModel
 
-  @State private var lastSaved: Date?
-
   var body: some View {
     contentView
       .focusedSceneValue(\.documentMode, documentMode)
@@ -77,25 +75,18 @@ struct TabContentView: View {
   private func syncNotebookDocument() {
     guard let document = tabManager.notebookDocument(for: tabId) else { return }
     document.notebook = viewModel.notebook
-    lastSaved = Date()
   }
 
   private func syncEditorDocument() {
     guard let document = tabManager.editorDocument(for: tabId) else { return }
     document.content = viewModel.editorContent
-    lastSaved = Date()
   }
 
   // MARK: - Notebook Content
 
   @ViewBuilder
   private var notebookContent: some View {
-    DocumentLayoutView(
-      viewModel: viewModel,
-      lastSaved: $lastSaved,
-      isEditorMode: false,
-      connectionConfig: viewModel.notebook.connectionConfig
-    ) {
+    DocumentLayoutView(viewModel: viewModel) {
       NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
     }
     .modifier(
@@ -114,12 +105,7 @@ struct TabContentView: View {
 
   @ViewBuilder
   private var editorContent: some View {
-    DocumentLayoutView(
-      viewModel: viewModel,
-      lastSaved: $lastSaved,
-      isEditorMode: true,
-      connectionConfig: viewModel.notebook.connectionConfig
-    ) {
+    DocumentLayoutView(viewModel: viewModel) {
       EditorModeView(viewModel: viewModel)
     }
     .modifier(

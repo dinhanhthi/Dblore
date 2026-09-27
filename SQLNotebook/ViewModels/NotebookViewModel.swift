@@ -97,6 +97,8 @@ class NotebookViewModel {
 
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
+  /// Last time this tab synced its document (shown in the window footer)
+  var lastSaved: Date?
 
   // MARK: - Toast (delegated to WorkspaceWindowManager)
   // Toast is now managed at app level via WorkspaceWindowManager.shared
