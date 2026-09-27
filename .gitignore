@@ -67,6 +67,9 @@ fastlane/test_output
 *.log
 build_output.txt
 
+# Release artifacts (scripts/build-release.sh)
+dist/
+
 # Docker
 docker/**/.env
 docker/**/data/
