@@ -195,6 +195,31 @@ extension NotebookViewModel {
 
   // MARK: - Cell Value Editing
 
+  /// Inline edit committed in the result grid at result column `index`: `row` is the displayed
+  /// row's values, so the primary key is that row's. Goes through `handleCellValueEdit` (live
+  /// target, protection gate, Safe Mode) with the result's live edit target, without opening
+  /// the sidebar.
+  func handleGridCellEdit(
+    row: [CellValue], column index: Int, newValue: String, result: CellResult, cellId: UUID?,
+    connectionManager: DatabaseConnectionManager?
+  ) {
+    guard result.columns.indices.contains(index) else { return }
+    let column = result.columns[index]
+    let originalValue = index < row.count ? row[index] : .null
+    cellDetailEditTarget = result.editTarget
+    handleCellValueEdit(
+      columnName: column.name,
+      columnType: column.type,
+      newValue: newValue,
+      originalValue: originalValue,
+      tableName: result.tableName,
+      rowData: CellResult.rowData(columns: result.columns, row: row),
+      primaryKeyColumns: result.primaryKeyColumns,
+      cellId: cellId,
+      connectionManager: connectionManager
+    )
+  }
+
   /// Handle JSON value edit from sidebar
   func handleJSONEdit(newJSON: String, originalPath: String) {
     // Validate JSON
