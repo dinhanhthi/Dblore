@@ -15,7 +15,7 @@ struct HeaderView: View {
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
-      HStack(spacing: Spacing.xs) {
+      GlassToolbarGroup {
         if viewModel.viewMode == .notebook {
           // Notebook mode buttons
           Button(action: {
@@ -30,7 +30,7 @@ struct HeaderView: View {
           }) {
             Label("New", systemImage: "plus")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘N)")
@@ -40,7 +40,7 @@ struct HeaderView: View {
           }) {
             Label("Run All", systemImage: "play.fill")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
           .confirmationDialog(
@@ -85,7 +85,7 @@ struct HeaderView: View {
           }) {
             Label("Clear All Outputs", systemImage: "trash")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
@@ -111,14 +111,14 @@ struct HeaderView: View {
           } label: {
             Label("Results", systemImage: "eye")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor, viewModel.isEditorQueryRunning {
           // Stops the query on the server (asks first if pending changes would be discarded)
           Button(action: { viewModel.cancelEditorQuery() }) {
             Label("Cancel", systemImage: "stop.fill")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .help("Cancel the running query (the connection is reset)")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
@@ -129,7 +129,7 @@ struct HeaderView: View {
           }) {
             Label("Run", systemImage: "play.fill")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glassProminent)
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
           .help(editorRunButtonHelp)
         }
@@ -139,25 +139,21 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
-      HStack(spacing: Spacing.sm) {
+      GlassToolbarGroup {
         // Search button
         Button(action: {
           viewModel.openSearch()
         }) {
           Image(systemName: "magnifyingglass")
         }
-        .buttonStyle(
-          GhostButtonStyle(
-            isActive: viewModel.isSearchPanelVisible,
-            iconOnly: true
-          )
-        )
+        .buttonStyle(.glass)
+        .tint(viewModel.isSearchPanelVisible ? Color.accent : nil)
         .help("Search (⌘F)")
       }
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.appBackground)
+    .chromeGlass()
     .overlay(alignment: .bottom) {
       Divider()
     }
