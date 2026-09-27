@@ -151,8 +151,7 @@ struct SafeModeSection: View {
       Picker("", selection: $selectedConnectionMode) {
         Text("Use Global").tag(SafeMode?.none)
         ForEach(SafeMode.allCases, id: \.self) { mode in
-          (Text(mode.displayName)
-            + Text(mode.requiresPassword ? " \(Image(systemName: "lock.fill"))" : ""))
+          safeModeLabel(mode)
             .tag(Optional(mode))
         }
       }
@@ -162,6 +161,13 @@ struct SafeModeSection: View {
         handleConnectionSafeModeChange(to: newValue)
       }
     }
+  }
+
+  /// Picker label: mode name, plus a lock icon when the mode requires a password.
+  private func safeModeLabel(_ mode: SafeMode) -> Text {
+    mode.requiresPassword
+      ? Text("\(mode.displayName) \(Image(systemName: "lock.fill"))")
+      : Text(mode.displayName)
   }
 
   // MARK: - Global Row
@@ -187,8 +193,7 @@ struct SafeModeSection: View {
           )
         ) {
           ForEach(SafeMode.allCases, id: \.self) { mode in
-            (Text(mode.displayName)
-              + Text(mode.requiresPassword ? " \(Image(systemName: "lock.fill"))" : ""))
+            safeModeLabel(mode)
               .tag(mode)
           }
         }

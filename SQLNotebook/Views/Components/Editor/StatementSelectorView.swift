@@ -84,10 +84,9 @@ struct StatementSelectorView: View {
           }) {
             HStack {
               // Combined text: "Result N • query text (truncated)"
-              (Text("Result \(index + 1) • ")
-                .font(.system(size: 11))
-                + Text(truncateQuery(statementResult.queryText))
-                .font(.system(size: 11, design: .monospaced)))
+              Text(
+                "\(Text("Result \(index + 1) • ").font(.system(size: 11)))\(Text(truncateQuery(statementResult.queryText)).font(.system(size: 11, design: .monospaced)))"
+              )
                 .lineLimit(1)
 
               Spacer()
