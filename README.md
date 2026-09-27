@@ -124,7 +124,7 @@ The database includes sample tables (customers, products, orders, employees, ana
 Releases are signed with Developer ID, notarized and published by the tag-triggered GitHub workflow `.github/workflows/release.yml`.
 
 - Cut a release with the `/cf-ship` project skill (changelog, semver bump, tag, CI release).
-- One-time setup (secrets, certificate, notarization profile) and the manual fallback: [.github/release-setup.md](.github/release-setup.md).
+- One-time setup (secrets, certificate, notarization profile) and the manual fallback: `docs/release-setup.md` (local guide, not tracked in git).
 
 ## License
 

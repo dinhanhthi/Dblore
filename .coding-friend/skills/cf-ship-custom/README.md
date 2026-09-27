@@ -57,13 +57,13 @@ Pushing a `v*` tag starts `.github/workflows/release.yml` on a `macos-26` runner
 
 ## Prerequisites
 
-- The six repository secrets listed in `.github/release-setup.md`
+- The six repository secrets listed in `docs/release-setup.md`
   (`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `KEYCHAIN_PASSWORD`,
   `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`). Check with
   `gh secret list`.
 - For the local fallback only: the Developer ID certificate in your login
   keychain and the `SQLNotebookNotary` notary profile
-  (`xcrun notarytool store-credentials ...`, see `.github/release-setup.md`).
+  (`xcrun notarytool store-credentials ...`, see `docs/release-setup.md`).
 - A `CHANGELOG.md` at the repo root with a title and format note; the skill
   inserts each new version below it.
 - `gh` authenticated, and the test DB container `sqlnotebook-postgres-test` up
@@ -84,7 +84,7 @@ Nothing to release.
 
 **CI fails at "Select Xcode with the macOS 26 SDK"** ("No Xcode with macOS SDK
 >= 26 found"). The runner lacks Xcode 27. Release locally, as described in
-".github/release-setup.md > Fallback: release from a local machine":
+"docs/release-setup.md > Fallback: release from a local machine":
 `scripts/build-release.sh --expect-version <version>`, extract the changelog
 section with the same awk, then `gh release create v<version>` with the DMG and
 `.sha256` (add `--prerelease` for `-rc` / `-beta`). The existing tag is reused.
@@ -133,4 +133,4 @@ BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts
 | `scripts/bump.sh`               | Writes the version and build number into the Xcode project and verifies them.        |
 | `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Used by CI and locally.            |
 | `.github/workflows/release.yml` | Tag-triggered release: build, notarize, publish on GitHub Releases.                  |
-| `.github/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |
+| `docs/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |
