@@ -33,4 +33,18 @@ struct AppSettingsIsolationTests {
     #expect(SessionManager.isRunningAsTestHost)
     #expect(AppSettings.sharedDefaults !== UserDefaults.standard)
   }
+
+  @Test("Commit inline edits immediately: off by default, persisted, reset to off")
+  func inlineEditAutoCommitSetting() throws {
+    let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+
+    let settings = AppSettings(defaults: suite)
+    #expect(settings.inlineEditAutoCommit == false)
+    settings.inlineEditAutoCommit = true
+    #expect(AppSettings(defaults: suite).inlineEditAutoCommit == true)
+    settings.resetToDefaults()
+    #expect(AppSettings(defaults: suite).inlineEditAutoCommit == false)
+  }
 }

@@ -239,13 +239,12 @@ struct InlineEditViewModelTests {
 
   // MARK: Gate and confirmation
 
-  @Test("readOnly blocks inline edit: error toast, no dialog, nothing pending")
+  @Test("readOnly blocks inline edit: error toast, no dialog")
   func readOnlyBlocksInlineEdit() {
     let viewModel = makeViewModel(config: ConnectionConfig(protectionLevel: .readOnly))
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
     #expect(viewModel.queryConfirmationState.showDialog == false)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
     let toast = WorkspaceWindowManager.shared.toastState.currentToast
     #expect(toast?.type == .error)
     #expect(toast?.message.contains("read-only") == true)
@@ -259,51 +258,18 @@ struct InlineEditViewModelTests {
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel, primaryKeyColumns: [])
     #expect(viewModel.queryConfirmationState.showDialog == false)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
     #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
-  @Test("alertRead: confirmation with the UPDATE preview is shown before sending")
-  func alertReadAsksBeforeSending() {
+  @Test(
+    "Safe Mode never asks before an inline edit (no dialog, no password)",
+    arguments: [SafeMode.alertRead, .alertAll, .safeRead, .safeAll])
+  func safeModeSkippedForInlineEdit(safeMode: SafeMode) {
     let viewModel = makeViewModel(
-      config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
+      config: ConnectionConfig(protectionLevel: .none, safeMode: safeMode))
     edit(viewModel)
-    let state = viewModel.queryConfirmationState
-    #expect(state.showDialog)
-    #expect(state.pendingInlineEdit != nil)
-    #expect(state.pendingQuery == #"UPDATE public.users SET "name" = $1 WHERE "id" = $2"#)
-    #expect(state.statements.first?.preview.hasPrefix("UPDATE") == true)
-    #expect(state.requiresPassword == false)
-  }
-
-  @Test("safeRead: the edit confirmation requires the Safe Mode password")
-  func safeReadRequiresPassword() {
-    let viewModel = makeViewModel(
-      config: ConnectionConfig(protectionLevel: .none, safeMode: .safeRead))
-    edit(viewModel)
-    #expect(viewModel.queryConfirmationState.showDialog)
-    #expect(viewModel.queryConfirmationState.requiresPassword)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit != nil)
-  }
-
-  @Test("Cancelling the confirmation drops the pending edit")
-  func cancelDropsPendingEdit() {
-    let viewModel = makeViewModel(
-      config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
-    edit(viewModel)
-    viewModel.cancelPendingQuery()
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
     #expect(viewModel.queryConfirmationState.showDialog == false)
-  }
-
-  @Test("A later cell confirmation replaces a stale pending edit")
-  func laterConfirmationReplacesStaleEdit() {
-    let viewModel = makeViewModel(
-      config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
-    edit(viewModel)
-    // Dialog dismissed without Cancel (only showDialog is reset by the binding)
-    viewModel.queryConfirmationState.showDialog = false
-    _ = viewModel.presentConfirmationIfNeeded(for: "DELETE FROM users WHERE id = 1", cellId: cellId)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
+    #expect(viewModel.queryConfirmationState.requiresPassword == false)
+    #expect(viewModel.queryConfirmationState.pendingQuery.isEmpty)
   }
 }

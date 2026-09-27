@@ -143,7 +143,6 @@ struct InlineEditIntegrationTests {
       columnName: "b", columnType: "text", newValue: "changed", originalValue: .string("x"),
       tableName: "s6_edit_nopk", rowData: ["a": .int(1), "b": .string("x")],
       primaryKeyColumns: pk, cellId: nil, connectionManager: manager)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
 
     #expect(throws: DatabaseError.self) {
       try CellUpdateStatement.make(

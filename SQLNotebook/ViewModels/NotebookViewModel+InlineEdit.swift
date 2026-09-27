@@ -2,8 +2,8 @@
 //  NotebookViewModel+InlineEdit.swift
 //  SQLNotebook
 //
-//  Inline grid edit: primary-key-only UPDATE, checked by the protection gate and confirmed by
-//  Safe Mode before anything is sent.
+//  Inline grid edit: primary-key-only UPDATE, checked by the protection gate (never Safe Mode)
+//  and staged in the app transaction or committed at once (`inlineEditAutoCommit`).
 //
 
 import AppKit
@@ -85,7 +85,6 @@ extension NotebookViewModel {
     editorResult?.editTarget = nil
     editorStatementResults = editorStatementResults.map(Self.withoutEditTarget)
     cellDetailEditTarget = nil
-    pendingInlineEditTarget = nil
   }
 
   private nonisolated static func withoutEditTarget(_ statement: StatementResult) -> StatementResult
@@ -195,15 +194,10 @@ extension NotebookViewModel {
       statement: statement, columnName: columnName, tableName: target.qualifiedName,
       cellId: cellId, connectionManager: connectionManager)
 
-    // Safe Mode: ask before sending, with the generated UPDATE as preview
-    if presentConfirmationIfNeeded(for: statement.sql, cellId: cellId) {
-      queryConfirmationState.pendingInlineEdit = edit
-      pendingInlineEditTarget = target
-      return
-    }
-
+    // No Safe Mode confirmation: the edit is staged (Commit / Rollback) unless committed at once
+    let autoCommit = AppSettings.shared.inlineEditAutoCommit
     Task { [weak self] in
-      await self?.sendInlineEdit(edit, target: target)
+      await self?.sendInlineEdit(edit, target: target, autoCommit: autoCommit)
     }
   }
 
@@ -211,11 +205,13 @@ extension NotebookViewModel {
   nonisolated static let notEditableMessage =
     "This result is read-only: run the cell again to edit a single table with a primary key"
 
-  /// Send a (confirmed) inline edit through the actor gate and refresh the cell.
+  /// Send an inline edit through the actor gate and refresh the cell. `autoCommit` false stages
+  /// it in the app transaction (Protected mode forced, whatever the connection's toggle); true
+  /// commits it at once unless a transaction is pending (see `executeGatedUpdate`).
   /// `target` must still be the live edit target of the edited result (same generation).
   /// Anything but exactly one updated row is reported as an error (the actor undoes it, see
   /// `DatabaseConnectionManager.executeGatedUpdate`).
-  func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?) async {
+  func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?, autoCommit: Bool) async {
     guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let target, target.qualifiedName == edit.tableName,
       isLiveEditTarget(target, cellId: edit.cellId)
@@ -224,10 +220,22 @@ extension NotebookViewModel {
       return
     }
     do {
+      let policy = protectionPolicy
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
-        edit.statement, policy: protectionPolicy, connectionEpoch: target.connectionEpoch,
-        caller: id)
-      if rowsAffected == 1 {
+        edit.statement,
+        policy: autoCommit
+          ? policy
+          : ProtectionPolicy(
+            protectionLevel: policy.protectionLevel, safeMode: policy.safeMode,
+            protectedMode: true),
+        connectionEpoch: target.connectionEpoch, caller: id, commitImmediately: autoCommit)
+      // Staged in the app transaction: nothing is saved until Commit in the banner
+      let pending = !(await edit.connectionManager.transactionSnapshot().isIdle)
+      if rowsAffected == 1, pending {
+        showToast(
+          "Edited '\(edit.columnName)' in '\(edit.tableName)' (1 row): pending until Commit",
+          type: .info)
+      } else if rowsAffected == 1 {
         showToast("Updated '\(edit.columnName)' in '\(edit.tableName)' (1 row)", type: .success)
       } else {
         showToast(

@@ -236,7 +236,10 @@ private struct PendingTransactionDialogs: ViewModifier {
         }
         .keyboardShortcut(.defaultAction)
       } message: {
-        Text(summary.reviewText)
+        // The title already counts statements and rows; the banner lists the statements
+        if let warning = summary.earlierChangesWarning {
+          Text(warning)
+        }
       }
       .sheet(isPresented: $workspaceManager.isCommitUnlockVisible) {
         SafeModeUnlockSheet(

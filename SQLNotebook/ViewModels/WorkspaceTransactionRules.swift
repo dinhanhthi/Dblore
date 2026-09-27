@@ -118,8 +118,8 @@ nonisolated struct PendingTransactionSummary: Sendable, Equatable {
 
   /// What Commit makes permanent, one line per statement (the first `reviewLimit`): kind (when
   /// the preview does not start with it), SQL preview, affected rows ("rows unknown" included),
-  /// then "… and N more" and the earlier-changes warning. Used by the banner's Commit
-  /// confirmation and by the resolve prompt before close / disconnect / quit.
+  /// then "… and N more" and the earlier-changes warning. Used by the resolve prompt
+  /// before close / disconnect / quit.
   var reviewText: String {
     let shown = pending.prefix(Self.reviewLimit).map { statement -> String in
       let preview = String(statement.sqlPreview.prefix(80))

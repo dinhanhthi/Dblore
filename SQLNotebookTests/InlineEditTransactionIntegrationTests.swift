@@ -314,4 +314,80 @@ struct InlineEditTransactionIntegrationTests {
       #expect(try await value(observer, table) == .int(11))
     }
   }
+
+  // MARK: - Grid edit: commit immediately setting
+
+  /// View model on a connection with Protected mode `protectedMode`
+  private func gridViewModel(protectedMode: Bool) -> NotebookViewModel {
+    let viewModel = NotebookViewModel()
+    viewModel.notebook.connectionConfig = Self.config(protectedMode: protectedMode)
+    return viewModel
+  }
+
+  /// Sends a grid edit of row `id` (`v` = `newValue`) of `target` through `viewModel` with the
+  /// "commit inline edits immediately" setting `autoCommit`
+  private func gridEdit(
+    _ viewModel: NotebookViewModel, _ manager: DatabaseConnectionManager, _ target: EditTarget,
+    id: Int = 1, to newValue: String, autoCommit: Bool
+  ) async throws {
+    var result = CellResult(
+      columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "v", type: "int4")],
+      rows: [[.int(id), .int(0)]], tableName: target.qualifiedName, primaryKeyColumns: ["id"])
+    result.editTarget = target
+    viewModel.editorResult = result
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: target.qualifiedName, columnName: "v", newValue: newValue,
+      primaryKeyColumns: target.primaryKeyColumns, rowData: ["id": .int(id)],
+      updateOnly: target.updateOnly)
+    let edit = PendingInlineEdit(
+      statement: statement, columnName: "v", tableName: target.qualifiedName, cellId: nil,
+      connectionManager: manager)
+    await viewModel.sendInlineEdit(edit, target: target, autoCommit: autoCommit)
+  }
+
+  @Test("Setting off, Protected OFF: the grid edit is pending (Commit / Rollback bar)")
+  func gridEditStagedWithoutProtectedMode() async throws {
+    let table = "p6_grid_staged"
+    try await withTable(table, protectedMode: false) { manager, observer in
+      let viewModel = gridViewModel(protectedMode: false)
+      let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
+      WorkspaceWindowManager.shared.dismissToast()
+      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: false)
+      // Not saved yet: no success toast, the user still has to Commit
+      let toast = WorkspaceWindowManager.shared.toastState.currentToast
+      #expect(toast?.type == .info)
+      #expect(toast?.message.contains("Commit") == true)
+      #expect(await isAppTx(manager))
+      #expect(await manager.transactionSnapshot().pending.count == 1)
+      #expect(try await value(observer, table) == .int(10))
+    }
+  }
+
+  @Test("Setting on, Protected ON: the grid edit is committed at once, nothing pending")
+  func gridEditCommittedImmediately() async throws {
+    let table = "p6_grid_commit"
+    try await withTable(table, protectedMode: true) { manager, observer in
+      let viewModel = gridViewModel(protectedMode: true)
+      let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
+      WorkspaceWindowManager.shared.dismissToast()
+      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
+      #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .success)
+      #expect(await manager.transactionSnapshot().isIdle)
+      #expect(try await value(observer, table) == .int(11))
+    }
+  }
+
+  @Test("Setting on with a pending transaction: the grid edit joins it")
+  func gridEditJoinsPendingTransaction() async throws {
+    let table = "p6_grid_join"
+    try await withTable(table, protectedMode: false) { manager, observer in
+      let viewModel = gridViewModel(protectedMode: false)
+      // Resolved before the transaction: the app then owns the session
+      let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
+      try await gridEdit(viewModel, manager, resolved, id: 2, to: "21", autoCommit: false)
+      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
+      #expect(await manager.transactionSnapshot().pending.count == 2)
+      #expect(try await value(observer, table) == .int(10))
+    }
+  }
 }

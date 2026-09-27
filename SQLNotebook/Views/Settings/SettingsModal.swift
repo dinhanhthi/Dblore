@@ -176,6 +176,13 @@ struct SettingsModalResultTableSection: View {
         isOn: $appSettings.hideRunWithQuerySection
       )
 
+      SettingsToggle(
+        title: "Commit Inline Edits Immediately",
+        description:
+          "When enabled, a cell edited in the result table is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
+        isOn: $appSettings.inlineEditAutoCommit
+      )
+
       // Max Height (Notebook only)
       SettingsSlider(
         title: "Max Height",
