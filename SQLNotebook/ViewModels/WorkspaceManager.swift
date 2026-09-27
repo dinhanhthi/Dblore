@@ -65,6 +65,13 @@ class WorkspaceManager: Identifiable {
   private var notebookDocuments: [UUID: SQLNotebookDocument] = [:]
   private var editorDocuments: [UUID: SQLEditorDocument] = [:]
 
+  // MARK: - Security-Scoped Bookmarks
+
+  /// Bookmark of each tab's file, written to the .sqlws on save
+  @ObservationIgnored var tabBookmarks: [UUID: Data] = [:]
+  /// Bookmark of the .sqlws file itself, stored in the recent workspaces entry
+  @ObservationIgnored var workspaceBookmark: Data?
+
   // MARK: - UI State
 
   var showingCloseConfirmation = false
@@ -134,6 +141,7 @@ class WorkspaceManager: Identifiable {
     if restoreTabs {
       for tabRef in workspace.tabs {
         tabs.append(tabRef.toTabItem())
+        tabBookmarks[tabRef.id] = tabRef.bookmark
       }
       activeTabId = workspace.activeTabId
     }
@@ -156,6 +164,7 @@ class WorkspaceManager: Identifiable {
 
     // Don't restore tabs in init - we'll do it here with proper viewModels
     let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
+    manager.workspaceBookmark = SecurityScopedAccess.bookmarkIfPossible(for: url)
 
     // Restore tabs from saved workspace with their original IDs
     for tabRef in workspace.tabs {
@@ -388,6 +397,8 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
     }
+    tabBookmarks[tab.id] =
+      tabRef.bookmark ?? SecurityScopedAccess.bookmarkIfPossible(for: fileURL)
   }
 
   func openFile(url: URL, selectTab: Bool = true) async throws {
@@ -445,6 +456,7 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
     }
+    tabBookmarks[tab.id] = SecurityScopedAccess.bookmarkIfPossible(for: url)
 
     markDirtyAndScheduleAutoSave()
     if selectTab {
@@ -554,6 +566,7 @@ class WorkspaceManager: Identifiable {
     viewModels.removeValue(forKey: id)
     notebookDocuments.removeValue(forKey: id)
     editorDocuments.removeValue(forKey: id)
+    tabBookmarks.removeValue(forKey: id)
     markDirtyAndScheduleAutoSave()
   }
 
@@ -676,6 +689,7 @@ class WorkspaceManager: Identifiable {
     }
 
     try await saveToURL(tabId: tabId, url: url)
+    tabBookmarks[tabId] = SecurityScopedAccess.bookmarkIfPossible(for: url)
   }
 
   // MARK: - Open Panels

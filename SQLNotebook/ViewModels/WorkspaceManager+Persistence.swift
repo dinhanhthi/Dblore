@@ -81,26 +81,34 @@ extension WorkspaceManager {
 
   private func saveWorkspaceToURL(_ url: URL) async throws {
     // Update workspace with current state
+    let isNewLocation = workspace.fileURL != url
     workspace.fileURL = url
     workspace.name = url.deletingPathExtension().lastPathComponent
-    workspace.tabs = tabs.map { WorkspaceTabReference.from($0) }
-    workspace.activeTabId = activeTabId
-    workspace.lastOpenedAt = Date()
 
-    // Encode and save
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    encoder.dateEncodingStrategy = .iso8601
-
-    let data = try encoder.encode(workspace)
+    let data = try encodedWorkspaceData()
     try data.write(to: url, options: .atomic)
 
     isDirty = false
+    if isNewLocation || workspaceBookmark == nil {
+      workspaceBookmark = SecurityScopedAccess.bookmarkIfPossible(for: url)
+    }
 
     // Add to recent workspaces
-    if let entry = WorkspaceHistoryEntry.from(workspace) {
+    if let entry = WorkspaceHistoryEntry.from(workspace, bookmark: workspaceBookmark) {
       RecentManager.shared.addWorkspace(entry)
     }
+  }
+
+  /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON
+  func encodedWorkspaceData() throws -> Data {
+    workspace.tabs = tabs.map { WorkspaceTabReference.from($0, bookmark: tabBookmarks[$0.id]) }
+    workspace.activeTabId = activeTabId
+    workspace.lastOpenedAt = Date()
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    return try encoder.encode(workspace)
   }
 
   /// Check if workspace has unsaved changes

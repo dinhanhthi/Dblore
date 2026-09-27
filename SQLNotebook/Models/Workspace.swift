@@ -174,26 +174,37 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
   var fileURL: URL?
   var documentType: TabDocumentType
   var title: String
+  /// App-scope security-scoped bookmark of `fileURL` (nil in workspaces saved before bookmarks)
+  var bookmark: Data?
 
   init(
     id: UUID = UUID(),
     fileURL: URL? = nil,
     documentType: TabDocumentType,
-    title: String
+    title: String,
+    bookmark: Data? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
     self.documentType = documentType
     self.title = title
+    self.bookmark = bookmark
+  }
+
+  /// Bookmark bytes differ between creations of the same file, so equality ignores them
+  static func == (lhs: WorkspaceTabReference, rhs: WorkspaceTabReference) -> Bool {
+    lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.documentType == rhs.documentType
+      && lhs.title == rhs.title
   }
 
   /// Create from a TabItem
-  static func from(_ tab: TabItem) -> WorkspaceTabReference {
+  static func from(_ tab: TabItem, bookmark: Data? = nil) -> WorkspaceTabReference {
     WorkspaceTabReference(
       id: tab.id,
       fileURL: tab.fileURL,
       documentType: tab.documentType,
-      title: tab.title
+      title: tab.title,
+      bookmark: bookmark
     )
   }
 

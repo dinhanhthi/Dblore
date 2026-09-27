@@ -122,7 +122,9 @@ class WorkspaceWindowManager {
     activeWorkspaceId = manager.id
 
     // Add to recent
-    if let entry = WorkspaceHistoryEntry.from(manager.workspace) {
+    if let entry = WorkspaceHistoryEntry.from(
+      manager.workspace, bookmark: manager.workspaceBookmark)
+    {
       RecentManager.shared.addWorkspace(entry)
     }
 
