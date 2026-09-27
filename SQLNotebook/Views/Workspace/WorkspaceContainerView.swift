@@ -648,6 +648,7 @@ struct WorkspaceTitleBarTabsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .blockDoubleClickZoom()
         .help("Settings (⌘,)")
 
@@ -686,6 +687,7 @@ struct WorkspaceTitleBarTabsView: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .pointerStyle(.link)
         .menuIndicator(.hidden)
         .fixedSize()
         .blockDoubleClickZoom()
@@ -772,6 +774,7 @@ struct TabNavigationArrowButton: View {
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .pointerStyle(.link)
     .disabled(!isEnabled)
     .blockDoubleClickZoom()
     .onHover { isHovering = $0 }

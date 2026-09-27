@@ -310,6 +310,7 @@ struct WorkspaceDraggableTabItem: View {
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .help("Close tab")
     } else {
       Color.clear

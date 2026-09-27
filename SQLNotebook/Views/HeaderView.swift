@@ -31,6 +31,7 @@ struct HeaderView: View {
             Label("New", systemImage: "plus")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘N)")
@@ -41,6 +42,7 @@ struct HeaderView: View {
             Label("Run All", systemImage: "play.fill")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
           .confirmationDialog(
@@ -86,6 +88,7 @@ struct HeaderView: View {
             Label("Clear All Outputs", systemImage: "trash")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
@@ -112,6 +115,7 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons: while a query runs, Run keeps its label, shows a spinner and
@@ -132,6 +136,7 @@ struct HeaderView: View {
             }
           }
           .buttonStyle(.glassProminent)
+          .pointerStyle(.link)
           .tint(Color.accent)
           .disabled(
             viewModel.isEditorQueryRunning || viewModel.editorContent.isEmpty
@@ -144,6 +149,7 @@ struct HeaderView: View {
             Image(systemName: "stop.fill")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .disabled(!viewModel.isEditorQueryRunning)
           .help("Cancel the running query (the connection is reset)")
         }

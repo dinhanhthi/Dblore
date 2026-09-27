@@ -69,6 +69,7 @@ extension EditorModeView {
             .foregroundColor(.foregroundSubtle)
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .help("Clear result")
       }
       .padding(.horizontal, Spacing.md)
@@ -135,6 +136,7 @@ extension EditorModeView {
     }
     .id(viewModel.editorStatementResults.map { $0.id })
     .buttonStyle(.plain)
+    .pointerStyle(.link)
     .help("Select statement result to view")
     .fixedSize()
   }

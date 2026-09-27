@@ -355,6 +355,10 @@ final class ResultGridTableView: NSTableView {
 /// Details button with a subtle rounded background, drawn at display time so it follows the
 /// light or dark appearance
 final class ResultGridDetailsButton: NSButton {
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     let path = NSBezierPath(
       roundedRect: bounds.insetBy(dx: 0.25, dy: 0.25), xRadius: CornerRadius.sm,

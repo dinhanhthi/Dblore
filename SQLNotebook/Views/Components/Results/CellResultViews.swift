@@ -308,6 +308,7 @@ struct ResultMetadataView: View {
             }
             .id(statementResults.map { $0.id })
             .buttonStyle(.plain)
+            .pointerStyle(.link)
             .help("Select statement result to view")
             .fixedSize()
 

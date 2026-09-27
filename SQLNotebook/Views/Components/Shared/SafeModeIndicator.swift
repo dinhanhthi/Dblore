@@ -42,6 +42,7 @@ struct SafeModeIndicator: View {
         .tintedCapsuleGlass(safeModeColor)
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .help(helpText)
       .onHover { hovering in
         if hovering {

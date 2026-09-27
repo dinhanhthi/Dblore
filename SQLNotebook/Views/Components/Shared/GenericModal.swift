@@ -103,6 +103,7 @@ struct GenericModalHeader: View {
           .foregroundColor(.foregroundMuted)
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .keyboardShortcut(.escape, modifiers: [])
     }
     .padding(.horizontal, Spacing.md)

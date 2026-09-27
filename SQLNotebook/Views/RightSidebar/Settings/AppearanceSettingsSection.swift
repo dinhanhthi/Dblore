@@ -48,6 +48,7 @@ struct AppearanceSettingsSection: View {
             .padding(.vertical, Spacing.sm)
           }
           .buttonStyle(.plain)
+          .pointerStyle(.link)
         }
       }
 
@@ -79,6 +80,7 @@ struct AppearanceSettingsSection: View {
               .padding(Spacing.xs)
           }
           .buttonStyle(.plain)
+          .pointerStyle(.link)
           .help(color.rawValue)
         }
       }

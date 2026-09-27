@@ -70,6 +70,7 @@ struct PendingTransactionBanner: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .accessibilityLabel(summary.headline)
       .accessibilityHint(isExpanded ? "Hide pending statements" : "Show pending statements")
 
@@ -81,6 +82,7 @@ struct PendingTransactionBanner: View {
         run { await workspaceManager.rollback() }
       }
       .buttonStyle(.glass)
+      .pointerStyle(.link)
       .controlSize(.small)
       .disabled(isWorking || isBusy)
       .accessibilityLabel("Roll back \(summary.statementCount) pending statements")
@@ -89,6 +91,7 @@ struct PendingTransactionBanner: View {
         workspaceManager.requestCommit()
       }
       .buttonStyle(.glassProminent)
+      .pointerStyle(.link)
       .tint(tint)
       .controlSize(.small)
       .disabled(summary.isAborted || isWorking || isBusy)
@@ -124,6 +127,7 @@ struct PendingTransactionBanner: View {
             Task { await workspaceManager.disconnect() }
           }
           .buttonStyle(.glassProminent)
+          .pointerStyle(.link)
           .tint(.destructive)
           .controlSize(.small)
           .accessibilityHint("Closes the connection; asks first")

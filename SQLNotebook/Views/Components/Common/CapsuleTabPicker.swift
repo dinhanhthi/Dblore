@@ -83,6 +83,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
                   .contentShape(Rectangle())
               }
               .buttonStyle(PlainButtonStyle())
+              .pointerStyle(.link)
               .onHover { hovering in
                 if hovering {
                   NSCursor.pointingHand.push()
