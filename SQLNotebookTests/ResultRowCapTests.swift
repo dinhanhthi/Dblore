@@ -1,6 +1,6 @@
 // ResultRowCapTests.swift
 // C6: one result row cap for notebook and editor. Global `AppSettings.resultRowCap`
-// (default 100, clamped to `SessionBrakeLimits.rowCapRange`), a per-connection
+// (default 10,000, clamped to `SessionBrakeLimits.rowCapRange`), a per-connection
 // `rowCapOverride` that wins when set, and a one-time migration of the legacy
 // `maxRowLimit` / `editorMaxRowLimit` UserDefaults keys. Every UserDefaults test uses an
 // isolated suite, never `UserDefaults.standard`.
@@ -26,16 +26,16 @@ struct ResultRowCapTests {
 
   // MARK: - Global default
 
-  @Test("Default global cap is 100 when nothing is stored")
-  func defaultIs100() throws {
-    #expect(AppSettings.defaultResultRowCap == 100)
+  @Test("Default global cap is 10,000 when nothing is stored")
+  func defaultIs10000() throws {
+    #expect(AppSettings.defaultResultRowCap == 10_000)
     try withIsolatedDefaults { defaults in
       #expect(AppSettings.loadResultRowCap(from: defaults) == nil)
       #expect(defaults.object(forKey: AppSettings.resultRowCapKey) == nil)
     }
     #expect(
       SettingsResolver.effectiveRowCap(override: nil, global: AppSettings.defaultResultRowCap)
-        == 100)
+        == 10_000)
   }
 
   @Test("Global cap is clamped to 100...100000 (non-positive -> default)")
@@ -124,6 +124,14 @@ struct ResultRowCapTests {
       #expect(AppSettings.loadResultRowCap(from: defaults) == 2500)
       #expect(defaults.integer(forKey: AppSettings.resultRowCapKey) == 2500)
       #expect(defaults.object(forKey: Self.legacyEditorKey) == nil)
+    }
+  }
+
+  @Test("A stored 100 (the old default) is an explicit choice and is kept")
+  func storedOldDefaultKept() throws {
+    try withIsolatedDefaults { defaults in
+      defaults.set(100, forKey: AppSettings.resultRowCapKey)
+      #expect(AppSettings.loadResultRowCap(from: defaults) == 100)
     }
   }
 

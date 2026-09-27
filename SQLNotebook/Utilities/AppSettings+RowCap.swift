@@ -12,8 +12,9 @@ extension AppSettings {
   /// UserDefaults key of `resultRowCap`
   nonisolated static let resultRowCapKey = "app.settings.resultRowCap"
 
-  /// Default rows shown per statement (raised when the NSTableView grid lands)
-  nonisolated static let defaultResultRowCap = 100
+  /// Default rows shown per statement when none is stored (a stored value, even the old
+  /// default 100, is an explicit choice and is kept)
+  nonisolated static let defaultResultRowCap = 10_000
 
   /// Pre-C6 keys (notebook 50-100, editor 100-200), migrated once then deleted
   private nonisolated static let legacyRowLimitKeys = [
