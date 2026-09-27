@@ -34,12 +34,13 @@ struct ResultGridView: NSViewRepresentable {
   /// Hand a vertical scroll the grid can't take to the parent (notebook list); false for a
   /// grid that fills its panel (editor)
   var forwardsScrollToParent = true
+  /// Effective "Hide Column Types" setting: one-line header without the type line
+  var hideColumnTypes = false
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
-  /// Fixed header height (set on the header view)
-  static let headerHeight: CGFloat = 28
-  /// Rows shown at once by a grid of `height(rowCount:)`; more rows scroll inside the grid
+  /// Rows shown at once by a grid of `height(rowCount:hideColumnTypes:)`; more rows scroll
+  /// inside the grid
   static let maxVisibleRows = 15
 
   /// Height of the rows only (no header), for a grid placed in a List or LazyVStack
@@ -47,9 +48,15 @@ struct ResultGridView: NSViewRepresentable {
     CGFloat(rowCount) * rowHeight
   }
 
+  /// Header height (set on the header view): name and type lines, or the name only
+  static func headerHeight(hideColumnTypes: Bool) -> CGFloat {
+    hideColumnTypes ? 28 : 48
+  }
+
   /// Fixed height of a grid in a List or LazyVStack: at most `maxVisibleRows` rows plus header
-  static func height(rowCount: Int) -> CGFloat {
-    rowsHeight(rowCount: min(rowCount, maxVisibleRows)) + headerHeight
+  static func height(rowCount: Int, hideColumnTypes: Bool) -> CGFloat {
+    rowsHeight(rowCount: min(rowCount, maxVisibleRows))
+      + headerHeight(hideColumnTypes: hideColumnTypes)
   }
 
   func makeCoordinator() -> ResultGridCoordinator {
@@ -71,7 +78,6 @@ struct ResultGridView: NSViewRepresentable {
     tableView.target = tableView
     tableView.action = #selector(ResultGridTableView.clickCell(_:))
     tableView.doubleAction = #selector(ResultGridTableView.editClickedCell(_:))
-    tableView.headerView?.frame.size.height = Self.headerHeight
 
     let scrollView = ResultGridScrollView()
     scrollView.documentView = tableView
@@ -97,7 +103,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onCellClick = onCellClick
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
+      hideColumnTypes: hideColumnTypes)
   }
 }
 

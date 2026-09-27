@@ -508,7 +508,7 @@ struct NotebookResultTableView: View {
   let cellId: UUID
   @State private var sortColumn: String?
   @State private var sortAscending = true
-  /// Current search match when it is in this cell's result data
+  /// Current search match when it is in this cell's result data or column names
   @State private var currentMatch: SearchMatch?
 
   /// Get the cell from viewModel
@@ -538,9 +538,12 @@ struct NotebookResultTableView: View {
         },
         searchQuery: viewModel.searchState.query,
         caseSensitive: viewModel.searchState.isCaseSensitive,
-        currentMatch: currentMatch
+        currentMatch: currentMatch,
+        hideColumnTypes: AppSettings.shared.hideColumnTypes
       )
-      .frame(height: ResultGridView.height(rowCount: result.rows.count))
+      .frame(
+        height: ResultGridView.height(
+          rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes))
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
       if let cell = cell, cell.statementResults.count > 1 {
@@ -562,7 +565,7 @@ struct NotebookResultTableView: View {
         notificationViewModelId == viewModel.id
       else { return }
       if let match = notification.userInfo?["match"] as? SearchMatch, match.cellId == cellId,
-        case .tableData = match.matchType
+        match.isInResultGrid
       {
         currentMatch = match
       } else {

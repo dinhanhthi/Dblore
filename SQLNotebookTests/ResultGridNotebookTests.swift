@@ -27,12 +27,16 @@ struct ResultGridNotebookTests {
     return (coordinator, tableView)
   }
 
-  @Test("Height is min(rows, 15) rows plus the header")
-  func height() {
-    let header = ResultGridView.headerHeight
-    #expect(ResultGridView.height(rowCount: 0) == header)
-    #expect(ResultGridView.height(rowCount: 10) == 10 * ResultGridView.rowHeight + header)
-    #expect(ResultGridView.height(rowCount: 100) == 15 * ResultGridView.rowHeight + header)
+  @Test("Height is min(rows, 15) rows plus the header", arguments: [false, true])
+  func height(hideColumnTypes: Bool) {
+    let header = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
+    #expect(ResultGridView.height(rowCount: 0, hideColumnTypes: hideColumnTypes) == header)
+    #expect(
+      ResultGridView.height(rowCount: 10, hideColumnTypes: hideColumnTypes)
+        == 10 * ResultGridView.rowHeight + header)
+    #expect(
+      ResultGridView.height(rowCount: 100, hideColumnTypes: hideColumnTypes)
+        == 15 * ResultGridView.rowHeight + header)
   }
 
   @Test(

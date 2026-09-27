@@ -296,13 +296,13 @@ extension EditorModeView {
 
 /// Result grid filling the editor result panel: it owns vertical scrolling (no hand-off to the
 /// parent). Sort, inline edit, cell click to the sidebar and search highlights as in a notebook
-/// cell; editor results have no cell ID, so every table-data search match applies.
+/// cell; editor results have no cell ID, so every data or column-name search match applies.
 struct EditorResultGridView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   @State private var sortColumn: String?
   @State private var sortAscending = true
-  /// Current search match when it is in the result data
+  /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
 
   var body: some View {
@@ -327,15 +327,14 @@ struct EditorResultGridView: View {
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,
       currentMatch: currentMatch,
-      forwardsScrollToParent: false
+      forwardsScrollToParent: false,
+      hideColumnTypes: AppSettings.shared.hideColumnTypes
     )
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
         notificationViewModelId == viewModel.id
       else { return }
-      if let match = notification.userInfo?["match"] as? SearchMatch,
-        case .tableData = match.matchType
-      {
+      if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
         currentMatch = match
       } else {
         currentMatch = nil

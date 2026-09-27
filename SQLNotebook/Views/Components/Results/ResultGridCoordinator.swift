@@ -35,6 +35,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let searchQuery: String
     let caseSensitive: Bool
     let currentMatchId: UUID?
+    let hideColumnTypes: Bool
+    let hasEditTarget: Bool
   }
 
   private(set) var model: ResultGridModel?
@@ -74,20 +76,43 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     }
   }
 
-  /// Rebuilds the columns and reloads the table when the result, the sort or the search
-  /// changed, and scrolls to the row of `currentMatch` (a match in this result's data).
-  /// Returns whether the table was reloaded.
+  /// Header content of `column`: the type unless hidden, the key icon for a primary-key
+  /// column of a result with a live edit target (a result read from a file has none), the
+  /// search highlight when the name contains the query and the current-match color when
+  /// `currentMatch` is this column's name
+  static func headerContent(
+    for column: ColumnInfo, result: CellResult, hideColumnTypes: Bool, searchQuery: String,
+    caseSensitive: Bool, currentMatch: SearchMatch?
+  ) -> ResultGridHeaderContent {
+    let isHighlighted =
+      !searchQuery.isEmpty
+      && column.name.range(of: searchQuery, options: caseSensitive ? [] : .caseInsensitive)
+        != nil
+    return ResultGridHeaderContent(
+      title: column.name,
+      type: hideColumnTypes ? nil : column.type,
+      isPrimaryKey: result.editTarget != nil && result.primaryKeyColumns.contains(column.name),
+      isHighlighted: isHighlighted,
+      isCurrentMatch: isHighlighted && currentMatch?.matchType == .columnName(column.name),
+      searchQuery: searchQuery, caseSensitive: caseSensitive)
+  }
+
+  /// Rebuilds the columns and reloads the table when the result, the sort, the search or the
+  /// column type flag changed, and scrolls to the row of `currentMatch` (a match in this
+  /// result's data). Returns whether the table was reloaded.
   @discardableResult
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
-    searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil
+    searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil,
+    hideColumnTypes: Bool = false
   )
     -> Bool
   {
     let newKey = Key(
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id,
+      hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil)
     guard newKey != key else { return false }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -110,6 +135,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       tableView.sortDescriptors = sortDescriptors
       isShowingInputSort = false
     }
+    updateHeader(
+      tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
+      caseSensitive: caseSensitive, currentMatch: currentMatch)
     tableView.reloadData()
     if let currentMatchCell {
       tableView.scrollRowToVisible(currentMatchCell.row)
@@ -253,7 +281,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let text = model.displayText(row: row, column: column)
     cell.textField?.textColor = isNull ? Self.nullTextColor : Self.textColor
     if let key, !key.searchQuery.isEmpty {
-      cell.textField?.attributedStringValue = highlighted(
+      cell.textField?.attributedStringValue = Self.highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
         textColor: isNull ? Self.nullTextColor : Self.textColor,
         isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
@@ -269,13 +297,37 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Private
 
+  /// Header height from the flag, and each column's header content; the header view is
+  /// redrawn (reloadData doesn't) and re-tiled in its scroll view when its height changes
+  private func updateHeader(
+    _ tableView: NSTableView, result: CellResult, hideColumnTypes: Bool, searchQuery: String,
+    caseSensitive: Bool, currentMatch: SearchMatch?
+  ) {
+    for tableColumn in tableView.tableColumns {
+      guard let cell = tableColumn.headerCell as? ResultGridHeaderCell,
+        let index = Int(tableColumn.identifier.rawValue), index < result.columns.count
+      else { continue }
+      cell.content = Self.headerContent(
+        for: result.columns[index], result: result, hideColumnTypes: hideColumnTypes,
+        searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch)
+    }
+    guard let headerView = tableView.headerView else { return }
+    let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
+    if headerView.frame.height != height {
+      headerView.frame.size.height = height
+      tableView.enclosingScrollView?.tile()
+    }
+    headerView.needsDisplay = true
+  }
+
   /// `text` with every match of `query` on the search highlight color, like SearchHighlighter;
   /// in the current match cell the first match is on the current-match color
-  private func highlighted(
-    _ text: String, query: String, caseSensitive: Bool, textColor: NSColor, isCurrentMatch: Bool
+  static func highlighted(
+    _ text: String, query: String, caseSensitive: Bool, font: NSFont = font, textColor: NSColor,
+    isCurrentMatch: Bool
   ) -> NSAttributedString {
     let string = NSMutableAttributedString(
-      string: text, attributes: [.font: Self.font, .foregroundColor: textColor])
+      string: text, attributes: [.font: font, .foregroundColor: textColor])
     let options: String.CompareOptions = caseSensitive ? [] : .caseInsensitive
     var start = text.startIndex
     while let range = text.range(of: query, options: options, range: start..<text.endIndex) {
@@ -296,6 +348,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     tableView.tableColumns.forEach(tableView.removeTableColumn)
     for (index, info) in columns.enumerated() {
       let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(String(index)))
+      // Before the title: the title is stored in the header cell
+      column.headerCell = ResultGridHeaderCell(textCell: info.name)
       column.title = info.name
       column.minWidth = 40
       column.width = 150
@@ -320,5 +374,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
     ])
     return cell
+  }
+}
+
+extension SearchMatch {
+  /// Shown by the result grid: a data cell, or a column name in the header
+  var isInResultGrid: Bool {
+    switch matchType {
+    case .tableData, .columnName: true
+    default: false
+    }
   }
 }
