@@ -194,15 +194,16 @@ extension NotebookViewModel {
   }
 
   /// Cell clicked in the result grid at result column `index` (`row` is the displayed row's
-  /// values): a JSON value opens in the JSON viewer, any other value in the cell detail
+  /// values, `originalRow` its index into `result.rows`): a JSON value opens in the JSON
+  /// viewer, any other value in the cell detail
   func showGridCellInSidebar(
-    row: [CellValue], column index: Int, result: CellResult, cellId: UUID?
+    row: [CellValue], originalRow: Int, column index: Int, result: CellResult, cellId: UUID?
   ) {
     guard result.columns.indices.contains(index) else { return }
     let column = result.columns[index]
     let value = index < row.count ? row[index] : .null
     if case .json(let json) = value {
-      showJSONInSidebar(json: json, path: "Column '\(column.name)'")
+      showJSONInSidebar(json: json, path: "Row \(originalRow + 1), Column '\(column.name)'")
     } else {
       showCellDetail(
         columnName: column.name,

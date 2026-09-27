@@ -66,10 +66,11 @@ struct ResultGridNotebookTests {
   @Test("A cell click delivers the displayed (sorted) row and the result column")
   func cellClick() {
     let (coordinator, _) = makeGrid(sortColumn: "id")
-    var clicked: (row: [CellValue], column: Int)?
-    coordinator.onCellClick = { clicked = ($0, $1) }
+    var clicked: (row: [CellValue], originalRow: Int, column: Int)?
+    coordinator.onCellClick = { clicked = ($0, $1, $2) }
     coordinator.cellClicked(row: 0, column: 1)
     #expect(clicked?.row == [.int(1), .string("ab")])
+    #expect(clicked?.originalRow == 1)
     #expect(clicked?.column == 1)
     coordinator.cellClicked(row: -1, column: 0)  // click outside a row
     #expect(clicked?.row == [.int(1), .string("ab")])

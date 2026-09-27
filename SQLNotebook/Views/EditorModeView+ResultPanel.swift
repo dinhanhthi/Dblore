@@ -320,8 +320,9 @@ struct EditorResultGridView: View {
         sortColumn = column
         sortAscending = ascending
       },
-      onCellClick: { row, column in
-        viewModel.showGridCellInSidebar(row: row, column: column, result: result, cellId: nil)
+      onCellClick: { row, originalRow, column in
+        viewModel.showGridCellInSidebar(
+          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
       },
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,

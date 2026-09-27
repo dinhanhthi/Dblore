@@ -20,10 +20,11 @@ struct ResultGridView: NSViewRepresentable {
   /// Receives the displayed row values, the result column index and the new text of an edit
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)? =
     nil
-  /// Receives the column and direction chosen by a header click
+  /// Receives the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
-  /// Receives the displayed row values and the result column index of a clicked cell
-  var onCellClick: ((_ row: [CellValue], _ column: Int) -> Void)? = nil
+  /// Receives the displayed row values, its index into `CellResult.rows` and the result column
+  /// index of a clicked cell
+  var onCellClick: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)? = nil
   /// Text highlighted in the cells (search)
   var searchQuery = ""
   var caseSensitive = false

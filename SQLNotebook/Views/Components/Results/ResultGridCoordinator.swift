@@ -49,12 +49,30 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Row values and column of the cell being edited, captured when editing starts so a reload
   /// during the edit can't shift the committed row
   private var editing: (row: [CellValue], column: Int)?
-  /// Called with the column and direction chosen by a header click
+  /// Called with the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)?
-  /// Called with the displayed row values and the result column index of a clicked cell
-  var onCellClick: ((_ row: [CellValue], _ column: Int) -> Void)?
+  /// Called with the displayed row values, its index into `CellResult.rows` and the result
+  /// column index of a clicked cell
+  var onCellClick: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
   /// True while `update` shows the input sort in the header, so it isn't reported back
   private var isShowingInputSort = false
+
+  /// Sort after a header click on `clicked`: the same column goes ascending, descending, then
+  /// no sort (nil column); another column starts ascending
+  static func nextSort(
+    current: (column: String?, ascending: Bool), clicked: String
+  ) -> (column: String?, ascending: Bool) {
+    guard current.column == clicked else { return (clicked, true) }
+    return current.ascending ? (clicked, false) : (nil, true)
+  }
+
+  /// Numbers are right-aligned, other values left-aligned, as in the result table
+  static func alignment(for value: CellValue) -> NSTextAlignment {
+    switch value {
+    case .int, .double: .right
+    default: .left
+    }
+  }
 
   /// Rebuilds the columns and reloads the table when the result, the sort or the search
   /// changed, and scrolls to the row of `currentMatch` (a match in this result's data).
@@ -101,15 +119,18 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// Reports a click on a displayed row (not the header) to `onCellClick`
   func cellClicked(row: Int, column: Int) {
-    guard let model, row >= 0, row < model.rowCount, column < model.columns.count else { return }
-    onCellClick?(model.row(at: row), column)
+    guard let model, let originalRow = model.originalRow(forDisplayedRow: row),
+      column < model.columns.count
+    else { return }
+    onCellClick?(model.row(at: row), originalRow, column)
   }
 
-  /// TSV of the selected rows, all columns in result order
+  /// TSV of the selected rows, all columns in on-screen order (after a column move)
   func selectionTSV(_ tableView: NSTableView) -> String {
     guard let model else { return "" }
     return model.tsv(
-      rows: tableView.selectedRowIndexes, columns: IndexSet(0..<model.columns.count))
+      rows: tableView.selectedRowIndexes,
+      columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) })
   }
 
   func copySelection(_ tableView: NSTableView) {
@@ -199,8 +220,19 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     _ tableView: NSTableView, sortDescriptorsDidChange _: [NSSortDescriptor]
   ) {
     guard !isShowingInputSort else { return }
-    let descriptor = tableView.sortDescriptors.first
-    onSortChange?(descriptor?.key, descriptor?.ascending ?? true)
+    // The table flips the direction itself; only the clicked column is taken from it
+    guard let clicked = tableView.sortDescriptors.first?.key else {
+      onSortChange?(nil, true)
+      return
+    }
+    let next = Self.nextSort(
+      current: (key?.sortColumn, key?.ascending ?? true), clicked: clicked)
+    if next.column == nil {
+      isShowingInputSort = true
+      tableView.sortDescriptors = []
+      isShowingInputSort = false
+    }
+    onSortChange?(next.column, next.ascending)
   }
 
   // MARK: - NSTableViewDelegate
@@ -216,7 +248,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let cell =
       tableView.makeView(withIdentifier: Self.cellIdentifier, owner: nil) as? NSTableCellView
       ?? makeCell()
-    let isNull = model.value(row: row, column: column) == .null
+    let value = model.value(row: row, column: column)
+    let isNull = value == .null
     let text = model.displayText(row: row, column: column)
     cell.textField?.textColor = isNull ? Self.nullTextColor : Self.textColor
     if let key, !key.searchQuery.isEmpty {
@@ -227,6 +260,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     } else {
       cell.textField?.stringValue = text
     }
+    cell.textField?.alignment = Self.alignment(for: value)
     cell.textField?.isEditable = false
     cell.textField?.isSelectable = false
     cell.textField?.delegate = self

@@ -532,8 +532,9 @@ struct NotebookResultTableView: View {
           sortColumn = column
           sortAscending = ascending
         },
-        onCellClick: { row, column in
-          viewModel.showGridCellInSidebar(row: row, column: column, result: result, cellId: cellId)
+        onCellClick: { row, originalRow, column in
+          viewModel.showGridCellInSidebar(
+            row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
         },
         searchQuery: viewModel.searchState.query,
         caseSensitive: viewModel.searchState.isCaseSensitive,

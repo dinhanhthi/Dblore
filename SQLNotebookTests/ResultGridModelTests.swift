@@ -47,6 +47,20 @@ struct ResultGridModelTests {
     #expect(model.displayText(row: 0, column: 1) == "a")
   }
 
+  @Test("TSV columns follow the given order")
+  func tsvColumnOrder() {
+    let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
+    #expect(model.tsv(rows: IndexSet([0, 1]), columns: [1, 0]) == "a\t1\nNULL\t2")
+  }
+
+  @Test("A displayed row maps back to its index in result.rows")
+  func originalRowLookup() {
+    let model = ResultGridModel(result: result, sortColumn: "id", ascending: false)
+    #expect((0..<3).map { model.originalRow(forDisplayedRow: $0) } == [0, 2, 1])
+    #expect(model.originalRow(forDisplayedRow: 3) == nil)
+    #expect(model.originalRow(forDisplayedRow: -1) == nil)
+  }
+
   @Test("TSV of a 2x2 selection quotes values containing a tab or a newline")
   func tsvSelection() {
     let result = CellResult(
@@ -56,7 +70,7 @@ struct ResultGridModelTests {
       ],
       rowCount: 3)
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: IndexSet([0, 1]))
+    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: [0, 1])
     #expect(tsv == "1\t\"a\tb\"\n2\t\"line1\nline2\"")
   }
 
