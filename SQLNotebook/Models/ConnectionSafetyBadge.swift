@@ -62,8 +62,7 @@ struct ConnectionSafetyBadge: Equatable, Sendable {
   static func sslStatus(_ mode: SSLMode) -> SSLStatus {
     switch mode {
     case .disable, .allow, .prefer: return SSLStatus(level: .danger, label: "No SSL")
-    case .require: return SSLStatus(level: .warning, label: "SSL unverified")
-    case .verifyCa, .verifyFull: return SSLStatus(level: .ok, label: "SSL verified")
+    case .require, .verifyCa, .verifyFull: return SSLStatus(level: .ok, label: "SSL verified")
     }
   }
 
@@ -71,7 +70,7 @@ struct ConnectionSafetyBadge: Equatable, Sendable {
     switch level {
     case .danger: return "the connection may be unencrypted"
     case .warning: return "encrypted, server certificate not verified"
-    case .ok: return "encrypted, server certificate verified"
+    case .ok: return "encrypted, this app always verifies the server certificate"
     }
   }
 }

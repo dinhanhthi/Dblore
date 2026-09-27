@@ -41,6 +41,14 @@ struct WorkspaceConnectUnlockTests {
         current: Self.strict, new: weakUpper, globalSafeMode: .silent))
   }
 
+  @Test("Same target ignores one trailing dot on the host")
+  func sameTargetTrailingDot() {
+    let weakDot = Self.config(host: "db.example.com.", safeMode: .silent)
+    #expect(
+      WorkspaceManager.connectRequiresUnlock(
+        current: Self.strict, new: weakDot, globalSafeMode: .silent))
+  }
+
   @Test("Global safeAll fallback counts as the current effective Safe Mode")
   func globalFallbackNeedsUnlock() {
     let current = Self.config(protectionLevel: .readOnly, safeMode: nil)

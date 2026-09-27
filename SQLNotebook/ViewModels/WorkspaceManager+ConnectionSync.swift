@@ -72,7 +72,11 @@ extension WorkspaceManager {
     func normalized(_ value: String) -> String {
       value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
-    return lhs.port == rhs.port && normalized(lhs.host) == normalized(rhs.host)
+    func normalizedHost(_ value: String) -> String {
+      let host = normalized(value)
+      return host.hasSuffix(".") ? String(host.dropLast()) : host
+    }
+    return lhs.port == rhs.port && normalizedHost(lhs.host) == normalizedHost(rhs.host)
       && normalized(lhs.database) == normalized(rhs.database)
       && normalized(lhs.username) == normalized(rhs.username)
   }

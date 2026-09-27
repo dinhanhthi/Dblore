@@ -122,11 +122,12 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     name = try container.decode(String.self, forKey: .name)
     safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
     protectedMode = try container.decodeIfPresent(Bool.self, forKey: .protectedMode) ?? true
-    statementTimeoutSeconds =
-      try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60
-    lockTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .lockTimeoutSeconds) ?? 5
-    idleInTransactionTimeoutSeconds =
-      try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600
+    statementTimeoutSeconds = SessionBrakeLimits.clampStatementTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60)
+    lockTimeoutSeconds = SessionBrakeLimits.clampLockTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .lockTimeoutSeconds) ?? 5)
+    idleInTransactionTimeoutSeconds = SessionBrakeLimits.clampIdleTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600)
     rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
 
     // Try to decode new protectionLevel first, fall back to legacy fields

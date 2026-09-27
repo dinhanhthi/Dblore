@@ -162,8 +162,8 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.rowCapOverride == 5000)
   }
 
-  @Test("Negative safety/session values decode as-is")
-  func negativeValuesDecodeAsIs() throws {
+  @Test("Non-positive brake timeouts decode as their defaults; rowCapOverride as-is")
+  func nonPositiveTimeoutsDecodeAsDefaults() throws {
     let json = """
       {
         "databaseType": "PostgreSQL",
@@ -177,8 +177,8 @@ struct DataModelConnectionConfigTests {
         "timeoutSeconds": 30,
         "name": "",
         "protectionLevel": "none",
-        "statementTimeoutSeconds": -1,
-        "lockTimeoutSeconds": -2,
+        "statementTimeoutSeconds": 0,
+        "lockTimeoutSeconds": -1,
         "idleInTransactionTimeoutSeconds": -3,
         "rowCapOverride": -4
       }
@@ -187,9 +187,9 @@ struct DataModelConnectionConfigTests {
 
     let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
 
-    #expect(decoded.statementTimeoutSeconds == -1)
-    #expect(decoded.lockTimeoutSeconds == -2)
-    #expect(decoded.idleInTransactionTimeoutSeconds == -3)
+    #expect(decoded.statementTimeoutSeconds == 60)
+    #expect(decoded.lockTimeoutSeconds == 5)
+    #expect(decoded.idleInTransactionTimeoutSeconds == 600)
     #expect(decoded.rowCapOverride == -4)
   }
 }

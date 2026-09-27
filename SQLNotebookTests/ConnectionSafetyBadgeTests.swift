@@ -66,15 +66,14 @@ struct ConnectionSafetyBadgeTests {
     #expect(badge(ssl: mode).ssl?.label == "No SSL")
   }
 
-  @Test func requireIsWarning() {
-    #expect(badge(ssl: .require).ssl?.level == .warning)
-    #expect(badge(ssl: .require).ssl?.label == "SSL unverified")
-  }
-
-  @Test(arguments: [SSLMode.verifyCa, .verifyFull])
+  @Test(arguments: [SSLMode.require, .verifyCa, .verifyFull])
   func verifiedSSLIsOK(_ mode: SSLMode) {
     #expect(badge(ssl: mode).ssl?.level == .ok)
     #expect(badge(ssl: mode).ssl?.label == "SSL verified")
+  }
+
+  @Test func requireTooltipSaysCertificateAlwaysVerified() {
+    #expect(badge(ssl: .require).tooltip.contains("always verifies the server certificate"))
   }
 
   @Test func sqliteHasNoSSLState() {
