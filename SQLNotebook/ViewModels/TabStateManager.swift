@@ -308,7 +308,7 @@ class TabStateManager {
         includeResultsOnSave: includeResults,
         useCompactFormat: false
       )
-      try data.write(to: url, options: .atomic)
+      try SecurityScopedAccess.write(data, to: url)
 
     case .sqlFile:
       guard let document = editorDocuments[tabId],
@@ -320,7 +320,7 @@ class TabStateManager {
       guard let data = viewModel.editorContent.data(using: .utf8) else {
         throw CocoaError(.fileWriteUnknown)
       }
-      try data.write(to: url, options: .atomic)
+      try SecurityScopedAccess.write(data, to: url)
     }
 
     markClean(tabId: tabId)

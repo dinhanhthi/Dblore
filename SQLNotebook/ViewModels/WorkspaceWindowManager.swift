@@ -117,14 +117,17 @@ class WorkspaceWindowManager {
       return existing
     }
 
-    let manager = try await WorkspaceManager.load(from: url)
+    let stored = RecentManager.shared.recentWorkspaces.first { $0.fileURL == url }
+    let manager = try await WorkspaceManager.load(
+      from: url, bookmark: stored?.bookmark, folderBookmark: stored?.folderBookmark)
     workspaces[manager.id] = manager
     activeWorkspaceId = manager.id
 
-    // Add to recent
-    if let entry = WorkspaceHistoryEntry.from(
-      manager.workspace, bookmark: manager.workspaceBookmark)
-    {
+    // Add to recent (with refreshed bookmarks); a moved file replaces its old entry
+    if let entry = manager.recentEntry {
+      if entry.fileURL != url {
+        RecentManager.shared.removeWorkspace(url: url)
+      }
       RecentManager.shared.addWorkspace(entry)
     }
 
@@ -183,6 +186,7 @@ class WorkspaceWindowManager {
     }
 
     workspaces.removeValue(forKey: id)
+    manager.releaseFileAccess()
 
     if activeWorkspaceId == id {
       activeWorkspaceId = workspaces.keys.first

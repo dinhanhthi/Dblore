@@ -13,12 +13,30 @@ import Foundation
 class RecentManager {
   // MARK: - Shared Instance
 
-  static let shared = RecentManager()
+  static let shared = RecentManager(
+    defaults: sharedDefaults,
+    documentController: SessionManager.isRunningAsTestHost ? nil : .shared)
+
+  /// Store of `shared`: `.standard` in the app; under XCTest an isolated suite, cleared at
+  /// creation, so tests never touch the user's real recents
+  nonisolated(unsafe) static let sharedDefaults: UserDefaults = {
+    guard SessionManager.isRunningAsTestHost else { return .standard }
+    let name = "ace.thi.SQLNotebook.tests.recents"
+    let suite = UserDefaults(suiteName: name) ?? UserDefaults()
+    suite.removePersistentDomain(forName: name)
+    return suite
+  }()
 
   // MARK: - Storage Keys
 
   private nonisolated static let workspacesKey = "com.sqlnotebook.recentWorkspaces"
   private nonisolated static let maxWorkspaces = 6
+  private nonisolated static let documentBookmarksKey = "com.sqlnotebook.recentDocumentBookmarks"
+  private nonisolated static let maxDocumentBookmarks = 20
+
+  private let defaults: UserDefaults
+  /// Source of the recent .sqlnb/.sql list; nil under XCTest (never the user's real recents)
+  private let documentController: NSDocumentController?
 
   // MARK: - State
 
@@ -28,6 +46,16 @@ class RecentManager {
   /// This is a cached snapshot that needs to be refreshed manually
   var recentDocuments: [URL] = []
 
+  /// Bookmark of a recent .sqlnb/.sql file, keyed by its standardized path
+  private struct DocumentBookmark: Codable {
+    let path: String
+    let bookmark: Data
+  }
+
+  /// Own bookmarks of recent files (most recent first): the URLs of
+  /// `NSDocumentController.recentDocumentURLs` are not relied on to carry access
+  @ObservationIgnored private var documentBookmarks: [DocumentBookmark] = []
+
   /// Recent connections (delegated to SessionManager)
   var recentConnections: [ConnectionHistoryEntry] {
     SessionManager.loadHistory()
@@ -35,8 +63,11 @@ class RecentManager {
 
   // MARK: - Initialization
 
-  private init() {
+  init(defaults: UserDefaults, documentController: NSDocumentController? = nil) {
+    self.defaults = defaults
+    self.documentController = documentController
     loadWorkspaces()
+    loadDocumentBookmarks()
     refreshRecentDocuments()
   }
 
@@ -86,7 +117,7 @@ class RecentManager {
   /// Clear all recent workspaces
   func clearWorkspaces() {
     recentWorkspaces = []
-    UserDefaults.standard.removeObject(forKey: Self.workspacesKey)
+    defaults.removeObject(forKey: Self.workspacesKey)
   }
 
   /// Clear all (workspaces + connections)
@@ -100,10 +131,35 @@ class RecentManager {
   /// Refresh recent documents from NSDocumentController
   /// Call this after opening/saving a document to update the list
   func refreshRecentDocuments() {
-    recentDocuments = NSDocumentController.shared.recentDocumentURLs.filter { url in
+    recentDocuments = (documentController?.recentDocumentURLs ?? []).filter { url in
       let ext = url.pathExtension.lowercased()
       return ext == "sqlnb" || ext == "sql"
     }
+  }
+
+  /// Add a file to the recent documents and remember its bookmark for the next reopen
+  func noteRecentDocument(_ url: URL, bookmark: Data?) {
+    if let bookmark {
+      rememberDocumentBookmark(bookmark, for: url)
+    }
+    documentController?.noteNewRecentDocumentURL(url)
+    refreshRecentDocuments()
+  }
+
+  /// Stored bookmark of a recent file
+  func documentBookmark(for url: URL) -> Data? {
+    let path = url.standardizedFileURL.path
+    return documentBookmarks.first { $0.path == path }?.bookmark
+  }
+
+  /// Store (or replace) the bookmark of a file opened or saved by the user
+  func rememberDocumentBookmark(_ bookmark: Data, for url: URL) {
+    let path = url.standardizedFileURL.path
+    documentBookmarks.removeAll { $0.path == path }
+    documentBookmarks.insert(DocumentBookmark(path: path, bookmark: bookmark), at: 0)
+    documentBookmarks = Array(documentBookmarks.prefix(Self.maxDocumentBookmarks))
+    guard let data = try? JSONEncoder().encode(documentBookmarks) else { return }
+    defaults.set(data, forKey: Self.documentBookmarksKey)
   }
 
   // MARK: - Connection Management (Delegated to SessionManager)
@@ -126,17 +182,16 @@ class RecentManager {
   // MARK: - Persistence
 
   private func loadWorkspaces() {
-    guard let data = UserDefaults.standard.data(forKey: Self.workspacesKey),
+    guard let data = defaults.data(forKey: Self.workspacesKey),
       let entries = try? JSONDecoder().decode([WorkspaceHistoryEntry].self, from: data)
     else {
       recentWorkspaces = []
       return
     }
 
-    // Filter out workspaces whose files no longer exist
-    recentWorkspaces = entries.filter { entry in
-      FileManager.default.fileExists(atPath: entry.fileURL.path)
-    }
+    // Runs at launch: never prompts. Without access a file looks missing, so only entries
+    // whose bookmark shows the file is really gone are dropped.
+    recentWorkspaces = entries.filter { !Self.isGone($0) }
 
     // If we filtered any out, save the cleaned list
     if recentWorkspaces.count != entries.count {
@@ -144,9 +199,38 @@ class RecentManager {
     }
   }
 
+  /// The entry's bookmark resolves to a file that no longer exists, or reports that it does
+  /// not exist. Entries without a bookmark, or whose bookmark fails for another reason (for
+  /// example Cocoa 259, seen for a deleted file but also possible for an unusable bookmark),
+  /// are kept.
+  static func isGone(
+    _ entry: WorkspaceHistoryEntry,
+    resolve: (Data) throws -> (url: URL, isStale: Bool) = { try SecurityScopedAccess.resolve($0) }
+  ) -> Bool {
+    guard let bookmark = entry.bookmark else { return false }
+    do {
+      let resolved = try resolve(bookmark)
+      let token = SecurityScopedAccessToken(url: resolved.url)
+      defer { token.release() }
+      return !FileManager.default.fileExists(atPath: resolved.url.path)
+    } catch {
+      let code = (error as NSError).code
+      return (error as NSError).domain == NSCocoaErrorDomain
+        && (code == CocoaError.fileNoSuchFile.rawValue
+          || code == CocoaError.fileReadNoSuchFile.rawValue)
+    }
+  }
+
   private func saveWorkspaces() {
     guard let data = try? JSONEncoder().encode(recentWorkspaces) else { return }
-    UserDefaults.standard.set(data, forKey: Self.workspacesKey)
+    defaults.set(data, forKey: Self.workspacesKey)
+  }
+
+  private func loadDocumentBookmarks() {
+    guard let data = defaults.data(forKey: Self.documentBookmarksKey),
+      let stored = try? JSONDecoder().decode([DocumentBookmark].self, from: data)
+    else { return }
+    documentBookmarks = stored
   }
 
   // MARK: - Computed Properties

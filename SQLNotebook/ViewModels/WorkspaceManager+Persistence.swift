@@ -81,22 +81,30 @@ extension WorkspaceManager {
 
   private func saveWorkspaceToURL(_ url: URL) async throws {
     // Update workspace with current state
-    let isNewLocation = workspace.fileURL != url
     workspace.fileURL = url
     workspace.name = url.deletingPathExtension().lastPathComponent
 
     let data = try encodedWorkspaceData()
-    try data.write(to: url, options: .atomic)
+    try SecurityScopedAccess.write(data, to: url)
 
     isDirty = false
-    if isNewLocation || workspaceBookmark == nil {
-      workspaceBookmark = SecurityScopedAccess.bookmarkIfPossible(for: url)
+    // Once per location: a failed bookmark is not retried on every auto-save
+    if workspaceBookmarkURL != url {
+      workspaceBookmarkURL = url
+      workspaceBookmark = accessHooks.makeBookmark(url)
     }
 
     // Add to recent workspaces
-    if let entry = WorkspaceHistoryEntry.from(workspace, bookmark: workspaceBookmark) {
-      RecentManager.shared.addWorkspace(entry)
+    if let entry = recentEntry {
+      recents.addWorkspace(entry)
     }
+  }
+
+  /// Recent workspaces entry with the current file and folder bookmarks (nil while unsaved)
+  var recentEntry: WorkspaceHistoryEntry? {
+    var entry = WorkspaceHistoryEntry.from(workspace, bookmark: workspaceBookmark)
+    entry?.folderBookmark = folderBookmark
+    return entry
   }
 
   /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON

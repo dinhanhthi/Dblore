@@ -71,6 +71,17 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var tabBookmarks: [UUID: Data] = [:]
   /// Bookmark of the .sqlws file itself, stored in the recent workspaces entry
   @ObservationIgnored var workspaceBookmark: Data?
+  /// Location `workspaceBookmark` was last created for (a failed attempt is not retried)
+  @ObservationIgnored var workspaceBookmarkURL: URL?
+  /// Bookmark of the folder containing the .sqlws (granted once for bookmark-less tab files)
+  @ObservationIgnored var folderBookmark: Data?
+  /// Access held while the workspace is open (released on close)
+  @ObservationIgnored var workspaceAccess: SecurityScopedAccessToken?
+  @ObservationIgnored var folderAccess: SecurityScopedAccessToken?
+  /// Access held while each tab is open (released on tab close)
+  @ObservationIgnored var tabAccess: [UUID: SecurityScopedAccessToken] = [:]
+  @ObservationIgnored var accessHooks = SecurityScopedAccessHooks.live
+  @ObservationIgnored var recents = RecentManager.shared
 
   // MARK: - UI State
 
@@ -153,34 +164,44 @@ class WorkspaceManager: Identifiable {
     return WorkspaceManager(workspace: workspace)
   }
 
-  /// Load workspace from URL
-  static func load(from url: URL) async throws -> WorkspaceManager {
-    let data = try Data(contentsOf: url)
+  /// Load workspace from URL, reading it (and its tab files) through the stored bookmarks of
+  /// its recent entry. Called on user action only: a permission failure asks the user to
+  /// select the file again, or once for the folder of bookmark-less tab files.
+  static func load(
+    from url: URL, bookmark: Data? = nil, folderBookmark: Data? = nil,
+    hooks: SecurityScopedAccessHooks = .live
+  ) async throws -> WorkspaceManager {
+    let access = hooks.access(bookmark)
+    let folderAccess = hooks.access(folderBookmark)
+    var fileURL = access?.isStale == true ? access?.url ?? url : url
+    var fileBookmark = access?.bookmark
+    let data: Data
+    do {
+      data = try Data(contentsOf: fileURL)
+    } catch let error where SecurityScopedAccess.isPermissionError(error) {
+      guard let chosen = await hooks.chooseFile(fileURL) else { throw error }
+      data = try Data(contentsOf: chosen)
+      fileURL = chosen
+      fileBookmark = nil
+    }
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     var workspace = try decoder.decode(Workspace.self, from: data)
-    workspace.fileURL = url
+    workspace.fileURL = fileURL
     workspace.lastOpenedAt = Date()
 
     // Don't restore tabs in init - we'll do it here with proper viewModels
     let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
-    manager.workspaceBookmark = SecurityScopedAccess.bookmarkIfPossible(for: url)
+    manager.accessHooks = hooks
+    manager.workspaceAccess = fileBookmark == nil ? nil : access?.token
+    manager.folderAccess = folderAccess?.token
+    manager.folderBookmark = folderAccess?.bookmark
+    manager.workspaceBookmark = fileBookmark ?? hooks.makeBookmark(fileURL)
+    manager.workspaceBookmarkURL = fileURL
 
-    // Restore tabs from saved workspace with their original IDs
-    for tabRef in workspace.tabs {
-      if let fileURL = tabRef.fileURL,
-        FileManager.default.fileExists(atPath: fileURL.path)
-      {
-        do {
-          try await manager.restoreTab(tabRef: tabRef)
-        } catch {
-          // Log error but continue loading other tabs
-          await AppLogger.shared.warning(
-            "Failed to restore tab: \(fileURL.lastPathComponent)",
-            category: "Workspace"
-          )
-        }
-      }
+    // Restore tabs from saved workspace with their original IDs; save refreshed bookmarks
+    if await manager.restoreTabs(workspace.tabs) {
+      manager.markDirtyAndScheduleAutoSave()
     }
 
     // Restore active tab
@@ -354,14 +375,63 @@ class WorkspaceManager: Identifiable {
     return tab.id
   }
 
-  /// Restore a tab from workspace with its original ID (used when loading from disk)
-  private func restoreTab(tabRef: WorkspaceTabReference) async throws {
-    guard let fileURL = tabRef.fileURL else {
+  /// Restore the saved tabs in order. The first tab file the app may not read (no usable
+  /// bookmark) asks once for the workspace folder; tabs still unreadable are skipped with a toast.
+  /// Returns whether a tab bookmark changed (refreshed or newly created) and needs saving.
+  private func restoreTabs(_ tabRefs: [WorkspaceTabReference]) async -> Bool {
+    var bookmarksChanged = false
+    var askedForFolder = folderAccess != nil
+    var deniedFiles: [String] = []
+    for tabRef in tabRefs {
+      guard let fileURL = tabRef.fileURL else { continue }
+      do {
+        do {
+          bookmarksChanged = try await restoreTab(tabRef: tabRef) || bookmarksChanged
+        } catch let error where SecurityScopedAccess.isPermissionError(error) && !askedForFolder {
+          askedForFolder = true
+          guard await grantWorkspaceFolder() else { throw error }
+          bookmarksChanged = try await restoreTab(tabRef: tabRef) || bookmarksChanged
+        }
+      } catch {
+        // Log error but continue loading other tabs
+        if SecurityScopedAccess.isPermissionError(error) {
+          deniedFiles.append(fileURL.lastPathComponent)
+        }
+        await AppLogger.shared.warning(
+          "Failed to restore tab: \(fileURL.lastPathComponent)",
+          category: "Workspace"
+        )
+      }
+    }
+    if !deniedFiles.isEmpty {
+      WorkspaceWindowManager.shared.showToast(
+        "No access to \(deniedFiles.joined(separator: ", ")): tab not restored", type: .warning)
+    }
+    return bookmarksChanged
+  }
+
+  /// Ask once for the folder containing the .sqlws and hold access to it for the workspace
+  private func grantWorkspaceFolder() async -> Bool {
+    guard let workspaceURL = workspace.fileURL,
+      let folder = await accessHooks.chooseFolder(workspaceURL)
+    else { return false }
+    folderAccess = accessHooks.startAccess(folder)
+    folderBookmark = accessHooks.makeBookmark(folder)
+    return true
+  }
+
+  /// Restore a tab from workspace with its original ID (used when loading from disk), reading
+  /// through its bookmark. Returns whether its bookmark changed.
+  private func restoreTab(tabRef: WorkspaceTabReference) async throws -> Bool {
+    guard let savedURL = tabRef.fileURL else {
       throw CocoaError(.fileReadNoSuchFile)
     }
+    let access = accessHooks.access(tabRef.bookmark)
+    let fileURL = access?.isStale == true ? access?.url ?? savedURL : savedURL
 
     // Create tab with original ID from workspace
-    let tab = tabRef.toTabItem()
+    var tab = tabRef.toTabItem()
+    tab.fileURL = fileURL
     let data = try Data(contentsOf: fileURL)
 
     switch tabRef.documentType {
@@ -397,8 +467,10 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
     }
-    tabBookmarks[tab.id] =
-      tabRef.bookmark ?? SecurityScopedAccess.bookmarkIfPossible(for: fileURL)
+    tabAccess[tab.id] = access?.token
+    let bookmark = access?.bookmark ?? accessHooks.makeBookmark(fileURL)
+    tabBookmarks[tab.id] = bookmark
+    return bookmark != tabRef.bookmark
   }
 
   func openFile(url: URL, selectTab: Bool = true) async throws {
@@ -414,7 +486,18 @@ class WorkspaceManager: Identifiable {
       throw CocoaError(.fileReadUnsupportedScheme)
     }
 
-    let data = try Data(contentsOf: url)
+    // Read through the file's stored bookmark; on a permission failure ask for the file
+    var access = accessHooks.access(recents.documentBookmark(for: url))
+    var url = access?.isStale == true ? access?.url ?? url : url
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch let error where SecurityScopedAccess.isPermissionError(error) {
+      guard let chosen = await accessHooks.chooseFile(url) else { throw error }
+      data = try Data(contentsOf: chosen)
+      url = chosen
+      access = nil
+    }
     let title = url.lastPathComponent
 
     let tab = TabItem(
@@ -456,16 +539,17 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
     }
-    tabBookmarks[tab.id] = SecurityScopedAccess.bookmarkIfPossible(for: url)
+    tabAccess[tab.id] = access?.token
+    let bookmark = access?.bookmark ?? accessHooks.makeBookmark(url)
+    tabBookmarks[tab.id] = bookmark
 
     markDirtyAndScheduleAutoSave()
     if selectTab {
       self.selectTab(id: tab.id)
     }
 
-    // Add to recent documents and refresh the list
-    NSDocumentController.shared.noteNewRecentDocumentURL(url)
-    RecentManager.shared.refreshRecentDocuments()
+    // Add to recent documents (with the bookmark for the next reopen) and refresh the list
+    recents.noteRecentDocument(url, bookmark: bookmark)
   }
 
   /// Create a ViewModel that uses the workspace's shared connection
@@ -567,7 +651,18 @@ class WorkspaceManager: Identifiable {
     notebookDocuments.removeValue(forKey: id)
     editorDocuments.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)
+    tabAccess.removeValue(forKey: id)?.release()
     markDirtyAndScheduleAutoSave()
+  }
+
+  /// Stop accessing the workspace, its folder and its tab files (workspace closed)
+  func releaseFileAccess() {
+    for token in tabAccess.values { token.release() }
+    tabAccess = [:]
+    workspaceAccess?.release()
+    workspaceAccess = nil
+    folderAccess?.release()
+    folderAccess = nil
   }
 
   func markDirty(tabId: UUID) {
@@ -632,7 +727,7 @@ class WorkspaceManager: Identifiable {
         includeResultsOnSave: includeResults,
         useCompactFormat: false
       )
-      try data.write(to: url, options: .atomic)
+      try SecurityScopedAccess.write(data, to: url)
 
     case .sqlFile:
       guard let document = editorDocuments[tabId],
@@ -642,7 +737,7 @@ class WorkspaceManager: Identifiable {
       guard let data = viewModel.editorContent.data(using: .utf8) else {
         throw CocoaError(.fileWriteUnknown)
       }
-      try data.write(to: url, options: .atomic)
+      try SecurityScopedAccess.write(data, to: url)
     }
 
     markClean(tabId: tabId)
@@ -689,7 +784,11 @@ class WorkspaceManager: Identifiable {
     }
 
     try await saveToURL(tabId: tabId, url: url)
-    tabBookmarks[tabId] = SecurityScopedAccess.bookmarkIfPossible(for: url)
+    tabAccess.removeValue(forKey: tabId)?.release()
+    tabBookmarks[tabId] = accessHooks.makeBookmark(url)
+    if let bookmark = tabBookmarks[tabId] {
+      recents.rememberDocumentBookmark(bookmark, for: url)
+    }
   }
 
   // MARK: - Open Panels

@@ -34,6 +34,32 @@ nonisolated enum SecurityScopedAccess {
       return nil
     }
   }
+
+  /// The sandbox (or file permissions) refused the read or write: the file may exist but the
+  /// app has no access yet. Missing, corrupt or unsupported files are not permission errors.
+  static func isPermissionError(_ error: Error) -> Bool {
+    let error = error as NSError
+    switch (error.domain, error.code) {
+    case (NSCocoaErrorDomain, CocoaError.fileReadNoPermission.rawValue),
+      (NSCocoaErrorDomain, CocoaError.fileWriteNoPermission.rawValue),
+      (NSPOSIXErrorDomain, Int(EPERM)), (NSPOSIXErrorDomain, Int(EACCES)):
+      return true
+    default:
+      return false
+    }
+  }
+
+  /// Write `data` to `url` atomically. An atomic write creates a temporary file next to `url`
+  /// and needs access to the parent folder; with access to the file only (a file bookmark
+  /// without the folder bookmark) it fails with a permission error, and the data is then
+  /// written in place instead (not atomic: an interrupted write can leave a partial file).
+  static func write(_ data: Data, to url: URL) throws {
+    do {
+      try data.write(to: url, options: .atomic)
+    } catch let error where isPermissionError(error) {
+      try data.write(to: url)
+    }
+  }
 }
 
 /// Access to a security-scoped URL: starts on creation, stops exactly once on `release()` or
