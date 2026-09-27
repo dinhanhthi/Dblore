@@ -72,19 +72,16 @@ enum DocumentCoder {
               ?? UUID()
             let queryText = statementDict["queryText"] as? String ?? ""
             let statementIndex = statementDict["statementIndex"] as? Int ?? 0
-            var statementResult: CellResult? = nil
-            if let resultDict = statementDict["result"] as? [String: Any] {
-              statementResult = decodeResult(from: resultDict, dateFormatter: dateFormatter)
-            }
-            // If result is nil, create an empty result
-            if statementResult == nil {
-              statementResult = CellResult()
-            }
+            // A missing or malformed result decodes to an empty result
+            let statementResult =
+              (statementDict["result"] as? [String: Any]).flatMap {
+                decodeResult(from: $0, dateFormatter: dateFormatter)
+              } ?? CellResult()
             statementResults.append(
               StatementResult(
                 id: statementId,
                 queryText: queryText,
-                result: statementResult!,
+                result: statementResult,
                 statementIndex: statementIndex
               ))
           }

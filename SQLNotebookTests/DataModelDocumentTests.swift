@@ -214,6 +214,28 @@ struct DataModelDocumentTests {
     #expect(decoded.cells[0].result?.rows.count == 1000)
     #expect(decoded.cells[0].result?.wasLimited == true)
   }
+
+  @Test("Malformed statement result entries decode to an empty result")
+  func malformedStatementResultDecodesEmpty() throws {
+    let json: [String: Any] = [
+      "cells": [
+        [
+          "content": "SELECT 1; SELECT 2",
+          "statementResults": [
+            ["queryText": "SELECT 1", "statementIndex": 0, "result": "not a dictionary"],
+            ["queryText": "SELECT 2", "statementIndex": 1],
+          ],
+        ]
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: json)
+
+    let notebook = try DocumentCoder.decode(from: data)
+
+    let statements = notebook.cells[0].statementResults
+    #expect(statements.map(\.queryText) == ["SELECT 1", "SELECT 2"])
+    #expect(statements.allSatisfy { $0.result.rows.isEmpty && $0.result.columns.isEmpty })
+  }
 }
 
 // MARK: - Saved-file compatibility (pre-Phase-4 <-> current)

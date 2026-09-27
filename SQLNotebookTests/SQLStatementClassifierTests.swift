@@ -284,6 +284,8 @@ struct SQLStatementClassifierTests {
     ("BEGIN READ ONLY", false),
     ("BEGIN ISOLATION LEVEL READ COMMITTED", false),
     ("SET search_path TO x", false),
+    ("SET SESSION search_path TO x", false),
+    ("SET SESSION AUTHORIZATION admin", false),
     ("SELECT 'READ WRITE'", false),
   ]
 
