@@ -189,18 +189,21 @@ private struct ViewFrameKey: PreferenceKey {
         // Example at top of screen (should show below)
         Button("Top Button") {}
           .buttonStyle(.bordered)
+          .pointerStyle(.link)
           .customTooltip("This tooltip appears below because button is at top")
           .position(x: 250, y: 50)
 
         // Example in middle/bottom of screen (should show above)
         Button("Bottom Button") {}
           .buttonStyle(.bordered)
+          .pointerStyle(.link)
           .customTooltip("This tooltip appears above to avoid hiding the button")
           .position(x: 250, y: 400)
 
         // Example with long text
         Button("Long Text") {}
           .buttonStyle(.bordered)
+          .pointerStyle(.link)
           .customTooltip(
             "This is a longer tooltip text that demonstrates auto-sizing with fixedSize modifier"
           )

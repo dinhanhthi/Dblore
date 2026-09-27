@@ -12,13 +12,19 @@ import SwiftUI
 extension NotebookViewModel {
   // MARK: - Right Sidebar
 
-  /// Show JSON in the sidebar
-  func showJSONInSidebar(json: String, path: String) {
-    rightSidebarContent = .jsonViewer(json: json, path: path)
+  /// Show `content` in the right sidebar, sliding it in when it was closed. Every entry point
+  /// that opens the sidebar goes through here so opening animates like closing.
+  func showSidebar(content: SidebarContent) {
+    rightSidebarContent = content
     withAnimation(.easeInOut(duration: 0.2)) {
       isRightSidebarVisible = true
     }
     handleRightSidebarConflict()
+  }
+
+  /// Show JSON in the sidebar
+  func showJSONInSidebar(json: String, path: String) {
+    showSidebar(content: .jsonViewer(json: json, path: path))
   }
 
   /// Show cell value details in sidebar
@@ -33,19 +39,16 @@ extension NotebookViewModel {
     cellId: UUID? = nil
   ) {
     cellDetailEditTarget = editTarget
-    rightSidebarContent = .cellInfo(
-      columnName: columnName,
-      columnType: columnType,
-      value: value,
-      tableName: tableName,
-      rowData: rowData,
-      primaryKeyColumns: primaryKeyColumns,
-      cellId: cellId
-    )
-    withAnimation(.easeInOut(duration: 0.2)) {
-      isRightSidebarVisible = true
-    }
-    handleRightSidebarConflict()
+    showSidebar(
+      content: .cellInfo(
+        columnName: columnName,
+        columnType: columnType,
+        value: value,
+        tableName: tableName,
+        rowData: rowData,
+        primaryKeyColumns: primaryKeyColumns,
+        cellId: cellId
+      ))
   }
 
   // Note: showConnectionForm() removed - connection form is now at workspace level

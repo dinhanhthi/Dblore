@@ -165,7 +165,6 @@ struct InlineEditSessionOnlyTests {
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
     #expect(viewModel.queryConfirmationState.showDialog == false)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
     #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
@@ -182,12 +181,11 @@ struct InlineEditSessionOnlyTests {
       rowData: rowData, primaryKeyColumns: ["id"], editTarget: stale, cellId: cellId)
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
     #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
-  @Test("Live target: the UPDATE uses the server-qualified name, not the passed table name")
-  func liveTargetUsesQualifiedName() {
+  @Test("Live target: the edit is accepted and sent without a confirmation")
+  func liveTargetAccepted() {
     let target = EditTarget(qualifiedName: "s6a.users", oid: 16_400, primaryKeyColumns: ["id"])
     var live = craftedResult()
     live.editTarget = target
@@ -196,10 +194,10 @@ struct InlineEditSessionOnlyTests {
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: "users",
       rowData: rowData, primaryKeyColumns: ["id"], editTarget: target, cellId: cellId)
+    WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit != nil)
-    #expect(
-      viewModel.queryConfirmationState.pendingQuery
-        == #"UPDATE s6a.users SET "name" = $1 WHERE "id" = $2"#)
+    // Refusals toast synchronously; an accepted edit is sent in a Task
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
   }
 }

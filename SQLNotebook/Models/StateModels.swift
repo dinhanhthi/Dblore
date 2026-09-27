@@ -99,8 +99,6 @@ struct QueryConfirmationState: Equatable, Sendable {
   var affectsAllRows: Bool = false  // True if DELETE/UPDATE without WHERE clause
   var requiresPassword: Bool = false  // True for Safe Mode levels 3-4
   var statements: [StatementConfirmation] = []  // Statements that need confirmation
-  /// Inline grid edit waiting for this confirmation (nil when a cell/editor query is pending)
-  var pendingInlineEdit: PendingInlineEdit?
 
   // Run All Cells confirmation (destructive or safety-critical cells)
   var showRunAllConfirmation: Bool = false
@@ -118,7 +116,6 @@ struct QueryConfirmationState: Equatable, Sendable {
     affectsAllRows = false
     requiresPassword = false
     statements = []
-    pendingInlineEdit = nil
     runAllAwaitingUnlock = false
   }
 
@@ -128,7 +125,7 @@ struct QueryConfirmationState: Equatable, Sendable {
   }
 }
 
-/// An inline grid edit held until the Safe Mode confirmation is accepted
+/// An inline grid edit ready to send through the gate
 struct PendingInlineEdit: Equatable, Sendable {
   let statement: CellUpdateStatement
   let columnName: String

@@ -69,6 +69,7 @@ extension EditorModeView {
             .foregroundColor(.foregroundSubtle)
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .help("Clear result")
       }
       .padding(.horizontal, Spacing.md)
@@ -135,6 +136,7 @@ extension EditorModeView {
     }
     .id(viewModel.editorStatementResults.map { $0.id })
     .buttonStyle(.plain)
+    .pointerStyle(.link)
     .help("Select statement result to view")
     .fixedSize()
   }
@@ -320,7 +322,7 @@ struct EditorResultGridView: View {
         sortColumn = column
         sortAscending = ascending
       },
-      onCellClick: { row, originalRow, column in
+      onShowCellDetails: { row, originalRow, column in
         viewModel.showGridCellInSidebar(
           row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
       },

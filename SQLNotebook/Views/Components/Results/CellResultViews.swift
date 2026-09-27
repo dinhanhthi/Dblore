@@ -308,6 +308,7 @@ struct ResultMetadataView: View {
             }
             .id(statementResults.map { $0.id })
             .buttonStyle(.plain)
+            .pointerStyle(.link)
             .help("Select statement result to view")
             .fixedSize()
 
@@ -510,6 +511,8 @@ struct NotebookResultGridView: View {
   @State private var sortAscending = true
   /// Current search match when it is in this cell's result data or column names
   @State private var currentMatch: SearchMatch?
+  /// System scroller style ("Show scroll bars"), for the grid height
+  @State private var scrollerStyle = NSScroller.preferredScrollerStyle
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -532,7 +535,7 @@ struct NotebookResultGridView: View {
           sortColumn = column
           sortAscending = ascending
         },
-        onCellClick: { row, originalRow, column in
+        onShowCellDetails: { row, originalRow, column in
           viewModel.showGridCellInSidebar(
             row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
         },
@@ -543,7 +546,8 @@ struct NotebookResultGridView: View {
       )
       .frame(
         height: ResultGridView.height(
-          rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes))
+          rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
+          scrollerStyle: scrollerStyle))
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
       if let cell = cell, cell.statementResults.count > 1 {
@@ -559,6 +563,12 @@ struct NotebookResultGridView: View {
         // Single statement: no dropdown
         ResultMetadataView(result: result)
       }
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: NSScroller.preferredScrollerStyleDidChangeNotification)
+    ) { _ in
+      scrollerStyle = NSScroller.preferredScrollerStyle
     }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,

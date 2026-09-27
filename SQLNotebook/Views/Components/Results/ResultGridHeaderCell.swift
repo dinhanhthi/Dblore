@@ -54,28 +54,46 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     return sort.ascending
   }
 
+  /// Draws the interior only: the header view draws the background, and super would add a
+  /// separator line at a fixed height, right under the type line of the taller header
+  override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+    drawInterior(withFrame: cellFrame, in: controlView)
+  }
+
+  /// Top of the first line so the ink (cap top of the name to the baseline of the last line) is
+  /// centered in `bounds`: the same gap above and below
+  static func linesTop(in bounds: NSRect, hasType: Bool) -> CGFloat {
+    let titleHeight = titleFont.ascender - titleFont.descender
+    let typeHeight = typeFont.ascender - typeFont.descender
+    let totalHeight = titleHeight + (hasType ? Spacing.xxs + typeHeight : 0)
+    let aboveInk = titleFont.ascender - titleFont.capHeight
+    let belowInk = -(hasType ? typeFont.descender : titleFont.descender)
+    let inkHeight = totalHeight - aboveInk - belowInk
+    return bounds.minY + (bounds.height - inkHeight) / 2 - aboveInk
+  }
+
   /// Draws the name and type lines over the full header height and the sort indicator; super
-  /// (not called) would draw a one-line title. Background, separators and the pressed state
-  /// stay with `draw(withFrame:in:)`.
+  /// (not called) would draw a one-line title.
   override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
     // AppKit draws the filler after the last column with a copy that has no title
     guard !stringValue.isEmpty else { return }
     var textFrame = cellFrame.insetBy(dx: Spacing.xsm, dy: 0)
+    var sortArrow: (ascending: Bool, rect: NSRect)?
     if let tableView = (controlView as? NSTableHeaderView)?.tableView,
       let column = tableView.tableColumns.first(where: { $0.headerCell === self }),
       let ascending = Self.sortAscending(for: column, in: tableView)
     {
-      drawSortIndicator(withFrame: cellFrame, in: controlView, ascending: ascending, priority: 0)
+      sortArrow = (ascending, sortIndicatorRect(forBounds: cellFrame))
       textFrame.size.width =
-        sortIndicatorRect(forBounds: cellFrame).minX - Spacing.xs
-        - textFrame.minX
+        sortIndicatorRect(forBounds: cellFrame).minX - Spacing.xs - textFrame.minX
     }
     let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
     let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
-    let totalHeight = titleHeight + (content.type == nil ? 0 : Spacing.xxs + typeHeight)
-    // Center both lines over the full header height (cellFrame is a one-line strip)
-    let bounds = controlView.bounds
-    let top = bounds.minY + (bounds.height - totalHeight) / 2
+    // Lines centered over the full header height (cellFrame is a one-line strip)
+    let top = Self.linesTop(in: controlView.bounds, hasType: content.type != nil)
+    if let (ascending, rect) = sortArrow {
+      drawSortArrow(ascending: ascending, centerX: rect.midX, centerY: top + titleHeight / 2)
+    }
     var titleX = textFrame.minX
     if content.isPrimaryKey, let key = Self.keyImage() {
       let size = key.size
@@ -122,6 +140,24 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     string.addAttribute(
       .paragraphStyle, value: paragraph, range: NSRange(location: 0, length: string.length))
     string.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+  }
+
+  /// Sort chevron in the app accent color, centered on the name line
+  private func drawSortArrow(ascending: Bool, centerX: CGFloat, centerY: CGFloat) {
+    guard
+      let image = NSImage(
+        systemSymbolName: ascending ? "chevron.up" : "chevron.down",
+        accessibilityDescription: ascending ? "Sorted ascending" : "Sorted descending")?
+        .withSymbolConfiguration(
+          NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor(Color.accent)])))
+    else { return }
+    let size = image.size
+    image.draw(
+      in: NSRect(
+        x: centerX - size.width / 2, y: centerY - size.height / 2, width: size.width,
+        height: size.height),
+      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
   }
 
   private static func keyImage() -> NSImage? {

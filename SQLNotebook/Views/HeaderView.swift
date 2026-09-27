@@ -11,6 +11,8 @@ struct HeaderView: View {
   @State private var showRunAllConfirmation = false
   @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
+  /// Run turns into Stop once the editor query has run for a second
+  @State private var canStopEditorQuery = false
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -31,6 +33,7 @@ struct HeaderView: View {
             Label("New", systemImage: "plus")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘N)")
@@ -41,6 +44,7 @@ struct HeaderView: View {
             Label("Run All", systemImage: "play.fill")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
           .confirmationDialog(
@@ -86,6 +90,7 @@ struct HeaderView: View {
             Label("Clear All Outputs", systemImage: "trash")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
@@ -112,28 +117,52 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .buttonStyle(.glass)
+          .pointerStyle(.link)
           .help("Show/Hide Results")
-        } else if viewModel.viewMode == .editor, viewModel.isEditorQueryRunning {
-          // Stops the query on the server (asks first if pending changes would be discarded)
-          Button(action: { viewModel.cancelEditorQuery() }) {
-            Label("Cancel", systemImage: "stop.fill")
-          }
-          .buttonStyle(.glass)
-          .help("Cancel the running query (the connection is reset)")
         } else if viewModel.viewMode == .editor {
-          // Editor mode buttons
+          // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
+          // disabled for the first second, then a click stops the query (after confirmation)
           Button(action: {
-            Task { @MainActor [viewModel] in
-              await viewModel.runEditorQuery()
+            if viewModel.isEditorQueryRunning {
+              viewModel.cancelEditorQuery()
+            } else {
+              Task { @MainActor [viewModel] in
+                await viewModel.runEditorQuery()
+              }
             }
           }) {
-            Label("Run", systemImage: "play.fill")
+            Label {
+              Text("Run")
+            } icon: {
+              if viewModel.isEditorQueryRunning {
+                RunSpinner()
+              } else {
+                Image(systemName: "play.fill")
+              }
+            }
           }
           .buttonStyle(.glassProminent)
-          .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
-          .help(editorRunButtonHelp)
+          .pointerStyle(.link)
+          .tint(Color.accent)
+          .disabled(
+            viewModel.isEditorQueryRunning
+              ? !canStopEditorQuery
+              : viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected
+          )
+          .help(
+            viewModel.isEditorQueryRunning
+              ? "Stop the running query (the connection is reset)" : editorRunButtonHelp
+          )
+          .task(id: viewModel.isEditorQueryRunning) {
+            canStopEditorQuery = false
+            guard viewModel.isEditorQueryRunning else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { canStopEditorQuery = true }
+          }
         }
       }
+      // Capsule shape for every header button (notebook and editor modes)
+      .buttonBorderShape(.capsule)
 
       Spacer()
 
@@ -146,17 +175,14 @@ struct HeaderView: View {
         safetyBadge(ConnectionSafetyBadge(config: config))
       }
 
-      GlassToolbarGroup {
-        // Search button
-        Button(action: {
-          viewModel.openSearch()
-        }) {
-          Image(systemName: "magnifyingglass")
-        }
-        .buttonStyle(.glass)
-        .tint(viewModel.isSearchPanelVisible ? Color.accent : nil)
-        .help("Search (⌘F)")
+      // Search button (same square style as the schema visualizer's search button)
+      Button(action: {
+        viewModel.openSearch()
+      }) {
+        Image(systemName: "magnifyingglass")
       }
+      .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
+      .help("Search (⌘F)")
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
@@ -228,6 +254,21 @@ struct HeaderView: View {
       • Allow: Execute all cells
       • Don't Allow: Skip the cells listed above and run the rest
       """
+  }
+}
+
+/// Three-quarter circle spinning in place of the Run icon while a query runs
+private struct RunSpinner: View {
+  @State private var isSpinning = false
+
+  var body: some View {
+    Circle()
+      .trim(from: 0, to: 0.75)
+      .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+      .frame(width: 10, height: 10)
+      .rotationEffect(.degrees(isSpinning ? 360 : 0))
+      .animation(.linear(duration: 0.8).repeatForever(autoreverses: false), value: isSpinning)
+      .onAppear { isSpinning = true }
   }
 }
 

@@ -53,11 +53,13 @@ extension DatabaseConnectionManager {
   /// edit target) is not the current connection's, and `DatabaseError.blockedByProtection` if
   /// `policy` forbids it. Under Protected mode the edit opens / joins the app transaction
   /// (same `caller` rule as `execute`, see `runProtectedEdit`); otherwise it is committed on its
-  /// own or runs in the user's open transaction (`runUnprotectedEdit`). Any other row count
-  /// throws `DatabaseError.editRowCountMismatch`.
+  /// own or runs in the user's open transaction (`runUnprotectedEdit`). `commitImmediately`
+  /// (the user's "commit inline edits immediately" setting) commits on its own even under
+  /// Protected mode, unless an app transaction is already pending (the edit then joins it).
+  /// Any other row count throws `DatabaseError.editRowCountMismatch`.
   func executeGatedUpdate(
     _ statement: CellUpdateStatement, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil
+    caller: UUID? = nil, commitImmediately: Bool = false
   )
     async throws -> Int
   {
@@ -73,7 +75,7 @@ extension DatabaseConnectionManager {
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
-    if protectedMode {
+    if protectedMode, !commitImmediately || !txState.isIdle {
       return try await runProtectedEdit(statement, classified: statements.first, caller: caller)
     }
     return try await runUnprotectedEdit(statement)

@@ -52,11 +52,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Row values and column of the cell being edited, captured when editing starts so a reload
   /// during the edit can't shift the committed row
   private var editing: (row: [CellValue], column: Int)?
+  /// True while a cell is being edited (the details button stays hidden)
+  var isEditing: Bool { editing != nil }
   /// Called with the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)?
   /// Called with the displayed row values, its index into `CellResult.rows` and the result
-  /// column index of a clicked cell
-  var onCellClick: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
+  /// column index of the cell whose details button was clicked
+  var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
   /// True while `update` shows the input sort in the header, so it isn't reported back
   private var isShowingInputSort = false
 
@@ -146,12 +148,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     return true
   }
 
-  /// Reports a click on a displayed row (not the header) to `onCellClick`
-  func cellClicked(row: Int, column: Int) {
+  /// Reports the details button of a displayed row's cell (not the header) to
+  /// `onShowCellDetails`
+  func showCellDetails(row: Int, column: Int) {
     guard let model, let originalRow = model.originalRow(forDisplayedRow: row),
       column < model.columns.count
     else { return }
-    onCellClick?(model.row(at: row), originalRow, column)
+    onShowCellDetails?(model.row(at: row), originalRow, column)
   }
 
   /// TSV of the selected rows, all columns in on-screen order (after a column move)

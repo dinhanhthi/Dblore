@@ -62,13 +62,17 @@ struct ResultGridEditTests {
 
     // Unchanged text sends nothing
     coordinator.commitEdit(row: 0, column: 1, newValue: "a")
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
+    #expect(viewModel.rightSidebarContent == nil)
 
     // Displayed row 0 is id 1 (result.rows[1]), not result.rows[0] (id 3)
     coordinator.commitEdit(row: 0, column: 1, newValue: "new")
-    let state = viewModel.queryConfirmationState
-    #expect(state.pendingQuery == #"UPDATE public.users SET "name" = $1 WHERE "id" = $2"#)
-    #expect(state.pendingInlineEdit?.statement.values == ["new", "1"])
+    guard case .cellInfo(_, _, let value, _, let rowData, _, _) = viewModel.rightSidebarContent
+    else {
+      Issue.record("the edit did not reach handleCellValueEdit")
+      return
+    }
+    #expect(value == .string("new"))
+    #expect(rowData?["id"] == .int(1))
   }
 
   @Test(
@@ -89,6 +93,5 @@ struct ResultGridEditTests {
     coordinator.onCommitEdit = { _, _, _ in delivered = true }
     coordinator.commitEdit(row: 0, column: 1, newValue: "new")
     #expect(delivered == false)
-    #expect(viewModel.queryConfirmationState.pendingInlineEdit == nil)
   }
 }

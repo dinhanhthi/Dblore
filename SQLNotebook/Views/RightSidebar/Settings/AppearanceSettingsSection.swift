@@ -11,17 +11,15 @@ struct AppearanceSettingsSection: View {
   @Bindable var appSettings: AppSettings
 
   var body: some View {
-    SettingsSection(title: "Appearance", icon: "paintbrush.fill") {
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        // Theme Picker
-        themePicker
+    VStack(alignment: .leading, spacing: Spacing.md) {
+      // Theme Picker
+      themePicker
 
-        Divider()
-          .padding(.vertical, Spacing.xs)
+      Divider()
+        .padding(.vertical, Spacing.xs)
 
-        // Accent Color Picker
-        accentColorPicker
-      }
+      // Accent Color Picker
+      accentColorPicker
     }
   }
 
@@ -48,6 +46,7 @@ struct AppearanceSettingsSection: View {
             .padding(.vertical, Spacing.sm)
           }
           .buttonStyle(.plain)
+          .pointerStyle(.link)
         }
       }
 
@@ -79,6 +78,7 @@ struct AppearanceSettingsSection: View {
               .padding(Spacing.xs)
           }
           .buttonStyle(.plain)
+          .pointerStyle(.link)
           .help(color.rawValue)
         }
       }

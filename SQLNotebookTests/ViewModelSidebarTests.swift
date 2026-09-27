@@ -56,6 +56,17 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isRightSidebarVisible == initialState)
   }
 
+  @Test("Showing sidebar content opens the right sidebar with that content")
+  func showSidebarOpensWithContent() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let content = SidebarContent.executedQuery(query: "SELECT 1", cellId: nil)
+
+    viewModel.showSidebar(content: content)
+
+    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.rightSidebarContent == content)
+  }
+
   // Note: Left sidebar is now owned by WorkspaceManager, not NotebookViewModel
   // The test for toggleLeftSidebar() has been removed as the functionality moved to WorkspaceManager
 
@@ -91,7 +102,7 @@ struct ViewModelSidebarTests {
     #expect(viewModel.notebook.settings.keyboardShortcuts.isEmpty == true)
   }
 
-  @Test("A JSON cell clicked in a sorted grid shows its original row number in the path")
+  @Test("A JSON cell shown from a sorted grid shows its original row number in the path")
   func gridJSONPathUsesOriginalRow() {
     let viewModel = NotebookViewModel(notebook: createTestNotebook())
     let result = CellResult(
@@ -100,12 +111,12 @@ struct ViewModelSidebarTests {
       rowCount: 3)
     let coordinator = ResultGridCoordinator()
     coordinator.update(NSTableView(), result: result, sortColumn: "id", ascending: false)
-    coordinator.onCellClick = { row, originalRow, column in
+    coordinator.onShowCellDetails = { row, originalRow, column in
       viewModel.showGridCellInSidebar(
         row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
     }
     // Displayed row 0 of the descending sort is original row 1 (id 3)
-    coordinator.cellClicked(row: 0, column: 1)
+    coordinator.showCellDetails(row: 0, column: 1)
     #expect(
       viewModel.rightSidebarContent == .jsonViewer(json: "{\"a\":3}", path: "Row 2, Column 'doc'"))
   }

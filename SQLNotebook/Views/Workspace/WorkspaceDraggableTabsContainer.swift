@@ -29,17 +29,15 @@ struct WorkspaceDraggableTabsContainer: View {
   /// Original index of the dragging tab
   @State private var originalIndex: Int?
 
-  /// Namespace for the selected tab glass morph
+  /// Namespace for the active tab capsule that slides between tabs
   @Namespace private var tabCapsuleNamespace
 
   private let tabSpacing: CGFloat = Spacing.xxs
 
   var body: some View {
-    GlassEffectContainer(spacing: tabSpacing) {
-      tabsRow
-    }
-    .frame(maxHeight: .infinity, alignment: .center)
-    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: workspaceManager.activeTabId)
+    tabsRow
+      .frame(maxHeight: .infinity, alignment: .center)
+      .animation(.spring(response: 0.35, dampingFraction: 0.8), value: workspaceManager.activeTabId)
   }
 
   private var tabsRow: some View {
@@ -276,9 +274,11 @@ struct WorkspaceDraggableTabItem: View {
     .frame(height: 28)
     .background {
       if isActive {
-        // Glass capsule for active tab - morphs between tabs
-        Color.clear
-          .selectedTabGlass(id: "activeTabGlass", in: capsuleNamespace)
+        // Neutral capsule for the active tab - slides between tabs; the label stays above it
+        Capsule()
+          .fill(Color.foreground.opacity(0.12))
+          .overlay(Capsule().strokeBorder(Color.foreground.opacity(0.12), lineWidth: 1))
+          .matchedGeometryEffect(id: "activeTab", in: capsuleNamespace)
       } else if isHovering || isDragging {
         // Subtle hover state for inactive tabs
         Capsule()
@@ -310,6 +310,7 @@ struct WorkspaceDraggableTabItem: View {
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .help("Close tab")
     } else {
       Color.clear

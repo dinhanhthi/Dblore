@@ -242,6 +242,7 @@ class AppSettings {
     static let accentColor = "app.settings.accentColor"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
+    static let inlineEditAutoCommit = "app.settings.inlineEditAutoCommit"
   }
 
   // MARK: - Settings Properties
@@ -393,6 +394,15 @@ class AppSettings {
     }
   }
 
+  /// Inline grid edits are committed at once (no Commit / Rollback bar); off: each edit is
+  /// staged in the app transaction. Safe Mode never asks for inline edits either way.
+  /// Default: false
+  var inlineEditAutoCommit: Bool = false {
+    didSet {
+      defaults.set(inlineEditAutoCommit, forKey: Keys.inlineEditAutoCommit)
+    }
+  }
+
   // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
   private var safeModeAuth: SafeModeAuthenticator { .shared }
@@ -541,6 +551,10 @@ class AppSettings {
       hideColumnTypes = defaults.bool(forKey: Keys.hideColumnTypes)
     }
 
+    if defaults.object(forKey: Keys.inlineEditAutoCommit) != nil {
+      inlineEditAutoCommit = defaults.bool(forKey: Keys.inlineEditAutoCommit)
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -571,6 +585,7 @@ class AppSettings {
     accentColor = .purple
     hideColumnTypes = false
     safeMode = .alertRead
+    inlineEditAutoCommit = false
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

@@ -1,7 +1,7 @@
 // ResultGridNotebookTests.swift
 // The result grid inside a notebook cell: fixed height (at most 15 rows plus the header),
-// vertical scroll handed to the notebook list at the grid's edges, header sort, cell click to
-// the sidebar and search highlights.
+// vertical scroll handed to the notebook list at the grid's edges, header sort, details button
+// to the sidebar and search highlights.
 
 import AppKit
 import Testing
@@ -27,16 +27,23 @@ struct ResultGridNotebookTests {
     return (coordinator, tableView)
   }
 
-  @Test("Height is min(rows, 15) rows plus the header", arguments: [false, true])
-  func height(hideColumnTypes: Bool) {
-    let header = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
-    #expect(ResultGridView.height(rowCount: 0, hideColumnTypes: hideColumnTypes) == header)
-    #expect(
-      ResultGridView.height(rowCount: 10, hideColumnTypes: hideColumnTypes)
-        == 10 * ResultGridView.rowHeight + header)
-    #expect(
-      ResultGridView.height(rowCount: 100, hideColumnTypes: hideColumnTypes)
-        == 15 * ResultGridView.rowHeight + header)
+  @Test(
+    "Height is min(rows, 15) rows plus the header and the legacy horizontal scroller",
+    arguments: [false, true], [NSScroller.Style.overlay, .legacy])
+  func height(hideColumnTypes: Bool, scrollerStyle: NSScroller.Style) {
+    // A legacy (always shown) horizontal scroller sits inside the grid height; overlay floats
+    let scroller =
+      scrollerStyle == .legacy
+      ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+    let header = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes) + scroller
+    func height(_ rowCount: Int) -> CGFloat {
+      ResultGridView.height(
+        rowCount: rowCount, hideColumnTypes: hideColumnTypes, scrollerStyle: scrollerStyle)
+    }
+    #expect(height(0) == header)
+    #expect(height(1) == ResultGridView.rowHeight + header)
+    #expect(height(10) == 10 * ResultGridView.rowHeight + header)
+    #expect(height(100) == 15 * ResultGridView.rowHeight + header)
   }
 
   @Test(
@@ -67,17 +74,68 @@ struct ResultGridNotebookTests {
     #expect(sort?.ascending == false)
   }
 
-  @Test("A cell click delivers the displayed (sorted) row and the result column")
-  func cellClick() {
+  @Test("Show details delivers the displayed (sorted) row and the result column")
+  func showCellDetails() {
     let (coordinator, _) = makeGrid(sortColumn: "id")
-    var clicked: (row: [CellValue], originalRow: Int, column: Int)?
-    coordinator.onCellClick = { clicked = ($0, $1, $2) }
-    coordinator.cellClicked(row: 0, column: 1)
-    #expect(clicked?.row == [.int(1), .string("ab")])
-    #expect(clicked?.originalRow == 1)
-    #expect(clicked?.column == 1)
-    coordinator.cellClicked(row: -1, column: 0)  // click outside a row
-    #expect(clicked?.row == [.int(1), .string("ab")])
+    var shown: (row: [CellValue], originalRow: Int, column: Int)?
+    coordinator.onShowCellDetails = { shown = ($0, $1, $2) }
+    coordinator.showCellDetails(row: 0, column: 1)
+    #expect(shown?.row == [.int(1), .string("ab")])
+    #expect(shown?.originalRow == 1)
+    #expect(shown?.column == 1)
+    coordinator.showCellDetails(row: -1, column: 0)  // outside a row
+    #expect(shown?.row == [.int(1), .string("ab")])
+  }
+
+  @Test("A click only selects and a double click only edits: neither shows the details")
+  func clickDoesNotShowDetails() {
+    let tableView = ResultGridView.makeTableView(coordinator: ResultGridCoordinator())
+    #expect(tableView.action == nil)
+    #expect(tableView.doubleAction == #selector(ResultGridTableView.editClickedCell(_:)))
+  }
+
+  @Test("The details button sits at the trailing edge of the visible part of the cell")
+  func detailsButtonFrame() {
+    let size = ResultGridTableView.detailsButtonSize
+    let cell = NSRect(x: 100, y: 26, width: 150, height: 26)
+    let frame = ResultGridTableView.detailsButtonFrame(
+      cellRect: cell, visibleRect: NSRect(x: 0, y: 0, width: 1000, height: 500))
+    #expect(
+      frame == NSRect(x: 250 - Spacing.xs - size, y: 39 - size / 2, width: size, height: size))
+    // Cell cut by the right edge of the visible area: the button stays visible
+    let clipped = ResultGridTableView.detailsButtonFrame(
+      cellRect: cell, visibleRect: NSRect(x: 0, y: 0, width: 200, height: 500))
+    #expect(clipped?.maxX == 200 - Spacing.xs)
+    // Cell scrolled out of view
+    #expect(
+      ResultGridTableView.detailsButtonFrame(
+        cellRect: cell, visibleRect: NSRect(x: 300, y: 0, width: 200, height: 500)) == nil)
+  }
+
+  @Test("Hovering a cell shows the details button; its click shows that cell's details")
+  func detailsButtonHover() {
+    let coordinator = ResultGridCoordinator()
+    let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+    coordinator.update(tableView, result: result, sortColumn: "id", ascending: true)
+    tableView.frame = NSRect(x: 0, y: 0, width: 300, height: 78)
+    tableView.moveColumn(0, toColumn: 1)  // on screen: name, id
+    var shown: (originalRow: Int, column: Int)?
+    coordinator.onShowCellDetails = { shown = ($1, $2) }
+
+    tableView.updateDetailsButton(at: NSPoint(x: 160, y: 30))  // row 1, second on-screen column
+    let button = tableView.detailsButton
+    #expect(!button.isHidden)
+    #expect(
+      button.frame
+        == ResultGridTableView.detailsButtonFrame(
+          cellRect: tableView.frameOfCell(atColumn: 1, row: 1), visibleRect: tableView.visibleRect))
+    button.sendAction(button.action, to: button.target)
+    // Displayed row 1 of the ascending sort is id 2 (original row 2), column "id" is 0
+    #expect(shown?.originalRow == 2)
+    #expect(shown?.column == 0)
+
+    tableView.updateDetailsButton(at: NSPoint(x: 10, y: 500))  // below the rows
+    #expect(button.isHidden)
   }
 
   @Test("Search highlights the matching text of a cell, case-insensitively")

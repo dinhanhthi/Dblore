@@ -20,8 +20,6 @@ extension NotebookViewModel {
 
     queryConfirmationState.pendingCellId = cellId
     queryConfirmationState.pendingQuery = query
-    // A stale edit from a dialog dismissed without Cancel must not run on this confirmation
-    queryConfirmationState.pendingInlineEdit = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.runAllAwaitingUnlock = false
       queryConfirmationState.clearRunAll()

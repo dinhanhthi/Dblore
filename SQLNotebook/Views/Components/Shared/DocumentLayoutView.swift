@@ -6,14 +6,11 @@
 import SwiftUI
 
 /// Shared layout structure for both Editor and Notebook modes
-/// Contains common UI elements: header, sidebars, footer, toast
+/// Contains common UI elements: header, sidebars, toast (the footer is window-level, see
+/// WorkspaceContainerView)
 struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
-  @Binding var lastSaved: Date?
-  let isEditorMode: Bool
-  var connectionConfig: ConnectionConfig?
   @Bindable private var appSettings = AppSettings.shared
-  @State private var showSafeModeModal = false
 
   @ViewBuilder let content: Content
 
@@ -25,7 +22,7 @@ struct DocumentLayoutView<Content: View>: View {
       // Main layout: HStack with left content area + right sidebar
       // Right sidebar now extends full height including header level
       HStack(spacing: 0) {
-        // Left side: Header + Content + Footer
+        // Left side: Header + Content
         VStack(spacing: 0) {
           // Header
           HeaderView(viewModel: viewModel)
@@ -55,20 +52,14 @@ struct DocumentLayoutView<Content: View>: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .clipped()
-
-          // Footer
-          FooterView(
-            viewModel: viewModel,
-            lastSaved: lastSaved,
-            isEditorMode: isEditorMode,
-            connectionConfig: connectionConfig,
-            onSafeModeTap: { showSafeModeModal = true }
-          )
         }
 
         // Right sidebar (conditionally shown) - now at same level as header
         RightSidebarContainer(viewModel: viewModel)
       }
+      // Slide the sidebar (and resize the content beside it) whichever entry point toggled it,
+      // including callers that change the visibility without `withAnimation`
+      .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
 
       // Toast notification overlay (app-level via WorkspaceWindowManager)
       ToastOverlay()
@@ -77,7 +68,6 @@ struct DocumentLayoutView<Content: View>: View {
       .easeInOut(duration: 0.4), value: WorkspaceWindowManager.shared.toastState.currentToast
     )
     .windowAppearance(appSettings.themePreference.colorScheme)
-    .safeModeModal(isPresented: $showSafeModeModal)
     // Note: Connection modals are now handled at workspace level (WorkspaceContainerView)
   }
 

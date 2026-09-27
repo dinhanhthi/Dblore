@@ -34,13 +34,6 @@ extension View {
   func tintedChromeGlass(_ color: Color) -> some View {
     glassEffect(.regular.tint(color.opacity(0.25)), in: Rectangle())
   }
-
-  /// Capsule glass for the selected tab. The shared `id` inside a `GlassEffectContainer`
-  /// lets the glass morph from the old selected tab to the new one.
-  func selectedTabGlass(id: some Hashable & Sendable, in namespace: Namespace.ID) -> some View {
-    glassEffect(.regular, in: Capsule())
-      .glassEffectID(id, in: namespace)
-  }
 }
 
 // MARK: - Glass Toolbar Group

@@ -93,7 +93,6 @@ struct EditTargetConnectionEpochTests {
       StatementResult(queryText: "SELECT 1", result: result(target), statementIndex: 0)
     ]
     viewModel.cellDetailEditTarget = target
-    viewModel.pendingInlineEditTarget = target
   }
 
   private func hasNoEditTarget(_ viewModel: NotebookViewModel) -> Bool {
@@ -104,10 +103,10 @@ struct EditTargetConnectionEpochTests {
       [viewModel.editorResult?.editTarget]
       + viewModel.editorStatementResults.map(\.result.editTarget)
     return (cellTargets + editorTargets).allSatisfy { $0 == nil }
-      && viewModel.cellDetailEditTarget == nil && viewModel.pendingInlineEditTarget == nil
+      && viewModel.cellDetailEditTarget == nil
   }
 
-  @Test("invalidateEditTargets clears every displayed result, the sidebar and pending targets")
+  @Test("invalidateEditTargets clears every displayed result and the sidebar target")
   func invalidateClearsAll() {
     let viewModel = NotebookViewModel()
     seed(viewModel)

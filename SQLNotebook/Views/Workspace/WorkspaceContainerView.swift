@@ -9,6 +9,7 @@ import SwiftUI
 /// Main container view for a workspace with tabs, sidebars, and content
 struct WorkspaceContainerView: View {
   @Bindable var workspaceManager: WorkspaceManager
+  @State private var showSafeModeModal = false
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -18,103 +19,114 @@ struct WorkspaceContainerView: View {
 
   var body: some View {
     GeometryReader { geometry in
-      ZStack(alignment: .topLeading) {
-        // Main layout (z-index 0 - lowest)
-        HStack(spacing: 0) {
-          // Left sidebar (full height, covers traffic light area)
-          WorkspaceLeftSidebar(
-            workspaceManager: workspaceManager,
-            tabBarHeight: ComponentSize.tabBarHeight,
-            maxWidth: geometry.size.width * 0.35
-          )
-
-          // Main content area (tabs + content)
-          VStack(spacing: 0) {
-            // Tab bar in titlebar area
-            WorkspaceTitleBarTabsView(
+      // Footer below the sidebar + content area: always full window width, unaffected by the
+      // left sidebar toggle
+      VStack(spacing: 0) {
+        ZStack(alignment: .topLeading) {
+          // Main layout (z-index 0 - lowest)
+          HStack(spacing: 0) {
+            // Left sidebar (full height, covers traffic light area)
+            WorkspaceLeftSidebar(
               workspaceManager: workspaceManager,
-              hasLeftSidebar: workspaceManager.isLeftSidebarVisible
+              tabBarHeight: ComponentSize.tabBarHeight,
+              maxWidth: geometry.size.width * 0.35
             )
 
-            // Pending Protected transaction (Commit / Rollback)
-            if !workspaceManager.pendingTransaction.isIdle {
-              PendingTransactionBanner(workspaceManager: workspaceManager)
-            }
-
-            // The server closed the connection (Reconnect)
-            if workspaceManager.connectionLostMessage != nil {
-              ConnectionLostBanner(workspaceManager: workspaceManager)
-            }
-
-            // Content area
-            if workspaceManager.isSchemaVisualizerActive {
-              // Schema visualizer at workspace level (overlays everything)
-              WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
-            } else if let activeTabId = workspaceManager.activeTabId,
-              let viewModel = workspaceManager.viewModel(for: activeTabId)
-            {
-              WorkspaceTabContentView(
-                tabId: activeTabId,
+            // Main content area (tabs + content)
+            VStack(spacing: 0) {
+              // Tab bar in titlebar area
+              WorkspaceTitleBarTabsView(
                 workspaceManager: workspaceManager,
-                viewModel: viewModel
+                hasLeftSidebar: workspaceManager.isLeftSidebarVisible
               )
-            } else {
-              WorkspaceWelcomeView(workspaceManager: workspaceManager)
+
+              // Pending Protected transaction (Commit / Rollback)
+              if !workspaceManager.pendingTransaction.isIdle {
+                PendingTransactionBanner(workspaceManager: workspaceManager)
+              }
+
+              // The server closed the connection (Reconnect)
+              if workspaceManager.connectionLostMessage != nil {
+                ConnectionLostBanner(workspaceManager: workspaceManager)
+              }
+
+              // Content area
+              if workspaceManager.isSchemaVisualizerActive {
+                // Schema visualizer at workspace level (overlays everything)
+                WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
+              } else if let activeTabId = workspaceManager.activeTabId,
+                let viewModel = workspaceManager.viewModel(for: activeTabId)
+              {
+                WorkspaceTabContentView(
+                  tabId: activeTabId,
+                  workspaceManager: workspaceManager,
+                  viewModel: viewModel
+                )
+              } else {
+                WorkspaceWelcomeView(workspaceManager: workspaceManager)
+              }
             }
           }
-        }
-        .zIndex(0)
+          .zIndex(0)
 
-        // Traffic light area background + toggle button + connection button (z-index 1)
-        // This covers sidebar buttons during animation
-        HStack(spacing: 0) {
-          // Background for traffic light area + buttons
-          Color.clear
-            .frame(
-              width: ComponentSize.trafficLightAndToggleWidth
-                + workspaceManager.connectionState.connectionButtonsWidth,
-              height: ComponentSize.tabBarHeight
-            )
-            .chromeGlass()
-            .overlay(alignment: .trailing) {
-              // Buttons positioned at trailing edge of background
-              HStack(spacing: Spacing.xxs) {
-                SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
-                  workspaceManager.toggleLeftSidebar()
-                }
-
-                DatabaseConnectionButton(workspaceManager: workspaceManager)
-
-                // Schema Visualizer button (only show when connected)
-                if case .connected = workspaceManager.connectionState {
-                  Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                      .font(.system(size: 12))
-                      .foregroundColor(.accent)
+          // Traffic light area background + toggle button + connection button (z-index 1)
+          // This covers sidebar buttons during animation
+          HStack(spacing: 0) {
+            // Background for traffic light area + buttons
+            Color.clear
+              .frame(
+                width: ComponentSize.trafficLightAndToggleWidth
+                  + workspaceManager.connectionState.connectionButtonsWidth,
+                height: ComponentSize.tabBarHeight
+              )
+              .chromeGlass()
+              .overlay(alignment: .trailing) {
+                // Buttons positioned at trailing edge of background
+                HStack(spacing: Spacing.xxs) {
+                  SidebarToggleButton(isSidebarVisible: workspaceManager.isLeftSidebarVisible) {
+                    workspaceManager.toggleLeftSidebar()
                   }
-                  .buttonStyle(
-                    GhostButtonStyle(
-                      isActive: workspaceManager.isSchemaVisualizerActive, iconOnly: true
-                    )
-                  )
-                  .controlSize(.small)
-                  .blockDoubleClickZoom()
-                  .help(
-                    workspaceManager.isSchemaVisualizerActive
-                      ? "Close Schema Visualizer" : "Visualize Schema Relationships")
-                }
-              }
-              .padding(.trailing, Spacing.md)
-            }
 
-          Spacer()
+                  DatabaseConnectionButton(workspaceManager: workspaceManager)
+
+                  // Schema Visualizer button (only show when connected)
+                  if case .connected = workspaceManager.connectionState {
+                    Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
+                      Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 12))
+                        .foregroundColor(.accent)
+                    }
+                    .buttonStyle(
+                      GhostButtonStyle(
+                        isActive: workspaceManager.isSchemaVisualizerActive, iconOnly: true
+                      )
+                    )
+                    .controlSize(.small)
+                    .blockDoubleClickZoom()
+                    .help(
+                      workspaceManager.isSchemaVisualizerActive
+                        ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+                  }
+                }
+                .padding(.trailing, Spacing.md)
+              }
+
+            Spacer()
+          }
+          .frame(height: ComponentSize.tabBarHeight)
+          // Border bottom - overlay to match title bar's divider
+          .overlay(alignment: .bottom) {
+            Divider()
+          }
+          .zIndex(1)
         }
-        .frame(height: ComponentSize.tabBarHeight)
-        // Border bottom - overlay to match title bar's divider
-        .overlay(alignment: .bottom) {
-          Divider()
-        }
-        .zIndex(1)
+
+        FooterView(
+          viewModel: workspaceManager.isSchemaVisualizerActive ? nil : activeViewModel,
+          connectionState: workspaceManager.connectionState,
+          connectionConfig: workspaceManager.workspace.connectionConfig,
+          onSafeModeTap: { showSafeModeModal = true }
+        )
       }
     }
     .frame(minWidth: 800, minHeight: 600)
@@ -165,6 +177,7 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
     .settingsModal(workspaceManager: workspaceManager)
+    .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
       // Toggle settings modal: if already showing, close it; otherwise show settings
       workspaceManager.isSettingsModalVisible.toggle()
@@ -232,7 +245,6 @@ struct WorkspaceTabContentView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Bindable var viewModel: NotebookViewModel
 
-  @State private var lastSaved: Date?
   @State private var keyEventMonitor: Any?
   @State private var monitorWindow: NSWindow?
 
@@ -301,12 +313,7 @@ struct WorkspaceTabContentView: View {
 
   @ViewBuilder
   private var notebookContent: some View {
-    DocumentLayoutView(
-      viewModel: viewModel,
-      lastSaved: $lastSaved,
-      isEditorMode: false,
-      connectionConfig: workspaceManager.workspace.connectionConfig
-    ) {
+    DocumentLayoutView(viewModel: viewModel) {
       NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
     }
     .modifier(
@@ -325,12 +332,7 @@ struct WorkspaceTabContentView: View {
 
   @ViewBuilder
   private var editorContent: some View {
-    DocumentLayoutView(
-      viewModel: viewModel,
-      lastSaved: $lastSaved,
-      isEditorMode: true,
-      connectionConfig: workspaceManager.workspace.connectionConfig
-    ) {
+    DocumentLayoutView(viewModel: viewModel) {
       // Wrap in List so it absorbs parent geometry changes gracefully
       // during sidebar animation, just like NotebookScrollContent does.
       // Without List, EditorModeView's SizeReader recalculates on every
@@ -363,13 +365,13 @@ struct WorkspaceTabContentView: View {
   private func syncNotebookDocument() {
     guard let document = workspaceManager.notebookDocument(for: tabId) else { return }
     document.notebook = viewModel.notebook
-    lastSaved = Date()
+    viewModel.lastSaved = Date()
   }
 
   private func syncEditorDocument() {
     guard let document = workspaceManager.editorDocument(for: tabId) else { return }
     document.content = viewModel.editorContent
-    lastSaved = Date()
+    viewModel.lastSaved = Date()
   }
 
   private func syncConnectionState() {
@@ -614,7 +616,8 @@ struct WorkspaceTitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      .padding(.trailing, Spacing.xs)
+      .padding(.leading, Spacing.xxs)
+      .padding(.trailing, Spacing.sm)
 
       // Scrollable tabs area with Chrome-like drag reordering
       ScrollViewReader { proxy in
@@ -633,44 +636,62 @@ struct WorkspaceTitleBarTabsView: View {
         }
       }
 
-      // New tab button
-      Menu {
+      HStack(spacing: Spacing.xxs) {
+        // Settings button
         Button {
-          workspaceManager.newNotebook()
+          NotificationCenter.default.post(name: .openSettings, object: nil)
         } label: {
-          Label("New Notebook", systemImage: "doc.text")
+          Image(systemName: "gearshape")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .blockDoubleClickZoom()
+        .help("Settings (⌘,)")
 
-        Button {
-          workspaceManager.newSQLFile()
+        // New tab button
+        Menu {
+          Button {
+            workspaceManager.newNotebook()
+          } label: {
+            Label("New Notebook", systemImage: "doc.text")
+          }
+
+          Button {
+            workspaceManager.newSQLFile()
+          } label: {
+            Label("New SQL File", systemImage: "doc")
+          }
+
+          Divider()
+
+          Button {
+            openNotebookWithPanel()
+          } label: {
+            Label("Open Notebook...", systemImage: "folder")
+          }
+
+          Button {
+            openSQLFileWithPanel()
+          } label: {
+            Label("Open SQL File...", systemImage: "folder")
+          }
         } label: {
-          Label("New SQL File", systemImage: "doc")
+          Image(systemName: "plus")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
         }
-
-        Divider()
-
-        Button {
-          openNotebookWithPanel()
-        } label: {
-          Label("Open Notebook...", systemImage: "folder")
-        }
-
-        Button {
-          openSQLFileWithPanel()
-        } label: {
-          Label("Open SQL File...", systemImage: "folder")
-        }
-      } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
+        .menuStyle(.borderlessButton)
+        .pointerStyle(.link)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .blockDoubleClickZoom()
       }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .blockDoubleClickZoom()
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
@@ -753,6 +774,7 @@ struct TabNavigationArrowButton: View {
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .pointerStyle(.link)
     .disabled(!isEnabled)
     .blockDoubleClickZoom()
     .onHover { isHovering = $0 }

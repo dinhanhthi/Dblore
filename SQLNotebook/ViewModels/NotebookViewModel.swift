@@ -97,6 +97,8 @@ class NotebookViewModel {
 
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
+  /// Last time this tab synced its document (shown in the window footer)
+  var lastSaved: Date?
 
   // MARK: - Toast (delegated to WorkspaceWindowManager)
   // Toast is now managed at app level via WorkspaceWindowManager.shared
@@ -119,8 +121,6 @@ class NotebookViewModel {
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
-  /// Edit target of `queryConfirmationState.pendingInlineEdit`
-  var pendingInlineEditTarget: EditTarget?
 
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
@@ -274,14 +274,6 @@ class NotebookViewModel {
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
       executeUnlockedRunAll()
-      return
-    }
-    // Inline grid edit waiting for this confirmation (either mode)
-    if let edit = queryConfirmationState.pendingInlineEdit {
-      let target = pendingInlineEditTarget
-      queryConfirmationState.clear()
-      pendingInlineEditTarget = nil
-      await sendInlineEdit(edit, target: target)
       return
     }
     // Check if it's editor mode or notebook mode

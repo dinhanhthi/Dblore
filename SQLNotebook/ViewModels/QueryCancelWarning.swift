@@ -11,6 +11,13 @@ import Foundation
 nonisolated struct QueryCancelWarning: Sendable, Equatable {
   static let confirmTitle = "Cancel query & discard"
   static let keepTitle = "Keep running"
+  static let stopTitle = "Stop query"
+
+  /// Asked before stopping the editor run when nothing pending would be discarded
+  static let sessionReset = QueryCancelWarning(
+    title: "Stop the running query?",
+    detail: "The connection is reset to stop the query on the server (temp tables, SET and "
+      + "search_path are lost).")
 
   let title: String
   /// What is discarded (the itemized pending list for an app transaction)

@@ -1,7 +1,8 @@
 // ResultGridHeaderTests.swift
 // The two-line grid header: column name (key icon for the primary key of an editable result,
 // search highlight on a column-name match) over the column type, hidden by hideColumnTypes.
-// The header is 48 pt with types, 28 pt without, and keeps the sort indicator.
+// The header is 54 pt with types, 28 pt without, with the same gap above and below the lines,
+// and keeps the sort indicator.
 
 import AppKit
 import Testing
@@ -38,9 +39,9 @@ struct ResultGridHeaderTests {
       searchQuery: searchQuery, caseSensitive: false, currentMatch: currentMatch)
   }
 
-  @Test("Header is 48 pt with column types and 28 pt without")
+  @Test("Header is 54 pt with column types and 28 pt without")
   func headerHeight() {
-    #expect(ResultGridView.headerHeight(hideColumnTypes: false) == 48)
+    #expect(ResultGridView.headerHeight(hideColumnTypes: false) == 54)
     #expect(ResultGridView.headerHeight(hideColumnTypes: true) == 28)
   }
 
@@ -50,10 +51,25 @@ struct ResultGridHeaderTests {
     let tableView = NSTableView()
     let result = result(editable: false)
     coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
-    #expect(tableView.headerView?.frame.height == 48)
+    #expect(tableView.headerView?.frame.height == 54)
     coordinator.update(
       tableView, result: result, sortColumn: nil, ascending: true, hideColumnTypes: true)
     #expect(tableView.headerView?.frame.height == 28)
+  }
+
+  @Test(
+    "The lines have the same gap above the name and below the last line", arguments: [true, false])
+  func linesCentered(hasType: Bool) {
+    let bounds = NSRect(x: 0, y: 0, width: 200, height: hasType ? 54 : 28)
+    let top = ResultGridHeaderCell.linesTop(in: bounds, hasType: hasType)
+    let title = ResultGridHeaderCell.titleFont
+    let type = ResultGridHeaderCell.typeFont
+    let capTop = top + title.ascender - title.capHeight
+    let baseline =
+      hasType
+      ? top + title.ascender - title.descender + Spacing.xxs + type.ascender
+      : top + title.ascender
+    #expect(abs((capTop - bounds.minY) - (bounds.maxY - baseline)) < 0.01)
   }
 
   @Test("Line 1 is the column name, line 2 the type, nil when types are hidden")

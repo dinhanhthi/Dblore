@@ -30,15 +30,28 @@ struct WindowDimensionsView: View {
   }
 }
 
+/// Window-level footer. `viewModel` is the active tab's (nil on the welcome view and the schema
+/// visualizer: only the version and the connection status are shown then).
 struct FooterView: View {
-  @Bindable var viewModel: NotebookViewModel
-  var lastSaved: Date?
-  var isEditorMode: Bool = false
+  var viewModel: NotebookViewModel?
+  var connectionState: ConnectionState
   var connectionConfig: ConnectionConfig?
   var onSafeModeTap: () -> Void = {}
   @State private var showDisableReadOnlyConfirmation = false
 
   var body: some View {
+    if let viewModel {
+      bar(viewModel: viewModel)
+        .protectionLevelDialog(
+          isPresented: $showDisableReadOnlyConfirmation,
+          viewModel: viewModel
+        )
+    } else {
+      bar(viewModel: nil)
+    }
+  }
+
+  private func bar(viewModel: NotebookViewModel?) -> some View {
     HStack(spacing: Spacing.lg) {
       // Left side - always visible
       HStack(spacing: Spacing.sm) {
@@ -48,29 +61,31 @@ struct FooterView: View {
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.md)
           .padding(.vertical, Spacing.xs + 2)
+          .background(Color.cardHeaderBackground)
 
         // Connection status
         connectionStatusIcon
-        Text(connectionStatusText)
+        Text(Self.connectionStatusText(for: connectionState, config: connectionConfig))
           .font(.small)
           .foregroundColor(.foregroundMuted)
 
-        // Protection level badge (clickable)
-        if let protectionLevel = connectionConfig?.protectionLevel,
-          protectionLevel != .none
-        {
-          protectionBadge(for: protectionLevel)
-            .onTapGesture {
-              showDisableReadOnlyConfirmation = true
-            }
-        }
+        if viewModel != nil {
+          // Protection level badge (clickable)
+          if let protectionLevel = connectionConfig?.protectionLevel,
+            protectionLevel != .none
+          {
+            protectionBadge(for: protectionLevel)
+              .onTapGesture {
+                showDisableReadOnlyConfirmation = true
+              }
+          }
 
-        // Safe Mode indicator (clickable to open Safe Mode modal)
-        SafeModeIndicator(
-          connectionConfig: viewModel.connectionState.isConnected
-            ? connectionConfig : nil,
-          onTap: onSafeModeTap
-        )
+          // Safe Mode indicator (clickable to open Safe Mode modal)
+          SafeModeIndicator(
+            connectionConfig: connectionState.isConnected ? connectionConfig : nil,
+            onTap: onSafeModeTap
+          )
+        }
 
         // Window dimensions (for debugging)
         // WindowDimensionsView()
@@ -78,57 +93,59 @@ struct FooterView: View {
 
       Spacer()
 
-      HStack(spacing: Spacing.sm) {
-        // Last saved
-        if let lastSaved {
-          Text(lastSavedText(lastSaved))
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-
-          Text("|")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-        }
-
-        // Notebook stats (only in notebook mode)
-        if !isEditorMode {
-          Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-
-          Text("|")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-        }
-
-        // File size indicator (always visible)
-        HStack(spacing: 4) {
-          Image(systemName: fileSizeIcon)
-            .font(.small)
-            .foregroundColor(fileSizeColor)
-
-          Text(viewModel.formattedFileSize)
-            .font(.small)
-            .foregroundColor(fileSizeColor)
-        }
-        .help(fileSizeTooltip)
+      if let viewModel {
+        documentStats(viewModel: viewModel)
       }
     }
     .padding(.trailing, Spacing.lg)
     .frame(height: ComponentSize.footerHeight)
-    .floatingBarGlass()
-    // Inline below the content (not an overlay) so it never covers grid rows
-    .padding(.horizontal, Spacing.sm)
-    .padding(.bottom, Spacing.xs)
-    .protectionLevelDialog(
-      isPresented: $showDisableReadOnlyConfirmation,
-      viewModel: viewModel
-    )
+    .background(Color.cardBackground)
+    .overlay(alignment: .top) {
+      Divider()
+    }
+  }
+
+  private func documentStats(viewModel: NotebookViewModel) -> some View {
+    HStack(spacing: Spacing.sm) {
+      // Last saved
+      if let lastSaved = viewModel.lastSaved {
+        Text(lastSavedText(lastSaved))
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+
+        Text("|")
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+      }
+
+      // Notebook stats (only in notebook mode)
+      if viewModel.viewMode == .notebook {
+        Text("\(viewModel.cellCount) cells, \(viewModel.executedCellCount) executed")
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+
+        Text("|")
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+      }
+
+      // File size indicator (always visible)
+      HStack(spacing: 4) {
+        Image(systemName: fileSizeIcon(viewModel))
+          .font(.small)
+          .foregroundColor(fileSizeColor(viewModel))
+
+        Text(viewModel.formattedFileSize)
+          .font(.small)
+          .foregroundColor(fileSizeColor(viewModel))
+      }
+      .help(fileSizeTooltip(viewModel))
+    }
   }
 
   @ViewBuilder
   private var connectionStatusIcon: some View {
-    switch viewModel.connectionState {
+    switch connectionState {
     case .disconnected:
       Circle()
         .fill(Color.foregroundSubtle)
@@ -148,14 +165,15 @@ struct FooterView: View {
     }
   }
 
-  private var connectionStatusText: String {
-    switch viewModel.connectionState {
+  static func connectionStatusText(for state: ConnectionState, config: ConnectionConfig?) -> String
+  {
+    switch state {
     case .disconnected:
       return "Not connected"
     case .connecting:
       return "Connecting..."
     case .connected:
-      if let config = connectionConfig {
+      if let config {
         // Show connection name if available, otherwise show database@host
         if !config.name.isEmpty {
           return "Connected to \(config.name)"
@@ -217,7 +235,7 @@ struct FooterView: View {
 
   // MARK: - File Size Helpers
 
-  private var fileSizeIcon: String {
+  private func fileSizeIcon(_ viewModel: NotebookViewModel) -> String {
     if viewModel.isFileSizeLarge {
       return "exclamationmark.triangle.fill"
     } else if viewModel.isFileSizeWarning {
@@ -227,7 +245,7 @@ struct FooterView: View {
     }
   }
 
-  private var fileSizeColor: Color {
+  private func fileSizeColor(_ viewModel: NotebookViewModel) -> Color {
     if viewModel.isFileSizeLarge {
       return .destructive
     } else if viewModel.isFileSizeWarning {
@@ -237,7 +255,7 @@ struct FooterView: View {
     }
   }
 
-  private var fileSizeTooltip: String {
+  private func fileSizeTooltip(_ viewModel: NotebookViewModel) -> String {
     if viewModel.isFileSizeLarge {
       return
         "File size is very large (> \(FileOptimizationService.formatFileSize(FileOptimizationService.largeSizeThreshold))). Consider creating a new notebook or removing old results."
@@ -253,7 +271,7 @@ struct FooterView: View {
 #Preview {
   FooterView(
     viewModel: NotebookViewModel(),
-    lastSaved: Date(),
+    connectionState: .connected,
     connectionConfig: ConnectionConfig(name: "My Database")
   )
   .preferredColorScheme(.dark)

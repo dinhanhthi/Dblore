@@ -70,6 +70,7 @@ struct FileOptimizationSection: View {
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
         }
         .buttonStyle(.plain)
+        .pointerStyle(.link)
         .confirmationDialog(
           "Remove All Results?",
           isPresented: $showRemoveResultsConfirmation,

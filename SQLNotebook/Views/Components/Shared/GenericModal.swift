@@ -103,6 +103,7 @@ struct GenericModalHeader: View {
           .foregroundColor(.foregroundMuted)
       }
       .buttonStyle(.plain)
+      .pointerStyle(.link)
       .keyboardShortcut(.escape, modifiers: [])
     }
     .padding(.horizontal, Spacing.md)
@@ -172,17 +173,16 @@ extension View {
 
 // MARK: - Modal Backdrop
 
-/// Background view for modals with blur and dimming effect
-struct ModalBackdrop: NSViewRepresentable {
-  func makeNSView(context: Context) -> NSVisualEffectView {
-    let view = NSVisualEffectView()
-    view.blendingMode = .behindWindow
-    view.state = .active
-    view.material = .hudWindow
-    return view
+/// Background view for modals: a clear blur of the window content plus a moderate dim, so the
+/// modal stands out while the app behind it stays recognizable
+struct ModalBackdrop: View {
+  var body: some View {
+    ZStack {
+      Rectangle().fill(.thinMaterial).opacity(0.8)
+      Color.black.opacity(0.35)
+    }
+    .contentShape(Rectangle())
   }
-
-  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - View Extension for Generic Modal
