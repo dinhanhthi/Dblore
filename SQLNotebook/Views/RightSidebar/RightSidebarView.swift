@@ -54,7 +54,7 @@ struct RightSidebarView: View {
       }
     }
     .frame(width: ComponentSize.sidebarWidth)
-    .background(Color.cardBackground)
+    .chromeGlass()
     .overlay(alignment: .leading) {
       Divider()
     }
@@ -77,7 +77,6 @@ struct RightSidebarView: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardHeaderBackground)
   }
 
   private var headerTitle: String {

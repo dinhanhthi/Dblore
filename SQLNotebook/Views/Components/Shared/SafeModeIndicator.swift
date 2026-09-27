@@ -39,8 +39,7 @@ struct SafeModeIndicator: View {
         .foregroundColor(safeModeColor)
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, 2)
-        .background(safeModeColor.opacity(0.15))
-        .clipShape(Capsule())
+        .tintedCapsuleGlass(safeModeColor)
       }
       .buttonStyle(.plain)
       .help(helpText)
