@@ -37,8 +37,8 @@ A native macOS application for interactive SQL development. Write, execute, and 
 
 ### Requirements
 
-- macOS 16.0 or later
-- Xcode 16.0 or later
+- macOS 26 or later
+- Xcode 27 or later
 - Swift 6.0 or later
 
 ### Installation
@@ -108,7 +108,7 @@ docker compose up -d
 
 **Connection Details:**
 - Host: `localhost`
-- Port: `5432`
+- Port: `5433` (host port, set by `POSTGRES_PORT` in `.env`; the container listens on `5432`)
 - Database: `sqlnotebook`
 - User: `sqlnotebook`
 - Password: `sqlnotebook123`
@@ -118,6 +118,13 @@ Connection string: `postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlno
 The database includes sample tables (customers, products, orders, employees, analytics) with realistic data for testing.
 
 **Database for testing**: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
+
+## Release
+
+Releases are signed with Developer ID, notarized and published by the tag-triggered GitHub workflow `.github/workflows/release.yml`.
+
+- Cut a release with the `/cf-ship` project skill (changelog, semver bump, tag, CI release).
+- One-time setup (secrets, certificate, notarization profile) and the manual fallback: [.github/release-setup.md](.github/release-setup.md).
 
 ## License
 
