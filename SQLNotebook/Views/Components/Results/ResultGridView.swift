@@ -5,6 +5,7 @@
 //  NSTableView-based result grid: view-based cell reuse renders only the visible rows.
 //  Columns can be resized and reordered; Cmd+C copies the selected rows as TSV.
 //  Double-click or Return edits a cell when `isEditable` (see NotebookViewModel.canEdit).
+//  A click reports the cell (`onCellClick`), a header click the sort (`onSortChange`).
 //
 
 import AppKit
@@ -19,13 +20,29 @@ struct ResultGridView: NSViewRepresentable {
   /// Receives the displayed row values, the result column index and the new text of an edit
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)? =
     nil
+  /// Receives the column and direction chosen by a header click
+  var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
+  /// Receives the displayed row values and the result column index of a clicked cell
+  var onCellClick: ((_ row: [CellValue], _ column: Int) -> Void)? = nil
+  /// Text highlighted in the cells (search)
+  var searchQuery = ""
+  var caseSensitive = false
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
+  /// Fixed header height (set on the header view)
+  static let headerHeight: CGFloat = 28
+  /// Rows shown at once by a grid of `height(rowCount:)`; more rows scroll inside the grid
+  static let maxVisibleRows = 15
 
   /// Height of the rows only (no header), for a grid placed in a List or LazyVStack
   static func rowsHeight(rowCount: Int) -> CGFloat {
     CGFloat(rowCount) * rowHeight
+  }
+
+  /// Fixed height of a grid in a List or LazyVStack: at most `maxVisibleRows` rows plus header
+  static func height(rowCount: Int) -> CGFloat {
+    rowsHeight(rowCount: min(rowCount, maxVisibleRows)) + headerHeight
   }
 
   func makeCoordinator() -> ResultGridCoordinator {
@@ -45,32 +62,77 @@ struct ResultGridView: NSViewRepresentable {
     tableView.style = .plain
     tableView.backgroundColor = NSColor(Color.cellBackground)
     tableView.target = tableView
+    tableView.action = #selector(ResultGridTableView.clickCell(_:))
     tableView.doubleAction = #selector(ResultGridTableView.editClickedCell(_:))
+    tableView.headerView?.frame.size.height = Self.headerHeight
 
-    let scrollView = NSScrollView()
+    let scrollView = ResultGridScrollView()
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.drawsBackground = false
-    context.coordinator.isEditable = isEditable
-    context.coordinator.onCommitEdit = onCommitEdit
-    context.coordinator.update(
-      tableView, result: result, sortColumn: sortColumn, ascending: ascending)
+    configure(context.coordinator, tableView)
     return scrollView
   }
 
   func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let tableView = scrollView.documentView as? NSTableView else { return }
-    context.coordinator.isEditable = isEditable
-    context.coordinator.onCommitEdit = onCommitEdit
-    context.coordinator.update(
-      tableView, result: result, sortColumn: sortColumn, ascending: ascending)
+    configure(context.coordinator, tableView)
+  }
+
+  private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
+    coordinator.isEditable = isEditable
+    coordinator.onCommitEdit = onCommitEdit
+    coordinator.onSortChange = onSortChange
+    coordinator.onCellClick = onCellClick
+    coordinator.update(
+      tableView, result: result, sortColumn: sortColumn, ascending: ascending,
+      searchQuery: searchQuery, caseSensitive: caseSensitive)
   }
 }
 
-/// Table view that answers the copy: action with the coordinator's TSV, and starts an inline
-/// edit on double-click or Return (in the last clicked column)
+/// Scroll view that hands a vertical scroll gesture to the enclosing scroll view (the notebook
+/// list) when the grid can't scroll that way, so the list keeps scrolling over a result.
+/// The choice is made once per gesture; horizontal scrolling stays in the grid.
+final class ResultGridScrollView: NSScrollView {
+  private var forwardsGesture: Bool?
+
+  /// Whether a vertical scroll of `deltaY` (> 0 toward the top) at `offsetY` (0 = top) goes to
+  /// the parent: the content fits, or the grid is already at the edge it scrolls toward
+  /// (within 1 pt, for fractional offsets)
+  static func shouldForward(deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat) -> Bool {
+    maxOffsetY < 1 || (deltaY > 0 && offsetY < 1) || (deltaY < 0 && offsetY > maxOffsetY - 1)
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    let startsGesture =
+      event.phase == .mayBegin || event.phase == .began
+      || (event.phase.isEmpty && event.momentumPhase.isEmpty)
+    if startsGesture { forwardsGesture = nil }
+    let deltaX = event.scrollingDeltaX
+    let deltaY = event.scrollingDeltaY
+    // Shift+wheel is a horizontal scroll (mouse), handled by the grid
+    if forwardsGesture == nil, deltaX != 0 || deltaY != 0, !event.modifierFlags.contains(.shift) {
+      let insets = contentView.contentInsets
+      let bounds = contentView.bounds
+      let maxOffsetY =
+        (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
+      forwardsGesture =
+        abs(deltaY) > abs(deltaX)
+        && Self.shouldForward(
+          deltaY: deltaY, offsetY: bounds.origin.y + insets.top, maxOffsetY: maxOffsetY)
+    }
+    if forwardsGesture == true {
+      nextResponder?.scrollWheel(with: event)
+    } else {
+      super.scrollWheel(with: event)
+    }
+  }
+}
+
+/// Table view that answers the copy: action with the coordinator's TSV, reports a cell click,
+/// and starts an inline edit on double-click or Return (in the last clicked column)
 final class ResultGridTableView: NSTableView {
   weak var coordinator: ResultGridCoordinator?
   private var lastClickedColumn = 0
@@ -79,6 +141,13 @@ final class ResultGridTableView: NSTableView {
     let column = self.column(at: convert(event.locationInWindow, from: nil))
     if column >= 0 { lastClickedColumn = column }
     super.mouseDown(with: event)
+  }
+
+  @objc func clickCell(_ sender: Any?) {
+    guard tableColumns.indices.contains(clickedColumn),
+      let column = Int(tableColumns[clickedColumn].identifier.rawValue)
+    else { return }
+    coordinator?.cellClicked(row: clickedRow, column: column)
   }
 
   @objc func editClickedCell(_ sender: Any?) {

@@ -499,11 +499,14 @@ enum CellResultViews {
 
 // MARK: - Notebook Result Table View
 
-/// ResultTableView with the result metadata footer for notebook mode
+/// Result grid (fixed height, so the notebook list measures a fixed size) with the result
+/// metadata footer for notebook mode
 struct NotebookResultTableView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID
+  @State private var sortColumn: String?
+  @State private var sortAscending = true
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -512,14 +515,25 @@ struct NotebookResultTableView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // Result table
-      ResultTableView(
+      ResultGridView(
         result: result,
-        viewModel: viewModel,
-        cellId: cellId,
-        showBorderRadius: false,
-        enableVerticalScrolling: false
+        sortColumn: sortColumn,
+        ascending: sortAscending,
+        isEditable: viewModel.canEdit(result),
+        onCommitEdit: { row, column, newValue in
+          viewModel.handleGridCellEdit(
+            row: row, column: column, newValue: newValue, result: result, cellId: cellId,
+            connectionManager: viewModel.connectionManager)
+        },
+        onSortChange: { column, ascending in
+          sortColumn = column
+          sortAscending = ascending
+        },
+        onCellClick: showInSidebar,
+        searchQuery: viewModel.searchState.query,
+        caseSensitive: viewModel.searchState.isCaseSensitive
       )
+      .frame(height: ResultGridView.height(rowCount: result.rows.count))
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
       if let cell = cell, cell.statementResults.count > 1 {
@@ -535,6 +549,26 @@ struct NotebookResultTableView: View {
         // Single statement: no dropdown
         ResultMetadataView(result: result)
       }
+    }
+  }
+
+  /// A JSON value opens in the JSON viewer, any other value in the cell detail
+  private func showInSidebar(row: [CellValue], column index: Int) {
+    let column = result.columns[index]
+    let value = index < row.count ? row[index] : .null
+    if case .json(let json) = value {
+      viewModel.showJSONInSidebar(json: json, path: "Column '\(column.name)'")
+    } else {
+      viewModel.showCellDetail(
+        columnName: column.name,
+        columnType: column.type,
+        value: value,
+        tableName: result.tableName,
+        rowData: CellResult.rowData(columns: result.columns, row: row),
+        primaryKeyColumns: result.primaryKeyColumns,
+        editTarget: result.editTarget,
+        cellId: cellId
+      )
     }
   }
 }

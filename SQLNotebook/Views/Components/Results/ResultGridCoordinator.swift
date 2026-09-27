@@ -22,13 +22,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
 
-  /// What decides a reload: the result's identity and the sort, not every SwiftUI update
+  /// What decides a reload: the result's identity, the sort and the search, not every SwiftUI
+  /// update
   private struct Key: Equatable {
     let timestamp: Date
     let columnNames: [String]
     let rowCount: Int
     let sortColumn: String?
     let ascending: Bool
+    let searchQuery: String
+    let caseSensitive: Bool
   }
 
   private(set) var model: ResultGridModel?
@@ -41,18 +44,26 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Row values and column of the cell being edited, captured when editing starts so a reload
   /// during the edit can't shift the committed row
   private var editing: (row: [CellValue], column: Int)?
+  /// Called with the column and direction chosen by a header click
+  var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)?
+  /// Called with the displayed row values and the result column index of a clicked cell
+  var onCellClick: ((_ row: [CellValue], _ column: Int) -> Void)?
+  /// True while `update` shows the input sort in the header, so it isn't reported back
+  private var isShowingInputSort = false
 
-  /// Rebuilds the columns and reloads the table when the result or the sort changed.
-  /// Returns whether the table was reloaded.
+  /// Rebuilds the columns and reloads the table when the result, the sort or the search
+  /// changed. Returns whether the table was reloaded.
   @discardableResult
   func update(
-    _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool
+    _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
+    searchQuery: String = "", caseSensitive: Bool = false
   )
     -> Bool
   {
     let newKey = Key(
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
-      rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending)
+      rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
+      searchQuery: searchQuery, caseSensitive: caseSensitive)
     guard newKey != key else { return false }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -61,8 +72,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
     tableView.dataSource = self
     tableView.delegate = self
+    let sortDescriptors = sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
+    if tableView.sortDescriptors != sortDescriptors {
+      isShowingInputSort = true
+      tableView.sortDescriptors = sortDescriptors
+      isShowingInputSort = false
+    }
     tableView.reloadData()
     return true
+  }
+
+  /// Reports a click on a displayed row (not the header) to `onCellClick`
+  func cellClicked(row: Int, column: Int) {
+    guard let model, row >= 0, row < model.rowCount, column < model.columns.count else { return }
+    onCellClick?(model.row(at: row), column)
   }
 
   /// TSV of the selected rows, all columns in result order
@@ -155,6 +178,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     model?.rowCount ?? 0
   }
 
+  func tableView(
+    _ tableView: NSTableView, sortDescriptorsDidChange _: [NSSortDescriptor]
+  ) {
+    guard !isShowingInputSort else { return }
+    let descriptor = tableView.sortDescriptors.first
+    onSortChange?(descriptor?.key, descriptor?.ascending ?? true)
+  }
+
   // MARK: - NSTableViewDelegate
 
   func tableView(
@@ -169,8 +200,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       tableView.makeView(withIdentifier: Self.cellIdentifier, owner: nil) as? NSTableCellView
       ?? makeCell()
     let isNull = model.value(row: row, column: column) == .null
-    cell.textField?.stringValue = model.displayText(row: row, column: column)
+    let text = model.displayText(row: row, column: column)
     cell.textField?.textColor = isNull ? Self.nullTextColor : Self.textColor
+    if let key, !key.searchQuery.isEmpty {
+      cell.textField?.attributedStringValue = highlighted(
+        text, query: key.searchQuery, caseSensitive: key.caseSensitive,
+        textColor: isNull ? Self.nullTextColor : Self.textColor)
+    } else {
+      cell.textField?.stringValue = text
+    }
     cell.textField?.isEditable = false
     cell.textField?.isSelectable = false
     cell.textField?.delegate = self
@@ -178,6 +216,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   // MARK: - Private
+
+  /// `text` with every match of `query` on the search highlight color, like SearchHighlighter
+  private func highlighted(
+    _ text: String, query: String, caseSensitive: Bool, textColor: NSColor
+  ) -> NSAttributedString {
+    let string = NSMutableAttributedString(
+      string: text, attributes: [.font: Self.font, .foregroundColor: textColor])
+    let options: String.CompareOptions = caseSensitive ? [] : .caseInsensitive
+    var start = text.startIndex
+    while let range = text.range(of: query, options: options, range: start..<text.endIndex) {
+      string.addAttributes(
+        [
+          .backgroundColor: NSColor(SearchHighlighter.highlightColor),
+          .foregroundColor: NSColor.black,
+        ], range: NSRange(range, in: text))
+      start = range.upperBound
+    }
+    return string
+  }
 
   /// Column identifiers are the model column index, so a reordered column still maps back
   private func rebuildColumns(_ tableView: NSTableView, columns: [ColumnInfo]) {
@@ -187,6 +244,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       column.title = info.name
       column.minWidth = 40
       column.width = 150
+      column.sortDescriptorPrototype = NSSortDescriptor(key: info.name, ascending: true)
       tableView.addTableColumn(column)
     }
   }
