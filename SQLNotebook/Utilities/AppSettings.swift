@@ -195,7 +195,20 @@ enum AccentColor: String, CaseIterable {
 @Observable
 class AppSettings {
   /// Shared singleton instance
-  static let shared = AppSettings()
+  static let shared = AppSettings(defaults: sharedDefaults)
+
+  /// Store of `shared`: `.standard` in the app; under XCTest an isolated suite, cleared at
+  /// creation, so tests never touch the user's real settings (UserDefaults is thread-safe)
+  nonisolated(unsafe) static let sharedDefaults: UserDefaults = {
+    guard SessionManager.isRunningAsTestHost else { return .standard }
+    let name = "ace.thi.SQLNotebook.tests"
+    let suite = UserDefaults(suiteName: name) ?? UserDefaults()
+    suite.removePersistentDomain(forName: name)
+    return suite
+  }()
+
+  /// Backing store of every setting
+  private let defaults: UserDefaults
 
   // MARK: - UserDefaults Keys
 
@@ -223,14 +236,14 @@ class AppSettings {
   /// Maximum height for result table view (in points)
   var maxResultHeight: CGFloat = 500.0 {
     didSet {
-      UserDefaults.standard.set(Double(maxResultHeight), forKey: Keys.maxResultHeight)
+      defaults.set(Double(maxResultHeight), forKey: Keys.maxResultHeight)
     }
   }
 
   /// Whether to include results when saving the notebook
   var includeResultsOnSave: Bool = true {
     didSet {
-      UserDefaults.standard.set(includeResultsOnSave, forKey: Keys.includeResultsOnSave)
+      defaults.set(includeResultsOnSave, forKey: Keys.includeResultsOnSave)
     }
   }
 
@@ -243,14 +256,14 @@ class AppSettings {
         resultRowCap = clampedValue
         return  // Avoid triggering didSet again
       }
-      UserDefaults.standard.set(resultRowCap, forKey: Self.resultRowCapKey)
+      defaults.set(resultRowCap, forKey: Self.resultRowCapKey)
     }
   }
 
   /// Whether the left sidebar (database schema) is visible
   var isLeftSidebarVisible: Bool = false {
     didSet {
-      UserDefaults.standard.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
+      defaults.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
     }
   }
 
@@ -264,14 +277,14 @@ class AppSettings {
         leftSidebarWidth = clampedValue
         return  // Avoid triggering didSet again
       }
-      UserDefaults.standard.set(Double(leftSidebarWidth), forKey: Keys.leftSidebarWidth)
+      defaults.set(Double(leftSidebarWidth), forKey: Keys.leftSidebarWidth)
     }
   }
 
   /// Theme preference (system, light, or dark)
   var themePreference: ThemePreference = .dark {
     didSet {
-      UserDefaults.standard.set(themePreference.rawValue, forKey: Keys.themePreference)
+      defaults.set(themePreference.rawValue, forKey: Keys.themePreference)
     }
   }
 
@@ -282,7 +295,7 @@ class AppSettings {
   /// Default: false (show confirmation)
   var bypassDestructiveQueryConfirmation: Bool = false {
     didSet {
-      UserDefaults.standard.set(
+      defaults.set(
         bypassDestructiveQueryConfirmation, forKey: Keys.bypassDestructiveQueryConfirmation)
     }
   }
@@ -291,7 +304,7 @@ class AppSettings {
   /// Default: true (enabled)
   var isAutoCompleteEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(isAutoCompleteEnabled, forKey: Keys.isAutoCompleteEnabled)
+      defaults.set(isAutoCompleteEnabled, forKey: Keys.isAutoCompleteEnabled)
     }
   }
 
@@ -299,7 +312,7 @@ class AppSettings {
   /// Default: true (shown)
   var showLineNumbers: Bool = true {
     didSet {
-      UserDefaults.standard.set(showLineNumbers, forKey: Keys.showLineNumbers)
+      defaults.set(showLineNumbers, forKey: Keys.showLineNumbers)
     }
   }
 
@@ -307,7 +320,7 @@ class AppSettings {
   /// Default: true (enabled)
   var wordWrapEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
+      defaults.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
     }
   }
 
@@ -315,7 +328,7 @@ class AppSettings {
   /// Default: false (shown)
   var hideRunWithQuerySection: Bool = false {
     didSet {
-      UserDefaults.standard.set(hideRunWithQuerySection, forKey: Keys.hideRunWithQuerySection)
+      defaults.set(hideRunWithQuerySection, forKey: Keys.hideRunWithQuerySection)
     }
   }
 
@@ -325,7 +338,7 @@ class AppSettings {
   /// Default: false (off - traditional behavior)
   var editorSimpleMode: Bool = false {
     didSet {
-      UserDefaults.standard.set(editorSimpleMode, forKey: Keys.editorSimpleMode)
+      defaults.set(editorSimpleMode, forKey: Keys.editorSimpleMode)
     }
   }
 
@@ -334,7 +347,7 @@ class AppSettings {
   /// Default: true (enabled)
   var syntaxHighlightingEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(syntaxHighlightingEnabled, forKey: Keys.syntaxHighlightingEnabled)
+      defaults.set(syntaxHighlightingEnabled, forKey: Keys.syntaxHighlightingEnabled)
       // Notify editors to re-apply highlighting
       NotificationCenter.default.post(name: .syntaxHighlightingChanged, object: nil)
     }
@@ -344,7 +357,7 @@ class AppSettings {
   /// Default: purple
   var accentColor: AccentColor = .purple {
     didSet {
-      UserDefaults.standard.set(accentColor.rawValue, forKey: Keys.accentColor)
+      defaults.set(accentColor.rawValue, forKey: Keys.accentColor)
       // Notify views to update colors
       NotificationCenter.default.post(name: .accentColorChanged, object: nil)
     }
@@ -355,7 +368,7 @@ class AppSettings {
   /// Default: false (show column types)
   var hideColumnTypes: Bool = false {
     didSet {
-      UserDefaults.standard.set(hideColumnTypes, forKey: Keys.hideColumnTypes)
+      defaults.set(hideColumnTypes, forKey: Keys.hideColumnTypes)
     }
   }
 
@@ -363,7 +376,7 @@ class AppSettings {
   /// Default: .alertRead (confirm modification queries)
   var safeMode: SafeMode = .alertRead {
     didSet {
-      UserDefaults.standard.set(safeMode.rawValue, forKey: Keys.safeMode)
+      defaults.set(safeMode.rawValue, forKey: Keys.safeMode)
     }
   }
 
@@ -419,100 +432,102 @@ class AppSettings {
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
   nonisolated static func getIncludeResultsOnSave() -> Bool {
     // Check if key exists, otherwise use default
-    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
-      return UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    if sharedDefaults.object(forKey: Keys.includeResultsOnSave) != nil {
+      return sharedDefaults.bool(forKey: Keys.includeResultsOnSave)
     }
     return true  // default value
   }
 
   // MARK: - Initialization
 
-  private init() {
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
     // Load from UserDefaults or use defaults
-    let savedHeight = UserDefaults.standard.double(forKey: Keys.maxResultHeight)
+    let savedHeight = defaults.double(forKey: Keys.maxResultHeight)
     if savedHeight > 0 {
       maxResultHeight = CGFloat(savedHeight)
     }
 
     // Check if key exists, otherwise use default
-    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
-      includeResultsOnSave = UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    if defaults.object(forKey: Keys.includeResultsOnSave) != nil {
+      includeResultsOnSave = defaults.bool(forKey: Keys.includeResultsOnSave)
     }
 
-    // Also migrates the legacy per-mode row limit keys (once)
-    if let savedRowCap = Self.loadResultRowCap(from: .standard) {
+    // Also migrates the legacy per-mode row limit keys (once); skipped under XCTest
+    if !SessionManager.isRunningAsTestHost, let savedRowCap = Self.loadResultRowCap(from: defaults)
+    {
       resultRowCap = savedRowCap
     }
 
     // Load left sidebar visibility state
-    if UserDefaults.standard.object(forKey: Keys.isLeftSidebarVisible) != nil {
-      isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
+    if defaults.object(forKey: Keys.isLeftSidebarVisible) != nil {
+      isLeftSidebarVisible = defaults.bool(forKey: Keys.isLeftSidebarVisible)
     }
 
     // Load left sidebar width
-    let savedSidebarWidth = UserDefaults.standard.double(forKey: Keys.leftSidebarWidth)
+    let savedSidebarWidth = defaults.double(forKey: Keys.leftSidebarWidth)
     if savedSidebarWidth > 0 {
       leftSidebarWidth = max(CGFloat(savedSidebarWidth), 200)
     }
 
     // Load theme preference
-    if let themeString = UserDefaults.standard.string(forKey: Keys.themePreference),
+    if let themeString = defaults.string(forKey: Keys.themePreference),
       let theme = ThemePreference(rawValue: themeString)
     {
       themePreference = theme
     }
 
     // Load bypass destructive query confirmation setting
-    if UserDefaults.standard.object(forKey: Keys.bypassDestructiveQueryConfirmation) != nil {
-      bypassDestructiveQueryConfirmation = UserDefaults.standard.bool(
+    if defaults.object(forKey: Keys.bypassDestructiveQueryConfirmation) != nil {
+      bypassDestructiveQueryConfirmation = defaults.bool(
         forKey: Keys.bypassDestructiveQueryConfirmation)
     }
 
     // Load autocomplete enabled setting
-    if UserDefaults.standard.object(forKey: Keys.isAutoCompleteEnabled) != nil {
-      isAutoCompleteEnabled = UserDefaults.standard.bool(forKey: Keys.isAutoCompleteEnabled)
+    if defaults.object(forKey: Keys.isAutoCompleteEnabled) != nil {
+      isAutoCompleteEnabled = defaults.bool(forKey: Keys.isAutoCompleteEnabled)
     }
 
     // Load show line numbers setting
-    if UserDefaults.standard.object(forKey: Keys.showLineNumbers) != nil {
-      showLineNumbers = UserDefaults.standard.bool(forKey: Keys.showLineNumbers)
+    if defaults.object(forKey: Keys.showLineNumbers) != nil {
+      showLineNumbers = defaults.bool(forKey: Keys.showLineNumbers)
     }
 
     // Load word wrap enabled setting
-    if UserDefaults.standard.object(forKey: Keys.wordWrapEnabled) != nil {
-      wordWrapEnabled = UserDefaults.standard.bool(forKey: Keys.wordWrapEnabled)
+    if defaults.object(forKey: Keys.wordWrapEnabled) != nil {
+      wordWrapEnabled = defaults.bool(forKey: Keys.wordWrapEnabled)
     }
 
     // Load hide run with query section setting
-    if UserDefaults.standard.object(forKey: Keys.hideRunWithQuerySection) != nil {
-      hideRunWithQuerySection = UserDefaults.standard.bool(forKey: Keys.hideRunWithQuerySection)
+    if defaults.object(forKey: Keys.hideRunWithQuerySection) != nil {
+      hideRunWithQuerySection = defaults.bool(forKey: Keys.hideRunWithQuerySection)
     }
 
     // Load editor simple mode setting
-    if UserDefaults.standard.object(forKey: Keys.editorSimpleMode) != nil {
-      editorSimpleMode = UserDefaults.standard.bool(forKey: Keys.editorSimpleMode)
+    if defaults.object(forKey: Keys.editorSimpleMode) != nil {
+      editorSimpleMode = defaults.bool(forKey: Keys.editorSimpleMode)
     }
 
     // Load syntax highlighting enabled setting
-    if UserDefaults.standard.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
-      syntaxHighlightingEnabled = UserDefaults.standard.bool(forKey: Keys.syntaxHighlightingEnabled)
+    if defaults.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
+      syntaxHighlightingEnabled = defaults.bool(forKey: Keys.syntaxHighlightingEnabled)
     }
 
     // Load accent color preference
-    if let accentString = UserDefaults.standard.string(forKey: Keys.accentColor),
+    if let accentString = defaults.string(forKey: Keys.accentColor),
       let accent = AccentColor(rawValue: accentString)
     {
       accentColor = accent
     }
 
     // Load hide column types setting
-    if UserDefaults.standard.object(forKey: Keys.hideColumnTypes) != nil {
-      hideColumnTypes = UserDefaults.standard.bool(forKey: Keys.hideColumnTypes)
+    if defaults.object(forKey: Keys.hideColumnTypes) != nil {
+      hideColumnTypes = defaults.bool(forKey: Keys.hideColumnTypes)
     }
 
     // Load Safe Mode setting
-    let savedSafeMode = UserDefaults.standard.integer(forKey: Keys.safeMode)
-    if UserDefaults.standard.object(forKey: Keys.safeMode) != nil,
+    let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
+    if defaults.object(forKey: Keys.safeMode) != nil,
       let mode = SafeMode(rawValue: savedSafeMode)
     {
       safeMode = mode

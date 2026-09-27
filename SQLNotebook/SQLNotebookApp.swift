@@ -134,7 +134,7 @@ struct SQLNotebookApp: App {
 
   init() {
     // Migrate from single session to connection history (one-time operation)
-    if SessionManager.shouldRestoreSession() {
+    if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()
     }
 

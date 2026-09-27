@@ -47,7 +47,7 @@ struct AppWindowView: View {
             cancelFileOpen()
           }
         )
-      } else if !SessionManager.shouldRestoreSession() {
+      } else if SessionManager.isRunningAsTestHost {
         // Running as test host - skip welcome (it loads recent connections from Keychain)
         Color.clear
       } else {

@@ -26,6 +26,9 @@ class SessionManager {
     environment["XCTestConfigurationFilePath"] == nil
   }
 
+  /// True when the process is an XCTest host (computed once from the process environment)
+  nonisolated static let isRunningAsTestHost = !shouldRestoreSession()
+
   // MARK: - Migration Support
 
   /// Migrate from single session to history array (one-time operation)
