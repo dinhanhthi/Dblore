@@ -113,26 +113,39 @@ struct HeaderView: View {
           }
           .buttonStyle(.glass)
           .help("Show/Hide Results")
-        } else if viewModel.viewMode == .editor, viewModel.isEditorQueryRunning {
-          // Stops the query on the server (asks first if pending changes would be discarded)
-          Button(action: { viewModel.cancelEditorQuery() }) {
-            Label("Cancel", systemImage: "stop.fill")
-          }
-          .buttonStyle(.glass)
-          .help("Cancel the running query (the connection is reset)")
         } else if viewModel.viewMode == .editor {
-          // Editor mode buttons
+          // Editor mode buttons: while a query runs, Run keeps its label, shows a spinner and
+          // is disabled; Stop is always there so the layout never shifts
           Button(action: {
             Task { @MainActor [viewModel] in
               await viewModel.runEditorQuery()
             }
           }) {
-            Label("Run", systemImage: "play.fill")
+            Label {
+              Text("Run")
+            } icon: {
+              if viewModel.isEditorQueryRunning {
+                RunSpinner()
+              } else {
+                Image(systemName: "play.fill")
+              }
+            }
           }
           .buttonStyle(.glassProminent)
           .tint(Color.accent)
-          .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
+          .disabled(
+            viewModel.isEditorQueryRunning || viewModel.editorContent.isEmpty
+              || !viewModel.connectionState.isConnected
+          )
           .help(editorRunButtonHelp)
+
+          // Stops the query on the server (asks first if pending changes would be discarded)
+          Button(action: { viewModel.cancelEditorQuery() }) {
+            Image(systemName: "stop.fill")
+          }
+          .buttonStyle(.glass)
+          .disabled(!viewModel.isEditorQueryRunning)
+          .help("Cancel the running query (the connection is reset)")
         }
       }
       // Capsule shape for every header button (notebook and editor modes)
@@ -228,6 +241,21 @@ struct HeaderView: View {
       • Allow: Execute all cells
       • Don't Allow: Skip the cells listed above and run the rest
       """
+  }
+}
+
+/// Three-quarter circle spinning in place of the Run icon while a query runs
+private struct RunSpinner: View {
+  @State private var isSpinning = false
+
+  var body: some View {
+    Circle()
+      .trim(from: 0, to: 0.75)
+      .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+      .frame(width: 10, height: 10)
+      .rotationEffect(.degrees(isSpinning ? 360 : 0))
+      .animation(.linear(duration: 0.8).repeatForever(autoreverses: false), value: isSpinning)
+      .onAppear { isSpinning = true }
   }
 }
 
