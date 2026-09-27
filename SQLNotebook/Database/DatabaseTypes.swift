@@ -31,8 +31,6 @@ struct QueryResult: Sendable {
   /// Reading stopped by closing the connection and reconnecting (no app transaction was
   /// pending): temp tables, SET values and search_path of the session were lost
   nonisolated var sessionReset = false
-  /// The session reset rolled back a transaction the user opened with BEGIN (Protected off)
-  nonisolated var userTxRolledBack = false
   /// Statements of the script that were not run because the session was reset before them
   nonisolated var skippedStatements: [String] = []
 

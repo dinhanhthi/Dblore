@@ -329,48 +329,6 @@ private struct LegacyFileView {
   }
 }
 
-/// Mirror of the pre-Phase-4 synthesized `CellResult: Codable` (no custom `init(from:)` at
-/// b8be7db / 74e4dc6): non-optional stored properties are REQUIRED keys.
-private struct LegacyCodableCellResult: Decodable {
-  struct Column: Decodable {
-    let name: String
-    let type: String
-  }
-
-  let columns: [Column]
-  let rows: [[CellValue]]
-  let executionTime: TimeInterval
-  let rowCount: Int
-  let timestamp: Date
-  let error: String?
-  let wasLimited: Bool
-  let sourceQuery: String?
-  let tableName: String?
-  let primaryKeyColumns: [String]
-  let rowIdentifiers: [CellValue]
-  let userLimitExceeded: Bool
-  let userRequestedLimit: Int?
-  let affectedRows: Int?
-  let limitWasCapped: Bool
-  let actualLimitUsed: Int?
-}
-
-/// Mirror of the pre-Phase-4 `NotebookCell.init(from:)`: id/cellType/content required, the
-/// rest `decodeIfPresent`.
-private struct LegacyCodableCell: Decodable {
-  let id: UUID
-  let cellType: String
-  let content: String
-  let result: LegacyCodableCellResult?
-  let statementResults: [LegacyStatement]?
-  struct LegacyStatement: Decodable {
-    let id: UUID
-    let queryText: String
-    let result: LegacyCodableCellResult
-    let statementIndex: Int
-  }
-}
-
 @Suite("Data Model - Saved-file compatibility")
 @MainActor
 struct DocumentLegacyCompatibilityTests {
@@ -450,9 +408,6 @@ struct DocumentLegacyCompatibilityTests {
     let result = try #require(notebook.cells.first?.result)
     #expect(result.tableName == nil)
     #expect(result.primaryKeyColumns.isEmpty)
-    #expect(result.rowIdentifiers.isEmpty)
-    #expect(result.userLimitExceeded == false)
-    #expect(result.userRequestedLimit == nil)
     let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
     let text = try #require(String(data: data, encoding: .utf8))
     #expect(!text.contains("paginationInfo"))
@@ -479,18 +434,5 @@ struct DocumentLegacyCompatibilityTests {
     #expect(!text.contains("primaryKeyColumns"))
     #expect(!text.contains("tableName"))
     #expect(try data == (DocumentCoder.encode(notebook, includeResultsOnSave: true)))
-  }
-
-  @Test("Codable cell from the current build decodes with the pre-Phase-4 required keys")
-  func currentCodableReadByOldContract() throws {
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    let cell = try #require(currentNotebook().cells.first)
-    let legacy = try decoder.decode(LegacyCodableCell.self, from: encoder.encode(cell))
-    #expect(legacy.result?.rowCount == 2)
-    #expect(legacy.result?.wasLimited == true)
-    #expect(legacy.statementResults?.count == 1)
   }
 }

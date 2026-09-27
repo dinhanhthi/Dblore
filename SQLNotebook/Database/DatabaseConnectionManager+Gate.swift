@@ -92,7 +92,6 @@ extension DatabaseConnectionManager {
     // The rows shown are the last statement's; a session reset always ends the script
     combined.truncated = last.truncated
     combined.sessionReset = last.sessionReset
-    combined.userTxRolledBack = last.userTxRolledBack
     combined.skippedStatements = last.skippedStatements
     return combined
   }

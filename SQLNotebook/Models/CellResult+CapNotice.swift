@@ -13,7 +13,6 @@ extension CellResult {
   func withCapInfo(from queryResult: QueryResult) -> CellResult {
     var result = self
     result.sessionReset = queryResult.sessionReset
-    result.userTxRolledBack = queryResult.userTxRolledBack
     result.skippedStatements = queryResult.skippedStatements
     return result
   }
@@ -26,9 +25,6 @@ extension CellResult {
       parts[0] += "."
       parts.append("The statement was stopped on the server.")
       parts.append("Connection was reset — temp tables, SET and search_path were lost.")
-      if userTxRolledBack {
-        parts.append("Your open transaction was rolled back.")
-      }
       if !skippedStatements.isEmpty {
         let count = skippedStatements.count
         parts.append(

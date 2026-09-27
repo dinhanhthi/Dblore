@@ -210,7 +210,6 @@ struct DatabaseCappedReadTests {
       #expect(read.rows.count == Self.cap)
       #expect(read.truncated)
       #expect(read.sessionReset)
-      #expect(!read.userTxRolledBack)
       #expect(read.skippedStatements.isEmpty)
       #expect(await manager.isConnected)
       #expect(await manager.connectionEpoch != epoch)
@@ -278,7 +277,6 @@ struct DatabaseCappedReadTests {
       #expect(read.rows.count == Self.cap)
       #expect(read.truncated)
       #expect(!read.sessionReset)
-      #expect(!read.userTxRolledBack)
       #expect(await manager.userTxOpen)
       let mine = try await manager.execute(
         userSQL: "SELECT v FROM \(table) WHERE id = 1", policy: open)

@@ -10,8 +10,7 @@ import Testing
 @MainActor
 struct CellResultCapNoticeTests {
   private func queryResult(
-    rows: Int, truncated: Bool, reset: Bool = false, rolledBack: Bool = false,
-    skipped: [String] = []
+    rows: Int, truncated: Bool, reset: Bool = false, skipped: [String] = []
   ) -> QueryResult {
     var result = QueryResult(
       columns: [ColumnInfo(name: "g", type: "INTEGER")],
@@ -19,7 +18,6 @@ struct CellResultCapNoticeTests {
       wasLimited: truncated)
     result.truncated = truncated
     result.sessionReset = reset
-    result.userTxRolledBack = rolledBack
     result.skippedStatements = skipped
     return result
   }
@@ -54,23 +52,21 @@ struct CellResultCapNoticeTests {
         + "reset — temp tables, SET and search_path were lost.")
   }
 
-  @Test("Session reset with the user's transaction and statements not run")
-  func sessionResetRolledBackAndSkipped() {
+  @Test("Session reset with statements not run")
+  func sessionResetSkipped() {
     let cell = cellResult(
       queryResult(
-        rows: 100, truncated: true, reset: true, rolledBack: true,
+        rows: 100, truncated: true, reset: true,
         skipped: ["UPDATE t SET v = 1", "DELETE FROM t"]))
-    #expect(cell.userTxRolledBack)
     #expect(cell.skippedStatements.count == 2)
     let notice = cell.capNotice ?? ""
-    #expect(notice.contains("Your open transaction was rolled back."))
     #expect(notice.contains("2 statements after this one were not run."))
   }
 
   @Test("Session fields are not persisted; wasLimited carries the truncation")
   func sessionFieldsNotEncoded() throws {
     let cell = cellResult(
-      queryResult(rows: 100, truncated: true, reset: true, rolledBack: true, skipped: ["X"]))
+      queryResult(rows: 100, truncated: true, reset: true, skipped: ["X"]))
     let data = try JSONEncoder().encode(cell)
     let decoded = try JSONDecoder().decode(CellResult.self, from: data)
     #expect(decoded.wasLimited)

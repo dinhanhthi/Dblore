@@ -135,35 +135,21 @@ struct CellResult: Codable, Sendable {
   let tableName: String?
   /// Primary key column names for the table (empty if no PK or unable to fetch)
   let primaryKeyColumns: [String]
-  /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
-  let rowIdentifiers: [CellValue]
-  /// True if user's LIMIT in query exceeded maxRows and was capped
-  let userLimitExceeded: Bool
-  /// The original LIMIT value user specified (if any)
-  let userRequestedLimit: Int?
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
   let affectedRows: Int?
-  /// True if user's LIMIT was capped to maxRows (even if no limiting occurred in result)
-  /// This is for display purposes - to show correct query in UI
-  let limitWasCapped: Bool
-  /// The actual LIMIT used in executed query (after capping)
-  let actualLimitUsed: Int?
   /// Validated inline-edit target of a live execution. Session-only: not coded, so a result
   /// read from a file is read-only until the cell is run again.
   var editTarget: EditTarget? = nil
   /// Session-only (not coded, see `withCapInfo(from:)`): the row cap closed and reopened the
-  /// session, the user's open transaction was rolled back, statements after it did not run.
-  /// A truncated result is persisted as `wasLimited`.
+  /// session, statements after it did not run. A truncated result is persisted as `wasLimited`.
   var sessionReset = false
-  var userTxRolledBack = false
   var skippedStatements: [String] = []
   /// Session-only: queued cells cancelled because this result reset the session
   var skippedQueuedCells = 0
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
-    case tableName, primaryKeyColumns, rowIdentifiers, userLimitExceeded, userRequestedLimit
-    case affectedRows, limitWasCapped, actualLimitUsed
+    case tableName, primaryKeyColumns, affectedRows
   }
 
   nonisolated init(
@@ -177,12 +163,7 @@ struct CellResult: Codable, Sendable {
     sourceQuery: String? = nil,
     tableName: String? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifiers: [CellValue] = [],
-    userLimitExceeded: Bool = false,
-    userRequestedLimit: Int? = nil,
     affectedRows: Int? = nil,
-    limitWasCapped: Bool = false,
-    actualLimitUsed: Int? = nil,
     editTarget: EditTarget? = nil
   ) {
     self.columns = columns
@@ -195,12 +176,7 @@ struct CellResult: Codable, Sendable {
     self.sourceQuery = sourceQuery
     self.tableName = tableName
     self.primaryKeyColumns = primaryKeyColumns
-    self.rowIdentifiers = rowIdentifiers
-    self.userLimitExceeded = userLimitExceeded
-    self.userRequestedLimit = userRequestedLimit
     self.affectedRows = affectedRows
-    self.limitWasCapped = limitWasCapped
-    self.actualLimitUsed = actualLimitUsed
     self.editTarget = editTarget
   }
 

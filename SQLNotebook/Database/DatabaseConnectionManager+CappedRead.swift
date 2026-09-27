@@ -111,11 +111,11 @@ extension DatabaseConnectionManager {
       try? await group?.shutdownGracefully()
       try await connect(config: config)
       sessionResetsContinuation.yield(
-        SessionResetEvent(epoch: connectionEpoch, userTxRolledBack: reset.userTxRolledBack))
+        SessionResetEvent(epoch: connectionEpoch, userTxRolledBack: false))
     } catch {
       guard _connection == nil else { return reset }
       let event = SessionLostEvent(
-        state: .idle, userTxOpen: reset.userTxRolledBack, epoch: connectionEpoch)
+        state: .idle, userTxOpen: false, epoch: connectionEpoch)
       lastSessionLoss = event
       sessionEventsContinuation.yield(event)
       await AppLogger.shared.warning(

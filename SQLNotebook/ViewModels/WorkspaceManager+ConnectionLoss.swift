@@ -36,10 +36,9 @@ extension WorkspaceManager {
   func sessionWasReset(_ event: SessionResetEvent) {
     switch event.reason {
     case .rowCap:
-      let rolledBack = event.userTxRolledBack ? " Your open transaction was rolled back." : ""
       WorkspaceWindowManager.shared.showToast(
         "Connection was reset to stop a large result — temp tables, SET and search_path were "
-          + "lost.\(rolledBack)", type: .warning)
+          + "lost.", type: .warning)
     case .cancelled(let pendingCount):
       WorkspaceWindowManager.shared.showToast(
         DatabaseError.cancelMessage(
