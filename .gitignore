@@ -136,5 +136,8 @@ docs/context/
 docs/warm/
 docs/later/
 docs/learn/
-.coding-friend/
+.coding-friend/*
 # <<< coding-friend managed
+# Track project custom skills (e.g. cf-ship-custom) in git; config.json stays ignored.
+# coding-friend may rewrite its managed block on update: re-check with `git check-ignore` after a cf update.
+!.coding-friend/skills/
