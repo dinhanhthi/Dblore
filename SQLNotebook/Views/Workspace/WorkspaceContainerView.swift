@@ -69,12 +69,13 @@ struct WorkspaceContainerView: View {
         // This covers sidebar buttons during animation
         HStack(spacing: 0) {
           // Background for traffic light area + buttons
-          Color.cardBackground
+          Color.clear
             .frame(
               width: ComponentSize.trafficLightAndToggleWidth
                 + workspaceManager.connectionState.connectionButtonsWidth,
               height: ComponentSize.tabBarHeight
             )
+            .chromeGlass()
             .overlay(alignment: .trailing) {
               // Buttons positioned at trailing edge of background
               HStack(spacing: Spacing.xxs) {
@@ -672,7 +673,7 @@ struct WorkspaceTitleBarTabsView: View {
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
-    .background(Color.cardBackground)
+    .chromeGlass()
     .background(WindowDragArea())
   }
 

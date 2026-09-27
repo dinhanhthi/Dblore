@@ -29,12 +29,20 @@ struct WorkspaceDraggableTabsContainer: View {
   /// Original index of the dragging tab
   @State private var originalIndex: Int?
 
-  /// Namespace for matched geometry effect (capsule sliding animation)
+  /// Namespace for the selected tab glass morph
   @Namespace private var tabCapsuleNamespace
 
   private let tabSpacing: CGFloat = Spacing.xxs
 
   var body: some View {
+    GlassEffectContainer(spacing: tabSpacing) {
+      tabsRow
+    }
+    .frame(maxHeight: .infinity, alignment: .center)
+    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: workspaceManager.activeTabId)
+  }
+
+  private var tabsRow: some View {
     HStack(alignment: .center, spacing: tabSpacing) {
       ForEach(Array(workspaceManager.tabs.enumerated()), id: \.element.id) { index, tab in
         let isDragging = tab.id == draggingTabId
@@ -82,8 +90,6 @@ struct WorkspaceDraggableTabsContainer: View {
     .onPreferenceChange(WorkspaceTabPositionPreferenceKey.self) { positions in
       tabPositions = positions
     }
-    .frame(maxHeight: .infinity, alignment: .center)
-    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: workspaceManager.activeTabId)
   }
 
   /// Calculate visual offset for a tab based on drag state
@@ -270,9 +276,9 @@ struct WorkspaceDraggableTabItem: View {
     .frame(height: 28)
     .background {
       if isActive {
-        // 3D capsule effect for active tab - slides between tabs
-        ActiveTabCapsule()
-          .matchedGeometryEffect(id: "activeTabCapsule", in: capsuleNamespace)
+        // Glass capsule for active tab - morphs between tabs
+        Color.clear
+          .selectedTabGlass(id: "activeTabGlass", in: capsuleNamespace)
       } else if isHovering || isDragging {
         // Subtle hover state for inactive tabs
         Capsule()
@@ -309,73 +315,5 @@ struct WorkspaceDraggableTabItem: View {
       Color.clear
         .frame(width: 14, height: 14)
     }
-  }
-}
-
-// MARK: - Active Tab Capsule with 3D Effect
-
-/// A capsule shape with 3D effect for the active tab indicator
-struct ActiveTabCapsule: View {
-  @Environment(\.colorScheme) private var colorScheme
-
-  var body: some View {
-    Capsule()
-      .fill(capsuleGradient)
-      .overlay {
-        // Inner highlight for 3D depth
-        Capsule()
-          .stroke(highlightGradient, lineWidth: 1)
-          .padding(0.5)
-      }
-      .shadow(color: shadowColor, radius: 3, x: 0, y: 1)
-      .shadow(color: shadowColor.opacity(0.3), radius: 1, x: 0, y: 0.5)
-  }
-
-  private var capsuleGradient: LinearGradient {
-    if colorScheme == .dark {
-      LinearGradient(
-        colors: [
-          Color.white.opacity(0.12),
-          Color.white.opacity(0.08),
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-    } else {
-      LinearGradient(
-        colors: [
-          Color.white,
-          Color.white.opacity(0.95),
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-    }
-  }
-
-  private var highlightGradient: LinearGradient {
-    if colorScheme == .dark {
-      LinearGradient(
-        colors: [
-          Color.white.opacity(0.15),
-          Color.white.opacity(0.05),
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-    } else {
-      LinearGradient(
-        colors: [
-          Color.white.opacity(0.9),
-          Color.black.opacity(0.05),
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-    }
-  }
-
-  private var shadowColor: Color {
-    colorScheme == .dark ? Color.black.opacity(0.4) : Color.black.opacity(0.15)
   }
 }

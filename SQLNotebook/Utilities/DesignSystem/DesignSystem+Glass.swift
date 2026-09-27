@@ -22,6 +22,13 @@ extension View {
   func floatingBarGlass() -> some View {
     glassEffect(.regular, in: Capsule())
   }
+
+  /// Capsule glass for the selected tab. The shared `id` inside a `GlassEffectContainer`
+  /// lets the glass morph from the old selected tab to the new one.
+  func selectedTabGlass(id: some Hashable & Sendable, in namespace: Namespace.ID) -> some View {
+    glassEffect(.regular, in: Capsule())
+      .glassEffectID(id, in: namespace)
+  }
 }
 
 // MARK: - Glass Toolbar Group
