@@ -3,7 +3,10 @@
 #
 # Usage: bash bump.sh <new_version>
 #   e.g. bash bump.sh 0.2.0
-#        bash bump.sh 0.2.0-rc.1
+#
+# The version is always the numeric core X.Y.Z: Apple requires three integers
+# for CFBundleShortVersionString. A prerelease suffix (-rc.N / -beta.N) lives
+# only in the git tag and the CHANGELOG heading, never in the project file.
 #
 # ONE file carries the version: SQLNotebook.xcodeproj/project.pbxproj. Every
 # build configuration has its own copy of two settings, and all of them move:
@@ -26,7 +29,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 NEW_VERSION="${1:-}"
 
 usage() {
-  echo "Usage: bash bump.sh <new_version>    e.g. 0.2.0 or 0.2.0-rc.1"
+  echo "Usage: bash bump.sh <new_version>    e.g. 0.2.0 (numeric X.Y.Z only)"
 }
 
 if [[ -z "$NEW_VERSION" ]]; then
@@ -34,10 +37,14 @@ if [[ -z "$NEW_VERSION" ]]; then
   exit 1
 fi
 
-# Core semver, optionally -rc.N / -beta.N. Deliberately narrower than full
-# semver: bump-info.sh only ever proposes this shape.
-if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$ ]]; then
-  echo "Error: version must be X.Y.Z, optionally -rc.N or -beta.N (got '$NEW_VERSION')"
+# Numeric core only. A prerelease suffix is a tag-only concern.
+if [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+  echo "Error: prerelease goes in the tag only; pass the core version (got '$NEW_VERSION', use '${NEW_VERSION%%-*}')"
+  usage
+  exit 1
+fi
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must be X.Y.Z (got '$NEW_VERSION')"
   usage
   exit 1
 fi
@@ -56,8 +63,8 @@ fi
 #
 # Only lines of the exact form `KEY = value;` are touched, so a mention of the
 # key inside a string or a comment elsewhere cannot be hit. Values may be
-# quoted or bare; a version containing `-` is written quoted to stay a single
-# token for every pbxproj parser. The temp file lives next to the target so the
+# quoted or bare; the new version is always written bare (it is numeric). The
+# temp file lives next to the target so the
 # final mv is a same-filesystem rename, i.e. atomic.
 
 TMP_FILE="$(mktemp "$PBXPROJ.bump.XXXXXX")"
@@ -85,9 +92,7 @@ if bad:
     sys.exit("Error: CURRENT_PROJECT_VERSION is not an integer: %s" % ", ".join(bad))
 
 new_build = max(int(b) for b in old_builds) + 1
-version_value = '"%s"' % version if "-" in version else version
-
-out = mv_re.sub(lambda m: m.group(1) + version_value + ";", src)
+out = mv_re.sub(lambda m: m.group(1) + version + ";", src)
 out = bv_re.sub(lambda m: m.group(1) + str(new_build) + ";", out)
 
 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -145,4 +150,4 @@ if [[ "$FAILED" -ne 0 ]]; then
 fi
 
 echo ""
-echo "Done. Next: update CHANGELOG.md, commit, then tag v$NEW_VERSION."
+echo "Done. Next: update CHANGELOG.md, commit, then tag v$NEW_VERSION (or v$NEW_VERSION-rc.N / -beta.N for a prerelease)."

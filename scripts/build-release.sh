@@ -16,7 +16,9 @@ usage() {
 Usage: scripts/build-release.sh [--skip-notarize] [--expect-version <version>]
 
   --skip-notarize           Skip notarization, stapling and Gatekeeper check
-  --expect-version <v>      Fail unless MARKETING_VERSION equals <v>
+  --expect-version <v>      <v> is X.Y.Z, X.Y.Z-rc.N or X.Y.Z-beta.N. Fail unless
+                            MARKETING_VERSION equals the core X.Y.Z; the DMG is
+                            named with the full <v> (default: MARKETING_VERSION)
   -h, --help                Show this help
 
 Notarization uses the keychain profile "$NOTARY_PROFILE", or an App Store
@@ -27,6 +29,11 @@ EOF
 fail() {
   echo "error: $*" >&2
   exit 1
+}
+
+# Print the top-level string field $1 of the JSON document on stdin.
+json_field() {
+  plutil -extract "$1" raw -o - - 2>/dev/null
 }
 
 SKIP_NOTARIZE=0
@@ -61,11 +68,25 @@ APP="$EXPORT_DIR/$SCHEME.app"
 VERSION=$(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -showBuildSettings 2>/dev/null | awk -F' = ' '/^ *MARKETING_VERSION = / { print $2; exit }')
 [[ -n "$VERSION" ]] || fail "could not read MARKETING_VERSION from build settings"
-if [[ -n "$EXPECT_VERSION" && "$EXPECT_VERSION" != "$VERSION" ]]; then
-  fail "MARKETING_VERSION is $VERSION, expected $EXPECT_VERSION"
+# MARKETING_VERSION is always numeric X.Y.Z; a prerelease suffix lives only in
+# the tag, so compare the core and name the DMG after the full tag version.
+DMG_VERSION="$VERSION"
+if [[ -n "$EXPECT_VERSION" ]]; then
+  [[ "$EXPECT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$ ]] ||
+    fail "--expect-version must be X.Y.Z, X.Y.Z-rc.N or X.Y.Z-beta.N (got $EXPECT_VERSION)"
+  EXPECT_CORE="${EXPECT_VERSION%%-*}"
+  [[ "$EXPECT_CORE" == "$VERSION" ]] ||
+    fail "MARKETING_VERSION is $VERSION, expected $EXPECT_CORE (from $EXPECT_VERSION)"
+  DMG_VERSION="$EXPECT_VERSION"
 fi
-DMG="$DIST/$SCHEME-$VERSION.dmg"
-echo "==> Building $SCHEME $VERSION"
+DMG="$DIST/$SCHEME-$DMG_VERSION.dmg"
+echo "==> Building $SCHEME $DMG_VERSION (MARKETING_VERSION $VERSION)"
+
+# Test hook. Never set during a real release: stop after the version check.
+if [[ -n "${BUILD_RELEASE_DRY_RUN:-}" ]]; then
+  echo "DMG=$DMG"
+  exit 0
+fi
 
 # Check notarization credentials before the long build
 NOTARY_AUTH=()
@@ -111,7 +132,18 @@ codesign --sign "$IDENTITY" --timestamp "$DMG"
 
 if [[ $SKIP_NOTARIZE -eq 0 ]]; then
   echo "==> Notarizing"
-  xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait
+  # notarytool can exit 0 for a rejected submission; trust only the JSON status.
+  NOTARY_JSON=$(xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait --output-format json) || true
+  echo "$NOTARY_JSON"
+  NOTARY_ID=$(json_field id <<<"$NOTARY_JSON" || true)
+  NOTARY_STATUS=$(json_field status <<<"$NOTARY_JSON" || true)
+  if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
+    echo "error: notarization status is '${NOTARY_STATUS:-unknown}' (submission id: ${NOTARY_ID:-unknown})" >&2
+    if [[ -n "$NOTARY_ID" ]]; then
+      xcrun notarytool log "$NOTARY_ID" "${NOTARY_AUTH[@]}" >&2 || true
+    fi
+    exit 1
+  fi
   xcrun stapler staple "$DMG"
   spctl -a -vvv -t install "$DMG"
 else
