@@ -140,6 +140,12 @@ struct HeaderView: View {
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
       GlassToolbarGroup {
+        if viewModel.connectionState.isConnected,
+          let config = workspaceManager?.workspace.connectionConfig
+        {
+          safetyBadge(ConnectionSafetyBadge(config: config))
+        }
+
         // Search button
         Button(action: {
           viewModel.openSearch()
@@ -156,6 +162,39 @@ struct HeaderView: View {
     .chromeGlass()
     .overlay(alignment: .bottom) {
       Divider()
+    }
+  }
+
+  // MARK: - Safety Badge
+
+  /// Protection state and SSL state at a glance; tinted by the SSL level
+  private func safetyBadge(_ badge: ConnectionSafetyBadge) -> some View {
+    let sslColor = badge.ssl.map { color(for: $0.level) } ?? .foregroundMuted
+    return HStack(spacing: Spacing.xs) {
+      Image(systemName: badge.protectionIcon)
+        .font(.system(size: 10))
+      Text(badge.protectionLabel)
+      if let ssl = badge.ssl {
+        Image(systemName: "circle.fill")
+          .font(.system(size: 6))
+          .foregroundColor(sslColor)
+        Text(ssl.label)
+      }
+    }
+    .font(.small)
+    .foregroundColor(.foreground)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, Spacing.xs)
+    .tintedCapsuleGlass(sslColor, interactive: false)
+    .help(badge.tooltip)
+    .accessibilityElement(children: .combine)
+  }
+
+  private func color(for level: ConnectionSafetyBadge.Level) -> Color {
+    switch level {
+    case .danger: return .destructive
+    case .warning: return .warning
+    case .ok: return .success
     }
   }
 

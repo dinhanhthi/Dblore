@@ -23,10 +23,16 @@ extension View {
     glassEffect(.regular, in: Capsule())
   }
 
-  /// Tinted, interactive capsule glass for small status badges (e.g. Safe Mode indicator).
-  /// The tint keeps the badge's color meaning on glass.
-  func tintedCapsuleGlass(_ color: Color) -> some View {
-    glassEffect(.regular.tint(color.opacity(0.25)).interactive(), in: Capsule())
+  /// Tinted capsule glass for small status badges (e.g. Safe Mode indicator).
+  /// The tint keeps the badge's color meaning on glass. Pass `interactive: false` for
+  /// passive notices that cannot be clicked.
+  func tintedCapsuleGlass(_ color: Color, interactive: Bool = true) -> some View {
+    glassEffect(.regular.tint(color.opacity(0.25)).interactive(interactive), in: Capsule())
+  }
+
+  /// Tinted edge-to-edge glass for workspace banners (pending transaction, connection lost).
+  func tintedChromeGlass(_ color: Color) -> some View {
+    glassEffect(.regular.tint(color.opacity(0.25)), in: Rectangle())
   }
 
   /// Capsule glass for the selected tab. The shared `id` inside a `GlassEffectContainer`

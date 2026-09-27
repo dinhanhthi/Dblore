@@ -35,7 +35,7 @@ struct ConnectionLostBanner: View {
       Button("Dismiss") {
         workspaceManager.dismissConnectionLost()
       }
-      .buttonStyle(SecondaryButtonStyle())
+      .buttonStyle(.glass)
       .controlSize(.small)
 
       Button("Reconnect") {
@@ -45,13 +45,13 @@ struct ConnectionLostBanner: View {
           isReconnecting = false
         }
       }
-      .buttonStyle(PrimaryButtonStyle())
+      .buttonStyle(.glassProminent)
       .controlSize(.small)
       .disabled(isReconnecting || workspaceManager.connectionState.isConnecting)
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
-    .background(Color.destructive.opacity(0.12))
+    .tintedChromeGlass(.destructive)
     .overlay(alignment: .bottom) {
       Rectangle().fill(Color.destructive.opacity(0.4)).frame(height: 1)
     }

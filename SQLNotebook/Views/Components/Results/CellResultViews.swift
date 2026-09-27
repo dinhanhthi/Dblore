@@ -319,14 +319,12 @@ struct ResultMetadataView: View {
 
           // Show warning if the row cap truncated the result
           if result.wasLimited {
-            HStack(spacing: Spacing.xs) {
-              Text("(")
-                .foregroundColor(.warning)
-              Text("showing first \(result.rowCount) rows")
-                .foregroundColor(.warning)
-              Text(")")
-                .foregroundColor(.warning)
-            }.font(.labelText)
+            Text("showing first \(result.rowCount) rows")
+              .font(.labelText)
+              .foregroundColor(.warning)
+              .padding(.horizontal, Spacing.sm)
+              .padding(.vertical, 2)
+              .tintedCapsuleGlass(.warning, interactive: false)
           }
 
           Text("|")
@@ -354,7 +352,10 @@ struct ResultMetadataView: View {
       .padding(.bottom, 0)  // Add bottom padding to prevent overlap with floating action panel
       if result.sessionReset, let notice = result.capNotice {  // the row cap reset the session
         Label(notice, systemImage: "exclamationmark.triangle.fill")
-          .font(.labelText).foregroundColor(.warning).padding(.bottom, Spacing.xs)
+          .font(.labelText).foregroundColor(.warning)
+          .padding(.horizontal, Spacing.sm).padding(.vertical, 2)
+          .tintedCapsuleGlass(.warning, interactive: false)
+          .padding(.bottom, Spacing.xs)
       }
     }
   }

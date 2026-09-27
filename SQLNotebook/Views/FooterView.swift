@@ -200,8 +200,7 @@ struct FooterView: View {
     .foregroundColor(level == .readOnly ? .warning : .secondary)
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, 2)
-    .background((level == .readOnly ? Color.warning : Color.secondary).opacity(0.15))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .tintedCapsuleGlass(level == .readOnly ? .warning : .secondary)
     .help(
       level == .readOnly
         ? "Click to change protection level"

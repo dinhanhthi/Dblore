@@ -37,7 +37,7 @@ struct PendingTransactionBanner: View {
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
-    .background(tint.opacity(0.12))
+    .tintedChromeGlass(tint)
     .overlay(alignment: .bottom) {
       Rectangle().fill(tint.opacity(0.4)).frame(height: 1)
     }
@@ -80,7 +80,7 @@ struct PendingTransactionBanner: View {
       Button("Roll Back") {
         run { await workspaceManager.rollback() }
       }
-      .buttonStyle(SecondaryButtonStyle())
+      .buttonStyle(.glass)
       .controlSize(.small)
       .disabled(isWorking || isBusy)
       .accessibilityLabel("Roll back \(summary.statementCount) pending statements")
@@ -88,7 +88,8 @@ struct PendingTransactionBanner: View {
       Button("Commit") {
         workspaceManager.requestCommit()
       }
-      .buttonStyle(PrimaryButtonStyle())
+      .buttonStyle(.glassProminent)
+      .tint(tint)
       .controlSize(.small)
       .disabled(summary.isAborted || isWorking || isBusy)
       .help(commitHelp)
@@ -122,7 +123,8 @@ struct PendingTransactionBanner: View {
           Button(title) {
             Task { await workspaceManager.disconnect() }
           }
-          .buttonStyle(DangerButtonStyle())
+          .buttonStyle(.glassProminent)
+          .tint(.destructive)
           .controlSize(.small)
           .accessibilityHint("Closes the connection; asks first")
         }
