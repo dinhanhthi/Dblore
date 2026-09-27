@@ -17,7 +17,7 @@ This is a **version bump + changelog + tag** operation for SQLNotebook, the macO
 
 The "for real" row is **promotion**: the next version drops the suffix and keeps the core. Treating it as a patch bump would ship `0.1.2` and skip `0.1.1` entirely. `bump-info.sh` computes this for you under "Next version". Read that section and use its answer verbatim. Never compute a version by hand.
 
-SQLNotebook has **one** version, in one file: `MARKETING_VERSION` (and the build number `CURRENT_PROJECT_VERSION`) in `SQLNoteBook.xcodeproj/project.pbxproj`, identical across every build configuration.
+SQLNotebook has **one** version, in one file: `MARKETING_VERSION` (and the build number `CURRENT_PROJECT_VERSION`) in `SQLNotebook.xcodeproj/project.pbxproj`, identical across every build configuration.
 
 ### Step B1: Get bump context
 
@@ -64,7 +64,7 @@ Only in State `bump`. Skip entirely for `first-release` and `already-bumped`.
 bash .coding-friend/skills/cf-ship-custom/scripts/bump.sh <version>
 ```
 
-It rewrites `SQLNoteBook.xcodeproj/project.pbxproj` only: `MARKETING_VERSION` -> `<version>` and `CURRENT_PROJECT_VERSION` -> max + 1 in every build configuration, then verifies they agree. It accepts only `X.Y.Z`, `X.Y.Z-rc.N` or `X.Y.Z-beta.N`. Switching prerelease kind on the same core (for example `0.1.1-rc.2` -> `0.1.1-beta.1`) is refused by `bump-info.sh` because it would move backwards; promote first or bump the core.
+It rewrites `SQLNotebook.xcodeproj/project.pbxproj` only: `MARKETING_VERSION` -> `<version>` and `CURRENT_PROJECT_VERSION` -> max + 1 in every build configuration, then verifies they agree. It accepts only `X.Y.Z`, `X.Y.Z-rc.N` or `X.Y.Z-beta.N`. Switching prerelease kind on the same core (for example `0.1.1-rc.2` -> `0.1.1-beta.1`) is refused by `bump-info.sh` because it would move backwards; promote first or bump the core.
 
 ### Step B4: Update `CHANGELOG.md`
 
@@ -127,7 +127,7 @@ If the container is not running, skip IT and say so in the report. Do not start 
 Stage only the release files, then commit on the **current branch**:
 
 ```bash
-git add SQLNoteBook.xcodeproj/project.pbxproj CHANGELOG.md   # pbxproj only if B3 ran
+git add SQLNotebook.xcodeproj/project.pbxproj CHANGELOG.md   # pbxproj only if B3 ran
 git commit -m "chore(release): bump to <version>"
 git push            # git push -u origin HEAD if the branch has no upstream
 ```

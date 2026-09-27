@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCHEME="SQLNotebook"
-PROJECT="SQLNoteBook.xcodeproj"
+PROJECT="SQLNotebook.xcodeproj"
 TEAM_ID="86H6CNLN4C"
 IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
 NOTARY_PROFILE="SQLNotebookNotary"

@@ -55,10 +55,8 @@ for arg in "$@"; do
 done
 
 # Guard the path arithmetic above instead of letting a wrong REPO_ROOT surface
-# as a confusing grep error further down. The git-tracked path is
-# SQLNoteBook.xcodeproj (capital B); macOS filesystems are case-insensitive, so
-# it also resolves when the checkout shows SQLNotebook.xcodeproj.
-PBXPROJ_REL="SQLNoteBook.xcodeproj/project.pbxproj"
+# as a confusing grep error further down.
+PBXPROJ_REL="SQLNotebook.xcodeproj/project.pbxproj"
 PBXPROJ="$REPO_ROOT/$PBXPROJ_REL"
 if [[ ! -f "$PBXPROJ" ]]; then
   echo "Error: $PBXPROJ_REL not found under REPO_ROOT=$REPO_ROOT"
@@ -92,9 +90,9 @@ fi
 # that is the whole exclusion mechanism: a commit touching only website/, docs/,
 # .github/, root *.md, ... never matches this pathspec, so it lands in
 # "Excluded" automatically. EXCLUDED_PATHS below is documentation for the
-# mapping legend, not a filter. `:(icase)` makes the project path match both
-# SQLNoteBook.xcodeproj/ and SQLNotebook.xcodeproj/.
-APP_PATHS=(SQLNotebook/ SQLNotebookTests/ ':(icase)SQLNoteBook.xcodeproj/' scripts/ assets/)
+# mapping legend, not a filter. `:(icase)` also matches commits made while git
+# tracked the project folder under a different letter case.
+APP_PATHS=(SQLNotebook/ SQLNotebookTests/ ':(icase)SQLNotebook.xcodeproj/' scripts/ assets/)
 EXCLUDED_PATHS="website/ web/ landing/ docs/ .coding-friend/ .github/ examples/ *.md (root)"
 # Conventional-commit scopes that never count toward a bump, however many app
 # files the commit touched.

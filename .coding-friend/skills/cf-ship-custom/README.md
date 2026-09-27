@@ -12,7 +12,7 @@ the contract the model follows (coding-friend applies its `## Before`,
 
 `/cf-ship` reads the app commits since the last published tag, picks a version,
 writes `CHANGELOG.md`, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
-`SQLNoteBook.xcodeproj/project.pbxproj`, runs build + tests + format check,
+`SQLNotebook.xcodeproj/project.pbxproj`, runs build + tests + format check,
 commits `chore(release): bump to <version>` on the current branch, pushes, tags
 `v<version>`, pushes the tag, then waits for CI and verifies the published DMG.
 
@@ -120,7 +120,7 @@ BUMP_INFO_TAG=v0.1.1-rc.2 BUMP_INFO_VERSION=0.1.1-rc.2 bash $B --beta # refused
 BUMP_INFO_TAG= bash $B                                                # first release
 
 # bump.sh on a copy of the project file
-cp SQLNoteBook.xcodeproj/project.pbxproj /tmp/copy.pbxproj
+cp SQLNotebook.xcodeproj/project.pbxproj /tmp/copy.pbxproj
 BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts/bump.sh 0.2.0
 ```
 

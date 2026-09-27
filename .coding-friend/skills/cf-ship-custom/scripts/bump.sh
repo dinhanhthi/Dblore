@@ -5,7 +5,7 @@
 #   e.g. bash bump.sh 0.2.0
 #        bash bump.sh 0.2.0-rc.1
 #
-# ONE file carries the version: SQLNoteBook.xcodeproj/project.pbxproj. Every
+# ONE file carries the version: SQLNotebook.xcodeproj/project.pbxproj. Every
 # build configuration has its own copy of two settings, and all of them move:
 #   MARKETING_VERSION        -> <new_version>           (CFBundleShortVersionString)
 #   CURRENT_PROJECT_VERSION  -> max(current) + 1        (CFBundleVersion)
@@ -42,9 +42,7 @@ if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$ ]]; then
   exit 1
 fi
 
-# The git-tracked path is SQLNoteBook.xcodeproj (capital B); macOS filesystems
-# are case-insensitive, so it also resolves as SQLNotebook.xcodeproj.
-PBXPROJ_REL="SQLNoteBook.xcodeproj/project.pbxproj"
+PBXPROJ_REL="SQLNotebook.xcodeproj/project.pbxproj"
 PBXPROJ="${BUMP_PBXPROJ:-$REPO_ROOT/$PBXPROJ_REL}"
 if [[ ! -f "$PBXPROJ" ]]; then
   echo "Error: $PBXPROJ not found"
