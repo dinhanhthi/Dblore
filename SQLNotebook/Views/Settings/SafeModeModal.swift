@@ -14,6 +14,9 @@ import SwiftUI
 struct SafeModeModal: View {
   @Binding var isPresented: Bool
   @Bindable var appSettings = AppSettings.shared
+  /// Opened from the unlock sheet: show the password panel even when the global mode is not a
+  /// password mode (the unlock may be for a per-connection Safe Mode)
+  var showsUnlockSetup: Bool = false
 
   // Password management states
   @State private var showPasswordSetup: Bool = false
@@ -57,6 +60,11 @@ struct SafeModeModal: View {
                 .padding(.bottom, Spacing.xs)
             }
           }
+        }
+
+        if showsUnlockSetup && !appSettings.safeMode.requiresPassword {
+          passwordPanel
+            .padding(.top, Spacing.sm)
         }
       }
       .padding(Spacing.lg)
@@ -253,6 +261,11 @@ struct SafeModeModal: View {
           }
           .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.small)
+          // Touch ID needs a Safe Mode password as its fallback
+          .disabled(!appSettings.hasCustomPasswordSet)
+          .help(
+            appSettings.hasCustomPasswordSet
+              ? "Unlock Safe Mode with Touch ID" : "Set a Safe Mode password first")
         }
 
         if appSettings.isSafeModePasswordSet {
@@ -418,8 +431,9 @@ struct SafeModeModal: View {
   // MARK: - Safe Mode Change Handler
 
   private func handleSafeModeChange(to newMode: SafeMode) {
-    if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
-      && newMode != appSettings.safeMode
+    if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
+      from: appSettings.safeMode, to: newMode, hasPassword: appSettings.hasCustomPasswordSet,
+      hasTouchID: appSettings.isBiometricEnabled)
     {
       pendingAction = .changeSafeMode(newMode)
       showAuthSheet = true

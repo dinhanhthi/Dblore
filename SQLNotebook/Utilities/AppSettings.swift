@@ -107,6 +107,19 @@ enum SafeMode: Int, Codable, CaseIterable, Sendable {
   }
 }
 
+/// Why Touch ID could not be enabled for Safe Mode
+enum SafeModeBiometricError: LocalizedError, Equatable {
+  /// Touch ID needs a Safe Mode password as its fallback
+  case passwordRequired
+
+  var errorDescription: String? {
+    switch self {
+    case .passwordRequired:
+      return "Set a Safe Mode password before enabling Touch ID."
+    }
+  }
+}
+
 /// Accent color preference enum
 enum AccentColor: String, CaseIterable {
   case purple = "Purple"
@@ -410,8 +423,11 @@ class AppSettings {
     return true
   }
 
-  /// Turns Touch ID on after a successful prompt; the password is kept as fallback
+  /// Turns Touch ID on after a successful prompt; the password is kept as fallback.
+  /// Throws `SafeModeBiometricError.passwordRequired` (no prompt) without a Safe Mode password,
+  /// so Touch ID never becomes the only unlock. Existing Touch-ID-only setups keep working.
   func enableBiometricAuth() async throws {
+    guard hasCustomPasswordSet else { throw SafeModeBiometricError.passwordRequired }
     guard
       await safeModeAuth.enableBiometrics(
         reason: "Enable Touch ID for Safe Mode query authorization")

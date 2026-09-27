@@ -90,15 +90,23 @@ struct SafeModeUnlockSheet: View {
   @State private var useDatabasePassword: Bool = false
   @State private var errorMessage: String?
   @State private var isAuthenticating: Bool = false
+  @State private var showsSafeModeSettings: Bool = false
 
   private var showsTouchID: Bool {
     AppSettings.shared.isBiometricEnabled && AppSettings.shared.canUseTouchID
   }
 
-  /// The database password is offered only while no Safe Mode password exists
+  /// The database password is offered only while no Safe Mode password exists and the
+  /// connection has a stored database password to compare against
   private var offersDatabasePassword: Bool {
     NotebookViewModel.showsDatabasePasswordFallback(
       hasSafeModePassword: AppSettings.shared.hasCustomPasswordSet)
+      && !(storedDatabasePassword ?? "").isEmpty
+  }
+
+  /// Neither a Safe Mode password nor Touch ID exists: offer to set one up (never unlocks)
+  private var offersUnlockSetup: Bool {
+    !AppSettings.shared.hasCustomPasswordSet && !AppSettings.shared.isBiometricEnabled
   }
 
   var body: some View {
@@ -145,6 +153,10 @@ struct SafeModeUnlockSheet: View {
         }
       }
 
+      if offersUnlockSetup {
+        unlockSetup
+      }
+
       if let errorMessage {
         Text(errorMessage)
           .font(.small)
@@ -167,6 +179,33 @@ struct SafeModeUnlockSheet: View {
     .padding(Spacing.xl)
     .frame(width: 350)
     .background(Color.appBackground)
+    .sheet(isPresented: $showsSafeModeSettings) {
+      SafeModeModal(isPresented: $showsSafeModeSettings, showsUnlockSetup: true)
+    }
+  }
+
+  /// Lockout recovery: opens the Safe Mode settings to set a password (Touch ID needs one
+  /// first). Setting it up does not unlock: the user still verifies here afterwards.
+  private var unlockSetup: some View {
+    VStack(spacing: Spacing.xs) {
+      Text("No Safe Mode password is set.")
+        .font(.small)
+        .foregroundColor(.foregroundSubtle)
+      HStack(spacing: Spacing.md) {
+        Button("Set password...") {
+          showsSafeModeSettings = true
+        }
+        Button("Enable Touch ID") {
+          showsSafeModeSettings = true
+        }
+        .disabled(true)
+        .foregroundColor(.foregroundMuted)
+        .help("Set a Safe Mode password first")
+      }
+      .font(.small)
+      .foregroundColor(.accent)
+      .buttonStyle(.plain)
+    }
   }
 
   /// Safe Mode password, or the database password via `acceptsDatabasePasswordFallback` only

@@ -66,6 +66,18 @@ extension NotebookViewModel {
       || (old.protectedMode && !new.protectedMode)
   }
 
+  /// Global Safe Mode picker: the per-connection rule on the Safe Mode alone (weakening away
+  /// from a password mode needs the unlock, strengthening never does). With no unlock
+  /// configured (no password, Touch ID off) nothing gates: there is nothing to verify against.
+  nonisolated static func requiresUnlockForGlobalSafeModeChange(
+    from old: SafeMode, to new: SafeMode, hasPassword: Bool, hasTouchID: Bool
+  ) -> Bool {
+    guard hasPassword || hasTouchID else { return false }
+    return requiresUnlockForChange(
+      from: ConnectionSafetyState(safeMode: old, protectionLevel: .none, protectedMode: false),
+      to: ConnectionSafetyState(safeMode: new, protectionLevel: .none, protectedMode: false))
+  }
+
   // MARK: - Requests (apply now, or hold for the unlock)
   // Without a connection config there is nothing to change: true, no unlock.
 

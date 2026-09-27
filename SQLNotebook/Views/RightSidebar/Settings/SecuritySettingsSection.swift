@@ -234,8 +234,9 @@ struct SafeModeSection: View {
   }
 
   private func handleSafeModeChange(to newMode: SafeMode) {
-    if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
-      && newMode != appSettings.safeMode
+    if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
+      from: appSettings.safeMode, to: newMode, hasPassword: appSettings.hasCustomPasswordSet,
+      hasTouchID: appSettings.isBiometricEnabled)
     {
       pendingAction = .changeSafeMode(newMode)
       showAuthSheet = true
@@ -261,7 +262,7 @@ struct SafeModeSection: View {
       }
 
       if !appSettings.isSafeModePasswordSet {
-        Text("Set a password or use Touch ID to enable protection.")
+        Text("Set a password to enable protection (then Touch ID if you like).")
           .font(.small)
           .foregroundColor(.foregroundSubtle)
       }
@@ -310,6 +311,11 @@ struct SafeModeSection: View {
             .foregroundColor(.accent)
           }
           .buttonStyle(.plain)
+          // Touch ID needs a Safe Mode password as its fallback
+          .disabled(!appSettings.hasCustomPasswordSet)
+          .help(
+            appSettings.hasCustomPasswordSet
+              ? "Unlock Safe Mode with Touch ID" : "Set a Safe Mode password first")
         }
 
         if appSettings.isSafeModePasswordSet {
