@@ -320,7 +320,7 @@ struct EditorResultGridView: View {
         sortColumn = column
         sortAscending = ascending
       },
-      onCellClick: { row, originalRow, column in
+      onShowCellDetails: { row, originalRow, column in
         viewModel.showGridCellInSidebar(
           row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
       },
