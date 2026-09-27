@@ -32,6 +32,8 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
   static let typeFont = NSFont.preferredFont(forTextStyle: .subheadline)
   static let typeColor = NSColor(Color.foregroundSubtle)
   static let keyColor = NSColor(Color.warning)
+  /// Extra room below the type line: the lines keep the top inset of a header without it
+  static let typeLineBottomExtra: CGFloat = 6
 
   var content = ResultGridHeaderContent()
 
@@ -73,9 +75,11 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
     let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
     let totalHeight = titleHeight + (content.type == nil ? 0 : Spacing.xxs + typeHeight)
-    // Center both lines over the full header height (cellFrame is a one-line strip)
+    // Center both lines over the full header height (cellFrame is a one-line strip), less the
+    // extra room below the type line
     let bounds = controlView.bounds
-    let top = bounds.minY + (bounds.height - totalHeight) / 2
+    let bottomExtra = content.type == nil ? 0 : Self.typeLineBottomExtra
+    let top = bounds.minY + (bounds.height - bottomExtra - totalHeight) / 2
     var titleX = textFrame.minX
     if content.isPrimaryKey, let key = Self.keyImage() {
       let size = key.size

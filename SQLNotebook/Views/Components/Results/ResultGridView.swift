@@ -50,9 +50,10 @@ struct ResultGridView: NSViewRepresentable {
     CGFloat(rowCount) * rowHeight
   }
 
-  /// Header height (set on the header view): name and type lines, or the name only
+  /// Header height (set on the header view): name and type lines, or the name only; with
+  /// types, `ResultGridHeaderCell.typeLineBottomExtra` of room below the type line
   static func headerHeight(hideColumnTypes: Bool) -> CGFloat {
-    hideColumnTypes ? 28 : 48
+    hideColumnTypes ? 28 : 48 + ResultGridHeaderCell.typeLineBottomExtra
   }
 
   /// Fixed height of a grid in a List or LazyVStack: at most `maxVisibleRows` rows plus header,

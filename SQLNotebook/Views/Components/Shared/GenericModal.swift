@@ -172,13 +172,13 @@ extension View {
 
 // MARK: - Modal Backdrop
 
-/// Background view for modals: a light blur of the window content plus a soft dim, so the
-/// app behind the modal stays recognizable
+/// Background view for modals: a clear blur of the window content plus a moderate dim, so the
+/// modal stands out while the app behind it stays recognizable
 struct ModalBackdrop: View {
   var body: some View {
     ZStack {
-      Rectangle().fill(.ultraThinMaterial).opacity(0.5)
-      Color.black.opacity(0.25)
+      Rectangle().fill(.thinMaterial).opacity(0.8)
+      Color.black.opacity(0.35)
     }
     .contentShape(Rectangle())
   }

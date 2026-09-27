@@ -125,7 +125,7 @@ struct SearchPanelView: View {
       RoundedRectangle(cornerRadius: CornerRadius.md)
         .strokeBorder(Color.accent.opacity(0.3), lineWidth: 1.5)
     )
-    .shadow(color: Color.accent.opacity(0.3), radius: 8, x: 0, y: 4)
+    .shadow(color: Color.accent.opacity(0.12), radius: 4, x: 0, y: 2)
     .frame(maxWidth: .infinity)
     .onAppear {
       // Auto-focus search field when panel appears
