@@ -11,13 +11,24 @@ import UniformTypeIdentifiers
 // MARK: - Settings Modal
 
 /// Main settings modal for workspace level
-/// Shows all settings in a scrollable modal with organized sections
+/// Shows settings in a tabbed modal, one section per tab
 struct SettingsModal: View {
   @Binding var isPresented: Bool
   let viewMode: ViewMode?
 
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
+  @State private var selectedTab: SettingsTab = .appearance
+
+  /// Tabs shown in the settings tab row (rawValue = label)
+  private enum SettingsTab: String, CaseIterable {
+    case appearance = "Appearance"
+    case editor = "Editor"
+    case results = "Results"
+    case save = "Save"
+    case developer = "Developer"
+    case shortcuts = "Shortcuts"
+  }
 
   /// Effective view mode - defaults to notebook if no active tab
   private var effectiveViewMode: ViewMode {
@@ -28,47 +39,25 @@ struct SettingsModal: View {
     GenericModal(
       title: "Settings",
       titleIcon: "gear",
-      width: 480,
+      width: 560,
       height: 600,
       isPresented: $isPresented
     ) {
-      ScrollView {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-          // Appearance Settings
-          AppearanceSettingsSection(appSettings: appSettings)
+      VStack(spacing: 0) {
+        // Tab row (fixed, does not scroll)
+        CapsuleTabPicker(
+          selection: $selectedTab,
+          tabs: SettingsTab.allCases,
+          height: 28
+        )
+        .padding(.horizontal, Spacing.xl)
+        .padding(.top, Spacing.md)
 
-          Divider()
-
-          // Editor Settings
-          SettingsModalEditorSection(
-            appSettings: appSettings,
-            viewMode: effectiveViewMode
-          )
-
-          Divider()
-
-          // Result Table Settings
-          SettingsModalResultTableSection(
-            appSettings: appSettings,
-            viewMode: effectiveViewMode
-          )
-
-          Divider()
-
-          // Save Options (Notebook Mode Only)
-          SettingsModalSaveOptionsSection(appSettings: appSettings)
-
-          Divider()
-
-          // Developer Settings
-          SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
-
-          Divider()
-
-          // Keyboard Shortcuts
-          SettingsModalKeyboardShortcutsSection(viewMode: effectiveViewMode)
+        ScrollView {
+          selectedSection
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.xl)
         }
-        .padding(Spacing.xl)
       }
     }
     .fileExporter(
@@ -78,6 +67,32 @@ struct SettingsModal: View {
       defaultFilename: "sqlnotebook-logs-\(formattedDate).txt"
     ) { _ in
       // Export completed, no action needed
+    }
+  }
+
+  /// Section view for the selected tab
+  @ViewBuilder
+  private var selectedSection: some View {
+    switch selectedTab {
+    case .appearance:
+      AppearanceSettingsSection(appSettings: appSettings)
+    case .editor:
+      SettingsModalEditorSection(
+        appSettings: appSettings,
+        viewMode: effectiveViewMode
+      )
+    case .results:
+      SettingsModalResultTableSection(
+        appSettings: appSettings,
+        viewMode: effectiveViewMode
+      )
+    case .save:
+      // Save Options (Notebook Mode Only)
+      SettingsModalSaveOptionsSection(appSettings: appSettings)
+    case .developer:
+      SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
+    case .shortcuts:
+      SettingsModalKeyboardShortcutsSection(viewMode: effectiveViewMode)
     }
   }
 
