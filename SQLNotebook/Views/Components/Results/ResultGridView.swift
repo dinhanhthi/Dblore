@@ -63,12 +63,13 @@ struct ResultGridView: NSViewRepresentable {
     ResultGridCoordinator()
   }
 
-  func makeNSView(context: Context) -> NSScrollView {
+  /// The grid's table view; alternating rows come from the coordinator's ResultGridRowView
+  static func makeTableView(coordinator: ResultGridCoordinator) -> ResultGridTableView {
     let tableView = ResultGridTableView()
-    tableView.coordinator = context.coordinator
+    tableView.coordinator = coordinator
     tableView.rowHeight = Self.rowHeight
     tableView.intercellSpacing = NSSize(width: 0, height: 0)
-    tableView.usesAlternatingRowBackgroundColors = true
+    tableView.usesAlternatingRowBackgroundColors = false
     tableView.allowsColumnResizing = true
     tableView.allowsColumnReordering = true
     tableView.allowsMultipleSelection = true
@@ -78,7 +79,11 @@ struct ResultGridView: NSViewRepresentable {
     tableView.target = tableView
     tableView.action = #selector(ResultGridTableView.clickCell(_:))
     tableView.doubleAction = #selector(ResultGridTableView.editClickedCell(_:))
+    return tableView
+  }
 
+  func makeNSView(context: Context) -> NSScrollView {
+    let tableView = Self.makeTableView(coordinator: context.coordinator)
     let scrollView = ResultGridScrollView()
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true

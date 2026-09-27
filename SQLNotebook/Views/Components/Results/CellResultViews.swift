@@ -52,7 +52,7 @@ struct ResultAreaView: View {
           EmptyResultView()
         } else {
           // Result table with metadata footer
-          NotebookResultTableView(
+          NotebookResultGridView(
             result: result,
             viewModel: viewModel,
             cellId: cellId
@@ -498,11 +498,11 @@ enum CellResultViews {
     .preferredColorScheme(.dark)
 }
 
-// MARK: - Notebook Result Table View
+// MARK: - Notebook Result Grid View
 
 /// Result grid (fixed height, so the notebook list measures a fixed size) with the result
 /// metadata footer for notebook mode
-struct NotebookResultTableView: View {
+struct NotebookResultGridView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID

@@ -122,4 +122,19 @@ struct ResultGridCoordinatorTests {
     #expect(!coordinator.update(tableView, result: result, sortColumn: "id", ascending: true))
     #expect(coordinator.update(tableView, result: result, sortColumn: "id", ascending: false))
   }
+
+  @Test("Odd displayed rows get the design-system alternate row view, even rows don't")
+  func alternateRows() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    let rowViews = (0..<3).map {
+      coordinator.tableView(tableView, rowViewForRow: $0) as? ResultGridRowView
+    }
+    #expect(rowViews.map { $0?.isAlternate } == [false, true, false])
+  }
+
+  @Test("The grid table leaves alternating rows to the row views")
+  func noSystemAlternatingRows() {
+    let tableView = ResultGridView.makeTableView(coordinator: ResultGridCoordinator())
+    #expect(!tableView.usesAlternatingRowBackgroundColors)
+  }
 }

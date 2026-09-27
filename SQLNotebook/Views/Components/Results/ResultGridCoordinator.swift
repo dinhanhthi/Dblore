@@ -23,6 +23,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
+  private static let rowIdentifier = NSUserInterfaceItemIdentifier("ResultGridRow")
 
   /// What decides a reload: the result's identity, the sort and the search, not every SwiftUI
   /// update
@@ -264,6 +265,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   // MARK: - NSTableViewDelegate
+
+  /// Reused row view, alternate on odd displayed rows
+  func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    let rowView =
+      tableView.makeView(withIdentifier: Self.rowIdentifier, owner: nil) as? ResultGridRowView
+      ?? ResultGridRowView()
+    rowView.identifier = Self.rowIdentifier
+    rowView.isAlternate = row % 2 == 1
+    return rowView
+  }
 
   func tableView(
     _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
