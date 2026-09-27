@@ -57,6 +57,13 @@ struct ResultGridHeaderTests {
     #expect(tableView.headerView?.frame.height == 28)
   }
 
+  @Test("Header cells draw over the full header height, not AppKit's one-line strip")
+  func fullHeightFrame() {
+    let frame = ResultGridHeaderCell.fullHeightFrame(
+      NSRect(x: 40, y: 6, width: 120, height: 36), in: NSRect(x: 0, y: 0, width: 600, height: 54))
+    #expect(frame == NSRect(x: 40, y: 0, width: 120, height: 54))
+  }
+
   @Test("Line 1 is the column name, line 2 the type, nil when types are hidden")
   func titleAndType() {
     let shown = content(1, result: result(editable: false))
