@@ -531,7 +531,9 @@ struct NotebookResultTableView: View {
           sortColumn = column
           sortAscending = ascending
         },
-        onCellClick: showInSidebar,
+        onCellClick: { row, column in
+          viewModel.showGridCellInSidebar(row: row, column: column, result: result, cellId: cellId)
+        },
         searchQuery: viewModel.searchState.query,
         caseSensitive: viewModel.searchState.isCaseSensitive,
         currentMatch: currentMatch
@@ -570,26 +572,6 @@ struct NotebookResultTableView: View {
         notificationViewModelId == viewModel.id
       else { return }
       currentMatch = nil
-    }
-  }
-
-  /// A JSON value opens in the JSON viewer, any other value in the cell detail
-  private func showInSidebar(row: [CellValue], column index: Int) {
-    let column = result.columns[index]
-    let value = index < row.count ? row[index] : .null
-    if case .json(let json) = value {
-      viewModel.showJSONInSidebar(json: json, path: "Column '\(column.name)'")
-    } else {
-      viewModel.showCellDetail(
-        columnName: column.name,
-        columnType: column.type,
-        value: value,
-        tableName: result.tableName,
-        rowData: CellResult.rowData(columns: result.columns, row: row),
-        primaryKeyColumns: result.primaryKeyColumns,
-        editTarget: result.editTarget,
-        cellId: cellId
-      )
     }
   }
 }

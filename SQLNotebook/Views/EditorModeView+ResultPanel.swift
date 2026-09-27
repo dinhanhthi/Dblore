@@ -291,3 +291,60 @@ extension EditorModeView {
     }
   }
 }
+
+// MARK: - Editor Result Grid
+
+/// Result grid filling the editor result panel: it owns vertical scrolling (no hand-off to the
+/// parent). Sort, inline edit, cell click to the sidebar and search highlights as in a notebook
+/// cell; editor results have no cell ID, so every table-data search match applies.
+struct EditorResultGridView: View {
+  let result: CellResult
+  @Bindable var viewModel: NotebookViewModel
+  @State private var sortColumn: String?
+  @State private var sortAscending = true
+  /// Current search match when it is in the result data
+  @State private var currentMatch: SearchMatch?
+
+  var body: some View {
+    ResultGridView(
+      result: result,
+      sortColumn: sortColumn,
+      ascending: sortAscending,
+      isEditable: viewModel.canEdit(result),
+      onCommitEdit: { row, column, newValue in
+        viewModel.handleGridCellEdit(
+          row: row, column: column, newValue: newValue, result: result, cellId: nil,
+          connectionManager: viewModel.connectionManager)
+      },
+      onSortChange: { column, ascending in
+        sortColumn = column
+        sortAscending = ascending
+      },
+      onCellClick: { row, column in
+        viewModel.showGridCellInSidebar(row: row, column: column, result: result, cellId: nil)
+      },
+      searchQuery: viewModel.searchState.query,
+      caseSensitive: viewModel.searchState.isCaseSensitive,
+      currentMatch: currentMatch,
+      forwardsScrollToParent: false
+    )
+    .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      if let match = notification.userInfo?["match"] as? SearchMatch,
+        case .tableData = match.matchType
+      {
+        currentMatch = match
+      } else {
+        currentMatch = nil
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      currentMatch = nil
+    }
+  }
+}

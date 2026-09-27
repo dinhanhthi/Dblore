@@ -30,6 +30,9 @@ struct ResultGridView: NSViewRepresentable {
   /// Current search match (the one Enter moved to): the grid scrolls to it and shows it on the
   /// current-match color when it is in this result's data
   var currentMatch: SearchMatch? = nil
+  /// Hand a vertical scroll the grid can't take to the parent (notebook list); false for a
+  /// grid that fills its panel (editor)
+  var forwardsScrollToParent = true
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
@@ -75,12 +78,14 @@ struct ResultGridView: NSViewRepresentable {
     scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.drawsBackground = false
+    scrollView.forwardsToParent = forwardsScrollToParent
     configure(context.coordinator, tableView)
     return scrollView
   }
 
   func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let tableView = scrollView.documentView as? NSTableView else { return }
+    (scrollView as? ResultGridScrollView)?.forwardsToParent = forwardsScrollToParent
     configure(context.coordinator, tableView)
   }
 
@@ -98,7 +103,9 @@ struct ResultGridView: NSViewRepresentable {
 /// Scroll view that hands a vertical scroll gesture to the enclosing scroll view (the notebook
 /// list) when the grid can't scroll that way, so the list keeps scrolling over a result.
 /// The choice is made once per gesture; horizontal scrolling stays in the grid.
+/// `forwardsToParent` false keeps every scroll in the grid (a grid filling its panel).
 final class ResultGridScrollView: NSScrollView {
+  var forwardsToParent = true
   private var forwardsGesture: Bool?
 
   /// Whether a vertical scroll of `deltaY` (> 0 toward the top) at `offsetY` (0 = top) goes to
@@ -122,7 +129,7 @@ final class ResultGridScrollView: NSScrollView {
       let maxOffsetY =
         (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
       forwardsGesture =
-        abs(deltaY) > abs(deltaX)
+        forwardsToParent && abs(deltaY) > abs(deltaX)
         && Self.shouldForward(
           deltaY: deltaY, offsetY: bounds.origin.y + insets.top, maxOffsetY: maxOffsetY)
     }

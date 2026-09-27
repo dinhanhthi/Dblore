@@ -168,17 +168,9 @@ struct EditorModeView: View {
   /// Result table section
   @ViewBuilder
   private func resultTableSection(result: CellResult) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      ResultTableView(
-        result: result,
-        viewModel: viewModel,
-        cellId: nil,  // No cell ID in editor mode
-        showBorderRadius: false,  // No border radius in editor mode
-        enableVerticalScrolling: true  // Enable vertical scrolling in editor mode
-      )
-      .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
-      .id(result.timestamp)  // Break render cycle on result changes
-    }
+    EditorResultGridView(result: result, viewModel: viewModel)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
+      .id(result.timestamp)  // New result: reset sort and search match
   }
 
   /// Empty state view (no results yet)
