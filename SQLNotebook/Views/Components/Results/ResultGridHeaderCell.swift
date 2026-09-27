@@ -56,20 +56,14 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     return sort.ascending
   }
 
-  /// `cellFrame` stretched to the full header height: AppKit passes a one-line strip, so the
-  /// bottom separator would sit right under the type line with an empty band below it
-  static func fullHeightFrame(_ cellFrame: NSRect, in bounds: NSRect) -> NSRect {
-    NSRect(x: cellFrame.minX, y: bounds.minY, width: cellFrame.width, height: bounds.height)
-  }
-
-  /// Background, separators and pressed state over the full header height
+  /// Draws the interior only: the header view draws the background, and super would add a
+  /// separator line at a fixed height, right under the type line of the taller header
   override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-    super.draw(withFrame: Self.fullHeightFrame(cellFrame, in: controlView.bounds), in: controlView)
+    drawInterior(withFrame: cellFrame, in: controlView)
   }
 
   /// Draws the name and type lines over the full header height and the sort indicator; super
-  /// (not called) would draw a one-line title. Background, separators and the pressed state
-  /// stay with `draw(withFrame:in:)`.
+  /// (not called) would draw a one-line title.
   override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
     // AppKit draws the filler after the last column with a copy that has no title
     guard !stringValue.isEmpty else { return }
