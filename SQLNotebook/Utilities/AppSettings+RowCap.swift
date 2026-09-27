@@ -26,6 +26,20 @@ extension AppSettings {
     SessionBrakeLimits.clampRowCap(value) ?? defaultResultRowCap
   }
 
+  /// Stepper rule: step 100 below 1000 and 1000 at or above (stepping down from 1000 gives
+  /// 900), clamped to `SessionBrakeLimits.rowCapRange`
+  nonisolated static func steppedResultRowCap(_ value: Int, up: Bool) -> Int {
+    let range = SessionBrakeLimits.rowCapRange
+    let next: Int
+    if up {
+      next = value + (value >= 1000 ? 1000 : 100)
+    } else {
+      // Above 1000, step down by 1000 but stop at 1000 before switching to steps of 100.
+      next = value > 1000 ? max(value - 1000, 1000) : value - 100
+    }
+    return min(max(next, range.lowerBound), range.upperBound)
+  }
+
   /// Stored cap (clamped), or nil when none is stored. When only the legacy keys exist, the
   /// larger of the two (clamped) is stored under the new key; legacy keys are always deleted.
   nonisolated static func loadResultRowCap(from defaults: UserDefaults) -> Int? {

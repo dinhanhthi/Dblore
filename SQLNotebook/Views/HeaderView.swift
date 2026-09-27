@@ -139,13 +139,14 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
-      GlassToolbarGroup {
-        if viewModel.connectionState.isConnected,
-          let config = workspaceManager?.workspace.connectionConfig
-        {
-          safetyBadge(ConnectionSafetyBadge(config: config))
-        }
+      // Safety badge sits outside the glass group so it does not merge with the Search button
+      if viewModel.connectionState.isConnected,
+        let config = workspaceManager?.workspace.connectionConfig
+      {
+        safetyBadge(ConnectionSafetyBadge(config: config))
+      }
 
+      GlassToolbarGroup {
         // Search button
         Button(action: {
           viewModel.openSearch()

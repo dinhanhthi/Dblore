@@ -143,3 +143,18 @@ struct ResultRowCapTests {
     }
   }
 }
+
+@Suite("Result row cap stepper")
+@MainActor
+struct ResultRowCapStepTests {
+  @Test(
+    "Step 100 below 1000, 1000 at or above, clamped to the row cap range",
+    arguments: [
+      (900, true, 1000), (1000, true, 2000), (2000, false, 1000), (1000, false, 900),
+      (100, false, 100), (100_000, true, 100_000), (100, true, 200), (99_500, true, 100_000),
+      (1001, false, 1000), (1500, false, 1000),
+    ])
+  func step(value: Int, up: Bool, expected: Int) {
+    #expect(AppSettings.steppedResultRowCap(value, up: up) == expected)
+  }
+}

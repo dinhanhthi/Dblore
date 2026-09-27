@@ -30,8 +30,18 @@ struct ResultRowCapSetting: View {
           .textFieldStyle(.plain)
           .inputCapsuleStyle()
           .frame(width: 80)
-          Stepper("", value: $appSettings.resultRowCap, in: range, step: 100)
-            .labelsHidden()
+          Stepper(
+            "",
+            onIncrement: {
+              appSettings.resultRowCap = AppSettings.steppedResultRowCap(
+                appSettings.resultRowCap, up: true)
+            },
+            onDecrement: {
+              appSettings.resultRowCap = AppSettings.steppedResultRowCap(
+                appSettings.resultRowCap, up: false)
+            }
+          )
+          .labelsHidden()
         }
       }
 

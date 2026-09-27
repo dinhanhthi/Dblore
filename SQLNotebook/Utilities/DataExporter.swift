@@ -38,11 +38,20 @@ enum DataExporter {
 
     // Data rows
     for row in result.rows {
-      let values = row.map { $0.fullString }
+      let values = row.map { escapeTSV($0.fullString) }
       tsv += values.joined(separator: "\t") + "\n"
     }
 
     return tsv
+  }
+
+  /// TSV value escape shared with the grid selection copy: a value with a tab, LF, CR or quote
+  /// (checked per unicode scalar, so CRLF counts) is quoted with inner quotes doubled, as in CSV
+  static func escapeTSV(_ value: String) -> String {
+    guard value.unicodeScalars.contains(where: { "\t\n\r\"".unicodeScalars.contains($0) }) else {
+      return value
+    }
+    return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
   }
 
   /// Export result to XLSX format (ZIP-based Office Open XML)

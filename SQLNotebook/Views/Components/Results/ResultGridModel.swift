@@ -56,16 +56,9 @@ struct ResultGridModel {
   /// TSV copy. A value with a tab, newline or quote is quoted with quotes doubled, as in CSV.
   func tsv(rows: IndexSet, columns: IndexSet) -> String {
     rows.map { row in
-      columns.map { Self.escapeTSV(value(row: row, column: $0).fullString) }
+      columns.map { DataExporter.escapeTSV(value(row: row, column: $0).fullString) }
         .joined(separator: "\t")
     }
     .joined(separator: "\n")
-  }
-
-  private static func escapeTSV(_ value: String) -> String {
-    guard value.unicodeScalars.contains(where: { "\t\n\r\"".unicodeScalars.contains($0) }) else {
-      return value
-    }
-    return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
   }
 }
