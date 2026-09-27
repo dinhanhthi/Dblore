@@ -165,7 +165,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     scrollView.documentView = textView
     // Enable scrolling when maxHeight is set (editor mode)
     scrollView.hasVerticalScroller = maxHeight != nil
-    scrollView.hasHorizontalScroller = !wordWrapEnabled  // Enable horizontal scroll when word wrap disabled
+    // Enable horizontal scroll when word wrap disabled
+    scrollView.hasHorizontalScroller = !wordWrapEnabled
     scrollView.drawsBackground = false
 
     // Set initial text with highlighting

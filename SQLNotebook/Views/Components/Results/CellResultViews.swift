@@ -267,9 +267,10 @@ struct ResultMetadataView: View {
                 }) {
                   HStack {
                     // Combined text: "Result N • query text (truncated)"
-                    Text(
-                      "\(Text("Result \(index + 1) • ").font(.system(size: 11)))\(Text(truncateQuery(statementResult.queryText)).font(.system(size: 11, design: .monospaced)))"
-                    )
+                    let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
+                    let queryLabel = Text(truncateQuery(statementResult.queryText))
+                      .font(.system(size: 11, design: .monospaced))
+                    Text("\(resultLabel)\(queryLabel)")
                       .lineLimit(1)
 
                     Spacer()

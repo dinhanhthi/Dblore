@@ -95,9 +95,9 @@ extension SchemaGraphNSView {
     let typeFont = NSFont.monospacedSystemFont(ofSize: 8, weight: .regular)
     let tableFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
 
-    // Calculate width needed for table name in header
+    // Calculate width needed for table name in header (+ 60 for padding + buttons)
     let tableNameWidth =
-      (node.table.name as NSString).size(withAttributes: [.font: tableFont]).width + 60  // padding + buttons
+      (node.table.name as NSString).size(withAttributes: [.font: tableFont]).width + 60
 
     // Calculate max width needed for columns
     var maxColumnWidth: CGFloat = 0

@@ -111,7 +111,8 @@ class NotebookViewModel {
   var searchState: SearchState = SearchState()
   var searchFocusTrigger: UUID = UUID()  // Trigger to force re-focus search field
   @ObservationIgnored var searchTask: Task<Void, Never>?  // Task for cancellation support
-  @ObservationIgnored var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
+  // Task for debounced navigation (10.1.3)
+  @ObservationIgnored var searchNavigationTask: Task<Void, Never>?
   @ObservationIgnored var previousFirstResponder: NSResponder?  // Store previous responder
 
   // MARK: - Query Confirmation State (10.3.2 optimization)

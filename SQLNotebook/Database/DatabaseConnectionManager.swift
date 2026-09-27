@@ -73,7 +73,8 @@ actor DatabaseConnectionManager {
 
   /// Retry configuration for connection attempts
   private static let maxRetries = 3
-  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]  // 1s, 2s, 4s in nanoseconds
+  // 1s, 2s, 4s in nanoseconds
+  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]
 
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {

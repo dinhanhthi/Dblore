@@ -46,7 +46,9 @@ extension AppSettings {
     let legacy = legacyRowLimitKeys.compactMap { key -> Int? in
       defaults.object(forKey: key) == nil ? nil : defaults.integer(forKey: key)
     }
-    legacyRowLimitKeys.forEach { defaults.removeObject(forKey: $0) }
+    for key in legacyRowLimitKeys {
+      defaults.removeObject(forKey: key)
+    }
 
     if defaults.object(forKey: resultRowCapKey) != nil {
       return clampResultRowCap(defaults.integer(forKey: resultRowCapKey))

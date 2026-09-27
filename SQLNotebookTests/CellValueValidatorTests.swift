@@ -261,11 +261,15 @@ struct CellValueValidatorTests {
       ("", "Date cannot be empty"),
       ("2024-02-20", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Missing time
       ("14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Only time
-      ("2024/02/20 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Wrong separator
-      ("20-02-2024 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Wrong order
+      // Wrong separator
+      ("2024/02/20 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      // Wrong order
+      ("20-02-2024 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
       ("Feb 20, 2024", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
-      ("2024-13-01 00:00:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Invalid month
-      ("2024-02-30 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Invalid day
+      // Invalid month
+      ("2024-13-01 00:00:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      // Invalid day
+      ("2024-02-30 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
       ("abc", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
     ]
 

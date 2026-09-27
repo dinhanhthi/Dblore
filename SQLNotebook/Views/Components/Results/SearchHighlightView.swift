@@ -11,7 +11,8 @@ import SwiftUI
 
 enum SearchHighlighter {
   /// Current match color (orange-yellow, same for both modes)
-  static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0)  // #FFD500 (orange-yellow)
+  // #FFD500 (orange-yellow)
+  static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0)
 
   /// Check if current appearance is dark mode
   static var isDarkMode: Bool {
