@@ -616,8 +616,8 @@ struct WorkspaceTitleBarTabsView: View {
           action: goToNextTab
         )
       }
-      .padding(.leading, Spacing.sm)
-      .padding(.trailing, Spacing.xs)
+      .padding(.leading, Spacing.xxs)
+      .padding(.trailing, Spacing.sm)
 
       // Scrollable tabs area with Chrome-like drag reordering
       ScrollViewReader { proxy in
@@ -636,44 +636,60 @@ struct WorkspaceTitleBarTabsView: View {
         }
       }
 
-      // New tab button
-      Menu {
+      HStack(spacing: Spacing.xxs) {
+        // Settings button
         Button {
-          workspaceManager.newNotebook()
+          NotificationCenter.default.post(name: .openSettings, object: nil)
         } label: {
-          Label("New Notebook", systemImage: "doc.text")
+          Image(systemName: "gearshape")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .blockDoubleClickZoom()
+        .help("Settings (⌘,)")
 
-        Button {
-          workspaceManager.newSQLFile()
+        // New tab button
+        Menu {
+          Button {
+            workspaceManager.newNotebook()
+          } label: {
+            Label("New Notebook", systemImage: "doc.text")
+          }
+
+          Button {
+            workspaceManager.newSQLFile()
+          } label: {
+            Label("New SQL File", systemImage: "doc")
+          }
+
+          Divider()
+
+          Button {
+            openNotebookWithPanel()
+          } label: {
+            Label("Open Notebook...", systemImage: "folder")
+          }
+
+          Button {
+            openSQLFileWithPanel()
+          } label: {
+            Label("Open SQL File...", systemImage: "folder")
+          }
         } label: {
-          Label("New SQL File", systemImage: "doc")
+          Image(systemName: "plus")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
         }
-
-        Divider()
-
-        Button {
-          openNotebookWithPanel()
-        } label: {
-          Label("Open Notebook...", systemImage: "folder")
-        }
-
-        Button {
-          openSQLFileWithPanel()
-        } label: {
-          Label("Open SQL File...", systemImage: "folder")
-        }
-      } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .blockDoubleClickZoom()
       }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .blockDoubleClickZoom()
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)

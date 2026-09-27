@@ -34,24 +34,6 @@ extension View {
   func tintedChromeGlass(_ color: Color) -> some View {
     glassEffect(.regular.tint(color.opacity(0.25)), in: Rectangle())
   }
-
-  /// Accent-tinted capsule glass for the selected tab, applied to the tab label itself so the
-  /// label is drawn as the glass content (a glass on a background sibling inside a
-  /// `GlassEffectContainer` is composited over the label and hides it). Inactive tabs get
-  /// `.identity` (no glass) so the modifier chain stays stable. The active tab uses
-  /// `activeID`, inactive tabs their own unique `inactiveID`, so the glass morphs from the
-  /// old selected tab to the new one.
-  func selectedTabGlass(
-    isActive: Bool, activeID: String, inactiveID: String, in namespace: Namespace.ID
-  ) -> some View {
-    glassEffect(isActive ? .regular.tint(Color.accent.opacity(0.2)) : .identity, in: Capsule())
-      .glassEffectID(isActive ? activeID : inactiveID, in: namespace)
-      .overlay {
-        if isActive {
-          Capsule().strokeBorder(Color.accent.opacity(0.35), lineWidth: 1)
-        }
-      }
-  }
 }
 
 // MARK: - Glass Toolbar Group
