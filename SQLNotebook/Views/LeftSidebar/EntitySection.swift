@@ -63,17 +63,19 @@ struct EntitySection<Content: View>: View {
       }
       .buttonStyle(.plain)
 
-      // Section content
+      // Section content (lazy: only visible rows are built when the sidebar is shown)
       if sectionExpanded {
-        content()
-          .padding(.leading, Spacing.lg)  // Indent section content
-          .overlay(alignment: .leading) {
-            Rectangle()
-              .fill(Color.foregroundSubtle.opacity(0.2))
-              .frame(width: 1)
-              .padding(.leading, Spacing.md + 6)  // Align with chevron center
-          }
-          .transition(.opacity.combined(with: .move(edge: .top)))
+        LazyVStack(alignment: .leading, spacing: 0) {
+          content()
+        }
+        .padding(.leading, Spacing.lg)  // Indent section content
+        .overlay(alignment: .leading) {
+          Rectangle()
+            .fill(Color.foregroundSubtle.opacity(0.2))
+            .frame(width: 1)
+            .padding(.leading, Spacing.md + 6)  // Align with chevron center
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
     .clipped()
