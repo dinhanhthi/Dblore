@@ -141,9 +141,7 @@ struct QueryCopyBar: View {
     Button(action: {
       // Show query in right sidebar (without comments)
       let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
-      viewModel?.rightSidebarContent = .executedQuery(
-        query: queryWithoutComments, cellId: cellId)
-      viewModel?.isRightSidebarVisible = true
+      viewModel?.showSidebar(content: .executedQuery(query: queryWithoutComments, cellId: cellId))
     }) {
       HStack(spacing: 4) {
         Image(systemName: "eye")

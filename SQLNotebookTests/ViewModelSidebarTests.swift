@@ -56,6 +56,17 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isRightSidebarVisible == initialState)
   }
 
+  @Test("Showing sidebar content opens the right sidebar with that content")
+  func showSidebarOpensWithContent() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let content = SidebarContent.executedQuery(query: "SELECT 1", cellId: nil)
+
+    viewModel.showSidebar(content: content)
+
+    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.rightSidebarContent == content)
+  }
+
   // Note: Left sidebar is now owned by WorkspaceManager, not NotebookViewModel
   // The test for toggleLeftSidebar() has been removed as the functionality moved to WorkspaceManager
 

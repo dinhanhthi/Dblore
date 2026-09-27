@@ -57,6 +57,9 @@ struct DocumentLayoutView<Content: View>: View {
         // Right sidebar (conditionally shown) - now at same level as header
         RightSidebarContainer(viewModel: viewModel)
       }
+      // Slide the sidebar (and resize the content beside it) whichever entry point toggled it,
+      // including callers that change the visibility without `withAnimation`
+      .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
 
       // Toast notification overlay (app-level via WorkspaceWindowManager)
       ToastOverlay()
