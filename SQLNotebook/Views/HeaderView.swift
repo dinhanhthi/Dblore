@@ -130,12 +130,13 @@ struct HeaderView: View {
             Label("Run", systemImage: "play.fill")
           }
           .buttonStyle(.glassProminent)
-          .buttonBorderShape(.capsule)
           .tint(Color.accent)
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
           .help(editorRunButtonHelp)
         }
       }
+      // Capsule shape for every header button (notebook and editor modes)
+      .buttonBorderShape(.capsule)
 
       Spacer()
 
