@@ -75,20 +75,8 @@ extension EditorModeView {
     }
   }
 
-  /// Get the actual query that was executed (with LIMIT replaced if needed)
+  /// The query that was executed (sent to the database as written)
   func getActualExecutedQuery(result: CellResult) -> String {
-    guard let sourceQuery = result.sourceQuery else {
-      return ""
-    }
-
-    // If user's LIMIT was capped (even if no limiting occurred in result)
-    // Show the actual query that was sent to database
-    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
-      // Replace LIMIT in query with actual limit used
-      return CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
-    }
-
-    // Return original query
-    return sourceQuery
+    result.sourceQuery ?? ""
   }
 }

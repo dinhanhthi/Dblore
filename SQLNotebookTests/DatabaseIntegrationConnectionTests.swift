@@ -15,11 +15,11 @@ struct DatabaseIntegrationConnectionTests {
 
   /// Test database configuration
   static let testConfig = ConnectionConfig(
-    host: ProcessInfo.processInfo.environment["TEST_DB_HOST"] ?? "localhost",
-    port: Int(ProcessInfo.processInfo.environment["TEST_DB_PORT"] ?? "5432") ?? 5432,
-    database: ProcessInfo.processInfo.environment["TEST_DB_NAME"] ?? "postgres",
-    username: ProcessInfo.processInfo.environment["TEST_DB_USER"] ?? "postgres",
-    password: ProcessInfo.processInfo.environment["TEST_DB_PASSWORD"] ?? "",
+    host: TestDatabase.host,
+    port: TestDatabase.port,
+    database: TestDatabase.database,
+    username: TestDatabase.username,
+    password: TestDatabase.password,
     sslMode: .disable,
     timeoutSeconds: 30
   )

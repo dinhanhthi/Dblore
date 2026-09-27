@@ -15,8 +15,6 @@ struct ResultTableView: View {
   let cellId: UUID?  // ID of the cell that produced this result
   var showBorderRadius: Bool = true  // Whether to show border radius (disabled in editor mode)
   var enableVerticalScrolling: Bool = false  // Whether to enable vertical scrolling (enabled in editor mode)
-  var paginationInfo: PaginationInfo? = nil  // Pagination info for editor mode
-  var onPageChange: ((Int) -> Void)? = nil  // Callback when page changes
 
   @State private var columnWidths: [String: CGFloat] = [:]
   @State private var hoveredRow: Int?
@@ -44,8 +42,8 @@ struct ResultTableView: View {
   private var headerHeight: CGFloat {
     appSettings.hideColumnTypes ? headerHeightWithoutType : headerHeightWithType
   }
-  // Note: Row limiting is handled at database level via AppSettings.maxRowLimit/editorMaxRowLimit
-  // All rows from result are rendered since DB already limits to max 100/200 rows
+  // Note: Row limiting is handled by the capped reader (effective result row cap)
+  // All rows from result are rendered since the reader already stops at the cap
 
   // Computed properties for search state (read-only, not tracked for re-render)
   // Only searchVersion state triggers re-renders (10.2.3 optimization)
@@ -79,7 +77,7 @@ struct ResultTableView: View {
         enableVerticalScrolling: enableVerticalScrolling
       ) {
         VStack(alignment: .leading, spacing: 0) {
-          // Data rows - DB already limits via AppSettings.maxRowLimit/editorMaxRowLimit
+          // Data rows - the capped reader already limits to the effective result row cap
           // Use sortedRows for display (sorted based on selected column)
           ForEach(Array(sortedRows.enumerated()), id: \.offset) { rowIndex, row in
             dataRow(row: row, rowIndex: rowIndex)
@@ -88,18 +86,6 @@ struct ResultTableView: View {
         .frame(width: totalColumnsWidth, alignment: .leading)
         // Add bottom padding to prevent horizontal scrollbar from covering last row
         .padding(.bottom, 12)
-      }
-
-      // Pagination controls (if applicable)
-      // Only show pagination if there are multiple pages
-      if let paginationInfo = paginationInfo, let onPageChange = onPageChange,
-        paginationInfo.totalPages > 1
-      {
-        PaginationView(
-          info: paginationInfo,
-          onPageChange: onPageChange,
-          includeHorizontalPadding: cellId == nil  // Add padding in Editor mode only
-        )
       }
     }
     .frame(maxWidth: .infinity)
@@ -437,8 +423,6 @@ struct ResultTableView: View {
     } else {
       let rowData = CellResult.rowData(columns: result.columns, row: row)
 
-      // No row identifier: `rowIdentifiers` is indexed by the unsorted position (and unused by
-      // the primary-key-only edit)
       viewModel.showCellDetail(
         columnName: column.name,
         columnType: column.type,
@@ -446,7 +430,6 @@ struct ResultTableView: View {
         tableName: result.tableName,
         rowData: rowData,
         primaryKeyColumns: result.primaryKeyColumns,
-        rowIdentifier: nil,
         editTarget: result.editTarget,
         cellId: cellId
       )

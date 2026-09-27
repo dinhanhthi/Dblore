@@ -25,18 +25,16 @@ extension EditorModeView {
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
     VStack(spacing: 0) {
-      // Warning banner (if query exceeded user limit)
-      if result.userLimitExceeded, let requestedLimit = result.userRequestedLimit {
+      // Warning banner (row cap reached; session reset details when the cap closed it)
+      if result.error == nil, let notice = result.capNotice {
         HStack(spacing: Spacing.xs) {
           Image(systemName: "exclamationmark.triangle.fill")
             .font(.system(size: 11))
             .foregroundColor(.warning)
 
-          Text(
-            "Query returned more than \(requestedLimit) rows. Showing first \(requestedLimit) rows only. Adjust limit in Settings."
-          )
-          .font(.system(size: 11))
-          .foregroundColor(.foreground)
+          Text(notice)
+            .font(.system(size: 11))
+            .foregroundColor(.foreground)
         }
         .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)

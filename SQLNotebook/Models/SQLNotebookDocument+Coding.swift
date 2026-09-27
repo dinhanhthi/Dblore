@@ -39,7 +39,7 @@ enum DocumentCoder {
     let keyboardShortcuts = settingsDict["keyboardShortcuts"] as? [String: String] ?? [:]
     let settings = NotebookSettings(keyboardShortcuts: keyboardShortcuts)
 
-    // NOTE: maxResultHeight, includeResultsOnSave, and maxRowLimit are now in AppSettings (global)
+    // NOTE: maxResultHeight, includeResultsOnSave, and the row limits are now in AppSettings (global)
 
     // Decode cells
     var cells: [NotebookCell] = []
@@ -92,41 +92,7 @@ enum DocumentCoder {
           totalExecutionTime = cellDict["totalExecutionTime"] as? TimeInterval
         }
 
-        // Decode pagination info
-        var paginationInfo: PaginationInfo? = nil
-        if let paginationDict = cellDict["paginationInfo"] as? [String: Any] {
-          let currentPage = paginationDict["currentPage"] as? Int ?? 1
-          let totalRows = paginationDict["totalRows"] as? Int ?? 0
-          let rowsPerPage = paginationDict["rowsPerPage"] as? Int ?? 0
-          let baseQuery = paginationDict["baseQuery"] as? String ?? ""
-          paginationInfo = PaginationInfo(
-            currentPage: currentPage,
-            totalRows: totalRows,
-            rowsPerPage: rowsPerPage,
-            baseQuery: baseQuery
-          )
-        }
-
-        // Decode statement pagination info
-        var statementPaginationInfo: [UUID: PaginationInfo] = [:]
-        if let statementPaginationDict = cellDict["statementPaginationInfo"]
-          as? [String: [String: Any]]
-        {
-          for (statementIdString, paginationDict) in statementPaginationDict {
-            if let statementId = UUID(uuidString: statementIdString) {
-              let currentPage = paginationDict["currentPage"] as? Int ?? 1
-              let totalRows = paginationDict["totalRows"] as? Int ?? 0
-              let rowsPerPage = paginationDict["rowsPerPage"] as? Int ?? 0
-              let baseQuery = paginationDict["baseQuery"] as? String ?? ""
-              statementPaginationInfo[statementId] = PaginationInfo(
-                currentPage: currentPage,
-                totalRows: totalRows,
-                rowsPerPage: rowsPerPage,
-                baseQuery: baseQuery
-              )
-            }
-          }
-        }
+        // Legacy paginationInfo / statementPaginationInfo are not read: pagination is gone.
 
         let cell = NotebookCell(
           id: cellId,
@@ -138,9 +104,7 @@ enum DocumentCoder {
           isResultVisible: isResultVisible,
           statementResults: statementResults,
           selectedStatementIndex: selectedStatementIndex,
-          totalExecutionTime: totalExecutionTime,
-          paginationInfo: paginationInfo,
-          statementPaginationInfo: statementPaginationInfo
+          totalExecutionTime: totalExecutionTime
         )
         cells.append(cell)
       }
@@ -177,7 +141,7 @@ enum DocumentCoder {
     // Connection information should be managed separately (e.g., via Keychain)
 
     // Encode settings
-    // NOTE: maxResultHeight, includeResultsOnSave, and maxRowLimit are now in AppSettings (global)
+    // NOTE: maxResultHeight, includeResultsOnSave, and the row limits are now in AppSettings (global)
     json["settings"] = [
       "keyboardShortcuts": notebook.settings.keyboardShortcuts
     ]
@@ -219,30 +183,6 @@ enum DocumentCoder {
         if let totalTime = cell.totalExecutionTime {
           cellDict["totalExecutionTime"] = totalTime
         }
-      }
-
-      // Save pagination info
-      if let paginationInfo = cell.paginationInfo {
-        cellDict["paginationInfo"] = [
-          "currentPage": paginationInfo.currentPage,
-          "totalRows": paginationInfo.totalRows,
-          "rowsPerPage": paginationInfo.rowsPerPage,
-          "baseQuery": paginationInfo.baseQuery,
-        ]
-      }
-
-      // Save statement pagination info
-      if !cell.statementPaginationInfo.isEmpty {
-        var statementPaginationDict: [String: [String: Any]] = [:]
-        for (statementId, paginationInfo) in cell.statementPaginationInfo {
-          statementPaginationDict[statementId.uuidString] = [
-            "currentPage": paginationInfo.currentPage,
-            "totalRows": paginationInfo.totalRows,
-            "rowsPerPage": paginationInfo.rowsPerPage,
-            "baseQuery": paginationInfo.baseQuery,
-          ]
-        }
-        cellDict["statementPaginationInfo"] = statementPaginationDict
       }
 
       cellsArray.append(cellDict)
@@ -292,23 +232,10 @@ enum DocumentCoder {
     let wasLimited = dict["wasLimited"] as? Bool ?? false
     let affectedRows = dict["affectedRows"] as? Int
 
-    // Decode new fields added for inline editing and metadata. Old files may carry tableName /
-    // primaryKeyColumns: display only, never an edit target (no `editTarget` is decoded).
     let sourceQuery = dict["sourceQuery"] as? String
-    let tableName = dict["tableName"] as? String
-    let primaryKeyColumns = dict["primaryKeyColumns"] as? [String] ?? []
-    let userLimitExceeded = dict["userLimitExceeded"] as? Bool ?? false
-    let userRequestedLimit = dict["userRequestedLimit"] as? Int
-
-    // Decode rowIdentifiers
-    var rowIdentifiers: [CellValue] = []
-    if let rowIdentifiersArray = dict["rowIdentifiers"] as? [[String: Any]] {
-      for cellDict in rowIdentifiersArray {
-        if let cellValue = decodeCellValue(from: cellDict, dateFormatter: dateFormatter) {
-          rowIdentifiers.append(cellValue)
-        }
-      }
-    }
+    // Legacy keys of old files are ignored: tableName / primaryKeyColumns (never an edit target,
+    // `editTarget` is session-only), ctid rowIdentifiers, userLimitExceeded / userRequestedLimit
+    // (LIMIT rewrite). `wasLimited` now means "truncated by the row cap".
 
     return CellResult(
       columns: columns,
@@ -319,11 +246,6 @@ enum DocumentCoder {
       error: error,
       wasLimited: wasLimited,
       sourceQuery: sourceQuery,
-      tableName: tableName,
-      primaryKeyColumns: primaryKeyColumns,
-      rowIdentifiers: rowIdentifiers,
-      userLimitExceeded: userLimitExceeded,
-      userRequestedLimit: userRequestedLimit,
       affectedRows: affectedRows
     )
   }
@@ -367,22 +289,9 @@ enum DocumentCoder {
     }
 
     // tableName / primaryKeyColumns are not written: the inline-edit target is session-only
-    // (`CellResult.editTarget`), re-resolved by the server on each live run.
-
-    if !result.rowIdentifiers.isEmpty {
-      let rowIdentifiersArray = result.rowIdentifiers.map { cellValue in
-        encodeCellValue(cellValue, dateFormatter: dateFormatter)
-      }
-      dict["rowIdentifiers"] = rowIdentifiersArray
-    }
-
-    if result.userLimitExceeded {
-      dict["userLimitExceeded"] = result.userLimitExceeded
-    }
-
-    if let userRequestedLimit = result.userRequestedLimit {
-      dict["userRequestedLimit"] = userRequestedLimit
-    }
+    // (`CellResult.editTarget`), re-resolved by the server on each live run. The pre-Phase-4
+    // reader treats every legacy key (tableName, primaryKeyColumns, rowIdentifiers,
+    // userLimitExceeded, userRequestedLimit, paginationInfo) as optional, so none is written.
 
     return dict
   }

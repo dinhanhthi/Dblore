@@ -123,9 +123,8 @@ extension NotebookViewModel {
           ))
 
         // Search in table data (limit rows for performance)
-        // Only search first maxRowLimit rows to avoid scanning huge result sets
-        let limitedRows = Array(
-          result.rows.prefix(await MainActor.run { AppSettings.shared.maxRowLimit }))
+        // Only search first effectiveRowCap rows to avoid scanning huge result sets
+        let limitedRows = Array(result.rows.prefix(effectiveRowCap))
         let limitedResult = CellResult(
           columns: result.columns,
           rows: limitedRows,

@@ -41,6 +41,11 @@ struct WorkspaceContainerView: View {
               PendingTransactionBanner(workspaceManager: workspaceManager)
             }
 
+            // The server closed the connection (Reconnect)
+            if workspaceManager.connectionLostMessage != nil {
+              ConnectionLostBanner(workspaceManager: workspaceManager)
+            }
+
             // Content area
             if workspaceManager.isSchemaVisualizerActive {
               // Schema visualizer at workspace level (overlays everything)

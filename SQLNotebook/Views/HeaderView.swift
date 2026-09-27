@@ -113,6 +113,13 @@ struct HeaderView: View {
           }
           .buttonStyle(GhostButtonStyle())
           .help("Show/Hide Results")
+        } else if viewModel.viewMode == .editor, viewModel.isEditorQueryRunning {
+          // Stops the query on the server (asks first if pending changes would be discarded)
+          Button(action: { viewModel.cancelEditorQuery() }) {
+            Label("Cancel", systemImage: "stop.fill")
+          }
+          .buttonStyle(GhostButtonStyle())
+          .help("Cancel the running query (the connection is reset)")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
           Button(action: {

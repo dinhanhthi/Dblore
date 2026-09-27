@@ -155,18 +155,9 @@ struct StatementSelectorView: View {
 
   // MARK: - Helper Methods
 
-  /// Get the actual query that was executed (with LIMIT replaced if it was capped)
+  /// The query that was executed (sent to the database as written)
   private func getActualExecutedQuery(result: CellResult) -> String {
-    guard let sourceQuery = result.sourceQuery else {
-      return ""
-    }
-
-    // If user's LIMIT was capped to maxRows, show the actual query sent to database
-    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
-      return CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
-    }
-
-    return sourceQuery
+    result.sourceQuery ?? ""
   }
 }
 

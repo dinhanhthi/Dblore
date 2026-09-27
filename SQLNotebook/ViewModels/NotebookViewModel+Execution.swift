@@ -38,26 +38,6 @@ extension NotebookViewModel {
     executionQueue.enqueue(cellId: id, query: query)
   }
 
-  /// Cancel execution for a specific cell
-  func cancelCell(id: UUID) {
-    executionQueue.cancel(cellId: id)
-
-    // Update UI state
-    if let index = notebook.cells.firstIndex(where: { $0.id == id }) {
-      notebook.cells[index].isRunning = false
-    }
-  }
-
-  /// Cancel all pending and executing cells
-  func cancelAllCells() {
-    executionQueue.cancelAll()
-
-    // Update UI state for all cells
-    for index in notebook.cells.indices {
-      notebook.cells[index].isRunning = false
-    }
-  }
-
   /// Internal method to execute a task (called by ExecutionQueue)
   func executeTask(_ task: ExecutionTask) async -> CellResult? {
     guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
@@ -73,6 +53,12 @@ extension NotebookViewModel {
     }
     // Another tab's pending transaction: nothing is sent, the cell keeps its result
     guard !refuseWhileTransactionPendingElsewhere() else { return nil }
+    // A Run All cell only runs on the connection its batch started on
+    let expectedEpoch: UInt64?
+    switch await admitBatchTask(task, on: connectionManager) {
+    case .run(let epoch): expectedEpoch = epoch
+    case .refused(let result): return result
+    }
 
     notebook.cells[index].isRunning = true
 
@@ -92,16 +78,18 @@ extension NotebookViewModel {
     let policy = protectionPolicy
     let caller = id
 
+    // The statements run on their own task, not cancelled with the queue: only Cancel (close +
+    // reconnect, `cancelRunningStatement`) stops the server work, and the server
+    // `statement_timeout` (applied on connect) is the time limit.
+    let maxRows = effectiveRowCap
     do {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(task.query) {
-        // Execute all statements with timeout (10.1.5 optimization)
-        let detailed = try await Task.withTimeout(seconds: 60) {
-          try await connectionManager
-            .executeDetailed(
-              userSQL: task.query, policy: policy, maxRows: AppSettings.shared.maxRowLimit,
-              caller: caller)
-        }
+        let detailed = try await Task {
+          try await connectionManager.executeDetailed(
+            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
+            expectedEpoch: expectedEpoch)
+        }.value
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
 
@@ -122,13 +110,8 @@ extension NotebookViewModel {
               sourceQuery: tuple.queryText,
               tableName: nil,
               primaryKeyColumns: [],
-              rowIdentifiers: tuple.result.rowIdentifiers,
-              userLimitExceeded: tuple.result.userLimitExceeded,
-              userRequestedLimit: tuple.result.userRequestedLimit,
-              affectedRows: tuple.result.affectedRows,
-              limitWasCapped: tuple.result.limitWasCapped,
-              actualLimitUsed: tuple.result.actualLimitUsed
-            ),
+              affectedRows: tuple.result.affectedRows
+            ).withCapInfo(from: tuple.result),
             statementIndex: index
           )
         }
@@ -142,50 +125,15 @@ extension NotebookViewModel {
         result = convertedStatements.last?.result
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
-
-        // Build pagination info for each statement with LIMIT
-        for statementResult in convertedStatements {
-          if let paginationInfo = await buildPaginationInfo(
-            for: statementResult.queryText, result: statementResult.result)
-          {
-            if cellStatementPaginationInfo[task.cellId] == nil {
-              cellStatementPaginationInfo[task.cellId] = [:]
-            }
-            cellStatementPaginationInfo[task.cellId]?[statementResult.id] = paginationInfo
-          }
-        }
-        // Sync statement pagination info to cell for persistence
-        notebook.cells[index].statementPaginationInfo =
-          cellStatementPaginationInfo[task.cellId] ?? [:]
-        // Clear single statement pagination info for multi-statement
-        notebook.cells[index].paginationInfo = nil
-
-        // Check for any limit exceeded warnings
-        for statementResult in convertedStatements {
-          if statementResult.result.userLimitExceeded,
-            let requestedLimit = statementResult.result.userRequestedLimit
-          {
-            let maxLimit = AppSettings.shared.maxRowLimit
-            showToast(
-              "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
-              type: .warning
-            )
-            break  // Only show once
-          }
-        }
       } else {
         // Single statement - use original logic
         // Connection identity before the query: the edit target must resolve on the same one
         let epoch = await connectionManager.connectionEpoch
-        // Execute query with timeout (10.1.5 optimization)
-        let queryResult = try await Task.withTimeout(seconds: 60) {
+        let queryResult = try await Task {
           try await connectionManager.execute(
-            userSQL: task.query,
-            policy: policy,
-            maxRows: AppSettings.shared.maxRowLimit,
-            caller: caller
-          )
-        }
+            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
+            expectedEpoch: expectedEpoch)
+        }.value
 
         executionCounter += 1
 
@@ -205,14 +153,9 @@ extension NotebookViewModel {
           sourceQuery: task.query,
           tableName: target?.qualifiedName,
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
-          rowIdentifiers: queryResult.rowIdentifiers,
-          userLimitExceeded: queryResult.userLimitExceeded,
-          userRequestedLimit: queryResult.userRequestedLimit,
           affectedRows: queryResult.affectedRows,
-          limitWasCapped: queryResult.limitWasCapped,
-          actualLimitUsed: queryResult.actualLimitUsed,
           editTarget: target
-        )
+        ).withCapInfo(from: queryResult)
 
         carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)
         notebook.cells[index].result = result
@@ -221,48 +164,7 @@ extension NotebookViewModel {
         notebook.cells[index].statementResults = []
         notebook.cells[index].selectedStatementIndex = 0
         notebook.cells[index].totalExecutionTime = nil
-
-        // Build pagination info if applicable
-        if let paginationInfo = await buildPaginationInfo(for: task.query, result: result!) {
-          cellPaginationInfo[task.cellId] = paginationInfo
-        } else {
-          // Clear pagination info if not applicable
-          cellPaginationInfo.removeValue(forKey: task.cellId)
-        }
-        // Clear statement pagination info for single statement
-        cellStatementPaginationInfo.removeValue(forKey: task.cellId)
-        // Sync pagination info to cell for persistence
-        notebook.cells[index].paginationInfo = cellPaginationInfo[task.cellId]
-        // Clear statement pagination info for single statement
-        notebook.cells[index].statementPaginationInfo = [:]
-
-        // Show toast if user's LIMIT was exceeded and capped
-        if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
-          let maxLimit = AppSettings.shared.maxRowLimit
-          showToast(
-            "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
-            type: .warning
-          )
-        }
       }
-    } catch is TaskTimeoutError {
-      // Handle query timeout (10.1.5 optimization)
-      executionCounter += 1
-      result = .errorResult(
-        "Query execution timed out after 60 seconds",
-        sourceQuery: task.query
-      )
-      notebook.cells[index].result = result
-      notebook.cells[index].executionCount = executionCounter
-      // Clear multi-statement data on error
-      notebook.cells[index].statementResults = []
-      notebook.cells[index].selectedStatementIndex = 0
-      notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
-      await AppLogger.shared.error(
-        "Query timed out for cell \(task.cellId)", category: "Execution")
     } catch let error as DatabaseError {
       // Handle database-specific errors
       executionCounter += 1
@@ -278,9 +180,6 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     } catch {
       // Handle general errors
       executionCounter += 1
@@ -291,11 +190,10 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     }
 
+    // A capped read reset the session: the queued cells must not run on the new one
+    stopQueueIfSessionReset(cellId: task.cellId)
     notebook.cells[index].isRunning = false
     await onStatementsExecuted?()
 
@@ -455,7 +353,7 @@ extension NotebookViewModel {
   /// This ensures the sidebar shows the latest executed query after re-running a cell or switching statements
   func updateExecutedQuerySidebarIfNeeded(cellId: UUID?, result: CellResult?) {
     // Check if sidebar is showing executed query
-    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent else {
+    guard case .executedQuery(_, let sidebarCellId) = rightSidebarContent else {
       return
     }
 
@@ -464,25 +362,11 @@ extension NotebookViewModel {
       return
     }
 
-    // Get the actual executed query (with LIMIT adjusted if needed)
+    // The executed query (sent as written)
     guard let sourceQuery = result?.sourceQuery else { return }
 
-    let actualQuery: String
-    if let result = result, result.limitWasCapped, let actualLimit = result.actualLimitUsed {
-      actualQuery = CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
-    } else {
-      actualQuery = sourceQuery
-    }
-
     // Remove comments for display
-    let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
-
-    // Update sidebar content
     rightSidebarContent = .executedQuery(
-      query: displayQuery,
-      cellId: cellId,
-      limitWasCapped: result?.limitWasCapped ?? false,
-      actualLimit: result?.actualLimitUsed
-    )
+      query: SQLSyntaxHighlighter.removeComments(sourceQuery), cellId: cellId)
   }
 }

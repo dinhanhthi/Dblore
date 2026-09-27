@@ -32,6 +32,8 @@ class WorkspaceManager: Identifiable {
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
+  /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
+  var connectionLostMessage: String?
 
   // MARK: - Protected Transaction (see WorkspaceManager+Transaction.swift)
 
@@ -125,6 +127,7 @@ class WorkspaceManager: Identifiable {
 
     // Set connection manager for autocomplete
     autocompleteProvider.setConnectionManager(connectionManager)
+    startSessionLossListener()
 
     // Only restore tabs for new workspaces (not loading from disk)
     // When loading from disk, load() will handle tab restoration with proper viewModels
@@ -236,6 +239,7 @@ class WorkspaceManager: Identifiable {
         "\(config.host):\(config.port):\(config.database):\(config.username)"
       editingConnectionConfig = config
       connectionState = .connected
+      connectionLostMessage = nil
       await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
 

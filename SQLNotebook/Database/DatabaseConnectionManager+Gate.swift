@@ -20,28 +20,31 @@ extension DatabaseConnectionManager {
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
   /// violates `policy`. Under Protected mode, writes run in the app transaction; while it is
   /// pending, a `caller` (tab token) other than the one that opened it is refused
-  /// (`DatabaseError.transactionPendingInAnotherTab`).
+  /// (`DatabaseError.transactionPendingInAnotherTab`). With `expectedEpoch`, nothing is sent
+  /// unless the connection is still that one (`DatabaseError.sessionChanged`).
   func execute(
     userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
-    caller: UUID? = nil
+    caller: UUID? = nil, expectedEpoch: UInt64? = nil
   ) async throws -> QueryResult {
     let (statements, protectedMode) = try authorize(userSQL, policy: policy)
     let run = try await runUserStatements(
-      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller)
+      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
+      expectedEpoch: expectedEpoch)
     return Self.combined(run.results.map(\.result), totalTime: run.totalTime)
   }
 
   /// Execute user SQL and return one result per statement.
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
   /// violates `policy`. Under Protected mode, writes run in the app transaction (same `caller`
-  /// rule as `execute`).
+  /// rule as `execute`, same `expectedEpoch` check).
   func executeDetailed(
     userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
-    caller: UUID? = nil
+    caller: UUID? = nil, expectedEpoch: UInt64? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     let (statements, protectedMode) = try authorize(userSQL, policy: policy)
     return try await runUserStatements(
-      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller)
+      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
+      expectedEpoch: expectedEpoch)
   }
 
   /// Send an inline grid edit (app-built UPDATE, values as bind parameters); it must update
@@ -83,11 +86,15 @@ extension DatabaseConnectionManager {
       return results.last ?? QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0)
     }
     let total = results.compactMap(\.affectedRows).reduce(0, +)
-    return QueryResult(
+    var combined = QueryResult(
       columns: last.columns, rows: last.rows, rowCount: last.rowCount, executionTime: totalTime,
-      wasLimited: last.wasLimited, rowIdentifiers: last.rowIdentifiers,
-      userLimitExceeded: last.userLimitExceeded, userRequestedLimit: last.userRequestedLimit,
-      affectedRows: total > 0 ? total : last.affectedRows)
+      wasLimited: last.wasLimited, affectedRows: total > 0 ? total : last.affectedRows)
+    // The rows shown are the last statement's; a session reset always ends the script
+    combined.truncated = last.truncated
+    combined.sessionReset = last.sessionReset
+    combined.userTxRolledBack = last.userTxRolledBack
+    combined.skippedStatements = last.skippedStatements
+    return combined
   }
 
   // MARK: - Gate

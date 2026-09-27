@@ -27,10 +27,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var tables: [DatabaseTable] = []
 
@@ -86,10 +86,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var columns: [DatabaseColumn] = []
 
@@ -194,10 +194,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.unique")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.unique"))
+      }
 
       var uniqueColumns: Set<String> = []
       for try await row in stream {
@@ -225,10 +225,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       for try await row in stream {
         let randomAccess = row.makeRandomAccess()
@@ -268,7 +268,9 @@ extension DatabaseConnectionManager {
         """, binds: binds)
 
     do {
-      let stream = try await connection.query(pkQuery, logger: Logger(label: "sqlnotebook.pk"))
+      let stream = try await send(on: connection) {
+        try await $0.query(pkQuery, logger: Logger(label: "sqlnotebook.pk"))
+      }
 
       var pkColumns: [String] = []
       for try await row in stream {
@@ -303,10 +305,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var views: [DatabaseView] = []
 
@@ -352,10 +354,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var functions: [DatabaseFunction] = []
 
@@ -411,10 +413,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var procedures: [DatabaseProcedure] = []
 
@@ -468,10 +470,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var users: [DatabaseUser] = []
 
@@ -533,10 +535,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var roles: [DatabaseRole] = []
 

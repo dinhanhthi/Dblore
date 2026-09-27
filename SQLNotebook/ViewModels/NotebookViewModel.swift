@@ -23,11 +23,9 @@ enum SidebarContent: Equatable {
     tableName: String?,
     rowData: [String: CellValue]?,  // All column values for this row
     primaryKeyColumns: [String],  // Primary key column names
-    rowIdentifier: CellValue?,  // Row identifier (ctid for PostgreSQL, rowid for SQLite)
     cellId: UUID?  // ID of the cell that produced this result (for re-running after edit)
   )
-  case executedQuery(
-    query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
+  case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
 }
 
 /// Main view model for the notebook editor
@@ -79,6 +77,11 @@ class NotebookViewModel {
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
+  /// Global result row cap source (tests pin a value without touching the shared settings)
+  @ObservationIgnored var globalRowCap: @MainActor () -> Int = { AppSettings.shared.resultRowCap }
+  /// Current Run All batch and the connection epoch its first cell started on (see
+  /// `NotebookViewModel+QueueReset.swift`)
+  @ObservationIgnored var runAllBatch: (id: UUID, epoch: UInt64)?
   /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false
@@ -125,19 +128,12 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+  /// An editor run is in flight (Cancel button, `WorkspaceManager.isTransactionOriginRunning`)
+  var isEditorQueryRunning = false
+  /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.
+  /// Tests inject the answer.
+  @ObservationIgnored var cancelQueryPrompt: (@MainActor (QueryCancelWarning) async -> Bool)?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
-
-  // MARK: - Pagination State (Editor Mode)
-  var editorPaginationInfo: PaginationInfo?  // Pagination info for editor result
-  var editorStatementPaginationInfo: [UUID: PaginationInfo] = [:]  // Pagination info per statement
-
-  // MARK: - Pagination State (Notebook Mode)
-  /// Pagination info for cells with single statement results
-  /// Key: cellId, Value: PaginationInfo
-  var cellPaginationInfo: [UUID: PaginationInfo] = [:]
-  /// Pagination info for multi-statement cell results
-  /// Key: cellId, Value: [statementId: PaginationInfo]
-  var cellStatementPaginationInfo: [UUID: [UUID: PaginationInfo]] = [:]
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
@@ -146,16 +142,6 @@ class NotebookViewModel {
     // Initialize execution queue with execution handler
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
-    }
-
-    // Restore pagination state from cells
-    for cell in notebook.cells {
-      if let paginationInfo = cell.paginationInfo {
-        cellPaginationInfo[cell.id] = paginationInfo
-      }
-      if !cell.statementPaginationInfo.isEmpty {
-        cellStatementPaginationInfo[cell.id] = cell.statementPaginationInfo
-      }
     }
 
     // Load sidebar visibility from settings after init
@@ -244,6 +230,13 @@ class NotebookViewModel {
   /// protection level can change at runtime. Passed to the database execution gate.
   var protectionPolicy: ProtectionPolicy {
     ProtectionPolicy(config: notebook.connectionConfig)
+  }
+
+  /// Rows read per statement (notebook cells, editor, Run All, inline-edit refresh): the
+  /// connection's row cap override, else the global result row cap.
+  var effectiveRowCap: Int {
+    SettingsResolver.effectiveRowCap(
+      override: notebook.connectionConfig?.rowCapOverride, global: globalRowCap())
   }
 
   /// The gate's error message if the connection's protection level blocks `query`, else nil.

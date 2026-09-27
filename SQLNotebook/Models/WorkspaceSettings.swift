@@ -16,12 +16,6 @@ struct WorkspaceSettings: Codable, Equatable, Sendable {
   /// Connection protection level override
   var connectionProtectionLevel: ConnectionProtectionLevel?
 
-  /// Maximum rows to fetch in notebook mode
-  var maxRowLimit: Int?
-
-  /// Maximum rows to fetch in editor mode
-  var editorMaxRowLimit: Int?
-
   // MARK: - Editor Settings
 
   /// Enable syntax highlighting
@@ -64,8 +58,6 @@ struct WorkspaceSettings: Codable, Equatable, Sendable {
   init(
     safeMode: SafeMode? = nil,
     connectionProtectionLevel: ConnectionProtectionLevel? = nil,
-    maxRowLimit: Int? = nil,
-    editorMaxRowLimit: Int? = nil,
     syntaxHighlightingEnabled: Bool? = nil,
     wordWrapEnabled: Bool? = nil,
     isAutoCompleteEnabled: Bool? = nil,
@@ -80,8 +72,6 @@ struct WorkspaceSettings: Codable, Equatable, Sendable {
   ) {
     self.safeMode = safeMode
     self.connectionProtectionLevel = connectionProtectionLevel
-    self.maxRowLimit = maxRowLimit
-    self.editorMaxRowLimit = editorMaxRowLimit
     self.syntaxHighlightingEnabled = syntaxHighlightingEnabled
     self.wordWrapEnabled = wordWrapEnabled
     self.isAutoCompleteEnabled = isAutoCompleteEnabled
@@ -99,8 +89,6 @@ struct WorkspaceSettings: Codable, Equatable, Sendable {
   var hasOverrides: Bool {
     safeMode != nil
       || connectionProtectionLevel != nil
-      || maxRowLimit != nil
-      || editorMaxRowLimit != nil
       || syntaxHighlightingEnabled != nil
       || wordWrapEnabled != nil
       || isAutoCompleteEnabled != nil

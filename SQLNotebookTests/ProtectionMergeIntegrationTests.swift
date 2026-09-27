@@ -10,13 +10,12 @@ import Testing
 @Suite("Protection Merge - Integration (Requires PostgreSQL)")
 struct ProtectionMergeIntegrationTests {
   private static func config(_ level: ConnectionProtectionLevel) -> ConnectionConfig {
-    let env = ProcessInfo.processInfo.environment
     return ConnectionConfig(
-      host: env["TEST_DB_HOST"] ?? "localhost",
-      port: Int(env["TEST_DB_PORT"] ?? "5432") ?? 5432,
-      database: env["TEST_DB_NAME"] ?? "postgres",
-      username: env["TEST_DB_USER"] ?? "postgres",
-      password: env["TEST_DB_PASSWORD"] ?? "",
+      host: TestDatabase.host,
+      port: TestDatabase.port,
+      database: TestDatabase.database,
+      username: TestDatabase.username,
+      password: TestDatabase.password,
       sslMode: .disable,
       timeoutSeconds: 30,
       protectionLevel: level

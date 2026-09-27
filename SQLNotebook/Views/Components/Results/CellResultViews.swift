@@ -51,7 +51,7 @@ struct ResultAreaView: View {
           // Empty result (no rows and no columns) - e.g., comment-only queries
           EmptyResultView()
         } else {
-          // Result table with pagination support
+          // Result table with metadata footer
           NotebookResultTableView(
             result: result,
             viewModel: viewModel,
@@ -317,12 +317,12 @@ struct ResultMetadataView: View {
 
           Text("Rows: \(result.rowCount)")
 
-          // Show warning if limited (either auto-limited or user LIMIT exceeded)
-          if result.wasLimited || result.userLimitExceeded {
+          // Show warning if the row cap truncated the result
+          if result.wasLimited {
             HStack(spacing: Spacing.xs) {
               Text("(")
                 .foregroundColor(.warning)
-              Text("limited to \(AppSettings.shared.maxRowLimit) rows")
+              Text("showing first \(result.rowCount) rows")
                 .foregroundColor(.warning)
               Text(")")
                 .foregroundColor(.warning)
@@ -352,6 +352,10 @@ struct ResultMetadataView: View {
       .frame(height: 30)
       .padding(.top, Spacing.sm)
       .padding(.bottom, 0)  // Add bottom padding to prevent overlap with floating action panel
+      if result.sessionReset, let notice = result.capNotice {  // the row cap reset the session
+        Label(notice, systemImage: "exclamationmark.triangle.fill")
+          .font(.labelText).foregroundColor(.warning).padding(.bottom, Spacing.xs)
+      }
     }
   }
 }
@@ -365,23 +369,9 @@ struct ResultQueryFooterView: View {
   var viewModel: NotebookViewModel?
   var cellId: UUID?
 
-  /// Get the actual query that was executed (with LIMIT replaced if it was capped)
-  private var actualExecutedQuery: String? {
-    guard let sourceQuery = result.sourceQuery else {
-      return nil
-    }
-
-    // If user's LIMIT was capped to maxRows, show the actual query sent to database
-    if result.limitWasCapped, let actualLimit = result.actualLimitUsed {
-      return CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
-    }
-
-    return sourceQuery
-  }
-
   var body: some View {
-    // Don't show if setting is enabled to hide this section
-    if !AppSettings.shared.hideRunWithQuerySection, let query = actualExecutedQuery {
+    // Don't show if setting is enabled to hide this section (the query is sent as written)
+    if !AppSettings.shared.hideRunWithQuerySection, let query = result.sourceQuery {
       VStack(alignment: .leading, spacing: 0) {
         // Horizontal divider line (top)
         Rectangle()
@@ -432,25 +422,6 @@ enum CellResultViews {
       let milliseconds = seconds * 1000
       return String(format: "%.0fms", milliseconds)
     }
-  }
-
-  /// Replace LIMIT value in query with a new limit value
-  /// Used to show the actual executed query in UI when LIMIT was capped
-  static func replaceLimitInQuery(_ query: String, newLimit: Int) -> String {
-    let pattern = "\\bLIMIT\\s+\\d+"
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-      return query
-    }
-
-    let nsRange = NSRange(query.startIndex..., in: query)
-    let modifiedQuery = regex.stringByReplacingMatches(
-      in: query,
-      options: [],
-      range: nsRange,
-      withTemplate: "LIMIT \(newLimit)"
-    )
-
-    return modifiedQuery
   }
 }
 
@@ -528,7 +499,7 @@ enum CellResultViews {
 
 // MARK: - Notebook Result Table View
 
-/// Wrapper for ResultTableView that provides pagination support for notebook mode
+/// ResultTableView with the result metadata footer for notebook mode
 struct NotebookResultTableView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
@@ -539,11 +510,6 @@ struct NotebookResultTableView: View {
     viewModel.notebook.cells.first(where: { $0.id == cellId })
   }
 
-  /// Get pagination info for this cell
-  private var paginationInfo: PaginationInfo? {
-    viewModel.getPaginationInfo(for: cellId)
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Result table
@@ -552,9 +518,7 @@ struct NotebookResultTableView: View {
         viewModel: viewModel,
         cellId: cellId,
         showBorderRadius: false,
-        enableVerticalScrolling: false,
-        paginationInfo: paginationInfo,
-        onPageChange: handlePageChange
+        enableVerticalScrolling: false
       )
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
@@ -570,26 +534,6 @@ struct NotebookResultTableView: View {
       } else {
         // Single statement: no dropdown
         ResultMetadataView(result: result)
-      }
-    }
-  }
-
-  /// Handle page change for single statement or selected statement in multi-statement
-  private func handlePageChange(_ page: Int) {
-    Task { @MainActor in
-      guard let cell = cell else { return }
-
-      if !cell.statementResults.isEmpty {
-        // Multi-statement mode - navigate for selected statement
-        let selectedStatement = cell.statementResults[cell.selectedStatementIndex]
-        await viewModel.navigateToPageForCellStatement(
-          cellId: cellId,
-          statementId: selectedStatement.id,
-          page: page
-        )
-      } else {
-        // Single statement mode
-        await viewModel.navigateToPageForCell(cellId: cellId, page: page)
       }
     }
   }

@@ -12,8 +12,10 @@ import PostgresNIO
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
   private var connection: PostgresConnection?
+  /// Fails in-flight queries when `connection` closes (see `send(on:_:)`)
+  private(set) var closeWatch: ConnectionCloseWatch?
   private var eventLoopGroup: EventLoopGroup?
-  private var config: ConnectionConfig?
+  private(set) var config: ConnectionConfig?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -29,6 +31,11 @@ actor DatabaseConnectionManager {
   /// Test hook: awaited inside Commit / Rollback right after the state became `.ending`, before
   /// COMMIT / ROLLBACK is sent (see `setTransactionEndHook`)
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
+  /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
+  var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Queries waiting in `send(on:)`: queued on the connection or running (see
+  /// `resetSessionIfCapped`)
+  var activeSends = 0
   /// Caller token (tab) that opened the app transaction: while it is pending, only this caller
   /// may run gated statements. Claimed before BEGIN is sent, cleared when the state is idle.
   var txOwner: UUID?
@@ -36,9 +43,32 @@ actor DatabaseConnectionManager {
   var userTxOpen = false
   /// Inline edit tables resolved outside any app transaction, by table OID (see `cachedEditTable`)
   var editTableCache: [UInt32: EditTable] = [:]
+  /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
+  var lastSessionLoss: SessionLostEvent?
+  /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
+  /// `DatabaseError.queryCancelled`
+  var lastCancel: QueryCancelRecord?
+  /// One `SessionLostEvent` each time the server (or the network) closes the connected session
+  nonisolated let sessionEvents: AsyncStream<SessionLostEvent>
+  let sessionEventsContinuation: AsyncStream<SessionLostEvent>.Continuation
+  /// One `SessionResetEvent` each time a capped read closed and reopened the session
+  nonisolated let sessionResets: AsyncStream<SessionResetEvent>
+  let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
+
+  init() {
+    (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
+      of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
+    (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
+      of: SessionResetEvent.self, bufferingPolicy: .bufferingNewest(8))
+  }
+
+  deinit {
+    sessionEventsContinuation.finish()
+    sessionResetsContinuation.finish()
+  }
 
   /// Default maximum number of rows to fetch from database to prevent memory issues
-  /// This is overridden by the notebook's maxRowLimit setting
+  /// Callers pass the effective result row cap (`NotebookViewModel.effectiveRowCap`)
   static let defaultMaxFetchRows = 100
 
   /// Retry configuration for connection attempts
@@ -156,8 +186,10 @@ actor DatabaseConnectionManager {
     // Session brakes are mandatory and applied on the local connection before it is published,
     // so no user statement (actor reentrancy) can run before the timeouts are set. On failure
     // the connection is closed and nothing was published.
+    let watch = ConnectionCloseWatch(closeFuture: conn.closeFuture)
     do {
-      try await applySessionBrakes(on: conn, config: config)
+      try await applySessionBrakes(on: conn, watch: watch, config: config)
+      await applyDisconnectCheck(on: conn, watch: watch)
     } catch {
       await AppLogger.shared.error(
         "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
@@ -167,33 +199,19 @@ actor DatabaseConnectionManager {
       throw error
     }
     connection = conn
+    closeWatch = watch
     self.config = config
     connectionEpoch &+= 1
+    lastSessionLoss = nil
+    // The UI learns about a session the server closed even when no query is running. The
+    // epoch names this connection exactly (an ObjectIdentifier can be reused after a reset).
+    let epoch = connectionEpoch
+    conn.closeFuture.whenComplete { [weak self] _ in
+      Task { await self?.markSessionLost(epoch: epoch) }
+    }
 
     await AppLogger.shared.info(
       "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
-  }
-
-  /// Apply the session brakes (`brakeStatements`) on a connection that is not published yet.
-  /// - Throws: `DatabaseError.connectionFailed` if any statement fails.
-  private func applySessionBrakes(
-    on conn: PostgresConnection, config: ConnectionConfig
-  )
-    async throws
-  {
-    for sql in Self.brakeStatements(for: config) {
-      do {
-        _ = try await conn.query(
-          PostgresQuery(unsafeSQL: sql), logger: Logger(label: "sqlnotebook.session")
-        ).get()
-      } catch let error as PSQLError {
-        throw DatabaseError.connectionFailed(
-          "Could not apply session safety settings (\(sql)): \(formatPostgresError(error))")
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Could not apply session safety settings (\(sql)): \(error.localizedDescription)")
-      }
-    }
   }
 
   /// Test connection without storing it
@@ -256,18 +274,8 @@ actor DatabaseConnectionManager {
 
   /// Disconnect from database
   func disconnect() async {
-    // Before any suspension point: no edit can use the closing connection's targets, and a
-    // statement failing meanwhile sees the connection gone (state stays idle)
-    connectionEpoch &+= 1
-    let closing = connection
-    let group = eventLoopGroup
-    connection = nil
-    eventLoopGroup = nil
-    config = nil
-    // Closing the connection rolls back any open transaction on the server
-    txState = .idle
-    userTxOpen = false
-    editTableCache.removeAll()
+    let (closing, group) = forgetConnection()
+    lastSessionLoss = nil
 
     if let closing {
       await AppLogger.shared.info("Disconnecting from database", category: "Database")
@@ -280,6 +288,22 @@ actor DatabaseConnectionManager {
       txState = .idle
       userTxOpen = false
     }
+  }
+
+  /// Forget the current connection before any suspension point: no edit can use its targets,
+  /// and a statement failing meanwhile sees the connection gone (state stays idle). Closing it
+  /// (or the server closing it) rolls back any open transaction on the server.
+  func forgetConnection() -> (connection: PostgresConnection?, group: EventLoopGroup?) {
+    connectionEpoch &+= 1
+    let forgotten = (connection, eventLoopGroup)
+    connection = nil
+    closeWatch = nil
+    eventLoopGroup = nil
+    config = nil
+    txState = .idle
+    userTxOpen = false
+    editTableCache.removeAll()
+    return forgotten
   }
 
   /// Check if currently connected

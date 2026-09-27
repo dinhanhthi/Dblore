@@ -108,11 +108,13 @@ extension DatabaseConnectionManager {
     guard let connection = _connection else { throw DatabaseError.notConnected }
     let startTime = Date()
     do {
-      let result = try await connection.query(
-        PostgresQuery(unsafeSQL: statement.sql, binds: statement.bindings),
-        logger: Logger(label: "sqlnotebook.update")
-      ).get()
-      return result.metadata.rows ?? 0
+      let query = PostgresQuery(unsafeSQL: statement.sql, binds: statement.bindings)
+      let metadata = try await send(on: connection) {
+        try await $0.query(query, logger: Logger(label: "sqlnotebook.update")).get().metadata
+      }
+      return metadata.rows ?? 0
+    } catch let error as DatabaseError {
+      throw error
     } catch let error as PSQLError {
       throw DatabaseError.queryFailed(
         formatPostgresError(error, query: statement.sql), Date().timeIntervalSince(startTime))

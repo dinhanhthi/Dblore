@@ -3,7 +3,7 @@
 //  SQLNotebook
 //
 //  While another tab of the workspace has a pending Protected transaction, this tab runs
-//  nothing (cells, editor, Run All, pagination, inline edits). The actor enforces the same
+//  nothing (cells, editor, Run All, inline edits). The actor enforces the same
 //  rule with the tab token (`id`); this check only gives the message before anything starts.
 //
 

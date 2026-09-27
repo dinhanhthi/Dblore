@@ -31,15 +31,24 @@ extension DatabaseConnectionManager {
   /// autocommit and user transaction control is tracked in `userTxOpen`.
   /// `caller` identifies the tab: while the app transaction is pending only the caller that
   /// opened it may run statements (checked again before every statement).
-  /// - Throws: `DatabaseError.transactionEnding` while Commit / Rollback is in progress and
+  /// A read cut by the row cap with no app transaction resets the session
+  /// (`resetSessionIfCapped`) and ends the script: the rest is listed in `skippedStatements`.
+  /// - Throws: `DatabaseError.queryCancelled` once the user cancelled (the session was closed);
+  ///   `DatabaseError.sessionChanged` when the connection changed between two statements, or
+  ///   is not `expectedEpoch` (a Run All batch's connection) on entry (nothing sent);
+  ///   `DatabaseError.transactionEnding` while Commit / Rollback is in progress and
   ///   `DatabaseError.transactionPendingInAnotherTab` (nothing sent);
   ///   `DatabaseError.transactionAborted` while the app transaction is aborted;
   ///   a statement error (after moving the app transaction to `.aborted`).
   func runUserStatements(
-    _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?
+    _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?,
+    expectedEpoch: UInt64? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     guard _connection != nil else { throw DatabaseError.notConnected }
     guard !statements.isEmpty else { throw DatabaseError.emptyQuery }
+    if let expectedEpoch, expectedEpoch != connectionEpoch {
+      throw DatabaseError.sessionChanged(skippedStatements: statements.count)
+    }
     try refuseIfConnectionClosed()
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
@@ -47,19 +56,29 @@ extension DatabaseConnectionManager {
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
+    // The connection this script runs on: a cancel closes it (see `cancelError(since:)`)
+    let epoch = connectionEpoch
     try await adoptUserTransactionIfNeeded(protectedMode: protectedMode, caller: caller)
 
     let start = Date()
     var openedHere = false
     var results: [(queryText: String, result: QueryResult)] = []
     for statement in statements {
+      await scriptCheckpointHook?(.beforeStatement(caller: caller, index: results.count))
+      // Cancelled, reset or reconnected between two statements: the rest must not run on the
+      // new session (outside the user's BEGIN, without its temp tables / SET)
+      try refuseIfSessionChanged(since: epoch, remaining: statements.count - results.count)
       // Another tab may have opened the transaction while this script was suspended
       try refuseIfOwnedByAnotherCaller(caller)
       let action =
         protectedMode
         ? ProtectedTransactionRules.action(for: statement, inTransaction: !txState.isIdle) : .run
       if action == .open {
-        try await beginAppTransaction(caller: caller)
+        do {
+          try await beginAppTransaction(caller: caller)
+        } catch {
+          throw cancelError(since: epoch) ?? error
+        }
         openedHere = true
       }
       // The schema may change: results read inside a pending transaction lose their cached
@@ -67,10 +86,14 @@ extension DatabaseConnectionManager {
       if ProtectedTransactionRules.invalidatesEditTables(statement) {
         editTableCache.removeAll()
       }
-      let result: QueryResult
+      // BEGIN suspended: the connection may have changed meanwhile
+      try refuseIfSessionChanged(since: epoch, remaining: statements.count - results.count)
+      var result: QueryResult
       do {
         result = try await executeSingleStatement(statement.text, maxRows: maxRows)
       } catch {
+        // The session is gone: nothing of the old transaction state applies any more
+        if let cancelled = cancelError(since: epoch) { throw cancelled }
         if !protectedMode {
           userTxOpen = ProtectedTransactionRules.userTxOpen(
             after: statement, current: userTxOpen, succeeded: false)
@@ -85,6 +108,14 @@ extension DatabaseConnectionManager {
       if !protectedMode {
         userTxOpen = ProtectedTransactionRules.userTxOpen(
           after: statement, current: userTxOpen, succeeded: true)
+      }
+      result = await resetSessionIfCapped(result, statement: statement)
+      if result.sessionReset {
+        // The rest would run outside the user's session state (temp tables, SET, BEGIN)
+        let index = results.count
+        result.skippedStatements = statements.dropFirst(index + 1).map(\.text)
+        results.append((queryText: statement.text, result: result))
+        break
       }
       results.append((queryText: statement.text, result: result))
     }
@@ -103,6 +134,10 @@ extension DatabaseConnectionManager {
   ///   is possible), when the server rolled it back instead, or when the connection was lost.
   ///   A failed COMMIT ends the transaction on the server, so the state is `.idle` afterwards.
   func commitAppTransaction(expectedGeneration: UInt64) async throws {
+    // The server ended the session (and its transaction): never report a silent success
+    if _connection == nil, let loss = lastSessionLoss {
+      throw DatabaseError.connectionLost(loss.message)
+    }
     try refuseIfEnding()
     if !txState.isIdle, commitGuard.refusesCommit(expectedGeneration: expectedGeneration) {
       throw DatabaseError.commitRefusedTransactionChanged
@@ -191,6 +226,16 @@ extension DatabaseConnectionManager {
   func refuseIfOwnedByAnotherCaller(_ caller: UUID?) throws {
     guard !txState.isIdle || txOwner != nil, txOwner != caller else { return }
     throw DatabaseError.transactionPendingInAnotherTab
+  }
+
+  /// A script started on connection `epoch` stops once the user cancelled that connection (its
+  /// close may still be in progress) or the connection changed (another tab's capped read,
+  /// reconnect): `DatabaseError.queryCancelled`, else `DatabaseError.sessionChanged`
+  /// (`remaining` statements not run).
+  func refuseIfSessionChanged(since epoch: UInt64, remaining: Int) throws {
+    if let cancelled = cancelError(since: epoch) { throw cancelled }
+    guard connectionEpoch != epoch else { return }
+    throw DatabaseError.sessionChanged(skippedStatements: remaining)
   }
 
   /// While the app transaction is aborted the server refuses everything but ROLLBACK.
@@ -286,15 +331,12 @@ extension DatabaseConnectionManager {
   }
 
   /// The server may close the session on its own (e.g. `idle_in_transaction_session_timeout`
-  /// while a user transaction idles). PostgresNIO never completes a query written to a closed
-  /// channel, so nothing is sent: the caller gets an error asking to reconnect. The user
-  /// transaction, if any, ended with the session.
+  /// while a user transaction idles). Nothing is sent: the session is forgotten
+  /// (`markSessionLost`, which also ends the user transaction) and the caller gets
+  /// `DatabaseError.connectionLost` asking to reconnect.
   func refuseIfConnectionClosed() throws {
-    guard isConnectionLost else { return }
-    userTxOpen = false
-    throw DatabaseError.connectionFailed(
-      "The server closed the connection (for example after the idle-in-transaction timeout). "
-        + "Reconnect to continue.")
+    guard let connection = _connection, connection.isClosed else { return }
+    throw sessionLostError(connection, epoch: connectionEpoch)
   }
 
   private func lostConnectionError(pendingCount: Int, _ error: Error) -> DatabaseError {
@@ -305,12 +347,15 @@ extension DatabaseConnectionManager {
 
   func sendTransactionControl(_ sql: String) async throws -> PostgresQueryMetadata {
     guard let connection = _connection else { throw DatabaseError.notConnected }
-    try refuseIfConnectionClosed()
     let startTime = Date()
     do {
-      return try await connection.query(
-        PostgresQuery(unsafeSQL: sql), logger: Logger(label: "sqlnotebook.transaction")
-      ).get().metadata
+      return try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: sql), logger: Logger(label: "sqlnotebook.transaction")
+        ).get().metadata
+      }
+    } catch let error as DatabaseError {
+      throw error
     } catch let error as PSQLError {
       throw DatabaseError.queryFailed(
         formatPostgresError(error, query: sql), Date().timeIntervalSince(startTime))

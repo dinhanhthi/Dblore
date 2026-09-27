@@ -51,10 +51,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.foreignkeys")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.foreignkeys"))
+      }
 
       var foreignKeys: [ForeignKey] = []
 

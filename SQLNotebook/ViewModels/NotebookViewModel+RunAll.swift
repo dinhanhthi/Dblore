@@ -138,12 +138,14 @@ extension NotebookViewModel {
     // Reset execution counter to start counting from 1 again
     executionCounter = 0
 
+    // One batch: its cells only run on the connection its first cell started on
+    let batchId = UUID()
     // Enqueue cells, optionally skipping the ones that needed confirmation
     for cell in pendingCells {
       if skipConfirmable && cell.needsConfirmation {
         continue
       }
-      executionQueue.enqueue(cellId: cell.id, query: cell.query)
+      executionQueue.enqueue(cellId: cell.id, query: cell.query, batchId: batchId)
     }
   }
 }

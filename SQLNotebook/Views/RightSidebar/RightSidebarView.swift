@@ -107,7 +107,7 @@ struct RightSidebarView: View {
         })
     case .cellInfo(
       let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns,
-      _, let cellId):
+      let cellId):
       CellInfoContent(
         columnName: columnName,
         columnType: columnType,
@@ -131,13 +131,8 @@ struct RightSidebarView: View {
           columnNames: Set(rowData.map { Array($0.keys) } ?? []))
       )
       .environment(viewModel)
-    case .executedQuery(let query, let cellId, let limitWasCapped, let actualLimit):
-      ExecutedQuerySidebarContent(
-        query: query,
-        cellId: cellId,
-        limitWasCapped: limitWasCapped,
-        actualLimit: actualLimit
-      )
+    case .executedQuery(let query, let cellId):
+      ExecutedQuerySidebarContent(query: query, cellId: cellId)
     }
   }
 
@@ -181,7 +176,6 @@ struct RightSidebarView: View {
     tableName: nil,
     rowData: nil,
     primaryKeyColumns: [],
-    rowIdentifier: nil,
     cellId: nil
   )
 

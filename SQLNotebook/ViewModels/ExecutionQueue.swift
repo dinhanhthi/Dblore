@@ -25,6 +25,10 @@ class ExecutionQueue {
   /// Flag to track if queue is processing
   private(set) var isProcessing = false
 
+  /// Identifies the current processing run: a run stopped by `cancelAll` (its statement may
+  /// still be finishing) exits instead of picking up cells enqueued after the cancel
+  private var runGeneration: UInt64 = 0
+
   /// Maximum history size before auto-clearing (10.1.7 optimization)
   private let maxHistorySize: Int = 10
 
@@ -47,9 +51,9 @@ class ExecutionQueue {
 
   // MARK: - Public API
 
-  /// Enqueue a new execution task
-  func enqueue(cellId: UUID, query: String) {
-    let task = ExecutionTask(cellId: cellId, query: query)
+  /// Enqueue a new execution task (`batchId`: the Run All batch it belongs to)
+  func enqueue(cellId: UUID, query: String, batchId: UUID? = nil) {
+    let task = ExecutionTask(cellId: cellId, query: query, batchId: batchId)
     tasks.append(task)
 
     // Start processing if not already running
@@ -87,11 +91,26 @@ class ExecutionQueue {
     }
 
     processingTask?.cancel()
+    runGeneration &+= 1
     currentTask = nil
     isProcessing = false
 
     // Notify idle waiters since we're now idle
     notifyIdle()
+  }
+
+  /// Cancel the pending tasks only; the executing one finishes normally and the queue then
+  /// becomes idle.
+  /// - Returns: the number of tasks cancelled.
+  @discardableResult
+  func cancelPending() -> Int {
+    var count = 0
+    for index in tasks.indices where tasks[index].state == .pending {
+      tasks[index].state = .cancelled
+      notifyTaskCompletion(cellId: tasks[index].cellId, state: .cancelled)
+      count += 1
+    }
+    return count
   }
 
   /// Clear completed and cancelled tasks
@@ -233,48 +252,32 @@ class ExecutionQueue {
 
   private func startProcessing() {
     isProcessing = true
+    runGeneration &+= 1
+    let generation = runGeneration
 
     // 10.2.2 Optimization: Run queue processing in detached task to avoid blocking main actor
     // The processing loop itself runs off main thread, only UI updates hop to main actor
     processingTask = Task.detached { [weak self] in
-      await self?.processQueue()
+      await self?.processQueue(generation: generation)
     }
   }
 
   /// Process the queue - runs in detached task, hops to main actor for state access
   /// Using nonisolated to actually run off main actor
-  nonisolated private func processQueue() async {
-    while await MainActor.run(body: { self.isProcessing }) {
-      // Find next pending task on main actor (quick UI state read)
-      guard
-        let (nextTaskIndex, taskToExecute) = await MainActor.run(body: {
-          self.getNextPendingTask()
-        })
-      else {
-        // No more pending tasks
-        await MainActor.run {
-          self.isProcessing = false
-          self.currentTask = nil
-          self.notifyIdle()
-        }
-        return
-      }
-
-      // Mark as executing on main actor
-      await MainActor.run {
-        guard nextTaskIndex < self.tasks.count else { return }
-        self.tasks[nextTaskIndex].state = .executing
-        self.currentTask = self.tasks[nextTaskIndex]
-        // Notify any waiters that this task started executing
-        self.notifyTaskExecuting(cellId: taskToExecute.cellId)
-      }
-
+  nonisolated private func processQueue(generation: UInt64) async {
+    // Claim the next pending task on main actor (quick UI state read); a stale run stops
+    while let taskToExecute = await MainActor.run(body: {
+      self.claimNextTask(generation: generation)
+    }) {
       // Check cancellation
       if Task.isCancelled {
         await MainActor.run {
-          guard nextTaskIndex < self.tasks.count else { return }
-          self.tasks[nextTaskIndex].state = .cancelled
-          self.currentTask = nil
+          guard let index = self.tasks.firstIndex(where: { $0.id == taskToExecute.id }) else {
+            return
+          }
+          self.tasks[index].state = .cancelled
+          if self.currentTask?.id == taskToExecute.id { self.currentTask = nil }
+          self.notifyTaskCompletion(cellId: taskToExecute.cellId, state: .cancelled)
         }
         continue
       }
@@ -289,6 +292,25 @@ class ExecutionQueue {
     }
   }
 
+  /// The next pending task, marked executing, for the run `generation`. Nil when that run must
+  /// stop: it was replaced (`cancelAll`, then a new run), or nothing is pending (the queue
+  /// becomes idle).
+  private func claimNextTask(generation: UInt64) -> ExecutionTask? {
+    guard isProcessing, runGeneration == generation else { return nil }
+    guard let index = tasks.firstIndex(where: { $0.state == .pending }) else {
+      // No more pending tasks
+      isProcessing = false
+      currentTask = nil
+      notifyIdle()
+      return nil
+    }
+    tasks[index].state = .executing
+    currentTask = tasks[index]
+    // Notify any waiters that this task started executing
+    notifyTaskExecuting(cellId: tasks[index].cellId)
+    return tasks[index]
+  }
+
   // MARK: - Private Helpers
 
   /// Execute task callback on main actor (async wrapper for nonisolated context)
@@ -297,19 +319,12 @@ class ExecutionQueue {
     await executeTask(task)
   }
 
-  /// Get the next pending task from the queue
-  private func getNextPendingTask() -> (Int, ExecutionTask)? {
-    guard let index = tasks.firstIndex(where: { $0.state == .pending }) else {
-      return nil
-    }
-    return (index, tasks[index])
-  }
-
   /// Update task result and auto-clear old tasks
   private func updateTaskResult(taskId: UUID, result: CellResult?) {
     // Re-find the task by ID since the array may have changed during await
+    // A run stopped by `cancelAll` must not clear the task of the run started after it
+    if currentTask?.id == taskId { currentTask = nil }
     guard let updatedIndex = tasks.firstIndex(where: { $0.id == taskId }) else {
-      currentTask = nil
       return
     }
 
@@ -317,7 +332,6 @@ class ExecutionQueue {
 
     // Check if task was cancelled during execution
     if tasks[updatedIndex].state == .cancelled {
-      currentTask = nil
       notifyTaskCompletion(cellId: cellId, state: .cancelled)
       return
     }
@@ -330,8 +344,6 @@ class ExecutionQueue {
       finalState = .failed("Execution returned no result")
     }
     tasks[updatedIndex].state = finalState
-
-    currentTask = nil
 
     // Notify any waiters for this specific task
     notifyTaskCompletion(cellId: cellId, state: finalState)

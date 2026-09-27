@@ -14,13 +14,12 @@ import Testing
 struct ProtectedTransactionTests {
   private static func config(protectedMode: Bool = true, idleTimeout: Int = 600) -> ConnectionConfig
   {
-    let env = ProcessInfo.processInfo.environment
     return ConnectionConfig(
-      host: env["TEST_DB_HOST"] ?? "localhost",
-      port: Int(env["TEST_DB_PORT"] ?? "5432") ?? 5432,
-      database: env["TEST_DB_NAME"] ?? "postgres",
-      username: env["TEST_DB_USER"] ?? "postgres",
-      password: env["TEST_DB_PASSWORD"] ?? "",
+      host: TestDatabase.host,
+      port: TestDatabase.port,
+      database: TestDatabase.database,
+      username: TestDatabase.username,
+      password: TestDatabase.password,
       sslMode: .disable,
       timeoutSeconds: 30,
       protectedMode: protectedMode,
@@ -739,14 +738,17 @@ struct ProtectedTransactionTests {
       #expect(await manager.userTxOpen)
 
       try await Task.sleep(for: .milliseconds(2500))
-      // The server closed the session: nothing is sent, the caller is asked to reconnect
+      // The server closed the session: nothing is sent, the caller is asked to reconnect (C0:
+      // the session is forgotten as soon as it closes, so the manager may already be
+      // disconnected)
       #expect(await manager._connection?.isClosed ?? true)
       let error = await #expect(throws: DatabaseError.self) {
         _ = try await manager.execute(userSQL: "SELECT 1", policy: open)
       }
-      if case .connectionFailed? = error {
-      } else {
-        Issue.record("Expected connectionFailed, got \(String(describing: error))")
+      switch error {
+      case .connectionLost?, .notConnected?: break
+      default:
+        Issue.record("Expected connectionLost / notConnected, got \(String(describing: error))")
       }
       #expect(!(await manager.userTxOpen))
     }

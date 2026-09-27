@@ -136,50 +136,6 @@ extension DatabaseConnectionManager {
     return withoutLeadingComments.uppercased().hasPrefix("SELECT")
   }
 
-  // MARK: - LIMIT Clause Detection
-
-  /// Check if a query already has a LIMIT clause
-  func hasLimitClause(_ query: String) -> Bool {
-    // Strip comments first to avoid false positives from LIMIT in comments
-    let withoutComments = stripAllComments(query)
-    let normalized = withoutComments.lowercased()
-    // Use regex to find LIMIT as a separate word (not part of another word)
-    return normalized.range(of: "\\blimit\\b", options: .regularExpression) != nil
-  }
-
-  /// Check if a query has a FROM clause
-  /// Queries without FROM clause are typically function calls like SELECT pg_sleep(3), SELECT now()
-  func hasFromClause(_ query: String) -> Bool {
-    let normalized = query.lowercased()
-    // Use regex to find FROM as a separate word (not part of another word)
-    return normalized.range(of: "\\bfrom\\b", options: .regularExpression) != nil
-  }
-
-  /// Extract LIMIT value from a query (returns nil if no LIMIT or cannot parse)
-  nonisolated func extractLimitValue(_ query: String) -> Int? {
-    // Strip comments first to avoid false positives from LIMIT in comments
-    let withoutComments = stripAllComments(query)
-
-    // Remove semicolons and trim
-    let cleaned = withoutComments.replacingOccurrences(of: ";", with: "").trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    let normalized = cleaned.lowercased()
-
-    // Pattern: LIMIT <number> (may have whitespace, semicolon, or end of string after)
-    let pattern = "\\blimit\\s+(\\d+)"
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-      let match = regex.firstMatch(
-        in: normalized, options: [], range: NSRange(normalized.startIndex..., in: normalized)),
-      match.numberOfRanges > 1,
-      let numberRange = Range(match.range(at: 1), in: normalized)
-    else {
-      return nil
-    }
-
-    let numberString = String(normalized[numberRange])
-    return Int(numberString)
-  }
-
   // MARK: - Table Name Extraction
 
   /// Extract single table name from a simple SELECT query

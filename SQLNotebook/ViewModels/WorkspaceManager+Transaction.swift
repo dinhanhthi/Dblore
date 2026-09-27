@@ -48,19 +48,21 @@ extension WorkspaceManager {
     applyTransactionState(status.state, originTabId: originTabId)
   }
 
-  /// The tab that opened the pending transaction is running cells: Commit and Rollback wait (the
-  /// actor refuses them anyway while a gated statement is in flight).
+  /// The tab that opened the pending transaction is running cells or an editor query: Commit
+  /// and Rollback wait (the actor refuses them anyway while a gated statement is in flight).
   var isTransactionOriginRunning: Bool {
     guard let origin = transactionOriginTabId, let viewModel = viewModels[origin] else {
       return false
     }
-    return viewModel.executionQueue?.isProcessing ?? false
+    return (viewModel.executionQueue?.isProcessing ?? false) || viewModel.isEditorQueryRunning
   }
 
-  /// Some tab is running cells: the mirror may still be idle while its statement opened a
-  /// transaction (it is refreshed after the statements finished)
+  /// Some tab is running cells or an editor query: the mirror may still be idle while its
+  /// statement opened a transaction (it is refreshed after the statements finished)
   var isAnyTabExecuting: Bool {
-    viewModels.values.contains { $0.executionQueue?.isProcessing ?? false }
+    viewModels.values.contains {
+      ($0.executionQueue?.isProcessing ?? false) || $0.isEditorQueryRunning
+    }
   }
 
   /// Opening time is set on the idle -> pending transition; everything is cleared on idle.
@@ -308,8 +310,9 @@ extension WorkspaceManager {
 
   // MARK: - Private
 
-  /// Cancel the queued and running cells of the tab that opened the transaction. The editor has
-  /// no queue: its run is one actor call, refused or failing once the transaction ended.
+  /// Cancel the queued and running cells of the tab that opened the transaction (queue only, no
+  /// cancel prompt). The editor has no queue: its run is one actor call, refused or failing once
+  /// the transaction ended.
   private func cancelOriginTabExecution() {
     guard let origin = transactionOriginTabId, let viewModel = viewModels[origin] else { return }
     viewModel.cancelAllCells()

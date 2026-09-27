@@ -29,7 +29,6 @@ extension NotebookViewModel {
     tableName: String? = nil,
     rowData: [String: CellValue]? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifier: CellValue? = nil,
     editTarget: EditTarget? = nil,
     cellId: UUID? = nil
   ) {
@@ -41,7 +40,6 @@ extension NotebookViewModel {
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
-      rowIdentifier: rowIdentifier,
       cellId: cellId
     )
     withAnimation(.easeInOut(duration: 0.2)) {

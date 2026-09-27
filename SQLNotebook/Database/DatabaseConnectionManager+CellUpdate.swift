@@ -270,7 +270,9 @@ extension DatabaseConnectionManager {
     var keyPositions: [(position: Int32, name: String)] = []
     var relationKind = ""
     var hasSubclass = true
-    let rows = try await connection.query(query, logger: Logger(label: "sqlnotebook.edit"))
+    let rows = try await send(on: connection) {
+      try await $0.query(query, logger: Logger(label: "sqlnotebook.edit"))
+    }
     for try await (tableOID, attnum, name, keyPosition, qualified, kind, subclass) in rows.decode(
       (Int64, Int32, String, Int32, String, String, Bool).self)
     {

@@ -28,7 +28,6 @@ extension NotebookSettings {
     // Legacy keys for backward compatibility (will be ignored when loading)
     case maxResultHeight
     case includeResultsOnSave
-    case maxRowLimit
   }
 
   nonisolated init(from decoder: Decoder) throws {

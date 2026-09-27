@@ -159,7 +159,6 @@ extension NotebookViewModel {
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
-      rowIdentifier: nil,
       cellId: cellId
     )
 

@@ -24,38 +24,28 @@ struct QueryResult: Sendable {
   nonisolated let executionTime: TimeInterval
   /// True if the result was limited due to reaching maxFetchRows
   nonisolated let wasLimited: Bool
-  /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
-  nonisolated let rowIdentifiers: [CellValue]
-  /// True if user's LIMIT in query exceeded maxRows and was capped
-  nonisolated let userLimitExceeded: Bool
-  /// The original LIMIT value user specified (if any)
-  nonisolated let userRequestedLimit: Int?
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
   nonisolated let affectedRows: Int?
-  /// True if user's LIMIT was capped to maxRows (even if no limiting occurred in result)
-  /// This is for display purposes - to show correct query in UI
-  nonisolated let limitWasCapped: Bool
-  /// The actual LIMIT used in executed query (after capping)
-  nonisolated let actualLimitUsed: Int?
+  /// The statement returned more rows than the row cap; only the first `rowCount` were read
+  nonisolated var truncated = false
+  /// Reading stopped by closing the connection and reconnecting (no app transaction was
+  /// pending): temp tables, SET values and search_path of the session were lost
+  nonisolated var sessionReset = false
+  /// The session reset rolled back a transaction the user opened with BEGIN (Protected off)
+  nonisolated var userTxRolledBack = false
+  /// Statements of the script that were not run because the session was reset before them
+  nonisolated var skippedStatements: [String] = []
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
-    wasLimited: Bool = false, rowIdentifiers: [CellValue] = [],
-    userLimitExceeded: Bool = false, userRequestedLimit: Int? = nil,
-    affectedRows: Int? = nil,
-    limitWasCapped: Bool = false, actualLimitUsed: Int? = nil
+    wasLimited: Bool = false, affectedRows: Int? = nil
   ) {
     self.columns = columns
     self.rows = rows
     self.rowCount = rowCount
     self.executionTime = executionTime
     self.wasLimited = wasLimited
-    self.rowIdentifiers = rowIdentifiers
-    self.userLimitExceeded = userLimitExceeded
-    self.userRequestedLimit = userRequestedLimit
     self.affectedRows = affectedRows
-    self.limitWasCapped = limitWasCapped
-    self.actualLimitUsed = actualLimitUsed
   }
 }
 
@@ -87,6 +77,16 @@ enum DatabaseError: LocalizedError {
   case transactionEnding(TransactionEndKind)
   /// Rollback refused before ROLLBACK was sent: a statement of the transaction is still running
   case rollbackRefusedStatementRunning
+  /// The server (or the network) closed the session; it was forgotten (full message, see
+  /// `SessionLostEvent.message`)
+  case connectionLost(String)
+  /// The user cancelled the running statement: the connection was closed (stopping the server
+  /// work) and reopened. `pendingCount` app-transaction changes / the user's open transaction
+  /// were rolled back with the old session.
+  case queryCancelled(pendingCount: Int, userTxRolledBack: Bool)
+  /// The connection was closed and reopened (another tab's capped read, a cancel, a reconnect)
+  /// while a script was between statements: its remaining `skippedStatements` were not run
+  case sessionChanged(skippedStatements: Int)
 
   var errorDescription: String? {
     switch self {
@@ -103,7 +103,7 @@ enum DatabaseError: LocalizedError {
         "Blocked by connection protection (statement \(statementIndex + 1)): \(reason). Nothing was executed."
     case .notEditable(let reason):
       return "Cannot edit this value: \(reason). Nothing was executed."
-    case .transactionAborted(let message):
+    case .transactionAborted(let message), .connectionLost(let message):
       return message
     case .transactionPendingInAnotherTab:
       return "Commit or roll back pending changes first (another tab has an uncommitted "
@@ -123,7 +123,24 @@ enum DatabaseError: LocalizedError {
     case .editRowCountMismatch(let updated, false):
       return "Expected to update 1 row, updated \(updated) — the change is still in your open "
         + "transaction; roll it back (ROLLBACK) to undo it"
+    case .queryCancelled(let pendingCount, let userTxRolledBack):
+      return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
+    case .sessionChanged(let count):
+      return "The connection was reset by another tab or action — the remaining \(count) "
+        + "statement\(count == 1 ? " was" : "s were") not run."
     }
+  }
+
+  /// "Query cancelled — connection was reset (…)" plus what the reset rolled back
+  nonisolated static func cancelMessage(pendingCount: Int, userTxRolledBack: Bool) -> String {
+    var parts = ["Query cancelled — connection was reset (temp tables, SET, search_path lost)."]
+    if pendingCount > 0 {
+      let verb = pendingCount == 1 ? "was" : "were"
+      parts.append(
+        "\(pendingCount) pending change\(pendingCount == 1 ? "" : "s") \(verb) rolled back.")
+    }
+    if userTxRolledBack { parts.append("Your open transaction was rolled back.") }
+    return parts.joined(separator: " ")
   }
 
   var executionTime: TimeInterval? {

@@ -52,12 +52,15 @@ struct ExecutionTask: Identifiable, Sendable {
   var state: ExecutionState
   let createdAt: Date
   let query: String
+  /// The Run All batch this task belongs to (nil for a single cell run)
+  let batchId: UUID?
 
-  init(cellId: UUID, query: String) {
+  init(cellId: UUID, query: String, batchId: UUID? = nil) {
     self.id = UUID()
     self.cellId = cellId
     self.state = .pending
     self.createdAt = Date()
     self.query = query
+    self.batchId = batchId
   }
 }

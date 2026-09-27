@@ -88,60 +88,6 @@ struct QueryParsingDetectionTests {
     }
   }
 
-  // MARK: - hasFromClause Tests
-
-  @Suite("hasFromClause - Detection")
-  struct HasFromClauseTests {
-
-    @Test("Query with FROM returns true")
-    func queryWithFromReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM users"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Should detect FROM clause")
-    }
-
-    @Test("Query without FROM returns false")
-    func queryWithoutFromReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT 1 + 1"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should return false for query without FROM")
-    }
-
-    @Test("Function call without FROM returns false")
-    func functionCallWithoutFromReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT now()"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should return false for function call")
-    }
-
-    @Test("FROM case insensitive")
-    func fromCaseInsensitive() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "select * from users"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Should detect FROM regardless of case")
-    }
-
-    @Test("Word boundary detection - 'FROM' in string should not match")
-    func fromInStringShouldNotMatch() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT 'FROM the beginning'"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Current implementation detects FROM in strings (known limitation)")
-    }
-
-    @Test("Word boundary detection - 'information' should not match")
-    func wordBoundaryDetectionInformation() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT information"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should not match FROM in 'information' due to word boundary")
-    }
-  }
-
   // MARK: - Statement kind detection (classifier; replaces prefix-based isModificationQuery)
 
   @Suite("Statement kind - Detection")
@@ -295,40 +241,12 @@ struct QueryParsingDetectionTests {
         #expect(manager.isSelectQuery(query) == true, "'\(query)' should be recognized as SELECT")
       }
     }
-
-    @Test("Limit typo 'limi' would become alias when wrapped with LIMIT")
-    func limitTypoBehavior() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM bot limi"
-      let result = await manager.wrapQueryWithLimit(query, maxRows: 100)
-
-      #expect(result.contains("LIMIT 100"), "Should add LIMIT clause")
-      #expect(result.contains("limi"), "Alias 'limi' should be preserved")
-    }
   }
 
   // MARK: - Integration Tests - Real-world Scenarios
 
   @Suite("Integration - Real-world Scenarios")
   struct IntegrationTests {
-
-    @Test("Scenario: User query with comment LIMIT should get actual LIMIT")
-    func userQueryWithCommentLimitGetsActualLimit() async throws {
-      let manager = DatabaseConnectionManager()
-
-      let userQuery = """
-        -- Old limit: LIMIT 1000
-        SELECT * FROM large_table
-        """
-
-      let result = await manager.wrapQueryWithLimit(userQuery, maxRows: 100)
-
-      #expect(!result.contains("--"), "Should remove comment")
-      #expect(!result.contains("Old limit"), "Should remove comment text")
-      #expect(!result.contains("LIMIT 1000"), "Should remove commented LIMIT")
-      #expect(result.contains("LIMIT 100"), "Should add actual LIMIT")
-      #expect(result == "SELECT * FROM large_table LIMIT 100", "Should match expected result")
-    }
 
     @Test("Scenario: Query with inline comments and string literals")
     func queryWithInlineCommentsAndStringLiterals() throws {
@@ -348,24 +266,6 @@ struct QueryParsingDetectionTests {
       #expect(stripped.contains("'-- not a comment'"), "Should preserve string literal")
       #expect(stripped.contains("name, email"), "Should preserve column list")
       #expect(stripped.contains("WHERE status = 'active'"), "Should preserve WHERE clause")
-    }
-
-    @Test("Scenario: Pagination query with comment explaining LIMIT")
-    func paginationQueryWithCommentExplainingLimit() async throws {
-      let manager = DatabaseConnectionManager()
-
-      let query = """
-        -- Pagination: 100 rows per page
-        -- LIMIT 100 OFFSET 200
-        SELECT id, name FROM products ORDER BY id
-        """
-
-      let result = await manager.wrapQueryWithLimit(query, maxRows: 50)
-
-      #expect(!result.contains("--"), "Should remove all comments")
-      #expect(!result.contains("Pagination"), "Should remove comment text")
-      #expect(!result.contains("OFFSET 200"), "Should remove commented OFFSET")
-      #expect(result.contains("LIMIT 50"), "Should add actual LIMIT 50")
     }
 
     @Test("Scenario: Complex query with nested comments")
