@@ -24,7 +24,7 @@ struct WorkspaceSidebarTopArea: View {
       if workspaceManager.isSchemaPaused {
         Label("Schema is paused until Commit/Rollback", systemImage: "pause.circle")
           .font(.caption2)
-          .foregroundColor(.foregroundMuted)
+          .foregroundColor(.foreground)
           .lineLimit(1)
           .truncationMode(.tail)
           .help(
@@ -73,7 +73,6 @@ struct WorkspaceSidebarTopArea: View {
       .padding(.trailing, Spacing.sm)
     }
     .frame(height: height)
-    .background(Color.cardBackground)
     .background(WindowDragArea())
   }
 }
@@ -111,6 +110,5 @@ struct SidebarEmptyState: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.cardBackground)
   }
 }

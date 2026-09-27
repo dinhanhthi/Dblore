@@ -199,7 +199,7 @@ struct WorkspaceLeftSidebar: View {
         WorkspaceLeftSidebarContent(workspaceManager: workspaceManager)
       }
       .frame(width: constrainedWidth)
-      .background(Color.cardBackground)
+      .chromeGlass()
       .transition(.move(edge: .leading))
       .overlay(alignment: .trailing) {
         ResizableSidebarDivider(
