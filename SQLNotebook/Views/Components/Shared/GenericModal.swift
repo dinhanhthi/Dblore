@@ -172,17 +172,16 @@ extension View {
 
 // MARK: - Modal Backdrop
 
-/// Background view for modals with blur and dimming effect
-struct ModalBackdrop: NSViewRepresentable {
-  func makeNSView(context: Context) -> NSVisualEffectView {
-    let view = NSVisualEffectView()
-    view.blendingMode = .behindWindow
-    view.state = .active
-    view.material = .hudWindow
-    return view
+/// Background view for modals: a light blur of the window content plus a soft dim, so the
+/// app behind the modal stays recognizable
+struct ModalBackdrop: View {
+  var body: some View {
+    ZStack {
+      Rectangle().fill(.ultraThinMaterial).opacity(0.5)
+      Color.black.opacity(0.25)
+    }
+    .contentShape(Rectangle())
   }
-
-  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - View Extension for Generic Modal

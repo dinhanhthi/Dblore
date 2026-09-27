@@ -614,6 +614,7 @@ struct WorkspaceTitleBarTabsView: View {
           action: goToNextTab
         )
       }
+      .padding(.leading, Spacing.sm)
       .padding(.trailing, Spacing.xs)
 
       // Scrollable tabs area with Chrome-like drag reordering

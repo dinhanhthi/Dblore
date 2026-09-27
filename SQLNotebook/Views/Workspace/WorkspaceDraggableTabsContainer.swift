@@ -274,12 +274,15 @@ struct WorkspaceDraggableTabItem: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: 28)
+    // Glass capsule for active tab - morphs between tabs; the label is the glass content
+    .selectedTabGlass(
+      isActive: isActive,
+      activeID: "activeTabGlass",
+      inactiveID: tab.id.uuidString,
+      in: capsuleNamespace
+    )
     .background {
-      if isActive {
-        // Glass capsule for active tab - morphs between tabs
-        Color.clear
-          .selectedTabGlass(id: "activeTabGlass", in: capsuleNamespace)
-      } else if isHovering || isDragging {
+      if !isActive && (isHovering || isDragging) {
         // Subtle hover state for inactive tabs
         Capsule()
           .fill(Color.cellBackgroundHover.opacity(0.4))

@@ -146,17 +146,14 @@ struct HeaderView: View {
         safetyBadge(ConnectionSafetyBadge(config: config))
       }
 
-      GlassToolbarGroup {
-        // Search button
-        Button(action: {
-          viewModel.openSearch()
-        }) {
-          Image(systemName: "magnifyingglass")
-        }
-        .buttonStyle(.glass)
-        .tint(viewModel.isSearchPanelVisible ? Color.accent : nil)
-        .help("Search (⌘F)")
+      // Search button (same square style as the schema visualizer's search button)
+      Button(action: {
+        viewModel.openSearch()
+      }) {
+        Image(systemName: "magnifyingglass")
       }
+      .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
+      .help("Search (⌘F)")
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
