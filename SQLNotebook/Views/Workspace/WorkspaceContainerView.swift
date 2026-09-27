@@ -354,6 +354,7 @@ struct WorkspaceTabContentView: View {
         syncDocument: syncEditorDocument
       )
     )
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncEditorDocument)
     .searchNotifications(viewModel: viewModel)
   }
 
