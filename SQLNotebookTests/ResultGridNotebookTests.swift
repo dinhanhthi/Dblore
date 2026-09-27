@@ -84,4 +84,40 @@ struct ResultGridNotebookTests {
     #expect(text?.attribute(.backgroundColor, at: 1, effectiveRange: nil) != nil)
     #expect(text?.attribute(.backgroundColor, at: 0, effectiveRange: nil) == nil)
   }
+
+  @Test("The current search match scrolls to its displayed row and uses the current-match color")
+  func currentMatch() {
+    let result = CellResult(
+      columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "name", type: "text")],
+      rows: (0..<30).map { [.int($0), .string("row\($0)")] },
+      rowCount: 30)
+    // Original row 20 is displayed at row 9 once sorted by id descending
+    let match = SearchMatch(
+      cellId: UUID(), matchType: .tableData(rowIndex: 20, columnName: "name"),
+      matchRange: "row20".startIndex..<"row20".endIndex, contextText: "row20", lineNumber: nil)
+    let coordinator = ResultGridCoordinator()
+    let tableView = ScrollRecordingTableView()
+    coordinator.update(
+      tableView, result: result, sortColumn: "id", ascending: false, searchQuery: "row",
+      caseSensitive: false, currentMatch: match)
+    #expect(tableView.scrolledRows == [9])
+
+    func background(row: Int) -> Any? {
+      let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[1], row: row)
+      return (view as? NSTableCellView)?.textField?.attributedStringValue
+        .attribute(.backgroundColor, at: 0, effectiveRange: nil)
+    }
+    #expect(background(row: 9) as? NSColor == ResultGridCoordinator.currentMatchColor)
+    #expect(background(row: 8) as? NSColor != ResultGridCoordinator.currentMatchColor)
+    #expect(background(row: 8) != nil)
+  }
+}
+
+/// Records the rows the coordinator asks to scroll to
+private final class ScrollRecordingTableView: NSTableView {
+  var scrolledRows: [Int] = []
+
+  override func scrollRowToVisible(_ row: Int) {
+    scrolledRows.append(row)
+  }
 }

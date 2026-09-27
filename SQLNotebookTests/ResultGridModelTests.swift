@@ -59,4 +59,29 @@ struct ResultGridModelTests {
     let tsv = model.tsv(rows: IndexSet([0, 1]), columns: IndexSet([0, 1]))
     #expect(tsv == "1\t\"a\tb\"\n2\t\"line1\nline2\"")
   }
+
+  @Test(
+    "An original row index maps to its displayed row, by index even for duplicate rows",
+    arguments: [true, false])
+  func originalToDisplayedRow(ascending: Bool) {
+    let result = CellResult(
+      columns: columns,
+      rows: [
+        [.int(2), .string("x")], [.int(1), .string("y")], [.int(2), .string("x")],
+        [.int(1), .null],
+      ],
+      rowCount: 4)
+    let model = ResultGridModel(result: result, sortColumn: "id", ascending: ascending)
+    let displayed = result.rows.indices.compactMap { model.displayedRow(forOriginalRow: $0) }
+    #expect(displayed.count == 4)
+    #expect(Set(displayed).count == 4)  // duplicates map to distinct displayed rows
+    for (original, row) in zip(result.rows.indices, displayed) {
+      #expect(model.row(at: row) == result.rows[original])
+    }
+    #expect(model.displayedRow(forOriginalRow: 4) == nil)
+    #expect(model.displayedRow(forOriginalRow: -1) == nil)
+
+    let unsorted = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    #expect(result.rows.indices.map { unsorted.displayedRow(forOriginalRow: $0) } == [0, 1, 2, 3])
+  }
 }

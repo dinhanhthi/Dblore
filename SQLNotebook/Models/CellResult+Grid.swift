@@ -11,10 +11,18 @@ extension CellResult {
   /// Rows in display order: sorted by `column` (stable for equal values is not guaranteed),
   /// or `rows` unchanged when there is no sort column or it is not in the result.
   func sortedRows(byColumn column: String?, ascending: Bool) -> [[CellValue]] {
+    sortedRowIndices(byColumn: column, ascending: ascending).map { rows[$0] }
+  }
+
+  /// Indices into `rows` in display order (the order of `sortedRows`), so duplicate rows keep
+  /// their own original index
+  func sortedRowIndices(byColumn column: String?, ascending: Bool) -> [Int] {
     guard let column, let columnIndex = columns.firstIndex(where: { $0.name == column }) else {
-      return rows
+      return Array(rows.indices)
     }
-    return rows.sorted { row1, row2 in
+    return rows.indices.sorted { index1, index2 in
+      let row1 = rows[index1]
+      let row2 = rows[index2]
       guard columnIndex < row1.count, columnIndex < row2.count else { return false }
       let value1 = row1[columnIndex]
       let value2 = row2[columnIndex]

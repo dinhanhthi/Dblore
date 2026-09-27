@@ -507,6 +507,8 @@ struct NotebookResultTableView: View {
   let cellId: UUID
   @State private var sortColumn: String?
   @State private var sortAscending = true
+  /// Current search match when it is in this cell's result data
+  @State private var currentMatch: SearchMatch?
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -531,7 +533,8 @@ struct NotebookResultTableView: View {
         },
         onCellClick: showInSidebar,
         searchQuery: viewModel.searchState.query,
-        caseSensitive: viewModel.searchState.isCaseSensitive
+        caseSensitive: viewModel.searchState.isCaseSensitive,
+        currentMatch: currentMatch
       )
       .frame(height: ResultGridView.height(rowCount: result.rows.count))
 
@@ -549,6 +552,24 @@ struct NotebookResultTableView: View {
         // Single statement: no dropdown
         ResultMetadataView(result: result)
       }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      if let match = notification.userInfo?["match"] as? SearchMatch, match.cellId == cellId,
+        case .tableData = match.matchType
+      {
+        currentMatch = match
+      } else {
+        currentMatch = nil
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      currentMatch = nil
     }
   }
 

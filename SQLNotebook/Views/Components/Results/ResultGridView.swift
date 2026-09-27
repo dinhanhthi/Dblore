@@ -27,6 +27,9 @@ struct ResultGridView: NSViewRepresentable {
   /// Text highlighted in the cells (search)
   var searchQuery = ""
   var caseSensitive = false
+  /// Current search match (the one Enter moved to): the grid scrolls to it and shows it on the
+  /// current-match color when it is in this result's data
+  var currentMatch: SearchMatch? = nil
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
@@ -88,7 +91,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onCellClick = onCellClick
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch)
   }
 }
 

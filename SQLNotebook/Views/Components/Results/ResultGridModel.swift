@@ -4,7 +4,8 @@
 //
 //  Pure model behind the result grid: the displayed (sorted) rows, cell display text and
 //  TSV of a selection. It holds only the displayed rows, so every row index it takes is a
-//  table (displayed) row and can never be confused with an index into `CellResult.rows`.
+//  table (displayed) row and can never be confused with an index into `CellResult.rows`;
+//  only `displayedRow(forOriginalRow:)` takes an index into `CellResult.rows`.
 //
 
 import Foundation
@@ -12,10 +13,18 @@ import Foundation
 struct ResultGridModel {
   let columns: [ColumnInfo]
   private let displayedRows: [[CellValue]]
+  /// Displayed row of each index into `CellResult.rows`
+  private let displayedRowByOriginalRow: [Int]
 
   init(result: CellResult, sortColumn: String?, ascending: Bool) {
     columns = result.columns
-    displayedRows = result.sortedRows(byColumn: sortColumn, ascending: ascending)
+    let originalRows = result.sortedRowIndices(byColumn: sortColumn, ascending: ascending)
+    displayedRows = originalRows.map { result.rows[$0] }
+    var displayedRowByOriginalRow = Array(repeating: 0, count: originalRows.count)
+    for (displayedRow, originalRow) in originalRows.enumerated() {
+      displayedRowByOriginalRow[originalRow] = displayedRow
+    }
+    self.displayedRowByOriginalRow = displayedRowByOriginalRow
   }
 
   var rowCount: Int { displayedRows.count }
@@ -23,6 +32,13 @@ struct ResultGridModel {
   /// The displayed row at table row `row`
   func row(at row: Int) -> [CellValue] {
     displayedRows[row]
+  }
+
+  /// Table (displayed) row of `originalRow`, an index into `CellResult.rows` such as a search
+  /// match's row; nil when out of range
+  func displayedRow(forOriginalRow originalRow: Int) -> Int? {
+    displayedRowByOriginalRow.indices.contains(originalRow)
+      ? displayedRowByOriginalRow[originalRow] : nil
   }
 
   /// Value at a table row and column; NULL when the row is shorter than the columns

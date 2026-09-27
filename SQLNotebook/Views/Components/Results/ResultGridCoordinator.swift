@@ -17,6 +17,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 {
   static let textColor = NSColor(Color.foreground)
   static let nullTextColor = NSColor(Color.foregroundSubtle)
+  /// Background of the current search match (the one Enter moved to), as in the result table
+  static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
   /// Same size as `Font.mono` (body, monospaced)
   static let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
@@ -32,10 +34,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let ascending: Bool
     let searchQuery: String
     let caseSensitive: Bool
+    let currentMatchId: UUID?
   }
 
   private(set) var model: ResultGridModel?
   private var key: Key?
+  /// Table (displayed) row and result column of the current search match
+  private var currentMatchCell: (row: Int, column: Int)?
 
   /// Set by the caller from `NotebookViewModel.canEdit(_:)`: without it no cell can be edited
   var isEditable = false
@@ -52,24 +57,33 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private var isShowingInputSort = false
 
   /// Rebuilds the columns and reloads the table when the result, the sort or the search
-  /// changed. Returns whether the table was reloaded.
+  /// changed, and scrolls to the row of `currentMatch` (a match in this result's data).
+  /// Returns whether the table was reloaded.
   @discardableResult
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
-    searchQuery: String = "", caseSensitive: Bool = false
+    searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil
   )
     -> Bool
   {
     let newKey = Key(
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id)
     guard newKey != key else { return false }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
     }
     key = newKey
-    model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
+    let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
+    self.model = model
+    currentMatchCell = nil
+    if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
+      let row = model.displayedRow(forOriginalRow: originalRow),
+      let column = model.columns.firstIndex(where: { $0.name == columnName })
+    {
+      currentMatchCell = (row, column)
+    }
     tableView.dataSource = self
     tableView.delegate = self
     let sortDescriptors = sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
@@ -79,6 +93,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       isShowingInputSort = false
     }
     tableView.reloadData()
+    if let currentMatchCell {
+      tableView.scrollRowToVisible(currentMatchCell.row)
+    }
     return true
   }
 
@@ -205,7 +222,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     if let key, !key.searchQuery.isEmpty {
       cell.textField?.attributedStringValue = highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
-        textColor: isNull ? Self.nullTextColor : Self.textColor)
+        textColor: isNull ? Self.nullTextColor : Self.textColor,
+        isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
     } else {
       cell.textField?.stringValue = text
     }
@@ -217,18 +235,21 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Private
 
-  /// `text` with every match of `query` on the search highlight color, like SearchHighlighter
+  /// `text` with every match of `query` on the search highlight color, like SearchHighlighter;
+  /// in the current match cell the first match is on the current-match color
   private func highlighted(
-    _ text: String, query: String, caseSensitive: Bool, textColor: NSColor
+    _ text: String, query: String, caseSensitive: Bool, textColor: NSColor, isCurrentMatch: Bool
   ) -> NSAttributedString {
     let string = NSMutableAttributedString(
       string: text, attributes: [.font: Self.font, .foregroundColor: textColor])
     let options: String.CompareOptions = caseSensitive ? [] : .caseInsensitive
     var start = text.startIndex
     while let range = text.range(of: query, options: options, range: start..<text.endIndex) {
+      let isCurrent = isCurrentMatch && start == text.startIndex
       string.addAttributes(
         [
-          .backgroundColor: NSColor(SearchHighlighter.highlightColor),
+          .backgroundColor: isCurrent
+            ? Self.currentMatchColor : NSColor(SearchHighlighter.highlightColor),
           .foregroundColor: NSColor.black,
         ], range: NSRange(range, in: text))
       start = range.upperBound
