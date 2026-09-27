@@ -209,6 +209,44 @@ struct ExecutionQueueTests {
     #expect(queue.tasks.first { $0.cellId == first }?.state == .cancelled)
   }
 
+  @Test(
+    "cancelPending cancels the queued tasks only: the executing one completes",
+    .timeLimit(.minutes(1)))
+  func testCancelPending() async throws {
+    let first = UUID()
+    let second = UUID()
+    let third = UUID()
+    var releaseFirst: CheckedContinuation<Void, Never>?
+    var executed: [UUID] = []
+    let done = CellResult.errorResult("done")
+
+    let queue = ExecutionQueue { task in
+      if task.cellId == first {
+        await withCheckedContinuation { releaseFirst = $0 }
+      }
+      executed.append(task.cellId)
+      return done
+    }
+
+    queue.enqueue(cellId: first, query: "SELECT 1")
+    queue.enqueue(cellId: second, query: "SELECT 2")
+    queue.enqueue(cellId: third, query: "SELECT 3")
+    #expect(await queue.waitForExecuting(cellId: first))
+    while releaseFirst == nil { await Task.yield() }
+
+    #expect(queue.cancelPending() == 2)
+    #expect(queue.isExecuting(cellId: first))
+    #expect(await queue.waitForTask(cellId: second) == .cancelled)
+    #expect(await queue.waitForTask(cellId: third) == .cancelled)
+
+    releaseFirst?.resume()
+    let state = await queue.waitForTask(cellId: first)
+    #expect(state == .completed(done), "got \(String(describing: state))")
+    await queue.waitForIdle()
+    #expect(executed == [first])
+    #expect(queue.cancelPending() == 0)
+  }
+
   // MARK: - State Tracking
 
   @Test("isExecuting returns correct state")

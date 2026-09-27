@@ -40,14 +40,14 @@ extension NotebookViewModel {
 
   /// Internal method to execute a task (called by ExecutionQueue)
   func executeTask(_ task: ExecutionTask) async -> CellResult? {
-    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+    guard let queuedIndex = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
 
     guard let connectionManager = connectionManager else {
       let errorResult = CellResult.errorResult(
         "No database connection available", sourceQuery: task.query)
-      notebook.cells[index].result = errorResult
+      notebook.cells[queuedIndex].result = errorResult
       onDocumentChanged?()
       return errorResult
     }
@@ -58,6 +58,10 @@ extension NotebookViewModel {
     switch await admitBatchTask(task, on: connectionManager) {
     case .run(let epoch): expectedEpoch = epoch
     case .refused(let result): return result
+    }
+    // The cell list may have changed while the admission awaited: the cell may be gone or moved
+    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+      return nil
     }
 
     notebook.cells[index].isRunning = true

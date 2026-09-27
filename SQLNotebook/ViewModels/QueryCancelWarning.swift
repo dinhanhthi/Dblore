@@ -17,17 +17,24 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
   let detail: String
 
   /// nil when cancelling loses nothing but the session state (temp tables, SET, search_path)
-  static func make(state: TransactionState, userTxOpen: Bool) -> QueryCancelWarning? {
+  /// - Parameter ownedByAnotherTab: the app transaction was opened by another tab. A user
+  ///   transaction (Protected off) has no owner: any tab may have sent its BEGIN.
+  static func make(
+    state: TransactionState, userTxOpen: Bool, ownedByAnotherTab: Bool = false
+  ) -> QueryCancelWarning? {
     if !state.isIdle {
       let count = state.pending.count
+      let owner = ownedByAnotherTab ? "another tab's " : ""
       return QueryCancelWarning(
-        title: "Cancelling will roll back \(count) pending change\(count == 1 ? "" : "s")",
+        title:
+          "Cancelling will roll back \(owner)\(count) pending change\(count == 1 ? "" : "s")",
         detail: PendingTransactionSummary(state: state).reviewText)
     }
     guard userTxOpen else { return nil }
     return QueryCancelWarning(
-      title: "Cancelling will roll back your open transaction",
+      title: "Cancelling will roll back the open transaction",
       detail: "The connection is closed to stop the query, so the server rolls back the "
-        + "transaction you opened with BEGIN (temp tables, SET and search_path are lost too).")
+        + "transaction opened with BEGIN in this tab or another tab (temp tables, SET and "
+        + "search_path are lost too).")
   }
 }

@@ -153,7 +153,8 @@ struct QueryCancelTests {
         #expect(status.inFlight)
         let start = Date()
         let outcome = await manager.cancelRunningStatement(
-          expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen)
+          expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+          expectedEpoch: status.epoch)
         #expect(outcome == .cancelled)
         let statement = await running.value
         #expect(Date().timeIntervalSince(start) < 2)
@@ -203,7 +204,8 @@ struct QueryCancelTests {
       let status = await manager.runningStatementStatus()
       #expect(status.userTxOpen)
       let outcome = await manager.cancelRunningStatement(
-        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen)
+        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+        expectedEpoch: status.epoch)
       #expect(outcome == .cancelled)
       let statement = await running.value
       #expect(isCancelled(statement), "got \(statement)")
@@ -229,13 +231,66 @@ struct QueryCancelTests {
       let status = await manager.runningStatementStatus()
       #expect(!status.inFlight)
       let outcome = await manager.cancelRunningStatement(
-        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen)
+        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+        expectedEpoch: status.epoch)
       #expect(outcome == .nothingRunning)
       #expect(try await backendPid(manager) == pid)
     } catch {
       Issue.record(error)
     }
     await tearDown(table, manager, observer)
+  }
+
+  @Test(
+    "A second Cancel with the status read before the first reset is refused (idle to idle)",
+    .timeLimit(.minutes(1)))
+  func secondCancelAfterResetRefused() async throws {
+    let table = "c3_cancel_twice"
+    let (manager, observer) = try await setUp(table, protectedMode: false)
+    var pid: String?
+    do {
+      let policy = open
+      let firstPid = try await backendPid(manager)
+      let first = Task {
+        await bounded(.seconds(10)) {
+          _ = try await manager.execute(userSQL: Self.sleepSQL, policy: policy)
+        }
+      }
+      #expect(await eventually { await activeSleepers(firstPid, observer) == 1 })
+      // Both clicks read the same status before either cancel ran
+      let seen = await manager.runningStatementStatus()
+      let firstOutcome = await manager.cancelRunningStatement(
+        expectedGeneration: seen.generation, expectedUserTxOpen: seen.userTxOpen,
+        expectedEpoch: seen.epoch)
+      #expect(firstOutcome == .cancelled)
+      _ = await first.value
+
+      // A new statement runs on the reopened session
+      pid = try await backendPid(manager)
+      guard let pid else { return }
+      let second = Task {
+        await bounded(.seconds(10)) {
+          _ = try await manager.execute(userSQL: Self.sleepSQL, policy: policy)
+        }
+      }
+      #expect(await eventually { await activeSleepers(pid, observer) == 1 })
+      #expect(await manager.runningStatementStatus().generation == seen.generation)
+
+      let secondOutcome = await manager.cancelRunningStatement(
+        expectedGeneration: seen.generation, expectedUserTxOpen: seen.userTxOpen,
+        expectedEpoch: seen.epoch)
+      #expect(secondOutcome == .nothingRunning)
+      #expect(await activeSleepers(pid, observer) == 1)
+
+      let status = await manager.runningStatementStatus()
+      _ = await manager.cancelRunningStatement(
+        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+        expectedEpoch: status.epoch)
+      _ = await second.value
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer, pid: pid)
   }
 
   // MARK: - Protected pending changes: confirm first

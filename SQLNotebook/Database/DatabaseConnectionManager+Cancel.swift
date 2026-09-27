@@ -27,6 +27,11 @@ nonisolated struct RunningStatementStatus: Sendable, Equatable {
   let userTxOpen: Bool
   /// `commitGuard.generation`: changes with the transaction state
   let generation: UInt64
+  /// `connectionEpoch` the running statement uses: changes with every reset (an idle to idle
+  /// reset leaves `generation` unchanged)
+  let epoch: UInt64
+  /// Caller token (tab) that opened the app transaction (nil when none)
+  let owner: UUID?
   /// A gated statement or inline edit is running
   let inFlight: Bool
 }
@@ -34,7 +39,7 @@ nonisolated struct RunningStatementStatus: Sendable, Equatable {
 nonisolated enum QueryCancelOutcome: Sendable, Equatable {
   /// The connection was closed and reopened (or reported lost if reopening failed)
   case cancelled
-  /// No gated statement is running: nothing was closed
+  /// No gated statement is running, or not on the connection the user saw: nothing was closed
   case nothingRunning
   /// The transaction state changed since the status the user saw: nothing was closed, ask again
   case transactionChanged
@@ -44,7 +49,7 @@ extension DatabaseConnectionManager {
   func runningStatementStatus() -> RunningStatementStatus {
     RunningStatementStatus(
       state: txState, userTxOpen: userTxOpen, generation: commitGuard.generation,
-      inFlight: commitGuard.inFlight > 0)
+      epoch: connectionEpoch, owner: txOwner, inFlight: commitGuard.inFlight > 0)
   }
 
   /// Stop the running statement on the server: close the connection and reconnect with the
@@ -52,11 +57,15 @@ extension DatabaseConnectionManager {
   /// `DatabaseError.queryCancelled`; a `SessionResetEvent` (`.cancelled`) is published. If the
   /// reconnect fails, the session is reported lost (`SessionLostEvent`).
   /// - Parameters: the `RunningStatementStatus` the user confirmed.
-  /// - Returns: `.nothingRunning` / `.transactionChanged` without closing anything.
+  /// - Returns: `.nothingRunning` (also when the connection changed since the status) /
+  ///   `.transactionChanged` without closing anything.
   func cancelRunningStatement(
-    expectedGeneration: UInt64, expectedUserTxOpen: Bool
+    expectedGeneration: UInt64, expectedUserTxOpen: Bool, expectedEpoch: UInt64
   ) async -> QueryCancelOutcome {
     guard commitGuard.inFlight > 0, _connection != nil, let config else { return .nothingRunning }
+    // Reset meanwhile (e.g. a double-click Cancel): the statement the user saw is gone, and what
+    // runs now on the new connection was not confirmed
+    guard connectionEpoch == expectedEpoch else { return .nothingRunning }
     guard commitGuard.generation == expectedGeneration, userTxOpen == expectedUserTxOpen else {
       return .transactionChanged
     }

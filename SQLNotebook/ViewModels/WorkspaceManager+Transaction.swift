@@ -198,7 +198,8 @@ extension WorkspaceManager {
   /// statement is in flight) and Disconnect (offered while COMMIT / ROLLBACK is awaited)
   /// disconnect, so the server ends the transaction. When the prompted Commit / Rollback fails
   /// (e.g. refused because a statement started meanwhile), the prompt is shown again with the
-  /// current options (Discard while it runs). Refused while another resolve prompt is open.
+  /// current options (Discard while it runs). Refused while another resolve prompt is open
+  /// (also when re-prompting).
   /// - Returns: true if the action may proceed (nothing is pending any more).
   func resolvePendingTransaction(
     action: PendingTransactionAction, resolution: PendingTransactionResolution? = nil,
@@ -221,6 +222,9 @@ extension WorkspaceManager {
       if let resolution {
         answer = resolution
       } else {
+        // Re-prompting after a refused answer: another resolve may have opened its prompt
+        // while the answer was applied (never two prompts at once)
+        guard !isResolvingPendingTransaction else { return false }
         // Only while the prompt is open: a hung COMMIT / ROLLBACK chosen here must stay
         // escapable from the banner, a close or a quit
         isResolvingPendingTransaction = true

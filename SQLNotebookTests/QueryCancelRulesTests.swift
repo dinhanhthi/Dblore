@@ -50,11 +50,22 @@ struct QueryCancelRulesTests {
     #expect(warning?.title == "Cancelling will roll back 1 pending change")
   }
 
+  @Test("Another tab's pending app transaction: named as that tab's changes")
+  func anotherTabsPendingChanges() {
+    let pending = [summary("UPDATE t SET v = 1 WHERE id = 1", rows: 1)]
+    let warning = QueryCancelWarning.make(
+      state: .appTx(pending: pending), userTxOpen: false, ownedByAnotherTab: true)
+    #expect(warning?.title == "Cancelling will roll back another tab's 1 pending change")
+    #expect(warning?.detail.contains("UPDATE t SET v = 1 WHERE id = 1") == true)
+  }
+
+  // Any tab may have sent the BEGIN: never "your" transaction
   @Test("User transaction open (Protected off): warns that it will be rolled back")
   func userTransactionWarns() {
     let warning = QueryCancelWarning.make(state: .idle, userTxOpen: true)
-    #expect(warning?.title == "Cancelling will roll back your open transaction")
-    #expect(warning?.detail.isEmpty == false)
+    #expect(warning?.title == "Cancelling will roll back the open transaction")
+    #expect(warning?.title.contains("your") == false)
+    #expect(warning?.detail.contains("this tab or another tab") == true)
   }
 
   @Test("Button titles")

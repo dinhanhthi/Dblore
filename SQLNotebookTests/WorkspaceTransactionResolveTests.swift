@@ -223,6 +223,49 @@ struct WorkspaceTransactionResolveTests {
   }
 
   @Test(
+    "Refused answer while another resolve prompt opened meanwhile: no second prompt at once",
+    .timeLimit(.minutes(1)))
+  func noRepromptWhileAnotherPromptIsOpen() async throws {
+    let fixture = try await setUp("p3_ws_reprompt_overlap")
+    await run("UPDATE \(fixture.table) SET v = 20 WHERE id = 1", in: fixture)
+    let viewModel = fixture.viewModel
+    let slowSQL = "UPDATE \(fixture.table) SET v = 30 WHERE id = 1 AND pg_sleep(2) IS NOT NULL"
+
+    var prompts = 0
+    var open = 0
+    var maxOpen = 0
+    var hung: Task<CellResult?, Never>?
+    var other: Task<Bool, Never>?
+    fixture.workspace.pendingTransactionPrompt = { [weak workspace = fixture.workspace] _, _, _ in
+      prompts += 1
+      open += 1
+      maxOpen = max(maxOpen, open)
+      defer { open -= 1 }
+      guard prompts == 1, let workspace else {
+        // Stays open while the first resolve handles its refused answer
+        try? await Task.sleep(for: .seconds(1))
+        return .cancel
+      }
+      // A statement starts while the prompt is open: the chosen Rollback is refused
+      let cell = NotebookCell(cellType: .sql, content: slowSQL)
+      viewModel.notebook.cells.append(cell)
+      hung = Task { await viewModel.executeTask(ExecutionTask(cellId: cell.id, query: slowSQL)) }
+      try? await Task.sleep(for: .milliseconds(500))
+      // Starts once this prompt is closed: its own prompt opens while the answer is applied
+      other = Task { await workspace.resolvePendingTransaction(action: .quit) }
+      return .rollback
+    }
+    #expect(!(await fixture.workspace.resolvePendingTransaction(action: .closeWindow)))
+    #expect(await other?.value == false)
+    #expect(prompts == 2)
+    #expect(maxOpen == 1)
+
+    _ = await hung?.value
+    #expect(try await committedValue(fixture) == .int(10))
+    await tearDown(fixture)
+  }
+
+  @Test(
     "A second resolve while the prompt is open is refused without a second prompt",
     .timeLimit(.minutes(1)))
   func resolveReentryRefused() async throws {

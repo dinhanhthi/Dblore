@@ -302,4 +302,40 @@ struct CapResetSharedSessionTests {
     }
     await tearDown(table, manager, observer)
   }
+
+  @Test(
+    "A script expected on another connection epoch is refused before anything is sent",
+    .timeLimit(.minutes(1)))
+  func staleExpectedEpochRefused() async throws {
+    let table = "cap_expected_epoch"
+    let (manager, observer) = try await setUp(table)
+    do {
+      let stale = await manager.connectionEpoch &- 1
+      do {
+        _ = try await manager.execute(
+          userSQL: "UPDATE \(table) SET v = 'b' WHERE id = 1", policy: open, expectedEpoch: stale)
+        Issue.record("the statement must be refused")
+      } catch DatabaseError.sessionChanged(let skipped) {
+        #expect(skipped == 1)
+      }
+      do {
+        _ = try await manager.executeDetailed(
+          userSQL: "UPDATE \(table) SET v = 'c' WHERE id = 1; UPDATE \(table) SET v = 'd' "
+            + "WHERE id = 1",
+          policy: open, expectedEpoch: stale)
+        Issue.record("the script must be refused")
+      } catch DatabaseError.sessionChanged(let skipped) {
+        #expect(skipped == 2)
+      }
+      #expect(try await rowOne(table, observer) == .string("a"))
+      // The current epoch runs
+      let current = await manager.connectionEpoch
+      _ = try await manager.execute(
+        userSQL: "UPDATE \(table) SET v = 'e' WHERE id = 1", policy: open, expectedEpoch: current)
+      #expect(try await rowOne(table, observer) == .string("e"))
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
 }

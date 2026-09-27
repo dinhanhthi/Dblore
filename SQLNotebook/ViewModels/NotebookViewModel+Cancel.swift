@@ -57,13 +57,17 @@ extension NotebookViewModel {
         if cancelQueue { cancelAllCells() }
         return false
       }
-      if let warning = QueryCancelWarning.make(state: status.state, userTxOpen: status.userTxOpen) {
+      let ownedByAnotherTab = status.owner.map { $0 != id } ?? false
+      if let warning = QueryCancelWarning.make(
+        state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab)
+      {
         guard await confirmCancel(warning) else { return false }
       }
       // Before the reset: a queued cell must not start on the reopened session
       if cancelQueue { cancelAllCells() }
       let outcome = await connectionManager.cancelRunningStatement(
-        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen)
+        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+        expectedEpoch: status.epoch)
       switch outcome {
       case .cancelled: return true
       case .nothingRunning: return false
