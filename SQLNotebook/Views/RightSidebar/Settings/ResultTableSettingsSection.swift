@@ -30,59 +30,25 @@ struct ResultTableSettingsSection: View {
           isOn: $appSettings.hideRunWithQuerySection
         )
 
-        // Mode-specific settings
+        // Max Height (Notebook only)
         if viewMode == .notebook {
-          notebookSpecificSettings
-        } else {
-          editorSpecificSettings
+          SettingsSlider(
+            title: "Max Height",
+            valueText: "\(Int(appSettings.maxResultHeight)) pt",
+            value: Binding(
+              get: { Double(appSettings.maxResultHeight) },
+              set: { appSettings.maxResultHeight = CGFloat($0) }
+            ),
+            range: 200...1000,
+            step: 50,
+            description:
+              "Adjust the maximum height of result tables. Values between 200-1000 points."
+          )
         }
+
+        // One row cap for Notebook and Editor
+        ResultRowCapSetting(appSettings: appSettings)
       }
     }
-  }
-
-  private var notebookSpecificSettings: some View {
-    VStack(alignment: .leading, spacing: Spacing.lg) {
-      // Max Height
-      SettingsSlider(
-        title: "Max Height",
-        valueText: "\(Int(appSettings.maxResultHeight)) pt",
-        value: Binding(
-          get: { Double(appSettings.maxResultHeight) },
-          set: { appSettings.maxResultHeight = CGFloat($0) }
-        ),
-        range: 200...1000,
-        step: 50,
-        description:
-          "Adjust the maximum height of result tables. Values between 200-1000 points."
-      )
-
-      // Max Row Limit
-      SettingsSlider(
-        title: "Max Rows",
-        valueText: "\(appSettings.maxRowLimit) rows",
-        value: Binding(
-          get: { Double(appSettings.maxRowLimit) },
-          set: { appSettings.maxRowLimit = Int($0) }
-        ),
-        range: 50...100,
-        step: 5,
-        description: "Maximum rows to fetch from database. Values between 50-100 rows."
-      )
-    }
-  }
-
-  private var editorSpecificSettings: some View {
-    // Max Row Limit
-    SettingsSlider(
-      title: "Max Rows",
-      valueText: "\(appSettings.editorMaxRowLimit) rows",
-      value: Binding(
-        get: { Double(appSettings.editorMaxRowLimit) },
-        set: { appSettings.editorMaxRowLimit = Int($0) }
-      ),
-      range: 100...200,
-      step: 10,
-      description: "Maximum rows to fetch from database. Values between 100-200 rows."
-    )
   }
 }

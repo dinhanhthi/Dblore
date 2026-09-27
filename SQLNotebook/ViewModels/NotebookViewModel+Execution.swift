@@ -38,38 +38,30 @@ extension NotebookViewModel {
     executionQueue.enqueue(cellId: id, query: query)
   }
 
-  /// Cancel execution for a specific cell
-  func cancelCell(id: UUID) {
-    executionQueue.cancel(cellId: id)
-
-    // Update UI state
-    if let index = notebook.cells.firstIndex(where: { $0.id == id }) {
-      notebook.cells[index].isRunning = false
-    }
-  }
-
-  /// Cancel all pending and executing cells
-  func cancelAllCells() {
-    executionQueue.cancelAll()
-
-    // Update UI state for all cells
-    for index in notebook.cells.indices {
-      notebook.cells[index].isRunning = false
-    }
-  }
-
   /// Internal method to execute a task (called by ExecutionQueue)
   func executeTask(_ task: ExecutionTask) async -> CellResult? {
-    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+    guard let queuedIndex = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
 
     guard let connectionManager = connectionManager else {
       let errorResult = CellResult.errorResult(
         "No database connection available", sourceQuery: task.query)
-      notebook.cells[index].result = errorResult
+      notebook.cells[queuedIndex].result = errorResult
       onDocumentChanged?()
       return errorResult
+    }
+    // Another tab's pending transaction: nothing is sent, the cell keeps its result
+    guard !refuseWhileTransactionPendingElsewhere() else { return nil }
+    // A Run All cell only runs on the connection its batch started on
+    let expectedEpoch: UInt64?
+    switch await admitBatchTask(task, on: connectionManager) {
+    case .run(let epoch): expectedEpoch = epoch
+    case .refused(let result): return result
+    }
+    // The cell list may have changed while the admission awaited: the cell may be gone or moved
+    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+      return nil
     }
 
     notebook.cells[index].isRunning = true
@@ -78,19 +70,32 @@ extension NotebookViewModel {
     let sanitizedQuery = AppLogger.shared.sanitizeQuery(task.query)
     await AppLogger.shared.info(
       "Executing query from cell \(task.cellId): `\(sanitizedQuery)`", category: "Execution")
+    // Cancelled meanwhile (e.g. the pending transaction is being resolved): send nothing
+    guard !Task.isCancelled else {
+      if let current = notebook.cells.firstIndex(where: { $0.id == task.cellId }) {
+        notebook.cells[current].isRunning = false
+      }
+      return nil
+    }
 
     var result: CellResult?
+    let policy = protectionPolicy
+    let caller = id
 
+    // The statements run on their own task, not cancelled with the queue: only Cancel (close +
+    // reconnect, `cancelRunningStatement`) stops the server work, and the server
+    // `statement_timeout` (applied on connect) is the time limit.
+    let maxRows = effectiveRowCap
     do {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(task.query) {
-        // Execute all statements with timeout (10.1.5 optimization)
-        let (statementResults, totalTime) =
-          try await Task.withTimeout(seconds: 60) {
-            try await connectionManager
-              .executeMultipleStatementsDetailed(
-                task.query, maxRows: AppSettings.shared.maxRowLimit)
-          }
+        let detailed = try await Task {
+          try await connectionManager.executeDetailed(
+            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
+            expectedEpoch: expectedEpoch)
+        }.value
+        let statementResults = detailed.results
+        let totalTime = detailed.totalTime
 
         executionCounter += 1
 
@@ -109,13 +114,8 @@ extension NotebookViewModel {
               sourceQuery: tuple.queryText,
               tableName: nil,
               primaryKeyColumns: [],
-              rowIdentifiers: tuple.result.rowIdentifiers,
-              userLimitExceeded: tuple.result.userLimitExceeded,
-              userRequestedLimit: tuple.result.userRequestedLimit,
-              affectedRows: tuple.result.affectedRows,
-              limitWasCapped: tuple.result.limitWasCapped,
-              actualLimitUsed: tuple.result.actualLimitUsed
-            ),
+              affectedRows: tuple.result.affectedRows
+            ).withCapInfo(from: tuple.result),
             statementIndex: index
           )
         }
@@ -129,58 +129,22 @@ extension NotebookViewModel {
         result = convertedStatements.last?.result
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
-
-        // Build pagination info for each statement with LIMIT
-        for statementResult in convertedStatements {
-          if let paginationInfo = await buildPaginationInfo(
-            for: statementResult.queryText, result: statementResult.result)
-          {
-            if cellStatementPaginationInfo[task.cellId] == nil {
-              cellStatementPaginationInfo[task.cellId] = [:]
-            }
-            cellStatementPaginationInfo[task.cellId]?[statementResult.id] = paginationInfo
-          }
-        }
-        // Sync statement pagination info to cell for persistence
-        notebook.cells[index].statementPaginationInfo =
-          cellStatementPaginationInfo[task.cellId] ?? [:]
-        // Clear single statement pagination info for multi-statement
-        notebook.cells[index].paginationInfo = nil
-
-        // Check for any limit exceeded warnings
-        for statementResult in convertedStatements {
-          if statementResult.result.userLimitExceeded,
-            let requestedLimit = statementResult.result.userRequestedLimit
-          {
-            let maxLimit = AppSettings.shared.maxRowLimit
-            showToast(
-              "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
-              type: .warning
-            )
-            break  // Only show once
-          }
-        }
       } else {
         // Single statement - use original logic
-        // Execute query with timeout (10.1.5 optimization)
-        let queryResult = try await Task.withTimeout(seconds: 60) {
-          try await connectionManager.executeQuery(
-            task.query,
-            maxRows: AppSettings.shared.maxRowLimit
-          )
-        }
+        // Connection identity before the query: the edit target must resolve on the same one
+        let epoch = await connectionManager.connectionEpoch
+        let queryResult = try await Task {
+          try await connectionManager.execute(
+            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
+            expectedEpoch: expectedEpoch)
+        }.value
 
         executionCounter += 1
 
-        // Extract table name from query (simple SELECT parsing)
-        let tableName = extractTableName(from: task.query)
-
-        // Fetch primary key columns if we have a table name
-        var primaryKeyColumns: [String] = []
-        if let tableName = tableName {
-          primaryKeyColumns =
-            (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-        }
+        // Session-only, server-validated inline edit target (nil = not editable)
+        let target = await editTarget(
+          for: task.query, result: queryResult, connectionManager: connectionManager,
+          epoch: epoch)
 
         // Convert QueryResult to CellResult
         result = CellResult(
@@ -191,64 +155,20 @@ extension NotebookViewModel {
           timestamp: Date(),
           wasLimited: queryResult.wasLimited,
           sourceQuery: task.query,
-          tableName: tableName,
-          primaryKeyColumns: primaryKeyColumns,
-          rowIdentifiers: queryResult.rowIdentifiers,
-          userLimitExceeded: queryResult.userLimitExceeded,
-          userRequestedLimit: queryResult.userRequestedLimit,
+          tableName: target?.qualifiedName,
+          primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: queryResult.affectedRows,
-          limitWasCapped: queryResult.limitWasCapped,
-          actualLimitUsed: queryResult.actualLimitUsed
-        )
+          editTarget: target
+        ).withCapInfo(from: queryResult)
 
+        carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
         // Clear multi-statement data for single statement
         notebook.cells[index].statementResults = []
         notebook.cells[index].selectedStatementIndex = 0
         notebook.cells[index].totalExecutionTime = nil
-
-        // Build pagination info if applicable
-        if let paginationInfo = await buildPaginationInfo(for: task.query, result: result!) {
-          cellPaginationInfo[task.cellId] = paginationInfo
-        } else {
-          // Clear pagination info if not applicable
-          cellPaginationInfo.removeValue(forKey: task.cellId)
-        }
-        // Clear statement pagination info for single statement
-        cellStatementPaginationInfo.removeValue(forKey: task.cellId)
-        // Sync pagination info to cell for persistence
-        notebook.cells[index].paginationInfo = cellPaginationInfo[task.cellId]
-        // Clear statement pagination info for single statement
-        notebook.cells[index].statementPaginationInfo = [:]
-
-        // Show toast if user's LIMIT was exceeded and capped
-        if queryResult.userLimitExceeded, let requestedLimit = queryResult.userRequestedLimit {
-          let maxLimit = AppSettings.shared.maxRowLimit
-          showToast(
-            "Query limit capped from \(requestedLimit) to \(maxLimit) rows. Increase in Settings.",
-            type: .warning
-          )
-        }
       }
-    } catch is TaskTimeoutError {
-      // Handle query timeout (10.1.5 optimization)
-      executionCounter += 1
-      result = .errorResult(
-        "Query execution timed out after 60 seconds",
-        sourceQuery: task.query
-      )
-      notebook.cells[index].result = result
-      notebook.cells[index].executionCount = executionCounter
-      // Clear multi-statement data on error
-      notebook.cells[index].statementResults = []
-      notebook.cells[index].selectedStatementIndex = 0
-      notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
-      await AppLogger.shared.error(
-        "Query timed out for cell \(task.cellId)", category: "Execution")
     } catch let error as DatabaseError {
       // Handle database-specific errors
       executionCounter += 1
@@ -264,9 +184,6 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     } catch {
       // Handle general errors
       executionCounter += 1
@@ -277,12 +194,12 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
-      // Clear pagination info on error
-      cellPaginationInfo.removeValue(forKey: task.cellId)
-      cellStatementPaginationInfo.removeValue(forKey: task.cellId)
     }
 
+    // A capped read reset the session: the queued cells must not run on the new one
+    stopQueueIfSessionReset(cellId: task.cellId)
     notebook.cells[index].isRunning = false
+    await onStatementsExecuted?()
 
     // Notify document changed to trigger save
     onDocumentChanged?()
@@ -294,97 +211,6 @@ extension NotebookViewModel {
     updateExecutedQuerySidebarIfNeeded(cellId: task.cellId, result: result)
 
     return result
-  }
-
-  /// Run all SQL cells sequentially by adding them to the queue
-  /// Checks for destructive queries and asks for confirmation if bypass setting is disabled
-  func runAllCells() async {
-    // Force blur to ensure text content is saved
-    NotificationCenter.default.post(name: .unfocusEditor, object: nil)
-    try? await Task.sleep(for: .milliseconds(50))
-
-    // Check connection protection level
-    let protectionLevel = notebook.connectionConfig?.protectionLevel ?? .none
-    let isReadOnly = protectionLevel == .readOnly
-
-    // Collect all SQL cells with their destructive status
-    var pendingCells: [(id: UUID, query: String, isDestructive: Bool)] = []
-    var destructiveCount = 0
-
-    for cell in notebook.cells where cell.cellType == .sql {
-      if !executionQueue.isInQueue(cellId: cell.id) {
-        let isDestructive = isModificationQuery(cell.content)
-        pendingCells.append((id: cell.id, query: cell.content, isDestructive: isDestructive))
-        if isDestructive {
-          destructiveCount += 1
-        }
-      }
-    }
-
-    // If no cells to run, return early
-    guard !pendingCells.isEmpty else { return }
-
-    // Check if we need to show confirmation for destructive queries
-    // Only show if: there are destructive queries AND bypass is disabled AND not read-only
-    if destructiveCount > 0 && !AppSettings.shared.bypassDestructiveQueryConfirmation && !isReadOnly
-    {
-      // Store pending cells and show confirmation dialog
-      queryConfirmationState.runAllPendingCells = pendingCells
-      queryConfirmationState.runAllDestructiveCount = destructiveCount
-      queryConfirmationState.showRunAllConfirmation = true
-      return
-    }
-
-    // Execute all cells (skip destructive queries if read-only)
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: isReadOnly)
-  }
-
-  /// Execute Run All Cells after user confirmation (allows destructive queries)
-  func executeRunAllCellsWithDestructive() async {
-    let pendingCells = queryConfirmationState.runAllPendingCells
-    queryConfirmationState.clearRunAll()
-
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: false)
-  }
-
-  /// Execute Run All Cells skipping destructive queries
-  func executeRunAllCellsSkipDestructive() async {
-    let pendingCells = queryConfirmationState.runAllPendingCells
-    let destructiveCount = queryConfirmationState.runAllDestructiveCount
-    queryConfirmationState.clearRunAll()
-
-    await executeRunAllCells(pendingCells: pendingCells, skipDestructive: true)
-
-    // Show toast about skipped queries
-    if destructiveCount > 0 {
-      let queryWord = destructiveCount == 1 ? "query" : "queries"
-      showToast(
-        "\(destructiveCount) destructive \(queryWord) skipped",
-        type: .warning
-      )
-    }
-  }
-
-  /// Cancel Run All Cells operation
-  func cancelRunAllCells() {
-    queryConfirmationState.clearRunAll()
-  }
-
-  /// Internal helper to execute Run All Cells
-  private func executeRunAllCells(
-    pendingCells: [(id: UUID, query: String, isDestructive: Bool)],
-    skipDestructive: Bool
-  ) async {
-    // Reset execution counter to start counting from 1 again
-    executionCounter = 0
-
-    // Enqueue cells, optionally skipping destructive ones
-    for cell in pendingCells {
-      if skipDestructive && cell.isDestructive {
-        continue
-      }
-      executionQueue.enqueue(cellId: cell.id, query: cell.query)
-    }
   }
 
   /// Clear output from a specific cell
@@ -513,71 +339,6 @@ extension NotebookViewModel {
 
   // MARK: - Helper Methods
 
-  /// Extract table name from a SQL query (simple SELECT parsing)
-  /// Works for SELECT queries with WHERE, ORDER BY, LIMIT, GROUP BY, HAVING, etc.
-  /// Returns nil for JOINs, subqueries, or other complex queries
-  func extractTableName(from query: String) -> String? {
-    // Normalize query: trim whitespace and convert to lowercase for parsing
-    let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-    // Check if it's a SELECT query
-    guard normalized.hasPrefix("select") else {
-      return nil
-    }
-
-    // Find "FROM" keyword using word boundary pattern
-    // Use regex to find FROM as a separate word (not part of another word)
-    guard let fromRange = normalized.range(of: "\\bfrom\\b", options: .regularExpression) else {
-      return nil
-    }
-
-    // Get everything after "FROM"
-    let afterFrom = String(normalized[fromRange.upperBound...])
-      .trimmingCharacters(in: .whitespaces)
-
-    // Define SQL keywords that indicate end of table name
-    let endKeywords = [
-      "where", "order", "group", "having", "limit", "offset",
-      "union", "intersect", "except", "window", "for",
-    ]
-
-    // Find the position of the first keyword or separator
-    var endPosition = afterFrom.endIndex
-
-    // Check for SQL keywords (word boundaries)
-    for keyword in endKeywords {
-      if let keywordRange = afterFrom.range(of: "\\b\(keyword)\\b", options: .regularExpression) {
-        if keywordRange.lowerBound < endPosition {
-          endPosition = keywordRange.lowerBound
-        }
-      }
-    }
-
-    // Also check for other separators (comma for multi-table, semicolon, parenthesis for subquery)
-    let separators = CharacterSet(charactersIn: ",;()")
-    if let separatorRange = afterFrom.rangeOfCharacter(from: separators) {
-      if separatorRange.lowerBound < endPosition {
-        endPosition = separatorRange.lowerBound
-      }
-    }
-
-    // Extract table name (everything from start to endPosition)
-    let tableName = String(afterFrom[..<endPosition])
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Return nil if empty or if it contains JOIN keyword (multi-table query)
-    if tableName.isEmpty || tableName.contains("join") {
-      return nil
-    }
-
-    // Handle quoted identifiers (strip quotes)
-    let cleanedTableName =
-      tableName
-      .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
-
-    return cleanedTableName.isEmpty ? nil : cleanedTableName
-  }
-
   // MARK: - Sidebar Update
 
   /// Select a specific statement result in a cell (for multi-statement queries)
@@ -596,7 +357,7 @@ extension NotebookViewModel {
   /// This ensures the sidebar shows the latest executed query after re-running a cell or switching statements
   func updateExecutedQuerySidebarIfNeeded(cellId: UUID?, result: CellResult?) {
     // Check if sidebar is showing executed query
-    guard case .executedQuery(_, let sidebarCellId, _, _) = rightSidebarContent else {
+    guard case .executedQuery(_, let sidebarCellId) = rightSidebarContent else {
       return
     }
 
@@ -605,25 +366,11 @@ extension NotebookViewModel {
       return
     }
 
-    // Get the actual executed query (with LIMIT adjusted if needed)
+    // The executed query (sent as written)
     guard let sourceQuery = result?.sourceQuery else { return }
 
-    let actualQuery: String
-    if let result = result, result.limitWasCapped, let actualLimit = result.actualLimitUsed {
-      actualQuery = CellResultViews.replaceLimitInQuery(sourceQuery, newLimit: actualLimit)
-    } else {
-      actualQuery = sourceQuery
-    }
-
     // Remove comments for display
-    let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
-
-    // Update sidebar content
     rightSidebarContent = .executedQuery(
-      query: displayQuery,
-      cellId: cellId,
-      limitWasCapped: result?.limitWasCapped ?? false,
-      actualLimit: result?.actualLimitUsed
-    )
+      query: SQLSyntaxHighlighter.removeComments(sourceQuery), cellId: cellId)
   }
 }

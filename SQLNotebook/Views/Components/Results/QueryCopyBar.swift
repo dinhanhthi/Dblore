@@ -142,11 +142,7 @@ struct QueryCopyBar: View {
       // Show query in right sidebar (without comments)
       let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
       viewModel?.rightSidebarContent = .executedQuery(
-        query: queryWithoutComments,
-        cellId: cellId,
-        limitWasCapped: result.limitWasCapped,
-        actualLimit: result.actualLimitUsed
-      )
+        query: queryWithoutComments, cellId: cellId)
       viewModel?.isRightSidebarVisible = true
     }) {
       HStack(spacing: 4) {

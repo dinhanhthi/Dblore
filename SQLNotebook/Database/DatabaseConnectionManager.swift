@@ -9,56 +9,72 @@ import NIOCore
 import NIOSSL
 import PostgresNIO
 
-/// Error thrown when a task exceeds its timeout
-struct TimeoutError: Error {
-  let message: String
-}
-
-/// Execute an async operation with a timeout
-/// - Parameters:
-///   - duration: Maximum duration before timing out
-///   - operation: The async operation to execute
-/// - Returns: Result from the operation
-/// - Throws: TimeoutError if operation exceeds duration, or any error from the operation
-private func withTimeout<T: Sendable>(
-  of duration: Duration,
-  operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-  try await withThrowingTaskGroup(of: T.self) { group in
-    // Add the main operation task
-    group.addTask {
-      try await operation()
-    }
-
-    // Add the timeout task
-    group.addTask {
-      try await Task.sleep(for: duration)
-      throw TimeoutError(message: "Operation timed out after \(duration)")
-    }
-
-    // Wait for first task to complete (either operation or timeout)
-    if let result = try await group.next() {
-      group.cancelAll()
-      return result
-    }
-
-    throw TimeoutError(message: "Unexpected task group completion")
-  }
-}
-
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
   private var connection: PostgresConnection?
+  /// Fails in-flight queries when `connection` closes (see `send(on:_:)`)
+  private(set) var closeWatch: ConnectionCloseWatch?
   private var eventLoopGroup: EventLoopGroup?
-  private var config: ConnectionConfig?
+  private(set) var config: ConnectionConfig?
+  /// Identity of the current connection: advanced on every disconnect and successful connect,
+  /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
+  private(set) var connectionEpoch: UInt64 = 0
+  /// Protected mode transaction state (see `DatabaseConnectionManager+Transaction.swift`)
+  var txState: TransactionState = .idle {
+    didSet {
+      if txState.isIdle { txOwner = nil }
+      if txState != oldValue { commitGuard.generation &+= 1 }
+    }
+  }
+  /// What the Commit confirmation reviewed, and gated statements in flight (`commitAppTransaction`)
+  var commitGuard = CommitGuard()
+  /// Test hook: awaited inside Commit / Rollback right after the state became `.ending`, before
+  /// COMMIT / ROLLBACK is sent (see `setTransactionEndHook`)
+  var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
+  /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
+  var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Queries waiting in `send(on:)`: queued on the connection or running (see
+  /// `resetSessionIfCapped`)
+  var activeSends = 0
+  /// Caller token (tab) that opened the app transaction: while it is pending, only this caller
+  /// may run gated statements. Claimed before BEGIN is sent, cleared when the state is idle.
+  var txOwner: UUID?
+  /// A transaction the user opened with BEGIN while Protected mode was off
+  var userTxOpen = false
+  /// Inline edit tables resolved outside any app transaction, by table OID (see `cachedEditTable`)
+  var editTableCache: [UInt32: EditTable] = [:]
+  /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
+  var lastSessionLoss: SessionLostEvent?
+  /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
+  /// `DatabaseError.queryCancelled`
+  var lastCancel: QueryCancelRecord?
+  /// One `SessionLostEvent` each time the server (or the network) closes the connected session
+  nonisolated let sessionEvents: AsyncStream<SessionLostEvent>
+  let sessionEventsContinuation: AsyncStream<SessionLostEvent>.Continuation
+  /// One `SessionResetEvent` each time a capped read closed and reopened the session
+  nonisolated let sessionResets: AsyncStream<SessionResetEvent>
+  let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
+
+  init() {
+    (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
+      of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
+    (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
+      of: SessionResetEvent.self, bufferingPolicy: .bufferingNewest(8))
+  }
+
+  deinit {
+    sessionEventsContinuation.finish()
+    sessionResetsContinuation.finish()
+  }
 
   /// Default maximum number of rows to fetch from database to prevent memory issues
-  /// This is overridden by the notebook's maxRowLimit setting
+  /// Callers pass the effective result row cap (`NotebookViewModel.effectiveRowCap`)
   static let defaultMaxFetchRows = 100
 
   /// Retry configuration for connection attempts
   private static let maxRetries = 3
-  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]  // 1s, 2s, 4s in nanoseconds
+  // 1s, 2s, 4s in nanoseconds
+  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]
 
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {
@@ -119,11 +135,9 @@ actor DatabaseConnectionManager {
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
-    // Disconnect if already connected
+    // Disconnect if already connected. Nothing of the new connection (connection, config,
+    // epoch) is published until its session brakes are applied.
     await disconnect()
-
-    // Store config
-    self.config = config
 
     // Create event loop group
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -150,14 +164,10 @@ actor DatabaseConnectionManager {
     )
 
     // Establish connection with retry logic
+    let conn: PostgresConnection
     do {
-      let conn = try await attemptConnection(
+      conn = try await attemptConnection(
         group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
-      connection = conn
-
-      // Log successful connection
-      await AppLogger.shared.info(
-        "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
     } catch let error as PSQLError {
       // Log connection failure
       await AppLogger.shared.error(
@@ -173,6 +183,36 @@ actor DatabaseConnectionManager {
       eventLoopGroup = nil
       throw DatabaseError.connectionFailed(error.localizedDescription)
     }
+
+    // Session brakes are mandatory and applied on the local connection before it is published,
+    // so no user statement (actor reentrancy) can run before the timeouts are set. On failure
+    // the connection is closed and nothing was published.
+    let watch = ConnectionCloseWatch(closeFuture: conn.closeFuture)
+    do {
+      try await applySessionBrakes(on: conn, watch: watch, config: config)
+      await applyDisconnectCheck(on: conn, watch: watch)
+    } catch {
+      await AppLogger.shared.error(
+        "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
+      try? await conn.close()
+      try? await group.shutdownGracefully()
+      eventLoopGroup = nil
+      throw error
+    }
+    connection = conn
+    closeWatch = watch
+    self.config = config
+    connectionEpoch &+= 1
+    lastSessionLoss = nil
+    // The UI learns about a session the server closed even when no query is running. The
+    // epoch names this connection exactly (an ObjectIdentifier can be reused after a reset).
+    let epoch = connectionEpoch
+    conn.closeFuture.whenComplete { [weak self] _ in
+      Task { await self?.markSessionLost(epoch: epoch) }
+    }
+
+    await AppLogger.shared.info(
+      "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
   }
 
   /// Test connection without storing it
@@ -235,27 +275,58 @@ actor DatabaseConnectionManager {
 
   /// Disconnect from database
   func disconnect() async {
-    // Log disconnection if we were connected
-    if connection != nil {
+    let (closing, group) = forgetConnection()
+    lastSessionLoss = nil
+
+    if let closing {
       await AppLogger.shared.info("Disconnecting from database", category: "Database")
+      try? await closing.close()
     }
+    try? await group?.shutdownGracefully()
 
-    if let conn = connection {
-      try? await conn.close()
-      connection = nil
+    // A statement that resumed during the awaits above must not leave a stale state
+    if connection == nil {
+      txState = .idle
+      userTxOpen = false
     }
+  }
 
-    if let group = eventLoopGroup {
-      try? await group.shutdownGracefully()
-      eventLoopGroup = nil
-    }
-
+  /// Forget the current connection before any suspension point: no edit can use its targets,
+  /// and a statement failing meanwhile sees the connection gone (state stays idle). Closing it
+  /// (or the server closing it) rolls back any open transaction on the server.
+  func forgetConnection() -> (connection: PostgresConnection?, group: EventLoopGroup?) {
+    connectionEpoch &+= 1
+    let forgotten = (connection, eventLoopGroup)
+    connection = nil
+    closeWatch = nil
+    eventLoopGroup = nil
     config = nil
+    txState = .idle
+    userTxOpen = false
+    editTableCache.removeAll()
+    return forgotten
   }
 
   /// Check if currently connected
   var isConnected: Bool {
     connection != nil
+  }
+
+  // MARK: - Connected Protection
+
+  /// Protection of the config this actor connected with (`.none` when not connected).
+  /// The execution gate enforces the stricter of this and the caller's policy.
+  var connectedPolicy: ProtectionPolicy {
+    ProtectionPolicy(config: config)
+  }
+
+  /// Apply a runtime change of the connection's protection settings (protection level,
+  /// Safe Mode, protected mode) to the connected config. No-op when not connected.
+  func updateConnectedProtection(from newConfig: ConnectionConfig) {
+    guard config != nil else { return }
+    config?.protectionLevel = newConfig.protectionLevel
+    config?.safeMode = newConfig.safeMode
+    config?.protectedMode = newConfig.protectedMode
   }
 
   // MARK: - Internal Access

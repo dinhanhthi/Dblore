@@ -16,7 +16,7 @@ xcodebuild \
   CODE_SIGN_IDENTITY="" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=NO \
-  OTHER_SWIFT_FLAGS="-Xfrontend -warn-concurrency -Xfrontend -enable-actor-data-race-checks" \
+  OTHER_SWIFT_FLAGS="\$(inherited) -Xfrontend -warn-concurrency -Xfrontend -enable-actor-data-race-checks" \
   clean build
 
 echo ""

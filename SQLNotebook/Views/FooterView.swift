@@ -48,7 +48,6 @@ struct FooterView: View {
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.md)
           .padding(.vertical, Spacing.xs + 2)
-          .background(Color.cardHeaderBackground)
 
         // Connection status
         connectionStatusIcon
@@ -116,12 +115,11 @@ struct FooterView: View {
       }
     }
     .padding(.trailing, Spacing.lg)
-    .padding(.leading, 0)
     .frame(height: ComponentSize.footerHeight)
-    .background(Color.cardBackground)
-    .overlay(alignment: .top) {
-      Divider()
-    }
+    .floatingBarGlass()
+    // Inline below the content (not an overlay) so it never covers grid rows
+    .padding(.horizontal, Spacing.sm)
+    .padding(.bottom, Spacing.xs)
     .protectionLevelDialog(
       isPresented: $showDisableReadOnlyConfirmation,
       viewModel: viewModel
@@ -187,7 +185,7 @@ struct FooterView: View {
   }
 
   private var appVersion: String {
-    Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
   }
 
   // MARK: - Protection Badge
@@ -202,8 +200,7 @@ struct FooterView: View {
     .foregroundColor(level == .readOnly ? .warning : .secondary)
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, 2)
-    .background((level == .readOnly ? Color.warning : Color.secondary).opacity(0.15))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .tintedCapsuleGlass(level == .readOnly ? .warning : .secondary)
     .help(
       level == .readOnly
         ? "Click to change protection level"

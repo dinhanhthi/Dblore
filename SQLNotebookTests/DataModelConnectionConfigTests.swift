@@ -94,4 +94,102 @@ struct DataModelConnectionConfigTests {
       #expect(decoded.timeoutSeconds == timeout)
     }
   }
+
+  // MARK: - Safety / Session Settings
+
+  @Test("New config has safety/session defaults")
+  func safetySessionDefaults() {
+    let config = ConnectionConfig(host: "localhost", database: "test")
+
+    #expect(config.protectedMode == true)
+    #expect(config.statementTimeoutSeconds == 60)
+    #expect(config.lockTimeoutSeconds == 5)
+    #expect(config.idleInTransactionTimeoutSeconds == 600)
+    #expect(config.rowCapOverride == nil)
+  }
+
+  @Test("Legacy JSON without new keys decodes with safety/session defaults")
+  func legacyJSONDecodesWithDefaults() throws {
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "db.example.com",
+        "port": 5432,
+        "database": "legacy",
+        "username": "admin",
+        "password": "",
+        "sslMode": "prefer",
+        "rememberConnection": true,
+        "timeoutSeconds": 30,
+        "name": "Old",
+        "readOnly": false,
+        "blockSchemaChanges": true
+      }
+      """
+    let data = try #require(json.data(using: .utf8))
+
+    let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
+
+    #expect(decoded.protectionLevel == .schemaOnly)
+    #expect(decoded.safeMode == nil)
+    #expect(decoded.protectedMode == true)
+    #expect(decoded.statementTimeoutSeconds == 60)
+    #expect(decoded.lockTimeoutSeconds == 5)
+    #expect(decoded.idleInTransactionTimeoutSeconds == 600)
+    #expect(decoded.rowCapOverride == nil)
+  }
+
+  @Test("Encode/decode round trip preserves custom safety/session values")
+  func safetySessionRoundTrip() throws {
+    let config = ConnectionConfig(
+      host: "localhost",
+      database: "test",
+      protectedMode: false,
+      statementTimeoutSeconds: 30,
+      lockTimeoutSeconds: 3,
+      idleInTransactionTimeoutSeconds: 120,
+      rowCapOverride: 5000
+    )
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.protectedMode == false)
+    #expect(decoded.statementTimeoutSeconds == 30)
+    #expect(decoded.lockTimeoutSeconds == 3)
+    #expect(decoded.idleInTransactionTimeoutSeconds == 120)
+    #expect(decoded.rowCapOverride == 5000)
+  }
+
+  @Test("Non-positive brake timeouts decode as their defaults; rowCapOverride as-is")
+  func nonPositiveTimeoutsDecodeAsDefaults() throws {
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "",
+        "password": "",
+        "sslMode": "prefer",
+        "rememberConnection": false,
+        "timeoutSeconds": 30,
+        "name": "",
+        "protectionLevel": "none",
+        "statementTimeoutSeconds": 0,
+        "lockTimeoutSeconds": -1,
+        "idleInTransactionTimeoutSeconds": -3,
+        "rowCapOverride": -4
+      }
+      """
+    let data = try #require(json.data(using: .utf8))
+
+    let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
+
+    #expect(decoded.statementTimeoutSeconds == 60)
+    #expect(decoded.lockTimeoutSeconds == 5)
+    #expect(decoded.idleInTransactionTimeoutSeconds == 600)
+    #expect(decoded.rowCapOverride == -4)
+  }
 }

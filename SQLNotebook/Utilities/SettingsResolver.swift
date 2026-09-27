@@ -10,8 +10,6 @@ import SwiftUI
 enum SettingKey: String, CaseIterable {
   case safeMode
   case connectionProtectionLevel
-  case maxRowLimit
-  case editorMaxRowLimit
   case syntaxHighlightingEnabled
   case wordWrapEnabled
   case isAutoCompleteEnabled
@@ -40,8 +38,6 @@ class SettingsResolver {
   private nonisolated enum Defaults {
     static let safeMode: SafeMode = .alertRead
     static let connectionProtectionLevel: ConnectionProtectionLevel = .none
-    static let maxRowLimit: Int = 50
-    static let editorMaxRowLimit: Int = 100
     static let syntaxHighlightingEnabled: Bool = true
     static let wordWrapEnabled: Bool = true
     static let isAutoCompleteEnabled: Bool = true
@@ -75,14 +71,6 @@ class SettingsResolver {
 
   var connectionProtectionLevel: ConnectionProtectionLevel {
     workspaceSettings?.connectionProtectionLevel ?? Defaults.connectionProtectionLevel
-  }
-
-  var maxRowLimit: Int {
-    workspaceSettings?.maxRowLimit ?? userSettings.maxRowLimit
-  }
-
-  var editorMaxRowLimit: Int {
-    workspaceSettings?.editorMaxRowLimit ?? userSettings.editorMaxRowLimit
   }
 
   var syntaxHighlightingEnabled: Bool {
@@ -129,6 +117,14 @@ class SettingsResolver {
     workspaceSettings?.editorSimpleMode ?? userSettings.editorSimpleMode
   }
 
+  // MARK: - Result Row Cap (connection > user)
+
+  /// Rows read per statement: the connection's `rowCapOverride` (clamped) when set, else the
+  /// global `AppSettings.resultRowCap` (clamped). Used by every user-SQL execution path.
+  nonisolated static func effectiveRowCap(override: Int?, global: Int) -> Int {
+    SessionBrakeLimits.clampRowCap(override) ?? AppSettings.clampResultRowCap(global)
+  }
+
   // MARK: - Settings from UserSettings only (not overridable)
 
   var themePreference: ThemePreference {
@@ -151,8 +147,6 @@ class SettingsResolver {
     switch key {
     case .safeMode: return ws.safeMode != nil
     case .connectionProtectionLevel: return ws.connectionProtectionLevel != nil
-    case .maxRowLimit: return ws.maxRowLimit != nil
-    case .editorMaxRowLimit: return ws.editorMaxRowLimit != nil
     case .syntaxHighlightingEnabled: return ws.syntaxHighlightingEnabled != nil
     case .wordWrapEnabled: return ws.wordWrapEnabled != nil
     case .isAutoCompleteEnabled: return ws.isAutoCompleteEnabled != nil
@@ -172,8 +166,6 @@ class SettingsResolver {
     switch key {
     case .safeMode: return Defaults.safeMode
     case .connectionProtectionLevel: return Defaults.connectionProtectionLevel
-    case .maxRowLimit: return Defaults.maxRowLimit
-    case .editorMaxRowLimit: return Defaults.editorMaxRowLimit
     case .syntaxHighlightingEnabled: return Defaults.syntaxHighlightingEnabled
     case .wordWrapEnabled: return Defaults.wordWrapEnabled
     case .isAutoCompleteEnabled: return Defaults.isAutoCompleteEnabled

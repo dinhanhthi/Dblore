@@ -25,18 +25,16 @@ extension EditorModeView {
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
     VStack(spacing: 0) {
-      // Warning banner (if query exceeded user limit)
-      if result.userLimitExceeded, let requestedLimit = result.userRequestedLimit {
+      // Warning banner (row cap reached; session reset details when the cap closed it)
+      if result.error == nil, let notice = result.capNotice {
         HStack(spacing: Spacing.xs) {
           Image(systemName: "exclamationmark.triangle.fill")
             .font(.system(size: 11))
             .foregroundColor(.warning)
 
-          Text(
-            "Query returned more than \(requestedLimit) rows. Showing first \(requestedLimit) rows only. Adjust limit in Settings."
-          )
-          .font(.system(size: 11))
-          .foregroundColor(.foreground)
+          Text(notice)
+            .font(.system(size: 11))
+            .foregroundColor(.foreground)
         }
         .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)
@@ -96,10 +94,10 @@ extension EditorModeView {
         }) {
           HStack {
             // Combined text: "Result N • query text (truncated)"
-            (Text("Result \(index + 1) • ")
-              .font(.system(size: 11))
-              + Text(truncateQuery(statementResult.queryText))
-              .font(.system(size: 11, design: .monospaced)))
+            let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
+            let queryLabel = Text(truncateQuery(statementResult.queryText))
+              .font(.system(size: 11, design: .monospaced))
+            Text("\(resultLabel)\(queryLabel)")
               .lineLimit(1)
 
             Spacer()
@@ -290,6 +288,63 @@ extension EditorModeView {
       .help("Copy error message")
       .padding(.top, Spacing.sm)
       .padding(.trailing, Spacing.sm)
+    }
+  }
+}
+
+// MARK: - Editor Result Grid
+
+/// Result grid filling the editor result panel: it owns vertical scrolling (no hand-off to the
+/// parent). Sort, inline edit, cell click to the sidebar and search highlights as in a notebook
+/// cell; editor results have no cell ID, so every data or column-name search match applies.
+struct EditorResultGridView: View {
+  let result: CellResult
+  @Bindable var viewModel: NotebookViewModel
+  @State private var sortColumn: String?
+  @State private var sortAscending = true
+  /// Current search match when it is in the result data or column names
+  @State private var currentMatch: SearchMatch?
+
+  var body: some View {
+    ResultGridView(
+      result: result,
+      sortColumn: sortColumn,
+      ascending: sortAscending,
+      isEditable: viewModel.canEdit(result),
+      onCommitEdit: { row, column, newValue in
+        viewModel.handleGridCellEdit(
+          row: row, column: column, newValue: newValue, result: result, cellId: nil,
+          connectionManager: viewModel.connectionManager)
+      },
+      onSortChange: { column, ascending in
+        sortColumn = column
+        sortAscending = ascending
+      },
+      onCellClick: { row, originalRow, column in
+        viewModel.showGridCellInSidebar(
+          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+      },
+      searchQuery: viewModel.searchState.query,
+      caseSensitive: viewModel.searchState.isCaseSensitive,
+      currentMatch: currentMatch,
+      forwardsScrollToParent: false,
+      hideColumnTypes: AppSettings.shared.hideColumnTypes
+    )
+    .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
+        currentMatch = match
+      } else {
+        currentMatch = nil
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .clearSearchHighlights)) { notification in
+      guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+        notificationViewModelId == viewModel.id
+      else { return }
+      currentMatch = nil
     }
   }
 }

@@ -117,12 +117,17 @@ class WorkspaceWindowManager {
       return existing
     }
 
-    let manager = try await WorkspaceManager.load(from: url)
+    let stored = RecentManager.shared.recentWorkspaces.first { $0.fileURL == url }
+    let manager = try await WorkspaceManager.load(
+      from: url, bookmark: stored?.bookmark, folderBookmark: stored?.folderBookmark)
     workspaces[manager.id] = manager
     activeWorkspaceId = manager.id
 
-    // Add to recent
-    if let entry = WorkspaceHistoryEntry.from(manager.workspace) {
+    // Add to recent (with refreshed bookmarks); a moved file replaces its old entry
+    if let entry = manager.recentEntry {
+      if entry.fileURL != url {
+        RecentManager.shared.removeWorkspace(url: url)
+      }
       RecentManager.shared.addWorkspace(entry)
     }
 
@@ -167,12 +172,21 @@ class WorkspaceWindowManager {
       guard canClose else { return false }
     }
 
-    // Disconnect if connected
+    // Disconnect if connected. A forced close answers with the first safe non-commit option
+    // (Rollback, or Discard / Disconnect while a statement / ROLLBACK runs); none (COMMIT
+    // awaited) asks.
     if manager.connectionState == .connected {
-      await manager.disconnect()
+      var resolution: PendingTransactionResolution?
+      if force {
+        await manager.refreshPendingTransaction()
+        resolution = WorkspaceTransactionRules.forcedResolution(
+          for: manager.pendingTransaction, statementInFlight: manager.isStatementInFlight)
+      }
+      guard await manager.disconnect(resolution: resolution) else { return false }
     }
 
     workspaces.removeValue(forKey: id)
+    manager.releaseFileAccess()
 
     if activeWorkspaceId == id {
       activeWorkspaceId = workspaces.keys.first

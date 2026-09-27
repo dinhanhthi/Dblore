@@ -23,11 +23,9 @@ enum SidebarContent: Equatable {
     tableName: String?,
     rowData: [String: CellValue]?,  // All column values for this row
     primaryKeyColumns: [String],  // Primary key column names
-    rowIdentifier: CellValue?,  // Row identifier (ctid for PostgreSQL, rowid for SQLite)
     cellId: UUID?  // ID of the cell that produced this result (for re-running after edit)
   )
-  case executedQuery(
-    query: String, cellId: UUID?, limitWasCapped: Bool = false, actualLimit: Int? = nil)  // Show executed query with syntax highlighting
+  case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
 }
 
 /// Main view model for the notebook editor
@@ -37,7 +35,9 @@ class NotebookViewModel {
   // Unique identifier for this view model instance (to scope search notifications)
   let id: UUID = UUID()
 
-  var notebook: SQLNotebook
+  var notebook: SQLNotebook {
+    didSet { connectionConfigDidChange() }
+  }
   var connectionState: ConnectionState = .disconnected
   var selectedCellId: UUID?
   var rightSidebarContent: SidebarContent?
@@ -65,6 +65,26 @@ class NotebookViewModel {
   // Connection manager reference from workspace (synced from WorkspaceManager)
   // This allows NotebookViewModel extensions to execute queries without refactoring
   var connectionManager: DatabaseConnectionManager?
+  /// Workspace mode: another tab opened the pending Protected transaction, so this tab runs
+  /// nothing until Commit / Rollback (the actor refuses this tab's `id` too). Set by
+  /// `WorkspaceManager`.
+  var isTransactionPendingElsewhere = false
+
+  /// Workspace mode: called when the connection's protection level, Safe Mode or protected mode
+  /// is changed in this tab (sidebar/footer dialogs), so the workspace, the actor and the other
+  /// tabs follow. Set by `WorkspaceManager`.
+  @ObservationIgnored var onConnectionProtectionChanged: ((ConnectionConfig) -> Void)?
+  /// Workspace mode: awaited after every statement execution in this tab, so the workspace
+  /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
+  @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
+  /// Global result row cap source (tests pin a value without touching the shared settings)
+  @ObservationIgnored var globalRowCap: @MainActor () -> Int = { AppSettings.shared.resultRowCap }
+  /// Current Run All batch and the connection epoch its first cell started on (see
+  /// `NotebookViewModel+QueueReset.swift`)
+  @ObservationIgnored var runAllBatch: (id: UUID, epoch: UInt64)?
+  /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
+  @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
+  @ObservationIgnored private var isApplyingWorkspaceConfig = false
 
   // Autocomplete provider
   let autocompleteProvider = SQLAutocompleteProvider()
@@ -91,11 +111,16 @@ class NotebookViewModel {
   var searchState: SearchState = SearchState()
   var searchFocusTrigger: UUID = UUID()  // Trigger to force re-focus search field
   @ObservationIgnored var searchTask: Task<Void, Never>?  // Task for cancellation support
-  @ObservationIgnored var searchNavigationTask: Task<Void, Never>?  // Task for debounced navigation (10.1.3)
+  // Task for debounced navigation (10.1.3)
+  @ObservationIgnored var searchNavigationTask: Task<Void, Never>?
   @ObservationIgnored var previousFirstResponder: NSResponder?  // Store previous responder
 
   // MARK: - Query Confirmation State (10.3.2 optimization)
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
+  /// Live edit target of the result the sidebar cell was opened from (session-only)
+  var cellDetailEditTarget: EditTarget?
+  /// Edit target of `queryConfirmationState.pendingInlineEdit`
+  var pendingInlineEditTarget: EditTarget?
 
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
@@ -104,36 +129,20 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+  /// An editor run is in flight (Cancel button, `WorkspaceManager.isTransactionOriginRunning`)
+  var isEditorQueryRunning = false
+  /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.
+  /// Tests inject the answer.
+  @ObservationIgnored var cancelQueryPrompt: (@MainActor (QueryCancelWarning) async -> Bool)?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
-
-  // MARK: - Pagination State (Editor Mode)
-  var editorPaginationInfo: PaginationInfo?  // Pagination info for editor result
-  var editorStatementPaginationInfo: [UUID: PaginationInfo] = [:]  // Pagination info per statement
-
-  // MARK: - Pagination State (Notebook Mode)
-  /// Pagination info for cells with single statement results
-  /// Key: cellId, Value: PaginationInfo
-  var cellPaginationInfo: [UUID: PaginationInfo] = [:]
-  /// Pagination info for multi-statement cell results
-  /// Key: cellId, Value: [statementId: PaginationInfo]
-  var cellStatementPaginationInfo: [UUID: [UUID: PaginationInfo]] = [:]
 
   init(notebook: SQLNotebook = .newDocument()) {
     self.notebook = notebook
+    observedConnectionConfig = notebook.connectionConfig
 
     // Initialize execution queue with execution handler
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
-    }
-
-    // Restore pagination state from cells
-    for cell in notebook.cells {
-      if let paginationInfo = cell.paginationInfo {
-        cellPaginationInfo[cell.id] = paginationInfo
-      }
-      if !cell.statementPaginationInfo.isEmpty {
-        cellStatementPaginationInfo[cell.id] = cell.statementPaginationInfo
-      }
     }
 
     // Load sidebar visibility from settings after init
@@ -191,40 +200,54 @@ class NotebookViewModel {
     fileSizeState.isWarning
   }
 
+  // MARK: - Workspace Connection Config
+
+  /// Workspace mode: adopt the workspace connection's config, the single source for the
+  /// protection policy, per-connection Safe Mode and the DB-password fallback of this tab.
+  /// (`connectionConfig` is never written to the notebook file.)
+  func applyWorkspaceConnectionConfig(_ config: ConnectionConfig?) {
+    guard notebook.connectionConfig != config else { return }
+    isApplyingWorkspaceConfig = true
+    notebook.connectionConfig = config
+    isApplyingWorkspaceConfig = false
+  }
+
+  private func connectionConfigDidChange() {
+    let current = notebook.connectionConfig
+    guard current != observedConnectionConfig else { return }
+    let previous = observedConnectionConfig
+    observedConnectionConfig = current
+    guard !isApplyingWorkspaceConfig, let current, let previous,
+      current.protectionLevel != previous.protectionLevel
+        || current.safeMode != previous.safeMode
+        || current.protectedMode != previous.protectedMode
+    else { return }
+    onConnectionProtectionChanged?(current)
+  }
+
   // MARK: - Query Confirmation
 
-  /// Check if a query is a modification statement (non-SELECT)
-  /// Includes: UPDATE, DELETE, INSERT (data modification)
-  /// And: CREATE, DROP, TRUNCATE, ALTER (schema modification)
-  /// This is used by Safe Mode to determine if confirmation is needed
-  func isModificationQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    // Data modification
-    if trimmed.hasPrefix("UPDATE") || trimmed.hasPrefix("DELETE") || trimmed.hasPrefix("INSERT") {
-      return true
-    }
-    // Schema modification (including CREATE for Safe Mode consistency with TablePlus)
-    if trimmed.hasPrefix("CREATE") || trimmed.hasPrefix("DROP") || trimmed.hasPrefix("TRUNCATE")
-      || trimmed.hasPrefix("ALTER")
-    {
-      return true
-    }
-    return false
+  /// Protection policy of this notebook's connection, built per execution because the
+  /// protection level can change at runtime. Passed to the database execution gate.
+  var protectionPolicy: ProtectionPolicy {
+    ProtectionPolicy(config: notebook.connectionConfig)
   }
 
-  /// Check if a query should be blocked in read-only mode
-  /// Now equivalent to isModificationQuery since CREATE is included there
-  func isBlockedInReadOnlyMode(_ query: String) -> Bool {
-    isModificationQuery(query)
+  /// Rows read per statement (notebook cells, editor, Run All, inline-edit refresh): the
+  /// connection's row cap override, else the global result row cap.
+  var effectiveRowCap: Int {
+    SettingsResolver.effectiveRowCap(
+      override: notebook.connectionConfig?.rowCapOverride, global: globalRowCap())
   }
 
-  /// Check if a query is a schema change (DDL) operation
-  /// Includes: CREATE, DROP, ALTER, TRUNCATE
-  /// Note: This is independent from read-only mode and data modifications
-  func isSchemaChangeQuery(_ query: String) -> Bool {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-    return trimmed.hasPrefix("CREATE") || trimmed.hasPrefix("DROP")
-      || trimmed.hasPrefix("ALTER") || trimmed.hasPrefix("TRUNCATE")
+  /// The gate's error message if the connection's protection level blocks `query`, else nil.
+  /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
+  func protectionBlockMessage(for query: String) -> String? {
+    let decision = DatabaseConnectionManager.evaluate(
+      SQLStatementClassifier.classify(query), policy: protectionPolicy)
+    guard case .blocked(let index, let kind, let reason) = decision else { return nil }
+    return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
+      .localizedDescription
   }
 
   /// Show confirmation dialog before executing a query based on Safe Mode level
@@ -232,63 +255,35 @@ class NotebookViewModel {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
     let query = notebook.cells[index].content
 
-    // Check connection protection level
-    if let config = notebook.connectionConfig {
-      switch config.protectionLevel {
-      case .readOnly:
-        // Block all modification queries in read-only mode
-        if isModificationQuery(query) {
-          showToast("Cannot execute this query in read-only mode", type: .error)
-          return
-        }
-      case .schemaOnly:
-        // Block only schema changes
-        if isSchemaChangeQuery(query) {
-          showToast("Schema changes are blocked for this connection", type: .error)
-          return
-        }
-      case .none:
-        break  // No protection
-      }
+    // Protection level is enforced by the database gate; fail fast with its message
+    if let message = protectionBlockMessage(for: query) {
+      showToast(message, type: .error)
+      return
     }
 
-    // Use per-connection SafeMode if set, otherwise fall back to global setting
-    let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
-    let isModification = isModificationQuery(query)
+    // Safe Mode: confirm based on every statement of the cell (see statementsNeedingConfirmation)
+    if presentConfirmationIfNeeded(for: query, cellId: id) { return }
 
-    // Determine if confirmation is needed based on Safe Mode level
-    let needsConfirmation: Bool
-    switch safeMode {
-    case .silent:
-      // No confirmation needed for any query
-      needsConfirmation = false
-    case .alertRead, .safeRead:
-      // Only confirm modification queries
-      needsConfirmation = isModification
-    case .alertAll, .safeAll:
-      // Confirm all queries
-      needsConfirmation = true
-    }
-
-    if needsConfirmation {
-      // Show confirmation dialog
-      queryConfirmationState.pendingCellId = id
-      queryConfirmationState.pendingQuery = query
-      // Check if DELETE/UPDATE without WHERE clause (affects ALL rows)
-      queryConfirmationState.affectsAllRows =
-        isModification && (connectionManager?.affectsAllRows(query) ?? false)
-      queryConfirmationState.requiresPassword = safeMode.requiresPassword
-      queryConfirmationState.showDialog = true
-    } else {
-      // Execute directly
-      Task {
-        await runCell(id: id)
-      }
+    Task {
+      await runCell(id: id)
     }
   }
 
   /// Execute the pending query after user confirmation
   func executePendingQuery() async {
+    // Run All waiting for the Safe Mode unlock
+    if queryConfirmationState.runAllAwaitingUnlock {
+      executeUnlockedRunAll()
+      return
+    }
+    // Inline grid edit waiting for this confirmation (either mode)
+    if let edit = queryConfirmationState.pendingInlineEdit {
+      let target = pendingInlineEditTarget
+      queryConfirmationState.clear()
+      pendingInlineEditTarget = nil
+      await sendInlineEdit(edit, target: target)
+      return
+    }
     // Check if it's editor mode or notebook mode
     if viewMode == .editor {
       await executeConfirmedEditorQuery()
@@ -303,6 +298,9 @@ class NotebookViewModel {
 
   /// Cancel the pending query execution
   func cancelPendingQuery() {
+    if queryConfirmationState.runAllAwaitingUnlock {
+      queryConfirmationState.clearRunAll()
+    }
     queryConfirmationState.clear()
   }
 }

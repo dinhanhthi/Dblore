@@ -61,6 +61,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     return false  // Keep app running even when all windows are closed
   }
 
+  /// Quitting with a pending Protected transaction asks Commit / Roll back / Cancel for each
+  /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
+  /// without COMMIT, so the server rolls the transaction back.
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    let managers = WorkspaceWindowManager.shared.allWorkspaces
+    // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
+    guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
+    else { return .terminateNow }
+    Task { @MainActor in
+      for manager in managers {
+        guard await manager.resolvePendingTransaction(action: .quit) else {
+          NSApp.reply(toApplicationShouldTerminate: false)
+          return
+        }
+      }
+      NSApp.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
+  }
+
   func applicationWillTerminate(_ notification: Notification) {
     // Save all workspace states
     Task { @MainActor in
@@ -114,7 +134,9 @@ struct SQLNotebookApp: App {
 
   init() {
     // Migrate from single session to connection history (one-time operation)
-    SessionManager.migrateIfNeeded()
+    if !SessionManager.isRunningAsTestHost {
+      SessionManager.migrateIfNeeded()
+    }
 
     // Configure SQLite temp directory to use app's temp directory
     configureSQLiteTempDirectory()

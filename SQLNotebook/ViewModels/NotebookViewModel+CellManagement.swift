@@ -53,10 +53,6 @@ extension NotebookViewModel {
 
     notebook.cells.remove(at: index)
 
-    // Clear pagination info for deleted cell
-    cellPaginationInfo.removeValue(forKey: id)
-    cellStatementPaginationInfo.removeValue(forKey: id)
-
     // Update selection
     if selectedCellId == id {
       if index > 0 {
@@ -95,10 +91,6 @@ extension NotebookViewModel {
     let deletedIndex = index
 
     notebook.cells.remove(at: index)
-
-    // Clear pagination info for removed cell
-    cellPaginationInfo.removeValue(forKey: id)
-    cellStatementPaginationInfo.removeValue(forKey: id)
 
     selectedCellId = restoreSelection
 

@@ -21,6 +21,18 @@ struct WorkspaceSidebarTopArea: View {
 
       Spacer()
 
+      if workspaceManager.isSchemaPaused {
+        Label("Schema is paused until Commit/Rollback", systemImage: "pause.circle")
+          .font(.caption2)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .help(
+            "Schema is paused until Commit/Rollback: the browser and autocomplete use cached metadata"
+          )
+          .padding(.trailing, Spacing.xs)
+      }
+
       HStack(spacing: Spacing.sm) {
         if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
           // Expand/Collapse all button
@@ -52,14 +64,15 @@ struct WorkspaceSidebarTopArea: View {
           .buttonStyle(GhostButtonStyle(iconOnly: true))
           .controlSize(.small)
           .blockDoubleClickZoom()
-          .disabled(workspaceManager.isLoadingSchema)
-          .help("Refresh schema")
+          .disabled(workspaceManager.isLoadingSchema || workspaceManager.isSchemaPaused)
+          .help(
+            workspaceManager.isSchemaPaused
+              ? "Schema is paused until Commit/Rollback" : "Refresh schema")
         }
       }
       .padding(.trailing, Spacing.sm)
     }
     .frame(height: height)
-    .background(Color.cardBackground)
     .background(WindowDragArea())
   }
 }
@@ -97,6 +110,5 @@ struct SidebarEmptyState: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.cardBackground)
   }
 }

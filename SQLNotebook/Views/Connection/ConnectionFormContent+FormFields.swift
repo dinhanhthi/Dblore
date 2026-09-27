@@ -277,5 +277,83 @@ extension ConnectionFormContent {
       }
       .buttonStyle(.plain)
     }
+
+    safetySection()
+  }
+
+  // MARK: - Safety
+
+  /// Protected mode, server-side session brakes and row cap override
+  @ViewBuilder
+  func safetySection() -> some View {
+    Divider()
+
+    Text("Safety")
+      .font(.headline)
+
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Protected mode")
+          .font(.body)
+        Text("Review data changes before they are committed")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $connectionConfig.protectedMode)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
+
+    brakeField(
+      "Statement timeout (seconds)", placeholder: "60",
+      value: $connectionConfig.statementTimeoutSeconds,
+      range: SessionBrakeLimits.statementTimeoutRange,
+      clamp: SessionBrakeLimits.clampStatementTimeout)
+
+    brakeField(
+      "Lock timeout (seconds)", placeholder: "5", value: $connectionConfig.lockTimeoutSeconds,
+      range: SessionBrakeLimits.lockTimeoutRange, clamp: SessionBrakeLimits.clampLockTimeout)
+
+    brakeField(
+      "Idle in transaction timeout (seconds)", placeholder: "600",
+      value: $connectionConfig.idleInTransactionTimeoutSeconds,
+      range: SessionBrakeLimits.idleTimeoutRange, clamp: SessionBrakeLimits.clampIdleTimeout)
+
+    FormField(label: "Row cap override (empty = global setting)") {
+      TextField("Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never))
+        .textFieldStyle(.plain)
+        .inputCapsuleStyle()
+        .frame(width: 120)
+        .onChange(of: connectionConfig.rowCapOverride) { _, newValue in
+          let clamped = SessionBrakeLimits.clampRowCap(newValue)
+          if clamped != newValue { connectionConfig.rowCapOverride = clamped }
+        }
+    }
+  }
+
+  /// Number field + stepper for a session brake, clamped to `range` (non-positive → default)
+  private func brakeField(
+    _ label: String, placeholder: String, value: Binding<Int>, range: ClosedRange<Int>,
+    clamp: @escaping (Int) -> Int
+  ) -> some View {
+    FormField(label: label) {
+      HStack(spacing: Spacing.sm) {
+        TextField(placeholder, value: value, format: .number.grouping(.never))
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
+          .frame(width: 80)
+        Stepper("", value: value, in: range)
+          .labelsHidden()
+      }
+      .onChange(of: value.wrappedValue) { _, newValue in
+        let clamped = clamp(newValue)
+        if clamped != newValue { value.wrappedValue = clamped }
+      }
+    }
   }
 }

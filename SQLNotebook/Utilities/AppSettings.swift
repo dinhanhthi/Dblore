@@ -3,9 +3,7 @@
 //  SQLNotebook
 //
 
-import CommonCrypto
 import Foundation
-import LocalAuthentication
 import SwiftUI
 
 /// Theme preference enum
@@ -109,6 +107,19 @@ enum SafeMode: Int, Codable, CaseIterable, Sendable {
   }
 }
 
+/// Why Touch ID could not be enabled for Safe Mode
+enum SafeModeBiometricError: LocalizedError, Equatable {
+  /// Touch ID needs a Safe Mode password as its fallback
+  case passwordRequired
+
+  var errorDescription: String? {
+    switch self {
+    case .passwordRequired:
+      return "Set a Safe Mode password before enabling Touch ID."
+    }
+  }
+}
+
 /// Accent color preference enum
 enum AccentColor: String, CaseIterable {
   case purple = "Purple"
@@ -197,15 +208,26 @@ enum AccentColor: String, CaseIterable {
 @Observable
 class AppSettings {
   /// Shared singleton instance
-  static let shared = AppSettings()
+  static let shared = AppSettings(defaults: sharedDefaults)
+
+  /// Store of `shared`: `.standard` in the app; under XCTest an isolated suite, cleared at
+  /// creation, so tests never touch the user's real settings (UserDefaults is thread-safe)
+  nonisolated(unsafe) static let sharedDefaults: UserDefaults = {
+    guard SessionManager.isRunningAsTestHost else { return .standard }
+    let name = "ace.thi.SQLNotebook.tests"
+    let suite = UserDefaults(suiteName: name) ?? UserDefaults()
+    suite.removePersistentDomain(forName: name)
+    return suite
+  }()
+
+  /// Backing store of every setting
+  private let defaults: UserDefaults
 
   // MARK: - UserDefaults Keys
 
   private nonisolated enum Keys {
     static let maxResultHeight = "app.settings.maxResultHeight"
     static let includeResultsOnSave = "app.settings.includeResultsOnSave"
-    static let maxRowLimit = "app.settings.maxRowLimit"
-    static let editorMaxRowLimit = "app.settings.editorMaxRowLimit"
     static let isLeftSidebarVisible = "app.settings.isLeftSidebarVisible"
     static let leftSidebarWidth = "app.settings.leftSidebarWidth"
     static let themePreference = "app.settings.themePreference"
@@ -220,8 +242,6 @@ class AppSettings {
     static let accentColor = "app.settings.accentColor"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
-    static let safeModePassword = "app.settings.safeModePassword"
-    static let safeModeBiometricEnabled = "app.settings.safeModeBiometricEnabled"
   }
 
   // MARK: - Settings Properties
@@ -229,47 +249,34 @@ class AppSettings {
   /// Maximum height for result table view (in points)
   var maxResultHeight: CGFloat = 500.0 {
     didSet {
-      UserDefaults.standard.set(Double(maxResultHeight), forKey: Keys.maxResultHeight)
+      defaults.set(Double(maxResultHeight), forKey: Keys.maxResultHeight)
     }
   }
 
   /// Whether to include results when saving the notebook
   var includeResultsOnSave: Bool = true {
     didSet {
-      UserDefaults.standard.set(includeResultsOnSave, forKey: Keys.includeResultsOnSave)
+      defaults.set(includeResultsOnSave, forKey: Keys.includeResultsOnSave)
     }
   }
 
-  /// Maximum number of rows to fetch from database in Notebook mode (default 50, range 50-100)
-  var maxRowLimit: Int = 50 {
+  /// Rows read per statement in Notebook and Editor mode (a connection's `rowCapOverride`
+  /// wins, see `SettingsResolver.effectiveRowCap`). Clamped to `SessionBrakeLimits.rowCapRange`.
+  var resultRowCap: Int = AppSettings.defaultResultRowCap {
     didSet {
-      // Clamp between 50 and 100
-      let clampedValue = min(max(maxRowLimit, 50), 100)
-      if clampedValue != maxRowLimit {
-        maxRowLimit = clampedValue
+      let clampedValue = Self.clampResultRowCap(resultRowCap)
+      if clampedValue != resultRowCap {
+        resultRowCap = clampedValue
         return  // Avoid triggering didSet again
       }
-      UserDefaults.standard.set(maxRowLimit, forKey: Keys.maxRowLimit)
-    }
-  }
-
-  /// Maximum number of rows to fetch from database in Editor mode (default 100, range 100-200)
-  var editorMaxRowLimit: Int = 100 {
-    didSet {
-      // Clamp between 100 and 200
-      let clampedValue = min(max(editorMaxRowLimit, 100), 200)
-      if clampedValue != editorMaxRowLimit {
-        editorMaxRowLimit = clampedValue
-        return  // Avoid triggering didSet again
-      }
-      UserDefaults.standard.set(editorMaxRowLimit, forKey: Keys.editorMaxRowLimit)
+      defaults.set(resultRowCap, forKey: Self.resultRowCapKey)
     }
   }
 
   /// Whether the left sidebar (database schema) is visible
   var isLeftSidebarVisible: Bool = false {
     didSet {
-      UserDefaults.standard.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
+      defaults.set(isLeftSidebarVisible, forKey: Keys.isLeftSidebarVisible)
     }
   }
 
@@ -283,22 +290,25 @@ class AppSettings {
         leftSidebarWidth = clampedValue
         return  // Avoid triggering didSet again
       }
-      UserDefaults.standard.set(Double(leftSidebarWidth), forKey: Keys.leftSidebarWidth)
+      defaults.set(Double(leftSidebarWidth), forKey: Keys.leftSidebarWidth)
     }
   }
 
   /// Theme preference (system, light, or dark)
   var themePreference: ThemePreference = .dark {
     didSet {
-      UserDefaults.standard.set(themePreference.rawValue, forKey: Keys.themePreference)
+      defaults.set(themePreference.rawValue, forKey: Keys.themePreference)
     }
   }
 
-  /// Bypass confirmation dialog for destructive queries (UPDATE/DELETE/INSERT)
+  /// Bypass the Run All confirmation dialog for cells that may modify the database
+  /// (DML, DDL, DO/CALL/COPY and other utility or unrecognized statements).
+  /// Cells that change the session brakes (`SET statement_timeout`, `RESET ALL`, ...) or
+  /// role/privileges are ALWAYS confirmed, even when this is on.
   /// Default: false (show confirmation)
   var bypassDestructiveQueryConfirmation: Bool = false {
     didSet {
-      UserDefaults.standard.set(
+      defaults.set(
         bypassDestructiveQueryConfirmation, forKey: Keys.bypassDestructiveQueryConfirmation)
     }
   }
@@ -307,7 +317,7 @@ class AppSettings {
   /// Default: true (enabled)
   var isAutoCompleteEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(isAutoCompleteEnabled, forKey: Keys.isAutoCompleteEnabled)
+      defaults.set(isAutoCompleteEnabled, forKey: Keys.isAutoCompleteEnabled)
     }
   }
 
@@ -315,7 +325,7 @@ class AppSettings {
   /// Default: true (shown)
   var showLineNumbers: Bool = true {
     didSet {
-      UserDefaults.standard.set(showLineNumbers, forKey: Keys.showLineNumbers)
+      defaults.set(showLineNumbers, forKey: Keys.showLineNumbers)
     }
   }
 
@@ -323,7 +333,7 @@ class AppSettings {
   /// Default: true (enabled)
   var wordWrapEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
+      defaults.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
     }
   }
 
@@ -331,7 +341,7 @@ class AppSettings {
   /// Default: false (shown)
   var hideRunWithQuerySection: Bool = false {
     didSet {
-      UserDefaults.standard.set(hideRunWithQuerySection, forKey: Keys.hideRunWithQuerySection)
+      defaults.set(hideRunWithQuerySection, forKey: Keys.hideRunWithQuerySection)
     }
   }
 
@@ -341,7 +351,7 @@ class AppSettings {
   /// Default: false (off - traditional behavior)
   var editorSimpleMode: Bool = false {
     didSet {
-      UserDefaults.standard.set(editorSimpleMode, forKey: Keys.editorSimpleMode)
+      defaults.set(editorSimpleMode, forKey: Keys.editorSimpleMode)
     }
   }
 
@@ -350,7 +360,7 @@ class AppSettings {
   /// Default: true (enabled)
   var syntaxHighlightingEnabled: Bool = true {
     didSet {
-      UserDefaults.standard.set(syntaxHighlightingEnabled, forKey: Keys.syntaxHighlightingEnabled)
+      defaults.set(syntaxHighlightingEnabled, forKey: Keys.syntaxHighlightingEnabled)
       // Notify editors to re-apply highlighting
       NotificationCenter.default.post(name: .syntaxHighlightingChanged, object: nil)
     }
@@ -360,7 +370,7 @@ class AppSettings {
   /// Default: purple
   var accentColor: AccentColor = .purple {
     didSet {
-      UserDefaults.standard.set(accentColor.rawValue, forKey: Keys.accentColor)
+      defaults.set(accentColor.rawValue, forKey: Keys.accentColor)
       // Notify views to update colors
       NotificationCenter.default.post(name: .accentColorChanged, object: nil)
     }
@@ -371,7 +381,7 @@ class AppSettings {
   /// Default: false (show column types)
   var hideColumnTypes: Bool = false {
     didSet {
-      UserDefaults.standard.set(hideColumnTypes, forKey: Keys.hideColumnTypes)
+      defaults.set(hideColumnTypes, forKey: Keys.hideColumnTypes)
     }
   }
 
@@ -379,119 +389,58 @@ class AppSettings {
   /// Default: .alertRead (confirm modification queries)
   var safeMode: SafeMode = .alertRead {
     didSet {
-      UserDefaults.standard.set(safeMode.rawValue, forKey: Keys.safeMode)
+      defaults.set(safeMode.rawValue, forKey: Keys.safeMode)
     }
   }
 
-  /// Password for Safe Mode (used in safeRead and safeAll levels)
-  /// Stored in UserDefaults as simple hash (not production-secure, but sufficient for local app)
-  /// Default: empty string (no password set)
-  var safeModePassword: String = "" {
-    didSet {
-      // Store hashed password (SHA256)
-      let hashedPassword = safeModePassword.isEmpty ? "" : hashPassword(safeModePassword)
-      UserDefaults.standard.set(hashedPassword, forKey: Keys.safeModePassword)
-    }
-  }
+  // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
-  /// Check if Safe Mode password is set (password or biometric)
-  var isSafeModePasswordSet: Bool {
-    let hasPassword =
-      !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
-    let hasBiometric = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
-    return hasPassword || hasBiometric
-  }
+  private var safeModeAuth: SafeModeAuthenticator { .shared }
 
-  /// Check if Safe Mode has a custom password set (not biometric)
-  var hasCustomPasswordSet: Bool {
-    !(UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? "").isEmpty
-  }
+  /// Safe Mode has an unlock configured (password or Touch ID)
+  var isSafeModePasswordSet: Bool { safeModeAuth.isProtected }
 
-  /// Verify Safe Mode password
-  /// Returns true if password matches stored hash
+  /// Safe Mode has a password (Touch ID may also be on)
+  var hasCustomPasswordSet: Bool { safeModeAuth.hasPassword }
+
+  /// Touch ID is enabled for Safe Mode (the password stays the fallback)
+  var isBiometricEnabled: Bool { safeModeAuth.isBiometricEnabled }
+
+  /// Touch ID is enrolled and usable right now (never prompts)
+  var canUseTouchID: Bool { safeModeAuth.canUseBiometrics }
+
+  /// True if `password` is the Safe Mode password (false when none is set)
   func verifySafeModePassword(_ password: String) -> Bool {
-    let storedHash = UserDefaults.standard.string(forKey: Keys.safeModePassword) ?? ""
-    if storedHash.isEmpty {
-      return true  // No password set, allow access
-    }
-    return hashPassword(password) == storedHash
+    safeModeAuth.verify(password: password)
   }
 
-  /// Hash password using SHA256
-  private func hashPassword(_ password: String) -> String {
-    guard let data = password.data(using: .utf8) else { return "" }
-    let hash = data.withUnsafeBytes { bytes -> [UInt8] in
-      var hash = [UInt8](repeating: 0, count: 32)
-      CC_SHA256(bytes.baseAddress, CC_LONG(data.count), &hash)
-      return hash
-    }
-    return hash.map { String(format: "%02x", $0) }.joined()
+  /// Sets the Safe Mode password and switches the unlock to password (Touch ID off).
+  /// False (nothing changed) if the password could not be stored.
+  @discardableResult
+  func setSafeModePassword(_ password: String) -> Bool {
+    guard safeModeAuth.setPassword(password) else { return false }
+    safeModeAuth.disableBiometrics()
+    return true
   }
 
-  // MARK: - Biometric Authentication
-
-  /// Observable property for biometric enabled state
-  /// This property triggers SwiftUI refresh when biometric state changes
-  private(set) var biometricEnabledState: Bool = false
-
-  /// Check if biometric authentication is enabled for Safe Mode
-  var isBiometricEnabled: Bool {
-    biometricEnabledState
-  }
-
-  /// Check if Safe Mode has any protection (password or biometric)
-  var isSafeModeProtected: Bool {
-    isSafeModePasswordSet || isBiometricEnabled
-  }
-
-  /// Enable biometric/system authentication for Safe Mode
-  /// Uses deviceOwnerAuthentication which supports Touch ID, Face ID, or macOS password
+  /// Turns Touch ID on after a successful prompt; the password is kept as fallback.
+  /// Throws `SafeModeBiometricError.passwordRequired` (no prompt) without a Safe Mode password,
+  /// so Touch ID never becomes the only unlock. Existing Touch-ID-only setups keep working.
   func enableBiometricAuth() async throws {
-    let context = LAContext()
-    var error: NSError?
-
-    // Check if device owner authentication is available (Touch ID, Face ID, or password)
-    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-      throw error
-        ?? NSError(
-          domain: "SafeMode", code: -1,
-          userInfo: [
-            NSLocalizedDescriptionKey:
-              "System authentication is not available. Please set up Touch ID or a system password."
-          ])
-    }
-
-    // Authenticate using Touch ID, Face ID, or macOS password
-    let success = try await context.evaluatePolicy(
-      .deviceOwnerAuthentication,
-      localizedReason: "Enable system authentication for Safe Mode query authorization")
-
-    if success {
-      await MainActor.run {
-        // Clear any existing password and enable biometric/system auth
-        UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
-        UserDefaults.standard.set(true, forKey: Keys.safeModeBiometricEnabled)
-        // Update observable property to trigger UI refresh
-        biometricEnabledState = true
-      }
+    guard hasCustomPasswordSet else { throw SafeModeBiometricError.passwordRequired }
+    guard
+      await safeModeAuth.enableBiometrics(
+        reason: "Enable Touch ID for Safe Mode query authorization")
+    else {
+      throw NSError(
+        domain: "SafeMode", code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "Touch ID is not available or was not confirmed."])
     }
   }
 
-  /// Verify using biometric authentication
+  /// Touch ID prompt; false means "use the password"
   func verifyBiometric() async throws -> Bool {
-    let context = LAContext()
-
-    // Use biometrics or device passcode as fallback
-    return try await context.evaluatePolicy(
-      .deviceOwnerAuthentication,
-      localizedReason: "Authorize query execution in Safe Mode")
-  }
-
-  /// Disable biometric authentication
-  func disableBiometricAuth() {
-    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
-    // Update observable property to trigger UI refresh
-    biometricEnabledState = false
+    await safeModeAuth.authenticate(reason: "Authorize query execution in Safe Mode")
   }
 
   // MARK: - Thread-safe accessors for non-MainActor contexts
@@ -499,116 +448,107 @@ class AppSettings {
   /// Get includeResultsOnSave directly from UserDefaults (thread-safe)
   nonisolated static func getIncludeResultsOnSave() -> Bool {
     // Check if key exists, otherwise use default
-    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
-      return UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    if sharedDefaults.object(forKey: Keys.includeResultsOnSave) != nil {
+      return sharedDefaults.bool(forKey: Keys.includeResultsOnSave)
     }
     return true  // default value
   }
 
   // MARK: - Initialization
 
-  private init() {
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
     // Load from UserDefaults or use defaults
-    let savedHeight = UserDefaults.standard.double(forKey: Keys.maxResultHeight)
+    let savedHeight = defaults.double(forKey: Keys.maxResultHeight)
     if savedHeight > 0 {
       maxResultHeight = CGFloat(savedHeight)
     }
 
     // Check if key exists, otherwise use default
-    if UserDefaults.standard.object(forKey: Keys.includeResultsOnSave) != nil {
-      includeResultsOnSave = UserDefaults.standard.bool(forKey: Keys.includeResultsOnSave)
+    if defaults.object(forKey: Keys.includeResultsOnSave) != nil {
+      includeResultsOnSave = defaults.bool(forKey: Keys.includeResultsOnSave)
     }
 
-    let savedLimit = UserDefaults.standard.integer(forKey: Keys.maxRowLimit)
-    if savedLimit > 0 {
-      // Clamp between 50 and 100
-      maxRowLimit = min(max(savedLimit, 50), 100)
-    }
-
-    let savedEditorLimit = UserDefaults.standard.integer(forKey: Keys.editorMaxRowLimit)
-    if savedEditorLimit > 0 {
-      // Clamp between 100 and 200
-      editorMaxRowLimit = min(max(savedEditorLimit, 100), 200)
+    // Also migrates the legacy per-mode row limit keys (once); skipped under XCTest
+    if !SessionManager.isRunningAsTestHost, let savedRowCap = Self.loadResultRowCap(from: defaults)
+    {
+      resultRowCap = savedRowCap
     }
 
     // Load left sidebar visibility state
-    if UserDefaults.standard.object(forKey: Keys.isLeftSidebarVisible) != nil {
-      isLeftSidebarVisible = UserDefaults.standard.bool(forKey: Keys.isLeftSidebarVisible)
+    if defaults.object(forKey: Keys.isLeftSidebarVisible) != nil {
+      isLeftSidebarVisible = defaults.bool(forKey: Keys.isLeftSidebarVisible)
     }
 
     // Load left sidebar width
-    let savedSidebarWidth = UserDefaults.standard.double(forKey: Keys.leftSidebarWidth)
+    let savedSidebarWidth = defaults.double(forKey: Keys.leftSidebarWidth)
     if savedSidebarWidth > 0 {
       leftSidebarWidth = max(CGFloat(savedSidebarWidth), 200)
     }
 
     // Load theme preference
-    if let themeString = UserDefaults.standard.string(forKey: Keys.themePreference),
+    if let themeString = defaults.string(forKey: Keys.themePreference),
       let theme = ThemePreference(rawValue: themeString)
     {
       themePreference = theme
     }
 
     // Load bypass destructive query confirmation setting
-    if UserDefaults.standard.object(forKey: Keys.bypassDestructiveQueryConfirmation) != nil {
-      bypassDestructiveQueryConfirmation = UserDefaults.standard.bool(
+    if defaults.object(forKey: Keys.bypassDestructiveQueryConfirmation) != nil {
+      bypassDestructiveQueryConfirmation = defaults.bool(
         forKey: Keys.bypassDestructiveQueryConfirmation)
     }
 
     // Load autocomplete enabled setting
-    if UserDefaults.standard.object(forKey: Keys.isAutoCompleteEnabled) != nil {
-      isAutoCompleteEnabled = UserDefaults.standard.bool(forKey: Keys.isAutoCompleteEnabled)
+    if defaults.object(forKey: Keys.isAutoCompleteEnabled) != nil {
+      isAutoCompleteEnabled = defaults.bool(forKey: Keys.isAutoCompleteEnabled)
     }
 
     // Load show line numbers setting
-    if UserDefaults.standard.object(forKey: Keys.showLineNumbers) != nil {
-      showLineNumbers = UserDefaults.standard.bool(forKey: Keys.showLineNumbers)
+    if defaults.object(forKey: Keys.showLineNumbers) != nil {
+      showLineNumbers = defaults.bool(forKey: Keys.showLineNumbers)
     }
 
     // Load word wrap enabled setting
-    if UserDefaults.standard.object(forKey: Keys.wordWrapEnabled) != nil {
-      wordWrapEnabled = UserDefaults.standard.bool(forKey: Keys.wordWrapEnabled)
+    if defaults.object(forKey: Keys.wordWrapEnabled) != nil {
+      wordWrapEnabled = defaults.bool(forKey: Keys.wordWrapEnabled)
     }
 
     // Load hide run with query section setting
-    if UserDefaults.standard.object(forKey: Keys.hideRunWithQuerySection) != nil {
-      hideRunWithQuerySection = UserDefaults.standard.bool(forKey: Keys.hideRunWithQuerySection)
+    if defaults.object(forKey: Keys.hideRunWithQuerySection) != nil {
+      hideRunWithQuerySection = defaults.bool(forKey: Keys.hideRunWithQuerySection)
     }
 
     // Load editor simple mode setting
-    if UserDefaults.standard.object(forKey: Keys.editorSimpleMode) != nil {
-      editorSimpleMode = UserDefaults.standard.bool(forKey: Keys.editorSimpleMode)
+    if defaults.object(forKey: Keys.editorSimpleMode) != nil {
+      editorSimpleMode = defaults.bool(forKey: Keys.editorSimpleMode)
     }
 
     // Load syntax highlighting enabled setting
-    if UserDefaults.standard.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
-      syntaxHighlightingEnabled = UserDefaults.standard.bool(forKey: Keys.syntaxHighlightingEnabled)
+    if defaults.object(forKey: Keys.syntaxHighlightingEnabled) != nil {
+      syntaxHighlightingEnabled = defaults.bool(forKey: Keys.syntaxHighlightingEnabled)
     }
 
     // Load accent color preference
-    if let accentString = UserDefaults.standard.string(forKey: Keys.accentColor),
+    if let accentString = defaults.string(forKey: Keys.accentColor),
       let accent = AccentColor(rawValue: accentString)
     {
       accentColor = accent
     }
 
     // Load hide column types setting
-    if UserDefaults.standard.object(forKey: Keys.hideColumnTypes) != nil {
-      hideColumnTypes = UserDefaults.standard.bool(forKey: Keys.hideColumnTypes)
+    if defaults.object(forKey: Keys.hideColumnTypes) != nil {
+      hideColumnTypes = defaults.bool(forKey: Keys.hideColumnTypes)
     }
 
     // Load Safe Mode setting
-    let savedSafeMode = UserDefaults.standard.integer(forKey: Keys.safeMode)
-    if UserDefaults.standard.object(forKey: Keys.safeMode) != nil,
+    let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
+    if defaults.object(forKey: Keys.safeMode) != nil,
       let mode = SafeMode(rawValue: savedSafeMode)
     {
       safeMode = mode
     }
-    // Note: safeModePassword is not loaded directly - it's stored as hash
-    // and only verified via verifySafeModePassword()
-
-    // Load biometric enabled state
-    biometricEnabledState = UserDefaults.standard.bool(forKey: Keys.safeModeBiometricEnabled)
+    // The Safe Mode password lives in SafeModeAuthenticator (Keychain), never in UserDefaults
   }
 
   // MARK: - Reset to Defaults
@@ -617,8 +557,7 @@ class AppSettings {
   func resetToDefaults() {
     maxResultHeight = 500.0
     includeResultsOnSave = true
-    maxRowLimit = 50
-    editorMaxRowLimit = 100
+    resultRowCap = Self.defaultResultRowCap
     isLeftSidebarVisible = false
     leftSidebarWidth = 250.0
     themePreference = .dark
@@ -632,14 +571,13 @@ class AppSettings {
     accentColor = .purple
     hideColumnTypes = false
     safeMode = .alertRead
-    // Note: Don't reset safeModePassword on general reset for security
+    // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
+    // goes through the shared authenticator's store (in-memory under XCTest)
+    clearSafeModePassword()
   }
 
-  /// Clear Safe Mode password and biometric (separate from general reset)
+  /// Clear the Safe Mode password (Keychain and legacy UserDefaults hash) and Touch ID
   func clearSafeModePassword() {
-    UserDefaults.standard.removeObject(forKey: Keys.safeModePassword)
-    UserDefaults.standard.set(false, forKey: Keys.safeModeBiometricEnabled)
-    // Update observable property to trigger UI refresh
-    biometricEnabledState = false
+    safeModeAuth.removePassword()
   }
 }

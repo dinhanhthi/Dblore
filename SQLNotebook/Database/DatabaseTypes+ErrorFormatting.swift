@@ -45,6 +45,7 @@ extension DatabaseConnectionManager {
   ///   - error: The PostgreSQL error
   ///   - query: The SQL query that caused the error (optional, for better position reporting)
   func formatPostgresError(_ error: PSQLError, query: String? = nil) -> String {
+    if let timeout = statementTimeoutMessage(error) { return timeout }
     var message = ""
 
     // Get the main error message
@@ -93,6 +94,19 @@ extension DatabaseConnectionManager {
     }
 
     return message
+  }
+
+  /// The server brake `statement_timeout` (applied on connect) stopped the statement: SQLSTATE
+  /// 57014 "canceling statement due to statement timeout" (57014 is also an administrator's
+  /// `pg_cancel_backend`, which keeps the server message). Nil for any other error.
+  func statementTimeoutMessage(_ error: PSQLError) -> String? {
+    guard let info = error.serverInfo, info[.sqlState] == "57014",
+      info[.message]?.contains("statement timeout") == true
+    else { return nil }
+    let seconds = SessionBrakeLimits.clampStatementTimeout(
+      config?.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout)
+    return "Statement timed out after \(seconds)s (statement_timeout, SQLSTATE 57014) — change it "
+      + "in the connection's Safety settings"
   }
 
   /// Extract the problematic keyword or context from query at the given position

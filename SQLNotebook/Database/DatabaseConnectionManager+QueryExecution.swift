@@ -5,7 +5,8 @@
 //  Core query execution methods for DatabaseConnectionManager
 //  Helper methods moved to:
 //  - DatabaseConnectionManager+QueryParsing.swift (query analysis)
-//  - DatabaseConnectionManager+QueryWrapping.swift (query transformation)
+//  - DatabaseConnectionManager+CappedRead.swift (row cap)
+//  - DatabaseConnectionManager+StatementRouting.swift (unchanged non-read statements, row reading)
 //
 
 import Foundation
@@ -15,12 +16,16 @@ import PostgresNIO
 extension DatabaseConnectionManager {
   // MARK: - Query Execution
 
-  /// Execute a SQL query and return results
+  /// Execute APP-OWNED SQL (no protection gate) and return results.
+  /// Never pass user text here: user SQL must go through `execute(userSQL:policy:maxRows:)`.
   /// Automatically handles multiple statements separated by semicolons
   /// - Parameters:
   ///   - query: The SQL query to execute (may contain multiple statements)
   ///   - maxRows: Maximum number of rows to fetch (defaults to defaultMaxFetchRows)
-  func executeQuery(_ query: String, maxRows: Int = defaultMaxFetchRows) async throws -> QueryResult
+  func executeInternal(
+    _ query: String, maxRows: Int = defaultMaxFetchRows
+  ) async throws
+    -> QueryResult
   {
     guard _connection != nil else {
       throw DatabaseError.notConnected
@@ -39,12 +44,13 @@ extension DatabaseConnectionManager {
     return try await executeSingleStatement(query, maxRows: maxRows)
   }
 
-  /// Execute multiple SQL statements sequentially and return detailed results for each
+  /// Execute multiple APP-OWNED SQL statements (no protection gate) sequentially and return
+  /// detailed results for each. User SQL must go through `executeDetailed(userSQL:policy:maxRows:)`.
   /// - Parameters:
   ///   - query: SQL string containing multiple statements
   ///   - maxRows: Maximum number of rows to fetch
   /// - Returns: Tuple of (array of results for each statement, total execution time)
-  func executeMultipleStatementsDetailed(
+  func executeInternalStatementsDetailed(
     _ query: String, maxRows: Int = defaultMaxFetchRows
   )
     async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval)
@@ -132,9 +138,6 @@ extension DatabaseConnectionManager {
           rowCount: finalResult.rowCount,
           executionTime: totalExecutionTime,
           wasLimited: finalResult.wasLimited,
-          rowIdentifiers: finalResult.rowIdentifiers,
-          userLimitExceeded: finalResult.userLimitExceeded,
-          userRequestedLimit: finalResult.userRequestedLimit,
           affectedRows: totalAffectedRows
         )
       }
@@ -146,9 +149,6 @@ extension DatabaseConnectionManager {
         rowCount: finalResult.rowCount,
         executionTime: totalExecutionTime,
         wasLimited: finalResult.wasLimited,
-        rowIdentifiers: finalResult.rowIdentifiers,
-        userLimitExceeded: finalResult.userLimitExceeded,
-        userRequestedLimit: finalResult.userRequestedLimit,
         affectedRows: finalResult.affectedRows
       )
     }
@@ -161,7 +161,7 @@ extension DatabaseConnectionManager {
   /// - Parameters:
   ///   - query: Single SQL statement
   ///   - maxRows: Maximum number of rows to fetch
-  private func executeSingleStatement(_ query: String, maxRows: Int) async throws -> QueryResult {
+  func executeSingleStatement(_ query: String, maxRows: Int) async throws -> QueryResult {
     guard let connection = _connection else {
       throw DatabaseError.notConnected
     }
@@ -178,331 +178,42 @@ extension DatabaseConnectionManager {
 
     let startTime = Date()
 
-    // Check if this is a modification query (UPDATE, DELETE, INSERT)
-    let isModification = isModificationQuery(query)
-
-    // For modification queries, we need to get affected rows count
-    if isModification {
-      do {
-        // NOTE: PostgresNIO 1.30.1 does not expose commandTag via onMetadata callback
-        // The onMetadata parameter is not available in the current version
-        // Solution: Use CTE with RETURNING to get affected rows count
-        // This is reliable and works across all PostgreSQL versions (8.2+)
-        let wrappedQuery = wrapModificationQueryForCount(query)
-
-        let stream = try await connection.query(
-          PostgresQuery(unsafeSQL: wrappedQuery),
-          logger: Logger(label: "sqlnotebook")
-        )
-
-        // The wrapped query returns a single row with count
-        var affectedRows = 0
-        for try await row in stream {
-          let randomAccess = row.makeRandomAccess()
-          // Get the first column which contains the count
-          if let cell = randomAccess.first {
-            if let count = try? cell.decode(Int64.self, context: .default) {
-              affectedRows = Int(count)
-            }
-          }
-        }
-
-        let executionTime = Date().timeIntervalSince(startTime)
-
-        return QueryResult(
-          columns: [],
-          rows: [],
-          rowCount: 0,
-          executionTime: executionTime,
-          affectedRows: affectedRows
-        )
-
-      } catch let error as PSQLError {
-        let executionTime = Date().timeIntervalSince(startTime)
-        let errorMessage = formatPostgresError(error, query: query)
-        throw DatabaseError.queryFailed(errorMessage, executionTime)
-      } catch {
-        let executionTime = Date().timeIntervalSince(startTime)
-        throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
-      }
+    // Everything but reads is sent unchanged (affected rows from the command tag or RETURNING)
+    switch StatementRoute.route(for: SQLStatementClassifier.classifyStatement(query)) {
+    case .command:
+      return try await executeCommand(query, on: connection, startTime: startTime)
+    case .returningRows:
+      return try await executeUnwrapped(
+        query, on: connection, countRows: true, maxRows: maxRows, startTime: startTime)
+    case .unwrappedRows:
+      return try await executeUnwrapped(
+        query, on: connection, countRows: false, maxRows: maxRows, startTime: startTime)
+    case .read:
+      break
     }
 
-    // For SELECT queries, proceed with normal logic
-    // Check if user specified a LIMIT that exceeds maxRows
-    let userOriginalLimit = extractLimitValue(query)
-    let hadUserLimit = userOriginalLimit != nil
-    let userLimitExceeded =
-      if let userLimit = userOriginalLimit {
-        userLimit > maxRows
-      } else {
-        false
-      }
-
-    // Step 1: Wrap query with LIMIT to enforce maxRows
-    // This prevents database from processing too many rows
-    let limitedQuery = wrapQueryWithLimit(query, maxRows: maxRows)
-
-    // Step 2: For PostgreSQL SELECT queries, wrap to include ctid
-    let shouldFetchCtid = databaseType == .postgresql && isSelectQuery(limitedQuery)
-    let executionQuery = shouldFetchCtid ? wrapQueryWithCtid(limitedQuery) : limitedQuery
-
-    // DEBUG: Log sanitized final query (redact sensitive data)
-    let sanitizedExecutionQuery = AppLogger.shared.sanitizeQuery(executionQuery)
-    await AppLogger.shared.debug(
-      "Final query to be sent to database: `\(sanitizedExecutionQuery)`", category: "Database")
-
+    // Reads are sent as written (no LIMIT / ctid rewrite): the capped reader stops after
+    // `maxRows` rows and breaks; the caller decides whether the session is reset
+    // (`resetSessionIfCapped`) or drained.
     do {
-      // Execute query and collect rows
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: executionQuery),
-        logger: Logger(label: "sqlnotebook")
-      )
-
-      var columns: [ColumnInfo] = []
-      var resultRows: [[CellValue]] = []
-      var rowIdentifiers: [CellValue] = []
-      var isFirstRow = true
-
-      var wasLimited = false
-      var ctidColumnIndex: Int? = nil
-
-      for try await row in stream {
-        let randomAccess = row.makeRandomAccess()
-
-        // On first row, extract column metadata from PostgresCells
-        if isFirstRow {
-          // PostgresRandomAccessRow is a Sequence of PostgresCell
-          var columnIndex = 0
-          for cell in randomAccess {
-            let columnName = cell.columnName
-            // Detect ctid column (our internal identifier)
-            if shouldFetchCtid && columnName == "_sqlnb_ctid" {
-              ctidColumnIndex = columnIndex
-            } else {
-              columns.append(
-                ColumnInfo(
-                  name: columnName,
-                  type: postgresDataTypeName(cell.dataType)
-                ))
-            }
-            columnIndex += 1
-          }
-          isFirstRow = false
-        }
-
-        // Parse values for each cell
-        var rowValues: [CellValue] = []
-        var columnIndex = 0
-        var ctidValue: CellValue? = nil
-
-        for cell in randomAccess {
-          let value = parseCellValue(from: cell)
-
-          // If this is the ctid column, store it separately
-          if let ctidIndex = ctidColumnIndex, columnIndex == ctidIndex {
-            ctidValue = value
-          } else {
-            rowValues.append(value)
-          }
-          columnIndex += 1
-        }
-
-        resultRows.append(rowValues)
-
-        // Store ctid value if we found it
-        if let ctid = ctidValue {
-          rowIdentifiers.append(ctid)
-        }
+      let stream = try await send(on: connection) {
+        try await $0.query(PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook"))
       }
-
+      let collected = try await readCapped(stream, maxRows: maxRows, readToEnd: false)
       let executionTime = Date().timeIntervalSince(startTime)
-
-      // Check if result was limited:
-      // - If we got exactly maxRows AND the original query didn't have LIMIT
-      // - This indicates there might be more rows available
-      // - Only for queries with FROM clause (table queries, not function calls)
-      let hadNoLimit = !hasLimitClause(query)
-      if resultRows.count == maxRows && hadNoLimit && isSelectQuery(query) && hasFromClause(query) {
-        wasLimited = true
-      }
-
-      // Determine final userLimitExceeded and userRequestedLimit values
-      // userRequestedLimit should always be the ACTUAL limit applied (not user's original limit)
-      // IMPORTANT: userLimitExceeded should only be true if we ACTUALLY returned maxRows
-      let finalUserLimitExceeded: Bool
-      let finalUserRequestedLimit: Int?
-
-      if wasLimited && !hadUserLimit {
-        // We auto-added LIMIT and result was limited
-        // This means there are potentially more rows available
-        finalUserLimitExceeded = true
-        finalUserRequestedLimit = maxRows
-      } else if userLimitExceeded {
-        // User had LIMIT but it exceeded maxRows, so we capped it
-        // However, only show warning if we ACTUALLY returned maxRows
-        // (if database has fewer rows than maxRows, no need to warn)
-        if resultRows.count >= maxRows {
-          finalUserLimitExceeded = true
-          finalUserRequestedLimit = maxRows
-        } else {
-          // Database had fewer rows than maxRows, no warning needed
-          finalUserLimitExceeded = false
-          finalUserRequestedLimit = nil
-        }
-      } else if let userLimit = userOriginalLimit, userLimit <= maxRows {
-        // User had LIMIT within maxRows, use their limit
-        finalUserLimitExceeded = false
-        finalUserRequestedLimit = userLimit
-      } else {
-        // No limiting occurred
-        finalUserLimitExceeded = false
-        finalUserRequestedLimit = nil
-      }
-
-      // Determine limitWasCapped and actualLimitUsed for UI display
-      // limitWasCapped = true when user's LIMIT was > maxRows (regardless of result rows)
-      // This is used to show correct query in "Run with query" bar and View Query sidebar
-      let limitWasCapped = userLimitExceeded  // userLimitExceeded means user's LIMIT > maxRows
-      let actualLimitUsed: Int? = limitWasCapped ? maxRows : userOriginalLimit
-
-      // Try to enrich column type information with modifiers
-      let enrichedColumns = await enrichColumnTypes(columns: columns, query: executionQuery)
-
-      return QueryResult(
-        columns: enrichedColumns,
-        rows: resultRows,
-        rowCount: resultRows.count,
-        executionTime: executionTime,
-        wasLimited: wasLimited,
-        rowIdentifiers: rowIdentifiers,
-        userLimitExceeded: finalUserLimitExceeded,
-        userRequestedLimit: finalUserRequestedLimit,
-        affectedRows: 0,  // SELECT queries always have 0 affected rows
-        limitWasCapped: limitWasCapped,
-        actualLimitUsed: actualLimitUsed
-      )
-
-    } catch let error as PSQLError {
-      let executionTime = Date().timeIntervalSince(startTime)
-      // Extract detailed error information from PostgreSQL
-      let errorMessage = formatPostgresError(error, query: query)
-      throw DatabaseError.queryFailed(errorMessage, executionTime)
+      // Try to enrich column type information with modifiers. Not after a truncated read: the
+      // catalog query would first wait for the rest of the result to drain.
+      let enrichedColumns =
+        collected.truncated
+        ? collected.columns : await enrichColumnTypes(columns: collected.columns, query: query)
+      var result = QueryResult(
+        columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,
+        executionTime: executionTime, wasLimited: collected.truncated,
+        affectedRows: 0)  // SELECT queries always have 0 affected rows
+      result.truncated = collected.truncated
+      return result
     } catch {
-      let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
+      throw queryFailure(error, query: query, startTime: startTime)
     }
   }
-
-  /// Execute an UPDATE statement for a single cell value
-  /// - Parameters:
-  ///   - tableName: The name of the table to update
-  ///   - columnName: The column to update
-  ///   - newValue: The new value as CellValue
-  ///   - rowData: All column values for the row (used to build WHERE clause)
-  ///   - rowIdentifier: Optional row identifier (ctid for PostgreSQL, rowid for SQLite)
-  /// - Returns: Number of rows affected
-  func updateCellValue(
-    tableName: String,
-    columnName: String,
-    newValue: CellValue,
-    rowData: [String: CellValue],
-    primaryKeyColumns: [String],
-    rowIdentifier: CellValue?
-  ) async throws -> Int {
-    guard _connection != nil else {
-      throw DatabaseError.notConnected
-    }
-
-    // Build WHERE clause with priority strategy:
-    // 1. Use primary key columns if available (most reliable and portable)
-    // 2. Use row identifier (ctid for PostgreSQL) if available
-    // 3. Fall back to all columns (current approach)
-    var whereConditions: [String] = []
-
-    // Priority 1: Use primary key columns if available
-    if !primaryKeyColumns.isEmpty {
-      var pkConditionsValid = true
-      for pkColumn in primaryKeyColumns {
-        if let pkValue = rowData[pkColumn] {
-          let sqlValue = cellValueToSQL(pkValue)
-          whereConditions.append("\"\(pkColumn)\" = \(sqlValue)")
-        } else {
-          // PK column not found in rowData, cannot use PK approach
-          pkConditionsValid = false
-          whereConditions = []
-          break
-        }
-      }
-      // If we successfully built PK conditions, we're done
-      if pkConditionsValid {
-        // Successfully used primary key
-      }
-    }
-
-    // Priority 2: Use row identifier (ctid) for PostgreSQL if no PK available
-    if whereConditions.isEmpty, let rowId = rowIdentifier, let dbType = databaseType {
-      switch dbType {
-      case .postgresql:
-        // Use ctid for PostgreSQL
-        let tidValue = cellValueToSQL(rowId)
-        whereConditions.append("ctid = \(tidValue)::tid")
-      case .sqlite:
-        // SQLite rowid support planned for phase 5
-        break
-      }
-    }
-
-    // Priority 3 (Fallback): Use all columns if no PK and no row identifier
-    if whereConditions.isEmpty {
-      for (col, val) in rowData {
-        let sqlValue = cellValueToSQL(val)
-        whereConditions.append("\"\(col)\" = \(sqlValue)")
-      }
-    }
-
-    let whereClause = whereConditions.joined(separator: " AND ")
-
-    // Build UPDATE query
-    let newSQLValue = cellValueToSQL(newValue)
-    let updateQuery = """
-      UPDATE "\(tableName)"
-      SET "\(columnName)" = \(newSQLValue)
-      WHERE \(whereClause)
-      """
-
-    let startTime = Date()
-
-    do {
-      guard let connection = _connection else {
-        throw DatabaseError.notConnected
-      }
-
-      // Execute UPDATE
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: updateQuery),
-        logger: Logger(label: "sqlnotebook.update")
-      )
-
-      // Count affected rows
-      var rowsAffected = 0
-      for try await _ in stream {
-        rowsAffected += 1
-      }
-
-      return rowsAffected
-
-    } catch let error as PSQLError {
-      let executionTime = Date().timeIntervalSince(startTime)
-      // Extract detailed error information from PostgreSQL
-      let errorMessage = formatPostgresError(error, query: updateQuery)
-      throw DatabaseError.queryFailed(errorMessage, executionTime)
-    } catch {
-      let executionTime = Date().timeIntervalSince(startTime)
-      throw DatabaseError.queryFailed(error.localizedDescription, executionTime)
-    }
-  }
-
-  // MARK: - Query Helpers
-
-  /// Check if a query is a SELECT statement
 }

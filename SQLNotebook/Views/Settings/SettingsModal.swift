@@ -178,31 +178,8 @@ struct SettingsModalResultTableSection: View {
             "Adjust the maximum height of result tables. Values between 200-1000 points. (Notebook only)"
         )
 
-        // Max Row Limit - Notebook
-        SettingsSlider(
-          title: "Max Rows (Notebook)",
-          valueText: "\(appSettings.maxRowLimit) rows",
-          value: Binding(
-            get: { Double(appSettings.maxRowLimit) },
-            set: { appSettings.maxRowLimit = Int($0) }
-          ),
-          range: 50...100,
-          step: 5,
-          description: "Maximum rows to fetch in Notebook mode. Values between 50-100 rows."
-        )
-
-        // Max Row Limit - Editor
-        SettingsSlider(
-          title: "Max Rows (Editor)",
-          valueText: "\(appSettings.editorMaxRowLimit) rows",
-          value: Binding(
-            get: { Double(appSettings.editorMaxRowLimit) },
-            set: { appSettings.editorMaxRowLimit = Int($0) }
-          ),
-          range: 100...200,
-          step: 10,
-          description: "Maximum rows to fetch in Editor mode. Values between 100-200 rows."
-        )
+        // One row cap for Notebook and Editor
+        ResultRowCapSetting(appSettings: appSettings)
       }
     }
   }

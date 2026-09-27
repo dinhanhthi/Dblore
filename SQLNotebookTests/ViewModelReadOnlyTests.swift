@@ -46,13 +46,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks DELETE query")
@@ -66,13 +67,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks INSERT query")
@@ -86,13 +88,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode allows SELECT query")
@@ -110,14 +113,15 @@ struct ViewModelReadOnlyTests {
     let previousSafeMode = AppSettings.shared.safeMode
     AppSettings.shared.safeMode = .alertRead
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should not show error toast or confirmation dialog for SELECT
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
     // Note: Toast may not be set to error (it could be nil or info)
-    if let toast = viewModel.toastState.currentToast {
+    if let toast = WorkspaceWindowManager.shared.toastState.currentToast {
       #expect(toast.type != .error)
     }
 
@@ -138,6 +142,11 @@ struct ViewModelReadOnlyTests {
 
     // Disable bypass confirmation to ensure dialog is shown
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
+
+    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousSafeMode = AppSettings.shared.safeMode
+    AppSettings.shared.safeMode = .alertRead
+    defer { AppSettings.shared.safeMode = previousSafeMode }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
@@ -161,13 +170,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks TRUNCATE query")
@@ -181,13 +191,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks ALTER query")
@@ -201,13 +212,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   @Test("Read-only mode blocks CREATE query")
@@ -221,13 +233,14 @@ struct ViewModelReadOnlyTests {
     // Set connection config with read-only mode enabled
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
 
-    // Act
+    // Act - reset the process-wide toast so leftovers from other tests can't leak in
+    WorkspaceWindowManager.shared.dismissToast()
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert - Should show toast error, not dialog
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
-    #expect(viewModel.toastState.currentToast?.type == .error)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 
   // MARK: - ConnectionConfig Protection Level Property Tests
@@ -263,54 +276,81 @@ struct ViewModelReadOnlyTests {
     #expect(config.blocksSchemaChanges == true)
   }
 
-  // MARK: - isBlockedInReadOnlyMode Tests
+  // MARK: - Gate-based blocking (replaces prefix-based isBlockedInReadOnlyMode)
 
-  @Test("isBlockedInReadOnlyMode returns true for modification queries")
-  func isBlockedInReadOnlyModeReturnsTrueForModificationQueries() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Act & Assert - All modification queries should be blocked
-    #expect(viewModel.isBlockedInReadOnlyMode("UPDATE users SET name = 'x'"))
-    #expect(viewModel.isBlockedInReadOnlyMode("DELETE FROM users"))
-    #expect(viewModel.isBlockedInReadOnlyMode("INSERT INTO users VALUES (1)"))
-    #expect(viewModel.isBlockedInReadOnlyMode("DROP TABLE users"))
-    #expect(viewModel.isBlockedInReadOnlyMode("TRUNCATE TABLE users"))
-    #expect(viewModel.isBlockedInReadOnlyMode("ALTER TABLE users ADD COLUMN age INT"))
+  func isBlockedInReadOnlyMode(_ query: String) -> Bool {
+    let decision = DatabaseConnectionManager.evaluate(
+      SQLStatementClassifier.classify(query), policy: ProtectionPolicy(protectionLevel: .readOnly))
+    return decision != .allowed
   }
 
-  @Test("isBlockedInReadOnlyMode returns true for CREATE query")
-  func isBlockedInReadOnlyModeReturnsTrueForCreateQuery() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Act & Assert - CREATE should be blocked in read-only mode
-    #expect(viewModel.isBlockedInReadOnlyMode("CREATE TABLE users (id INT)"))
-    #expect(viewModel.isBlockedInReadOnlyMode("CREATE INDEX idx ON users(name)"))
-    #expect(viewModel.isBlockedInReadOnlyMode("CREATE VIEW user_view AS SELECT * FROM users"))
+  @Test("Read-only gate blocks modification queries")
+  func readOnlyGateBlocksModificationQueries() {
+    #expect(isBlockedInReadOnlyMode("UPDATE users SET name = 'x'"))
+    #expect(isBlockedInReadOnlyMode("DELETE FROM users"))
+    #expect(isBlockedInReadOnlyMode("INSERT INTO users VALUES (1)"))
+    #expect(isBlockedInReadOnlyMode("DROP TABLE users"))
+    #expect(isBlockedInReadOnlyMode("TRUNCATE TABLE users"))
+    #expect(isBlockedInReadOnlyMode("ALTER TABLE users ADD COLUMN age INT"))
   }
 
-  @Test("isBlockedInReadOnlyMode returns false for SELECT query")
-  func isBlockedInReadOnlyModeReturnsFalseForSelectQuery() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Act & Assert - SELECT should NOT be blocked
-    #expect(!viewModel.isBlockedInReadOnlyMode("SELECT * FROM users"))
-    #expect(!viewModel.isBlockedInReadOnlyMode("SELECT id, name FROM users WHERE id = 1"))
+  @Test("Read-only gate blocks CREATE query")
+  func readOnlyGateBlocksCreateQuery() {
+    #expect(isBlockedInReadOnlyMode("CREATE TABLE users (id INT)"))
+    #expect(isBlockedInReadOnlyMode("CREATE INDEX idx ON users(name)"))
+    #expect(isBlockedInReadOnlyMode("CREATE VIEW user_view AS SELECT * FROM users"))
   }
 
-  @Test("isBlockedInReadOnlyMode returns false for EXPLAIN query")
-  func isBlockedInReadOnlyModeReturnsFalseForExplainQuery() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
+  @Test("Read-only gate allows SELECT query")
+  func readOnlyGateAllowsSelectQuery() {
+    #expect(!isBlockedInReadOnlyMode("SELECT * FROM users"))
+    #expect(!isBlockedInReadOnlyMode("SELECT id, name FROM users WHERE id = 1"))
+  }
 
-    // Act & Assert - EXPLAIN should NOT be blocked
-    #expect(!viewModel.isBlockedInReadOnlyMode("EXPLAIN SELECT * FROM users"))
-    #expect(!viewModel.isBlockedInReadOnlyMode("EXPLAIN ANALYZE SELECT * FROM users"))
+  @Test("Read-only gate allows EXPLAIN but blocks EXPLAIN ANALYZE (it executes the statement)")
+  func readOnlyGateExplain() {
+    #expect(!isBlockedInReadOnlyMode("EXPLAIN SELECT * FROM users"))
+    #expect(isBlockedInReadOnlyMode("EXPLAIN ANALYZE SELECT * FROM users"))
+    #expect(isBlockedInReadOnlyMode("EXPLAIN ANALYZE DELETE FROM users"))
+  }
+
+  @Test("Read-only gate blocks a modification hidden after a SELECT or a comment")
+  func readOnlyGateBlocksHiddenStatements() {
+    #expect(isBlockedInReadOnlyMode("SELECT 1; DROP TABLE t"))
+    #expect(isBlockedInReadOnlyMode("-- harmless\nDELETE FROM users"))
+    #expect(isBlockedInReadOnlyMode("/* SELECT */ UPDATE users SET a = 1"))
+  }
+
+  @Test("Read-only mode blocks a cell with a hidden DROP (toast, no dialog)")
+  func readOnlyModeBlocksHiddenDropInCell() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let cellId = viewModel.notebook.cells[0].id
+    viewModel.notebook.cells[0].content = "SELECT 1; DROP TABLE t"
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
+
+    WorkspaceWindowManager.shared.dismissToast()
+    viewModel.confirmAndRunCell(id: cellId)
+
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
+    #expect(
+      WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("statement 2") == true
+    )
+  }
+
+  @Test("Schema-only mode blocks DDL in a cell (toast, no dialog)")
+  func schemaOnlyModeBlocksDDLInCell() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let cellId = viewModel.notebook.cells[0].id
+    viewModel.notebook.cells[0].content = "UPDATE t SET a = 1 WHERE id = 1; DROP TABLE t"
+    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .schemaOnly)
+
+    WorkspaceWindowManager.shared.dismissToast()
+    viewModel.confirmAndRunCell(id: cellId)
+
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(viewModel.queryConfirmationState.pendingCellId == nil)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
   }
 }

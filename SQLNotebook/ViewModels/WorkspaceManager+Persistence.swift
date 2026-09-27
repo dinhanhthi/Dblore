@@ -83,24 +83,40 @@ extension WorkspaceManager {
     // Update workspace with current state
     workspace.fileURL = url
     workspace.name = url.deletingPathExtension().lastPathComponent
-    workspace.tabs = tabs.map { WorkspaceTabReference.from($0) }
+
+    let data = try encodedWorkspaceData()
+    try SecurityScopedAccess.write(data, to: url)
+
+    isDirty = false
+    // Once per location: a failed bookmark is not retried on every auto-save
+    if workspaceBookmarkURL != url {
+      workspaceBookmarkURL = url
+      workspaceBookmark = accessHooks.makeBookmark(url)
+    }
+
+    // Add to recent workspaces
+    if let entry = recentEntry {
+      recents.addWorkspace(entry)
+    }
+  }
+
+  /// Recent workspaces entry with the current file and folder bookmarks (nil while unsaved)
+  var recentEntry: WorkspaceHistoryEntry? {
+    var entry = WorkspaceHistoryEntry.from(workspace, bookmark: workspaceBookmark)
+    entry?.folderBookmark = folderBookmark
+    return entry
+  }
+
+  /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON
+  func encodedWorkspaceData() throws -> Data {
+    workspace.tabs = tabs.map { WorkspaceTabReference.from($0, bookmark: tabBookmarks[$0.id]) }
     workspace.activeTabId = activeTabId
     workspace.lastOpenedAt = Date()
 
-    // Encode and save
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     encoder.dateEncodingStrategy = .iso8601
-
-    let data = try encoder.encode(workspace)
-    try data.write(to: url, options: .atomic)
-
-    isDirty = false
-
-    // Add to recent workspaces
-    if let entry = WorkspaceHistoryEntry.from(workspace) {
-      RecentManager.shared.addWorkspace(entry)
-    }
+    return try encoder.encode(workspace)
   }
 
   /// Check if workspace has unsaved changes
@@ -109,8 +125,10 @@ extension WorkspaceManager {
     return tabs.contains { $0.isDirty }
   }
 
-  /// Check if workspace can be closed (prompt for unsaved changes)
+  /// Check if workspace can be closed (resolve a pending Protected transaction, then prompt
+  /// for unsaved changes)
   func canClose() async -> Bool {
+    guard await resolvePendingTransaction(action: .closeWindow) else { return false }
     guard hasUnsavedChanges else { return true }
 
     // Show alert for unsaved changes
@@ -151,9 +169,10 @@ extension WorkspaceManager {
 // MARK: - Schema Loading
 
 extension WorkspaceManager {
-  /// Load database schema
+  /// Load database schema. While a Protected transaction is pending the cached schema is kept
+  /// and no catalog query is sent (the actor refuses them too).
   func loadDatabaseSchema() async {
-    guard connectionState == .connected else { return }
+    guard connectionState == .connected, !isSchemaPaused else { return }
     isLoadingSchema = true
 
     do {
@@ -205,6 +224,11 @@ extension WorkspaceManager {
           await AppLogger.shared.warning(
             "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema")
         }
+      }
+
+      // The transaction opened meanwhile: later lookups were refused, keep the cache
+      if await connectionManager.isMetadataPaused {
+        throw DatabaseError.metadataPausedDuringTransaction
       }
 
       databaseTables = tables

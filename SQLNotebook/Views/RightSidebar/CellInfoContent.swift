@@ -441,7 +441,6 @@ struct CellInfoContent: View {
     tableName: "users",
     rowData: ["user_id": .int(1), "is_active": .bool(true)],
     primaryKeyColumns: ["user_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 
@@ -463,7 +462,6 @@ struct CellInfoContent: View {
     tableName: "users",
     rowData: ["user_id": .int(1), "email": .string("user@example.com")],
     primaryKeyColumns: ["user_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 
@@ -485,7 +483,6 @@ struct CellInfoContent: View {
     tableName: "users",
     rowData: ["user_id": .int(42), "email": .string("user@example.com")],
     primaryKeyColumns: ["user_id"],
-    rowIdentifier: .int(42),
     cellId: nil
   )
 
@@ -510,7 +507,6 @@ struct CellInfoContent: View {
     tableName: "posts",
     rowData: ["post_id": .int(1), "created_at": .date(date)],
     primaryKeyColumns: ["post_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 
@@ -538,7 +534,6 @@ struct CellInfoContent: View {
     tableName: "articles",
     rowData: ["article_id": .int(1), "description": .string(longText)],
     primaryKeyColumns: ["article_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 
@@ -564,7 +559,6 @@ struct CellInfoContent: View {
     tableName: "users",
     rowData: ["user_id": .int(1), "metadata": .string(jsonString)],
     primaryKeyColumns: ["user_id"],
-    rowIdentifier: .int(1),
     cellId: nil
   )
 

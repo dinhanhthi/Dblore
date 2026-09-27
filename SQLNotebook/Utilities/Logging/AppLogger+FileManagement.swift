@@ -68,7 +68,8 @@ extension AppLogger {
       return
     }
 
-    let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!  // 7 days retention
+    // 7 days retention
+    let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
 
     var deletedCount = 0
     var totalSizeFreed: Int64 = 0

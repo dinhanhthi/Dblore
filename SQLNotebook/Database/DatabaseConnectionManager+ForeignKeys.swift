@@ -15,9 +15,7 @@ extension DatabaseConnectionManager {
   /// Fetch all foreign key relationships from the database
   /// Queries pg_constraint system catalog for foreign key constraints
   func fetchForeignKeys() async throws -> [ForeignKey] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     // Query to get foreign key constraints with source and target column names
     // Uses pg_constraint, pg_class, pg_namespace, and pg_attribute catalogs
@@ -53,10 +51,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.foreignkeys")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.foreignkeys"))
+      }
 
       var foreignKeys: [ForeignKey] = []
 

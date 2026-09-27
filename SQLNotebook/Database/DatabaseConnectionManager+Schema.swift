@@ -14,9 +14,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all tables from the database
   func fetchTables() async throws -> [DatabaseTable] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -29,10 +27,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var tables: [DatabaseTable] = []
 
@@ -58,16 +56,15 @@ extension DatabaseConnectionManager {
 
   /// Fetch columns for a specific table
   func fetchColumns(tableSchema: String, tableName: String) async throws -> [DatabaseColumn] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
-
     // First, fetch primary key columns for this table
     let primaryKeyColumns = try await fetchPrimaryKeyColumns(
       tableName: "\(tableSchema).\(tableName)")
 
     // Fetch unique constraint columns
     let uniqueColumns = try await fetchUniqueColumns(tableSchema: tableSchema, tableName: tableName)
+
+    // Checked after the lookups above: the app transaction may have opened meanwhile
+    let connection = try catalogConnection()
 
     // Use string interpolation for now since parameter binding is complex with PostgresNIO
     // Include additional columns for type enrichment and identity
@@ -89,10 +86,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var columns: [DatabaseColumn] = []
 
@@ -183,9 +180,7 @@ extension DatabaseConnectionManager {
   ) async throws -> Set<
     String
   > {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     // Query to get unique constraint columns (only single-column constraints)
     let query = """
@@ -199,10 +194,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.unique")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.unique"))
+      }
 
       var uniqueColumns: Set<String> = []
       for try await row in stream {
@@ -221,9 +216,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch row count for a specific table
   func fetchRowCount(tableSchema: String, tableName: String) async throws -> Int {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     // Use COUNT(*) to get exact row count
     let query = """
@@ -232,10 +225,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       for try await row in stream {
         let randomAccess = row.makeRandomAccess()
@@ -256,41 +249,28 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Fetch primary key column names for a table
-  /// Returns array of column names that form the primary key (empty if no PK)
+  /// Fetch primary key column names for a table, in key order (empty if no PK).
+  /// `tableName` (`table` or `schema.table`, SQL identifier syntax) is resolved with
+  /// `to_regclass` like an unqualified name in a query (search_path) and bound as a parameter.
   func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
-    guard _connection != nil else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
-    // Parse table name to handle schema.table format
-    let parts = tableName.split(separator: ".")
-    let schema: String
-    let table: String
-
-    if parts.count == 2 {
-      schema = String(parts[0])
-      table = String(parts[1])
-    } else {
-      schema = "public"
-      table = tableName
-    }
-
-    // Query to get primary key columns from PostgreSQL system catalogs
-    let pkQuery = """
-      SELECT a.attname AS column_name
-      FROM pg_index i
-      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-      WHERE i.indrelid = '\(schema).\(table)'::regclass
-        AND i.indisprimary
-      ORDER BY array_position(i.indkey, a.attnum)
-      """
+    var binds = PostgresBindings(capacity: 1)
+    binds.append(tableName)
+    let pkQuery = PostgresQuery(
+      unsafeSQL: """
+        SELECT a.attname::text AS column_name
+        FROM pg_index i
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = to_regclass($1)
+          AND i.indisprimary
+        ORDER BY array_position(i.indkey, a.attnum)
+        """, binds: binds)
 
     do {
-      let stream = try await _connection!.query(
-        PostgresQuery(unsafeSQL: pkQuery),
-        logger: Logger(label: "sqlnotebook.pk")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(pkQuery, logger: Logger(label: "sqlnotebook.pk"))
+      }
 
       var pkColumns: [String] = []
       for try await row in stream {
@@ -303,7 +283,7 @@ extension DatabaseConnectionManager {
       return pkColumns
 
     } catch {
-      // If query fails (table doesn't exist, permissions, etc.), return empty array
+      // If query fails (invalid name, permissions, etc.), return empty array
       return []
     }
   }
@@ -312,9 +292,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all views from the database
   func fetchViews() async throws -> [DatabaseView] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -327,10 +305,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var views: [DatabaseView] = []
 
@@ -359,9 +337,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all functions from the database
   func fetchFunctions() async throws -> [DatabaseFunction] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -378,10 +354,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var functions: [DatabaseFunction] = []
 
@@ -421,9 +397,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all procedures from the database
   func fetchProcedures() async throws -> [DatabaseProcedure] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -439,10 +413,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var procedures: [DatabaseProcedure] = []
 
@@ -480,9 +454,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all users from the database
   func fetchUsers() async throws -> [DatabaseUser] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -498,10 +470,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var users: [DatabaseUser] = []
 
@@ -542,9 +514,7 @@ extension DatabaseConnectionManager {
 
   /// Fetch all roles from the database
   func fetchRoles() async throws -> [DatabaseRole] {
-    guard let connection = _connection else {
-      throw DatabaseError.notConnected
-    }
+    let connection = try catalogConnection()
 
     let query = """
       SELECT
@@ -565,10 +535,10 @@ extension DatabaseConnectionManager {
       """
 
     do {
-      let stream = try await connection.query(
-        PostgresQuery(unsafeSQL: query),
-        logger: Logger(label: "sqlnotebook.schema")
-      )
+      let stream = try await send(on: connection) {
+        try await $0.query(
+          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
+      }
 
       var roles: [DatabaseRole] = []
 

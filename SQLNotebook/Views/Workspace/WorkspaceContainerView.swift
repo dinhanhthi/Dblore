@@ -36,6 +36,16 @@ struct WorkspaceContainerView: View {
               hasLeftSidebar: workspaceManager.isLeftSidebarVisible
             )
 
+            // Pending Protected transaction (Commit / Rollback)
+            if !workspaceManager.pendingTransaction.isIdle {
+              PendingTransactionBanner(workspaceManager: workspaceManager)
+            }
+
+            // The server closed the connection (Reconnect)
+            if workspaceManager.connectionLostMessage != nil {
+              ConnectionLostBanner(workspaceManager: workspaceManager)
+            }
+
             // Content area
             if workspaceManager.isSchemaVisualizerActive {
               // Schema visualizer at workspace level (overlays everything)
@@ -59,12 +69,13 @@ struct WorkspaceContainerView: View {
         // This covers sidebar buttons during animation
         HStack(spacing: 0) {
           // Background for traffic light area + buttons
-          Color.cardBackground
+          Color.clear
             .frame(
               width: ComponentSize.trafficLightAndToggleWidth
                 + workspaceManager.connectionState.connectionButtonsWidth,
               height: ComponentSize.tabBarHeight
             )
+            .chromeGlass()
             .overlay(alignment: .trailing) {
               // Buttons positioned at trailing edge of background
               HStack(spacing: Spacing.xxs) {
@@ -112,6 +123,8 @@ struct WorkspaceContainerView: View {
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
     )
+    .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
+    .pendingTransactionDialogs(workspaceManager: workspaceManager)
     .confirmationDialog(
       "Save changes?",
       isPresented: $workspaceManager.showingCloseConfirmation,
@@ -186,7 +199,7 @@ struct WorkspaceLeftSidebar: View {
         WorkspaceLeftSidebarContent(workspaceManager: workspaceManager)
       }
       .frame(width: constrainedWidth)
-      .background(Color.cardBackground)
+      .chromeGlass()
       .transition(.move(edge: .leading))
       .overlay(alignment: .trailing) {
         ResizableSidebarDivider(
@@ -341,6 +354,7 @@ struct WorkspaceTabContentView: View {
         syncDocument: syncEditorDocument
       )
     )
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncEditorDocument)
     .searchNotifications(viewModel: viewModel)
   }
 
@@ -660,7 +674,7 @@ struct WorkspaceTitleBarTabsView: View {
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
-    .background(Color.cardBackground)
+    .chromeGlass()
     .background(WindowDragArea())
   }
 

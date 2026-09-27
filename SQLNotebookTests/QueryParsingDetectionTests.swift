@@ -88,327 +88,136 @@ struct QueryParsingDetectionTests {
     }
   }
 
-  // MARK: - hasFromClause Tests
+  // MARK: - Statement kind detection (classifier; replaces prefix-based isModificationQuery)
 
-  @Suite("hasFromClause - Detection")
-  struct HasFromClauseTests {
+  @Suite("Statement kind - Detection")
+  struct StatementKindTests {
 
-    @Test("Query with FROM returns true")
-    func queryWithFromReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM users"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Should detect FROM clause")
+    func kind(_ query: String) -> StatementKind? {
+      SQLStatementClassifier.classify(query).first?.kind
     }
 
-    @Test("Query without FROM returns false")
-    func queryWithoutFromReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT 1 + 1"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should return false for query without FROM")
+    @Test("UPDATE, DELETE and INSERT are DML")
+    func dataModificationIsDML() {
+      #expect(kind("UPDATE users SET name = 'x'") == .dml)
+      #expect(kind("DELETE FROM users") == .dml)
+      #expect(kind("INSERT INTO users VALUES (1)") == .dml)
     }
 
-    @Test("Function call without FROM returns false")
-    func functionCallWithoutFromReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT now()"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should return false for function call")
+    @Test("SELECT is a read")
+    func selectIsRead() {
+      #expect(kind("SELECT * FROM users") == .read)
     }
 
-    @Test("FROM case insensitive")
-    func fromCaseInsensitive() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "select * from users"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Should detect FROM regardless of case")
+    @Test("Modification query with leading comment is detected")
+    func modificationWithLeadingComment() {
+      #expect(kind("-- comment\nUPDATE users SET name = 'x'") == .dml)
     }
 
-    @Test("Word boundary detection - 'FROM' in string should not match")
-    func fromInStringShouldNotMatch() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT 'FROM the beginning'"
-      let result = await manager.hasFromClause(query)
-      #expect(result == true, "Current implementation detects FROM in strings (known limitation)")
-    }
-
-    @Test("Word boundary detection - 'information' should not match")
-    func wordBoundaryDetectionInformation() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT information"
-      let result = await manager.hasFromClause(query)
-      #expect(result == false, "Should not match FROM in 'information' due to word boundary")
-    }
-  }
-
-  // MARK: - isModificationQuery Tests
-
-  @Suite("isModificationQuery - Detection")
-  struct IsModificationQueryTests {
-
-    @Test("UPDATE query returns true")
-    func updateQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "UPDATE users SET name = 'x'"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == true, "Should detect UPDATE query")
-    }
-
-    @Test("DELETE query returns true")
-    func deleteQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "DELETE FROM users"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == true, "Should detect DELETE query")
-    }
-
-    @Test("INSERT query returns true")
-    func insertQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "INSERT INTO users VALUES (1)"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == true, "Should detect INSERT query")
-    }
-
-    @Test("SELECT query returns false")
-    func selectQueryReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM users"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == false, "Should not detect SELECT as modification")
-    }
-
-    @Test("Modification query with leading comment returns true")
-    func modificationQueryWithLeadingCommentReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "-- comment\nUPDATE users SET name = 'x'"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == true, "Should detect UPDATE after comment")
-    }
-
-    @Test("CREATE TABLE query returns false")
-    func createTableQueryReturnsFalse() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "CREATE TABLE users (id INT)"
-      let result = await manager.isModificationQuery(query)
-      #expect(result == false, "Should not detect CREATE as modification")
-    }
-
-    @Test("DROP query returns true")
-    func dropQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
+    @Test("CREATE, DROP, TRUNCATE and ALTER are DDL")
+    func schemaModificationIsDDL() {
       let queries = [
+        "CREATE TABLE users (id INT)",
         "DROP TABLE users",
         "DROP DATABASE mydb",
         "DROP INDEX idx_name",
         "DROP VIEW my_view",
         "DROP SCHEMA public",
-      ]
-      for query in queries {
-        let result = await manager.isModificationQuery(query)
-        #expect(result == true, "Should detect DROP query as modification: \(query)")
-      }
-    }
-
-    @Test("TRUNCATE query returns true")
-    func truncateQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
         "TRUNCATE TABLE users",
         "TRUNCATE users",
-      ]
-      for query in queries {
-        let result = await manager.isModificationQuery(query)
-        #expect(result == true, "Should detect TRUNCATE query as modification: \(query)")
-      }
-    }
-
-    @Test("ALTER query returns true")
-    func alterQueryReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
         "ALTER TABLE users ADD COLUMN age INT",
         "ALTER TABLE users DROP COLUMN email",
         "ALTER TABLE users RENAME TO customers",
       ]
       for query in queries {
-        let result = await manager.isModificationQuery(query)
-        #expect(result == true, "Should detect ALTER query as modification: \(query)")
+        #expect(kind(query) == .ddl, "Should detect DDL: \(query)")
       }
     }
 
-    @Test("DROP/TRUNCATE/ALTER with leading comment returns true")
-    func schemaModificationWithLeadingCommentReturnsTrue() async throws {
-      let manager = DatabaseConnectionManager()
+    @Test("DROP/TRUNCATE/ALTER with leading comment are DDL")
+    func schemaModificationWithLeadingComment() {
       let queries = [
         "-- comment\nDROP TABLE users",
         "/* multi-line */ TRUNCATE TABLE users",
         "-- be careful\nALTER TABLE users DROP COLUMN email",
       ]
       for query in queries {
-        let result = await manager.isModificationQuery(query)
-        #expect(result == true, "Should detect schema modification after comment: \(query)")
+        #expect(kind(query) == .ddl, "Should detect DDL after comment: \(query)")
       }
+    }
+
+    @Test("Every statement of a multi-statement query is classified")
+    func multiStatementClassified() {
+      let kinds = SQLStatementClassifier.classify("SELECT 1; DROP TABLE t").map(\.kind)
+      #expect(kinds == [.read, .ddl])
     }
   }
 
-  // MARK: - hasWhereClause Tests
-
-  @Suite("hasWhereClause - WHERE Clause Detection")
-  struct HasWhereClauseTests {
-
-    @Test("DELETE with WHERE returns true")
-    func deleteWithWhereReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "DELETE FROM users WHERE id = 1",
-        "DELETE FROM users WHERE name = 'John'",
-        "delete from users where active = false",
-      ]
-      for query in queries {
-        let result = manager.hasWhereClause(query)
-        #expect(result == true, "Should detect WHERE in: \(query)")
-      }
-    }
-
-    @Test("DELETE without WHERE returns false")
-    func deleteWithoutWhereReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "DELETE FROM users",
-        "DELETE FROM users;",
-        "delete from users",
-      ]
-      for query in queries {
-        let result = manager.hasWhereClause(query)
-        #expect(result == false, "Should not detect WHERE in: \(query)")
-      }
-    }
-
-    @Test("UPDATE with WHERE returns true")
-    func updateWithWhereReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "UPDATE users SET name = 'John' WHERE id = 1",
-        "UPDATE accounts SET balance = 0 WHERE active = false",
-        "update users set name = 'x' where id = 1",
-      ]
-      for query in queries {
-        let result = manager.hasWhereClause(query)
-        #expect(result == true, "Should detect WHERE in: \(query)")
-      }
-    }
-
-    @Test("UPDATE without WHERE returns false")
-    func updateWithoutWhereReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "UPDATE users SET name = 'John'",
-        "UPDATE accounts SET balance = 0",
-        "update users set active = false",
-      ]
-      for query in queries {
-        let result = manager.hasWhereClause(query)
-        #expect(result == false, "Should not detect WHERE in: \(query)")
-      }
-    }
-
-    @Test("SELECT query returns true (not applicable)")
-    func selectQueryReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.hasWhereClause("SELECT * FROM users")
-      #expect(result == true, "SELECT should return true (not applicable)")
-    }
-
-    @Test("INSERT query returns true (not applicable)")
-    func insertQueryReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.hasWhereClause("INSERT INTO users VALUES (1)")
-      #expect(result == true, "INSERT should return true (not applicable)")
-    }
-
-    @Test("WHERE in comment is ignored")
-    func whereInCommentIsIgnored() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "-- WHERE id = 1\nDELETE FROM users"
-      let result = manager.hasWhereClause(query)
-      #expect(result == false, "Should ignore WHERE in comment")
-    }
-  }
-
-  // MARK: - affectsAllRows Tests
+  // MARK: - affectsAllRows Tests (classifier; replaces prefix-based hasWhereClause/affectsAllRows)
 
   @Suite("affectsAllRows - All Rows Detection")
   struct AffectsAllRowsTests {
 
+    func affectsAllRows(_ query: String) -> Bool {
+      SQLStatementClassifier.classify(query).first?.affectsAllRows ?? false
+    }
+
     @Test("DELETE without WHERE affects all rows")
-    func deleteWithoutWhereAffectsAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "DELETE FROM users",
-        "DELETE FROM users;",
-        "delete from accounts",
-      ]
-      for query in queries {
-        let result = manager.affectsAllRows(query)
-        #expect(result == true, "Should affect all rows: \(query)")
+    func deleteWithoutWhereAffectsAllRows() {
+      for query in ["DELETE FROM users", "DELETE FROM users;", "delete from accounts"] {
+        #expect(affectsAllRows(query), "Should affect all rows: \(query)")
       }
     }
 
     @Test("DELETE with WHERE does not affect all rows")
-    func deleteWithWhereDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("DELETE FROM users WHERE id = 1")
-      #expect(result == false, "Should not affect all rows with WHERE")
+    func deleteWithWhereDoesNotAffectAllRows() {
+      for query in [
+        "DELETE FROM users WHERE id = 1",
+        "DELETE FROM users WHERE name = 'John'",
+        "delete from users where active = false",
+      ] {
+        #expect(!affectsAllRows(query), "Should not affect all rows: \(query)")
+      }
     }
 
     @Test("UPDATE without WHERE affects all rows")
-    func updateWithoutWhereAffectsAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let queries = [
-        "UPDATE users SET active = false",
-        "UPDATE accounts SET balance = 0",
-      ]
-      for query in queries {
-        let result = manager.affectsAllRows(query)
-        #expect(result == true, "Should affect all rows: \(query)")
+    func updateWithoutWhereAffectsAllRows() {
+      for query in [
+        "UPDATE users SET active = false", "UPDATE accounts SET balance = 0",
+        "update users set active = false",
+      ] {
+        #expect(affectsAllRows(query), "Should affect all rows: \(query)")
       }
     }
 
     @Test("UPDATE with WHERE does not affect all rows")
-    func updateWithWhereDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("UPDATE users SET name = 'x' WHERE id = 1")
-      #expect(result == false, "Should not affect all rows with WHERE")
+    func updateWithWhereDoesNotAffectAllRows() {
+      for query in [
+        "UPDATE users SET name = 'x' WHERE id = 1",
+        "UPDATE accounts SET balance = 0 WHERE active = false",
+      ] {
+        #expect(!affectsAllRows(query), "Should not affect all rows: \(query)")
+      }
     }
 
-    @Test("SELECT does not affect all rows")
-    func selectDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("SELECT * FROM users")
-      #expect(result == false, "SELECT should not affect all rows")
+    @Test("SELECT, INSERT, DROP and TRUNCATE do not use affectsAllRows")
+    func otherStatementsDoNotAffectAllRows() {
+      for query in [
+        "SELECT * FROM users", "INSERT INTO users VALUES (1)", "DROP TABLE users",
+        "TRUNCATE TABLE users",
+      ] {
+        #expect(!affectsAllRows(query), "Not DELETE/UPDATE: \(query)")
+      }
     }
 
-    @Test("INSERT does not affect all rows")
-    func insertDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("INSERT INTO users VALUES (1)")
-      #expect(result == false, "INSERT should not affect all rows")
+    @Test("WHERE in comment is ignored")
+    func whereInCommentIsIgnored() {
+      #expect(affectsAllRows("-- WHERE id = 1\nDELETE FROM users"))
     }
 
-    @Test("DROP does not affect all rows (different concern)")
-    func dropDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("DROP TABLE users")
-      #expect(result == false, "DROP is not DELETE/UPDATE, different concern")
-    }
-
-    @Test("TRUNCATE does not use affectsAllRows (handled separately)")
-    func truncateDoesNotAffectAllRows() throws {
-      let manager = DatabaseConnectionManager()
-      let result = manager.affectsAllRows("TRUNCATE TABLE users")
-      #expect(result == false, "TRUNCATE is not DELETE/UPDATE")
+    @Test("WHERE in a string literal is ignored")
+    func whereInStringIsIgnored() {
+      #expect(affectsAllRows("UPDATE users SET note = 'WHERE id = 1'"))
     }
   }
 
@@ -432,40 +241,12 @@ struct QueryParsingDetectionTests {
         #expect(manager.isSelectQuery(query) == true, "'\(query)' should be recognized as SELECT")
       }
     }
-
-    @Test("Limit typo 'limi' would become alias when wrapped with LIMIT")
-    func limitTypoBehavior() async throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM bot limi"
-      let result = await manager.wrapQueryWithLimit(query, maxRows: 100)
-
-      #expect(result.contains("LIMIT 100"), "Should add LIMIT clause")
-      #expect(result.contains("limi"), "Alias 'limi' should be preserved")
-    }
   }
 
   // MARK: - Integration Tests - Real-world Scenarios
 
   @Suite("Integration - Real-world Scenarios")
   struct IntegrationTests {
-
-    @Test("Scenario: User query with comment LIMIT should get actual LIMIT")
-    func userQueryWithCommentLimitGetsActualLimit() async throws {
-      let manager = DatabaseConnectionManager()
-
-      let userQuery = """
-        -- Old limit: LIMIT 1000
-        SELECT * FROM large_table
-        """
-
-      let result = await manager.wrapQueryWithLimit(userQuery, maxRows: 100)
-
-      #expect(!result.contains("--"), "Should remove comment")
-      #expect(!result.contains("Old limit"), "Should remove comment text")
-      #expect(!result.contains("LIMIT 1000"), "Should remove commented LIMIT")
-      #expect(result.contains("LIMIT 100"), "Should add actual LIMIT")
-      #expect(result == "SELECT * FROM large_table LIMIT 100", "Should match expected result")
-    }
 
     @Test("Scenario: Query with inline comments and string literals")
     func queryWithInlineCommentsAndStringLiterals() throws {
@@ -485,24 +266,6 @@ struct QueryParsingDetectionTests {
       #expect(stripped.contains("'-- not a comment'"), "Should preserve string literal")
       #expect(stripped.contains("name, email"), "Should preserve column list")
       #expect(stripped.contains("WHERE status = 'active'"), "Should preserve WHERE clause")
-    }
-
-    @Test("Scenario: Pagination query with comment explaining LIMIT")
-    func paginationQueryWithCommentExplainingLimit() async throws {
-      let manager = DatabaseConnectionManager()
-
-      let query = """
-        -- Pagination: 100 rows per page
-        -- LIMIT 100 OFFSET 200
-        SELECT id, name FROM products ORDER BY id
-        """
-
-      let result = await manager.wrapQueryWithLimit(query, maxRows: 50)
-
-      #expect(!result.contains("--"), "Should remove all comments")
-      #expect(!result.contains("Pagination"), "Should remove comment text")
-      #expect(!result.contains("OFFSET 200"), "Should remove commented OFFSET")
-      #expect(result.contains("LIMIT 50"), "Should add actual LIMIT 50")
     }
 
     @Test("Scenario: Complex query with nested comments")

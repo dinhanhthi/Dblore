@@ -54,7 +54,7 @@ struct RightSidebarView: View {
       }
     }
     .frame(width: ComponentSize.sidebarWidth)
-    .background(Color.cardBackground)
+    .chromeGlass()
     .overlay(alignment: .leading) {
       Divider()
     }
@@ -77,7 +77,6 @@ struct RightSidebarView: View {
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.cardHeaderBackground)
   }
 
   private var headerTitle: String {
@@ -107,7 +106,7 @@ struct RightSidebarView: View {
         })
     case .cellInfo(
       let columnName, let columnType, let value, let tableName, let rowData, let primaryKeyColumns,
-      let rowIdentifier, let cellId):
+      let cellId):
       CellInfoContent(
         columnName: columnName,
         columnType: columnType,
@@ -121,21 +120,18 @@ struct RightSidebarView: View {
             tableName: tableName,
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
-            rowIdentifier: rowIdentifier,
             cellId: cellId,
             connectionManager: workspaceManager?.connectionManager
           )
         },
-        isReadOnly: viewModel.notebook.connectionConfig?.isReadOnly ?? false
+        // Editable only for a single table with a primary key, on a writable connection
+        isReadOnly: !viewModel.canEdit(
+          tableName: tableName, primaryKeyColumns: primaryKeyColumns,
+          columnNames: Set(rowData.map { Array($0.keys) } ?? []))
       )
       .environment(viewModel)
-    case .executedQuery(let query, let cellId, let limitWasCapped, let actualLimit):
-      ExecutedQuerySidebarContent(
-        query: query,
-        cellId: cellId,
-        limitWasCapped: limitWasCapped,
-        actualLimit: actualLimit
-      )
+    case .executedQuery(let query, let cellId):
+      ExecutedQuerySidebarContent(query: query, cellId: cellId)
     }
   }
 
@@ -179,7 +175,6 @@ struct RightSidebarView: View {
     tableName: nil,
     rowData: nil,
     primaryKeyColumns: [],
-    rowIdentifier: nil,
     cellId: nil
   )
 

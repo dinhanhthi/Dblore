@@ -29,9 +29,10 @@ extension NotebookViewModel {
     tableName: String? = nil,
     rowData: [String: CellValue]? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifier: CellValue? = nil,
+    editTarget: EditTarget? = nil,
     cellId: UUID? = nil
   ) {
+    cellDetailEditTarget = editTarget
     rightSidebarContent = .cellInfo(
       columnName: columnName,
       columnType: columnType,
@@ -39,7 +40,6 @@ extension NotebookViewModel {
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
-      rowIdentifier: rowIdentifier,
       cellId: cellId
     )
     withAnimation(.easeInOut(duration: 0.2)) {
@@ -193,7 +193,57 @@ extension NotebookViewModel {
     }
   }
 
+  /// Cell clicked in the result grid at result column `index` (`row` is the displayed row's
+  /// values, `originalRow` its index into `result.rows`): a JSON value opens in the JSON
+  /// viewer, any other value in the cell detail
+  func showGridCellInSidebar(
+    row: [CellValue], originalRow: Int, column index: Int, result: CellResult, cellId: UUID?
+  ) {
+    guard result.columns.indices.contains(index) else { return }
+    let column = result.columns[index]
+    let value = index < row.count ? row[index] : .null
+    if case .json(let json) = value {
+      showJSONInSidebar(json: json, path: "Row \(originalRow + 1), Column '\(column.name)'")
+    } else {
+      showCellDetail(
+        columnName: column.name,
+        columnType: column.type,
+        value: value,
+        tableName: result.tableName,
+        rowData: CellResult.rowData(columns: result.columns, row: row),
+        primaryKeyColumns: result.primaryKeyColumns,
+        editTarget: result.editTarget,
+        cellId: cellId
+      )
+    }
+  }
+
   // MARK: - Cell Value Editing
+
+  /// Inline edit committed in the result grid at result column `index`: `row` is the displayed
+  /// row's values, so the primary key is that row's. Goes through `handleCellValueEdit` (live
+  /// target, protection gate, Safe Mode) with the result's live edit target, without opening
+  /// the sidebar.
+  func handleGridCellEdit(
+    row: [CellValue], column index: Int, newValue: String, result: CellResult, cellId: UUID?,
+    connectionManager: DatabaseConnectionManager?
+  ) {
+    guard result.columns.indices.contains(index) else { return }
+    let column = result.columns[index]
+    let originalValue = index < row.count ? row[index] : .null
+    cellDetailEditTarget = result.editTarget
+    handleCellValueEdit(
+      columnName: column.name,
+      columnType: column.type,
+      newValue: newValue,
+      originalValue: originalValue,
+      tableName: result.tableName,
+      rowData: CellResult.rowData(columns: result.columns, row: row),
+      primaryKeyColumns: result.primaryKeyColumns,
+      cellId: cellId,
+      connectionManager: connectionManager
+    )
+  }
 
   /// Handle JSON value edit from sidebar
   func handleJSONEdit(newJSON: String, originalPath: String) {
@@ -216,143 +266,5 @@ extension NotebookViewModel {
     // Show success message
     showToast("JSON copied to clipboard", type: .success)
     // TODO: In the future, this could update the actual database value
-  }
-
-  /// Handle cell value edit from sidebar
-  /// - Parameter connectionManager: Optional connection manager from workspace for database updates
-  func handleCellValueEdit(
-    columnName: String,
-    columnType: String,
-    newValue: String,
-    originalValue: CellValue,
-    tableName: String?,
-    rowData: [String: CellValue]?,
-    primaryKeyColumns: [String],
-    rowIdentifier: CellValue?,
-    cellId: UUID?,
-    connectionManager: DatabaseConnectionManager? = nil
-  ) {
-    // If tableName is missing, try to extract it from the cell's source query
-    var resolvedTableName = tableName
-    let resolvedPrimaryKeyColumns = primaryKeyColumns
-
-    if resolvedTableName == nil || resolvedTableName?.isEmpty == true {
-      // Try to get the source query from the cell result
-      if let cellId = cellId,
-        let cellIndex = notebook.cells.firstIndex(where: { $0.id == cellId }),
-        let result = notebook.cells[cellIndex].result
-      {
-        // Try to get sourceQuery from result, or fallback to cell content
-        let queryToExtract = result.sourceQuery ?? notebook.cells[cellIndex].content
-        resolvedTableName = extractTableName(from: queryToExtract)
-      }
-    }
-
-    // Try to convert the new string value to the appropriate CellValue type
-    let updatedCellValue: CellValue
-    switch originalValue {
-    case .string:
-      updatedCellValue = .string(newValue)
-    case .int:
-      if let intValue = Int(newValue) {
-        updatedCellValue = .int(intValue)
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    case .double:
-      if let doubleValue = Double(newValue) {
-        updatedCellValue = .double(doubleValue)
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    case .bool:
-      if let boolValue = Bool(newValue) {
-        updatedCellValue = .bool(boolValue)
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    case .null:
-      if newValue.isEmpty || newValue.lowercased() == "null" {
-        updatedCellValue = .null
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    case .json:
-      updatedCellValue = .json(newValue)
-    case .date:
-      // Try to parse the date string
-      if let date = ISO8601DateFormatter().date(from: newValue) {
-        updatedCellValue = .date(date)
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    case .data:
-      if let data = newValue.data(using: .utf8) {
-        updatedCellValue = .data(data)
-      } else {
-        updatedCellValue = .string(newValue)
-      }
-    }
-
-    // Copy to clipboard
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(newValue, forType: .string)
-
-    // Update the sidebar content with the new value (use resolved table name)
-    rightSidebarContent = .cellInfo(
-      columnName: columnName,
-      columnType: columnType,
-      value: updatedCellValue,
-      tableName: resolvedTableName,
-      rowData: rowData,
-      primaryKeyColumns: resolvedPrimaryKeyColumns,
-      rowIdentifier: rowIdentifier,
-      cellId: cellId
-    )
-
-    // If we have table name, row data, and connection manager, attempt to update database
-    if let tableName = resolvedTableName, let rowData = rowData, !tableName.isEmpty,
-      let connectionManager = connectionManager
-    {
-      Task { @MainActor [connectionManager, weak self] in
-        do {
-          // Fetch primary key columns if we don't have them yet
-          var pkColumns = resolvedPrimaryKeyColumns
-          if pkColumns.isEmpty {
-            pkColumns =
-              (try? await connectionManager.fetchPrimaryKeyColumns(tableName: tableName)) ?? []
-          }
-
-          let rowsAffected = try await connectionManager.updateCellValue(
-            tableName: tableName,
-            columnName: columnName,
-            newValue: updatedCellValue,
-            rowData: rowData,
-            primaryKeyColumns: pkColumns,
-            rowIdentifier: rowIdentifier
-          )
-
-          // Show success notification
-          self?.showToast(
-            "Updated '\(columnName)' in '\(tableName)' (\(rowsAffected) row\(rowsAffected == 1 ? "" : "s"))",
-            type: .success
-          )
-
-          // Re-run the cell to refresh the table view with updated data
-          if let cellId = cellId {
-            await self?.runCell(id: cellId)
-          }
-        } catch {
-          // Show error notification
-          self?.showToast(
-            "Failed to update '\(columnName)': \(error.localizedDescription)",
-            type: .error
-          )
-        }
-      }
-    } else {
-      // Show info message when only copying to clipboard
-      showToast("Value copied to clipboard", type: .info)
-    }
   }
 }

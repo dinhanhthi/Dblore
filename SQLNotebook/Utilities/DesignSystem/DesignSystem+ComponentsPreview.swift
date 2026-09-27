@@ -201,3 +201,61 @@ private struct AllButtonsPreview: View {
   AllButtonsPreview()
     .controlSize(.small)
 }
+
+// MARK: - Glass Preview
+
+private struct GlassPreview: View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.xl) {
+      Text("Chrome Glass").font(.headline)
+      Text("Tab bar / header strip")
+        .frame(maxWidth: .infinity, minHeight: ComponentSize.headerHeight)
+        .chromeGlass()
+
+      Text("Floating Bar Glass").font(.headline)
+      HStack(spacing: Spacing.sm) {
+        Image(systemName: "doc.on.doc")
+        Text("Copy query")
+      }
+      .padding(.vertical, Spacing.sm)
+      .padding(.horizontal, Spacing.md)
+      .floatingBarGlass()
+
+      Text("Glass Toolbar Group").font(.headline)
+      GlassToolbarGroup {
+        Button {
+        } label: {
+          Image(systemName: "play.fill")
+        }.buttonStyle(.glassProminent)
+        Button {
+        } label: {
+          Image(systemName: "stop.fill")
+        }.buttonStyle(.glass)
+        Button {
+        } label: {
+          Image(systemName: "gear")
+        }.buttonStyle(.glass)
+      }
+    }
+    .padding(Spacing.lg)
+    .frame(width: 500, height: 400)
+    // Colorful backdrop so the glass effect is visible
+    .background(
+      LinearGradient(
+        colors: [.accent, .success, .warning],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+    )
+  }
+}
+
+#Preview("Glass (Light)") {
+  GlassPreview()
+    .preferredColorScheme(.light)
+}
+
+#Preview("Glass (Dark)") {
+  GlassPreview()
+    .preferredColorScheme(.dark)
+}

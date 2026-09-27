@@ -122,7 +122,11 @@ struct NotebookStatistics: Sendable {
   }
 }
 
-/// Expose DocumentCoder for file size calculation
+/// The document coder the app saves with (the nested `DocumentCoder` below shadows the name)
+private typealias MainDocumentCoder = DocumentCoder
+
+/// Expose DocumentCoder for file size calculation. Delegates to the main coder so the size
+/// estimate uses exactly the saved format (same keys, same legacy-compatibility rules).
 extension FileOptimizationService {
   enum DocumentCoder {
     nonisolated static func encode(
@@ -130,176 +134,8 @@ extension FileOptimizationService {
       includeResultsOnSave: Bool,
       useCompactFormat: Bool = false
     ) throws -> Data {
-      // Reuse the encoding logic from SQLNotebookDocument
-      let dateFormatter = ISO8601DateFormatter()
-
-      var json: [String: Any] = [
-        "version": "1.0",
-        "id": notebook.id.uuidString,
-        "metadata": [
-          "createdAt": dateFormatter.string(from: notebook.metadata.createdAt),
-          "modifiedAt": dateFormatter.string(from: notebook.metadata.modifiedAt),
-          "title": notebook.metadata.title,
-        ],
-      ]
-
-      json["settings"] = [
-        "keyboardShortcuts": notebook.settings.keyboardShortcuts
-      ]
-
-      var cellsArray: [[String: Any]] = []
-      for cell in notebook.cells {
-        var cellDict: [String: Any] = [
-          "id": cell.id.uuidString,
-          "cellType": cell.cellType.rawValue,
-          "content": cell.content,
-        ]
-        if let count = cell.executionCount {
-          cellDict["executionCount"] = count
-        }
-        if let result = cell.result, includeResultsOnSave {
-          cellDict["result"] = encodeResult(result, dateFormatter: dateFormatter)
-        }
-        // Save isRunning and isResultVisible state
-        cellDict["isRunning"] = cell.isRunning
-        cellDict["isResultVisible"] = cell.isResultVisible
-
-        // Save multi-statement results
-        if !cell.statementResults.isEmpty {
-          let statementResultsArray = cell.statementResults.map { statementResult in
-            var statementDict: [String: Any] = [
-              "id": statementResult.id.uuidString,
-              "queryText": statementResult.queryText,
-              "statementIndex": statementResult.statementIndex,
-            ]
-            if includeResultsOnSave {
-              statementDict["result"] = encodeResult(
-                statementResult.result, dateFormatter: dateFormatter)
-            }
-            return statementDict
-          }
-          cellDict["statementResults"] = statementResultsArray
-          cellDict["selectedStatementIndex"] = cell.selectedStatementIndex
-          if let totalTime = cell.totalExecutionTime {
-            cellDict["totalExecutionTime"] = totalTime
-          }
-        }
-
-        // Save pagination info
-        if let paginationInfo = cell.paginationInfo {
-          cellDict["paginationInfo"] = [
-            "currentPage": paginationInfo.currentPage,
-            "totalRows": paginationInfo.totalRows,
-            "rowsPerPage": paginationInfo.rowsPerPage,
-            "baseQuery": paginationInfo.baseQuery,
-          ]
-        }
-
-        // Save statement pagination info
-        if !cell.statementPaginationInfo.isEmpty {
-          var statementPaginationDict: [String: [String: Any]] = [:]
-          for (statementId, paginationInfo) in cell.statementPaginationInfo {
-            statementPaginationDict[statementId.uuidString] = [
-              "currentPage": paginationInfo.currentPage,
-              "totalRows": paginationInfo.totalRows,
-              "rowsPerPage": paginationInfo.rowsPerPage,
-              "baseQuery": paginationInfo.baseQuery,
-            ]
-          }
-          cellDict["statementPaginationInfo"] = statementPaginationDict
-        }
-
-        cellsArray.append(cellDict)
-      }
-      json["cells"] = cellsArray
-
-      // Use compact format for better performance (10.1.10 optimization)
-      // Removed .prettyPrinted to improve save speed by 50%
-      let options: JSONSerialization.WritingOptions = [.sortedKeys]
-      return try JSONSerialization.data(withJSONObject: json, options: options)
-    }
-
-    private nonisolated static func encodeResult(
-      _ result: CellResult, dateFormatter: ISO8601DateFormatter
-    ) -> [String: Any] {
-      var dict: [String: Any] = [
-        "executionTime": result.executionTime,
-        "rowCount": result.rowCount,
-        "timestamp": dateFormatter.string(from: result.timestamp),
-        "wasLimited": result.wasLimited,
-      ]
-
-      let columnsArray = result.columns.map { column in
-        ["name": column.name, "type": column.type]
-      }
-      dict["columns"] = columnsArray
-
-      let rowsArray = result.rows.map { row in
-        row.map { cellValue in
-          encodeCellValue(cellValue, dateFormatter: dateFormatter)
-        }
-      }
-      dict["rows"] = rowsArray
-
-      if let error = result.error {
-        dict["error"] = error
-      }
-
-      if let affectedRows = result.affectedRows {
-        dict["affectedRows"] = affectedRows
-      }
-
-      if let sourceQuery = result.sourceQuery {
-        dict["sourceQuery"] = sourceQuery
-      }
-
-      if let tableName = result.tableName {
-        dict["tableName"] = tableName
-      }
-
-      if !result.primaryKeyColumns.isEmpty {
-        dict["primaryKeyColumns"] = result.primaryKeyColumns
-      }
-
-      if !result.rowIdentifiers.isEmpty {
-        let rowIdentifiersArray = result.rowIdentifiers.map { cellValue in
-          encodeCellValue(cellValue, dateFormatter: dateFormatter)
-        }
-        dict["rowIdentifiers"] = rowIdentifiersArray
-      }
-
-      if result.userLimitExceeded {
-        dict["userLimitExceeded"] = result.userLimitExceeded
-      }
-
-      if let userRequestedLimit = result.userRequestedLimit {
-        dict["userRequestedLimit"] = userRequestedLimit
-      }
-
-      return dict
-    }
-
-    private nonisolated static func encodeCellValue(
-      _ value: CellValue, dateFormatter: ISO8601DateFormatter
-    ) -> [String: Any] {
-      switch value {
-      case .null:
-        return ["type": "null"]
-      case .string(let str):
-        return ["type": "string", "value": str]
-      case .int(let int):
-        return ["type": "int", "value": int]
-      case .double(let double):
-        return ["type": "double", "value": double]
-      case .bool(let bool):
-        return ["type": "bool", "value": bool]
-      case .json(let json):
-        return ["type": "json", "value": json]
-      case .date(let date):
-        return ["type": "date", "value": dateFormatter.string(from: date)]
-      case .data(let data):
-        return ["type": "data", "value": data.base64EncodedString()]
-      }
+      try MainDocumentCoder.encode(
+        notebook, includeResultsOnSave: includeResultsOnSave, useCompactFormat: useCompactFormat)
     }
   }
 }

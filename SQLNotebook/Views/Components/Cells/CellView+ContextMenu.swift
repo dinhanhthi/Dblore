@@ -12,7 +12,9 @@ extension CellView {
   @ViewBuilder
   var cellContextMenu: some View {
     if cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id) {
-      Button(action: { viewModel.cancelCell(id: cell.id) }) {
+      Button {
+        viewModel.cancelCell(id: cell.id)
+      } label: {
         Label("Cancel Execution", systemImage: "stop.fill")
       }
     } else {
@@ -23,21 +25,29 @@ extension CellView {
 
     Divider()
 
-    Button(action: { viewModel.duplicateCell(id: cell.id) }) {
+    Button {
+      viewModel.duplicateCell(id: cell.id)
+    } label: {
       Label("Duplicate", systemImage: "doc.on.doc")
     }
 
-    Button(action: { viewModel.moveSelectedCellUp() }) {
+    Button {
+      viewModel.moveSelectedCellUp()
+    } label: {
       Label("Move Up", systemImage: "arrow.up")
     }
 
-    Button(action: { viewModel.moveSelectedCellDown() }) {
+    Button {
+      viewModel.moveSelectedCellDown()
+    } label: {
       Label("Move Down", systemImage: "arrow.down")
     }
 
     Divider()
 
-    Button(action: { viewModel.toggleResultVisibility(cellId: cell.id) }) {
+    Button {
+      viewModel.toggleResultVisibility(cellId: cell.id)
+    } label: {
       Label(
         cell.isResultVisible ? "Hide Result" : "Show Result",
         systemImage: cell.isResultVisible ? "eye.slash" : "eye"
@@ -45,12 +55,16 @@ extension CellView {
     }
     .disabled(cell.result == nil)
 
-    Button(action: { viewModel.clearCellOutput(id: cell.id) }) {
+    Button {
+      viewModel.clearCellOutput(id: cell.id)
+    } label: {
       Label("Clear Output", systemImage: "trash")
     }
     .disabled(cell.result == nil)
 
-    Button(role: .destructive, action: { viewModel.deleteCell(id: cell.id) }) {
+    Button(role: .destructive) {
+      viewModel.deleteCell(id: cell.id)
+    } label: {
       Label("Delete", systemImage: "trash.fill")
     }
   }

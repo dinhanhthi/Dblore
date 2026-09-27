@@ -14,6 +14,9 @@ import SwiftUI
 struct SafeModeModal: View {
   @Binding var isPresented: Bool
   @Bindable var appSettings = AppSettings.shared
+  /// Opened from the unlock sheet: show the password panel even when the global mode is not a
+  /// password mode (the unlock may be for a per-connection Safe Mode)
+  var showsUnlockSetup: Bool = false
 
   // Password management states
   @State private var showPasswordSetup: Bool = false
@@ -30,6 +33,7 @@ struct SafeModeModal: View {
   @State private var authPassword: String = ""
   @State private var authError: String?
   @State private var isAuthenticating: Bool = false
+  @State private var usePasswordForAuth: Bool = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -57,6 +61,11 @@ struct SafeModeModal: View {
             }
           }
         }
+
+        if showsUnlockSetup && !appSettings.safeMode.requiresPassword {
+          passwordPanel
+            .padding(.top, Spacing.sm)
+        }
       }
       .padding(Spacing.lg)
     }
@@ -80,6 +89,7 @@ struct SafeModeModal: View {
           authPassword = ""
           authError = nil
           isAuthenticating = false
+          usePasswordForAuth = !appSettings.canUseTouchID
         }
     }
   }
@@ -251,6 +261,11 @@ struct SafeModeModal: View {
           }
           .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.small)
+          // Touch ID needs a Safe Mode password as its fallback
+          .disabled(!appSettings.hasCustomPasswordSet)
+          .help(
+            appSettings.hasCustomPasswordSet
+              ? "Unlock Safe Mode with Touch ID" : "Set a Safe Mode password first")
         }
 
         if appSettings.isSafeModePasswordSet {
@@ -351,7 +366,7 @@ struct SafeModeModal: View {
           .multilineTextAlignment(.center)
       }
 
-      if appSettings.isBiometricEnabled {
+      if appSettings.isBiometricEnabled && !usePasswordForAuth {
         Button("Use Touch ID") {
           authenticateWithBiometric()
         }
@@ -359,8 +374,9 @@ struct SafeModeModal: View {
         .disabled(isAuthenticating)
 
         Button("Use password instead") {
-          // Will need password fallback
+          usePasswordForAuth = true
         }
+        .disabled(!appSettings.hasCustomPasswordSet)
         .font(.small)
         .foregroundColor(.accent)
         .buttonStyle(.plain)
@@ -415,8 +431,9 @@ struct SafeModeModal: View {
   // MARK: - Safe Mode Change Handler
 
   private func handleSafeModeChange(to newMode: SafeMode) {
-    if appSettings.safeMode.requiresPassword && appSettings.isSafeModePasswordSet
-      && newMode != appSettings.safeMode
+    if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
+      from: appSettings.safeMode, to: newMode, hasPassword: appSettings.hasCustomPasswordSet,
+      hasTouchID: appSettings.isBiometricEnabled)
     {
       pendingAction = .changeSafeMode(newMode)
       showAuthSheet = true
@@ -461,10 +478,11 @@ struct SafeModeModal: View {
       }
     }
 
-    // Set password (this also clears biometric if it was enabled)
-    appSettings.safeModePassword = newPassword
-    appSettings.clearSafeModePassword()
-    appSettings.safeModePassword = newPassword
+    // Store the password (Keychain, salted hash); switches the unlock to password
+    guard appSettings.setSafeModePassword(newPassword) else {
+      passwordError = "Could not store the password"
+      return
+    }
 
     refreshTrigger = UUID()
     showPasswordSetup = false

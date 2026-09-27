@@ -125,12 +125,11 @@ private struct QueryConfirmationModifier: ViewModifier {
               .font(.body.bold())
               .foregroundStyle(.red)
           } else {
-            Text("This query will modify data in your database:")
+            Text("These statements need confirmation:")
               .font(.body)
           }
-          Text(viewModel.queryConfirmationState.pendingQuery)
+          Text(statementSummary)
             .font(.system(.body, design: .monospaced))
-            .lineLimit(5)
           Text("Are you sure you want to proceed?")
             .font(.body)
         }
@@ -163,30 +162,24 @@ private struct QueryConfirmationModifier: ViewModifier {
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
 
-      // Query preview
+      // Statements that need confirmation
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        Text("Query to execute:")
+        Text("Statements to confirm:")
           .font(.subheading)
           .foregroundColor(.foreground)
 
-        Text(viewModel.queryConfirmationState.pendingQuery)
-          .font(.mono)
-          .foregroundColor(.foregroundMuted)
-          .lineLimit(5)
+        statementList
           .padding(Spacing.md)
           .frame(maxWidth: .infinity, alignment: .leading)
           .background(Color.inputBackground)
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
 
-      // Authorization options
-      if AppSettings.shared.isBiometricEnabled {
-        // Touch ID option
+      // Authorization: Touch ID first (prompted on appear), Safe Mode password as fallback
+      if showsTouchID {
         biometricAuthSection
-      } else {
-        // Password entry
-        passwordEntrySection
       }
+      passwordEntrySection
 
       // Buttons
       HStack(spacing: Spacing.md) {
@@ -199,66 +192,117 @@ private struct QueryConfirmationModifier: ViewModifier {
         .buttonStyle(.plain)
         .foregroundColor(.foregroundMuted)
 
-        if !AppSettings.shared.isBiometricEnabled {
-          Button("Execute Query") {
-            verifyAndExecute()
-          }
-          .buttonStyle(.borderedProminent)
-          .tint(.destructive)
-          // Enable button if Safe Mode password is set OR using database password mode
-          .disabled(!AppSettings.shared.isSafeModePasswordSet && !useDatabasePassword)
+        Button(viewModel.queryConfirmationState.runAllAwaitingUnlock ? "Run All" : "Execute Query")
+        {
+          verifyAndExecute()
         }
+        .buttonStyle(.borderedProminent)
+        .tint(.destructive)
+        // Enable button if a Safe Mode password is set OR using database password mode
+        .disabled(!AppSettings.shared.hasCustomPasswordSet && !useDatabasePassword)
       }
     }
     .padding(Spacing.xl)
     .frame(width: 450)
     .background(Color.appBackground)
+    .task {
+      if showsTouchID { authenticateWithBiometric() }
+    }
+  }
+
+  /// Touch ID is enabled for Safe Mode and usable now
+  private var showsTouchID: Bool {
+    AppSettings.shared.isBiometricEnabled && AppSettings.shared.canUseTouchID
+  }
+
+  /// Plain-text list for the confirmation dialog message (text only on macOS), capped so a
+  /// huge cell under alertAll stays readable
+  private var statementSummary: String {
+    let statements = viewModel.queryConfirmationState.statements
+    guard !statements.isEmpty else { return viewModel.queryConfirmationState.pendingQuery }
+    return NotebookViewModel.confirmationSummary(statements)
+  }
+
+  /// Each statement needing confirmation with its reason badges (password sheet)
+  private var statementList: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        ForEach(viewModel.queryConfirmationState.statements) { statement in
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("\(statement.index + 1). \(statement.preview)")
+              .font(.mono)
+              .foregroundColor(.foregroundMuted)
+              .lineLimit(2)
+            Text(statement.kindLabel)
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+            ForEach(statement.reasons, id: \.self) { reason in
+              Label(reason, systemImage: "exclamationmark.triangle.fill")
+                .font(.small)
+                .foregroundColor(.destructive)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, Spacing.xxs)
+                .background(Color.destructive.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if viewModel.queryConfirmationState.statements.isEmpty {
+          Text(viewModel.queryConfirmationState.pendingQuery)
+            .font(.mono)
+            .foregroundColor(.foregroundMuted)
+            .lineLimit(5)
+        }
+      }
+    }
+    .frame(maxHeight: 200)
   }
 
   private var biometricAuthSection: some View {
-    VStack(spacing: Spacing.md) {
-      Button(action: {
-        authenticateWithBiometric()
-      }) {
-        HStack(spacing: Spacing.sm) {
-          if isBiometricAuthenticating {
-            ProgressView()
-              .scaleEffect(0.8)
-          } else {
-            Image(systemName: "touchid")
-              .font(.title)
-          }
-          Text(isBiometricAuthenticating ? "Authenticating..." : "Use Touch ID")
-            .font(.bodyText)
+    Button(action: {
+      authenticateWithBiometric()
+    }) {
+      HStack(spacing: Spacing.sm) {
+        if isBiometricAuthenticating {
+          ProgressView()
+            .scaleEffect(0.8)
+        } else {
+          Image(systemName: "touchid")
+            .font(.title)
         }
-        .foregroundColor(.accent)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, Spacing.md)
-        .background(Color.accent.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        Text(isBiometricAuthenticating ? "Authenticating..." : "Use Touch ID")
+          .font(.bodyText)
       }
-      .buttonStyle(.plain)
-      .disabled(isBiometricAuthenticating)
-
-      if let error = passwordError {
-        Text(error)
-          .font(.small)
-          .foregroundColor(.destructive)
-      }
+      .foregroundColor(.accent)
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, Spacing.md)
+      .background(Color.accent.opacity(0.1))
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     }
+    .buttonStyle(.plain)
+    .disabled(isBiometricAuthenticating)
   }
 
   private var passwordEntrySection: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack {
-        Text(useDatabasePassword ? "Enter database password:" : "Enter Safe Mode password:")
-          .font(.subheading)
-          .foregroundColor(.foreground)
+        Text(
+          useDatabasePassword
+            ? "Enter database password:"
+            : (showsTouchID ? "Or enter Safe Mode password:" : "Enter Safe Mode password:")
+        )
+        .font(.subheading)
+        .foregroundColor(.foreground)
 
         Spacer()
 
-        // Forgot password / Back button
-        if viewModel.connectionState == .connected {
+        // Forgot password / Back button (database password only while no Safe Mode password)
+        if viewModel.connectionState == .connected
+          && (useDatabasePassword
+            || NotebookViewModel.showsDatabasePasswordFallback(
+              hasSafeModePassword: AppSettings.shared.hasCustomPasswordSet))
+        {
           Button(action: {
             useDatabasePassword.toggle()
             passwordEntry = ""
@@ -288,7 +332,7 @@ private struct QueryConfirmationModifier: ViewModifier {
         Text("Using database connection password to authorize this query.")
           .font(.small)
           .foregroundColor(.foregroundSubtle)
-      } else if !AppSettings.shared.isSafeModePasswordSet {
+      } else if !AppSettings.shared.hasCustomPasswordSet {
         Text("⚠️ No password has been set. Please set a password in Settings first.")
           .font(.small)
           .foregroundColor(.warning)
@@ -298,9 +342,17 @@ private struct QueryConfirmationModifier: ViewModifier {
 
   private func verifyAndExecute() {
     if useDatabasePassword {
-      // Verify using database connection password
-      guard passwordEntry == viewModel.notebook.connectionConfig?.password else {
-        passwordError = "Incorrect database password"
+      // Database password: only when no Safe Mode password exists, never empty
+      let hasSafeModePassword = AppSettings.shared.hasCustomPasswordSet
+      guard
+        NotebookViewModel.acceptsDatabasePasswordFallback(
+          entry: passwordEntry, storedPassword: viewModel.notebook.connectionConfig?.password,
+          hasSafeModePassword: hasSafeModePassword)
+      else {
+        passwordError =
+          hasSafeModePassword
+          ? "A Safe Mode password is set: use it or Touch ID"
+          : "Incorrect database password"
         return
       }
     } else {
@@ -322,29 +374,24 @@ private struct QueryConfirmationModifier: ViewModifier {
   }
 
   private func authenticateWithBiometric() {
+    guard !isBiometricAuthenticating else { return }
     isBiometricAuthenticating = true
     passwordError = nil
 
-    Task {
-      do {
-        let success = try await AppSettings.shared.verifyBiometric()
-        await MainActor.run {
-          isBiometricAuthenticating = false
-          if success {
-            Task {
-              await viewModel.executePendingQuery()
-              syncDocument()
-            }
-          } else {
-            passwordError = "Authentication failed"
-          }
-        }
-      } catch {
-        await MainActor.run {
-          isBiometricAuthenticating = false
-          passwordError = error.localizedDescription
-        }
+    Task { @MainActor in
+      let success = await SafeModeAuthenticator.shared.authenticate(
+        reason: "Authorize query execution in Safe Mode")
+      isBiometricAuthenticating = false
+      guard success else {
+        passwordError = "Touch ID did not unlock. Enter your password instead."
+        return
       }
+      // The sheet may have been cancelled while the Touch ID prompt was up
+      guard viewModel.queryConfirmationState.showDialog else { return }
+      passwordEntry = ""
+      useDatabasePassword = false
+      await viewModel.executePendingQuery()
+      syncDocument()
     }
   }
 }

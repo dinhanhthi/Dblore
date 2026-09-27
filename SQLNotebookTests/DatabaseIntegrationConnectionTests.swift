@@ -15,11 +15,11 @@ struct DatabaseIntegrationConnectionTests {
 
   /// Test database configuration
   static let testConfig = ConnectionConfig(
-    host: ProcessInfo.processInfo.environment["TEST_DB_HOST"] ?? "localhost",
-    port: Int(ProcessInfo.processInfo.environment["TEST_DB_PORT"] ?? "5432") ?? 5432,
-    database: ProcessInfo.processInfo.environment["TEST_DB_NAME"] ?? "postgres",
-    username: ProcessInfo.processInfo.environment["TEST_DB_USER"] ?? "postgres",
-    password: ProcessInfo.processInfo.environment["TEST_DB_PASSWORD"] ?? "",
+    host: TestDatabase.host,
+    port: TestDatabase.port,
+    database: TestDatabase.database,
+    username: TestDatabase.username,
+    password: TestDatabase.password,
     sslMode: .disable,
     timeoutSeconds: 30
   )
@@ -106,7 +106,7 @@ struct DatabaseIntegrationConnectionTests {
     do {
       try await manager.connect(config: Self.testConfig)
 
-      let result = try await manager.executeQuery("SELECT 1 AS num, 'test' AS str")
+      let result = try await manager.executeInternal("SELECT 1 AS num, 'test' AS str")
 
       #expect(result.rows.count == 1, "Should return 1 row")
       #expect(result.columns.count == 2, "Should have 2 columns")
@@ -139,16 +139,17 @@ struct DatabaseIntegrationConnectionTests {
             value INTEGER
         )
         """
-      _ = try await manager.executeQuery(createTable)
+      _ = try await manager.executeInternal(createTable)
 
       // INSERT
       let insertSQL =
         "INSERT INTO test_modifications (name, value) VALUES ('test1', 100), ('test2', 200)"
-      let insertResult = try await manager.executeQuery(insertSQL)
+      let insertResult = try await manager.executeInternal(insertSQL)
       #expect(insertResult.rows.isEmpty, "INSERT should return no rows")
 
       // SELECT to verify INSERT
-      let selectResult = try await manager.executeQuery("SELECT COUNT(*) FROM test_modifications")
+      let selectResult = try await manager.executeInternal(
+        "SELECT COUNT(*) FROM test_modifications")
       if let firstRow = selectResult.rows.first,
         let firstValue = firstRow.first,
         case .int(let count) = firstValue
@@ -160,10 +161,10 @@ struct DatabaseIntegrationConnectionTests {
 
       // UPDATE
       let updateSQL = "UPDATE test_modifications SET value = 150 WHERE name = 'test1'"
-      _ = try await manager.executeQuery(updateSQL)
+      _ = try await manager.executeInternal(updateSQL)
 
       // SELECT to verify UPDATE
-      let verifyUpdate = try await manager.executeQuery(
+      let verifyUpdate = try await manager.executeInternal(
         "SELECT value FROM test_modifications WHERE name = 'test1'")
       if let firstRow = verifyUpdate.rows.first,
         let firstValue = firstRow.first,
@@ -176,10 +177,11 @@ struct DatabaseIntegrationConnectionTests {
 
       // DELETE
       let deleteSQL = "DELETE FROM test_modifications WHERE name = 'test2'"
-      _ = try await manager.executeQuery(deleteSQL)
+      _ = try await manager.executeInternal(deleteSQL)
 
       // SELECT to verify DELETE
-      let verifyDelete = try await manager.executeQuery("SELECT COUNT(*) FROM test_modifications")
+      let verifyDelete = try await manager.executeInternal(
+        "SELECT COUNT(*) FROM test_modifications")
       if let firstRow = verifyDelete.rows.first,
         let firstValue = firstRow.first,
         case .int(let count) = firstValue
@@ -212,7 +214,7 @@ struct DatabaseIntegrationConnectionTests {
             data JSONB
         )
         """
-      _ = try await manager.executeQuery(createTable)
+      _ = try await manager.executeInternal(createTable)
 
       // Insert JSONB data
       let insertSQL = """
@@ -221,10 +223,10 @@ struct DatabaseIntegrationConnectionTests {
             ('["apple", "banana", "cherry"]'::jsonb),
             ('{"nested": {"key": "value"}}'::jsonb)
         """
-      _ = try await manager.executeQuery(insertSQL)
+      _ = try await manager.executeInternal(insertSQL)
 
       // Query JSONB data
-      let result = try await manager.executeQuery("SELECT data FROM test_jsonb ORDER BY id")
+      let result = try await manager.executeInternal("SELECT data FROM test_jsonb ORDER BY id")
 
       #expect(result.rows.count == 3, "Should return 3 rows")
 
@@ -272,17 +274,17 @@ struct DatabaseIntegrationConnectionTests {
             timestamptz_col TIMESTAMPTZ
         )
         """
-      _ = try await manager.executeQuery(createTable)
+      _ = try await manager.executeInternal(createTable)
 
       // Insert date/time data
       let insertSQL = """
         INSERT INTO test_datetime (date_col, timestamp_col, timestamptz_col) VALUES
             ('2024-01-15', '2024-01-15 14:30:00', '2024-01-15 14:30:00+00')
         """
-      _ = try await manager.executeQuery(insertSQL)
+      _ = try await manager.executeInternal(insertSQL)
 
       // Query date/time data
-      let result = try await manager.executeQuery(
+      let result = try await manager.executeInternal(
         "SELECT date_col, timestamp_col, timestamptz_col FROM test_datetime")
 
       #expect(result.rows.count == 1, "Should return 1 row")

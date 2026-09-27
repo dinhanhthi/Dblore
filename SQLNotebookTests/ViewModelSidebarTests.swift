@@ -1,6 +1,7 @@
 // ViewModelSidebarTests.swift
 // Tests for sidebar, connection state, and notebook metadata
 
+import AppKit
 import Foundation
 import Testing
 
@@ -55,19 +56,8 @@ struct ViewModelSidebarTests {
     #expect(viewModel.isRightSidebarVisible == initialState)
   }
 
-  @Test("Toggle left sidebar")
-  func toggleLeftSidebar() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let initialState = viewModel.isLeftSidebarVisible
-
-    // Act
-    viewModel.toggleLeftSidebar()
-
-    // Assert
-    #expect(viewModel.isLeftSidebarVisible == !initialState)
-  }
+  // Note: Left sidebar is now owned by WorkspaceManager, not NotebookViewModel
+  // The test for toggleLeftSidebar() has been removed as the functionality moved to WorkspaceManager
 
   // Note: Settings is now a modal at workspace level, not in the right sidebar
   // The test for showSettings() has been removed as the functionality moved to WorkspaceManager
@@ -99,5 +89,24 @@ struct ViewModelSidebarTests {
 
     // Just verify settings exists and has keyboardShortcuts
     #expect(viewModel.notebook.settings.keyboardShortcuts.isEmpty == true)
+  }
+
+  @Test("A JSON cell clicked in a sorted grid shows its original row number in the path")
+  func gridJSONPathUsesOriginalRow() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let result = CellResult(
+      columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "doc", type: "jsonb")],
+      rows: [[.int(1), .json("{\"a\":1}")], [.int(3), .json("{\"a\":3}")], [.int(2), .null]],
+      rowCount: 3)
+    let coordinator = ResultGridCoordinator()
+    coordinator.update(NSTableView(), result: result, sortColumn: "id", ascending: false)
+    coordinator.onCellClick = { row, originalRow, column in
+      viewModel.showGridCellInSidebar(
+        row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+    }
+    // Displayed row 0 of the descending sort is original row 1 (id 3)
+    coordinator.cellClicked(row: 0, column: 1)
+    #expect(
+      viewModel.rightSidebarContent == .jsonViewer(json: "{\"a\":3}", path: "Row 2, Column 'doc'"))
   }
 }

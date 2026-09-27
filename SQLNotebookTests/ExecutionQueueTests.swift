@@ -164,6 +164,89 @@ struct ExecutionQueueTests {
     #expect(executedCellIds.isEmpty)
   }
 
+  @Test(
+    "A run stopped by cancelAll never cancels cells enqueued after it (Cancel then re-run)",
+    .timeLimit(.minutes(1)))
+  func testCancelledRunDoesNotTouchLaterWork() async throws {
+    let first = UUID()
+    let second = UUID()
+    let third = UUID()
+    var releaseFirst: CheckedContinuation<Void, Never>?
+    var releaseSecond: CheckedContinuation<Void, Never>?
+    var executed: [UUID] = []
+    let done = CellResult.errorResult("done")
+
+    let queue = ExecutionQueue { task in
+      if task.cellId == first {
+        await withCheckedContinuation { releaseFirst = $0 }
+      } else if task.cellId == second {
+        await withCheckedContinuation { releaseSecond = $0 }
+      }
+      executed.append(task.cellId)
+      return done
+    }
+
+    // The first cell's statement is still being cancelled on the server
+    queue.enqueue(cellId: first, query: "SELECT pg_sleep(30)")
+    #expect(await queue.waitForExecuting(cellId: first))
+    while releaseFirst == nil { await Task.yield() }
+    queue.cancelAll()
+
+    // The user runs again meanwhile
+    queue.enqueue(cellId: second, query: "SELECT 2")
+    #expect(await queue.waitForExecuting(cellId: second))
+    while releaseSecond == nil { await Task.yield() }
+    queue.enqueue(cellId: third, query: "SELECT 3")
+
+    // The cancelled statement returns: its run must stop, not pick up the third cell
+    releaseFirst?.resume()
+    try await Task.sleep(for: .milliseconds(100))
+    releaseSecond?.resume()
+
+    let state = await queue.waitForTask(cellId: third)
+    #expect(state == .completed(done), "got \(String(describing: state))")
+    #expect(executed.contains(third))
+    #expect(queue.tasks.first { $0.cellId == first }?.state == .cancelled)
+  }
+
+  @Test(
+    "cancelPending cancels the queued tasks only: the executing one completes",
+    .timeLimit(.minutes(1)))
+  func testCancelPending() async throws {
+    let first = UUID()
+    let second = UUID()
+    let third = UUID()
+    var releaseFirst: CheckedContinuation<Void, Never>?
+    var executed: [UUID] = []
+    let done = CellResult.errorResult("done")
+
+    let queue = ExecutionQueue { task in
+      if task.cellId == first {
+        await withCheckedContinuation { releaseFirst = $0 }
+      }
+      executed.append(task.cellId)
+      return done
+    }
+
+    queue.enqueue(cellId: first, query: "SELECT 1")
+    queue.enqueue(cellId: second, query: "SELECT 2")
+    queue.enqueue(cellId: third, query: "SELECT 3")
+    #expect(await queue.waitForExecuting(cellId: first))
+    while releaseFirst == nil { await Task.yield() }
+
+    #expect(queue.cancelPending() == 2)
+    #expect(queue.isExecuting(cellId: first))
+    #expect(await queue.waitForTask(cellId: second) == .cancelled)
+    #expect(await queue.waitForTask(cellId: third) == .cancelled)
+
+    releaseFirst?.resume()
+    let state = await queue.waitForTask(cellId: first)
+    #expect(state == .completed(done), "got \(String(describing: state))")
+    await queue.waitForIdle()
+    #expect(executed == [first])
+    #expect(queue.cancelPending() == 0)
+  }
+
   // MARK: - State Tracking
 
   @Test("isExecuting returns correct state")
@@ -192,7 +275,8 @@ struct ExecutionQueueTests {
     // Should be executing now
     #expect(queue.isExecuting(cellId: cellId))
 
-    // Release the task
+    // The task is marked executing before its body runs: wait until it is blocked, then release
+    while taskContinuation == nil { await Task.yield() }
     taskContinuation?.resume()
 
     // Wait for completion

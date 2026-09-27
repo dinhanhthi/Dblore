@@ -36,7 +36,6 @@ struct WorkspaceLeftSidebarContent: View {
         contentForSelectedTab
       }
     }
-    .background(Color.cardBackground)
   }
 
   private var tabSelector: some View {

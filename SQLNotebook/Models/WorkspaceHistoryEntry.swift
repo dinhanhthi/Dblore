@@ -13,6 +13,10 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   let connectionDisplayString: String?
   let lastOpenedAt: Date
   let tabCount: Int
+  /// App-scope security-scoped bookmark of the .sqlws file (nil in entries saved before bookmarks)
+  var bookmark: Data?
+  /// Bookmark of the folder containing the .sqlws, re-granting its bookmark-less tab files
+  var folderBookmark: Data?
 
   init(
     id: UUID = UUID(),
@@ -20,7 +24,8 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     name: String,
     connectionDisplayString: String? = nil,
     lastOpenedAt: Date = Date(),
-    tabCount: Int = 0
+    tabCount: Int = 0,
+    bookmark: Data? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -28,6 +33,14 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     self.connectionDisplayString = connectionDisplayString
     self.lastOpenedAt = lastOpenedAt
     self.tabCount = tabCount
+    self.bookmark = bookmark
+  }
+
+  /// Bookmark bytes differ between creations of the same file, so equality ignores them
+  static func == (lhs: WorkspaceHistoryEntry, rhs: WorkspaceHistoryEntry) -> Bool {
+    lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.name == rhs.name
+      && lhs.connectionDisplayString == rhs.connectionDisplayString
+      && lhs.lastOpenedAt == rhs.lastOpenedAt && lhs.tabCount == rhs.tabCount
   }
 
   /// Display string for the welcome screen
@@ -52,7 +65,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   }
 
   /// Create from a Workspace
-  static func from(_ workspace: Workspace) -> WorkspaceHistoryEntry? {
+  static func from(_ workspace: Workspace, bookmark: Data? = nil) -> WorkspaceHistoryEntry? {
     guard let fileURL = workspace.fileURL else { return nil }
     return WorkspaceHistoryEntry(
       id: workspace.id,
@@ -60,7 +73,8 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       name: workspace.name,
       connectionDisplayString: workspace.connectionConfig?.displayString,
       lastOpenedAt: workspace.lastOpenedAt,
-      tabCount: workspace.tabs.count
+      tabCount: workspace.tabs.count,
+      bookmark: bookmark
     )
   }
 }

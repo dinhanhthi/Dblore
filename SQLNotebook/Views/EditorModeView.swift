@@ -7,14 +7,6 @@
 
 import SwiftUI
 
-// MARK: - Array Extension for Safe Access
-
-extension Array {
-  subscript(safe index: Index) -> Element? {
-    return indices.contains(index) ? self[index] : nil
-  }
-}
-
 // MARK: - Editor Mode View
 
 /// Editor mode view - Single SQL editor with result panel below
@@ -45,19 +37,6 @@ struct EditorModeView: View {
   }
 
   // MARK: - Computed Properties
-
-  /// Get current pagination info (computed property to avoid recalculation in body)
-  private var currentPaginationInfo: PaginationInfo? {
-    // Multi-statement mode: get pagination for current statement
-    if !viewModel.editorStatementResults.isEmpty,
-      let currentStatement = viewModel.editorStatementResults[
-        safe: viewModel.selectedStatementIndex]
-    {
-      return viewModel.editorStatementPaginationInfo[currentStatement.id]
-    }
-    // Single statement mode: get pagination for editor result
-    return viewModel.editorPaginationInfo
-  }
 
   // MARK: - Body
 
@@ -189,19 +168,9 @@ struct EditorModeView: View {
   /// Result table section
   @ViewBuilder
   private func resultTableSection(result: CellResult) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      ResultTableView(
-        result: result,
-        viewModel: viewModel,
-        cellId: nil,  // No cell ID in editor mode
-        showBorderRadius: false,  // No border radius in editor mode
-        enableVerticalScrolling: true,  // Enable vertical scrolling in editor mode
-        paginationInfo: currentPaginationInfo,
-        onPageChange: handlePageChange
-      )
-      .frame(maxHeight: .infinity)  // Fill available space and enable scrolling
-      .id(result.timestamp)  // Break render cycle on result changes
-    }
+    EditorResultGridView(result: result, viewModel: viewModel)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
+      .id(result.timestamp)  // New result: reset sort and search match
   }
 
   /// Empty state view (no results yet)
@@ -216,24 +185,6 @@ struct EditorModeView: View {
         .font(.system(size: 12))
         .foregroundColor(.foregroundMuted)
       Spacer()
-    }
-  }
-
-  // MARK: - Page Change Handler
-
-  /// Handle page change
-  private func handlePageChange(_ page: Int) {
-    Task { @MainActor in
-      // Multi-statement mode: navigate page for current statement
-      if !viewModel.editorStatementResults.isEmpty,
-        let currentStatement = viewModel.editorStatementResults[
-          safe: viewModel.selectedStatementIndex]
-      {
-        await viewModel.navigateToPageForStatement(statementId: currentStatement.id, page: page)
-      } else {
-        // Single statement mode: navigate page for editor result
-        await viewModel.navigateToPage(page)
-      }
     }
   }
 }

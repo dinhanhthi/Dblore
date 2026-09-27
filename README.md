@@ -37,8 +37,8 @@ A native macOS application for interactive SQL development. Write, execute, and 
 
 ### Requirements
 
-- macOS 16.0 or later
-- Xcode 16.0 or later
+- macOS 26 or later
+- Xcode 27 or later
 - Swift 6.0 or later
 
 ### Installation
@@ -108,7 +108,7 @@ docker compose up -d
 
 **Connection Details:**
 - Host: `localhost`
-- Port: `5432`
+- Port: `5433` (host port, set by `POSTGRES_PORT` in `.env`; the container listens on `5432`)
 - Database: `sqlnotebook`
 - User: `sqlnotebook`
 - Password: `sqlnotebook123`
@@ -119,15 +119,13 @@ The database includes sample tables (customers, products, orders, employees, ana
 
 **Database for testing**: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
 
-## Documentation
+## Release
 
-- [Project Architecture](docs/project.md) - Technical overview and design decisions
-- [Keyboard Shortcuts](docs/keyboard_shortcuts.md) - Complete shortcuts reference
-- [Testing Plan](docs/testing_plan.md) - Testing strategy and setup
-- [Dependencies](docs/dependencies.md) - SPM packages and version information
-- [Task Tracking](docs/TODO.md) - Roadmap and pending features
-- [Implementation Details](docs/implementation/) - Feature documentation and solutions
+Releases are signed with Developer ID, notarized and published by the tag-triggered GitHub workflow `.github/workflows/release.yml`.
+
+- Cut a release with the `/cf-ship` project skill (changelog, semver bump, tag, CI release).
+- One-time setup (secrets, certificate, notarization profile) and the manual fallback: `docs/release-setup.md` (local guide, not tracked in git).
 
 ## License
 
-GPL-3.0 License - see LICENSE file for details
+SQLNotebook is licensed under [AGPL-3.0-or-later](LICENSE).

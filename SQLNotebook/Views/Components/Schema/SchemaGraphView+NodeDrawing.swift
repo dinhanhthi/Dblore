@@ -454,7 +454,8 @@ extension SchemaGraphNSView {
     let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     let highlightColor: NSColor
     if isCurrentMatch {
-      highlightColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)  // #FFD500 orange-yellow
+      // #FFD500 orange-yellow
+      highlightColor = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)
     } else {
       highlightColor =
         isDarkMode

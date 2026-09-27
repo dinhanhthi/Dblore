@@ -130,6 +130,7 @@ struct TabContentView: View {
         syncDocument: syncEditorDocument
       )
     )
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncEditorDocument)
     .searchNotifications(viewModel: viewModel)
   }
 }

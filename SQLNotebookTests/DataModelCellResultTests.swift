@@ -152,83 +152,30 @@ struct DataModelCellResultTests {
     #expect(decoded.rows.count == 0)
   }
 
-  @Test("CellResult with row limit metadata")
-  func cellResultRowLimitMetadata() throws {
-    // Arrange
+  @Test("CellResult drops the LIMIT-rewrite / ctid fields but still decodes JSON carrying them")
+  func cellResultLegacyLimitKeys() throws {
+    let legacyKeys = [
+      "rowIdentifiers", "userLimitExceeded", "userRequestedLimit", "limitWasCapped",
+      "actualLimitUsed",
+    ]
     let result = CellResult(
-      columns: [ColumnInfo(name: "id", type: "integer")],
-      rows: [[.int(1)], [.int(2)]],
-      executionTime: 0.01,
-      rowCount: 2,
-      timestamp: Date(),
-      wasLimited: true,
-      userLimitExceeded: true,
-      userRequestedLimit: 10000
-    )
-
-    // Act - Round-trip
+      columns: [ColumnInfo(name: "id", type: "integer")], rows: [[.int(1)], [.int(2)]],
+      rowCount: 2, wasLimited: true)
     let data = try JSONEncoder().encode(result)
-    let decoded = try JSONDecoder().decode(CellResult.self, from: data)
+    var dict = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    for key in legacyKeys { #expect(dict[key] == nil, "\(key) still encoded") }
 
-    // Assert
-    #expect(decoded.wasLimited == true)
-    #expect(decoded.userLimitExceeded == true)
-    #expect(decoded.userRequestedLimit == 10000)
-  }
-
-  @Test("CellResult - User LIMIT exceeds maxRows but database has fewer rows than maxRows")
-  func cellResultUserLimitExceedsButFewerActualRows() throws {
-    // Scenario: Database has 36 rows, maxRows setting is 100, user query has LIMIT 130
-    // Expected: No warning should be shown because actual rows (36) < maxRows (100)
-
-    // Arrange - Simulate 36 rows returned
-    let rows = (1...36).map { [CellValue.int($0)] }
-    let result = CellResult(
-      columns: [ColumnInfo(name: "id", type: "integer")],
-      rows: rows,
-      executionTime: 0.01,
-      rowCount: 36,
-      timestamp: Date(),
-      wasLimited: false,
-      userLimitExceeded: false,
-      userRequestedLimit: nil
-    )
-
-    // Act - Round-trip encoding/decoding
-    let data = try JSONEncoder().encode(result)
-    let decoded = try JSONDecoder().decode(CellResult.self, from: data)
-
-    // Assert - No warning should be shown
-    #expect(decoded.userLimitExceeded == false)
-    #expect(decoded.userRequestedLimit == nil)
-    #expect(decoded.rowCount == 36)
-  }
-
-  @Test("CellResult - User LIMIT exceeds maxRows AND database returns maxRows")
-  func cellResultUserLimitExceedsAndMaxRowsReturned() throws {
-    // Scenario: Database has 200 rows, maxRows setting is 100, user query has LIMIT 130
-    // Expected: Warning should be shown because actual rows returned = maxRows (100)
-
-    // Arrange - Simulate 100 rows returned (capped at maxRows)
-    let rows = (1...100).map { [CellValue.int($0)] }
-    let result = CellResult(
-      columns: [ColumnInfo(name: "id", type: "integer")],
-      rows: rows,
-      executionTime: 0.01,
-      rowCount: 100,
-      timestamp: Date(),
-      wasLimited: false,
-      userLimitExceeded: true,
-      userRequestedLimit: 100
-    )
-
-    // Act - Round-trip encoding/decoding
-    let data = try JSONEncoder().encode(result)
-    let decoded = try JSONDecoder().decode(CellResult.self, from: data)
-
-    // Assert - Warning should be shown
-    #expect(decoded.userLimitExceeded == true)
-    #expect(decoded.userRequestedLimit == 100)
-    #expect(decoded.rowCount == 100)
+    // Old JSON carrying the legacy keys still decodes
+    dict["rowIdentifiers"] = try JSONSerialization.jsonObject(
+      with: JSONEncoder().encode([CellValue.string("(0,1)"), .string("(0,2)")]))
+    dict["userLimitExceeded"] = true
+    dict["userRequestedLimit"] = 500
+    dict["limitWasCapped"] = true
+    dict["actualLimitUsed"] = 100
+    let legacy = try JSONSerialization.data(withJSONObject: dict)
+    let decoded = try JSONDecoder().decode(CellResult.self, from: legacy)
+    #expect(decoded.rowCount == 2)
+    #expect(decoded.wasLimited)
+    #expect(decoded.rows == [[.int(1)], [.int(2)]])
   }
 }

@@ -16,6 +16,19 @@ class SessionManager {
   private static let historyKey = "com.sqlnotebook.connectionHistory"
   private static let keychainService = "com.sqlnotebook.database"
 
+  // MARK: - Launch Restore
+
+  /// Whether the app should restore the previous session (and read the Keychain) at launch.
+  /// Returns false when running as an XCTest host to avoid blocking Keychain prompts.
+  nonisolated static func shouldRestoreSession(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) -> Bool {
+    environment["XCTestConfigurationFilePath"] == nil
+  }
+
+  /// True when the process is an XCTest host (computed once from the process environment)
+  nonisolated static let isRunningAsTestHost = !shouldRestoreSession()
+
   // MARK: - Migration Support
 
   /// Migrate from single session to history array (one-time operation)

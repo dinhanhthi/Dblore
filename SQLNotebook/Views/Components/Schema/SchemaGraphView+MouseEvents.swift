@@ -222,7 +222,8 @@ extension SchemaGraphNSView {
     if let node = hitTestLeftResizeHandle(at: point) {
       if hoveredLeftResizeHandleNodeId != node.id {
         hoveredLeftResizeHandleNodeId = node.id
-        if hoveredResizeHandleNodeId == nil {  // Only push if right handle cursor not already active
+        // Only push if right handle cursor not already active
+        if hoveredResizeHandleNodeId == nil {
           NSCursor.resizeLeftRight.push()
         }
         needsRedraw = true

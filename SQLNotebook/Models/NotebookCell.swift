@@ -20,10 +20,6 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var selectedStatementIndex: Int
   /// Total execution time for all statements (for multi-statement queries)
   var totalExecutionTime: TimeInterval?
-  /// Pagination info for single statement result (nil if not paginated)
-  var paginationInfo: PaginationInfo?
-  /// Pagination info for multi-statement results (key: statementId)
-  var statementPaginationInfo: [UUID: PaginationInfo]
 
   // MARK: - Codable
 
@@ -38,8 +34,6 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case statementResults
     case selectedStatementIndex
     case totalExecutionTime
-    case paginationInfo
-    case statementPaginationInfo
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -58,10 +52,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
-    paginationInfo = try container.decodeIfPresent(PaginationInfo.self, forKey: .paginationInfo)
-    statementPaginationInfo =
-      try container.decodeIfPresent([UUID: PaginationInfo].self, forKey: .statementPaginationInfo)
-      ?? [:]
+    // Legacy `paginationInfo` / `statementPaginationInfo` (LIMIT-rewrite pagination) are ignored
   }
 
   nonisolated func encode(to encoder: Encoder) throws {
@@ -76,8 +67,6 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encode(statementResults, forKey: .statementResults)
     try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
     try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
-    try container.encodeIfPresent(paginationInfo, forKey: .paginationInfo)
-    try container.encode(statementPaginationInfo, forKey: .statementPaginationInfo)
   }
 
   nonisolated init(
@@ -90,9 +79,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     isResultVisible: Bool = true,
     statementResults: [StatementResult] = [],
     selectedStatementIndex: Int = 0,
-    totalExecutionTime: TimeInterval? = nil,
-    paginationInfo: PaginationInfo? = nil,
-    statementPaginationInfo: [UUID: PaginationInfo] = [:]
+    totalExecutionTime: TimeInterval? = nil
   ) {
     self.id = id
     self.cellType = cellType
@@ -104,8 +91,6 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.statementResults = statementResults
     self.selectedStatementIndex = selectedStatementIndex
     self.totalExecutionTime = totalExecutionTime
-    self.paginationInfo = paginationInfo
-    self.statementPaginationInfo = statementPaginationInfo
   }
 }
 
@@ -150,19 +135,22 @@ struct CellResult: Codable, Sendable {
   let tableName: String?
   /// Primary key column names for the table (empty if no PK or unable to fetch)
   let primaryKeyColumns: [String]
-  /// Row identifiers (ctid for PostgreSQL, rowid for SQLite) - one per row
-  let rowIdentifiers: [CellValue]
-  /// True if user's LIMIT in query exceeded maxRows and was capped
-  let userLimitExceeded: Bool
-  /// The original LIMIT value user specified (if any)
-  let userRequestedLimit: Int?
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
   let affectedRows: Int?
-  /// True if user's LIMIT was capped to maxRows (even if no limiting occurred in result)
-  /// This is for display purposes - to show correct query in UI
-  let limitWasCapped: Bool
-  /// The actual LIMIT used in executed query (after capping)
-  let actualLimitUsed: Int?
+  /// Validated inline-edit target of a live execution. Session-only: not coded, so a result
+  /// read from a file is read-only until the cell is run again.
+  var editTarget: EditTarget? = nil
+  /// Session-only (not coded, see `withCapInfo(from:)`): the row cap closed and reopened the
+  /// session, statements after it did not run. A truncated result is persisted as `wasLimited`.
+  var sessionReset = false
+  var skippedStatements: [String] = []
+  /// Session-only: queued cells cancelled because this result reset the session
+  var skippedQueuedCells = 0
+
+  private enum CodingKeys: String, CodingKey {
+    case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
+    case tableName, primaryKeyColumns, affectedRows
+  }
 
   nonisolated init(
     columns: [ColumnInfo] = [],
@@ -175,12 +163,8 @@ struct CellResult: Codable, Sendable {
     sourceQuery: String? = nil,
     tableName: String? = nil,
     primaryKeyColumns: [String] = [],
-    rowIdentifiers: [CellValue] = [],
-    userLimitExceeded: Bool = false,
-    userRequestedLimit: Int? = nil,
     affectedRows: Int? = nil,
-    limitWasCapped: Bool = false,
-    actualLimitUsed: Int? = nil
+    editTarget: EditTarget? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -192,12 +176,8 @@ struct CellResult: Codable, Sendable {
     self.sourceQuery = sourceQuery
     self.tableName = tableName
     self.primaryKeyColumns = primaryKeyColumns
-    self.rowIdentifiers = rowIdentifiers
-    self.userLimitExceeded = userLimitExceeded
-    self.userRequestedLimit = userRequestedLimit
     self.affectedRows = affectedRows
-    self.limitWasCapped = limitWasCapped
-    self.actualLimitUsed = actualLimitUsed
+    self.editTarget = editTarget
   }
 
   /// Creates an error result
@@ -220,6 +200,20 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated var id: String { name }
   nonisolated let name: String
   nonisolated let type: String
+  /// Source table OID from the server's RowDescription (0 = not a plain table column,
+  /// nil = unknown). Used to decide whether inline edit may target the row.
+  nonisolated let tableOID: UInt32?
+  /// Source column attribute number from the RowDescription (0 = not a table column)
+  nonisolated let attributeNumber: Int16?
+
+  nonisolated init(
+    name: String, type: String, tableOID: UInt32? = nil, attributeNumber: Int16? = nil
+  ) {
+    self.name = name
+    self.type = type
+    self.tableOID = tableOID
+    self.attributeNumber = attributeNumber
+  }
 }
 
 /// A value in a result cell, supporting multiple SQL types

@@ -52,33 +52,9 @@ struct ConnectionInfoContent: View {
                   config.protectionLevel == .readOnly
                     ? Color.warning.opacity(0.1) : Color.secondary.opacity(0.1))
             )
-            .confirmationDialog(
-              "Change Protection Level?",
-              isPresented: $showDisableReadOnlyConfirmation,
-              titleVisibility: .visible
-            ) {
-              Button("Disable Protection", role: .destructive) {
-                viewModel.notebook.connectionConfig?.protectionLevel = .none
-                viewModel.onDocumentChanged?()
-              }
-              if config.protectionLevel == .readOnly {
-                Button("Schema Protection Only") {
-                  viewModel.notebook.connectionConfig?.protectionLevel = .schemaOnly
-                  viewModel.onDocumentChanged?()
-                }
-              }
-              if config.protectionLevel == .schemaOnly {
-                Button("Enable Read-Only Mode") {
-                  viewModel.notebook.connectionConfig?.protectionLevel = .readOnly
-                  viewModel.onDocumentChanged?()
-                }
-              }
-              Button("Cancel", role: .cancel) {}
-            } message: {
-              Text(
-                "Choose a new protection level for this connection."
-              )
-            }
+            // Lowering goes through the Safe Mode unlock (see ProtectionLevelDialogModifier)
+            .protectionLevelDialog(
+              isPresented: $showDisableReadOnlyConfirmation, viewModel: viewModel)
           }
 
           // Connection name (if provided)

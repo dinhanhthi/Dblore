@@ -15,7 +15,7 @@ struct HeaderView: View {
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
-      HStack(spacing: Spacing.xs) {
+      GlassToolbarGroup {
         if viewModel.viewMode == .notebook {
           // Notebook mode buttons
           Button(action: {
@@ -30,7 +30,7 @@ struct HeaderView: View {
           }) {
             Label("New", systemImage: "plus")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘N)")
@@ -40,7 +40,7 @@ struct HeaderView: View {
           }) {
             Label("Run All", systemImage: "play.fill")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
           .confirmationDialog(
@@ -85,7 +85,7 @@ struct HeaderView: View {
           }) {
             Label("Clear All Outputs", systemImage: "trash")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .help("Clear All Outputs")
           .confirmationDialog(
             "Clear all outputs?",
@@ -111,8 +111,15 @@ struct HeaderView: View {
           } label: {
             Label("Results", systemImage: "eye")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glass)
           .help("Show/Hide Results")
+        } else if viewModel.viewMode == .editor, viewModel.isEditorQueryRunning {
+          // Stops the query on the server (asks first if pending changes would be discarded)
+          Button(action: { viewModel.cancelEditorQuery() }) {
+            Label("Cancel", systemImage: "stop.fill")
+          }
+          .buttonStyle(.glass)
+          .help("Cancel the running query (the connection is reset)")
         } else if viewModel.viewMode == .editor {
           // Editor mode buttons
           Button(action: {
@@ -122,7 +129,7 @@ struct HeaderView: View {
           }) {
             Label("Run", systemImage: "play.fill")
           }
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(.glassProminent)
           .disabled(viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected)
           .help(editorRunButtonHelp)
         }
@@ -132,27 +139,63 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (SQLNotebook > Settings) or Cmd+,
-      HStack(spacing: Spacing.sm) {
+      // Safety badge sits outside the glass group so it does not merge with the Search button
+      if viewModel.connectionState.isConnected,
+        let config = workspaceManager?.workspace.connectionConfig
+      {
+        safetyBadge(ConnectionSafetyBadge(config: config))
+      }
+
+      GlassToolbarGroup {
         // Search button
         Button(action: {
           viewModel.openSearch()
         }) {
           Image(systemName: "magnifyingglass")
         }
-        .buttonStyle(
-          GhostButtonStyle(
-            isActive: viewModel.isSearchPanelVisible,
-            iconOnly: true
-          )
-        )
+        .buttonStyle(.glass)
+        .tint(viewModel.isSearchPanelVisible ? Color.accent : nil)
         .help("Search (⌘F)")
       }
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ComponentSize.headerHeight)
-    .background(Color.appBackground)
+    .chromeGlass()
     .overlay(alignment: .bottom) {
       Divider()
+    }
+  }
+
+  // MARK: - Safety Badge
+
+  /// Protection state and SSL state at a glance; tinted by the SSL level
+  private func safetyBadge(_ badge: ConnectionSafetyBadge) -> some View {
+    let sslColor = badge.ssl.map { color(for: $0.level) } ?? .foregroundMuted
+    return HStack(spacing: Spacing.xs) {
+      Image(systemName: badge.protectionIcon)
+        .font(.system(size: 10))
+      Text(badge.protectionLabel)
+      if let ssl = badge.ssl {
+        Image(systemName: "circle.fill")
+          .font(.system(size: 6))
+          .foregroundColor(sslColor)
+        Text(ssl.label)
+      }
+    }
+    .font(.small)
+    .foregroundColor(.foreground)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, Spacing.xs)
+    .tintedCapsuleGlass(sslColor, interactive: false)
+    .help(badge.tooltip)
+    .accessibilityElement(children: .combine)
+  }
+
+  private func color(for level: ConnectionSafetyBadge.Level) -> Color {
+    switch level {
+    case .danger: return .destructive
+    case .warning: return .warning
+    case .ok: return .success
     }
   }
 
@@ -169,20 +212,21 @@ struct HeaderView: View {
   // MARK: - Run All Destructive Dialog
 
   private var runAllDestructiveDialogTitle: String {
-    let count = viewModel.queryConfirmationState.runAllDestructiveCount
-    let queryWord = count == 1 ? "query" : "queries"
-    return "Run All contains \(count) destructive \(queryWord)"
+    let cells = viewModel.queryConfirmationState.runAllConfirmCells
+    if cells.contains(where: \.isSafetyCritical) {
+      return "Run All changes session safety settings"
+    }
+    let cellWord = cells.count == 1 ? "cell" : "cells"
+    return "Run All contains \(cells.count) \(cellWord) that may modify your database"
   }
 
   private var runAllDestructiveDialogMessage: String {
-    let count = viewModel.queryConfirmationState.runAllDestructiveCount
-    let queryWord = count == 1 ? "query" : "queries"
+    let cells = viewModel.queryConfirmationState.runAllConfirmCells
     return """
-      This batch contains \(count) destructive \(queryWord) (UPDATE, DELETE, INSERT) \
-      that will modify your database.
+      \(NotebookViewModel.runAllSummary(cells))
 
-      • Allow: Execute all queries including destructive ones
-      • Don't Allow: Skip destructive queries and run the rest
+      • Allow: Execute all cells
+      • Don't Allow: Skip the cells listed above and run the rest
       """
   }
 }
