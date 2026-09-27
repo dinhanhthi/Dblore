@@ -25,10 +25,10 @@ extension NotebookViewModel {
     Task { await cancelRunningStatement(cancelQueue: true) }
   }
 
-  /// Cancel button of the editor run
+  /// Run button clicked while the editor run is in flight: always confirmed first
   func cancelEditorQuery() {
     guard isEditorQueryRunning else { return }
-    Task { await cancelRunningStatement(cancelQueue: false) }
+    Task { await cancelRunningStatement(cancelQueue: false, alwaysConfirm: true) }
   }
 
   /// Cancel all pending and executing cells in the queue only (nothing is sent to the server;
@@ -47,9 +47,10 @@ extension NotebookViewModel {
   /// - Parameter cancelQueue: also cancel the notebook queue (the running cell and the queued
   ///   ones: they would run on the reopened session); with nothing on the server, only the
   ///   queue is cancelled.
+  /// - Parameter alwaysConfirm: ask even when nothing pending would be discarded
   /// - Returns: true if the connection was closed to stop a statement.
   @discardableResult
-  func cancelRunningStatement(cancelQueue: Bool) async -> Bool {
+  func cancelRunningStatement(cancelQueue: Bool, alwaysConfirm: Bool = false) async -> Bool {
     guard let connectionManager else { return false }
     while true {
       let status = await connectionManager.runningStatementStatus()
@@ -60,6 +61,7 @@ extension NotebookViewModel {
       let ownedByAnotherTab = status.owner.map { $0 != id } ?? false
       if let warning = QueryCancelWarning.make(
         state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab)
+        ?? (alwaysConfirm ? .sessionReset : nil)
       {
         guard await confirmCancel(warning) else { return false }
       }
@@ -84,7 +86,9 @@ extension NotebookViewModel {
     alert.informativeText = warning.detail
     // Return keeps the query running; the destructive answer needs a click
     alert.addButton(withTitle: QueryCancelWarning.keepTitle)
-    let discard = alert.addButton(withTitle: QueryCancelWarning.confirmTitle)
+    let discard = alert.addButton(
+      withTitle: warning == .sessionReset
+        ? QueryCancelWarning.stopTitle : QueryCancelWarning.confirmTitle)
     discard.hasDestructiveAction = true
     let response: NSApplication.ModalResponse
     if let window = NSApp.keyWindow {

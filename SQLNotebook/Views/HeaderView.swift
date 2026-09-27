@@ -11,6 +11,8 @@ struct HeaderView: View {
   @State private var showRunAllConfirmation = false
   @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
+  /// Run turns into Stop once the editor query has run for a second
+  @State private var canStopEditorQuery = false
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -118,11 +120,15 @@ struct HeaderView: View {
           .pointerStyle(.link)
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor {
-          // Editor mode buttons: while a query runs, Run keeps its label, shows a spinner and
-          // is disabled; Stop is always there so the layout never shifts
+          // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
+          // disabled for the first second, then a click stops the query (after confirmation)
           Button(action: {
-            Task { @MainActor [viewModel] in
-              await viewModel.runEditorQuery()
+            if viewModel.isEditorQueryRunning {
+              viewModel.cancelEditorQuery()
+            } else {
+              Task { @MainActor [viewModel] in
+                await viewModel.runEditorQuery()
+              }
             }
           }) {
             Label {
@@ -139,19 +145,20 @@ struct HeaderView: View {
           .pointerStyle(.link)
           .tint(Color.accent)
           .disabled(
-            viewModel.isEditorQueryRunning || viewModel.editorContent.isEmpty
-              || !viewModel.connectionState.isConnected
+            viewModel.isEditorQueryRunning
+              ? !canStopEditorQuery
+              : viewModel.editorContent.isEmpty || !viewModel.connectionState.isConnected
           )
-          .help(editorRunButtonHelp)
-
-          // Stops the query on the server (asks first if pending changes would be discarded)
-          Button(action: { viewModel.cancelEditorQuery() }) {
-            Image(systemName: "stop.fill")
+          .help(
+            viewModel.isEditorQueryRunning
+              ? "Stop the running query (the connection is reset)" : editorRunButtonHelp
+          )
+          .task(id: viewModel.isEditorQueryRunning) {
+            canStopEditorQuery = false
+            guard viewModel.isEditorQueryRunning else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { canStopEditorQuery = true }
           }
-          .buttonStyle(.glass)
-          .pointerStyle(.link)
-          .disabled(!viewModel.isEditorQueryRunning)
-          .help("Cancel the running query (the connection is reset)")
         }
       }
       // Capsule shape for every header button (notebook and editor modes)
