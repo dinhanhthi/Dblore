@@ -353,10 +353,8 @@ struct InlineEditTransactionIntegrationTests {
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
       WorkspaceWindowManager.shared.dismissToast()
       try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: false)
-      // Not saved yet: no success toast, the user still has to Commit
-      let toast = WorkspaceWindowManager.shared.toastState.currentToast
-      #expect(toast?.type == .info)
-      #expect(toast?.message.contains("Commit") == true)
+      // No toast either way: the pending banner shows it, the user still has to Commit
+      #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
       #expect(await isAppTx(manager))
       #expect(await manager.transactionSnapshot().pending.count == 1)
       #expect(try await value(observer, table) == .int(10))
@@ -371,7 +369,8 @@ struct InlineEditTransactionIntegrationTests {
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
       WorkspaceWindowManager.shared.dismissToast()
       try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
-      #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .success)
+      // No toast: the refreshed cell shows the committed value
+      #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
       #expect(await manager.transactionSnapshot().isIdle)
       #expect(try await value(observer, table) == .int(11))
     }
