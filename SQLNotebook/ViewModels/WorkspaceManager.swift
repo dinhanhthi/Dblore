@@ -59,6 +59,16 @@ class WorkspaceManager: Identifiable {
   var tabs: [TabItem] = []
   var activeTabId: UUID?
 
+  /// A closed file tab, reopened with Cmd+Shift+T
+  struct ClosedTab {
+    let fileURL: URL
+    let index: Int
+    let bookmark: Data?
+  }
+
+  /// Closed file tabs of this session, most recent last
+  private(set) var closedTabs: [ClosedTab] = []
+
   // MARK: - Tab Storage
 
   private(set) var viewModels: [UUID: NotebookViewModel] = [:]
@@ -648,6 +658,9 @@ class WorkspaceManager: Identifiable {
       }
     }
 
+    if let url = tabs[index].fileURL {
+      closedTabs.append(ClosedTab(fileURL: url, index: index, bookmark: tabBookmarks[id]))
+    }
     tabs.remove(at: index)
     viewModels.removeValue(forKey: id)
     notebookDocuments.removeValue(forKey: id)
@@ -655,6 +668,21 @@ class WorkspaceManager: Identifiable {
     tabBookmarks.removeValue(forKey: id)
     tabAccess.removeValue(forKey: id)?.release()
     markDirtyAndScheduleAutoSave()
+  }
+
+  var canReopenClosedTab: Bool { !closedTabs.isEmpty }
+
+  /// Reopen the most recently closed file tab at its former position, through its bookmark
+  func reopenClosedTab() async throws {
+    guard let closed = closedTabs.popLast() else { return }
+    if let bookmark = closed.bookmark {
+      recents.rememberDocumentBookmark(bookmark, for: closed.fileURL)
+    }
+    let countBefore = tabs.count
+    try await openFile(url: closed.fileURL)
+    // Already open: openFile only selected it
+    guard tabs.count > countBefore else { return }
+    moveTab(from: tabs.count - 1, to: min(closed.index, tabs.count - 1))
   }
 
   /// Stop accessing the workspace, its folder and its tab files (workspace closed)

@@ -485,6 +485,19 @@ struct TabCommands: Commands {
       .keyboardShortcut("w", modifiers: .command)
       .disabled(activeTabId == nil)
 
+      Button("Reopen Closed Tab") {
+        Task {
+          do {
+            try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
+          } catch {
+            WorkspaceWindowManager.shared.showToast(
+              "Could not reopen tab: \(error.localizedDescription)", type: .warning)
+          }
+        }
+      }
+      .keyboardShortcut("t", modifiers: [.command, .shift])
+      .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+
       Divider()
 
       Button("Next Tab") {
