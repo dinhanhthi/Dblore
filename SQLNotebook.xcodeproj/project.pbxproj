@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
+		D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC222EF71234009A0E5A /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */,
+				D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -144,6 +146,7 @@
 			name = SQLNotebook;
 			packageProductDependencies = (
 				D3E0FC002EF71234009A0E5B /* PostgresNIO */,
+				D3E0FC222EF71234009A0E5A /* Sparkle */,
 			);
 			productName = SQLNotebook;
 			productReference = D3E0FB932EF70DBB009A0E5A /* SQLNotebook.app */;
@@ -179,6 +182,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */,
+				D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D3E0FB942EF70DBB009A0E5A /* Products */;
@@ -545,6 +549,14 @@
 				minimumVersion = 1.33.1;
 			};
 		};
+		D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -552,6 +564,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */;
 			productName = PostgresNIO;
+		};
+		D3E0FC222EF71234009A0E5A /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

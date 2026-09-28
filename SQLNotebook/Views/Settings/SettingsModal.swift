@@ -26,6 +26,7 @@ struct SettingsModal: View {
     case editor = "Editor"
     case results = "Results"
     case save = "Save"
+    case updates = "Updates"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
   }
@@ -89,6 +90,8 @@ struct SettingsModal: View {
     case .save:
       // Save Options (Notebook Mode Only)
       SettingsModalSaveOptionsSection(appSettings: appSettings)
+    case .updates:
+      SettingsModalUpdatesSection()
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
@@ -214,6 +217,21 @@ struct SettingsModalSaveOptionsSection: View {
       description:
         "When enabled, query results are saved with the notebook. Disable to reduce file size. (Notebook only)",
       isOn: $appSettings.includeResultsOnSave
+    )
+  }
+}
+
+// MARK: - Updates Section
+
+struct SettingsModalUpdatesSection: View {
+  @ObservedObject private var updater = UpdaterController.shared
+
+  var body: some View {
+    SettingsToggle(
+      title: "Automatically Check for Updates",
+      description:
+        "Check for new versions of SQLNotebook in the background and offer to install them. You can always check now from the SQLNotebook menu.",
+      isOn: $updater.automaticallyChecksForUpdates
     )
   }
 }

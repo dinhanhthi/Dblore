@@ -13,6 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Disable automatic window tabbing - each workspace gets its own window
     NSWindow.allowsAutomaticWindowTabbing = false
+    // Start Sparkle (no-op under tests)
+    UpdaterController.shared.start()
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -298,6 +300,8 @@ struct SharedCommands: Commands {
 
     // Add Settings after About in appInfo group (no keyboard shortcut)
     CommandGroup(after: .appInfo) {
+      CheckForUpdatesButton()
+
       Button("Settings...") {
         NotificationCenter.default.post(name: .openSettings, object: nil)
       }
@@ -314,6 +318,18 @@ struct SharedCommands: Commands {
     window.isReleasedWhenClosed = false
     window.center()
     window.makeKeyAndOrderFront(nil)
+  }
+}
+
+/// "Check for Updates…" menu item; observes the updater so the disabled state stays current.
+private struct CheckForUpdatesButton: View {
+  @ObservedObject private var updater = UpdaterController.shared
+
+  var body: some View {
+    Button("Check for Updates…") {
+      updater.checkForUpdates()
+    }
+    .disabled(!updater.canCheckForUpdates)
   }
 }
 

@@ -125,5 +125,14 @@
 	<true/>
 	<key>NSQuitAlwaysKeepsWindows</key>
 	<false/>
+	<!-- Sparkle auto-update -->
+	<key>SUFeedURL</key>
+	<string>https://dinhanhthi.github.io/SQLNotebook/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>+HUXDzWR/yNBnJyO0cIfLhwU9ZJhwQ8iKnEU9R838JY=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
 </dict>
 </plist>
