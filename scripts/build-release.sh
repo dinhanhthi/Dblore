@@ -16,9 +16,7 @@ usage() {
 Usage: scripts/build-release.sh [--skip-notarize] [--expect-version <version>]
 
   --skip-notarize           Skip notarization, stapling and Gatekeeper check
-  --expect-version <v>      <v> is X.Y.Z, X.Y.Z-rc.N or X.Y.Z-beta.N. Fail unless
-                            MARKETING_VERSION equals the core X.Y.Z; the DMG is
-                            named with the full <v> (default: MARKETING_VERSION)
+  --expect-version <v>      <v> is X.Y.Z. Fail unless MARKETING_VERSION equals it
   -h, --help                Show this help
 
 Notarization uses the keychain profile "$NOTARY_PROFILE", or an App Store
@@ -68,19 +66,14 @@ APP="$EXPORT_DIR/$SCHEME.app"
 VERSION=$(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -showBuildSettings 2>/dev/null | awk -F' = ' '/^ *MARKETING_VERSION = / { print $2; exit }')
 [[ -n "$VERSION" ]] || fail "could not read MARKETING_VERSION from build settings"
-# MARKETING_VERSION is always numeric X.Y.Z; a prerelease suffix lives only in
-# the tag, so compare the core and name the DMG after the full tag version.
-DMG_VERSION="$VERSION"
 if [[ -n "$EXPECT_VERSION" ]]; then
-  [[ "$EXPECT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta)\.[0-9]+)?$ ]] ||
-    fail "--expect-version must be X.Y.Z, X.Y.Z-rc.N or X.Y.Z-beta.N (got $EXPECT_VERSION)"
-  EXPECT_CORE="${EXPECT_VERSION%%-*}"
-  [[ "$EXPECT_CORE" == "$VERSION" ]] ||
-    fail "MARKETING_VERSION is $VERSION, expected $EXPECT_CORE (from $EXPECT_VERSION)"
-  DMG_VERSION="$EXPECT_VERSION"
+  [[ "$EXPECT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    fail "--expect-version must be X.Y.Z (got $EXPECT_VERSION)"
+  [[ "$EXPECT_VERSION" == "$VERSION" ]] ||
+    fail "MARKETING_VERSION is $VERSION, expected $EXPECT_VERSION"
 fi
-DMG="$DIST/$SCHEME-$DMG_VERSION.dmg"
-echo "==> Building $SCHEME $DMG_VERSION (MARKETING_VERSION $VERSION)"
+DMG="$DIST/$SCHEME-$VERSION.dmg"
+echo "==> Building $SCHEME $VERSION"
 
 # Test hook. Never set during a real release: stop after the version check.
 if [[ -n "${BUILD_RELEASE_DRY_RUN:-}" ]]; then

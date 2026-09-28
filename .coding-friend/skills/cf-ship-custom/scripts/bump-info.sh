@@ -7,30 +7,22 @@
 # Read-only: this script never writes a file, a tag, or a commit. The only git
 # operation with a side effect is `git fetch --tags origin`.
 #
-# Usage: bash bump-info.sh [patch|minor|major] [--rc|--beta]
+# Usage: bash bump-info.sh [patch|minor|major]
 #   The level is optional. Omit it and the model picks one from the commits.
 #
-#   Releases are STABLE by default. `--rc` / `--beta` are opt-in: pass one only
-#   when the user explicitly asked for a prerelease.
+#   Releases are stable only: tags are vX.Y.Z. Any other v* tag (e.g. a
+#   leftover v0.1.1-rc.1) is ignored when finding the latest release.
 #
-#   MARKETING_VERSION is always the numeric core X.Y.Z; the script errors
-#   otherwise. A prerelease suffix (-rc.N / -beta.N) lives only in the git tag
-#   and the CHANGELOG heading, so the output names two things separately:
-#   "Next file version" (what bump.sh writes, or "unchanged") and "Next tag".
-#
-#   Promotion is the subtle case and is why this script computes the candidate
-#   versions itself instead of leaving semver arithmetic to a model: when the
-#   latest tag is a prerelease of the file version (v0.1.1-rc.2, file 0.1.1)
-#   and NO flag is given, the next tag drops the suffix (v0.1.1) and the file
-#   stays unchanged. Treating that as an ordinary patch bump would ship 0.1.2
-#   and skip 0.1.1 entirely.
+#   MARKETING_VERSION is always X.Y.Z; the script errors otherwise. The output
+#   names two things separately: "Next file version" (what bump.sh writes, or
+#   "unchanged") and "Next tag".
 #
 # Test hooks. Never set either during a real release.
 #   BUMP_INFO_VERSION=0.1.1  -> pretend MARKETING_VERSION says that, so every
 #     state is reachable without editing the real project file.
 # BUMP_INFO_TAG overrides the tag discovered on origin (and skips the fetch).
 #   BUMP_INFO_TAG=              -> forces the first-release branch (no tag)
-#   BUMP_INFO_TAG=v0.1.1-rc.1   -> pretend that tag is the latest published one
+#   BUMP_INFO_TAG=v0.1.1        -> pretend that tag is the latest published one
 # It replaces the candidate list, so the rest of the script runs unchanged.
 
 set -euo pipefail
@@ -39,7 +31,6 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 REQUESTED_LEVEL=""
-PRERELEASE_KIND=""
 for arg in "$@"; do
   case "$arg" in
     patch | minor | major)
@@ -49,11 +40,9 @@ for arg in "$@"; do
       fi
       REQUESTED_LEVEL="$arg"
       ;;
-    --rc) PRERELEASE_KIND="rc" ;;
-    --beta) PRERELEASE_KIND="beta" ;;
     *)
       echo "Error: unknown argument '$arg'"
-      echo "Usage: bash bump-info.sh [patch|minor|major] [--rc|--beta]"
+      echo "Usage: bash bump-info.sh [patch|minor|major]"
       exit 1
       ;;
   esac
@@ -147,15 +136,13 @@ else
 fi
 [[ -n "${BUMP_INFO_VERSION:-}" ]] && TEST_MODE=yes
 
-# `sort -V` is NOT used to pick the newest tag: it orders 0.1.0 BEFORE 0.1.0-rc.1,
-# so once v0.1.0 ships it would report the rc as latest. Semver ordering (a
-# release outranks its own prereleases) is done in python, which also derives
-# the state and the next file version / next tag in the same pass.
+# The newest vX.Y.Z tag is picked in python, which also derives the state and
+# the next file version / next tag in the same pass. Tags not of that exact form
+# are ignored.
 #
-# MARKETING_VERSION is always the numeric core X.Y.Z (Apple requires three
-# integers for CFBundleShortVersionString). A prerelease suffix (-rc.N /
-# -beta.N) lives only in the git tag and the CHANGELOG heading, so the state is
-# derived from the latest tag's CORE compared with the file version.
+# MARKETING_VERSION is always X.Y.Z (Apple requires three integers for
+# CFBundleShortVersionString). The state is derived from the latest tag
+# compared with the file version.
 #
 # The tag list goes in as an argument, not on stdin: the heredoc below already
 # occupies stdin, so a piped list would be silently swallowed and every run
@@ -167,61 +154,42 @@ fi
 #   3 file version
 #   4 tag the commit range starts from (empty = entire history)
 #   5.. "<label> <next file version|unchanged> <next tag>", one per candidate
-TAG_INFO="$(python3 - "$PBX_VERSIONS" "$TAG_CANDIDATES" "${BUMP_INFO_VERSION:-}" "$PRERELEASE_KIND" <<'PY'
+TAG_INFO="$(python3 - "$PBX_VERSIONS" "$TAG_CANDIDATES" "${BUMP_INFO_VERSION:-}" <<'PY'
 import re, sys
 
-TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$")
+TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 CORE_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def key(version):
-    """Semver precedence: 1.0.0 > 1.0.0-rc.2 > 1.0.0-rc.1."""
-    core, _, pre = version.partition("-")
-    nums = [int(n) for n in core.split(".")]
-    if not pre:
-        return (nums, 1, [])
-    # Numeric identifiers rank below alphanumeric ones, per semver.
-    parts = [(0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")]
-    return (nums, 0, parts)
-
-
-def core_key(version):
-    return [int(n) for n in version.partition("-")[0].split(".")]
+    return [int(n) for n in version.split(".")]
 
 
 candidates = [t for t in (line.strip() for line in sys.argv[2].splitlines()) if t]
+# Tags not of the exact form vX.Y.Z are ignored; none left means first release.
 parsed = [(m.group(0), m.group(1)) for m in map(TAG_RE.match, candidates) if m]
-if candidates and not parsed:
-    sys.exit("Error: no candidate tag matched vX.Y.Z[-pre]: %s" % ", ".join(candidates))
 
 # argv[3] is the BUMP_INFO_VERSION test hook. It has to be applied here, before
 # the comparison below — patching the version afterwards would leave the state
 # computed from the real file.
 file_version = sys.argv[3] if sys.argv[3] else sys.argv[1].strip()
-kind = sys.argv[4]
 if not CORE_RE.match(file_version):
-    sys.exit(
-        "Error: MARKETING_VERSION %r is not X.Y.Z. A prerelease suffix (-rc.N / "
-        "-beta.N) lives only in the git tag, never in the project file."
-        % file_version
-    )
-suffix = "-%s.1" % kind if kind else ""
+    sys.exit("Error: MARKETING_VERSION %r is not X.Y.Z" % file_version)
 next_lines = []
 
 if not parsed:
     tag, state, range_tag = "", "first-release", ""
-    next_lines.append("ship unchanged v%s%s" % (file_version, suffix))
+    next_lines.append("ship unchanged v%s" % file_version)
 else:
     tag, tag_version = max(parsed, key=lambda p: key(p[1]))
     range_tag = tag
-    tag_core, _, tag_pre = tag_version.partition("-")
-    f, t = core_key(file_version), core_key(tag_core)
+    f, t = key(file_version), key(tag_version)
     if f > t:
         state = "already-bumped"
-        next_lines.append("ship unchanged v%s%s" % (file_version, suffix))
+        next_lines.append("ship unchanged v%s" % file_version)
     elif f < t:
         state = "BROKEN-tag-ahead-of-file"
-    elif not tag_pre:
+    else:
         state = "bump"
         major, minor, patch = f
         for level, nxt in (
@@ -229,29 +197,7 @@ else:
             ("minor", "%d.%d.0" % (major, minor + 1)),
             ("major", "%d.0.0" % (major + 1)),
         ):
-            next_lines.append("%s %s v%s%s" % (level, nxt, nxt, suffix))
-    else:
-        pre_kind, _, pre_num = tag_pre.partition(".")
-        if not kind:
-            # Promotion: the target was decided when the prerelease was cut.
-            # Tag the same core as stable; the level is irrelevant.
-            state = "promote"
-            next_lines.append("promote unchanged v%s" % tag_core)
-            # The stable release notes cover everything since the previous
-            # STABLE release, not just the commits since the last prerelease.
-            stable = [p for p in parsed if "-" not in p[1]]
-            range_tag = max(stable, key=lambda p: key(p[1]))[0] if stable else ""
-        elif kind == pre_kind and pre_num.isdigit():
-            state = "next-prerelease"
-            next_lines.append(
-                "iterate unchanged v%s-%s.%d" % (tag_core, pre_kind, int(pre_num) + 1)
-            )
-        else:
-            sys.exit(
-                "Error: cannot go from -%s to -%s on the same core version "
-                "(latest tag %s). Switching prerelease kind is refused: promote "
-                "to v%s first, or bump the core." % (pre_kind, kind, tag, tag_core)
-            )
+            next_lines.append("%s %s v%s" % (level, nxt, nxt))
 
 print(tag)
 print(state)
@@ -269,7 +215,7 @@ RANGE_TAG="$(printf '%s\n' "$TAG_INFO" | sed -n 4p)"
 NEXT_VERSIONS="$(printf '%s\n' "$TAG_INFO" | sed -n '5,$p')"
 
 case "$STATE" in
-  first-release | already-bumped | bump | promote | next-prerelease | BROKEN-tag-ahead-of-file) ;;
+  first-release | already-bumped | bump | BROKEN-tag-ahead-of-file) ;;
   *)
     echo "Error: unexpected state '$STATE'"
     exit 1
@@ -279,19 +225,13 @@ esac
 # ─── Commit ranges ────────────────────────────────────────────────────────────
 #
 # With no tag there is nothing to diff against, so the empty tree stands in for
-# the previous release and the log covers all history. A promotion starts from
-# the latest STABLE tag (RANGE_TAG), so its notes cover every prerelease of the
-# core; with no stable tag yet, that is the entire history as well.
+# the previous release and the log covers all history.
 
 if [[ -z "$RANGE_TAG" ]]; then
   EMPTY_TREE="$(git hash-object -t tree /dev/null)"
   DIFF_RANGE="$EMPTY_TREE..HEAD"
   LOG_RANGE="HEAD"
-  if [[ "$STATE" == "first-release" ]]; then
-    RANGE_LABEL="(entire history — first release)"
-  else
-    RANGE_LABEL="(entire history — no stable tag before $LATEST_TAG)"
-  fi
+  RANGE_LABEL="(entire history — first release)"
 else
   # The tag was chosen from `git ls-remote origin`, so it exists on the remote —
   # but not necessarily in this clone. Without this guard git prints
@@ -314,9 +254,6 @@ else
     DIFF_RANGE="$RANGE_TAG..HEAD"
     LOG_RANGE="$RANGE_TAG..HEAD"
     RANGE_LABEL="$RANGE_TAG..HEAD"
-  fi
-  if [[ "$STATE" == "promote" ]]; then
-    RANGE_LABEL="$RANGE_LABEL  (promotion: since the latest stable tag)"
   fi
 fi
 
@@ -379,31 +316,19 @@ if [[ -n "$REQUESTED_LEVEL" ]]; then
 else
   echo "Requested level:       (none — decide from the commits below)"
 fi
-if [[ -n "$PRERELEASE_KIND" ]]; then
-  echo "Prerelease:            -$PRERELEASE_KIND  (asked for explicitly)"
-else
-  echo "Prerelease:            no — STABLE (the default; --rc / --beta is opt-in)"
-fi
 
 if [[ "$STATE" != "BROKEN-tag-ahead-of-file" ]]; then
   echo ""
   echo "--- Next version (computed — do NOT do this arithmetic yourself) ---"
   echo "\"Next file version\" is what bump.sh writes to MARKETING_VERSION; \"unchanged\""
   echo "means do NOT run bump.sh. \"Next tag\" is the git tag and the CHANGELOG heading"
-  echo "(## <Next tag> (<date>)). A -rc.N / -beta.N suffix lives only in the tag."
+  echo "(## <Next tag> (<date>))."
   case "$STATE" in
     first-release)
       echo "FIRST RELEASE: ship the version already in the project file as-is."
       ;;
     already-bumped)
       echo "ALREADY BUMPED: the file is ahead of the latest tag; do NOT bump again."
-      ;;
-    promote)
-      echo "PROMOTE: tag $LATEST_TAG is a prerelease of $FILE_VERSION. The target was"
-      echo "fixed when the prerelease was cut: tag it stable, do NOT bump the core."
-      ;;
-    next-prerelease)
-      echo "NEXT PRERELEASE: the next -$PRERELEASE_KIND after $LATEST_TAG, same core."
       ;;
   esac
   if [[ "$STATE" != "bump" && -n "$REQUESTED_LEVEL" ]]; then
@@ -426,28 +351,23 @@ fi
 if [[ "$STATE" == "BROKEN-tag-ahead-of-file" ]]; then
   echo ""
   echo "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  echo "  !! STOP. Tag $LATEST_TAG has a NEWER core than the file version $FILE_VERSION."
+  echo "  !! STOP. Tag $LATEST_TAG is NEWER than the file version $FILE_VERSION."
   echo "  !! Something was tagged without bumping MARKETING_VERSION. Do not"
   echo "  !! release, do not bump, do not tag. Report this to the user and let"
   echo "  !! them decide whether the tag or the file version is the mistake."
   echo "  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 fi
 echo ""
-echo "State legend (compares the latest tag's CORE X.Y.Z with the file version):"
+echo "State legend (compares the latest vX.Y.Z tag with the file version):"
 echo "  first-release             No tag exists at all. Do NOT compute a bump from"
 echo "                            the file version — ship the version already in the"
 echo "                            file and write the changelog from all of history."
-echo "  bump                      Latest tag is stable and equals the file version."
+echo "  bump                      Latest tag equals the file version."
 echo "                            Pick a new version; bump.sh writes it."
-echo "  already-bumped            File version is ahead of the latest tag's core. The"
+echo "  already-bumped            File version is ahead of the latest tag. The"
 echo "                            bump already happened: update the changelog only,"
 echo "                            never bump again."
-echo "  promote                   Latest tag is a prerelease of the file version and"
-echo "                            no flag was given: tag the same core stable. No"
-echo "                            bump; the range starts at the latest stable tag."
-echo "  next-prerelease           Latest tag is a prerelease of the file version and"
-echo "                            the same flag was given: tag the next -N. No bump."
-echo "  BROKEN-tag-ahead-of-file  A tag's core is NEWER than the file version, i.e."
+echo "  BROKEN-tag-ahead-of-file  A tag is NEWER than the file version, i.e."
 echo "                            something was tagged without bumping. STOP and tell"
 echo "                            the user; do not release from this state."
 echo ""

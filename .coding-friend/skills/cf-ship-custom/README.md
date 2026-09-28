@@ -18,23 +18,15 @@ runs build + tests + a lint of the changed Swift files, commits
 `v<tag version>`, pushes the tag, then waits for CI and verifies the published
 DMG.
 
-**Prereleases are tag-only.** `MARKETING_VERSION` is always `X.Y.Z`; `-rc.N` /
-`-beta.N` exist only in the git tag and the `CHANGELOG.md` heading. The DMG is
-named with the full tag version (`SQLNotebook-0.1.1-rc.1.dmg`).
+SQLNotebook ships stable releases only: the tag is always `v` +
+`MARKETING_VERSION` (`X.Y.Z`), and the DMG is `SQLNotebook-<version>.dmg`.
 
 ## Say it in one line
-
-**Releases are stable by default.** A prerelease only happens if you ask.
 
 | You want                          | You say               | Latest tag -> file / tag                           |
 | --------------------------------- | --------------------- | -------------------------------------------------- |
 | A normal release, level auto      | `/cf-ship`            | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
 | Force the level                   | `/cf-ship minor`      | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
-| A release candidate               | `/cf-ship --rc`       | `v0.1.0` -> `0.1.1` / `v0.1.1-rc.1`                |
-| Another candidate after a fix     | `/cf-ship --rc`       | `v0.1.1-rc.1` -> unchanged / `v0.1.1-rc.2`         |
-| **Promote the candidate**         | `/cf-ship`            | `v0.1.1-rc.2` -> unchanged / **`v0.1.1`**          |
-| A beta                            | `/cf-ship --beta`     | `v0.1.0` -> `0.1.1` / `v0.1.1-beta.1`              |
-| A candidate for a bigger release  | `/cf-ship minor --rc` | `v0.1.0` -> `0.2.0` / `v0.2.0-rc.1`                |
 
 Auto level: PATCH by default, MINOR when new capability dominates, MAJOR only
 for breaking `.sqlnb` / config compatibility (reserved while pre-1.0, so MINOR
@@ -42,27 +34,22 @@ instead). Only commits touching `SQLNotebook/`, `SQLNotebookTests/`, the Xcode
 project, `scripts/` or `assets/` count; docs, CI and `.coding-friend/` changes
 never trigger a release.
 
-**Promotion:** when the latest tag is `-rc.N` or `-beta.N` of the file version,
-`/cf-ship` with no flag tags the same core stable (`v0.1.1-rc.2` -> `v0.1.1`,
-not `v0.1.2`) without touching the project file, and the changelog covers
-everything since the previous stable tag. Switching kind on the same core
-(`--beta` after an rc) is refused. `bump-info.sh` computes all of this and
-prints `Next file version` and `Next tag` under "Next version".
+`bump-info.sh` computes the version and prints `Next file version` and
+`Next tag` under "Next version".
 
 ## What CI does
 
-Pushing a `v*` tag starts `.github/workflows/release.yml` on a `macos-26` runner:
+Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` runner:
 
 1. Selects the newest Xcode in `/Applications` with a macOS SDK >= 26.
 2. Extracts the `## v<tag version>` section of `CHANGELOG.md` as release notes
    (fails if the file or the section is missing or empty).
 3. Imports the Developer ID certificate into a temporary keychain.
 4. Runs `scripts/build-release.sh --expect-version <tag version>`: checks the
-   tag's core equals `MARKETING_VERSION`, then archive, export, sign, DMG,
+   tag equals `MARKETING_VERSION`, then archive, export, sign, DMG,
    notarize, staple, Gatekeeper check.
 5. Publishes `SQLNotebook-<tag version>.dmg` and `.dmg.sha256`
-   on GitHub Releases. A tag containing `-rc` or `-beta` becomes a
-   **prerelease**; anything else is a normal (latest) release.
+   on GitHub Releases as a normal (latest) release.
 6. Deletes the keychain and key files.
 
 ## Prerequisites
@@ -85,15 +72,15 @@ Pushing a `v*` tag starts `.github/workflows/release.yml` on a `macos-26` runner
 deleted. If the version was really released, bump again; if a tag was pushed
 but CI failed, use the fallback below instead of retagging.
 
-**`State: BROKEN-tag-ahead-of-file`.** A tag's core is newer than `MARKETING_VERSION`,
+**`State: BROKEN-tag-ahead-of-file`.** A tag is newer than `MARKETING_VERSION`,
 meaning something was tagged without bumping. The skill stops; decide by hand
 whether the tag or the project version is wrong.
 
-**`HAS APP CHANGES: no`.** Only docs/CI/tooling changed since the last tag
-(the last stable tag for a promotion). Nothing to release.
+**`HAS APP CHANGES: no`.** Only docs/CI/tooling changed since the last tag.
+Nothing to release.
 
-**"MARKETING_VERSION ... is not X.Y.Z".** A prerelease suffix was written into
-the project file. Set it back to the numeric core; the suffix belongs in the tag.
+**"MARKETING_VERSION ... is not X.Y.Z".** The project file holds something
+other than a plain version. Set it to `X.Y.Z`.
 
 **Lint findings.** The release lints (`swift-format lint --strict`, no
 rewrite) only the Swift files changed since the last tag and stops on any
@@ -104,7 +91,7 @@ finding. Fix them in a normal commit, then release again.
 "docs/release-setup.md > Fallback: release from a local machine":
 `scripts/build-release.sh --expect-version <tag version>`, extract the changelog
 section with the same awk, then `gh release create v<tag version>` with the DMG and
-`.sha256` (add `--prerelease` for `-rc` / `-beta`). The existing tag is reused.
+`.sha256`. The existing tag is reused.
 
 **Notarization fails.** Read the step log (`gh run view <id> --log-failed`) and
 the notary log it prints (`xcrun notarytool log <submission-id>`). Common causes:
@@ -128,14 +115,12 @@ output `TEST MODE` when they are on.
 B=.coding-friend/skills/cf-ship-custom/scripts/bump-info.sh
 
 BUMP_INFO_TAG=v0.1.0 BUMP_INFO_VERSION=0.1.0 bash $B                # bump: patch 0.1.1
-BUMP_INFO_TAG=v0.1.0 BUMP_INFO_VERSION=0.1.0 bash $B patch --rc     # file 0.1.1, tag v0.1.1-rc.1
-BUMP_INFO_TAG=v0.1.1-rc.1 BUMP_INFO_VERSION=0.1.1 bash $B           # promote: tag v0.1.1
-BUMP_INFO_TAG=v0.1.1-rc.1 BUMP_INFO_VERSION=0.1.1 bash $B --rc      # next rc: tag v0.1.1-rc.2
-BUMP_INFO_TAG=v0.1.1-rc.1 BUMP_INFO_VERSION=0.1.1 bash $B --beta    # refused (non-zero)
 BUMP_INFO_TAG=v0.1.0 BUMP_INFO_VERSION=0.1.1 bash $B                # already-bumped
 BUMP_INFO_TAG=v0.2.0 BUMP_INFO_VERSION=0.1.0 bash $B                # BROKEN-tag-ahead-of-file
+BUMP_INFO_TAG= bash $B                                              # first release
+BUMP_INFO_TAG=v0.1.1-rc.1 BUMP_INFO_VERSION=0.1.1 bash $B           # suffix tag ignored: first release
 BUMP_INFO_TAG= BUMP_INFO_VERSION=0.1.1-rc.1 bash $B                 # error: file must be X.Y.Z
-BUMP_INFO_TAG= bash $B                                                # first release
+BUMP_INFO_TAG=v0.1.0 BUMP_INFO_VERSION=0.1.0 bash $B --rc           # error: unknown argument
 
 # bump.sh on a copy of the project file
 cp SQLNotebook.xcodeproj/project.pbxproj /tmp/copy.pbxproj

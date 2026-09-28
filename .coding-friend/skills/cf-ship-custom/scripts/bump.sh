@@ -5,8 +5,7 @@
 #   e.g. bash bump.sh 0.2.0
 #
 # The version is always the numeric core X.Y.Z: Apple requires three integers
-# for CFBundleShortVersionString. A prerelease suffix (-rc.N / -beta.N) lives
-# only in the git tag and the CHANGELOG heading, never in the project file.
+# for CFBundleShortVersionString.
 #
 # ONE file carries the version: SQLNotebook.xcodeproj/project.pbxproj. Every
 # build configuration has its own copy of two settings, and all of them move:
@@ -37,12 +36,6 @@ if [[ -z "$NEW_VERSION" ]]; then
   exit 1
 fi
 
-# Numeric core only. A prerelease suffix is a tag-only concern.
-if [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
-  echo "Error: prerelease goes in the tag only; pass the core version (got '$NEW_VERSION', use '${NEW_VERSION%%-*}')"
-  usage
-  exit 1
-fi
 if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Error: version must be X.Y.Z (got '$NEW_VERSION')"
   usage
@@ -150,4 +143,4 @@ if [[ "$FAILED" -ne 0 ]]; then
 fi
 
 echo ""
-echo "Done. Next: update CHANGELOG.md, commit, then tag v$NEW_VERSION (or v$NEW_VERSION-rc.N / -beta.N for a prerelease)."
+echo "Done. Next: update CHANGELOG.md, commit, then tag v$NEW_VERSION."
