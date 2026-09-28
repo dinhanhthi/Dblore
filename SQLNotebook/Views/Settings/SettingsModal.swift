@@ -166,7 +166,7 @@ private struct SettingsNavRow: View {
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .fill(
             isSelected
-              ? Color.accentMuted
+              ? Color.accent.opacity(0.15)
               : (isHovered ? Color.cellBackgroundHover : Color.clear))
       )
       .contentShape(Rectangle())

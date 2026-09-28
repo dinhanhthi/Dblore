@@ -122,12 +122,13 @@ enum SafeModeBiometricError: LocalizedError, Equatable {
 
 /// Accent color preference enum
 enum AccentColor: String, CaseIterable {
-  case purple = "Purple"
   case blue = "Blue"
+  case purple = "Purple"
   case green = "Green"
   case orange = "Orange"
   case pink = "Pink"
   case cyan = "Cyan"
+  case gray = "Gray"
 
   /// Light mode hex color
   var lightHex: String {
@@ -138,6 +139,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "ea580c"
     case .pink: return "db2777"
     case .cyan: return "0891b2"
+    case .gray: return "71717a"
     }
   }
 
@@ -150,6 +152,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "f97316"
     case .pink: return "ec4899"
     case .cyan: return "06b6d4"
+    case .gray: return "71717a"
     }
   }
 
@@ -162,6 +165,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "c2410c"
     case .pink: return "be185d"
     case .cyan: return "0e7490"
+    case .gray: return "52525b"
     }
   }
 
@@ -174,6 +178,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "ea580c"
     case .pink: return "db2777"
     case .cyan: return "0891b2"
+    case .gray: return "52525b"
     }
   }
 
@@ -186,6 +191,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "ea580c"
     case .pink: return "db2777"
     case .cyan: return "0891b2"
+    case .gray: return "18181b"
     }
   }
 
@@ -198,6 +204,7 @@ enum AccentColor: String, CaseIterable {
     case .orange: return "fdba74"
     case .pink: return "f9a8d4"
     case .cyan: return "67e8f9"
+    case .gray: return "fafafa"
     }
   }
 }
@@ -368,8 +375,8 @@ class AppSettings {
   }
 
   /// Accent color preference for the app UI
-  /// Default: purple
-  var accentColor: AccentColor = .purple {
+  /// Default: blue
+  var accentColor: AccentColor = .blue {
     didSet {
       defaults.set(accentColor.rawValue, forKey: Keys.accentColor)
       // Notify views to update colors
@@ -582,7 +589,7 @@ class AppSettings {
     hideRunWithQuerySection = false
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
-    accentColor = .purple
+    accentColor = .blue
     hideColumnTypes = false
     safeMode = .alertRead
     inlineEditAutoCommit = false
