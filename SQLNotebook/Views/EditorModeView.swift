@@ -110,10 +110,13 @@ struct EditorModeView: View {
         )
       }
 
-      // Floating toggle for syntax highlighting
-      SyntaxHighlightToggleButton()
-        .padding(.trailing, Spacing.lg)
-        .padding(.bottom, Spacing.md)
+      // Floating format button and syntax highlighting toggle
+      HStack(spacing: Spacing.xs) {
+        FormatSQLButton(textView: textViewRef)
+        SyntaxHighlightToggleButton()
+      }
+      .padding(.trailing, Spacing.lg)
+      .padding(.bottom, Spacing.md)
     }
     .background(Color.inputBackground)
     .frame(width: containerSize.width, height: editorHeight)
