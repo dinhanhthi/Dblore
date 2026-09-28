@@ -1,133 +1,96 @@
+<div align="center">
+
+<img src="assets/sqlnb.png" alt="SQLNotebook" width="120" />
+
 # SQLNotebook
 
-<p align="center">
-  <img src="assets/sqlnb.png" alt="SQLNotebook Logo" width="100" />
-</p>
+A native macOS app for working with SQL: write and run queries in **notebooks** (like
+Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 
-A native macOS application for interactive SQL development. Write, execute, and save SQL queries in a notebook-style interface, similar to Jupyter Notebook but designed specifically for SQL workflows. It also supports traditional editor mode for writing SQL queries.
+**[Download for macOS](https://github.com/dinhanhthi/SQLNotebook/releases/latest)**
+&nbsp;·&nbsp; macOS 26+ &nbsp;·&nbsp; signed &amp; notarized
 
-![Screenshot](./assets/screenshot.png)
+</div>
 
-## ✨ Features
+![Screenshot](assets/screenshot.png)
 
-### Core Functionality
-- 📓 **Dual Mode System**
-  - **Notebook Mode** (`.sqlnb` files): Cell-based interface with inline results, similar to Jupyter Notebook
-  - **Editor Mode** (`.sql` files): Single SQL editor with result panel below, optimized for traditional SQL development
-  - Seamless switching between modes with dedicated file types
-- 💡 **Autocomplete** - Smart SQL autocomplete with keywords, table names, and column suggestions
-- 📊 **Result Visualization** - Interactive table view with column resizing and JSON data viewer
-- 🗂️ **Database Schema Browser** - Left sidebar showing tables, columns, and row counts
-- 🔌 **Multiple Database Support** - PostgreSQL and SQLite connectivity
-- 💾 **Persistent Notebooks** - Save work as `.sqlnb` (Notebook mode) or `.sql` (Editor mode) files with full query history
-- 🎨 **Syntax Highlighting** - SQL and JSON syntax highlighting with dark/light theme support
-- ⌨️ **Keyboard Shortcuts** - Efficient navigation and execution shortcuts (Jupyter-like in Notebook, traditional in Editor)
-- 📝 **Application Logging** - Built-in log system with export capabilities for debugging
-- ✏️ **Inline Result Editing** - Edit result data directly in table views
+## Features
 
-## 🛠️ Tech Stack
+- **Notebooks and editor tabs**: `.sqlnb` notebooks with inline results per cell, and
+  standalone `.sql` files, in a multi-tab, multi-window workspace
+- **Query execution**: run a cell, the query at the cursor, or all cells; cancel running
+  queries; row count and execution time per result
+- **Editor**: syntax highlighting, line numbers, table- and column-aware autocompletion,
+  word wrap, comment toggle
+- **Results grid**: sort, resize and search columns, paginate, and inspect a cell in a
+  detail view with a JSON viewer
+- **Export**: Excel, CSV, JSON, Markdown, PDF or TSV
+- **Inline editing**: edit values directly in the results grid
+- **Safe Mode**: protection levels, confirmation before destructive statements, and a
+  Commit / Rollback banner for pending transactions, with Touch ID to unlock
+- **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
+  canvas of tables with foreign-key lines
+- **Connections**: saved connections with passwords in the Keychain, SSL, timeouts and a
+  read-only mode
+- **Automatic updates**: checks for new versions and installs them from the app
 
-- 🚀 **Language:** Swift 6+ with strict concurrency checking
-- 🎨 **UI Framework:** SwiftUI with native macOS integration
-- 🗄️ **Database Clients:**
-  - PostgreSQL: [PostgresNIO](https://github.com/vapor/postgres-nio) with SSL/TLS support
-  - SQLite: Native SQLite3 library
+## Install
 
-## Getting Started
+- **Download the app:** get the latest signed &amp; notarized DMG from the
+  [Releases page](https://github.com/dinhanhthi/SQLNotebook/releases/latest), open it and
+  drag SQLNotebook to Applications. From v0.2.0 on, it updates itself
+  (**SQLNotebook > Check for Updates…**).
+- **Or build from source:** see below.
 
-### Requirements
+## Requirements
 
 - macOS 26 or later
-- Xcode 27 or later
-- Swift 6.0 or later
+- Xcode 27 (only to build from source)
+- A PostgreSQL server to connect to
 
-### Installation
+## Build from source
 
-```bash
-# Clone repository
-git clone https://github.com/yourusername/SQLNotebook.git
+```sh
+git clone https://github.com/dinhanhthi/SQLNotebook.git
 cd SQLNotebook
-
-# Open in Xcode
-open SQLNotebook.xcodeproj
-
-# Build and run (Cmd+R)
+open SQLNotebook.xcodeproj      # press Run
 ```
 
-### Build Settings
+Headless build / test:
 
-**Important:** Enable strict concurrency checking to match CI/CD:
-
-1. Select project → Target "SQLNotebook" → Build Settings
-2. Search for "Strict Concurrency Checking"
-3. Set to `Complete`
-
-Or build via command line:
-```bash
-xcodebuild -scheme SQLNotebook build SWIFT_STRICT_CONCURRENCY=complete
+```sh
+xcodebuild build -scheme SQLNotebook -destination 'platform=macOS,arch=arm64'
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook \
+  -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO
 ```
 
-## Development
+`-enableCodeCoverage NO` is required: without it `xcodebuild test` hangs after the tests
+finish.
 
-### Code Formatting
+### Local databases
 
-Format code with `swift-format`:
+[`docker/`](docker/README.md) has ready-made PostgreSQL containers:
 
-```bash
-# Install
-brew install swift-format
+- a development database with sample data, on port `5433`
+  (`postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlnotebook`);
+- a separate database for the integration tests, on port `5435`.
 
-# Format entire project
-swift-format -i -r SQLNotebook/
-
-# Check formatting (lint mode)
-swift-format lint -r SQLNotebook/
-```
-
-### Testing
-
-Run tests with Swift Testing framework:
-
-```bash
-# Run all tests
-xcodebuild test -scheme SQLNotebook
-
-# Skip integration tests (no database required)
-SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook
-```
-
-### Database Setup
-
-For development and testing, use Docker:
-
-```bash
+```sh
 cd docker/postgresql
 cp .env.example .env
 docker compose up -d
 ```
 
-**Connection Details:**
-- Host: `localhost`
-- Port: `5433` (host port, set by `POSTGRES_PORT` in `.env`; the container listens on `5432`)
-- Database: `sqlnotebook`
-- User: `sqlnotebook`
-- Password: `sqlnotebook123`
+## Contributing
 
-Connection string: `postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlnotebook`
-
-The database includes sample tables (customers, products, orders, employees, analytics) with realistic data for testing.
-
-**Database for testing**: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
-
-## Release
-
-Releases are signed with Developer ID, notarized and published by the tag-triggered GitHub workflow `.github/workflows/release.yml`.
-
-- Cut a release with the `/cf-ship` project skill (changelog, semver bump, tag, CI release).
-- One-time setup (secrets, certificate, notarization profile) and the manual fallback: `docs/release-setup.md` (local guide, not tracked in git).
+Contributions are welcome: open an issue to discuss a change, or send a pull request.
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for guidelines.
 
 ## License
 
 Copyright (C) 2025-2026 Anh-Thi Dinh.
 
-SQLNotebook is licensed under [AGPL-3.0-or-later](LICENSE).
+SQLNotebook is open source under the
+[GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+You may use, modify, and distribute it under its terms. See [LICENSE](LICENSE) for the
+full license text.
