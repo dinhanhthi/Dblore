@@ -19,6 +19,11 @@ extension NotebookViewModel {
 
   /// Run query in editor mode (selection if any, otherwise all content)
   func runEditorQuery() async {
+    // Data viewer tab: Run (Cmd+R) reloads the page, there is no editor text
+    if dataViewer != nil {
+      await refreshDataViewer()
+      return
+    }
     let query = getEditorQueryText()
 
     // In Simple Mode, clear results if no executable query on current line

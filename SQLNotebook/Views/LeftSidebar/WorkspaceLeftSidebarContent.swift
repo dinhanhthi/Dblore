@@ -74,6 +74,13 @@ struct WorkspaceLeftSidebarContent: View {
               onToggle: {
                 workspaceManager.toggleTableExpansion(tableId: table.id)
               },
+              onOpen: {
+                workspaceManager.openDataViewer(
+                  schema: table.schema,
+                  name: table.name,
+                  orderColumns: table.columns.filter(\.isPrimaryKey).map(\.name)
+                )
+              },
               onColumnClick: { _ in
                 // No active cell to insert into when no document is open
               }
@@ -94,6 +101,10 @@ struct WorkspaceLeftSidebarContent: View {
               isExpanded: view.isExpanded,
               onToggle: {
                 workspaceManager.toggleViewExpansion(viewId: view.id)
+              },
+              onOpen: {
+                workspaceManager.openDataViewer(
+                  schema: view.schema, name: view.name, orderColumns: [])
               },
               onColumnClick: { _ in
                 // No active cell to insert into when no document is open

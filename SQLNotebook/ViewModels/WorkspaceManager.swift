@@ -385,6 +385,52 @@ class WorkspaceManager: Identifiable {
     return tab.id
   }
 
+  /// Show a table/view in a data viewer tab: select the tab already showing it, else reuse the
+  /// preview tab, else open a new preview tab. The preview tab that opened a pending Protected
+  /// transaction is pinned instead of replaced.
+  func openDataViewer(schema: String, name: String, orderColumns: [String]) {
+    if let id = tabs.first(where: {
+      let state = viewModels[$0.id]?.dataViewer
+      return state?.schema == schema && state?.name == name
+    })?.id {
+      selectTab(id: id)
+      return
+    }
+
+    let state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
+    if let index = tabs.firstIndex(where: \.isPreview) {
+      if tabs[index].id == transactionOriginTabId {
+        tabs[index].isPreview = false
+      } else if let viewModel = viewModels[tabs[index].id] {
+        viewModel.dataViewer = state
+        viewModel.editorResult = nil
+        viewModel.editorStatementResults = []
+        tabs[index].title = state.title
+        selectTab(id: tabs[index].id)
+        Task { await viewModel.loadDataViewerPage() }
+        return
+      }
+    }
+
+    let viewModel = createViewModel(for: SQLNotebook(cells: [], documentType: .script))
+    viewModel.viewMode = .editor
+    viewModel.dataViewer = state
+
+    let tab = TabItem(
+      documentType: .dataViewer, title: state.title, isDirty: false, isPreview: true)
+    tabs.append(tab)
+    viewModels[tab.id] = viewModel
+
+    selectTab(id: tab.id)
+    Task { await viewModel.loadDataViewerPage() }
+  }
+
+  /// Keep a preview tab (it is no longer replaced by the next preview)
+  func pinTab(id: UUID) {
+    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+    tabs[index].isPreview = false
+  }
+
   /// Restore the saved tabs in order. The first tab file the app may not read (no usable
   /// bookmark) asks once for the workspace folder; tabs still unreadable are skipped with a toast.
   /// Returns whether a tab bookmark changed (refreshed or newly created) and needs saving.
@@ -702,7 +748,10 @@ class WorkspaceManager: Identifiable {
   }
 
   func markDirty(tabId: UUID) {
-    guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+    // Data viewer tabs have no document to save
+    guard let index = tabs.firstIndex(where: { $0.id == tabId }),
+      tabs[index].documentType != .dataViewer
+    else { return }
     tabs[index].isDirty = true
   }
 

@@ -284,6 +284,8 @@ struct WorkspaceTabContentView: View {
   private var contentView: some View {
     if viewModel.viewMode == .notebook {
       notebookContent
+    } else if viewModel.dataViewer != nil {
+      dataViewerContent
     } else {
       editorContent
     }
@@ -342,6 +344,34 @@ struct WorkspaceTabContentView: View {
       GeometryReader { geometry in
         ScrollView {
           EditorModeView(viewModel: viewModel)
+            .frame(height: geometry.size.height)
+        }
+        .scrollDisabled(true)
+        .scrollContentBackground(.hidden)
+      }
+    }
+    .modifier(
+      WorkspaceEditorNotificationHandler(
+        tabId: tabId,
+        workspaceManager: workspaceManager,
+        viewModel: viewModel,
+        syncDocument: syncEditorDocument
+      )
+    )
+    .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncEditorDocument)
+    .searchNotifications(viewModel: viewModel)
+  }
+
+  // MARK: - Data Viewer Content
+
+  /// Same wrapper as editorContent (sidebars, no layout flash during sidebar animation); Run
+  /// reaches runEditorQuery, which refreshes the page. No editor document, so sync is a no-op.
+  @ViewBuilder
+  private var dataViewerContent: some View {
+    DocumentLayoutView(viewModel: viewModel) {
+      GeometryReader { geometry in
+        ScrollView {
+          DataViewerView(viewModel: viewModel)
             .frame(height: geometry.size.height)
         }
         .scrollDisabled(true)

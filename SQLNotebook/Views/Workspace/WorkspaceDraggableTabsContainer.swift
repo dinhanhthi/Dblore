@@ -52,6 +52,7 @@ struct WorkspaceDraggableTabsContainer: View {
           isDragging: isDragging,
           capsuleNamespace: tabCapsuleNamespace,
           onSelect: { workspaceManager.selectTab(id: tab.id) },
+          onPin: { workspaceManager.pinTab(id: tab.id) },
           onClose: { workspaceManager.requestCloseTab(id: tab.id) }
         )
         .id(tab.id)
@@ -243,6 +244,7 @@ struct WorkspaceDraggableTabItem: View {
   let isDragging: Bool
   let capsuleNamespace: Namespace.ID
   let onSelect: () -> Void
+  let onPin: () -> Void
   let onClose: () -> Void
 
   @State private var isHovering = false
@@ -257,6 +259,7 @@ struct WorkspaceDraggableTabItem: View {
       // Title
       Text(tab.title)
         .font(.system(size: 12))
+        .italic(tab.isPreview)
         .lineLimit(1)
         .foregroundColor(isActive ? .foreground : .foregroundMuted)
 
@@ -289,7 +292,11 @@ struct WorkspaceDraggableTabItem: View {
     .opacity(isDragging ? 0.9 : 1.0)
     .scaleEffect(isDragging ? 1.02 : 1.0)
     .shadow(color: isDragging ? Color.black.opacity(0.2) : Color.clear, radius: 4, y: 2)
-    .onTapGesture { onSelect() }
+    .onTapGesture {
+      onSelect()
+      // Double-click pins a preview tab; reading clickCount keeps single-click switching instant
+      if NSApp.currentEvent?.clickCount == 2 { onPin() }
+    }
     .onMiddleClick { onClose() }
     .blockDoubleClickZoom()
     .onHover { isHovering = $0 }

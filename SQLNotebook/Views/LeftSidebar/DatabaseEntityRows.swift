@@ -13,6 +13,7 @@ struct TableRowView: View {
   let table: DatabaseTable
   let isExpanded: Bool
   let onToggle: () -> Void
+  let onOpen: () -> Void
   let onColumnClick: (String) -> Void
 
   @State private var isHoveringTable = false
@@ -27,6 +28,13 @@ struct TableRowView: View {
           .foregroundColor(.foregroundMuted)
           .frame(width: 12, height: 12)
           .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          // Larger hit area; negative padding keeps the 12pt layout footprint
+          .frame(width: 20, height: 20)
+          .contentShape(Rectangle())
+          .padding(-Spacing.xs)
+          .onTapGesture {
+            onToggle()
+          }
 
         // Table icon
         Image(systemName: "tablecells")
@@ -63,7 +71,7 @@ struct TableRowView: View {
       }
       .contentShape(Rectangle())
       .onTapGesture {
-        onToggle()
+        onOpen()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)
@@ -112,6 +120,7 @@ struct ViewRowView: View {
   let view: DatabaseView
   let isExpanded: Bool
   let onToggle: () -> Void
+  let onOpen: () -> Void
   let onColumnClick: (String) -> Void
 
   @State private var isHovering = false
@@ -126,6 +135,13 @@ struct ViewRowView: View {
           .foregroundColor(.foregroundMuted)
           .frame(width: 12, height: 12)
           .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          // Larger hit area; negative padding keeps the 12pt layout footprint
+          .frame(width: 20, height: 20)
+          .contentShape(Rectangle())
+          .padding(-Spacing.xs)
+          .onTapGesture {
+            onToggle()
+          }
 
         // View icon
         Image(systemName: "eye")
@@ -149,7 +165,7 @@ struct ViewRowView: View {
       }
       .contentShape(Rectangle())
       .onTapGesture {
-        onToggle()
+        onOpen()
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.xs)

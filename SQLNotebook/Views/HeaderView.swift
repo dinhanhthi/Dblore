@@ -119,6 +119,44 @@ struct HeaderView: View {
           .glassButtonStyle()
           .linkPointer()
           .help("Show/Hide Results")
+        } else if viewModel.dataViewer != nil {
+          // Data viewer: Refresh reloads the page and the row count; Stop works like Run's
+          Button(action: {
+            if viewModel.isEditorQueryRunning {
+              viewModel.cancelEditorQuery()
+            } else {
+              Task { @MainActor [viewModel] in
+                await viewModel.refreshDataViewer()
+              }
+            }
+          }) {
+            Label {
+              Text("Refresh")
+            } icon: {
+              if viewModel.isEditorQueryRunning {
+                RunSpinner()
+              } else {
+                Image(systemName: "arrow.clockwise")
+              }
+            }
+          }
+          .glassButtonStyle(prominent: true)
+          .linkPointer()
+          .tint(Color.accent)
+          .disabled(
+            viewModel.isEditorQueryRunning
+              ? !canStopEditorQuery : !viewModel.connectionState.isConnected
+          )
+          .help(
+            viewModel.isEditorQueryRunning
+              ? "Stop the running query (the connection is reset)" : "Reload this page (⌘R)"
+          )
+          .task(id: viewModel.isEditorQueryRunning) {
+            canStopEditorQuery = false
+            guard viewModel.isEditorQueryRunning else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { canStopEditorQuery = true }
+          }
         } else if viewModel.viewMode == .editor {
           // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
           // disabled for the first second, then a click stops the query (after confirmation)

@@ -26,6 +26,8 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
   detail view with a JSON viewer
 - **Export**: Excel, CSV, JSON, Markdown, PDF or TSV
 - **Inline editing**: edit values directly in the results grid
+- **Table data viewer**: click a table/view in the sidebar to browse its data in a preview
+  tab (pagination, column toggles, inline edit)
 - **Safe Mode**: protection levels, confirmation before destructive statements, and a
   Commit / Rollback banner for pending transactions, with Touch ID to unlock
 - **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
