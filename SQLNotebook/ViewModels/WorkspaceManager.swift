@@ -568,6 +568,8 @@ class WorkspaceManager: Identifiable {
 
     // Share workspace's connection manager so ViewModels can execute queries
     viewModel.connectionManager = connectionManager
+    // Share workspace's autocomplete provider so editors get table/column suggestions
+    viewModel.autocompleteProvider = autocompleteProvider
     // Protection level / Safe Mode come from the workspace connection config
     shareConnectionConfig(with: viewModel)
     attachTransactionHook(to: viewModel)

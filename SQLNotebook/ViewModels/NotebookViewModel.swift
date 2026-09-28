@@ -86,8 +86,8 @@ class NotebookViewModel {
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false
 
-  // Autocomplete provider
-  let autocompleteProvider = SQLAutocompleteProvider()
+  // Autocomplete provider (replaced by the workspace's shared, schema-loaded provider)
+  var autocompleteProvider = SQLAutocompleteProvider()
 
   // Execution queue for managing cell executions
   private(set) var executionQueue: ExecutionQueue!
