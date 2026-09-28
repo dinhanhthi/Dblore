@@ -3,7 +3,8 @@
 
 import Foundation
 
-/// Reformats SQL with one clause per line and indented clause contents.
+/// Reformats SQL with one clause per line and its contents on the same line. Only the
+/// SELECT list breaks at commas; joins start a line with their ON condition below.
 /// Built on the shared lexeme scanner, so string literals, quoted identifiers, dollar quotes
 /// and comments are re-emitted verbatim. Only whitespace changes, plus keywords uppercased
 /// (unquoted words are case-insensitive in PostgreSQL). Adjacent tokens stay adjacent, so
@@ -79,6 +80,8 @@ nonisolated enum SQLFormatter {
     let keyword: String?
     /// Whitespace or a comment preceded this item in the input
     let spaced: Bool
+    /// A line break separates this item from the previous one in the input
+    let startsLine: Bool
     /// A string constant continuing the previous one (a newline separates them, so
     /// PostgreSQL concatenates them)
     let continuesString: Bool
@@ -91,6 +94,7 @@ nonisolated enum SQLFormatter {
     var items: [Item] = []
     var spaced = false
     var hadNewline = false
+    var startsLine = false
     var i = 0
     while i < scalars.count {
       let lexeme = SQLTokenizer.lexeme(in: scalars, at: i)
@@ -100,7 +104,9 @@ nonisolated enum SQLFormatter {
       switch lexeme.kind {
       case .whitespace:
         spaced = true
-        hadNewline = hadNewline || raw.unicodeScalars.contains { $0 == "\n" || $0 == "\r" }
+        let isNewline = raw.unicodeScalars.contains { $0 == "\n" || $0 == "\r" }
+        hadNewline = hadNewline || isNewline
+        startsLine = startsLine || isNewline
         continue
       case .comment:
         // Compare scalars: `hasPrefix` would miss `--` followed by a combining mark
@@ -124,8 +130,9 @@ nonisolated enum SQLFormatter {
       let continuesString = kind == .literal && previous?.kind == .literal && hadNewline
       items.append(
         Item(
-          kind: kind, text: text, keyword: upper, spaced: spaced,
+          kind: kind, text: text, keyword: upper, spaced: spaced, startsLine: startsLine,
           continuesString: continuesString))
+      startsLine = false
       spaced = kind == .lineComment || kind == .blockComment
       if !spaced { hadNewline = false }
     }
@@ -138,10 +145,14 @@ nonisolated enum SQLFormatter {
     /// A parenthesis level: the top level or a subquery is a query; anything else is inline.
     struct Frame {
       let isQuery: Bool
-      /// Indent of this query's clause keywords
+      /// Indent (in spaces) of this query's clause keywords
       let base: Int
       /// Indent of the line holding the opening parenthesis
       let openIndent: Int
+      /// Indent of the lines after a comma, set in a SELECT list
+      var commaIndent: Int?
+      /// A JOIN is waiting for its ON condition
+      var isInJoin = false
     }
 
     enum Break: Equatable {
@@ -156,13 +167,15 @@ nonisolated enum SQLFormatter {
     var pendingBreak: Break?
     var lastText = ""
     var isStatementStart = true
-    var isInBetween = false
 
     init(items: [Item]) {
       self.items = items
     }
 
-    var frame: Frame { frames[frames.count - 1] }
+    var frame: Frame {
+      get { frames[frames.count - 1] }
+      set { frames[frames.count - 1] = newValue }
+    }
 
     mutating func run() {
       var index = 0
@@ -175,12 +188,8 @@ nonisolated enum SQLFormatter {
     mutating func handle(at index: Int) -> Int {
       let item = items[index]
       switch item.kind {
-      case .lineComment:
-        emit(item.text, spaced: true)
-        requestBreak(.line(indent: lineIndent))
-        return index + 1
-      case .blockComment:
-        emit(item.text, spaced: true)
+      case .lineComment, .blockComment:
+        handleComment(item)
         return index + 1
       case .symbol:
         handleSymbol(item, at: index)
@@ -198,24 +207,40 @@ nonisolated enum SQLFormatter {
       }
     }
 
+    /// A comment on its own line in the input keeps its own line; a trailing comment stays
+    /// on the line it follows, ahead of any pending break.
+    mutating func handleComment(_ item: Item) {
+      if item.startsLine {
+        requestBreak(pendingBreak ?? .line(indent: lineIndent))
+        emit(item.text, spaced: true)
+        if item.kind == .lineComment { requestBreak(.line(indent: lineIndent)) }
+      } else {
+        let pending = pendingBreak
+        pendingBreak = nil
+        emit(item.text, spaced: true)
+        pendingBreak = pending
+        if item.kind == .lineComment { requestBreak(pending ?? .line(indent: lineIndent)) }
+      }
+    }
+
     mutating func handleSymbol(_ item: Item, at index: Int) {
       switch item.text {
       case ",":
         emit(",", spaced: false)
-        if frame.isQuery { requestBreak(.line(indent: frame.base + 1)) }
+        if frame.isQuery, let indent = frame.commaIndent { requestBreak(.line(indent: indent)) }
       case ";":
         emit(";", spaced: false)
         frames.removeSubrange(1...)
-        isInBetween = false
+        frame = Frame(isQuery: true, base: 0, openIndent: 0)
         requestBreak(.blank)
       case "(":
         emit("(", spaced: item.spaced)
         let opensQuery = ["SELECT", "WITH"].contains(nextKeyword(after: index))
         frames.append(
           Frame(
-            isQuery: opensQuery, base: opensQuery ? lineIndent + 1 : frame.base,
+            isQuery: opensQuery, base: opensQuery ? lineIndent + 2 : frame.base,
             openIndent: lineIndent))
-        if opensQuery { requestBreak(.line(indent: lineIndent + 1)) }
+        if opensQuery { requestBreak(.line(indent: lineIndent + 2)) }
       case ")":
         if frames.count > 1 {
           let closed = frames.removeLast()
@@ -244,23 +269,23 @@ nonisolated enum SQLFormatter {
         }
         requestBreak(.line(indent: frame.base))
         emit(header, spaced: true)
-        requestBreak(.line(indent: frame.base + 1))
-        isInBetween = false
+        frame.commaIndent = keyword == "SELECT" ? frame.base + header.count + 1 : nil
+        frame.isInJoin = false
         return next
       }
       switch keyword {
-      case "AND" where isInBetween:
-        isInBetween = false
-      case "AND", "OR":
-        requestBreak(.line(indent: frame.base + 1))
-      case "BETWEEN":
-        isInBetween = true
       case "JOIN" where !SQLFormatter.joinModifiers.contains(previousKeyword(before: index)):
-        requestBreak(.line(indent: frame.base + 1))
+        requestBreak(.line(indent: frame.base))
+        frame.isInJoin = true
+      case "JOIN":
+        frame.isInJoin = true
+      case "ON" where frame.isInJoin:
+        requestBreak(.line(indent: frame.base + 2))
+        frame.isInJoin = false
       case _ where SQLFormatter.joinModifiers.contains(keyword):
         let startsJoin = ["JOIN", "OUTER"].contains(nextKeyword(after: index))
         if startsJoin && !SQLFormatter.joinModifiers.contains(previousKeyword(before: index)) {
-          requestBreak(.line(indent: frame.base + 1))
+          requestBreak(.line(indent: frame.base))
         }
       default:
         break
@@ -289,7 +314,7 @@ nonisolated enum SQLFormatter {
         pendingBreak = nil
         if case .line(let indent) = pending { lineIndent = indent } else { lineIndent = 0 }
         if !output.isEmpty { output += pending == .blank ? "\n\n" : "\n" }
-        output += String(repeating: "  ", count: lineIndent)
+        output += String(repeating: " ", count: lineIndent)
       } else if !output.isEmpty, lastText == "," || (spaced && lastText != "(") {
         output += " "
       }
