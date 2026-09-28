@@ -598,7 +598,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: ComponentSize.trafficLightAndToggleWidth
-              + workspaceManager.connectionState.connectionButtonsWidth)
+              + workspaceManager.connectionState.connectionButtonsWidth + 10)
       } else {
         Color.clear.frame(width: 10)
       }
