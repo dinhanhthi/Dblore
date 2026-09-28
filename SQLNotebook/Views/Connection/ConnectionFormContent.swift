@@ -246,7 +246,7 @@ struct ConnectionFormContent: View {
 
   private var isFormValid: Bool {
     if inputMode == .connectionString {
-      return !connectionString.isEmpty
+      return !connectionString.isEmpty && parseError == nil
     }
     return !connectionConfig.host.isEmpty
       && !connectionConfig.database.isEmpty
@@ -314,6 +314,9 @@ struct ConnectionFormContent: View {
   // MARK: - Actions
 
   private func testConnection() {
+    // Use the active tab: an unparsable connection string would leave stale form values
+    guard inputMode == .form || parseError == nil else { return }
+
     // Validate connection name is not empty
     guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
@@ -328,10 +331,11 @@ struct ConnectionFormContent: View {
 
     isTesting = true
     testResult = nil
+    let config = connectionConfig
 
     Task { @MainActor in
       do {
-        let success = try await onTest(connectionConfig)
+        let success = try await onTest(config)
         isTesting = false
         testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
@@ -342,6 +346,9 @@ struct ConnectionFormContent: View {
   }
 
   private func connect() {
+    // Use the active tab: an unparsable connection string would leave stale form values
+    guard inputMode == .form || parseError == nil else { return }
+
     // Validate connection name is not empty
     guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
     else {
@@ -355,10 +362,11 @@ struct ConnectionFormContent: View {
     }
 
     isConnecting = true
+    let config = connectionConfig
 
     Task { @MainActor in
       do {
-        try await onConnectCallback(connectionConfig)
+        try await onConnectCallback(config)
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {

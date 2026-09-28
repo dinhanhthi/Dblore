@@ -27,7 +27,8 @@ extension ConnectionFormContent {
 
   func parseConnectionString(_ connectionStr: String) {
     // Support both postgresql:// and postgres:// schemes
-    let normalizedStr = connectionStr.replacingOccurrences(of: "postgres://", with: "postgresql://")
+    let normalizedStr = connectionStr.trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "postgres://", with: "postgresql://")
 
     guard let url = URL(string: normalizedStr),
       let scheme = url.scheme,
@@ -44,8 +45,8 @@ extension ConnectionFormContent {
 
     let port = url.port ?? 5432
     let database = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let username = url.user ?? ""
-    let password = url.password ?? ""
+    let username = url.user(percentEncoded: false) ?? ""
+    let password = url.password(percentEncoded: false) ?? ""
 
     // Parse SSL mode from query parameters
     var sslMode: SSLMode = .prefer
