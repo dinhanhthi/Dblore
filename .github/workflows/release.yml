@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release:
@@ -103,8 +104,79 @@ jobs:
             --title "SQLNotebook $version" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
 
+      # Use the tools from the Sparkle SPM artifact the build already resolved (checksum-verified
+      # by SPM, same version as the app) rather than an unverified download: this binary gets the
+      # private signing key.
+      - name: Locate Sparkle tools
+        run: |
+          ga=$(find ~/Library/Developer/Xcode/DerivedData -path '*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast' -type f 2>/dev/null | head -1)
+          if [[ -z "$ga" ]]; then
+            echo "::error::generate_appcast not found in the Sparkle SPM artifact"
+            exit 1
+          fi
+          echo "GENERATE_APPCAST=$ga" >> "$GITHUB_ENV"
+
+      - name: Generate appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::error::SPARKLE_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          archives="$RUNNER_TEMP/appcast"
+          mkdir -p "$archives"
+          # Start from the feed on main so previous items are kept.
+          git fetch --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+          git show FETCH_HEAD:appcast.xml > "$archives/appcast.xml"
+          # DMG only, no release-notes .md: keeps the in-app update dialog compact.
+          cp "dist/SQLNotebook-$version.dmg" "$archives/"
+          # Key via stdin: the default keychain path blocks on a prompt on a headless runner.
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" "$archives" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/$GITHUB_REF_NAME/" \
+            --full-release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases"
+          if ! grep -q "<sparkle:shortVersionString>$version</sparkle:shortVersionString>" "$archives/appcast.xml"; then
+            echo "::error::appcast.xml has no item for $version"
+            exit 1
+          fi
+          if ! grep -q 'sparkle:edSignature=' "$archives/appcast.xml"; then
+            echo "::error::appcast.xml has no EdDSA signature"
+            exit 1
+          fi
+
+      - name: Commit appcast to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # The run is checked out at the tag and main may have moved: work on a fresh main.
+          git fetch --no-tags "$repo_url" main
+          git checkout --force --detach FETCH_HEAD
+          cp "$RUNNER_TEMP/appcast/appcast.xml" appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- appcast.xml; then
+            echo "appcast unchanged"
+          else
+            git add appcast.xml
+            git commit -m "chore(release): appcast v$version"
+            git push "$repo_url" HEAD:main
+          fi
+
+      - name: Deploy appcast to Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Pushes made with GITHUB_TOKEN do not trigger other workflows, but workflow_dispatch does.
+        run: gh workflow run deploy-appcast.yml --ref main -R "$GITHUB_REPOSITORY"
+
       - name: Clean up signing material
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/notary_key.p8" "$RUNNER_TEMP/developer_id.p12"
+          rm -rf "$RUNNER_TEMP/appcast"

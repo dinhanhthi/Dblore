@@ -1,0 +1,45 @@
+name: Deploy appcast
+
+# Publishes ONLY appcast.xml to GitHub Pages (https://dinhanhthi.github.io/SQLNotebook/appcast.xml).
+# Nothing else in the repo is published: the job copies just that one file into the Pages artifact.
+# Requires Settings > Pages > Source = "GitHub Actions".
+# release.yml dispatches this workflow after committing appcast.xml, because pushes made with
+# GITHUB_TOKEN don't trigger `push` workflows.
+
+on:
+  push:
+    branches: [main]
+    paths: ['appcast.xml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Stage ONLY appcast.xml
+        run: |
+          mkdir -p _site
+          cp appcast.xml _site/appcast.xml
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

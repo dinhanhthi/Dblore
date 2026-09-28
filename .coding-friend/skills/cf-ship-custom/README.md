@@ -16,7 +16,7 @@ writes `CHANGELOG.md`, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
 runs build + tests + a lint of the changed Swift files, commits
 `chore(release): bump to <tag version>` on the current branch, pushes, tags
 `v<tag version>`, pushes the tag, then waits for CI and verifies the published
-DMG.
+DMG and the Sparkle appcast.
 
 SQLNotebook ships stable releases only: the tag is always `v` +
 `MARKETING_VERSION` (`X.Y.Z`), and the DMG is `SQLNotebook-<version>.dmg`.
@@ -50,14 +50,31 @@ Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` ru
    notarize, staple, Gatekeeper check.
 5. Publishes `SQLNotebook-<tag version>.dmg` and `.dmg.sha256`
    on GitHub Releases as a normal (latest) release.
-6. Deletes the keychain and key files.
+6. Locates `generate_appcast` in the Sparkle SPM artifact the build resolved
+   (checksum-verified by SPM, same version as the app).
+7. Runs `generate_appcast` on the DMG plus the current `appcast.xml` from
+   `main`, signing with the `SPARKLE_PRIVATE_KEY` secret (passed on stdin).
+   The feed keeps the latest 3 versions (the `generate_appcast` default).
+8. Commits the new `appcast.xml` to `main` as `github-actions[bot]`
+   (`chore(release): appcast v<tag version>`; never counts toward a bump).
+9. Dispatches `deploy-appcast.yml`, which publishes only `appcast.xml` to
+   <https://dinhanhthi.github.io/SQLNotebook/appcast.xml> (GitHub Pages).
+10. Deletes the keychain, key files and the appcast work folder.
 
 ## Prerequisites
 
-- The six repository secrets listed in `docs/release-setup.md`
+- The seven repository secrets listed in `docs/release-setup.md`
   (`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `KEYCHAIN_PASSWORD`,
-  `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`). Check with
-  `gh secret list`.
+  `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`,
+  `SPARKLE_PRIVATE_KEY`). Check the names with `gh secret list`.
+- A **public** repo: Sparkle and users cannot download release assets from a
+  private one. The skill stops unless
+  `gh api repos/dinhanhthi/SQLNotebook --jq .visibility` prints `public`.
+- GitHub Pages with Source = **GitHub Actions**
+  (`gh api repos/dinhanhthi/SQLNotebook/pages --jq .build_type` prints
+  `workflow`). The skill stops otherwise.
+- For the local fallback appcast: the Sparkle EdDSA key in your login keychain
+  under the account `sqlnotebook`.
 - For the local fallback only: the Developer ID certificate in your login
   keychain and the `SQLNotebookNotary` notary profile
   (`xcrun notarytool store-credentials ...`, see `docs/release-setup.md`).
@@ -98,6 +115,18 @@ the notary log it prints (`xcrun notarytool log <submission-id>`). Common causes
 a nested binary without hardened runtime or secure timestamp, or wrong
 `NOTARY_*` secrets. Fix, then rebuild with the fallback; do not retag.
 
+**Appcast not updated** (the feed lacks the new version). Check the
+`deploy-appcast.yml` run (`gh run list --workflow=deploy-appcast.yml --limit 3`,
+then `gh run view <id> --log-failed`) and that the Pages source is GitHub
+Actions. If `release.yml` failed before "Commit appcast to main" (for example
+`SPARKLE_PRIVATE_KEY` not set), the release exists but the feed does not: use
+the fallback appcast steps in `SKILL.md` Rules; do not retag.
+
+**Update not offered in the app.** Sparkle compares `sparkle:version`
+(`CURRENT_PROJECT_VERSION`), not the marketing version. If the build number did
+not increase over the last published one, installed apps see no update. Bump
+again with a higher build number; never edit a published appcast item by hand.
+
 **Gatekeeper warns on the downloaded DMG.** Check it yourself:
 
 ```bash
@@ -135,5 +164,7 @@ BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts
 | `scripts/bump-info.sh`          | Reads tags and commits, names the state, computes next file version + tag. Writes nothing. |
 | `scripts/bump.sh`               | Writes the version and build number into the Xcode project and verifies them.        |
 | `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Used by CI and locally.            |
-| `.github/workflows/release.yml` | Tag-triggered release: build, notarize, publish on GitHub Releases.                  |
+| `.github/workflows/release.yml` | Tag-triggered release: build, notarize, publish on GitHub Releases, update appcast.  |
+| `.github/workflows/deploy-appcast.yml` | Publishes only `appcast.xml` to GitHub Pages.                                 |
+| `appcast.xml`                   | (repo root) Sparkle feed. Owned by CI; never edit by hand.                           |
 | `docs/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |

@@ -87,7 +87,7 @@ fi
 # mapping legend, not a filter. `:(icase)` also matches commits made while git
 # tracked the project folder under a different letter case.
 APP_PATHS=(SQLNotebook/ SQLNotebookTests/ ':(icase)SQLNotebook.xcodeproj/' scripts/ assets/)
-EXCLUDED_PATHS="website/ web/ landing/ docs/ .coding-friend/ .github/ examples/ *.md (root)"
+EXCLUDED_PATHS="website/ web/ landing/ docs/ .coding-friend/ .github/ examples/ *.md (root) appcast.xml (root)"
 # Conventional-commit scopes that never count toward a bump, however many app
 # files the commit touched.
 EXCLUDED_SCOPE_RE='^[0-9a-f]+ [a-z]+\((website|landing|docs)\)!?:'
