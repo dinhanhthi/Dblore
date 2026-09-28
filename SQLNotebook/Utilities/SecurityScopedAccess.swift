@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import Synchronization
+import os
 
 /// App-scope security-scoped bookmarks for files the user picked, so the sandboxed app can
 /// reach them again after a relaunch.
@@ -68,7 +68,7 @@ nonisolated final class SecurityScopedAccessToken: Sendable {
   let url: URL
   let isGranted: Bool
   private let stop: @Sendable (URL) -> Void
-  private let isReleased = Mutex(false)
+  private let isReleased = OSAllocatedUnfairLock(initialState: false)
 
   init(
     url: URL,

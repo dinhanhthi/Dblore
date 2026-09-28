@@ -226,15 +226,15 @@ private struct GlassPreview: View {
         Button {
         } label: {
           Image(systemName: "play.fill")
-        }.buttonStyle(.glassProminent)
+        }.glassButtonStyle(prominent: true)
         Button {
         } label: {
           Image(systemName: "stop.fill")
-        }.buttonStyle(.glass)
+        }.glassButtonStyle()
         Button {
         } label: {
           Image(systemName: "gear")
-        }.buttonStyle(.glass)
+        }.glassButtonStyle()
       }
     }
     .padding(Spacing.lg)

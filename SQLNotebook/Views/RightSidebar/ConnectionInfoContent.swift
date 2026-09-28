@@ -43,7 +43,7 @@ struct ConnectionInfoContent: View {
                   .foregroundColor(.accent)
               }
               .buttonStyle(.plain)
-              .pointerStyle(.link)
+              .linkPointer()
             }
             .padding(Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)

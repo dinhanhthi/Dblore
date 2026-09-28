@@ -35,8 +35,8 @@ struct ConnectionLostBanner: View {
       Button("Dismiss") {
         workspaceManager.dismissConnectionLost()
       }
-      .buttonStyle(.glass)
-      .pointerStyle(.link)
+      .glassButtonStyle()
+      .linkPointer()
       .controlSize(.small)
 
       Button("Reconnect") {
@@ -46,8 +46,8 @@ struct ConnectionLostBanner: View {
           isReconnecting = false
         }
       }
-      .buttonStyle(.glassProminent)
-      .pointerStyle(.link)
+      .glassButtonStyle(prominent: true)
+      .linkPointer()
       .controlSize(.small)
       .disabled(isReconnecting || workspaceManager.connectionState.isConnecting)
     }

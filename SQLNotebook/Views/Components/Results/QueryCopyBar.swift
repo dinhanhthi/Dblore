@@ -166,7 +166,7 @@ struct QueryCopyBar: View {
       )
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .help("View full query in sidebar")
     .fixedSize()
   }
@@ -277,7 +277,7 @@ struct QueryCopyBar: View {
       )
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .help("Download or copy result data")
     .fixedSize()
   }

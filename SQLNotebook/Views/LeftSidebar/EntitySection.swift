@@ -62,7 +62,7 @@ struct EntitySection<Content: View>: View {
         .padding(.vertical, Spacing.xs)
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
 
       // Section content (lazy: only visible rows are built when the sidebar is shown)
       if sectionExpanded {

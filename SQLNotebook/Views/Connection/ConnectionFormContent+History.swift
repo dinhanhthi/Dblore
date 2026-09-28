@@ -55,7 +55,7 @@ extension ConnectionFormContent {
                   .foregroundColor(.destructive)
               }
               .buttonStyle(.plain)
-              .pointerStyle(.link)
+              .linkPointer()
             }
           }
         }
@@ -77,7 +77,7 @@ extension ConnectionFormContent {
         .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
     }
     .confirmationDialog(
       "Delete Connection?",

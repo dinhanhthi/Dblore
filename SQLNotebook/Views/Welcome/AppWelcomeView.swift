@@ -349,7 +349,7 @@ struct RecentWorkspaceRow: View {
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .onHover { hovering in
       isHovering = hovering
     }
@@ -470,7 +470,7 @@ struct RecentConnectionRow: View {
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .onHover { hovering in
       isHovering = hovering
     }
@@ -548,7 +548,7 @@ struct ActionCard: View {
           .frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent)
-      .pointerStyle(.link)
+      .linkPointer()
       .tint(accentColor)
       .controlSize(.regular)
     }

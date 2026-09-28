@@ -6,8 +6,8 @@
 // still throw. Temp files only; recents use an injected suite, never the user's defaults.
 
 import Foundation
-import Synchronization
 import Testing
+import os
 
 @testable import SQLNotebook
 
@@ -62,8 +62,8 @@ struct SecurityScopedRestoreTests {
 
   /// Counts start/stop calls of the tokens it creates
   private final class AccessCounter: Sendable {
-    let starts = Mutex<[String]>([])
-    let stops = Mutex<[String]>([])
+    let starts = OSAllocatedUnfairLock<[String]>(initialState: [])
+    let stops = OSAllocatedUnfairLock<[String]>(initialState: [])
 
     func token(_ url: URL) -> SecurityScopedAccessToken {
       SecurityScopedAccessToken(
@@ -247,7 +247,7 @@ struct SecurityScopedRestoreTests {
     let fixture = try Fixture(tabCount: 3)
     defer { fixture.remove() }
     fixture.setPermissions(0o000, fixture.tabURLs)
-    let asked = Mutex(0)
+    let asked = OSAllocatedUnfairLock(initialState: 0)
     let counter = AccessCounter()
     let hooks = Self.hooks(
       counter: counter,
@@ -278,7 +278,7 @@ struct SecurityScopedRestoreTests {
     let fixture = try Fixture(tabCount: 2, tabBookmarks: [Data([99]), Data([98])])
     defer { fixture.remove() }
     fixture.setPermissions(0o000, fixture.tabURLs)
-    let asked = Mutex(0)
+    let asked = OSAllocatedUnfairLock(initialState: 0)
     let hooks = Self.hooks(
       counter: AccessCounter(),
       chooseFolder: { workspaceURL in
@@ -299,7 +299,7 @@ struct SecurityScopedRestoreTests {
     let fixture = try Fixture(tabCount: 2)
     defer { fixture.remove() }
     fixture.setPermissions(0o000, fixture.tabURLs)
-    let asked = Mutex(0)
+    let asked = OSAllocatedUnfairLock(initialState: 0)
     let hooks = Self.hooks(
       counter: AccessCounter(),
       chooseFolder: { _ in
@@ -319,7 +319,7 @@ struct SecurityScopedRestoreTests {
     fixture.setPermissions(0o000, fixture.tabURLs)
     let (recents, suite, name) = try Self.recents()
     defer { suite.removePersistentDomain(forName: name) }
-    let asked = Mutex(0)
+    let asked = OSAllocatedUnfairLock(initialState: 0)
     let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
     manager.recents = recents
     manager.accessHooks = Self.hooks(
@@ -344,7 +344,7 @@ struct SecurityScopedRestoreTests {
     try Data("not a notebook".utf8).write(to: corrupt)
     let (recents, suite, name) = try Self.recents()
     defer { suite.removePersistentDomain(forName: name) }
-    let asked = Mutex(0)
+    let asked = OSAllocatedUnfairLock(initialState: 0)
     let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
     manager.recents = recents
     manager.accessHooks = Self.hooks(

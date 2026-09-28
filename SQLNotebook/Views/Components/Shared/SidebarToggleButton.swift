@@ -23,7 +23,7 @@ struct SidebarToggleButton: View {
         .frame(width: 16, height: 16)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .padding(.trailing, Spacing.sm)
     .blockDoubleClickZoom()
     .help(isSidebarVisible ? "Hide sidebar" : "Show sidebar")

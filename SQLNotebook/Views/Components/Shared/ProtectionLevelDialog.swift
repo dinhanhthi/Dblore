@@ -150,7 +150,7 @@ struct SafeModeUnlockSheet: View {
           .font(.small)
           .foregroundColor(.accent)
           .buttonStyle(.plain)
-          .pointerStyle(.link)
+          .linkPointer()
         }
       }
 
@@ -206,7 +206,7 @@ struct SafeModeUnlockSheet: View {
       .font(.small)
       .foregroundColor(.accent)
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
     }
   }
 

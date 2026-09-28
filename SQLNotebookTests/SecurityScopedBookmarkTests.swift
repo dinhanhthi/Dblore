@@ -4,8 +4,8 @@
 // the saved workspace carries the tab bookmarks.
 
 import Foundation
-import Synchronization
 import Testing
+import os
 
 @testable import SQLNotebook
 
@@ -99,8 +99,8 @@ struct SecurityScopedBookmarkTests {
 
   @Test("A granted access token stops exactly once (release, then deinit)")
   func grantedTokenStopsOnce() {
-    let starts = Mutex(0)
-    let stops = Mutex(0)
+    let starts = OSAllocatedUnfairLock(initialState: 0)
+    let stops = OSAllocatedUnfairLock(initialState: 0)
     var token: SecurityScopedAccessToken? = SecurityScopedAccessToken(
       url: URL(fileURLWithPath: "/tmp/a.sql"),
       start: { _ in
@@ -118,7 +118,7 @@ struct SecurityScopedBookmarkTests {
 
   @Test("A granted token stops on deinit when never released")
   func grantedTokenStopsOnDeinit() {
-    let stops = Mutex(0)
+    let stops = OSAllocatedUnfairLock(initialState: 0)
     var token: SecurityScopedAccessToken? = SecurityScopedAccessToken(
       url: URL(fileURLWithPath: "/tmp/a.sql"), start: { _ in true },
       stop: { _ in stops.withLock { $0 += 1 } })
@@ -129,7 +129,7 @@ struct SecurityScopedBookmarkTests {
 
   @Test("A denied access token never calls stop")
   func deniedTokenNeverStops() {
-    let stops = Mutex(0)
+    let stops = OSAllocatedUnfairLock(initialState: 0)
     var token: SecurityScopedAccessToken? = SecurityScopedAccessToken(
       url: URL(fileURLWithPath: "/tmp/a.sql"), start: { _ in false },
       stop: { _ in stops.withLock { $0 += 1 } })

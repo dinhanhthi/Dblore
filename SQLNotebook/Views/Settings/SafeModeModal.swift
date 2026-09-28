@@ -162,7 +162,7 @@ struct SafeModeModal: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
       .onHover { hovering in
         isHovering = hovering
         if hovering {
@@ -381,7 +381,7 @@ struct SafeModeModal: View {
         .font(.small)
         .foregroundColor(.accent)
         .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .linkPointer()
       } else {
         VStack(spacing: Spacing.sm) {
           SecureField("Password", text: $authPassword)

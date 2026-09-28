@@ -61,7 +61,7 @@ struct SecuritySettingsSection: View {
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
         }
         .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .linkPointer()
       }
       Spacer()
     }
@@ -292,7 +292,7 @@ struct SafeModeSection: View {
           .foregroundColor(.accent)
         }
         .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .linkPointer()
 
         if !appSettings.isBiometricEnabled {
           Button(action: {
@@ -313,7 +313,7 @@ struct SafeModeSection: View {
             .foregroundColor(.accent)
           }
           .buttonStyle(.plain)
-          .pointerStyle(.link)
+          .linkPointer()
           // Touch ID needs a Safe Mode password as its fallback
           .disabled(!appSettings.hasCustomPasswordSet)
           .help(
@@ -331,7 +331,7 @@ struct SafeModeSection: View {
               .foregroundColor(.destructive)
           }
           .buttonStyle(.plain)
-          .pointerStyle(.link)
+          .linkPointer()
         }
       }
     }
@@ -392,7 +392,7 @@ struct SafeModeSection: View {
               .font(.small)
               .foregroundColor(.accent)
               .buttonStyle(.plain)
-              .pointerStyle(.link)
+              .linkPointer()
             }
           }
         }
@@ -458,7 +458,7 @@ struct SafeModeSection: View {
         .font(.small)
         .foregroundColor(.accent)
         .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .linkPointer()
       } else {
         VStack(spacing: Spacing.sm) {
           if useDbPasswordForAuth && !appSettings.hasCustomPasswordSet {
@@ -480,7 +480,7 @@ struct SafeModeSection: View {
               .font(.small)
               .foregroundColor(.accent)
               .buttonStyle(.plain)
-              .pointerStyle(.link)
+              .linkPointer()
             }
           }
         }

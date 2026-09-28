@@ -71,7 +71,7 @@ extension ConnectionFormContent {
             .frame(width: 20, height: 20)
         }
         .buttonStyle(PlainButtonStyle())
-        .pointerStyle(.link)
+        .linkPointer()
         .onHover { hovering in
           if hovering {
             NSCursor.pointingHand.push()
@@ -103,7 +103,7 @@ extension ConnectionFormContent {
         .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
       .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -178,7 +178,7 @@ extension ConnectionFormContent {
         .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
       .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -240,7 +240,7 @@ extension ConnectionFormContent {
         .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
     }
 
     // Security Level (Safe Mode) Picker
@@ -280,7 +280,7 @@ extension ConnectionFormContent {
         .dropdownCapsuleStyle()
       }
       .buttonStyle(.plain)
-      .pointerStyle(.link)
+      .linkPointer()
     }
 
     safetySection()

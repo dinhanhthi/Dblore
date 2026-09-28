@@ -29,7 +29,7 @@ struct DeveloperSettingsSection: View {
           .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
         }
         .buttonStyle(.plain)
-        .pointerStyle(.link)
+        .linkPointer()
 
         Text(
           "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."

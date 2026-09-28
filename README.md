@@ -8,7 +8,7 @@ A native macOS app for working with SQL: write and run queries in **notebooks** 
 Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 
 **[Download for macOS](https://github.com/dinhanhthi/SQLNotebook/releases/latest)**
-&nbsp;·&nbsp; macOS 26+ &nbsp;·&nbsp; signed &amp; notarized
+&nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
 
 </div>
 
@@ -44,8 +44,8 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 
 ## Requirements
 
-- macOS 26 or later
-- Xcode 27 (only to build from source)
+- macOS 14 or later
+- Xcode 27 on macOS 26 (only to build from source)
 - A PostgreSQL server to connect to
 
 ## Build from source

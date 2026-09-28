@@ -386,7 +386,7 @@ struct ColumnRowView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.xs)
     .background(

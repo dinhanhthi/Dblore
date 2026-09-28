@@ -6,7 +6,7 @@ Thanks for your interest — contributions are welcome!
 
 - **Found a bug or have an idea?** Open an issue to discuss it first.
 - **Sending code?**
-  1. Build from source (macOS 26+, Xcode 27+) and make sure the unit tests pass:
+  1. Build from source (Xcode 27+ on macOS 26+; the app itself runs on macOS 14+) and make sure the unit tests pass:
 
      ```bash
      SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook \

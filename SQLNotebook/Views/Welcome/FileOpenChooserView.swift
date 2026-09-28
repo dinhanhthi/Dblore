@@ -76,7 +76,7 @@ struct FileOpenChooserView: View {
             onCancel()
           }
           .buttonStyle(.plain)
-          .pointerStyle(.link)
+          .linkPointer()
           .foregroundColor(.foregroundMuted)
           .keyboardShortcut(.escape, modifiers: [])
         }
@@ -234,7 +234,7 @@ struct OpenWorkspaceRow: View {
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .onHover { hovering in
       isHovering = hovering
     }
@@ -270,7 +270,7 @@ struct NewWorkspaceRow: View {
       .background(isHovering ? Color.cellBackgroundHover : Color.clear)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .onHover { hovering in
       isHovering = hovering
     }

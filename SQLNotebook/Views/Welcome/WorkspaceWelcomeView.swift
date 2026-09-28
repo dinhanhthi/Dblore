@@ -290,7 +290,7 @@ struct WorkspaceRecentFileRow: View {
       .cornerRadius(CornerRadius.sm)
     }
     .buttonStyle(.plain)
-    .pointerStyle(.link)
+    .linkPointer()
     .onHover { hovering in
       isHovering = hovering
     }
