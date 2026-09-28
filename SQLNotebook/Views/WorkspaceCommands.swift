@@ -33,49 +33,6 @@ struct WorkspaceCommands: Commands {
         .keyboardShortcut(",", modifiers: [.command])
       }
     }
-
-    // Workspace save commands (after standard save)
-    // Note: New/Open workspace commands are now in TabCommands to avoid CommandGroup conflicts
-    CommandGroup(after: .saveItem) {
-      Divider()
-
-      Button("Save Workspace") {
-        saveActiveWorkspace()
-      }
-      .keyboardShortcut("s", modifiers: [.command, .option])
-
-      Button("Save Workspace As...") {
-        saveActiveWorkspaceAs()
-      }
-      .keyboardShortcut("s", modifiers: [.command, .option, .shift])
-
-      Divider()
-
-      Button("Close Workspace") {
-        closeActiveWorkspace()
-      }
-      .keyboardShortcut("w", modifiers: [.command, .option])
-    }
-  }
-
-  private func saveActiveWorkspace() {
-    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
-    Task {
-      try? await workspace.saveWorkspace()
-    }
-  }
-
-  private func saveActiveWorkspaceAs() {
-    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
-    Task {
-      try? await workspace.saveWorkspaceWithPanel()
-    }
-  }
-
-  private func closeActiveWorkspace() {
-    Task {
-      _ = await WorkspaceWindowManager.shared.closeActiveWorkspace()
-    }
   }
 }
 

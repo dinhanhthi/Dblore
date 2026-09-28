@@ -439,6 +439,29 @@ struct TabCommands: Commands {
         Text("Save As...")
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
+
+      // Workspace save commands live here: a separate CommandGroup(after: .saveItem)
+      // is dropped by SwiftUI because this group replaces .saveItem
+      Divider()
+
+      Button("Save Workspace") {
+        saveActiveWorkspace()
+      }
+      .keyboardShortcut("s", modifiers: [.command, .option])
+
+      Button("Save Workspace As...") {
+        saveActiveWorkspaceAs()
+      }
+      .keyboardShortcut("s", modifiers: [.command, .option, .shift])
+
+      Divider()
+
+      Button("Close Workspace") {
+        Task {
+          _ = await WorkspaceWindowManager.shared.closeActiveWorkspace()
+        }
+      }
+      .keyboardShortcut("w", modifiers: [.command, .option])
     }
 
     // Window menu - Tab navigation
