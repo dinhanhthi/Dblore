@@ -85,6 +85,7 @@ struct ResultGridView: NSViewRepresentable {
     tableView.columnAutoresizingStyle = .noColumnAutoresizing
     tableView.style = .plain
     tableView.backgroundColor = NSColor(Color.cellBackground)
+    tableView.headerView = ResultGridHeaderView()
     tableView.target = tableView
     tableView.doubleAction = #selector(ResultGridTableView.editClickedCell(_:))
     return tableView
@@ -159,6 +160,16 @@ final class ResultGridScrollView: NSScrollView {
     } else {
       super.scrollWheel(with: event)
     }
+  }
+}
+
+/// Header view with an opaque background: the default one is translucent, so rows scrolled
+/// under it show through
+final class ResultGridHeaderView: NSTableHeaderView {
+  override func draw(_ dirtyRect: NSRect) {
+    (tableView?.backgroundColor ?? .windowBackgroundColor).setFill()
+    dirtyRect.fill()
+    super.draw(dirtyRect)
   }
 }
 
