@@ -48,9 +48,11 @@ Only in State `bump`. An explicit level from the user wins. Otherwise decide fro
 
 Commits under "Excluded" (touching no bump-relevant path: `docs/`, `.github/`, `.coding-friend/`, root `*.md`, root `appcast.xml`, ...; this includes CI's `chore(release): appcast vX.Y.Z` commits) and under "Excluded by scope" (`(website)` / `(landing)` / `(docs)`) never count. For "Excluded by scope", judge each: count it only if it is genuinely an app change that was mis-scoped.
 
-- **PATCH** (x.y.Z), the default. Bug fixes, UX polish, performance, refinements of existing behaviour. Bias strongly toward it: one incidental new thing among many fixes is still PATCH.
-- **MINOR** (x.Y.0) when new capability is the dominant story: a new feature, a new setting, a new kind of cell or connection option the user can invoke.
+- **PATCH** (x.y.Z), the default, and almost always the answer. Bug fixes, UX polish, performance, refinements of existing behaviour, **and ordinary new features**: a new setting or toggle, a new menu item or shortcut, a new export format, a new option on an existing dialog, a new column in the results grid, an improvement to an existing panel. Several such features in one release are still PATCH.
+- **MINOR** (x.Y.0) only for a **milestone**: a whole new area of the app that changes what SQLNotebook is for, such as support for a new database engine, a new kind of document or tab, or a new workspace-level tool on the scale of the schema visualizer. A single feature, however useful, is not a milestone. If you have to argue for MINOR, it is PATCH.
 - **MAJOR** (X.0.0) only for a change that breaks compatibility of `.sqlnb` notebook files or saved connection/config data users depend on. While the app is pre-1.0, MAJOR is reserved: use MINOR instead.
+
+When in doubt, choose PATCH. Never pick MINOR two releases in a row on your own judgement: if the latest tag was itself a minor bump (`X.Y.0`), this one is PATCH unless the user asked for `minor`.
 
 Take the matching `Next file version` and `Next tag` pair from "Next version" in the bump-info output. In every other State there is a single pair and the level does not apply.
 

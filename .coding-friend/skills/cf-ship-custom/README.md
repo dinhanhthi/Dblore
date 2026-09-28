@@ -28,9 +28,11 @@ SQLNotebook ships stable releases only: the tag is always `v` +
 | A normal release, level auto      | `/cf-ship`            | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
 | Force the level                   | `/cf-ship minor`      | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
 
-Auto level: PATCH by default, MINOR when new capability dominates, MAJOR only
-for breaking `.sqlnb` / config compatibility (reserved while pre-1.0, so MINOR
-instead). Only commits touching `SQLNotebook/`, `SQLNotebookTests/`, the Xcode
+Auto level: PATCH almost always, including ordinary new features (a setting, a
+menu item, an export format). MINOR only for a milestone (a new database
+engine, a new kind of document or tab), never twice in a row unless you ask
+with `/cf-ship minor`. MAJOR only for breaking `.sqlnb` / config compatibility
+(reserved while pre-1.0, so MINOR instead). Only commits touching `SQLNotebook/`, `SQLNotebookTests/`, the Xcode
 project, `scripts/` or `assets/` count; docs, CI and `.coding-friend/` changes
 never trigger a release.
 
