@@ -119,24 +119,48 @@ fi
 echo "==> Verifying app signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
-echo "==> Creating $DMG"
-hdiutil create -volname "$SCHEME" -srcfolder "$APP" -ov -format UDZO "$DMG"
-codesign --sign "$IDENTITY" --timestamp "$DMG"
-
-if [[ $SKIP_NOTARIZE -eq 0 ]]; then
-  echo "==> Notarizing"
-  # notarytool can exit 0 for a rejected submission; trust only the JSON status.
-  NOTARY_JSON=$(xcrun notarytool submit "$DMG" "${NOTARY_AUTH[@]}" --wait --output-format json) || true
-  echo "$NOTARY_JSON"
-  NOTARY_ID=$(json_field id <<<"$NOTARY_JSON" || true)
-  NOTARY_STATUS=$(json_field status <<<"$NOTARY_JSON" || true)
-  if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
-    echo "error: notarization status is '${NOTARY_STATUS:-unknown}' (submission id: ${NOTARY_ID:-unknown})" >&2
-    if [[ -n "$NOTARY_ID" ]]; then
-      xcrun notarytool log "$NOTARY_ID" "${NOTARY_AUTH[@]}" >&2 || true
+# Submit $1 to Apple and wait. notarytool can exit 0 for a rejected submission;
+# trust only the JSON status.
+notarize() {
+  local json id status
+  json=$(xcrun notarytool submit "$1" "${NOTARY_AUTH[@]}" --wait --output-format json) || true
+  echo "$json"
+  id=$(json_field id <<<"$json" || true)
+  status=$(json_field status <<<"$json" || true)
+  if [[ "$status" != "Accepted" ]]; then
+    echo "error: notarization of $1 is '${status:-unknown}' (submission id: ${id:-unknown})" >&2
+    if [[ -n "$id" ]]; then
+      xcrun notarytool log "$id" "${NOTARY_AUTH[@]}" >&2 || true
     fi
     exit 1
   fi
+}
+
+# Staple the app itself before it goes into the DMG, so the copy users drag out
+# (and the one Sparkle installs) passes Gatekeeper offline too.
+if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+  echo "==> Notarizing the app"
+  APP_ZIP="$EXPORT_DIR/$SCHEME.zip"
+  ditto -c -k --keepParent "$APP" "$APP_ZIP"
+  notarize "$APP_ZIP"
+  rm -f "$APP_ZIP"
+  xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"
+fi
+
+echo "==> Creating $DMG"
+# App plus an Applications shortcut, so users can drag it across
+DMG_STAGE="$DIST/dmg-stage"
+rm -rf "$DMG_STAGE" && mkdir -p "$DMG_STAGE"
+ditto "$APP" "$DMG_STAGE/$SCHEME.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+hdiutil create -volname "$SCHEME" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
+rm -rf "$DMG_STAGE"
+codesign --sign "$IDENTITY" --timestamp "$DMG"
+
+if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+  echo "==> Notarizing the DMG"
+  notarize "$DMG"
   xcrun stapler staple "$DMG"
   spctl -a -vvv -t install "$DMG"
 else
