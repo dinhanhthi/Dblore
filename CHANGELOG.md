@@ -2,6 +2,13 @@
 
 All notable user-visible changes to SQLNotebook, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.2.1 (2026-09-28)
+
+### Improved
+
+- **Lowered the minimum macOS to 14.** SQLNotebook now runs on macOS 14 and later (previously 26); the Liquid Glass look and the pointing-hand cursor still show on the macOS versions that support them. [#a51ce77](https://github.com/dinhanhthi/SQLNotebook/commit/a51ce77)
+- **The installer DMG now includes a shortcut to the Applications folder**, so you can drag SQLNotebook straight in. [#b668e5b](https://github.com/dinhanhthi/SQLNotebook/commit/b668e5b)
+
 ## v0.2.0 (2026-09-28)
 
 ### Added
