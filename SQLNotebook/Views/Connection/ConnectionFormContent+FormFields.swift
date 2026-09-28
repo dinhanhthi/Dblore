@@ -72,6 +72,7 @@ extension ConnectionFormContent {
         }
         .buttonStyle(PlainButtonStyle())
         .linkPointer()
+        .help(getIsPasswordVisible() ? "Hide password" : "Show password")
         .onHover { hovering in
           if hovering {
             NSCursor.pointingHand.push()

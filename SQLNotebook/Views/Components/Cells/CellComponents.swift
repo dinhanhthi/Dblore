@@ -37,6 +37,7 @@ struct CellSidebarView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(cell.isRunning || viewModel.executionQueue.isInQueue(cellId: cell.id))
+      .help("Run Cell (⌃↩)")
 
       // Execution count
       if let count = cell.executionCount {

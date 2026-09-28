@@ -68,6 +68,7 @@ struct SchemaSearchPanelView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(workspaceManager.schemaSearchState.matches.isEmpty)
+      .help("Previous match (⇧⌘G)")
 
       Button {
         workspaceManager.navigateToNextSchemaMatch()
@@ -77,6 +78,7 @@ struct SchemaSearchPanelView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(workspaceManager.schemaSearchState.matches.isEmpty)
+      .help("Next match (⌘G)")
 
       Divider()
         .frame(height: 20)
@@ -110,6 +112,7 @@ struct SchemaSearchPanelView: View {
           .font(.system(size: 12))
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .help("Close search (Esc)")
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)

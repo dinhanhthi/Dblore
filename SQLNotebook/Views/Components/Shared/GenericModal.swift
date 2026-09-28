@@ -105,6 +105,7 @@ struct GenericModalHeader: View {
       .buttonStyle(.plain)
       .linkPointer()
       .keyboardShortcut(.escape, modifiers: [])
+      .help("Close (Esc)")
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)

@@ -72,6 +72,7 @@ struct SearchPanelView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(viewModel.searchState.matches.isEmpty)
+      .help("Previous match (⇧⌘G)")
 
       Button {
         viewModel.navigateToNextMatch()
@@ -81,6 +82,7 @@ struct SearchPanelView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .disabled(viewModel.searchState.matches.isEmpty)
+      .help("Next match (⌘G)")
 
       Divider()
         .frame(height: 20)
@@ -114,6 +116,7 @@ struct SearchPanelView: View {
           .font(.system(size: 12))
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .help("Close search (Esc)")
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)

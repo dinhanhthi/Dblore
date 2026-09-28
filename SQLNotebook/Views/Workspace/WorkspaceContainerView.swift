@@ -691,6 +691,7 @@ struct WorkspaceTitleBarTabsView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .blockDoubleClickZoom()
+        .help("New or open tab")
       }
       .padding(.horizontal, Spacing.sm)
     }

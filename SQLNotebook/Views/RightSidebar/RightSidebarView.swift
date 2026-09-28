@@ -74,6 +74,7 @@ struct RightSidebarView: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
+      .help("Close sidebar")
     }
     .padding(.horizontal, Spacing.md)
     .frame(height: ComponentSize.headerHeight)
