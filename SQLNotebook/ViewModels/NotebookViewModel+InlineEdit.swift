@@ -235,6 +235,9 @@ extension NotebookViewModel {
       // Re-run the cell to refresh the table view with the stored data
       if let cellId = edit.cellId {
         await runCell(id: cellId)
+      } else if dataViewer != nil {
+        // Data viewer: reload the current page
+        await loadDataViewerPage()
       }
     } catch {
       showToast(

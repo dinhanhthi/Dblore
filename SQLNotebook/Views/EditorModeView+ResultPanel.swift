@@ -302,6 +302,8 @@ extension EditorModeView {
 struct EditorResultGridView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
+  /// Names of result columns hidden in the grid (data viewer); empty shows every column
+  var hiddenColumns: Set<String> = []
   @State private var sortColumn: String?
   @State private var sortAscending = true
   /// Current search match when it is in the result data or column names
@@ -330,7 +332,8 @@ struct EditorResultGridView: View {
       caseSensitive: viewModel.searchState.isCaseSensitive,
       currentMatch: currentMatch,
       forwardsScrollToParent: false,
-      hideColumnTypes: AppSettings.shared.hideColumnTypes
+      hideColumnTypes: AppSettings.shared.hideColumnTypes,
+      hiddenColumns: hiddenColumns
     )
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,

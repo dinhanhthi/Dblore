@@ -476,6 +476,9 @@ class WorkspaceManager: Identifiable {
       tabs.append(tab)
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
+
+    case .dataViewer:
+      return false  // Never persisted, so never restored
     }
     tabAccess[tab.id] = access?.token
     let bookmark = access?.bookmark ?? accessHooks.makeBookmark(fileURL)
@@ -548,6 +551,9 @@ class WorkspaceManager: Identifiable {
       tabs.append(tab)
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
+
+    case .dataViewer:
+      return  // Never detected from a file URL
     }
     tabAccess[tab.id] = access?.token
     let bookmark = access?.bookmark ?? accessHooks.makeBookmark(url)
@@ -734,6 +740,8 @@ class WorkspaceManager: Identifiable {
 
   func saveTab(id: UUID) async throws {
     guard let tab = tabs.first(where: { $0.id == id }) else { return }
+    // Data viewer tabs have no file: Save and Save As are no-ops
+    guard tab.documentType != .dataViewer else { return }
 
     if let url = tab.fileURL {
       try await saveToURL(tabId: id, url: url)
@@ -768,6 +776,9 @@ class WorkspaceManager: Identifiable {
         throw CocoaError(.fileWriteUnknown)
       }
       try SecurityScopedAccess.write(data, to: url)
+
+    case .dataViewer:
+      return  // Unreachable: saveTab returns early
     }
 
     markClean(tabId: tabId)
@@ -790,6 +801,8 @@ class WorkspaceManager: Identifiable {
       if !tab.title.hasSuffix(".sql") {
         panel.nameFieldStringValue += ".sql"
       }
+    case .dataViewer:
+      return  // Unreachable: saveTab returns early
     }
 
     guard let window = NSApp.keyWindow else {

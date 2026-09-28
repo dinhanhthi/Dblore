@@ -123,6 +123,29 @@ struct ResultGridCoordinatorTests {
     #expect(coordinator.update(tableView, result: result, sortColumn: "id", ascending: false))
   }
 
+  @Test("Hidden columns hide their table column and keep the result column identifiers")
+  func hiddenColumns() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    coordinator.update(
+      tableView, result: result, sortColumn: nil, ascending: true, hiddenColumns: ["name"])
+    #expect(tableView.tableColumns.map(\.isHidden) == [false, true])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["0", "1"])
+
+    coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
+    #expect(tableView.tableColumns.map(\.isHidden) == [false, false])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["0", "1"])
+  }
+
+  @Test("A hidden column follows its identifier after a column move")
+  func hiddenColumnAfterMove() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    tableView.moveColumn(1, toColumn: 0)
+    coordinator.update(
+      tableView, result: result, sortColumn: nil, ascending: true, hiddenColumns: ["name"])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["1", "0"])
+    #expect(tableView.tableColumns.map(\.isHidden) == [true, false])
+  }
+
   @Test("Odd displayed rows get the design-system alternate row view, even rows don't")
   func alternateRows() {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)

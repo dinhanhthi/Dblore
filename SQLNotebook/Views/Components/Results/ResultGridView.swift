@@ -38,6 +38,9 @@ struct ResultGridView: NSViewRepresentable {
   var forwardsScrollToParent = true
   /// Effective "Hide Column Types" setting: one-line header without the type line
   var hideColumnTypes = false
+  /// Names of result columns hidden in the grid; the result, column indices and edits are
+  /// unchanged
+  var hiddenColumns: Set<String> = []
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
@@ -118,7 +121,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
-      hideColumnTypes: hideColumnTypes)
+      hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns)
   }
 }
 

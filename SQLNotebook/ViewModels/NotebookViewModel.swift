@@ -129,6 +129,8 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+  /// Table/view data viewer tab state (nil for every other tab)
+  var dataViewer: DataViewerState?
   /// An editor run is in flight (Cancel button, `WorkspaceManager.isTransactionOriginRunning`)
   var isEditorQueryRunning = false
   /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.

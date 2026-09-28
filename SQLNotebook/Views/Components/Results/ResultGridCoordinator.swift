@@ -38,6 +38,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let currentMatchId: UUID?
     let hideColumnTypes: Bool
     let hasEditTarget: Bool
+    let hiddenColumns: Set<String>
   }
 
   private(set) var model: ResultGridModel?
@@ -100,14 +101,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       searchQuery: searchQuery, caseSensitive: caseSensitive)
   }
 
-  /// Rebuilds the columns and reloads the table when the result, the sort, the search or the
-  /// column type flag changed, and scrolls to the row of `currentMatch` (a match in this
-  /// result's data). Returns whether the table was reloaded.
+  /// Rebuilds the columns and reloads the table when the result, the sort, the search, the
+  /// column type flag or the hidden columns changed, and scrolls to the row of `currentMatch`
+  /// (a match in this result's data). Returns whether the table was reloaded.
   @discardableResult
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
     searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil,
-    hideColumnTypes: Bool = false
+    hideColumnTypes: Bool = false, hiddenColumns: Set<String> = []
   )
     -> Bool
   {
@@ -115,11 +116,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id,
-      hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil)
+      hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
+      hiddenColumns: hiddenColumns)
     guard newKey != key else { return false }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
     }
+    updateHiddenColumns(tableView, result: result, hiddenColumns: hiddenColumns)
     key = newKey
     let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
     self.model = model
@@ -332,6 +335,18 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       tableView.enclosingScrollView?.tile()
     }
     headerView.needsDisplay = true
+  }
+
+  /// Hides the table columns whose result column name is in `hiddenColumns`, found by
+  /// identifier (the result column index) so a moved column keeps its state
+  private func updateHiddenColumns(
+    _ tableView: NSTableView, result: CellResult, hiddenColumns: Set<String>
+  ) {
+    for tableColumn in tableView.tableColumns {
+      guard let index = Int(tableColumn.identifier.rawValue), index < result.columns.count
+      else { continue }
+      tableColumn.isHidden = hiddenColumns.contains(result.columns[index].name)
+    }
   }
 
   /// `text` with every match of `query` on the search highlight color, like SearchHighlighter;

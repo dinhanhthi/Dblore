@@ -14,6 +14,8 @@ struct TabItem: Identifiable, Equatable {
   var title: String
   var isDirty: Bool
   var lastAccessed: Date
+  /// Session-only preview state (italic title, replaced by the next preview); never persisted
+  var isPreview: Bool
 
   init(
     id: UUID = UUID(),
@@ -21,7 +23,8 @@ struct TabItem: Identifiable, Equatable {
     documentType: TabDocumentType,
     title: String,
     isDirty: Bool = false,
-    lastAccessed: Date = Date()
+    lastAccessed: Date = Date(),
+    isPreview: Bool = false
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -29,6 +32,7 @@ struct TabItem: Identifiable, Equatable {
     self.title = title
     self.isDirty = isDirty
     self.lastAccessed = lastAccessed
+    self.isPreview = isPreview
   }
 
   /// Creates a new untitled notebook tab
@@ -54,11 +58,13 @@ struct TabItem: Identifiable, Equatable {
 enum TabDocumentType: String, Codable, Equatable {
   case notebook  // .sqlnb files
   case sqlFile  // .sql files
+  case dataViewer  // table/view data viewer, no file
 
   var fileExtension: String {
     switch self {
     case .notebook: return "sqlnb"
     case .sqlFile: return "sql"
+    case .dataViewer: return ""
     }
   }
 
@@ -66,6 +72,7 @@ enum TabDocumentType: String, Codable, Equatable {
     switch self {
     case .notebook: return "doc.text"
     case .sqlFile: return "doc"
+    case .dataViewer: return "tablecells"
     }
   }
 
@@ -94,5 +101,6 @@ extension TabItem: Codable {
     title = try container.decode(String.self, forKey: .title)
     isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
     lastAccessed = try container.decodeIfPresent(Date.self, forKey: .lastAccessed) ?? Date()
+    isPreview = false
   }
 }

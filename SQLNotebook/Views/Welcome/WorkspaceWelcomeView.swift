@@ -128,6 +128,8 @@ struct WorkspaceWelcomeView: View {
       panel.allowedContentTypes = [.sqlNotebook]
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
+    case .dataViewer:
+      return  // No file to open
     }
 
     panel.begin { response in
@@ -250,6 +252,7 @@ struct WorkspaceRecentFileRow: View {
     switch fileType {
     case .notebook: return .accent
     case .sqlFile: return .syntaxFunction
+    case .dataViewer: return .foregroundMuted
     case nil: return .foregroundMuted
     }
   }

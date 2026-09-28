@@ -53,8 +53,8 @@ extension NotebookViewModel {
     queryConfirmationState.clear()
   }
 
-  /// Execute query in editor mode (internal)
-  private func executeEditorQuery(_ query: String) async {
+  /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page)
+  func executeEditorQuery(_ query: String, maxRows: Int? = nil) async {
     guard let connectionManager = connectionManager else {
       showToast("No database connection available", type: .error)
       return
@@ -76,7 +76,7 @@ extension NotebookViewModel {
           try await connectionManager
           .executeDetailed(
             userSQL: query, policy: protectionPolicy,
-            maxRows: effectiveRowCap, caller: id)
+            maxRows: maxRows ?? effectiveRowCap, caller: id)
 
         totalExecutionTime = totalTime
 
@@ -123,7 +123,7 @@ extension NotebookViewModel {
 
       } else {
         // Single statement - use existing logic
-        let maxRows = effectiveRowCap
+        let maxRows = maxRows ?? effectiveRowCap
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         let epoch = await connectionManager.connectionEpoch

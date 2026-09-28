@@ -174,6 +174,9 @@ class TabStateManager {
       tabs.append(tab)
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
+
+    case .dataViewer:
+      return  // Never detected from a file URL
     }
 
     selectTab(id: tab.id)
@@ -321,6 +324,9 @@ class TabStateManager {
         throw CocoaError(.fileWriteUnknown)
       }
       try SecurityScopedAccess.write(data, to: url)
+
+    case .dataViewer:
+      return  // Data viewer tabs have no file
     }
 
     markClean(tabId: tabId)
@@ -340,6 +346,8 @@ class TabStateManager {
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
       panel.nameFieldStringValue += ".sql"
+    case .dataViewer:
+      return  // Data viewer tabs have no file
     }
 
     let response = await panel.beginSheetModal(for: NSApp.keyWindow!)
