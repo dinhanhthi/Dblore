@@ -57,9 +57,18 @@ struct ResultGridModel {
     return column < values.count ? values[column] : .null
   }
 
-  /// Text shown in a cell, the same as the result table (NULL shows as "NULL")
+  /// Longest text shown in a cell; longer text ends with "…"
+  static let maxDisplayLength = 1000
+
+  /// Text shown in a cell, the same as the result table (NULL shows as "NULL"), on one line
+  /// (line breaks become spaces) and at most `maxDisplayLength` characters: the single-line
+  /// text field still lays out every line of a long multi-line value, which made scrolling lag
   func displayText(row: Int, column: Int) -> String {
-    value(row: row, column: column).displayString
+    let text = value(row: row, column: column).displayString
+    let prefix = text.prefix(Self.maxDisplayLength)
+    let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+      .joined(separator: " ")
+    return prefix.endIndex < text.endIndex ? flat + "…" : flat
   }
 
   /// Tab-separated selected cells (no header, no trailing newline), full values like the

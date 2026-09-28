@@ -47,6 +47,26 @@ struct ResultGridModelTests {
     #expect(model.displayText(row: 0, column: 1) == "a")
   }
 
+  @Test("Display text is on one line and capped at maxDisplayLength characters")
+  func flatCappedDisplayText() {
+    let max = ResultGridModel.maxDisplayLength
+    let exact = String(repeating: "x", count: max)
+    let values: [CellValue] = [
+      .string("a\nb"), .string("a\r\nb"), .string(exact), .string(exact + "y"),
+    ]
+    let model = ResultGridModel(
+      result: CellResult(
+        columns: [ColumnInfo(name: "t", type: "text")], rows: values.map { [$0] },
+        rowCount: values.count),
+      sortColumn: nil, ascending: true)
+    #expect(
+      (0..<4).map { model.displayText(row: $0, column: 0) } == [
+        "a b", "a b", exact, exact + "…",
+      ])
+    // Edit and copy keep the full value
+    #expect(model.value(row: 1, column: 0).fullString == "a\r\nb")
+  }
+
   @Test("TSV columns follow the given order")
   func tsvColumnOrder() {
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
