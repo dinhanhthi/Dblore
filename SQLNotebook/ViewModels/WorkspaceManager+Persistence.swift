@@ -256,7 +256,7 @@ extension WorkspaceManager {
 
   /// Toggle left sidebar visibility
   func toggleLeftSidebar() {
-    withAnimation(.easeInOut(duration: 0.2)) {
+    withSidebarAnimation {
       isLeftSidebarVisible.toggle()
     }
     workspace.settings.isLeftSidebarVisible = isLeftSidebarVisible

@@ -16,7 +16,7 @@ extension NotebookViewModel {
   /// that opens the sidebar goes through here so opening animates like closing.
   func showSidebar(content: SidebarContent) {
     rightSidebarContent = content
-    withAnimation(.easeInOut(duration: 0.2)) {
+    withSidebarAnimation {
       isRightSidebarVisible = true
     }
     handleRightSidebarConflict()
@@ -56,7 +56,7 @@ extension NotebookViewModel {
 
   /// Toggle sidebar visibility
   func toggleSidebar() {
-    withAnimation(.easeInOut(duration: 0.2)) {
+    withSidebarAnimation {
       isRightSidebarVisible.toggle()
     }
     if isRightSidebarVisible {
@@ -66,7 +66,7 @@ extension NotebookViewModel {
 
   /// Close the sidebar
   func closeSidebar() {
-    withAnimation(.easeInOut(duration: 0.2)) {
+    withSidebarAnimation {
       isRightSidebarVisible = false
     }
   }

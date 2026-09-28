@@ -150,6 +150,13 @@ struct SQLNotebookApp: App {
     WindowGroup {
       AppWindowView()
         .frame(minWidth: 800, minHeight: 600)
+        // Disable all SwiftUI animations app-wide for snappier tab and layout switches
+        .transaction {
+          // Sidebar show/hide keeps its animation
+          guard !$0.isSidebarAnimation else { return }
+          $0.disablesAnimations = true
+          $0.animation = nil
+        }
     }
     .windowStyle(.hiddenTitleBar)
     .commands {

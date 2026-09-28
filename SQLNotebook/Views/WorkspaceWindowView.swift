@@ -154,6 +154,12 @@ struct AppWindowView: View {
   private func openNewWindow(for newWorkspaceId: UUID) {
     // Create a new NSWindow programmatically with SwiftUI content
     let newWindowView = NewWorkspaceWindowView(workspaceId: newWorkspaceId)
+      // Disable all SwiftUI animations, same as the main WindowGroup
+      .transaction {
+        guard !$0.isSidebarAnimation else { return }
+        $0.disablesAnimations = true
+        $0.animation = nil
+      }
     let hostingController = NSHostingController(rootView: newWindowView)
 
     let newWindow = NSWindow(contentViewController: hostingController)

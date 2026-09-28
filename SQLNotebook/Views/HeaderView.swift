@@ -268,6 +268,8 @@ private struct RunSpinner: View {
       .frame(width: 10, height: 10)
       .rotationEffect(.degrees(isSpinning ? 360 : 0))
       .animation(.linear(duration: 0.8).repeatForever(autoreverses: false), value: isSpinning)
+      // Opt out of the app-wide animation kill switch so the spinner keeps rotating
+      .transaction { $0.disablesAnimations = false }
       .onAppear { isSpinning = true }
   }
 }
