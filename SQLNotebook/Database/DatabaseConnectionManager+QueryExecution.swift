@@ -161,7 +161,10 @@ extension DatabaseConnectionManager {
   /// - Parameters:
   ///   - query: Single SQL statement
   ///   - maxRows: Maximum number of rows to fetch
-  func executeSingleStatement(_ query: String, maxRows: Int) async throws -> QueryResult {
+  ///   - inTransaction: A transaction is open (app or user): a plain read goes through a cursor
+  func executeSingleStatement(
+    _ query: String, maxRows: Int, inTransaction: Bool = false
+  ) async throws -> QueryResult {
     guard let connection = _connection else {
       throw DatabaseError.notConnected
     }
@@ -179,7 +182,8 @@ extension DatabaseConnectionManager {
     let startTime = Date()
 
     // Everything but reads is sent unchanged (affected rows from the command tag or RETURNING)
-    switch StatementRoute.route(for: SQLStatementClassifier.classifyStatement(query)) {
+    let statement = SQLStatementClassifier.classifyStatement(query)
+    switch StatementRoute.route(for: statement) {
     case .command:
       return try await executeCommand(query, on: connection, startTime: startTime)
     case .returningRows:
@@ -189,7 +193,10 @@ extension DatabaseConnectionManager {
       return try await executeUnwrapped(
         query, on: connection, countRows: false, maxRows: maxRows, startTime: startTime)
     case .read:
-      break
+      if inTransaction, let statement, Self.usesCursor(statement) {
+        return try await executeCursorRead(
+          query, on: connection, maxRows: maxRows, startTime: startTime)
+      }
     }
 
     // Reads are sent as written (no LIMIT / ctid rewrite): the capped reader stops after

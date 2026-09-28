@@ -5,13 +5,21 @@
 // - a read with no app transaction and no user transaction open, that calls no function, while
 //   no other caller uses the connection: the session is closed and reopened with the same config
 //   (`resetSessionIfCapped`), the remaining statements of the script are not run;
-// - any other read (inside the app transaction or the user's own BEGIN, calling a function,
-//   another tab's statement in flight): the loop breaks and PostgresNIO drains the rest (bounded
-//   by statement_timeout), the session, its transaction and pending changes survive;
+// - a plain SELECT / VALUES / TABLE / WITH read calling no function and locking no rows, inside
+//   the app transaction or the user's own BEGIN: sent as a server-side cursor
+//   (`executeCursorRead`: DECLARE, FETCH cap + 1, CLOSE), so the server stops at the cap and the
+//   transaction survives. The planner prefers a fast-start plan for a cursor: an index matching
+//   ORDER BY skips the sort. Without one the server still sorts every row first, and only
+//   statement_timeout stops it;
+// - any other read (SHOW, EXPLAIN, calling a function, a row lock such as FOR UPDATE / FOR
+//   SHARE that a cursor would apply to fetched rows only, another tab's statement in flight
+//   with no transaction open): the loop breaks and PostgresNIO drains the rest (bounded by
+//   statement_timeout), the session, its transaction and pending changes survive;
 // - a statement that may write (RETURNING, utility, data-modifying WITH): read to the end,
 //   rows past the cap counted but not kept. Closing mid-stream would roll back its changes.
 
 import Foundation
+import Logging
 import PostgresNIO
 
 /// Why the manager closed and reopened the session
@@ -124,10 +132,67 @@ extension DatabaseConnectionManager {
     return reset
   }
 
+  /// Inside a transaction, read `query` through a server-side cursor: DECLARE, FETCH cap + 1,
+  /// CLOSE. The server stops at the cap instead of draining. Errors point at the text sent
+  /// (the server position is relative to it).
+  func executeCursorRead(
+    _ query: String, on connection: PostgresConnection, maxRows: Int, startTime: Date
+  ) async throws -> QueryResult {
+    let name = "sqlnb_cap_" + UUID().uuidString.prefix(8).lowercased()
+    let declare = "DECLARE \(name) NO SCROLL CURSOR FOR \(query)"
+    let fetch = "FETCH FORWARD \(maxRows + 1) FROM \(name)"
+    let close = "CLOSE \(name)"
+    _ = try await executeCommand(declare, on: connection, startTime: startTime)
+    let collected: CollectedRows
+    do {
+      let stream = try await send(on: connection) {
+        try await $0.query(PostgresQuery(unsafeSQL: fetch), logger: Logger(label: "sqlnotebook"))
+      }
+      collected = try await readCapped(stream, maxRows: maxRows, readToEnd: false)
+    } catch {
+      throw queryFailure(error, query: fetch, startTime: startTime)
+    }
+    _ = try await executeCommand(close, on: connection, startTime: startTime)
+    let executionTime = Date().timeIntervalSince(startTime)
+    // Not after a truncated read, as on the drain path: a failed catalog query inside the
+    // user's BEGIN would abort their transaction
+    let enrichedColumns =
+      collected.truncated
+      ? collected.columns : await enrichColumnTypes(columns: collected.columns, query: query)
+    var result = QueryResult(
+      columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,
+      executionTime: executionTime, wasLimited: collected.truncated, affectedRows: 0)
+    result.truncated = collected.truncated
+    cursorReadCount += 1
+    return result
+  }
+
   /// Test hook (see `scriptCheckpointHook`): lets a test interleave other callers at a
   /// `ScriptCheckpoint`. Nil in the app.
   func setScriptCheckpointHook(_ hook: (@Sendable (ScriptCheckpoint) async -> Void)?) {
     scriptCheckpointHook = hook
+  }
+
+  /// A plain read a cursor can run: SELECT / VALUES / TABLE / WITH (not SHOW or EXPLAIN) that
+  /// calls no function (its side effects would stop at the cap) and locks no rows.
+  nonisolated static func usesCursor(_ statement: ClassifiedStatement) -> Bool {
+    guard statement.kind == .read else { return false }
+    let tokens = SQLTokenizer.tokens(statement.text)
+    let first = tokens.first { $0.kind == .word }?.keyword ?? ""
+    return ["SELECT", "VALUES", "TABLE", "WITH"].contains(first)
+      && !SQLStatementClassifier.mayCallFunctions(statement.text)
+      && !hasLockingClause(tokens)
+  }
+
+  /// `FOR UPDATE / NO KEY UPDATE / SHARE / KEY SHARE` at any depth: in a cursor it locks only
+  /// the rows fetched, not every matching row. Fails closed (words, so not in strings/comments).
+  private nonisolated static func hasLockingClause(_ tokens: [SQLToken]) -> Bool {
+    let locks: [[String]] = [["UPDATE"], ["NO", "KEY", "UPDATE"], ["SHARE"], ["KEY", "SHARE"]]
+    return tokens.indices.contains { index in
+      guard tokens[index].isWord("FOR") else { return false }
+      let next = tokens[(index + 1)...].prefix(3).map { $0.keyword ?? "" }
+      return locks.contains { next.starts(with: $0) }
+    }
   }
 
   /// EXPLAIN ANALYZE runs its statement, and a called function may write: closing before the
