@@ -29,6 +29,19 @@ struct SettingsModal: View {
     case updates = "Updates"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
+
+    /// SF Symbol shown next to the label in the navigation sidebar
+    var icon: String {
+      switch self {
+      case .appearance: return "paintbrush"
+      case .editor: return "text.cursor"
+      case .results: return "tablecells"
+      case .save: return "square.and.arrow.down"
+      case .updates: return "arrow.triangle.2.circlepath"
+      case .developer: return "wrench.and.screwdriver"
+      case .shortcuts: return "keyboard"
+      }
+    }
   }
 
   /// Effective view mode - defaults to notebook if no active tab
@@ -40,25 +53,42 @@ struct SettingsModal: View {
     GenericModal(
       title: "Settings",
       titleIcon: "gear",
-      width: 640,
+      width: 720,
       height: 600,
       isPresented: $isPresented
     ) {
-      VStack(spacing: 0) {
-        // Tab row (fixed, does not scroll)
-        CapsuleTabPicker(
-          selection: $selectedTab,
-          tabs: SettingsTab.allCases,
-          height: 28
-        )
-        .padding(.horizontal, Spacing.xl)
-        .padding(.top, Spacing.md)
+      HStack(spacing: 0) {
+        // Navigation sidebar (fixed, does not scroll)
+        VStack(alignment: .leading, spacing: Spacing.xxs) {
+          ForEach(SettingsTab.allCases, id: \.self) { tab in
+            SettingsNavRow(
+              title: tab.rawValue,
+              icon: tab.icon,
+              isSelected: selectedTab == tab,
+              action: { selectedTab = tab }
+            )
+          }
+          Spacer(minLength: 0)
+        }
+        .padding(Spacing.sm)
+        .frame(width: 180)
+        .frame(maxHeight: .infinity)
+        .background(Color.cardHeaderBackground)
+
+        Divider()
 
         ScrollView {
-          selectedSection
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Spacing.xl)
+          VStack(alignment: .leading, spacing: Spacing.lg) {
+            Text(selectedTab.rawValue)
+              .font(.subheading)
+              .foregroundColor(.foreground)
+
+            selectedSection
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(Spacing.xl)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .fileExporter(
@@ -103,6 +133,47 @@ struct SettingsModal: View {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd-HHmm"
     return formatter.string(from: Date())
+  }
+}
+
+// MARK: - Settings Navigation Row
+
+/// One row of the settings sidebar: icon + label, pill fill when selected or hovered
+private struct SettingsNavRow: View {
+  let title: String
+  let icon: String
+  let isSelected: Bool
+  let action: () -> Void
+
+  @State private var isHovered = false
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: Spacing.sm) {
+        Image(systemName: icon)
+          .font(.labelText)
+          .frame(width: 16)
+
+        Text(title)
+          .font(.bodyText)
+
+        Spacer(minLength: 0)
+      }
+      .foregroundColor(isSelected ? .foreground : .foregroundMuted)
+      .padding(.horizontal, Spacing.sm)
+      .frame(height: 28)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(
+            isSelected
+              ? Color.accentMuted
+              : (isHovered ? Color.cellBackgroundHover : Color.clear))
+      )
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .onHover { isHovered = $0 }
   }
 }
 
