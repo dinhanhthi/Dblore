@@ -33,6 +33,8 @@ actor DatabaseConnectionManager {
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
   /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Reads that went through a server-side cursor (`executeCursorRead`); observed by tests
+  var cursorReadCount = 0
   /// Queries waiting in `send(on:)`: queued on the connection or running (see
   /// `resetSessionIfCapped`)
   var activeSends = 0

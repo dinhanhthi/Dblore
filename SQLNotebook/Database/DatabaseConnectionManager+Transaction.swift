@@ -90,7 +90,9 @@ extension DatabaseConnectionManager {
       try refuseIfSessionChanged(since: epoch, remaining: statements.count - results.count)
       var result: QueryResult
       do {
-        result = try await executeSingleStatement(statement.text, maxRows: maxRows)
+        let inTransaction = !txState.isIdle || userTxOpen
+        result = try await executeSingleStatement(
+          statement.text, maxRows: maxRows, inTransaction: inTransaction)
       } catch {
         // The session is gone: nothing of the old transaction state applies any more
         if let cancelled = cancelError(since: epoch) { throw cancelled }

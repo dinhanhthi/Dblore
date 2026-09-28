@@ -8,6 +8,10 @@
 //   / SET are lost and reported; the remaining statements are not run.
 // - The user's own transaction is open (Protected off): drained like the app transaction, so
 //   uncommitted work is never discarded by the cap (only Cancel rolls it back).
+// - Cursor inside a transaction (app or user): a plain read (SELECT / VALUES / TABLE / WITH, no
+//   function call) is sent as DECLARE / FETCH cap+1 / CLOSE, so the server stops at the cap
+//   instead of draining; SHOW, EXPLAIN, function-calling and row-locking (FOR UPDATE / SHARE)
+//   reads still drain.
 // - Write routes (RETURNING) never close mid-stream: rows past the cap are counted, not kept.
 // Against the docker test database (TEST_DB_* env, port 5435 in CI/autopilot).
 
@@ -89,6 +93,21 @@ struct DatabaseCappedReadTests {
     await manager.disconnect()
     _ = try? await observer.executeInternal("DROP TABLE IF EXISTS \(table)")
     await observer.disconnect()
+  }
+
+  private func isAborted(_ manager: DatabaseConnectionManager) async -> Bool {
+    if case .aborted = await manager.transactionSnapshot() { return true }
+    return false
+  }
+
+  /// Open server-side cursors of the session. `count(` is a function call, so this probe drains
+  /// instead of opening a cursor of its own (and does not bump `cursorReadCount`). Its own
+  /// unnamed extended-protocol portal is listed too, so it is excluded.
+  private func openCursors(_ manager: DatabaseConnectionManager) async throws -> CellValue? {
+    let open = open
+    let cursors = try await manager.execute(
+      userSQL: "SELECT count(*)::int FROM pg_cursors WHERE name <> ''", policy: open)
+    return value(cursors)
   }
 
   /// The first value of `events` within `duration`, or nil
@@ -353,6 +372,173 @@ struct DatabaseCappedReadTests {
       #expect(await manager.connectionEpoch == epoch)
       let count = try await observer.executeInternal("SELECT count(*)::int FROM \(table)")
       #expect(value(count) == .int(301))
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
+
+  // MARK: - Cursor inside a transaction
+
+  /// A plain read of a filled table with an order: the cursor must stop it at the cap
+  private static func orderedRead(_ table: String) -> String {
+    "SELECT * FROM \(table) ORDER BY id"
+  }
+
+  @Test(
+    "Inside the app transaction a plain read goes through a cursor: capped, tx and UPDATE kept",
+    .timeLimit(.minutes(1)))
+  func appTransactionReadUsesCursor() async throws {
+    let table = "c2_cursor_apptx"
+    let (manager, observer) = try await setUp(table, protectedMode: true, filled: true)
+    let open = open
+    do {
+      _ = try await manager.execute(
+        userSQL: "UPDATE \(table) SET v = 20 WHERE id = 1", policy: open)
+      let epoch = await manager.connectionEpoch
+
+      let read = try await manager.execute(
+        userSQL: Self.orderedRead(table), policy: open, maxRows: Self.cap)
+      #expect(read.rows.count == Self.cap)
+      #expect(read.truncated)
+      #expect(read.wasLimited)
+      #expect(!read.sessionReset)
+      #expect(await manager.connectionEpoch == epoch)
+      // Checked first: any later plain read in the transaction goes through a cursor too
+      #expect(await manager.cursorReadCount == 1)
+
+      let inside = try await manager.execute(
+        userSQL: "SELECT v FROM \(table) WHERE id = 1", policy: open)
+      #expect(value(inside) == .int(20))
+      let outside = try await observer.executeInternal("SELECT v FROM \(table) WHERE id = 1")
+      #expect(value(outside) == .int(10))
+      #expect(try await openCursors(manager) == .int(0))
+      let status = await manager.transactionStatus()
+      guard case .appTx(let pending) = status.state else {
+        Issue.record("app transaction lost after the cursor read: \(status.state)")
+        throw DatabaseError.notConnected
+      }
+      #expect(pending.count == 1)
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
+
+  @Test(
+    "Inside the user's own transaction a plain read goes through a cursor; the tx is kept",
+    .timeLimit(.minutes(1)))
+  func userTransactionReadUsesCursor() async throws {
+    let table = "c2_cursor_usertx"
+    let (manager, observer) = try await setUp(table, protectedMode: false, filled: true)
+    let open = open
+    do {
+      _ = try await manager.execute(userSQL: "BEGIN", policy: open)
+      let read = try await manager.execute(
+        userSQL: Self.orderedRead(table), policy: open, maxRows: Self.cap)
+      #expect(read.rows.count == Self.cap)
+      #expect(read.truncated)
+      #expect(!read.sessionReset)
+      #expect(await manager.cursorReadCount == 1)
+      #expect(await manager.userTxOpen)
+      #expect(try await openCursors(manager) == .int(0))
+      _ = try await manager.execute(userSQL: "ROLLBACK", policy: open)
+      #expect(await manager.userTxOpen == false)
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
+
+  @Test(
+    "An error in a cursor read points at the user's SQL and aborts the app transaction",
+    .timeLimit(.minutes(1)))
+  func cursorReadErrorAbortsTransaction() async throws {
+    let table = "c2_cursor_error"
+    let (manager, observer) = try await setUp(table, protectedMode: true, filled: true)
+    let open = open
+    do {
+      _ = try await manager.execute(
+        userSQL: "UPDATE \(table) SET v = 20 WHERE id = 1", policy: open)
+      do {
+        _ = try await manager.execute(
+          userSQL: "SELECT nosuchcol FROM \(table)", policy: open, maxRows: Self.cap)
+        Issue.record("expected DatabaseError.queryFailed")
+      } catch DatabaseError.queryFailed(let message, _) {
+        // The server position is relative to the DECLARE text: it must still name the column
+        #expect(message.contains("Near: \"nosuchcol\""), "got \(message)")
+      }
+      #expect(await isAborted(manager))
+      #expect(await manager.transactionSnapshot().pending.count == 1)
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
+
+  @Test(
+    "A cursor read keeps the column origins of the plain read (cell edit inside a tx)",
+    .timeLimit(.minutes(1)))
+  func cursorReadKeepsColumnOrigins() async throws {
+    let table = "c2_cursor_origin"
+    let (manager, observer) = try await setUp(table, protectedMode: false, filled: true)
+    let open = open
+    do {
+      // Outside a transaction: the plain capped read (session reset path)
+      let plain = try await manager.execute(
+        userSQL: Self.orderedRead(table), policy: open, maxRows: Self.cap)
+      #expect(plain.sessionReset)
+
+      _ = try await manager.execute(userSQL: "BEGIN", policy: open)
+      let cursor = try await manager.execute(
+        userSQL: Self.orderedRead(table), policy: open, maxRows: Self.cap)
+      #expect(await manager.cursorReadCount == 1)
+      #expect(cursor.columns.map(\.name) == ["id", "v"])
+      // Non-nil and non-zero, so the comparison below is not vacuous
+      #expect(cursor.columns.allSatisfy { ($0.tableOID ?? 0) != 0 })
+      #expect(cursor.columns.allSatisfy { ($0.attributeNumber ?? 0) != 0 })
+      #expect(cursor.columns.map(\.tableOID) == plain.columns.map(\.tableOID))
+      #expect(cursor.columns.map(\.attributeNumber) == plain.columns.map(\.attributeNumber))
+      _ = try await manager.execute(userSQL: "ROLLBACK", policy: open)
+    } catch {
+      Issue.record(error)
+    }
+    await tearDown(table, manager, observer)
+  }
+
+  @Test(
+    "Inside a transaction SHOW, EXPLAIN and function-calling reads do not use the cursor",
+    .timeLimit(.minutes(1)))
+  func nonCursorReadsInsideTransaction() async throws {
+    let table = "c2_cursor_skip"
+    let (manager, observer) = try await setUp(table, protectedMode: false, filled: true)
+    let open = open
+    do {
+      _ = try await manager.execute(userSQL: "BEGIN", policy: open)
+      let show = try await manager.execute(
+        userSQL: "SHOW statement_timeout", policy: open, maxRows: Self.cap)
+      #expect(show.rows.count == 1)
+      #expect(value(show) == .string("45s"))
+      let explain = try await manager.execute(
+        userSQL: "EXPLAIN SELECT * FROM \(table)", policy: open, maxRows: Self.cap)
+      #expect(explain.rows.count > 0)
+      // A function call keeps draining (its side effects run in full)
+      let series = try await manager.execute(
+        userSQL: Self.largeRead, policy: open, maxRows: Self.cap)
+      #expect(series.rows.count == Self.cap)
+      #expect(series.truncated)
+      #expect(!series.sessionReset)
+      // A row lock drains: a cursor would lock only the rows it fetched
+      for lock in ["FOR UPDATE", "FOR SHARE"] {
+        let locked = try await manager.execute(
+          userSQL: "SELECT * FROM \(table) \(lock)", policy: open, maxRows: Self.cap)
+        #expect(locked.rows.count == Self.cap)
+        #expect(locked.truncated)
+        #expect(!locked.sessionReset)
+      }
+      #expect(await manager.cursorReadCount == 0)
+      _ = try await manager.execute(userSQL: "ROLLBACK", policy: open)
+      #expect(await manager.userTxOpen == false)
     } catch {
       Issue.record(error)
     }
