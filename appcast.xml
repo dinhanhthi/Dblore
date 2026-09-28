@@ -2,5 +2,14 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>SQLNotebook</title>
+        <item>
+            <title>0.2.0</title>
+            <pubDate>Mon, 28 Sep 2026 11:26:23 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/SQLNotebook/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/dinhanhthi/SQLNotebook/releases/download/v0.2.0/SQLNotebook-0.2.0.dmg" length="17749029" type="application/octet-stream" sparkle:edSignature="1FmV+e2B+rgl3/X6fkQ/zdsDhR//cFTRW3UKDAFRhxnFNiw/eW4lClJbee+zE9v2uV1Wx2MxEoy0qiSOMT3UAg=="/>
+        </item>
     </channel>
 </rss>
