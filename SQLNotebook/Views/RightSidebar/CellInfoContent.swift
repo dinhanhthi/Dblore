@@ -22,7 +22,7 @@ struct CellInfoContent: View {
   @State private var validationError: String?
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
-  @State private var isWordWrapEnabled = false
+  @State private var isWordWrapEnabled = true
   @FocusState private var isTextEditorFocused: Bool
 
   @Environment(NotebookViewModel.self) private var viewModel
@@ -117,7 +117,7 @@ struct CellInfoContent: View {
                 icon: "curlybraces",
                 helpText: isBeautified ? "Show Original" : "Beautify JSON",
                 isActive: isBeautified,
-                action: isBeautified ? showOriginal : beautifyJSON
+                action: isBeautified ? showOriginal : { beautifyJSON() }
               )
             }
 
@@ -261,6 +261,7 @@ struct CellInfoContent: View {
         editedBoolValue = boolValue
         originalBoolValue = boolValue
       }
+      beautifyJSON(silent: true)
     }
     .onChange(of: value) { _, newValue in
       // Reset beautified state when value changes
@@ -272,6 +273,7 @@ struct CellInfoContent: View {
         editedBoolValue = boolValue
         originalBoolValue = boolValue
       }
+      beautifyJSON(silent: true)
     }
   }
 
@@ -371,12 +373,18 @@ struct CellInfoContent: View {
 
   // MARK: - JSON Beautification
 
-  private func beautifyJSON() {
+  /// `silent` is used for automatic beautification: no toasts, and only for JSON objects/arrays.
+  private func beautifyJSON(silent: Bool = false) {
     guard case .string(let stringValue) = value else { return }
+
+    if silent {
+      let first = stringValue.first(where: { !$0.isWhitespace })
+      guard first == "{" || first == "[" else { return }
+    }
 
     // Try to parse the string as JSON
     guard let data = stringValue.data(using: .utf8) else {
-      viewModel.showToast("Cannot convert string to data.", type: .error)
+      if !silent { viewModel.showToast("Cannot convert string to data.", type: .error) }
       return
     }
 
@@ -396,6 +404,7 @@ struct CellInfoContent: View {
       // Compare original data length with serialized length
       // If original is significantly longer, there's likely trailing invalid JSON
       if data.count > Int(Double(serializedData.count) * 1.5) {
+        if silent { return }
         viewModel.showToast(
           "Warning: Only the first valid JSON object was beautified. The input contains multiple objects or invalid trailing data.",
           type: .warning
@@ -409,7 +418,9 @@ struct CellInfoContent: View {
       )
 
       guard let prettyString = String(data: prettyData, encoding: .utf8) else {
-        viewModel.showToast("Cannot convert beautified data to string.", type: .error)
+        if !silent {
+          viewModel.showToast("Cannot convert beautified data to string.", type: .error)
+        }
         return
       }
 
@@ -419,7 +430,7 @@ struct CellInfoContent: View {
 
     } catch {
       // Show error toast if not valid JSON
-      viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error)
+      if !silent { viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error) }
       return
     }
   }
