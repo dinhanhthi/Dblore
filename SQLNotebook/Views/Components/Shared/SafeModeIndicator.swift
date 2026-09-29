@@ -78,8 +78,7 @@ struct SafeModeIndicator: View {
     case .alertRead, .alertAll:
       return .warning
     case .safeRead, .safeAll:
-      // Always use purple/violet for Safe mode, independent of app accent color
-      return .purple
+      return .accent
     }
   }
 }
