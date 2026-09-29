@@ -164,6 +164,10 @@ struct HeaderView: View {
       // Capsule shape for every header button (notebook and editor modes)
       .buttonBorderShape(.capsule)
 
+      if viewModel.dataViewer != nil {
+        DataViewerControls(viewModel: viewModel)
+      }
+
       Spacer()
 
       // Trailing group - Search (common to both modes)
