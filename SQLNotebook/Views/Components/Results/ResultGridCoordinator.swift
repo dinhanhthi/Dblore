@@ -48,6 +48,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   private(set) var model: ResultGridModel?
+  /// Reused cells whose text field holds highlighted attributed text
+  private var highlightedCells = Set<ObjectIdentifier>()
   private var key: Key?
   /// Table (displayed) row and result column of the current search match
   private var currentMatchCell: (row: Int, column: Int)?
@@ -368,16 +370,21 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let value = model.value(row: row, column: column)
     let isNull = value == .null
     let text = model.displayText(row: row, column: column)
-    cell.textField?.textColor = isNull ? Self.nullTextColor : Self.textColor
+    let textColor = isNull ? Self.nullTextColor : Self.textColor
+    if cell.textField?.textColor != textColor { cell.textField?.textColor = textColor }
+    let cellID = ObjectIdentifier(cell)
     if let key, !key.searchQuery.isEmpty {
+      highlightedCells.insert(cellID)
       cell.textField?.attributedStringValue = Self.highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
-        textColor: isNull ? Self.nullTextColor : Self.textColor,
+        textColor: textColor,
         isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
-    } else {
+    } else if highlightedCells.remove(cellID) != nil || cell.textField?.stringValue != text {
+      // A cell that showed search highlights is reset even when the plain text is the same
       cell.textField?.stringValue = text
     }
-    cell.textField?.alignment = Self.alignment(for: value)
+    let alignment = Self.alignment(for: value)
+    if cell.textField?.alignment != alignment { cell.textField?.alignment = alignment }
     applyHighlight(to: cell, row: row, column: column)
     cell.textField?.isEditable = false
     cell.textField?.isSelectable = false

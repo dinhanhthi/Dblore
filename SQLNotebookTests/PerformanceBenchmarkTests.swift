@@ -156,6 +156,7 @@ struct PerformanceBenchmarkTests {
     }
   }
 
+  // Typical case: 100 KB document, cursor in a short last statement (tiny statement window).
   @Test("autocompleteSuggestions100KB")
   func autocompleteSuggestions100KB() {
     let provider = SQLAutocompleteProvider()
@@ -166,21 +167,52 @@ struct PerformanceBenchmarkTests {
           columns: [DatabaseColumn(name: "id", type: "integer")])
       })
     let text = PerfFixtures.sql2kLines() + "\nSELECT * FROM us"
+    let cursor = (text as NSString).length  // UTF-16 offset, as NSTextView reports it
     var count = 0
     let ms = PerfBench.median(of: 20) {
-      count = provider.getSuggestions(for: text, at: text.count).count
+      count = provider.getSuggestions(for: text, at: cursor).count
     }
     #expect(count > 0)
     PerfReport.record("autocompleteSuggestions100KB", ms: ms)
+    #expect(ms < 5, "autocomplete median \(ms) ms")
+  }
+
+  // Worst case: one ~100 KB statement without any ";", aliases present, cursor at the end.
+  @Test("autocompleteSuggestionsHugeStatement")
+  func autocompleteSuggestionsHugeStatement() {
+    let provider = SQLAutocompleteProvider()
+    provider.update(
+      tables: ["users", "orders", "order_items", "products", "sessions"].map {
+        DatabaseTable(
+          schema: "public", name: $0,
+          columns: [DatabaseColumn(name: "id", type: "integer")])
+      })
+    var text = "SELECT "
+    var i = 0
+    while text.utf8.count < 100_000 {
+      text += "u\(i).id, o\(i).total, p\(i).name, "
+      i += 1
+    }
+    text += "x FROM users u0 JOIN orders o0 ON o0.id = u0.id"
+    for j in 0..<200 { text += " JOIN products p\(j) ON p\(j).id = u0.id" }
+    text += " WHERE us"
+    #expect(text.utf8.count >= 100_000 && !text.contains(";"))
+    let cursor = (text as NSString).length  // UTF-16 offset, as NSTextView reports it
+    var count = 0
+    let ms = PerfBench.median(of: 20) {
+      count = provider.getSuggestions(for: text, at: cursor).count
+    }
+    #expect(count > 0)
+    PerfReport.record("autocompleteSuggestionsHugeStatement", ms: ms)
+    // extractTableReferences is linear now (was ~74 ms in Debug when quadratic in FROM/JOIN count)
+    #expect(ms < 20, "huge-statement autocomplete median \(ms) ms")
   }
 
   @Test("gridDisplayText1000x30")
   func gridDisplayText1000x30() {
     let result = PerfFixtures.cellResult()
     #expect(result.rows.count == 1000 && result.columns.count == 30)
-    let model = ResultGridModel(result: result, sortColumn: nil, ascending: true)
-
-    func pass() -> Int {
+    func pass(_ model: ResultGridModel) -> Int {
       var total = 0
       for row in 0..<model.rowCount {
         for column in 0..<model.columns.count {
@@ -190,12 +222,20 @@ struct PerformanceBenchmarkTests {
       return total
     }
 
+    // First pass: a fresh (cold cache) model per run
     var total = 0
-    let first = ContinuousClock().measure { total = pass() }
+    let first = PerfBench.median(of: 7, warmup: 1) {
+      let fresh = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+      total = pass(fresh)
+    }
     #expect(total > 0)
-    PerfReport.record("gridDisplayText1000x30.firstPass", ms: milliseconds(first))
-    let second = PerfBench.median(of: 20, warmup: 0) { _ = pass() }
+    PerfReport.record("gridDisplayText1000x30.firstPass", ms: first)
+
+    let model = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    _ = pass(model)
+    let second = PerfBench.median(of: 20, warmup: 0) { _ = pass(model) }
     PerfReport.record("gridDisplayText1000x30.secondPass", ms: second)
+    #expect(second * 5 <= first, "warm pass \(second) ms not 5x faster than cold \(first) ms")
 
     var width: CGFloat = 0
     let fit = PerfBench.median(of: 5) {

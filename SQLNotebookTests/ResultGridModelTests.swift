@@ -118,4 +118,75 @@ struct ResultGridModelTests {
     let unsorted = ResultGridModel(result: result, sortColumn: nil, ascending: true)
     #expect(result.rows.indices.map { unsorted.displayedRow(forOriginalRow: $0) } == [0, 1, 2, 3])
   }
+
+  // MARK: - Display text cache
+
+  /// The uncached algorithm: display string, first 1000 characters, line breaks as spaces
+  private func referenceText(_ value: CellValue) -> String {
+    let text = value.displayString
+    let prefix = text.prefix(1000)
+    let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+      .joined(separator: " ")
+    return prefix.endIndex < text.endIndex ? flat + "…" : flat
+  }
+
+  @Test("Cached text equals the uncached computation, on the first and the second call")
+  func cachedTextEqualsUncached() {
+    let values: [CellValue] = [
+      .string("line1\nline2\r\nline3"), .string(String(repeating: "ab\n", count: 600)),
+      .string(String(repeating: "x", count: 1000)), .string(String(repeating: "x", count: 1001)),
+      .null, .int(-42), .double(3.14159), .bool(true),
+      .date(Date(timeIntervalSince1970: 1_700_000_000)), .json("{\"a\":\n[1,2]}"),
+      .data(Data([0xDE, 0xAD, 0xBE, 0xEF])),
+    ]
+    let result = CellResult(
+      columns: [ColumnInfo(name: "v", type: "text")], rows: values.map { [$0] },
+      rowCount: values.count)
+    let model = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    for pass in 1...2 {
+      for (row, value) in values.enumerated() {
+        #expect(
+          model.displayText(row: row, column: 0) == referenceText(value), "pass \(pass) row \(row)")
+      }
+    }
+    // Column beyond a short row shows NULL
+    #expect(model.displayText(row: 0, column: 5) == "NULL")
+  }
+
+  @Test("A model rebuilt after an inline edit shows the new value, the old model keeps the old")
+  func rebuiltModelShowsEdit() {
+    let before = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    #expect(before.displayText(row: 0, column: 1) == "c")  // fills the cache
+
+    var editedRows = rows
+    editedRows[0][1] = .string("edited")
+    let edited = CellResult(columns: columns, rows: editedRows, rowCount: 3)
+    let after = ResultGridModel(result: edited, sortColumn: nil, ascending: true)
+
+    #expect(after.displayText(row: 0, column: 1) == "edited")
+    #expect(before.displayText(row: 0, column: 1) == "c")
+  }
+
+  @Test("The cache is per model: models over different results do not share entries")
+  func cacheIsPerModel() {
+    let other = CellResult(
+      columns: columns, rows: [[.int(9), .string("z")]], rowCount: 1)
+    let modelA = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    let modelB = ResultGridModel(result: other, sortColumn: nil, ascending: true)
+    #expect(modelA.displayText(row: 0, column: 0) == "3")
+    #expect(modelB.displayText(row: 0, column: 0) == "9")
+    #expect(modelA.displayText(row: 0, column: 1) == "c")
+    #expect(modelB.displayText(row: 0, column: 1) == "z")
+  }
+
+  @Test("A sorted model caches by displayed row")
+  func sortedModelCachesByDisplayedRow() {
+    let model = ResultGridModel(result: result, sortColumn: "id", ascending: false)
+    for _ in 1...2 {
+      #expect(model.displayText(row: 0, column: 0) == "3")
+      #expect(model.displayText(row: 0, column: 1) == "c")
+      #expect(model.displayText(row: 2, column: 0) == "1")
+      #expect(model.displayText(row: 1, column: 1) == "NULL")
+    }
+  }
 }

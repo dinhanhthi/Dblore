@@ -226,6 +226,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.delegate = nil
     textView.textStorage?.delegate = nil
 
+    // Stop any pending autocomplete computation and close the popover
+    textView.hideAutocomplete()
+
     // Clear callbacks
     textView.onFocus = nil
     textView.onBlur = nil

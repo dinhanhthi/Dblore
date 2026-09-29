@@ -18,6 +18,9 @@ struct ResultGridModel {
   private let originalRows: [Int]
   /// Displayed row of each index into `CellResult.rows`
   private let displayedRowByOriginalRow: [Int]
+  /// Lazily filled display text, shared by copies of this model (the rows are immutable, and
+  /// a new model, hence an empty cache, is built whenever the result or sort changes)
+  private let textCache: DisplayTextCache
 
   init(result: CellResult, sortColumn: String?, ascending: Bool) {
     columns = result.columns
@@ -29,6 +32,7 @@ struct ResultGridModel {
       displayedRowByOriginalRow[originalRow] = displayedRow
     }
     self.displayedRowByOriginalRow = displayedRowByOriginalRow
+    textCache = DisplayTextCache(rowCount: originalRows.count)
   }
 
   var rowCount: Int { displayedRows.count }
@@ -64,6 +68,13 @@ struct ResultGridModel {
   /// (line breaks become spaces) and at most `maxDisplayLength` characters: the single-line
   /// text field still lays out every line of a long multi-line value, which made scrolling lag
   func displayText(row: Int, column: Int) -> String {
+    if let cached = textCache.text(row: row, column: column) { return cached }
+    let text = computeDisplayText(row: row, column: column)
+    textCache.store(text, row: row, column: column, columnCount: columns.count)
+    return text
+  }
+
+  private func computeDisplayText(row: Int, column: Int) -> String {
     let text = value(row: row, column: column).displayString
     let prefix = text.prefix(Self.maxDisplayLength)
     let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
@@ -80,5 +91,28 @@ struct ResultGridModel {
         .joined(separator: "\t")
     }
     .joined(separator: "\n")
+  }
+}
+
+/// Per-cell display text of one `ResultGridModel`, filled on first request. A row's array is
+/// allocated on first store, so memory stays proportional to the cells actually shown. Main
+/// actor only, like the model (the project's default isolation), so no locking is needed.
+private final class DisplayTextCache {
+  private var rows: [[String?]?]
+
+  init(rowCount: Int) {
+    rows = Array(repeating: nil, count: rowCount)
+  }
+
+  func text(row: Int, column: Int) -> String? {
+    guard let cells = rows[row], column < cells.count else { return nil }
+    return cells[column]
+  }
+
+  func store(_ text: String, row: Int, column: Int, columnCount: Int) {
+    // A column past the model's columns (a short row shows NULL) is not cached
+    guard column < columnCount else { return }
+    if rows[row] == nil { rows[row] = Array(repeating: nil, count: columnCount) }
+    rows[row]?[column] = text
   }
 }

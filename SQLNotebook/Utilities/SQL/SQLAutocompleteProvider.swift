@@ -62,9 +62,13 @@ class SQLAutocompleteProvider {
   /// Get autocomplete suggestions based on current input
   /// - Parameters:
   ///   - text: Full text content
-  ///   - cursorPosition: Current cursor position in text
+  ///   - cursorPosition: Current cursor position in text (UTF-16 offset)
   /// - Returns: Array of suggestions
-  func getSuggestions(for text: String, at cursorPosition: Int) -> [AutocompleteSuggestion] {
+  func getSuggestions(for fullText: String, at fullCursorPosition: Int) -> [AutocompleteSuggestion]
+  {
+    // Only the current statement matters (bounded scan, see statementWindow)
+    let (text, cursorPosition) = statementWindow(in: fullText, at: fullCursorPosition)
+
     // Find the word being typed (token at cursor position)
     let token = extractCurrentToken(from: text, at: cursorPosition)
 
