@@ -11,6 +11,7 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
+    PerfSignpost.event("launch.didFinish")
     // Disable automatic window tabbing - each workspace gets its own window
     NSWindow.allowsAutomaticWindowTabbing = false
     // Start Sparkle (no-op under tests)
@@ -135,6 +136,7 @@ struct SQLNotebookApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
   init() {
+    PerfSignpost.event("launch.init")
     // Migrate from single session to connection history (one-time operation)
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()

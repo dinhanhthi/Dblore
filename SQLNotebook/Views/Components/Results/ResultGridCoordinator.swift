@@ -136,37 +136,40 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       Self.rowNumberWidth(rowCount: result.rows.count)
     let oldKey = key
     key = newKey
-    let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
-    self.model = model
-    highlightMatches =
-      highlight?.matches(
-        rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
-        dialect: highlightDialect) ?? [:]
-    currentMatchCell = nil
-    if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
-      let row = model.displayedRow(forOriginalRow: originalRow),
-      let column = model.columns.firstIndex(where: { $0.name == columnName })
-    {
-      currentMatchCell = (row, column)
-    }
-    tableView.dataSource = self
-    tableView.delegate = self
-    let sortDescriptors = sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
-    if tableView.sortDescriptors != sortDescriptors {
-      isShowingInputSort = true
-      tableView.sortDescriptors = sortDescriptors
-      isShowingInputSort = false
-    }
-    updateHeader(
-      tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
-      caseSensitive: caseSensitive, currentMatch: currentMatch)
-    // New columns fit like a divider double-click; a re-run keeps dragged widths
-    if newKey.columnNames != oldKey?.columnNames {
-      for (index, tableColumn) in tableView.tableColumns.enumerated() {
-        tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)
+    PerfSignpost.interval("grid.reload") {
+      let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
+      self.model = model
+      highlightMatches =
+        highlight?.matches(
+          rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
+          dialect: highlightDialect) ?? [:]
+      currentMatchCell = nil
+      if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
+        let row = model.displayedRow(forOriginalRow: originalRow),
+        let column = model.columns.firstIndex(where: { $0.name == columnName })
+      {
+        currentMatchCell = (row, column)
       }
+      tableView.dataSource = self
+      tableView.delegate = self
+      let sortDescriptors =
+        sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
+      if tableView.sortDescriptors != sortDescriptors {
+        isShowingInputSort = true
+        tableView.sortDescriptors = sortDescriptors
+        isShowingInputSort = false
+      }
+      updateHeader(
+        tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
+        caseSensitive: caseSensitive, currentMatch: currentMatch)
+      // New columns fit like a divider double-click; a re-run keeps dragged widths
+      if newKey.columnNames != oldKey?.columnNames {
+        for (index, tableColumn) in tableView.tableColumns.enumerated() {
+          tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)
+        }
+      }
+      tableView.reloadData()
     }
-    tableView.reloadData()
     if let currentMatchCell {
       tableView.scrollRowToVisible(currentMatchCell.row)
     }

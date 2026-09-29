@@ -309,7 +309,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       guard textView.window != nil else { return }
 
       // Apply syntax highlighting without affecting undo stack
-      applyHighlightingWithoutUndo(to: textView, text: textView.string)
+      PerfSignpost.interval("editor.highlight.keystroke") {
+        applyHighlightingWithoutUndo(to: textView, text: textView.string)
+      }
 
       // Update height to fit content
       updateHeight(textView: textView)
@@ -332,30 +334,32 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         let textStorage = textView.textStorage
       else { return }
 
-      let attributed: NSAttributedString
-      if isSearchActive {
-        // Get current match range from NotebookViewModel's search state
-        let currentMatchRange = getCurrentMatchRange(for: textView.string)
-        attributed = SQLSyntaxHighlighter.highlightWithSearch(
-          text,
-          searchQuery: searchQuery,
-          isCaseSensitive: isCaseSensitive,
-          currentMatchRange: currentMatchRange
-        )
-      } else {
-        attributed = SQLSyntaxHighlighter.highlight(text)
+      PerfSignpost.interval("editor.highlight.full") {
+        let attributed: NSAttributedString
+        if isSearchActive {
+          // Get current match range from NotebookViewModel's search state
+          let currentMatchRange = getCurrentMatchRange(for: textView.string)
+          attributed = SQLSyntaxHighlighter.highlightWithSearch(
+            text,
+            searchQuery: searchQuery,
+            isCaseSensitive: isCaseSensitive,
+            currentMatchRange: currentMatchRange
+          )
+        } else {
+          attributed = SQLSyntaxHighlighter.highlight(text)
+        }
+
+        // Disable undo registration for programmatic text changes
+        let undoManager = textView.undoManager
+        undoManager?.disableUndoRegistration()
+
+        textStorage.beginEditing()
+        textStorage.setAttributedString(attributed)
+        textStorage.endEditing()
+
+        // Re-enable undo registration
+        undoManager?.enableUndoRegistration()
       }
-
-      // Disable undo registration for programmatic text changes
-      let undoManager = textView.undoManager
-      undoManager?.disableUndoRegistration()
-
-      textStorage.beginEditing()
-      textStorage.setAttributedString(attributed)
-      textStorage.endEditing()
-
-      // Re-enable undo registration
-      undoManager?.enableUndoRegistration()
     }
 
     /// Apply syntax highlighting without creating undo operations

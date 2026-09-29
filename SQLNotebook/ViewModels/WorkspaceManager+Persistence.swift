@@ -186,74 +186,78 @@ extension WorkspaceManager {
     guard connectionState == .connected, !isSchemaPaused else { return }
     isLoadingSchema = true
 
-    do {
-      // Fetch basic schema info in parallel
-      async let tablesTask = connectionManager.fetchTables()
-      async let viewsTask = connectionManager.fetchViews()
-      async let functionsTask = connectionManager.fetchFunctions()
-      async let proceduresTask = connectionManager.fetchProcedures()
-      async let usersTask = connectionManager.fetchUsers()
-      async let rolesTask = connectionManager.fetchRoles()
-      async let foreignKeysTask = connectionManager.fetchForeignKeys()
+    await PerfSignpost.interval("schema.load") {
+      do {
+        // Fetch basic schema info in parallel
+        async let tablesTask = connectionManager.fetchTables()
+        async let viewsTask = connectionManager.fetchViews()
+        async let functionsTask = connectionManager.fetchFunctions()
+        async let proceduresTask = connectionManager.fetchProcedures()
+        async let usersTask = connectionManager.fetchUsers()
+        async let rolesTask = connectionManager.fetchRoles()
+        async let foreignKeysTask = connectionManager.fetchForeignKeys()
 
-      var (tables, views, functions, procedures, users, roles, foreignKeys) = try await (
-        tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask, foreignKeysTask
-      )
+        var (tables, views, functions, procedures, users, roles, foreignKeys) = try await (
+          tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask,
+          foreignKeysTask
+        )
 
-      // Fetch columns and row count for each table
-      for index in tables.indices {
-        let table = tables[index]
-        do {
-          let columns = try await connectionManager.fetchColumns(
-            tableSchema: table.schema,
-            tableName: table.name
-          )
-          tables[index].columns = columns
+        // Fetch columns and row count for each table
+        for index in tables.indices {
+          let table = tables[index]
+          do {
+            let columns = try await connectionManager.fetchColumns(
+              tableSchema: table.schema,
+              tableName: table.name
+            )
+            tables[index].columns = columns
 
-          // Fetch row count
-          let rowCount = try await connectionManager.fetchRowCount(
-            tableSchema: table.schema,
-            tableName: table.name
-          )
-          tables[index].rowCount = rowCount
-        } catch {
-          await AppLogger.shared.warning(
-            "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
+            // Fetch row count
+            let rowCount = try await connectionManager.fetchRowCount(
+              tableSchema: table.schema,
+              tableName: table.name
+            )
+            tables[index].rowCount = rowCount
+          } catch {
+            await AppLogger.shared.warning(
+              "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
+          }
         }
-      }
 
-      // Fetch columns for each view
-      for index in views.indices {
-        let view = views[index]
-        do {
-          let columns = try await connectionManager.fetchColumns(
-            tableSchema: view.schema,
-            tableName: view.name
-          )
-          views[index].columns = columns
-        } catch {
-          await AppLogger.shared.warning(
-            "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema")
+        // Fetch columns for each view
+        for index in views.indices {
+          let view = views[index]
+          do {
+            let columns = try await connectionManager.fetchColumns(
+              tableSchema: view.schema,
+              tableName: view.name
+            )
+            views[index].columns = columns
+          } catch {
+            await AppLogger.shared.warning(
+              "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema"
+            )
+          }
         }
+
+        // The transaction opened meanwhile: later lookups were refused, keep the cache
+        if await connectionManager.isMetadataPaused {
+          throw DatabaseError.metadataPausedDuringTransaction
+        }
+
+        databaseTables = tables
+        databaseViews = views
+        databaseFunctions = functions
+        databaseProcedures = procedures
+        databaseUsers = users
+        databaseRoles = roles
+        databaseForeignKeys = foreignKeys
+
+        // Sync to tab ViewModels
+        syncConnectionStateToTabs()
+      } catch {
+        await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
       }
-
-      // The transaction opened meanwhile: later lookups were refused, keep the cache
-      if await connectionManager.isMetadataPaused {
-        throw DatabaseError.metadataPausedDuringTransaction
-      }
-
-      databaseTables = tables
-      databaseViews = views
-      databaseFunctions = functions
-      databaseProcedures = procedures
-      databaseUsers = users
-      databaseRoles = roles
-      databaseForeignKeys = foreignKeys
-
-      // Sync to tab ViewModels
-      syncConnectionStateToTabs()
-    } catch {
-      await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
     }
 
     isLoadingSchema = false

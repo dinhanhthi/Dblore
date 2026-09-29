@@ -181,54 +181,56 @@ class WorkspaceManager: Identifiable {
     from url: URL, bookmark: Data? = nil, folderBookmark: Data? = nil,
     hooks: SecurityScopedAccessHooks = .live
   ) async throws -> WorkspaceManager {
-    let access = hooks.access(bookmark)
-    let folderAccess = hooks.access(folderBookmark)
-    var fileURL = access?.isStale == true ? access?.url ?? url : url
-    var fileBookmark = access?.bookmark
-    let data: Data
-    do {
-      data = try Data(contentsOf: fileURL)
-    } catch let error where SecurityScopedAccess.isPermissionError(error) {
-      guard let chosen = await hooks.chooseFile(fileURL) else { throw error }
-      data = try Data(contentsOf: chosen)
-      fileURL = chosen
-      fileBookmark = nil
+    try await PerfSignpost.interval("workspace.load") {
+      let access = hooks.access(bookmark)
+      let folderAccess = hooks.access(folderBookmark)
+      var fileURL = access?.isStale == true ? access?.url ?? url : url
+      var fileBookmark = access?.bookmark
+      let data: Data
+      do {
+        data = try Data(contentsOf: fileURL)
+      } catch let error where SecurityScopedAccess.isPermissionError(error) {
+        guard let chosen = await hooks.chooseFile(fileURL) else { throw error }
+        data = try Data(contentsOf: chosen)
+        fileURL = chosen
+        fileBookmark = nil
+      }
+      let decoder = JSONDecoder()
+      decoder.dateDecodingStrategy = .iso8601
+      var workspace = try decoder.decode(Workspace.self, from: data)
+      workspace.fileURL = fileURL
+      workspace.lastOpenedAt = Date()
+
+      // Don't restore tabs in init - we'll do it here with proper viewModels
+      let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
+      manager.accessHooks = hooks
+      manager.workspaceAccess = fileBookmark == nil ? nil : access?.token
+      manager.folderAccess = folderAccess?.token
+      manager.folderBookmark = folderAccess?.bookmark
+      manager.workspaceBookmark = fileBookmark ?? hooks.makeBookmark(fileURL)
+      manager.workspaceBookmarkURL = fileURL
+
+      // Restore tabs from saved workspace with their original IDs; save refreshed bookmarks
+      if await manager.restoreTabs(workspace.tabs) {
+        manager.markDirtyAndScheduleAutoSave()
+      }
+
+      // Restore active tab
+      if let activeId = workspace.activeTabId,
+        manager.tabs.contains(where: { $0.id == activeId })
+      {
+        manager.activeTabId = activeId
+      } else if let firstTab = manager.tabs.first {
+        manager.activeTabId = firstTab.id
+      }
+
+      // Auto-connect if connection config exists
+      if workspace.connectionConfig != nil {
+        await manager.autoConnectIfNeeded()
+      }
+
+      return manager
     }
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    var workspace = try decoder.decode(Workspace.self, from: data)
-    workspace.fileURL = fileURL
-    workspace.lastOpenedAt = Date()
-
-    // Don't restore tabs in init - we'll do it here with proper viewModels
-    let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
-    manager.accessHooks = hooks
-    manager.workspaceAccess = fileBookmark == nil ? nil : access?.token
-    manager.folderAccess = folderAccess?.token
-    manager.folderBookmark = folderAccess?.bookmark
-    manager.workspaceBookmark = fileBookmark ?? hooks.makeBookmark(fileURL)
-    manager.workspaceBookmarkURL = fileURL
-
-    // Restore tabs from saved workspace with their original IDs; save refreshed bookmarks
-    if await manager.restoreTabs(workspace.tabs) {
-      manager.markDirtyAndScheduleAutoSave()
-    }
-
-    // Restore active tab
-    if let activeId = workspace.activeTabId,
-      manager.tabs.contains(where: { $0.id == activeId })
-    {
-      manager.activeTabId = activeId
-    } else if let firstTab = manager.tabs.first {
-      manager.activeTabId = firstTab.id
-    }
-
-    // Auto-connect if connection config exists
-    if workspace.connectionConfig != nil {
-      await manager.autoConnectIfNeeded()
-    }
-
-    return manager
   }
 
   // MARK: - Computed Properties
@@ -272,7 +274,9 @@ class WorkspaceManager: Identifiable {
     invalidateEditTargetsInTabs()
 
     do {
-      try await connectionManager.connect(config: config)
+      try await PerfSignpost.interval("db.connect") {
+        try await connectionManager.connect(config: config)
+      }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
       workspace.connectionKeychainKey =

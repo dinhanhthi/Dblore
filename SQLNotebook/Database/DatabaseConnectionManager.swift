@@ -35,6 +35,8 @@ actor DatabaseConnectionManager {
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
   /// Reads that went through a server-side cursor (`executeCursorRead`); observed by tests
   var cursorReadCount = 0
+  /// App catalog queries that passed `catalogConnection()`; observed by performance tests
+  var catalogQueryCount = 0
   /// Queries waiting in `send(on:)`: queued on the connection or running (see
   /// `resetSessionIfCapped`)
   var activeSends = 0
