@@ -11,8 +11,17 @@ import UniformTypeIdentifiers
 // MARK: - App Delegate for file handling
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+  /// Set once quitting is confirmed, so closing the windows on quit does not reopen Welcome
+  private var isTerminating = false
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     PerfSignpost.event("launch.didFinish")
+    NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: nil, queue: .main
+    ) { [weak self] note in
+      guard let window = note.object as? NSWindow else { return }
+      Task { @MainActor in self?.reopenWelcomeIfLastWindowClosed(window) }
+    }
     // Disable automatic window tabbing - each workspace gets its own window
     NSWindow.allowsAutomaticWindowTabbing = false
     // Start Sparkle (no-op under tests)
@@ -65,6 +74,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     return false  // Keep app running even when all windows are closed
   }
 
+  /// Closing the last workspace/welcome window brings the Welcome window back
+  /// (About and other small windows are not resizable, so they never trigger this)
+  @MainActor
+  private func reopenWelcomeIfLastWindowClosed(_ closed: NSWindow) {
+    guard !isTerminating, !SessionManager.isRunningAsTestHost,
+      closed.canBecomeMain, closed.styleMask.contains(.resizable)
+    else { return }
+    // Let a quit in progress (which closes the windows too) win over the reopen
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+      guard let self, !self.isTerminating else { return }
+      let hasWindow = NSApp.windows.contains {
+        $0 !== closed && $0.isVisible && $0.canBecomeMain && $0.styleMask.contains(.resizable)
+      }
+      guard !hasWindow else { return }
+      NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+    }
+  }
+
   /// Quitting with a pending Protected transaction asks Commit / Roll back / Cancel for each
   /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
   /// without COMMIT, so the server rolls the transaction back.
@@ -72,7 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let managers = WorkspaceWindowManager.shared.allWorkspaces
     // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
     guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
-    else { return .terminateNow }
+    else {
+      isTerminating = true
+      return .terminateNow
+    }
     Task { @MainActor in
       for manager in managers {
         guard await manager.resolvePendingTransaction(action: .quit) else {
@@ -80,6 +110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           return
         }
       }
+      isTerminating = true
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

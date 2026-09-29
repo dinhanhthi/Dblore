@@ -36,6 +36,7 @@ struct AppWelcomeView: View {
                   RecentWorkspacesColumn(
                     workspaces: recentManager.recentWorkspaces,
                     onSelect: openWorkspace,
+                    onRemove: { recentManager.removeWorkspace(id: $0.id) },
                     onNew: createNewWorkspace,
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,
@@ -49,6 +50,7 @@ struct AppWelcomeView: View {
                   RecentConnectionsColumn(
                     connections: recentManager.recentConnections,
                     onSelect: openConnectionAsWorkspace,
+                    onRemove: { recentManager.removeConnection(id: $0.id) },
                     onNew: showConnectionForm,
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,
@@ -217,7 +219,7 @@ struct WelcomeHeader: View {
         .foregroundColor(.foregroundMuted)
 
       Text("Version \(appVersion)")
-        .font(.caption)
+        .font(.callout)
         .foregroundColor(.foregroundSubtle)
     }
     .padding(.bottom, Spacing.lg)
@@ -229,6 +231,7 @@ struct WelcomeHeader: View {
 struct RecentWorkspacesColumn: View {
   let workspaces: [WorkspaceHistoryEntry]
   let onSelect: (WorkspaceHistoryEntry) -> Void
+  let onRemove: (WorkspaceHistoryEntry) -> Void
   let onNew: () -> Void
   let columnWidth: CGFloat
 
@@ -256,20 +259,25 @@ struct RecentWorkspacesColumn: View {
 
       // Workspace list
       VStack(spacing: 0) {
-        ForEach(workspaces.prefix(6)) { workspace in
+        let rows = Array(workspaces.prefix(6))
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, workspace in
           RecentWorkspaceRow(
             workspace: workspace,
+            isFirst: index == 0,
+            isLast: index == rows.count - 1,
             isLoading: loadingWorkspaceId == workspace.id,
             onSelect: { entry in
               loadingWorkspaceId = entry.id
               onSelect(entry)
-            }
+            },
+            onRemove: { onRemove(workspace) }
           )
           .disabled(loadingWorkspaceId != nil)
         }
       }
-      .background(Color.cardBackground)
-      .cornerRadius(CornerRadius.md)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md).fill(Color.cardBackground)
+      )
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .stroke(Color.border, lineWidth: 1)
@@ -283,10 +291,14 @@ struct RecentWorkspacesColumn: View {
 
 struct RecentWorkspaceRow: View {
   let workspace: WorkspaceHistoryEntry
+  let isFirst: Bool
+  let isLast: Bool
   let isLoading: Bool
   let onSelect: (WorkspaceHistoryEntry) -> Void
+  let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringRemove = false
 
   var body: some View {
     Button {
@@ -354,10 +366,18 @@ struct RecentWorkspaceRow: View {
         Spacer(minLength: 0)
       }
       .padding(Spacing.sm)
-      .background(isHovering ? Color.cellBackgroundHover : Color.clear)
+      .background(
+        recentRowShape(isFirst: isFirst, isLast: isLast)
+          .fill(isHovering ? Color.cellBackgroundHover : Color.clear)
+      )
     }
     .buttonStyle(.plain)
     .linkPointer()
+    .overlay(alignment: .trailing) {
+      if (isHovering || isHoveringRemove) && !isLoading {
+        RecentRemoveButton(action: onRemove, isHovering: $isHoveringRemove)
+      }
+    }
     .onHover { hovering in
       isHovering = hovering
     }
@@ -369,6 +389,7 @@ struct RecentWorkspaceRow: View {
 struct RecentConnectionsColumn: View {
   let connections: [ConnectionHistoryEntry]
   let onSelect: (ConnectionHistoryEntry) -> Void
+  let onRemove: (ConnectionHistoryEntry) -> Void
   let onNew: () -> Void
   let columnWidth: CGFloat
 
@@ -396,20 +417,25 @@ struct RecentConnectionsColumn: View {
 
       // Connection list
       VStack(spacing: 0) {
-        ForEach(connections.prefix(6)) { connection in
+        let rows = Array(connections.prefix(6))
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, connection in
           RecentConnectionRow(
             connection: connection,
+            isFirst: index == 0,
+            isLast: index == rows.count - 1,
             isLoading: loadingConnectionId == connection.id,
             onSelect: { entry in
               loadingConnectionId = entry.id
               onSelect(entry)
-            }
+            },
+            onRemove: { onRemove(connection) }
           )
           .disabled(loadingConnectionId != nil)
         }
       }
-      .background(Color.cardBackground)
-      .cornerRadius(CornerRadius.md)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md).fill(Color.cardBackground)
+      )
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .stroke(Color.border, lineWidth: 1)
@@ -423,10 +449,14 @@ struct RecentConnectionsColumn: View {
 
 struct RecentConnectionRow: View {
   let connection: ConnectionHistoryEntry
+  let isFirst: Bool
+  let isLast: Bool
   let isLoading: Bool
   let onSelect: (ConnectionHistoryEntry) -> Void
+  let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringRemove = false
 
   var body: some View {
     Button {
@@ -475,13 +505,60 @@ struct RecentConnectionRow: View {
         Spacer(minLength: 0)
       }
       .padding(Spacing.sm)
-      .background(isHovering ? Color.cellBackgroundHover : Color.clear)
+      .background(
+        recentRowShape(isFirst: isFirst, isLast: isLast)
+          .fill(isHovering ? Color.cellBackgroundHover : Color.clear)
+      )
     }
     .buttonStyle(.plain)
     .linkPointer()
+    .overlay(alignment: .trailing) {
+      if (isHovering || isHoveringRemove) && !isLoading {
+        RecentRemoveButton(action: onRemove, isHovering: $isHoveringRemove)
+      }
+    }
     .onHover { hovering in
       isHovering = hovering
     }
+  }
+}
+
+// MARK: - Recent Remove Button
+
+/// Hover highlight of a row: rounded only at the corners it shares with the card
+private func recentRowShape(isFirst: Bool, isLast: Bool) -> UnevenRoundedRectangle {
+  UnevenRoundedRectangle(
+    topLeadingRadius: isFirst ? CornerRadius.md : 0,
+    bottomLeadingRadius: isLast ? CornerRadius.md : 0,
+    bottomTrailingRadius: isLast ? CornerRadius.md : 0,
+    topTrailingRadius: isFirst ? CornerRadius.md : 0)
+}
+
+/// Hover-only button that removes a card from the recent list, centered on the card's
+/// right edge (half of it sticks out)
+private struct RecentRemoveButton: View {
+  private static let size: CGFloat = 20
+
+  let action: () -> Void
+  @Binding var isHovering: Bool
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: "xmark")
+        .resizable()
+        .scaledToFit()
+        .fontWeight(.semibold)
+        .foregroundColor(.foreground)
+        .frame(width: 8, height: 8)
+        .frame(width: Self.size, height: Self.size)
+        .background(Circle().fill(Color.inputBackground))
+        .overlay(Circle().stroke(Color.border, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .help("Remove from recent")
+    .onHover { isHovering = $0 }
+    .offset(x: Self.size / 2)
   }
 }
 
@@ -527,6 +604,7 @@ struct ActionCard: View {
   let action: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringRemove = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -731,6 +809,7 @@ private struct PreviewAppWelcomeView: View {
                   RecentWorkspacesColumn(
                     workspaces: previewManager.recentWorkspaces,
                     onSelect: { _ in },
+                    onRemove: { _ in },
                     onNew: {},
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,
@@ -743,6 +822,7 @@ private struct PreviewAppWelcomeView: View {
                   RecentConnectionsColumn(
                     connections: previewManager.recentConnections,
                     onSelect: { _ in },
+                    onRemove: { _ in },
                     onNew: {},
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,

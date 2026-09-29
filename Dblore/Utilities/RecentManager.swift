@@ -58,8 +58,12 @@ class RecentManager {
 
   /// Recent connections (delegated to SessionManager)
   var recentConnections: [ConnectionHistoryEntry] {
-    SessionManager.loadHistory()
+    _ = connectionsRevision
+    return SessionManager.loadHistory()
   }
+
+  /// Bumped when the connection history changes, so views reading `recentConnections` refresh
+  private var connectionsRevision = 0
 
   // MARK: - Initialization
 
@@ -172,11 +176,13 @@ class RecentManager {
   /// Remove a connection from recent list
   func removeConnection(id: UUID) {
     SessionManager.removeConnection(id: id)
+    connectionsRevision += 1
   }
 
   /// Clear all recent connections
   func clearConnections() {
     SessionManager.clearAllHistory()
+    connectionsRevision += 1
   }
 
   // MARK: - Persistence
