@@ -40,7 +40,7 @@ struct SafeModeModal: View {
       GenericModalHeader(
         title: "Database Protection",
         titleIcon: "shield.lefthalf.filled",
-        titleIconColor: .purple,
+        titleIconColor: .accent,
         onClose: { isPresented = false }
       )
 
@@ -191,7 +191,7 @@ struct SafeModeModal: View {
       case .alertRead, .alertAll:
         return .warning
       case .safeRead, .safeAll:
-        return .purple
+        return .accent
       }
     }
   }
