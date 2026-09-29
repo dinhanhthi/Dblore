@@ -82,6 +82,8 @@ struct ResultGridView: NSViewRepresentable {
     tableView.rowHeight = Self.rowHeight
     tableView.intercellSpacing = NSSize(width: 0, height: 0)
     tableView.usesAlternatingRowBackgroundColors = false
+    tableView.gridStyleMask = .solidVerticalGridLineMask
+    tableView.gridColor = NSColor(Color.border)
     tableView.allowsColumnResizing = true
     tableView.allowsColumnReordering = true
     tableView.allowsMultipleSelection = true
@@ -178,6 +180,8 @@ final class ResultGridHeaderView: NSTableHeaderView {
         if index == draggedColumn { rect.origin.x += draggedDistance }
         guard rect.intersects(dirtyRect) else { continue }
         column.headerCell.draw(withFrame: rect, in: self)
+        NSColor(Color.border).setFill()
+        NSRect(x: rect.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
       }
     }
     NSColor(Color.border).setFill()
