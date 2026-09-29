@@ -56,8 +56,8 @@ struct TableRowView: View {
           Spacer()
 
           // Row count badge
-          if let rowCount = table.rowCount {
-            Text("\(rowCount)")
+          if let estimate = compactRowEstimate(table.rowCount) {
+            Text(estimate)
               .font(.system(.caption2))
               .foregroundColor(.foregroundSubtle)
               .padding(.horizontal, Spacing.xs)
@@ -66,6 +66,7 @@ struct TableRowView: View {
                 RoundedRectangle(cornerRadius: 3)
                   .fill(Color.inputBackground)
               )
+              .help("Estimated row count (from table statistics)")
           }
         }
       }

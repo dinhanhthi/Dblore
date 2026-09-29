@@ -38,78 +38,23 @@ class SQLAutocompleteProvider {
   var tables: [DatabaseTable] = []
   var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
 
-  // Cache validity tracking (10.1.4 optimization)
-  private var lastRefreshTime: Date?
-  private let cacheValidityDuration: TimeInterval = 5 * 60  // 5 minutes
+  // MARK: - Schema
 
-  // Current connection manager reference
-  private weak var connectionManager: DatabaseConnectionManager?
-
-  // MARK: - Initialization
-
-  func setConnectionManager(_ manager: DatabaseConnectionManager?) {
-    connectionManager = manager
-  }
-
-  // MARK: - Schema Fetching
-
-  /// Fetch schema metadata (tables and columns) from the database
-  func refreshSchema() async {
-    guard let manager = connectionManager else { return }
-
-    // Check cache validity (10.1.4 optimization - skip refetch if cache is still valid)
-    if let lastRefresh = lastRefreshTime,
-      Date().timeIntervalSince(lastRefresh) < cacheValidityDuration,
-      !tables.isEmpty
-    {
-      // Cache is still valid, skip refetch
-      return
+  /// Feed the provider from the already loaded schema (tables with their columns)
+  func update(tables: [DatabaseTable]) {
+    self.tables = tables
+    var index: [String: [DatabaseColumn]] = [:]
+    index.reserveCapacity(tables.count)
+    for table in tables {
+      index["\(table.schema).\(table.name)"] = table.columns
     }
-
-    // Check if connected
-    let isConnected = await manager.isConnected
-    guard isConnected else {
-      tables = []
-      columnsByTable = [:]
-      lastRefreshTime = nil
-      return
-    }
-
-    do {
-      // Fetch all tables
-      let fetchedTables = try await manager.fetchTables()
-      tables = fetchedTables
-
-      // Fetch columns for each table (limit to first 50 tables to avoid slowdown)
-      var newColumnsCache: [String: [DatabaseColumn]] = [:]
-      for table in fetchedTables.prefix(50) {
-        do {
-          let columns = try await manager.fetchColumns(
-            tableSchema: table.schema, tableName: table.name)
-          let key = "\(table.schema).\(table.name)"
-          newColumnsCache[key] = columns
-        } catch {
-          // Skip tables we can't fetch columns for
-          await AppLogger.shared.warning(
-            "Failed to fetch columns for \(table.schema).\(table.name): \(error)",
-            category: "Autocomplete")
-        }
-      }
-      columnsByTable = newColumnsCache
-
-      // Update cache timestamp (10.1.4 optimization)
-      lastRefreshTime = Date()
-
-    } catch {
-      await AppLogger.shared.error("Failed to refresh schema: \(error)", category: "Autocomplete")
-    }
+    columnsByTable = index
   }
 
   /// Clear the schema cache (10.1.4 & 10.1.8 optimization)
   func clearCache() {
     tables = []
     columnsByTable = [:]
-    lastRefreshTime = nil
   }
 
   // MARK: - Autocomplete Suggestions

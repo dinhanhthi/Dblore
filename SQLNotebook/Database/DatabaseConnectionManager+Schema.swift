@@ -12,18 +12,40 @@ import PostgresNIO
 extension DatabaseConnectionManager {
   // MARK: - Schema Introspection
 
-  /// Fetch all tables from the database
+  /// Relation-level visibility, equivalent to what information_schema applies to tables and views
+  private static let relationPrivilegeFilter = """
+    (pg_has_role(c.relowner, 'USAGE')
+      OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+      OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))
+    """
+
+  /// information_schema hides other sessions' temporary tables (unreadable for this session)
+  private static let hideOtherTempSchemas = "NOT pg_is_other_temp_schema(n.oid)"
+
+  /// Column-level visibility, as information_schema.columns applies it: a column is listed only
+  /// with a privilege on that column (or ownership through a role), not on any other column
+  private static let columnPrivilegeFilter = """
+    (pg_has_role(c.relowner, 'USAGE')
+      OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
+    """
+
+  /// Fetch all tables from the database (row count is the planner estimate, nil if never analyzed)
   func fetchTables() async throws -> [DatabaseTable] {
     let connection = try catalogConnection()
 
     let query = """
       SELECT
-        table_schema,
-        table_name
-      FROM information_schema.tables
-      WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-        AND table_type = 'BASE TABLE'
-      ORDER BY table_schema, table_name
+        n.nspname::text,
+        c.relname::text,
+        CASE WHEN c.reltuples < 0 OR (c.reltuples = 0 AND c.relpages = 0)
+          THEN NULL ELSE c.reltuples::bigint END AS row_estimate
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        AND \(Self.hideOtherTempSchemas)
+        AND \(Self.relationPrivilegeFilter)
+      ORDER BY n.nspname, c.relname
       """
 
     do {
@@ -45,7 +67,8 @@ extension DatabaseConnectionManager {
           continue
         }
 
-        tables.append(DatabaseTable(schema: schema, name: name))
+        let estimate = try? randomAccess[2].decode(Int?.self, context: .default)
+        tables.append(DatabaseTable(schema: schema, name: name, rowCount: estimate ?? nil))
       }
 
       return tables
@@ -54,35 +77,36 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Fetch columns for a specific table
-  func fetchColumns(tableSchema: String, tableName: String) async throws -> [DatabaseColumn] {
-    // First, fetch primary key columns for this table
-    let primaryKeyColumns = try await fetchPrimaryKeyColumns(
-      tableName: "\(tableSchema).\(tableName)")
-
-    // Fetch unique constraint columns
-    let uniqueColumns = try await fetchUniqueColumns(tableSchema: tableSchema, tableName: tableName)
-
-    // Checked after the lookups above: the app transaction may have opened meanwhile
+  /// Fetch the columns of every table and view in one query, keyed by "schema.relation"
+  func fetchAllColumns() async throws -> [String: [DatabaseColumn]] {
     let connection = try catalogConnection()
 
-    // Use string interpolation for now since parameter binding is complex with PostgresNIO
-    // Include additional columns for type enrichment and identity
     let query = """
       SELECT
-        column_name,
-        data_type,
-        is_nullable,
-        column_default,
-        character_maximum_length,
-        numeric_precision,
-        numeric_scale,
-        datetime_precision,
-        is_identity
-      FROM information_schema.columns
-      WHERE table_schema = '\(tableSchema)'
-        AND table_name = '\(tableName)'
-      ORDER BY ordinal_position
+        n.nspname::text,
+        c.relname::text,
+        a.attname::text,
+        format_type(a.atttypid, a.atttypmod),
+        a.attnotnull,
+        (a.attidentity <> '') AS is_identity,
+        EXISTS (
+          SELECT 1 FROM pg_index i
+          WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)
+        ) AS is_pk,
+        EXISTS (
+          SELECT 1 FROM pg_index i
+          WHERE i.indrelid = c.oid AND i.indisunique AND NOT i.indisprimary
+            AND array_length(i.indkey, 1) = 1 AND a.attnum = ANY(i.indkey)
+        ) AS is_unique
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p', 'v')
+        AND a.attnum > 0 AND NOT a.attisdropped
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        AND \(Self.hideOtherTempSchemas)
+        AND \(Self.columnPrivilegeFilter)
+      ORDER BY n.nspname, c.relname, a.attnum
       """
 
     do {
@@ -91,126 +115,29 @@ extension DatabaseConnectionManager {
           PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.schema"))
       }
 
-      var columns: [DatabaseColumn] = []
-
+      var rows: [SchemaCatalog.ColumnRow] = []
       for try await row in stream {
-        let randomAccess = row.makeRandomAccess()
-
-        let cells = Array(randomAccess)
-        guard cells.count >= 3 else { continue }
-
-        guard let columnName = try? cells[0].decode(String.self, context: .default),
-          let dataType = try? cells[1].decode(String.self, context: .default),
-          let isNullableStr = try? cells[2].decode(String.self, context: .default)
+        let cells = Array(row.makeRandomAccess())
+        guard cells.count >= 8,
+          let schema = try? cells[0].decode(String.self, context: .default),
+          let relation = try? cells[1].decode(String.self, context: .default),
+          let name = try? cells[2].decode(String.self, context: .default),
+          let formatType = try? cells[3].decode(String.self, context: .default),
+          let notNull = try? cells[4].decode(Bool.self, context: .default),
+          let isIdentity = try? cells[5].decode(Bool.self, context: .default),
+          let isPK = try? cells[6].decode(Bool.self, context: .default),
+          let isUnique = try? cells[7].decode(Bool.self, context: .default)
         else {
           continue
         }
-
-        let isNullable = isNullableStr.uppercased() == "YES"
-
-        // Check if this column is a primary key
-        let isPrimaryKey = primaryKeyColumns.contains(columnName)
-
-        // Check if this column is identity
-        var isIdentity = false
-        if cells.count > 8,
-          let isIdentityStr = try? cells[8].decode(String.self, context: .default)
-        {
-          isIdentity = isIdentityStr.uppercased() == "YES"
-        }
-
-        // Check if this column has unique constraint (but not primary key)
-        let isUnique = uniqueColumns.contains(columnName) && !isPrimaryKey
-
-        // Build enriched type string with precision/scale/length
-        var enrichedType = dataType.uppercased()
-
-        // Add length for character types (VARCHAR, CHAR)
-        if cells.count > 4, let maxLength = try? cells[4].decode(Int.self, context: .default) {
-          enrichedType += "(\(maxLength))"
-        }
-        // Add precision and scale for numeric types
-        else if cells.count > 6,
-          let precision = try? cells[5].decode(Int.self, context: .default)
-        {
-          if let scale = try? cells[6].decode(Int.self, context: .default) {
-            enrichedType += "(\(precision),\(scale))"
-          } else {
-            enrichedType += "(\(precision))"
-          }
-        }
-        // Add precision for datetime types
-        else if cells.count > 7,
-          let datetimePrecision = try? cells[7].decode(Int.self, context: .default)
-        {
-          // For timestamp types, check if it's WITH/WITHOUT TIME ZONE
-          if dataType.uppercased().contains("TIMESTAMP") {
-            if dataType.uppercased().contains("WITH TIME ZONE") {
-              enrichedType = "TIMESTAMP(\(datetimePrecision)) W TZ"
-            } else {
-              enrichedType = "TIMESTAMP(\(datetimePrecision)) W/O TZ"
-            }
-          }
-        }
-
-        columns.append(
-          DatabaseColumn(
-            name: columnName,
-            type: enrichedType,
-            isNullable: isNullable,
-            isPrimaryKey: isPrimaryKey,
-            isIdentity: isIdentity,
-            isUnique: isUnique
-          )
-        )
+        rows.append(
+          SchemaCatalog.ColumnRow(
+            schema: schema, relation: relation, name: name, formatType: formatType,
+            notNull: notNull, isIdentity: isIdentity, isPK: isPK, isUnique: isUnique))
       }
-
-      return columns
+      return SchemaCatalog.columnsByRelation(rows)
     } catch {
-      throw DatabaseError.queryFailed(
-        "Failed to fetch columns for \(tableSchema).\(tableName): \(error.localizedDescription)",
-        0
-      )
-    }
-  }
-
-  /// Fetch unique constraint column names for a table (single-column unique constraints only)
-  private func fetchUniqueColumns(
-    tableSchema: String, tableName: String
-  ) async throws -> Set<
-    String
-  > {
-    let connection = try catalogConnection()
-
-    // Query to get unique constraint columns (only single-column constraints)
-    let query = """
-      SELECT a.attname AS column_name
-      FROM pg_index i
-      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-      WHERE i.indrelid = '\(tableSchema).\(tableName)'::regclass
-        AND i.indisunique
-        AND NOT i.indisprimary
-        AND array_length(i.indkey, 1) = 1
-      """
-
-    do {
-      let stream = try await send(on: connection) {
-        try await $0.query(
-          PostgresQuery(unsafeSQL: query), logger: Logger(label: "sqlnotebook.unique"))
-      }
-
-      var uniqueColumns: Set<String> = []
-      for try await row in stream {
-        let randomAccess = row.makeRandomAccess()
-        if let columnName = try? randomAccess[0].decode(String.self) {
-          uniqueColumns.insert(columnName)
-        }
-      }
-
-      return uniqueColumns
-    } catch {
-      // If query fails, return empty set
-      return []
+      throw DatabaseError.queryFailed("Failed to fetch columns: \(error.localizedDescription)", 0)
     }
   }
 
@@ -295,13 +222,14 @@ extension DatabaseConnectionManager {
     let connection = try catalogConnection()
 
     let query = """
-      SELECT
-        table_schema,
-        table_name,
-        view_definition
-      FROM information_schema.views
-      WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-      ORDER BY table_schema, table_name
+      SELECT n.nspname::text, c.relname::text
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind = 'v'
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND \(Self.hideOtherTempSchemas)
+        AND \(Self.relationPrivilegeFilter)
+      ORDER BY n.nspname, c.relname
       """
 
     do {
@@ -322,9 +250,7 @@ extension DatabaseConnectionManager {
           continue
         }
 
-        let definition = try? randomAccess[2].decode(String.self, context: .default)
-
-        views.append(DatabaseView(schema: schema, name: name, definition: definition))
+        views.append(DatabaseView(schema: schema, name: name, definition: nil))
       }
 
       return views
@@ -344,8 +270,7 @@ extension DatabaseConnectionManager {
         n.nspname AS schema,
         p.proname AS name,
         pg_get_function_result(p.oid) AS return_type,
-        pg_get_function_arguments(p.oid) AS arguments,
-        pg_get_functiondef(p.oid) AS definition
+        pg_get_function_arguments(p.oid) AS arguments
       FROM pg_proc p
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
@@ -373,15 +298,13 @@ extension DatabaseConnectionManager {
           continue
         }
 
-        let definition = try? randomAccess[4].decode(String.self, context: .default)
-
         functions.append(
           DatabaseFunction(
             schema: schema,
             name: name,
             returnType: returnType,
             arguments: arguments,
-            definition: definition
+            definition: nil
           )
         )
       }
@@ -403,8 +326,7 @@ extension DatabaseConnectionManager {
       SELECT
         n.nspname AS schema,
         p.proname AS name,
-        pg_get_function_arguments(p.oid) AS arguments,
-        pg_get_functiondef(p.oid) AS definition
+        pg_get_function_arguments(p.oid) AS arguments
       FROM pg_proc p
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
@@ -431,14 +353,12 @@ extension DatabaseConnectionManager {
           continue
         }
 
-        let definition = try? randomAccess[3].decode(String.self, context: .default)
-
         procedures.append(
           DatabaseProcedure(
             schema: schema,
             name: name,
             arguments: arguments,
-            definition: definition
+            definition: nil
           )
         )
       }

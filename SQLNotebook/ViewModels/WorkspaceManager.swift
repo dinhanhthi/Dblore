@@ -22,6 +22,13 @@ class WorkspaceManager: Identifiable {
   var workspace: Workspace
   var isDirty: Bool = false
   var autoSaveTask: Task<Void, Never>?
+  /// Background schema load started by connect (and by a Commit / Rollback that retries a
+  /// load discarded during the transaction)
+  var schemaLoadTask: Task<Void, Never>?
+  /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
+  var schemaLoadGeneration = 0
+  /// Background auto-connect started by `load(from:)` (workspace open does not wait for it)
+  var autoConnectTask: Task<Void, Never>?
 
   // MARK: - Shared Connection
 
@@ -153,8 +160,6 @@ class WorkspaceManager: Identifiable {
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
     isLeftSidebarVisible = settingsResolver.isLeftSidebarVisible
 
-    // Set connection manager for autocomplete
-    autocompleteProvider.setConnectionManager(connectionManager)
     startSessionLossListener()
 
     // Only restore tabs for new workspaces (not loading from disk)
@@ -224,9 +229,10 @@ class WorkspaceManager: Identifiable {
         manager.activeTabId = firstTab.id
       }
 
-      // Auto-connect if connection config exists
+      // Auto-connect in the background: the window opens at once, showing "connecting"
       if workspace.connectionConfig != nil {
-        await manager.autoConnectIfNeeded()
+        manager.connectionState = .connecting
+        manager.autoConnectTask = Task { await manager.autoConnectIfNeeded() }
       }
 
       return manager
@@ -268,7 +274,12 @@ class WorkspaceManager: Identifiable {
 
   /// Connect without the weakening check. Only `connect(config:globalSafeMode:)` and
   /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) may call this.
-  func connectWithoutUnlockCheck(config: ConnectionConfig) async throws {
+  func connectWithoutUnlockCheck(
+    config: ConnectionConfig, isAutoConnect: Bool = false
+  ) async throws {
+    // A load of the previous connection must not assign its schema during the connect
+    cancelSchemaLoad()
+    if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
@@ -290,20 +301,17 @@ class WorkspaceManager: Identifiable {
       // Save to connection history
       SessionManager.saveConnection(config)
 
-      // Load schema
-      await loadDatabaseSchema()
-
-      // Refresh autocomplete
-      await autocompleteProvider.refreshSchema()
-
       // Update all tab ViewModels with connection state
       syncConnectionStateToTabs()
 
-      // Restored data viewers load once connected
+      // Restored data viewers load once connected (before the schema, they are what the user sees)
       for viewModel in viewModels.values
       where viewModel.dataViewer != nil && viewModel.editorResult == nil {
         Task { await viewModel.loadDataViewerPage() }
       }
+
+      // The schema loads in the background; tabs get it when the load finishes
+      startSchemaLoad()
     } catch {
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
@@ -316,30 +324,57 @@ class WorkspaceManager: Identifiable {
     try await connectionManager.testConnection(config: editingConnectionConfig)
   }
 
+  /// A user-initiated connect replaces a pending auto-connect: cancel it and wait until it is
+  /// done (a cancelled auto-connect that had already connected disconnects itself), so two
+  /// connects never overlap on the connection actor and the stale one cannot overwrite the state.
+  func supersedeAutoConnect() async {
+    guard let task = autoConnectTask else { return }
+    task.cancel()
+    await task.value
+    autoConnectTask = nil
+    // The cancelled auto-connect leaves its "connecting" state alone; a manual connect that
+    // throws before connecting (unlock required, pending transaction kept) must not inherit it.
+    // connectWithoutUnlockCheck sets .connecting again on the success path.
+    if connectionState == .connecting { connectionState = .disconnected }
+  }
+
+  func awaitAutoConnect() async {
+    await autoConnectTask?.value
+  }
+
   func autoConnectIfNeeded() async {
-    guard let config = workspace.connectionConfig else { return }
+    guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
 
     // Try to get password from Keychain
-    if let keychainKey = workspace.keychainKey,
+    guard let keychainKey = workspace.keychainKey,
       let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
-    {
-      var configWithPassword = config
-      configWithPassword.password = password
-      editingConnectionConfig = configWithPassword
+    else {
+      // No stored password: never leave the UI on "connecting"
+      if !Task.isCancelled { connectionState = .disconnected }
+      return
+    }
+    var configWithPassword = config
+    configWithPassword.password = password
+    editingConnectionConfig = configWithPassword
 
-      do {
-        try await connect(config: configWithPassword)
-        await AppLogger.shared.info(
-          "Auto-connected to workspace: \(config.safeDisplayString)",
-          category: "Workspace"
-        )
-      } catch {
-        await AppLogger.shared.warning(
-          "Auto-connect failed: \(error.localizedDescription)",
-          category: "Workspace"
-        )
-        connectionState = .disconnected
+    do {
+      try await connect(config: configWithPassword, isAutoConnect: true)
+      if Task.isCancelled {
+        // Closed or disconnected while connecting: do not stay connected
+        await performDisconnect()
+        return
       }
+      await AppLogger.shared.info(
+        "Auto-connected to workspace: \(config.safeDisplayString)",
+        category: "Workspace"
+      )
+    } catch {
+      await AppLogger.shared.warning(
+        "Auto-connect failed: \(error.localizedDescription)",
+        category: "Workspace"
+      )
+      // Never over a newer connection: only while this attempt is still the visible one
+      if !Task.isCancelled, connectionState == .connecting { connectionState = .disconnected }
     }
   }
 
@@ -1074,7 +1109,9 @@ class WorkspaceManager: Identifiable {
 
   /// Refresh the schema graph
   func refreshSchemaGraph() async {
-    // Reload schema data first
+    // Reload schema data first (a cancelled load still finishes its queries but is superseded:
+    // it assigns nothing and leaves `isLoadingSchema` to this load)
+    cancelSchemaLoad()
     await loadDatabaseSchema()
     // Then rebuild graph
     await loadSchemaGraph()

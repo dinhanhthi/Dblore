@@ -172,10 +172,12 @@ class WorkspaceWindowManager {
       guard canClose else { return false }
     }
 
+    manager.autoConnectTask?.cancel()
+
     // Disconnect if connected. A forced close answers with the first safe non-commit option
     // (Rollback, or Discard / Disconnect while a statement / ROLLBACK runs); none (COMMIT
     // awaited) asks.
-    if manager.connectionState == .connected {
+    if manager.connectionState == .connected || manager.connectionState.isConnecting {
       var resolution: PendingTransactionResolution?
       if force {
         await manager.refreshPendingTransaction()

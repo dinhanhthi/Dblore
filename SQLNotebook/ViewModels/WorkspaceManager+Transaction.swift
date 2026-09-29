@@ -68,6 +68,13 @@ extension WorkspaceManager {
   /// Opening time is set on the idle -> pending transition; everything is cleared on idle.
   /// Every tab but the origin is blocked while a transaction is pending.
   func applyTransactionState(_ state: TransactionState, originTabId: UUID?) {
+    // A load discarded during the transaction is retried once it ended
+    let endedTransaction = state.isIdle && !pendingTransaction.isIdle
+    defer {
+      if endedTransaction, connectionState == .connected, databaseTables.isEmpty {
+        startSchemaLoad()
+      }
+    }
     if state.isIdle {
       transactionOpenedAt = nil
       isCommitConfirmationVisible = false
@@ -276,9 +283,12 @@ extension WorkspaceManager {
   /// Close the connection and clear everything that came from it (no resolve: the caller did it,
   /// or chose to discard the pending changes by disconnecting)
   func performDisconnect() async {
+    autoConnectTask?.cancel()
+    cancelSchemaLoad()
     await connectionManager.disconnect()
     await refreshPendingTransaction()
     connectionState = .disconnected
+    cancelSchemaLoad()  // the idle transition above may have started a retry
     invalidateEditTargetsInTabs()
 
     // Clear schema

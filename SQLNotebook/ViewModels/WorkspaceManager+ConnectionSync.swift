@@ -104,8 +104,10 @@ extension WorkspaceManager {
   ///   when the connect is held in `pendingWeakeningConnect` (nothing changed); connect with
   ///   `completePendingWeakeningConnect()` after the unlock.
   func connect(
-    config: ConnectionConfig, globalSafeMode: SafeMode = AppSettings.shared.safeMode
+    config: ConnectionConfig, globalSafeMode: SafeMode = AppSettings.shared.safeMode,
+    isAutoConnect: Bool = false
   ) async throws {
+    if !isAutoConnect { await supersedeAutoConnect() }
     guard await resolvePendingTransaction(action: .disconnect, globalSafeMode: globalSafeMode)
     else {
       throw WorkspaceConnectError.pendingTransactionKept
@@ -117,7 +119,7 @@ extension WorkspaceManager {
       throw WorkspaceConnectError.unlockRequired
     }
     pendingWeakeningConnect = nil
-    try await connectWithoutUnlockCheck(config: config)
+    try await connectWithoutUnlockCheck(config: config, isAutoConnect: isAutoConnect)
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.

@@ -159,9 +159,12 @@ struct PerformanceBenchmarkTests {
   @Test("autocompleteSuggestions100KB")
   func autocompleteSuggestions100KB() {
     let provider = SQLAutocompleteProvider()
-    provider.tables = ["users", "orders", "order_items", "products", "sessions"].map {
-      DatabaseTable(schema: "public", name: $0)
-    }
+    provider.update(
+      tables: ["users", "orders", "order_items", "products", "sessions"].map {
+        DatabaseTable(
+          schema: "public", name: $0,
+          columns: [DatabaseColumn(name: "id", type: "integer")])
+      })
     let text = PerfFixtures.sql2kLines() + "\nSELECT * FROM us"
     var count = 0
     let ms = PerfBench.median(of: 20) {

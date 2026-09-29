@@ -180,11 +180,37 @@ extension WorkspaceManager {
 // MARK: - Schema Loading
 
 extension WorkspaceManager {
+  /// Start the schema load in the background, replacing a running one
+  func startSchemaLoad() {
+    schemaLoadTask?.cancel()
+    schemaLoadTask = Task { await self.loadDatabaseSchema() }
+  }
+
+  /// Cancels the running load. A cancelled load keeps running its queries for a moment, but
+  /// it is superseded (generation): it assigns nothing and does not touch `isLoadingSchema`.
+  func cancelSchemaLoad() {
+    schemaLoadTask?.cancel()
+    schemaLoadTask = nil
+    schemaLoadGeneration += 1
+    isLoadingSchema = false
+  }
+
+  func awaitSchemaLoad() async {
+    await schemaLoadTask?.value
+  }
+
   /// Load database schema. While a Protected transaction is pending the cached schema is kept
   /// and no catalog query is sent (the actor refuses them too).
   func loadDatabaseSchema() async {
-    guard connectionState == .connected, !isSchemaPaused else { return }
+    // A task cancelled before it ran must not start a load (it would supersede the newer one)
+    guard !Task.isCancelled, connectionState == .connected, !isSchemaPaused else { return }
+    // Only the latest load may assign results or clear the flag; an older one is superseded
+    schemaLoadGeneration += 1
+    let generation = schemaLoadGeneration
     isLoadingSchema = true
+    defer {
+      if generation == schemaLoadGeneration { isLoadingSchema = false }
+    }
 
     await PerfSignpost.interval("schema.load") {
       do {
@@ -197,47 +223,20 @@ extension WorkspaceManager {
         async let rolesTask = connectionManager.fetchRoles()
         async let foreignKeysTask = connectionManager.fetchForeignKeys()
 
-        var (tables, views, functions, procedures, users, roles, foreignKeys) = try await (
-          tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask,
-          foreignKeysTask
-        )
+        async let columnsTask = connectionManager.fetchAllColumns()
 
-        // Fetch columns and row count for each table
+        var (tables, views, functions, procedures, users, roles, foreignKeys, columnsByRelation) =
+          try await (
+            tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask,
+            foreignKeysTask, columnsTask
+          )
+
+        // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
         for index in tables.indices {
-          let table = tables[index]
-          do {
-            let columns = try await connectionManager.fetchColumns(
-              tableSchema: table.schema,
-              tableName: table.name
-            )
-            tables[index].columns = columns
-
-            // Fetch row count
-            let rowCount = try await connectionManager.fetchRowCount(
-              tableSchema: table.schema,
-              tableName: table.name
-            )
-            tables[index].rowCount = rowCount
-          } catch {
-            await AppLogger.shared.warning(
-              "Failed to fetch columns for \(table.qualifiedName): \(error)", category: "Schema")
-          }
+          tables[index].columns = columnsByRelation[tables[index].qualifiedName] ?? []
         }
-
-        // Fetch columns for each view
         for index in views.indices {
-          let view = views[index]
-          do {
-            let columns = try await connectionManager.fetchColumns(
-              tableSchema: view.schema,
-              tableName: view.name
-            )
-            views[index].columns = columns
-          } catch {
-            await AppLogger.shared.warning(
-              "Failed to fetch columns for view \(view.qualifiedName): \(error)", category: "Schema"
-            )
-          }
+          views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
         }
 
         // The transaction opened meanwhile: later lookups were refused, keep the cache
@@ -245,7 +244,13 @@ extension WorkspaceManager {
           throw DatabaseError.metadataPausedDuringTransaction
         }
 
+        // Cancelled (refresh, disconnect) or disconnected meanwhile: assign nothing
+        guard !Task.isCancelled, generation == schemaLoadGeneration,
+          connectionState == .connected
+        else { return }
+
         databaseTables = tables
+        autocompleteProvider.update(tables: tables)
         databaseViews = views
         databaseFunctions = functions
         databaseProcedures = procedures
@@ -259,14 +264,12 @@ extension WorkspaceManager {
         await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
       }
     }
-
-    isLoadingSchema = false
   }
 
   /// Refresh database schema
   func refreshDatabaseSchema() async {
+    cancelSchemaLoad()
     await loadDatabaseSchema()
-    await autocompleteProvider.refreshSchema()
   }
 
   /// Toggle left sidebar visibility
