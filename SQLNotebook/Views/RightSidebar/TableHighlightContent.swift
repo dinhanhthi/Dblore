@@ -2,8 +2,8 @@
 //  TableHighlightContent.swift
 //  SQLNotebook
 //
-//  Highlight form of the data viewer in the right sidebar: condition rows, color, style and
-//  Apply/Clear. Saved highlights live in `SavedHighlightsPopover`.
+//  Highlight form of the data viewer in the right sidebar: color and style on top, then condition rows.
+//  Apply/Clear are in the sidebar footer. Saved highlights live in `SavedHighlightsPopover`.
 //
 
 import SwiftUI
@@ -16,48 +16,54 @@ struct TableHighlightContent: View {
   }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        FilterConditionsEditor(
-          conditions: $viewModel.highlightDraft.filter.conditions,
-          columns: viewModel.filterColumns,
-          onSubmit: viewModel.applyHighlight)
-
-        HStack(spacing: Spacing.sm) {
-          Text("Color")
-            .font(.small)
-            .foregroundColor(.foregroundMuted)
-          Menu {
-            ForEach(HighlightColor.allCases, id: \.self) { color in
-              Button(action: { viewModel.highlightDraft.color = color }) {
-                Label(color.displayName, systemImage: "circle.fill")
-                  .foregroundStyle(color.color)
-              }
-            }
-          } label: {
-            HStack(spacing: Spacing.xs) {
-              Circle().fill(viewModel.highlightDraft.color.color).frame(width: 10, height: 10)
-              Text(viewModel.highlightDraft.color.displayName).font(.small)
+    VStack(alignment: .leading, spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
+        Menu {
+          ForEach(HighlightColor.allCases, id: \.self) { color in
+            Button(action: { viewModel.highlightDraft.color = color }) {
+              Label(color.displayName, systemImage: "circle.fill")
+                .foregroundStyle(color.color)
             }
           }
-          .menuStyle(.borderlessButton)
-          .fixedSize()
+        } label: {
+          HStack(spacing: Spacing.xs) {
+            Circle().fill(viewModel.highlightDraft.color.color).frame(width: 10, height: 10)
+            Text(viewModel.highlightDraft.color.displayName).font(.small)
+          }
         }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Highlight color")
 
-        Picker("Style", selection: $viewModel.highlightDraft.style) {
+        Spacer()
+
+        Picker("", selection: $viewModel.highlightDraft.style) {
           Text("Cell").tag(HighlightStyle.cell)
           Text("Row").tag(HighlightStyle.row)
         }
         .pickerStyle(.segmented)
-
-        HStack(spacing: Spacing.sm) {
-          Button("Apply") { viewModel.applyHighlight() }
-            .buttonStyle(PrimaryButtonStyle())
-          Button("Clear") { viewModel.clearHighlight() }
-            .buttonStyle(SecondaryButtonStyle())
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+        .help("Highlight the matching cell or the whole row")
+        .onChange(of: viewModel.highlightDraft.style) { _, style in
+          // Live switch of an applied highlight; other draft edits still wait for Apply
+          if viewModel.dataViewer?.highlight.isEmpty == false {
+            viewModel.dataViewer?.highlight.style = style
+          }
         }
       }
-      .frame(maxWidth: .infinity, alignment: .topLeading)
+
+      Divider()
+
+      ScrollView {
+        FilterConditionsEditor(
+          conditions: $viewModel.highlightDraft.filter.conditions,
+          columns: viewModel.filterColumns,
+          onSubmit: viewModel.applyHighlight
+        )
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+      }
     }
     .onAppear { viewModel.prepareHighlightDraft() }
     .onChange(of: relation) { viewModel.prepareHighlightDraft() }

@@ -3,7 +3,7 @@
 //  SQLNotebook
 //
 //  Filter form of the data viewer in the right sidebar: condition rows (column, operator,
-//  value, AND/OR) and Apply/Clear. Saved filters live in `SavedFiltersPopover`.
+//  value, AND/OR). Apply/Clear are in the sidebar footer. Saved filters live in `SavedFiltersPopover`.
 //
 
 import SwiftUI
@@ -17,18 +17,10 @@ struct TableFilterContent: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: Spacing.md) {
-        FilterConditionsEditor(
-          conditions: $viewModel.filterDraft.conditions, columns: viewModel.filterColumns,
-          onSubmit: { Task { await viewModel.applyFilter() } })
-
-        HStack(spacing: Spacing.sm) {
-          Button("Apply") { Task { await viewModel.applyFilter() } }
-            .buttonStyle(PrimaryButtonStyle())
-          Button("Clear") { Task { await viewModel.clearFilter() } }
-            .buttonStyle(SecondaryButtonStyle())
-        }
-      }
+      FilterConditionsEditor(
+        conditions: $viewModel.filterDraft.conditions, columns: viewModel.filterColumns,
+        onSubmit: { Task { await viewModel.applyFilter() } }
+      )
       .frame(maxWidth: .infinity, alignment: .topLeading)
     }
     .onAppear { viewModel.prepareFilterDraft() }

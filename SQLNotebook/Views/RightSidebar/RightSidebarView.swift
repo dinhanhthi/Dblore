@@ -35,12 +35,9 @@ struct RightSidebarView: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if content == .tableFilter || content == .tableHighlight {
-          // TableFilterContent and TableHighlightContent handle their own ScrollView
-          VStack(alignment: .leading, spacing: 0) {
-            contentView(for: content)
-              .padding(Spacing.md)
-          }
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          // TableFilterContent and TableHighlightContent handle their own ScrollView; Apply and
+          // Clear sit in a footer pinned at the bottom
+          formWithFooter(content)
         } else if case .executedQuery = content {
           // ExecutedQuerySidebarContent handles its own ScrollView
           VStack(alignment: .leading, spacing: 0) {
@@ -66,6 +63,42 @@ struct RightSidebarView: View {
     .chromeGlass()
     .overlay(alignment: .leading) {
       Divider()
+    }
+  }
+
+  /// Form content filling the sidebar with a footer (Apply/Clear) pinned at the bottom
+  private func formWithFooter(_ content: SidebarContent) -> some View {
+    VStack(spacing: 0) {
+      contentView(for: content)
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+      Divider()
+
+      HStack(spacing: Spacing.sm) {
+        Button("Apply") { applyForm(content) }
+          .buttonStyle(PrimaryButtonStyle())
+        Button("Clear") { clearForm(content) }
+          .buttonStyle(SecondaryButtonStyle())
+        Spacer()
+      }
+      .padding(Spacing.md)
+    }
+  }
+
+  private func applyForm(_ content: SidebarContent) {
+    if content == .tableHighlight {
+      viewModel.applyHighlight()
+    } else {
+      Task { await viewModel.applyFilter() }
+    }
+  }
+
+  private func clearForm(_ content: SidebarContent) {
+    if content == .tableHighlight {
+      viewModel.clearHighlight()
+    } else {
+      Task { await viewModel.clearFilter() }
     }
   }
 

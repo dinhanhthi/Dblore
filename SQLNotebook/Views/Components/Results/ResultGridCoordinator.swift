@@ -384,14 +384,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Private
 
-  /// Paints the cell with the highlight color (dark text) when the highlight matches it, and
+  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, and
   /// always clears it otherwise, since cells are reused
   private func applyHighlight(to cell: NSTableCellView, row: Int, column: Int) {
     let hits = highlightMatches[row]
     let isPainted =
       key?.highlight?.style == .row ? hits != nil : hits?.contains(column) == true
-    cell.layer?.backgroundColor = isPainted ? key?.highlight?.color.nsColor.cgColor : nil
-    if isPainted { cell.textField?.textColor = .black }
+    cell.layer?.backgroundColor =
+      isPainted ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor : nil
   }
 
   /// Header height from the flag, and each column's header content; the header view is
