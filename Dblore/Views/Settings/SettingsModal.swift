@@ -421,7 +421,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
 
   private var editorShortcuts: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      groupTitle("SQL Editor")
+      groupTitle("Editor")
       ShortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
       ShortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
       ShortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")

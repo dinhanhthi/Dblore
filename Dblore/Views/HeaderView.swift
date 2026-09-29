@@ -57,7 +57,7 @@ struct HeaderView: View {
             }
             Button("Cancel", role: .cancel) {}
           } message: {
-            Text("This will execute all SQL cells in sequence. Existing results will be replaced.")
+            Text("This will execute all cells in sequence. Existing results will be replaced.")
           }
           .confirmationDialog(
             runAllDestructiveDialogTitle,

@@ -497,7 +497,7 @@ struct EmptyWelcomeActions: View {
       ActionCard(
         icon: "folder.badge.gearshape",
         title: "New Workspace",
-        description: "Create a new workspace to organize your SQL files",
+        description: "Create a new workspace to organize your notebooks and queries",
         accentColor: .accent,
         buttonTitle: "Create Workspace",
         action: onNewWorkspace

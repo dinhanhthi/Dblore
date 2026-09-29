@@ -373,7 +373,7 @@ class AppSettings {
     }
   }
 
-  /// Enable syntax highlighting in SQL editors
+  /// Enable syntax highlighting in editors
   /// When disabled, SQL code is displayed as plain text (faster for large files)
   /// Default: true (enabled)
   var syntaxHighlightingEnabled: Bool = true {

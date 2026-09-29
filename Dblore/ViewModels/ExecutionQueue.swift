@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Class that manages the execution queue for SQL cells
+/// Class that manages the execution queue for notebook cells
 /// UI state is @MainActor for SwiftUI observation, but processing runs off main thread
 @MainActor
 @Observable

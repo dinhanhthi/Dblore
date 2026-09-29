@@ -8,7 +8,7 @@ import Foundation
 // MARK: - Run All Cells
 
 extension NotebookViewModel {
-  /// Run all SQL cells sequentially by adding them to the queue.
+  /// Run all cells sequentially by adding them to the queue.
   ///
   /// 1. Every cell is checked with the protection gate first: if any cell is blocked, Run All
   ///    stops with the gate's error toast and nothing runs.

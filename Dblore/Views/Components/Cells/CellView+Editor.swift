@@ -40,7 +40,7 @@ struct SQLEditorView: View {
     let baseView = ZStack(alignment: .topLeading) {
       // Placeholder - use isTextEmpty state for immediate reactivity
       if isTextEmpty {
-        Text("-- Write your SQL query here...")
+        Text("-- Write your query here...")
           .font(.system(size: 13, design: .monospaced))
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.sm + 4)
@@ -92,7 +92,7 @@ struct SQLEditorView: View {
 
 // MARK: - Preview
 
-#Preview("SQL Editor") {
+#Preview("Cell Editor") {
   @Previewable @State var content = "SELECT * FROM users WHERE id = 1;"
   @Previewable @State var textViewRef: SQLTextView? = nil
 

@@ -66,7 +66,7 @@ struct WorkspaceWelcomeView: View {
             DocumentTypeCard(
               icon: "doc.text.fill",
               title: "Notebook",
-              description: "Interactive SQL with multiple cells and inline results",
+              description: "Interactive queries with multiple cells and inline results",
               accentColor: .accent,
               onNew: { workspaceManager.newNotebook() },
               onOpen: { openFile(type: .notebook) }
