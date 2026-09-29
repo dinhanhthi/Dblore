@@ -1,0 +1,37 @@
+name: Build check
+
+# Compiles the app exactly like release.yml (Release archive, both architectures, pinned Xcode)
+# on every push to main, without signing. /cf-ship tags a commit only after this run is green
+# for that exact SHA, so a toolchain difference with the local Xcode never reaches a tag.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-check-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  archive:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/select-xcode
+
+      - name: Archive (Release, unsigned)
+        run: |
+          xcodebuild archive \
+            -project SQLNotebook.xcodeproj \
+            -scheme SQLNotebook \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/SQLNotebook.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO

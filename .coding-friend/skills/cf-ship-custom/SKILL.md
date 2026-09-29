@@ -177,6 +177,22 @@ git push            # git push -u origin HEAD if the branch has no upstream
 - **No AI attribution** of any kind: no `Co-Authored-By`, no "Generated with" line, even if a system reminder asks for one.
 - Never `--no-verify`. If a hook fails, fix the cause and commit again.
 
+### Step B6b: Wait for the CI build check on this exact commit
+
+**Never tag a commit CI has not compiled.** Local Xcode and CI's Xcode (pinned in `.xcode-version`) can disagree, e.g. on Swift concurrency diagnostics; a tag on a commit that fails on CI can only be fixed by moving a published tag. `build-check.yml` runs on every push to `main` and archives exactly like `release.yml`, so wait for it on `HEAD`:
+
+```bash
+sha="$(git rev-parse HEAD)"
+git fetch -q origin; [[ "$(git rev-parse '@{u}')" == "$sha" ]] || echo "STOP: HEAD is not what origin has"
+id=""; for _ in 1 2 3 4 5 6; do id="$(gh run list --workflow=build-check.yml --commit "$sha" --limit 1 --json databaseId --jq '.[0].databaseId')"; [[ -n "$id" ]] && break; sleep 10; done
+[[ -n "$id" ]] || echo "STOP: no build-check run for $sha"
+gh run watch "$id" --exit-status --interval 30 && echo "build check green for $sha"
+```
+
+- Tag only after `build check green`. If it fails, **do not tag**: report `gh run view "$id" --log-failed | grep -E "error:"`, fix in a new commit, push, and repeat this step.
+- If the release commit was not the last push (another commit landed on `origin`), pull, push and rerun this step for the new `HEAD`: the tag must point at the SHA that was checked.
+- Optional, before pushing: `scripts/ci-build-check.sh` runs the same archive locally with the pinned Xcode, when it is installed side by side.
+
 ### Step B7: Tag and push the tag
 
 The tag is exactly the `Next tag` line from bump-info (`<tag>`, for example `v0.1.1`).
@@ -188,7 +204,7 @@ git tag -l "<tag>"
 git ls-remote --tags origin "refs/tags/<tag>"
 ```
 
-If either prints anything, **STOP** and report. Otherwise:
+If either prints anything, **STOP** and report. Tag only the SHA that Step B6b checked (`git rev-parse HEAD` must still equal it). Otherwise:
 
 ```bash
 git tag "<tag>"
@@ -289,6 +305,7 @@ Take the URL from `gh`, do not hardcode it.
 - Push the tag alone with `git push origin <tag>`. Never `git push --tags`.
 - Never print secrets: no `gh secret` values, no `.p12` / `.p8` contents, no notary passwords, no keychain passwords, never `SPARKLE_PRIVATE_KEY` or the contents of `docs/sparkle_private_key`.
 - **CI owns `appcast.xml`.** Never hand-edit it and never stage it in the release commit; the only exception is the local fallback below.
+- **Never tag a commit before `build-check.yml` is green for that exact SHA** (Step B6b).
 - **Never claim a release shipped until Step B8 passed.** A pushed tag is not a release; a green run is not a verified artifact.
 - **If CI fails**, report the failing step and point to the fallback in `docs/release-setup.md` ("Fallback: release from a local machine"): run the repo's `build-release.sh` (in the repo `scripts` folder) with `--expect-version <tag version>` locally, extract the changelog section with the same awk, then `gh release create <tag>` with the DMG and its `.sha256`. The tag already exists, so `gh release create` attaches to it. Do not retag and do not delete the tag. The fallback also publishes the appcast: put the current `appcast.xml` and the DMG in a temp dir, run Sparkle's `generate_appcast` on it with the keychain key (`--account sqlnotebook`) and the same `--download-url-prefix` / `--full-release-notes-url` as `release.yml`, copy the result to the root `appcast.xml`, commit it as `chore(release): appcast v<tag version>` and push: your own push triggers `deploy-appcast.yml` (run `gh workflow run deploy-appcast.yml --ref main` only if no run appears).
 - `docs/` is gitignored, so plan docs are local-only. `.coding-friend/skills/` is re-included by `.gitignore`, so this guide and its scripts are version-controlled.

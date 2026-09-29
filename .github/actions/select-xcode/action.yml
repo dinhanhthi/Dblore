@@ -1,0 +1,22 @@
+name: Select pinned Xcode
+description: Selects the Xcode whose version is in .xcode-version, so every workflow builds with the same toolchain.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        want="$(tr -d '[:space:]' < .xcode-version)"
+        for xcode in "/Applications/Xcode_${want}.app" /Applications/Xcode*.app; do
+          [[ -d "$xcode" ]] || continue
+          have="$(DEVELOPER_DIR="$xcode/Contents/Developer" xcodebuild -version 2>/dev/null | awk 'NR==1{print $2}')"
+          if [[ "$have" == "$want" ]]; then
+            echo "Selecting $xcode (Xcode $have)"
+            sudo xcode-select -s "$xcode/Contents/Developer"
+            xcodebuild -version
+            exit 0
+          fi
+        done
+        echo "::error::Xcode $want (from .xcode-version) is not installed on this runner"
+        ls -d /Applications/Xcode*.app
+        exit 1

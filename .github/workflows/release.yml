@@ -22,29 +22,11 @@ jobs:
             exit 1
           fi
 
-      - name: Select Xcode with the macOS 26 SDK
-        run: |
-          best="" best_sdk=""
-          for xcode in /Applications/Xcode*.app; do
-            [[ -d "$xcode" ]] || continue
-            sdk=$(DEVELOPER_DIR="$xcode/Contents/Developer" xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)
-            echo "$xcode: macOS SDK ${sdk:-none}"
-            [[ -n "$sdk" && "${sdk%%.*}" -ge 26 ]] || continue
-            if [[ -z "$best" ]] || [[ "$(printf '%s\n%s\n' "$best_sdk" "$sdk" | sort -V | tail -1)" == "$sdk" ]]; then
-              best="$xcode" best_sdk="$sdk"
-            fi
-          done
-          if [[ -z "$best" ]]; then
-            echo "::error::No Xcode with macOS SDK >= 26 found in /Applications"
-            exit 1
-          fi
-          echo "Selecting $best (macOS SDK $best_sdk)"
-          sudo xcode-select -s "$best/Contents/Developer"
-          xcodebuild -version
-
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - uses: ./.github/actions/select-xcode
 
       - name: Extract release notes
         run: |
