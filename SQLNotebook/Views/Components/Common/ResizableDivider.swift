@@ -33,6 +33,10 @@ struct ResizableDivider: View {
   /// Position of divider as ratio (0.0 = top, 1.0 = bottom)
   @Binding var position: CGFloat
 
+  /// Direction the panels are laid out in: `.vertical` = top/bottom (horizontal divider line),
+  /// `.horizontal` = left/right (vertical divider line; the "height" values below are then widths)
+  var axis: Axis = .vertical
+
   /// Total height of the container
   let totalHeight: CGFloat
 
@@ -45,16 +49,18 @@ struct ResizableDivider: View {
   @State private var isDragging = false
   @State private var isHovering = false
 
+  private var isSideBySide: Bool { axis == .horizontal }
+
   var body: some View {
     Rectangle()
       .fill(Color.border)
-      .frame(height: 1)
+      .frame(width: isSideBySide ? 1 : nil, height: isSideBySide ? nil : 1)
       .background(
-        // Invisible hit area for better UX - extends upward only to avoid blocking result header
+        // Invisible hit area for better UX - extends up/left only to avoid blocking result header
         Rectangle()
           .fill(Color.clear)
-          .frame(height: 8)
-          .offset(y: -3.5)  // Shift up so hit area doesn't overlap with result header below
+          .frame(width: isSideBySide ? 8 : nil, height: isSideBySide ? nil : 8)
+          .offset(x: isSideBySide ? -3.5 : 0, y: isSideBySide ? 0 : -3.5)
           .contentShape(Rectangle())
       )
       .background(
@@ -64,10 +70,10 @@ struct ResizableDivider: View {
             isDragging
               ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear)
           )
-          .frame(height: 8)
-          .offset(y: -3.5)  // Match hit area position
+          .frame(width: isSideBySide ? 8 : nil, height: isSideBySide ? nil : 8)
+          .offset(x: isSideBySide ? -3.5 : 0, y: isSideBySide ? 0 : -3.5)  // Match hit area position
       )
-      .cursor(NSCursor.resizeUpDown)
+      .cursor(isSideBySide ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown)
       .onHover { hovering in
         isHovering = hovering
       }
@@ -81,7 +87,8 @@ struct ResizableDivider: View {
         DragGesture(minimumDistance: 0)
           .onChanged { value in
             isDragging = true
-            let newHeight = totalHeight * position + value.translation.height
+            let delta = isSideBySide ? value.translation.width : value.translation.height
+            let newHeight = totalHeight * position + delta
             let maxTop = totalHeight - minBottomHeight
             let minTop = minTopHeight
 

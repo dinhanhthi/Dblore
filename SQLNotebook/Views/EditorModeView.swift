@@ -19,8 +19,13 @@ struct EditorModeView: View {
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isErrorCopied: Bool = false
 
-  /// Width of the line number gutter
-  private let gutterWidth: CGFloat = 44
+  /// Width of the line number gutter: fits the widest line number (12pt monospaced digits are
+  /// about 7.3pt wide) plus 8pt padding on each side; at least 2 digits wide
+  private var gutterWidth: CGFloat {
+    let lineCount = viewModel.editorContent.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
+    let digits = max(String(lineCount).count, 2)
+    return ceil(CGFloat(digits) * 7.3) + 16
+  }
 
   // MARK: - State Accessors (for extensions)
 
@@ -42,28 +47,45 @@ struct EditorModeView: View {
 
   var body: some View {
     SizeReader { containerSize in
-      let totalHeight = max(containerSize.height, 1)  // Ensure non-zero
-      let minPanelHeight: CGFloat = 250  // Increased from 150 to 250
-      let maxEditorHeight = max(totalHeight - minPanelHeight, minPanelHeight)
+      let totalLength = max(
+        viewModel.isEditorSideBySide ? containerSize.width : containerSize.height, 1)
+      let minPanelLength: CGFloat = 250
+      let maxEditorLength = max(totalLength - minPanelLength, minPanelLength)
 
-      // Calculate actual heights based on divider position
-      let editorHeight = max(minPanelHeight, min(maxEditorHeight, totalHeight * dividerPosition))
-      let resultHeight = max(totalHeight - editorHeight, 0)  // Ensure non-negative
+      // Calculate actual sizes (height when stacked, width when side by side) from divider position
+      let editorLength = max(minPanelLength, min(maxEditorLength, totalLength * dividerPosition))
+      let resultLength = max(totalLength - editorLength, 0)  // Ensure non-negative
+      let otherLength = viewModel.isEditorSideBySide ? containerSize.height : containerSize.width
 
-      VStack(spacing: 0) {
-        // Top: SQL Editor (with distinct background like cell editor)
-        editorSection(containerSize: containerSize, editorHeight: editorHeight)
+      let editor = editorSection(
+        width: viewModel.isEditorSideBySide ? editorLength : otherLength,
+        height: viewModel.isEditorSideBySide ? otherLength : editorLength)
+      let divider = ResizableDivider(
+        position: $dividerPosition,
+        axis: viewModel.isEditorSideBySide ? .horizontal : .vertical,
+        totalHeight: totalLength,
+        minTopHeight: minPanelLength,
+        minBottomHeight: minPanelLength
+      )
+      let result = resultSection(
+        width: viewModel.isEditorSideBySide ? resultLength : otherLength,
+        height: viewModel.isEditorSideBySide ? otherLength : resultLength)
 
-        // Draggable divider
-        ResizableDivider(
-          position: $dividerPosition,
-          totalHeight: totalHeight,
-          minTopHeight: minPanelHeight,
-          minBottomHeight: minPanelHeight
-        )
-
-        // Bottom: Result Panel
-        resultSection(containerSize: containerSize, resultHeight: resultHeight)
+      if viewModel.isEditorSideBySide {
+        HStack(spacing: 0) {
+          editor
+          divider
+          result
+        }
+      } else {
+        VStack(spacing: 0) {
+          // Top: SQL Editor (with distinct background like cell editor)
+          editor
+          // Draggable divider
+          divider
+          // Bottom: Result Panel
+          result
+        }
       }
     }
     .onChange(of: textViewRef) { _, newValue in
@@ -81,7 +103,7 @@ struct EditorModeView: View {
   // MARK: - Editor Section
 
   @ViewBuilder
-  private func editorSection(containerSize: CGSize, editorHeight: CGFloat) -> some View {
+  private func editorSection(width: CGFloat, height editorHeight: CGFloat) -> some View {
     ZStack(alignment: .bottomTrailing) {
       HStack(spacing: 0) {
         // Line numbers gutter (conditionally shown based on settings)
@@ -119,13 +141,13 @@ struct EditorModeView: View {
       .padding(.bottom, Spacing.md)
     }
     .background(Color.inputBackground)
-    .frame(width: containerSize.width, height: editorHeight)
+    .frame(width: width, height: editorHeight)
   }
 
   // MARK: - Result Section
 
   @ViewBuilder
-  private func resultSection(containerSize: CGSize, resultHeight: CGFloat) -> some View {
+  private func resultSection(width: CGFloat, height resultHeight: CGFloat) -> some View {
     if let result = viewModel.editorResult {
       VStack(alignment: .leading, spacing: 0) {
         // Header at top
@@ -144,11 +166,11 @@ struct EditorModeView: View {
         // Footer at bottom (shows source query)
         resultPanelFooter(result: result)
       }
-      .frame(width: containerSize.width, height: resultHeight)
+      .frame(width: width, height: resultHeight)
     } else {
       // Empty state
       emptyStateView()
-        .frame(width: containerSize.width, height: resultHeight)
+        .frame(width: width, height: resultHeight)
     }
   }
 

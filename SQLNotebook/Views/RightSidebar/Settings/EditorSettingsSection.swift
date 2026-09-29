@@ -46,6 +46,16 @@ struct EditorSettingsSection: View {
           isOn: $appSettings.wordWrapEnabled
         )
 
+        // Default layout for new .sql files (Editor mode only)
+        if viewMode == .editor {
+          SettingsToggle(
+            title: "Side-by-Side Layout",
+            description:
+              "Open new .sql files with the editor on the left and results on the right instead of stacked. Toggle per file with the layout button in the header.",
+            isOn: $appSettings.editorSideBySideDefault
+          )
+        }
+
         // Simple Mode toggle (Editor mode only)
         if viewMode == .editor {
           SettingsToggle(

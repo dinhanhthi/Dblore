@@ -215,6 +215,13 @@ struct SettingsModalEditorSection: View {
         isOn: $appSettings.wordWrapEnabled
       )
 
+      SettingsToggle(
+        title: "Side-by-Side Layout",
+        description:
+          "Open new .sql files with the editor on the left and results on the right instead of stacked. Toggle per file with the layout button in the header. (Editor only)",
+        isOn: $appSettings.editorSideBySideDefault
+      )
+
       // Simple Mode toggle (Editor mode only)
       SettingsToggle(
         title: "Simple Mode",

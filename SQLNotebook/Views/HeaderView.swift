@@ -211,6 +211,19 @@ struct HeaderView: View {
           }
         }
 
+        // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right)
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+          Button(action: { viewModel.isEditorSideBySide.toggle() }) {
+            Image(
+              systemName: viewModel.isEditorSideBySide
+                ? "rectangle.split.2x1" : "rectangle.split.1x2")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .help(
+            viewModel.isEditorSideBySide
+              ? "Stack editor above result" : "Place editor beside result")
+        }
+
         // Search button (same square style as the schema visualizer's search button)
         Button(action: {
           viewModel.openSearch()

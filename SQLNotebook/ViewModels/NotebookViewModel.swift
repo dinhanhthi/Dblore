@@ -125,6 +125,8 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
+  /// Editor and result side by side (left/right) in this tab; starts from the user default
+  var isEditorSideBySide: Bool = AppSettings.shared.editorSideBySideDefault
   var editorResult: CellResult?  // Result for editor mode (single statement or legacy)
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)

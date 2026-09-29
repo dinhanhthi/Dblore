@@ -243,6 +243,7 @@ class AppSettings {
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
     static let showLineNumbers = "app.settings.showLineNumbers"
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
+    static let editorSideBySideDefault = "app.settings.editorSideBySideDefault"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
     static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
@@ -334,6 +335,15 @@ class AppSettings {
   var showLineNumbers: Bool = true {
     didSet {
       defaults.set(showLineNumbers, forKey: Keys.showLineNumbers)
+    }
+  }
+
+  /// Layout a newly opened .sql file starts with: editor left / result right (true) or
+  /// editor top / result bottom (false)
+  /// Default: false (top/bottom)
+  var editorSideBySideDefault: Bool = false {
+    didSet {
+      defaults.set(editorSideBySideDefault, forKey: Keys.editorSideBySideDefault)
     }
   }
 
@@ -526,6 +536,11 @@ class AppSettings {
       showLineNumbers = defaults.bool(forKey: Keys.showLineNumbers)
     }
 
+    // Load default editor layout setting
+    if defaults.object(forKey: Keys.editorSideBySideDefault) != nil {
+      editorSideBySideDefault = defaults.bool(forKey: Keys.editorSideBySideDefault)
+    }
+
     // Load word wrap enabled setting
     if defaults.object(forKey: Keys.wordWrapEnabled) != nil {
       wordWrapEnabled = defaults.bool(forKey: Keys.wordWrapEnabled)
@@ -586,6 +601,7 @@ class AppSettings {
     isAutoCompleteEnabled = true
     showLineNumbers = true
     wordWrapEnabled = true
+    editorSideBySideDefault = false
     hideRunWithQuerySection = false
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
