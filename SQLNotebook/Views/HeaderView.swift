@@ -119,45 +119,7 @@ struct HeaderView: View {
           .glassButtonStyle()
           .linkPointer()
           .help("Show/Hide Results")
-        } else if viewModel.dataViewer != nil {
-          // Data viewer: Refresh reloads the page and the row count; Stop works like Run's
-          Button(action: {
-            if viewModel.isEditorQueryRunning {
-              viewModel.cancelEditorQuery()
-            } else {
-              Task { @MainActor [viewModel] in
-                await viewModel.refreshDataViewer()
-              }
-            }
-          }) {
-            Label {
-              Text("Refresh")
-            } icon: {
-              if viewModel.isEditorQueryRunning {
-                RunSpinner()
-              } else {
-                Image(systemName: "arrow.clockwise")
-              }
-            }
-          }
-          .glassButtonStyle(prominent: true)
-          .linkPointer()
-          .tint(Color.accent)
-          .disabled(
-            viewModel.isEditorQueryRunning
-              ? !canStopEditorQuery : !viewModel.connectionState.isConnected
-          )
-          .help(
-            viewModel.isEditorQueryRunning
-              ? "Stop the running query (the connection is reset)" : "Reload this page (⌘R)"
-          )
-          .task(id: viewModel.isEditorQueryRunning) {
-            canStopEditorQuery = false
-            guard viewModel.isEditorQueryRunning else { return }
-            try? await Task.sleep(for: .seconds(1))
-            if !Task.isCancelled { canStopEditorQuery = true }
-          }
-        } else if viewModel.viewMode == .editor {
+        } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
           // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
           // disabled for the first second, then a click stops the query (after confirmation)
           Button(action: {
@@ -213,17 +175,57 @@ struct HeaderView: View {
         safetyBadge(ConnectionSafetyBadge(config: config))
       }
 
-      // Search button (same square style as the schema visualizer's search button)
-      Button(action: {
-        viewModel.openSearch()
-      }) {
-        Image(systemName: "magnifyingglass")
+      // Refresh and Search sit close together, tighter than the header's spacing
+      HStack(spacing: Spacing.xxs) {
+        if viewModel.dataViewer != nil {
+          // Data viewer: Refresh reloads the page and the row count; Stop works like Run's
+          Button(action: {
+            if viewModel.isEditorQueryRunning {
+              viewModel.cancelEditorQuery()
+            } else {
+              Task { @MainActor [viewModel] in
+                await viewModel.refreshDataViewer()
+              }
+            }
+          }) {
+            if viewModel.isEditorQueryRunning {
+              RunSpinner()
+            } else {
+              Image(systemName: "arrow.clockwise")
+            }
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .disabled(
+            viewModel.isEditorQueryRunning
+              ? !canStopEditorQuery : !viewModel.connectionState.isConnected
+          )
+          .help(
+            viewModel.isEditorQueryRunning
+              ? "Stop the running query (the connection is reset)" : "Reload this page (⌘R)"
+          )
+          .task(id: viewModel.isEditorQueryRunning) {
+            canStopEditorQuery = false
+            guard viewModel.isEditorQueryRunning else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { canStopEditorQuery = true }
+          }
+        }
+
+        // Search button (same square style as the schema visualizer's search button)
+        Button(action: {
+          viewModel.openSearch()
+        }) {
+          Image(systemName: "magnifyingglass")
+        }
+        .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
+        .help("Search (⌘F)")
       }
-      .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
-      .help("Search (⌘F)")
     }
     .padding(.horizontal, Spacing.sm)
-    .frame(height: ComponentSize.headerHeight)
+    .frame(
+      height: viewModel.dataViewer != nil
+        ? ComponentSize.compactHeaderHeight : ComponentSize.headerHeight
+    )
     .chromeGlass()
     .overlay(alignment: .bottom) {
       Divider()

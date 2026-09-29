@@ -35,6 +35,8 @@ enum CornerRadius {
 
 enum ComponentSize {
   static let headerHeight: CGFloat = 44
+  /// Data viewer header: icon-only Refresh and Search
+  static let compactHeaderHeight: CGFloat = 36
   static let footerHeight: CGFloat = 28
   static let sidebarWidth: CGFloat = 320
   static let cellSidebarWidth: CGFloat = 34
