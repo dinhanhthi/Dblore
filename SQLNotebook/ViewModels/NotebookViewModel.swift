@@ -123,6 +123,8 @@ class NotebookViewModel {
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
+  /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
+  var cellDetailRow: Int?
 
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook

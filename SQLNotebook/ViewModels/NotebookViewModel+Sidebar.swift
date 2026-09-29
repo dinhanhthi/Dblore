@@ -218,7 +218,55 @@ extension NotebookViewModel {
         editTarget: result.editTarget,
         cellId: cellId
       )
+      cellDetailRow = originalRow
     }
+  }
+
+  /// Re-run what produced the sidebar cell (same gates as Run); the new result refreshes the
+  /// sidebar through `syncCellDetail`
+  func refreshCellDetail() {
+    guard case .cellInfo(_, _, _, _, _, _, let cellId) = rightSidebarContent else { return }
+    if let cellId {
+      confirmAndRunCell(id: cellId)
+    } else {
+      Task { await runEditorQuery() }
+    }
+  }
+
+  /// After `result` replaced the result of `cellId` (nil = editor), re-read the sidebar cell from
+  /// it: the same row (by primary key when there is one, else by position) and column. The
+  /// sidebar keeps its value when the row or column is gone.
+  func syncCellDetail(cellId: UUID?, result: CellResult?) {
+    guard let result, result.error == nil,
+      case .cellInfo(let columnName, _, _, _, let oldRow, let keys, let sidebarCellId) =
+        rightSidebarContent,
+      sidebarCellId == cellId,
+      let column = result.columns.firstIndex(where: { $0.name == columnName })
+    else { return }
+
+    let rowIndex: Int?
+    if let oldRow, !keys.isEmpty {
+      rowIndex = result.rows.firstIndex { row in
+        let data = CellResult.rowData(columns: result.columns, row: row)
+        return keys.allSatisfy { data[$0] == oldRow[$0] }
+      }
+    } else {
+      rowIndex = cellDetailRow
+    }
+    guard let rowIndex, result.rows.indices.contains(rowIndex) else { return }
+
+    let row = result.rows[rowIndex]
+    cellDetailEditTarget = result.editTarget
+    cellDetailRow = rowIndex
+    rightSidebarContent = .cellInfo(
+      columnName: columnName,
+      columnType: result.columns[column].type,
+      value: column < row.count ? row[column] : .null,
+      tableName: result.tableName,
+      rowData: CellResult.rowData(columns: result.columns, row: row),
+      primaryKeyColumns: result.primaryKeyColumns,
+      cellId: cellId
+    )
   }
 
   // MARK: - Cell Value Editing

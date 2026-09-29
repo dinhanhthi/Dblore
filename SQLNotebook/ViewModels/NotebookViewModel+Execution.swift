@@ -209,6 +209,7 @@ extension NotebookViewModel {
 
     // Update View Query sidebar if it's showing query for this cell
     updateExecutedQuerySidebarIfNeeded(cellId: task.cellId, result: result)
+    syncCellDetail(cellId: task.cellId, result: result)
 
     return result
   }
