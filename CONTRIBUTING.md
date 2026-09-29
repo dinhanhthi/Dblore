@@ -1,4 +1,4 @@
-# Contributing to SQLNotebook
+# Contributing to Dblore
 
 Thanks for your interest — contributions are welcome!
 
@@ -9,7 +9,7 @@ Thanks for your interest — contributions are welcome!
   1. Build from source (Xcode 27+ on macOS 26+; the app itself runs on macOS 14+) and make sure the unit tests pass:
 
      ```bash
-     SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook \
+     SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore \
        -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO
      ```
 
@@ -22,7 +22,7 @@ Thanks for your interest — contributions are welcome!
 
 ## License
 
-SQLNotebook is open source under the **GNU Affero General Public License v3.0**. By
+Dblore is open source under the **GNU Affero General Public License v3.0**. By
 submitting a contribution, you agree that it is licensed under the same terms. You
 confirm that the contribution is your own original work, or that you are authorized to
 submit it.

@@ -1,6 +1,6 @@
-# `/cf-ship` for SQLNotebook: usage
+# `/cf-ship` for Dblore: usage
 
-How to release SQLNotebook. This file is for **you**; `SKILL.md` next to it is
+How to release Dblore. This file is for **you**; `SKILL.md` next to it is
 the contract the model follows (coding-friend applies its `## Before`,
 `## Rules` and `## After` sections on top of the standard `/cf-ship`).
 
@@ -12,14 +12,14 @@ the contract the model follows (coding-friend applies its `## Before`,
 
 `/cf-ship` reads the app commits since the last published tag, picks a version,
 writes `CHANGELOG.md`, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
-`SQLNotebook.xcodeproj/project.pbxproj` (only when the file version changes),
+`Dblore.xcodeproj/project.pbxproj` (only when the file version changes),
 runs build + tests + a lint of the changed Swift files, commits
 `chore(release): bump to <tag version>` on the current branch, pushes, tags
 `v<tag version>`, pushes the tag, then waits for CI and verifies the published
 DMG and the Sparkle appcast.
 
-SQLNotebook ships stable releases only: the tag is always `v` +
-`MARKETING_VERSION` (`X.Y.Z`), and the DMG is `SQLNotebook-<version>.dmg`.
+Dblore ships stable releases only: the tag is always `v` +
+`MARKETING_VERSION` (`X.Y.Z`), and the DMG is `Dblore-<version>.dmg`.
 
 ## Say it in one line
 
@@ -31,8 +31,8 @@ SQLNotebook ships stable releases only: the tag is always `v` +
 Auto level: PATCH almost always, including ordinary new features (a setting, a
 menu item, an export format). MINOR only for a milestone (a new database
 engine, a new kind of document or tab), never twice in a row unless you ask
-with `/cf-ship minor`. MAJOR only for breaking `.sqlnb` / config compatibility
-(reserved while pre-1.0, so MINOR instead). Only commits touching `SQLNotebook/`, `SQLNotebookTests/`, the Xcode
+with `/cf-ship minor`. MAJOR only for breaking `.dblore` / config compatibility
+(reserved while pre-1.0, so MINOR instead). Only commits touching `Dblore/`, `DbloreTests/`, the Xcode
 project, `scripts/` or `assets/` count; docs, CI and `.coding-friend/` changes
 never trigger a release.
 
@@ -50,7 +50,7 @@ Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` ru
 4. Runs `scripts/build-release.sh --expect-version <tag version>`: checks the
    tag equals `MARKETING_VERSION`, then archive, export, sign, DMG,
    notarize, staple, Gatekeeper check.
-5. Publishes `SQLNotebook-<tag version>.dmg` and `.dmg.sha256`
+5. Publishes `Dblore-<tag version>.dmg` and `.dmg.sha256`
    on GitHub Releases as a normal (latest) release.
 6. Locates `generate_appcast` in the Sparkle SPM artifact the build resolved
    (checksum-verified by SPM, same version as the app).
@@ -60,7 +60,7 @@ Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` ru
 8. Commits the new `appcast.xml` to `main` as `github-actions[bot]`
    (`chore(release): appcast v<tag version>`; never counts toward a bump).
 9. Dispatches `deploy-appcast.yml`, which publishes only `appcast.xml` to
-   <https://dinhanhthi.github.io/SQLNotebook/appcast.xml> (GitHub Pages).
+   <https://dinhanhthi.github.io/Dblore/appcast.xml> (GitHub Pages).
 10. Deletes the keychain, key files and the appcast work folder.
 
 ## Prerequisites
@@ -71,18 +71,18 @@ Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` ru
   `SPARKLE_PRIVATE_KEY`). Check the names with `gh secret list`.
 - A **public** repo: Sparkle and users cannot download release assets from a
   private one. The skill stops unless
-  `gh api repos/dinhanhthi/SQLNotebook --jq .visibility` prints `public`.
+  `gh api repos/dinhanhthi/Dblore --jq .visibility` prints `public`.
 - GitHub Pages with Source = **GitHub Actions**
-  (`gh api repos/dinhanhthi/SQLNotebook/pages --jq .build_type` prints
+  (`gh api repos/dinhanhthi/Dblore/pages --jq .build_type` prints
   `workflow`). The skill stops otherwise.
 - For the local fallback appcast: the Sparkle EdDSA key in your login keychain
   under the account `sqlnotebook`.
 - For the local fallback only: the Developer ID certificate in your login
-  keychain and the `SQLNotebookNotary` notary profile
+  keychain and the `DbloreNotary` notary profile
   (`xcrun notarytool store-credentials ...`, see `docs/release-setup.md`).
 - A `CHANGELOG.md` at the repo root with a title and format note; the skill
   inserts each new version below it.
-- `gh` authenticated, and the test DB container `sqlnotebook-postgres-test` up
+- `gh` authenticated, and the test DB container `dblore-postgres-test` up
   if you want the integration suite to run before the release.
 
 ## Troubleshooting
@@ -132,8 +132,8 @@ again with a higher build number; never edit a published appcast item by hand.
 **Gatekeeper warns on the downloaded DMG.** Check it yourself:
 
 ```bash
-spctl -a -vv -t install "/Volumes/SQLNotebook/SQLNotebook.app"   # want: Notarized Developer ID
-xcrun stapler validate "/Volumes/SQLNotebook/SQLNotebook.app"
+spctl -a -vv -t install "/Volumes/Dblore/Dblore.app"   # want: Notarized Developer ID
+xcrun stapler validate "/Volumes/Dblore/Dblore.app"
 ```
 
 ## Testing the scripts without releasing anything
@@ -154,7 +154,7 @@ BUMP_INFO_TAG= BUMP_INFO_VERSION=0.1.1-rc.1 bash $B                 # error: fil
 BUMP_INFO_TAG=v0.1.0 BUMP_INFO_VERSION=0.1.0 bash $B --rc           # error: unknown argument
 
 # bump.sh on a copy of the project file
-cp SQLNotebook.xcodeproj/project.pbxproj /tmp/copy.pbxproj
+cp Dblore.xcodeproj/project.pbxproj /tmp/copy.pbxproj
 BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts/bump.sh 0.2.0
 ```
 

@@ -1,13 +1,14 @@
 <div align="center">
 
-<img src="assets/logo_256.png" alt="SQLNotebook" width="120" />
+<img src="assets/logo_256.png" alt="Dblore" width="120" />
 
-# SQLNotebook
+# Dblore
 
-A native macOS app for working with SQL: write and run queries in **notebooks** (like
-Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
+A native macOS app for working with databases: write and run queries in **notebooks**
+(like Jupyter, for your databases) or in a classic **SQL editor**. Supports PostgreSQL
+today; more engines (such as MongoDB) are planned.
 
-**[Download for macOS](https://github.com/dinhanhthi/SQLNotebook/releases/latest)**
+**[Download for macOS](https://github.com/dinhanhthi/Dblore/releases/latest)**
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
 
 </div>
@@ -16,7 +17,7 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 
 ## Features
 
-- **Notebooks and editor tabs**: `.sqlnb` notebooks with inline results per cell, and
+- **Notebooks and editor tabs**: `.dblore` notebooks with inline results per cell, and
   standalone `.sql` files, in a multi-tab, multi-window workspace
 - **Query execution**: run a cell, the query at the cursor, or all cells; cancel running
   queries; row count and execution time per result
@@ -39,9 +40,9 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 ## Install
 
 - **Download the app:** get the latest signed &amp; notarized DMG from the
-  [Releases page](https://github.com/dinhanhthi/SQLNotebook/releases/latest), open it and
-  drag SQLNotebook to Applications. From v0.2.0 on, it updates itself
-  (**SQLNotebook > Check for Updates…**).
+  [Releases page](https://github.com/dinhanhthi/Dblore/releases/latest), open it and
+  drag Dblore to Applications. From v0.2.0 on, it updates itself
+  (**Dblore > Check for Updates…**).
 - **Or build from source:** see below.
 
 ## Requirements
@@ -53,16 +54,16 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 ## Build from source
 
 ```sh
-git clone https://github.com/dinhanhthi/SQLNotebook.git
-cd SQLNotebook
-open SQLNotebook.xcodeproj      # press Run
+git clone https://github.com/dinhanhthi/Dblore.git
+cd Dblore
+open Dblore.xcodeproj      # press Run
 ```
 
 Headless build / test:
 
 ```sh
-xcodebuild build -scheme SQLNotebook -destination 'platform=macOS,arch=arm64'
-SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook \
+xcodebuild build -scheme Dblore -destination 'platform=macOS,arch=arm64'
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore \
   -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO
 ```
 
@@ -74,7 +75,7 @@ finish.
 [`docker/`](docker/README.md) has ready-made PostgreSQL containers:
 
 - a development database with sample data, on port `5433`
-  (`postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlnotebook`);
+  (`postgresql://dblore:dblore123@localhost:5433/dblore`);
 - a separate database for the integration tests, on port `5435`.
 
 ```sh
@@ -92,7 +93,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for guidelines.
 
 Copyright (C) 2025-2026 Anh-Thi Dinh.
 
-SQLNotebook is open source under the
+Dblore is open source under the
 [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
 You may use, modify, and distribute it under its terms. See [LICENSE](LICENSE) for the
 full license text.

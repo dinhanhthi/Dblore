@@ -1,10 +1,10 @@
 ## Before
 
-This is a **version bump + changelog + tag** operation for SQLNotebook, the macOS app. Run these steps BEFORE the standard cf-ship workflow.
+This is a **version bump + changelog + tag** operation for Dblore, the macOS app. Run these steps BEFORE the standard cf-ship workflow.
 
 **Args** (optional): `[patch|minor|major]`
 
-SQLNotebook ships stable releases only: tags are always `vX.Y.Z` = `MARKETING_VERSION`. A release has two outputs: the **next file version** (what `bump.sh` writes, or `unchanged`) and the **next tag**.
+Dblore ships stable releases only: tags are always `vX.Y.Z` = `MARKETING_VERSION`. A release has two outputs: the **next file version** (what `bump.sh` writes, or `unchanged`) and the **next tag**.
 
 | The user says                 | You run               | Latest tag -> file / tag                               |
 | ----------------------------- | --------------------- | ------------------------------------------------------ |
@@ -13,7 +13,7 @@ SQLNotebook ships stable releases only: tags are always `vX.Y.Z` = `MARKETING_VE
 
 `bump-info.sh` computes this for you under "Next version" as two lines, `Next file version` and `Next tag`. Read them and use them verbatim. Never compute a version by hand.
 
-SQLNotebook has **one** version, in one file: `MARKETING_VERSION` (and the build number `CURRENT_PROJECT_VERSION`) in `SQLNotebook.xcodeproj/project.pbxproj`, identical across every build configuration. Below, `<tag>` means the `Next tag` line (for example `v0.1.1`) and `<tag version>` the same string without the leading `v` (`0.1.1`).
+Dblore has **one** version, in one file: `MARKETING_VERSION` (and the build number `CURRENT_PROJECT_VERSION`) in `Dblore.xcodeproj/project.pbxproj`, identical across every build configuration. Below, `<tag>` means the `Next tag` line (for example `v0.1.1`) and `<tag version>` the same string without the leading `v` (`0.1.1`).
 
 ### Step B1: Get bump context
 
@@ -49,8 +49,8 @@ Only in State `bump`. An explicit level from the user wins. Otherwise decide fro
 Commits under "Excluded" (touching no bump-relevant path: `docs/`, `.github/`, `.coding-friend/`, root `*.md`, root `appcast.xml`, ...; this includes CI's `chore(release): appcast vX.Y.Z` commits) and under "Excluded by scope" (`(website)` / `(landing)` / `(docs)`) never count. For "Excluded by scope", judge each: count it only if it is genuinely an app change that was mis-scoped.
 
 - **PATCH** (x.y.Z), the default, and almost always the answer. Bug fixes, UX polish, performance, refinements of existing behaviour, **and ordinary new features**: a new setting or toggle, a new menu item or shortcut, a new export format, a new option on an existing dialog, a new column in the results grid, an improvement to an existing panel. Several such features in one release are still PATCH.
-- **MINOR** (x.Y.0) only for a **milestone**: a whole new area of the app that changes what SQLNotebook is for, such as support for a new database engine, a new kind of document or tab, or a new workspace-level tool on the scale of the schema visualizer. A single feature, however useful, is not a milestone. If you have to argue for MINOR, it is PATCH.
-- **MAJOR** (X.0.0) only for a change that breaks compatibility of `.sqlnb` notebook files or saved connection/config data users depend on. While the app is pre-1.0, MAJOR is reserved: use MINOR instead.
+- **MINOR** (x.Y.0) only for a **milestone**: a whole new area of the app that changes what Dblore is for, such as support for a new database engine, a new kind of document or tab, or a new workspace-level tool on the scale of the schema visualizer. A single feature, however useful, is not a milestone. If you have to argue for MINOR, it is PATCH.
+- **MAJOR** (X.0.0) only for a change that breaks compatibility of `.dblore` notebook files or saved connection/config data users depend on. While the app is pre-1.0, MAJOR is reserved: use MINOR instead.
 
 When in doubt, choose PATCH. Never pick MINOR two releases in a row on your own judgement: if the latest tag was itself a minor bump (`X.Y.0`), this one is PATCH unless the user asked for `minor`.
 
@@ -64,7 +64,7 @@ Only when `Next file version` is a version, i.e. only in State `bump`. When it s
 bash .coding-friend/skills/cf-ship-custom/scripts/bump.sh <Next file version>
 ```
 
-It rewrites `SQLNotebook.xcodeproj/project.pbxproj` only: `MARKETING_VERSION` -> `<Next file version>` and `CURRENT_PROJECT_VERSION` -> max + 1 in every build configuration, then verifies they agree. It accepts only `X.Y.Z`: never pass the tag.
+It rewrites `Dblore.xcodeproj/project.pbxproj` only: `MARKETING_VERSION` -> `<Next file version>` and `CURRENT_PROJECT_VERSION` -> max + 1 in every build configuration, then verifies they agree. It accepts only `X.Y.Z`: never pass the tag.
 
 ### Step B4: Update `CHANGELOG.md`
 
@@ -94,10 +94,10 @@ Run all of these. Do not commit without them.
 
 ```bash
 # BUILD
-xcodebuild build -scheme SQLNotebook -destination 'platform=macOS,arch=arm64' -derivedDataPath .build
+xcodebuild build -scheme Dblore -destination 'platform=macOS,arch=arm64' -derivedDataPath .build
 
 # UT
-SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook -destination 'platform=macOS,arch=arm64' -derivedDataPath .build -enableCodeCoverage NO
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore -destination 'platform=macOS,arch=arm64' -derivedDataPath .build -enableCodeCoverage NO
 ```
 
 Format check. Lint (non-modifying) only the Swift files changed since the start of the commit range; never run `swift-format -i` or `-r` on whole folders here. `<range tag>` is the tag in the bump-info `Commit range` line:
@@ -122,10 +122,10 @@ fi
 Integration tests, only when the test DB container is up:
 
 ```bash
-docker ps --format '{{.Names}}' | grep -qx sqlnotebook-postgres-test && echo "test DB up"
+docker ps --format '{{.Names}}' | grep -qx dblore-postgres-test && echo "test DB up"
 
 # IT
-TEST_RUNNER_TEST_DB_PORT=5435 TEST_RUNNER_TEST_DB_NAME=sqlnotebook_test TEST_RUNNER_TEST_DB_USER=sqlnotebook_test TEST_RUNNER_TEST_DB_PASSWORD=sqlnotebook123 SKIP_UI_TESTS=true xcodebuild test -scheme SQLNotebook -destination 'platform=macOS,arch=arm64' -derivedDataPath .build -enableCodeCoverage NO
+TEST_RUNNER_TEST_DB_PORT=5435 TEST_RUNNER_TEST_DB_NAME=dblore_test TEST_RUNNER_TEST_DB_USER=dblore_test TEST_RUNNER_TEST_DB_PASSWORD=dblore123 SKIP_UI_TESTS=true xcodebuild test -scheme Dblore -destination 'platform=macOS,arch=arm64' -derivedDataPath .build -enableCodeCoverage NO
 ```
 
 If the container is not running, skip IT and say so in the report. Do not start it.
@@ -135,8 +135,8 @@ If the container is not running, skip IT and say so in the report. Do not start 
 **Build number must increase.** Sparkle offers an update only when the new `sparkle:version` (= `CFBundleVersion` = `CURRENT_PROJECT_VERSION`) is strictly greater than the installed one. Run this in every State, from the repo root:
 
 ```bash
-build="$(grep -E '^[[:space:]]*CURRENT_PROJECT_VERSION = ' SQLNotebook.xcodeproj/project.pbxproj | sed -E 's/.*= *"?([0-9]+)"?;.*/\1/' | sort -n | tail -1)"
-feed="$(curl -fsSL https://dinhanhthi.github.io/SQLNotebook/appcast.xml 2>/dev/null || true)"
+build="$(grep -E '^[[:space:]]*CURRENT_PROJECT_VERSION = ' Dblore.xcodeproj/project.pbxproj | sed -E 's/.*= *"?([0-9]+)"?;.*/\1/' | sort -n | tail -1)"
+feed="$(curl -fsSL https://dinhanhthi.github.io/Dblore/appcast.xml 2>/dev/null || true)"
 last="$(printf '%s' "$feed" | grep -oE '<sparkle:version>[0-9]+</sparkle:version>' | grep -oE '[0-9]+' | sort -n | tail -1)"
 if [[ -z "$last" ]]; then echo "no published build yet: no constraint"; elif (( build > last )); then echo "ok: build $build > $last"; else echo "STOP: build $build must be > $last"; fi
 ```
@@ -146,13 +146,13 @@ An empty feed or a 404 (before the first Sparkle release) means no constraint. I
 **Release pre-flight (GitHub side).** Before committing, check that CI can publish an update users can actually download. Read-only; never print secret values:
 
 ```bash
-v="$(gh api repos/dinhanhthi/SQLNotebook --jq .visibility 2>/dev/null)" || v=""
+v="$(gh api repos/dinhanhthi/Dblore --jq .visibility 2>/dev/null)" || v=""
 [[ "$v" == public ]] && echo "visibility: public" || echo "STOP: repo visibility is '${v:-unknown}', must be public"
 
-gh secret list -R dinhanhthi/SQLNotebook --json name --jq '.[].name' | grep -qx SPARKLE_PRIVATE_KEY \
+gh secret list -R dinhanhthi/Dblore --json name --jq '.[].name' | grep -qx SPARKLE_PRIVATE_KEY \
   && echo "secret: SPARKLE_PRIVATE_KEY set" || echo "STOP: secret SPARKLE_PRIVATE_KEY missing"
 
-p="$(gh api repos/dinhanhthi/SQLNotebook/pages --jq .build_type 2>/dev/null)" || p=""
+p="$(gh api repos/dinhanhthi/Dblore/pages --jq .build_type 2>/dev/null)" || p=""
 [[ "$p" == workflow ]] && echo "pages: GitHub Actions" || echo "STOP: Pages source is '${p:-not configured}', must be GitHub Actions (workflow)"
 ```
 
@@ -167,7 +167,7 @@ On any `STOP`, report it with a pointer to `docs/release-setup.md` and do not co
 Stage only the release files, then commit on the **current branch**:
 
 ```bash
-git add SQLNotebook.xcodeproj/project.pbxproj CHANGELOG.md   # pbxproj only if B3 ran
+git add Dblore.xcodeproj/project.pbxproj CHANGELOG.md   # pbxproj only if B3 ran
 git commit -m "chore(release): bump to <tag version>"
 git push            # git push -u origin HEAD if the branch has no upstream
 ```
@@ -238,18 +238,18 @@ gh release view "<tag>" --json isPrerelease,isDraft,assets
 
 - `isPrerelease` must be `false`.
 - `isDraft` must be `false`.
-- `assets` must contain `SQLNotebook-<tag version>.dmg` and `SQLNotebook-<tag version>.dmg.sha256`.
+- `assets` must contain `Dblore-<tag version>.dmg` and `Dblore-<tag version>.dmg.sha256`.
 
 Download and check the DMG in a temp dir:
 
 ```bash
 tmp="$(mktemp -d)"
-gh release download "<tag>" -p 'SQLNotebook-*.dmg*' -D "$tmp"
-(cd "$tmp" && shasum -a 256 -c "SQLNotebook-<tag version>.dmg.sha256")
-hdiutil attach -nobrowse -readonly "$tmp/SQLNotebook-<tag version>.dmg"
-spctl -a -vv -t install "/Volumes/SQLNotebook/SQLNotebook.app"   # expect: accepted, source=Notarized Developer ID
-xcrun stapler validate "/Volumes/SQLNotebook/SQLNotebook.app"    # expect: The validate action worked!
-hdiutil detach "/Volumes/SQLNotebook"
+gh release download "<tag>" -p 'Dblore-*.dmg*' -D "$tmp"
+(cd "$tmp" && shasum -a 256 -c "Dblore-<tag version>.dmg.sha256")
+hdiutil attach -nobrowse -readonly "$tmp/Dblore-<tag version>.dmg"
+spctl -a -vv -t install "/Volumes/Dblore/Dblore.app"   # expect: accepted, source=Notarized Developer ID
+xcrun stapler validate "/Volumes/Dblore/Dblore.app"    # expect: The validate action worked!
+hdiutil detach "/Volumes/Dblore"
 ```
 
 Use the mount point `hdiutil attach` actually prints if it differs. Always detach, even when a check fails.
@@ -264,9 +264,9 @@ gh run watch <deploy-run-id> --exit-status --interval 30
 Then check the live feed:
 
 ```bash
-feed="$(curl -fsSL https://dinhanhthi.github.io/SQLNotebook/appcast.xml)"
+feed="$(curl -fsSL https://dinhanhthi.github.io/Dblore/appcast.xml)"
 printf '%s' "$feed" | grep -F "<sparkle:shortVersionString><tag version></sparkle:shortVersionString>"
-printf '%s' "$feed" | grep -F 'url="https://github.com/dinhanhthi/SQLNotebook/releases/download/v<tag version>/SQLNotebook-<tag version>.dmg"'
+printf '%s' "$feed" | grep -F 'url="https://github.com/dinhanhthi/Dblore/releases/download/v<tag version>/Dblore-<tag version>.dmg"'
 printf '%s' "$feed" | grep -F 'sparkle:edSignature='
 printf '%s' "$feed" | grep -oE '<sparkle:version>[0-9]+</sparkle:version>' | grep -oE '[0-9]+' | sort -n | tail -1   # the build <N> for B9 (highest = the new item)
 ```
@@ -284,10 +284,10 @@ git pull --ff-only
 
 ```
 Released:
-  SQLNotebook <tag> -> tag <tag> pushed -> release.yml -> notarized DMG + sha256
+  Dblore <tag> -> tag <tag> pushed -> release.yml -> notarized DMG + sha256
 
   Release: <gh release view <tag> --json url -q .url>
-  Appcast: live at https://dinhanhthi.github.io/SQLNotebook/appcast.xml (<tag version>, build <N>)
+  Appcast: live at https://dinhanhthi.github.io/Dblore/appcast.xml (<tag version>, build <N>)
 ```
 
 Take the URL from `gh`, do not hardcode it.

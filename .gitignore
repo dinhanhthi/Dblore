@@ -85,19 +85,19 @@ docs/CLAUDE.md
 docs/*
 
 # claude-mem context files
-SQLNotebook/Database/CLAUDE.md
-SQLNotebook/Services/CLAUDE.md
-SQLNotebook/ViewModels/CLAUDE.md
-SQLNotebook/Views/CLAUDE.md
-SQLNotebook/Views/Components/CLAUDE.md
-SQLNotebook/Editor/CLAUDE.md
-SQLNotebook/Execution/CLAUDE.md
-SQLNotebook/Models/CLAUDE.md
-SQLNotebook/Utilities/CLAUDE.md
-SQLNotebookTests/CLAUDE.md
-SQLNotebook.xcodeproj/CLAUDE.md
-SQLNotebook/Views/Sidebars/CLAUDE.md
-SQLNotebook/**/CLAUDE.md
+Dblore/Database/CLAUDE.md
+Dblore/Services/CLAUDE.md
+Dblore/ViewModels/CLAUDE.md
+Dblore/Views/CLAUDE.md
+Dblore/Views/Components/CLAUDE.md
+Dblore/Editor/CLAUDE.md
+Dblore/Execution/CLAUDE.md
+Dblore/Models/CLAUDE.md
+Dblore/Utilities/CLAUDE.md
+DbloreTests/CLAUDE.md
+Dblore.xcodeproj/CLAUDE.md
+Dblore/Views/Sidebars/CLAUDE.md
+Dblore/**/CLAUDE.md
 scripts/CLAUDE.md
 
 docs/implementation/CLAUDE.md
