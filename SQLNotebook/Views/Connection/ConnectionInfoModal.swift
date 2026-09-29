@@ -27,6 +27,16 @@ struct ConnectionInfoDisconnectButton: View {
 struct WorkspaceConnectionInfoModal: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Binding var isPresented: Bool
+  @State private var draftName = ""
+
+  private var currentName: String {
+    workspaceManager.workspace.connectionConfig?.name ?? ""
+  }
+
+  private var canApply: Bool {
+    let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !trimmed.isEmpty && trimmed != currentName
+  }
 
   private var headerTitle: String {
     if let config = workspaceManager.workspace.connectionConfig, !config.name.isEmpty {
@@ -44,9 +54,16 @@ struct WorkspaceConnectionInfoModal: View {
       height: 450,
       isPresented: $isPresented
     ) {
-      WorkspaceConnectionInfoContent(workspaceManager: workspaceManager)
+      WorkspaceConnectionInfoContent(workspaceManager: workspaceManager, name: $draftName)
+        .onAppear { draftName = currentName }
     } footer: {
       GenericModalFooter {
+        Button("Apply") {
+          workspaceManager.renameConnection(to: draftName)
+          draftName = currentName
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(!canApply)
         Spacer()
         ConnectionInfoDisconnectButton(
           onDisconnect: {
@@ -65,6 +82,7 @@ struct WorkspaceConnectionInfoModal: View {
 
 struct WorkspaceConnectionInfoContent: View {
   @Bindable var workspaceManager: WorkspaceManager
+  @Binding var name: String
 
   private var config: ConnectionConfig? {
     workspaceManager.workspace.connectionConfig
@@ -74,9 +92,14 @@ struct WorkspaceConnectionInfoContent: View {
     if let config {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          // Connection name (if provided)
-          if !config.name.isEmpty {
-            infoRow(label: "Connection Name", value: config.name)
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("Connection Name")
+              .font(.caption)
+              .foregroundColor(.foregroundSubtle)
+
+            TextField("Connection name", text: $name)
+              .textFieldStyle(.plain)
+              .inputCapsuleStyle()
           }
 
           infoRow(label: "Host", value: config.host)

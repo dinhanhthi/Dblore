@@ -48,6 +48,19 @@ extension WorkspaceManager {
     }
   }
 
+  /// Rename the active connection (workspace, editing copy, tabs and the recent list).
+  func renameConnection(to name: String) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, var current = workspace.connectionConfig, current.name != trimmed
+    else { return }
+    current.name = trimmed
+    workspace.connectionConfig = current
+    editingConnectionConfig.name = trimmed
+    markDirtyAndScheduleAutoSave()
+    syncConnectionStateToTabs()
+    SessionManager.saveConnection(current)
+  }
+
   // MARK: - Connect (weakening needs the Safe Mode unlock)
 
   /// True if connecting with `new` needs the Safe Mode unlock: `new` targets the same database
