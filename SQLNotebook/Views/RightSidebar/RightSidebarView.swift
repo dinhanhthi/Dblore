@@ -8,6 +8,7 @@ import SwiftUI
 struct RightSidebarView: View {
   @Bindable var viewModel: NotebookViewModel
   @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
+  @State private var showSavedFilters = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -74,6 +75,19 @@ struct RightSidebarView: View {
         .foregroundColor(.foreground)
 
       Spacer()
+
+      if case .tableFilter = viewModel.rightSidebarContent {
+        Button(action: { showSavedFilters.toggle() }) {
+          Image(systemName: "bookmark")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .help("Save filters")
+        .popover(isPresented: $showSavedFilters, arrowEdge: .bottom) {
+          SavedFiltersPopover(viewModel: viewModel)
+        }
+      }
 
       Button(action: { viewModel.closeSidebar() }) {
         Image(systemName: "xmark")

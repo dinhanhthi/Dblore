@@ -3,15 +3,13 @@
 //  SQLNotebook
 //
 //  Filter form of the data viewer in the right sidebar: condition rows (column, operator,
-//  value, AND/OR), Apply/Clear and the filters saved for the table.
+//  value, AND/OR) and Apply/Clear. Saved filters live in `SavedFiltersPopover`.
 //
 
 import SwiftUI
 
 struct TableFilterContent: View {
   @Bindable var viewModel: NotebookViewModel
-
-  @State private var saveName = ""
 
   private var relation: String {
     "\(viewModel.dataViewer?.schema ?? "").\(viewModel.dataViewer?.name ?? "")"
@@ -20,9 +18,12 @@ struct TableFilterContent: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Spacing.md) {
-        ForEach($viewModel.filterDraft.conditions) { $condition in
-          let index = viewModel.filterDraft.conditions.firstIndex { $0.id == condition.id } ?? 0
-          conditionRow($condition, index: index)
+        VStack(spacing: Spacing.xs) {
+          ForEach($viewModel.filterDraft.conditions) { $condition in
+            let index = viewModel.filterDraft.conditions.firstIndex { $0.id == condition.id } ?? 0
+            if index > 0 { connectorPill($condition) }
+            conditionRow($condition)
+          }
         }
 
         Button(action: addCondition) {
@@ -37,9 +38,6 @@ struct TableFilterContent: View {
           Button("Clear") { Task { await viewModel.clearFilter() } }
             .buttonStyle(SecondaryButtonStyle())
         }
-
-        Divider()
-        savedFiltersSection
       }
       .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -49,20 +47,28 @@ struct TableFilterContent: View {
 
   // MARK: - Condition row
 
-  private func conditionRow(_ condition: Binding<FilterCondition>, index: Int) -> some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      if index > 0 {
-        Menu {
-          Button("AND") { condition.wrappedValue.connector = .and }
-          Button("OR") { condition.wrappedValue.connector = .or }
-        } label: {
-          Text(condition.wrappedValue.connector == .and ? "AND" : "OR")
-            .font(.small)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+  /// AND/OR joining a condition to the one above; OR is tinted to stand out from AND
+  private func connectorPill(_ condition: Binding<FilterCondition>) -> some View {
+    let isOr = condition.wrappedValue.connector == .or
+    return HStack(spacing: Spacing.xs) {
+      Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      Menu {
+        Button("AND") { condition.wrappedValue.connector = .and }
+        Button("OR") { condition.wrappedValue.connector = .or }
+      } label: {
+        Text(isOr ? "OR" : "AND")
+          .font(.small)
+          .foregroundColor(isOr ? .accent : .foregroundMuted)
       }
+      .menuStyle(.borderlessButton)
+      .fixedSize()
+      Rectangle().fill(Color.borderSubtle).frame(height: 1)
+    }
+  }
 
+  /// One condition as a bordered card so rows read as separate units
+  private func conditionRow(_ condition: Binding<FilterCondition>) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
       HStack(spacing: Spacing.xs) {
         Picker("", selection: condition.column) {
           Text("Column").tag("")
@@ -107,6 +113,11 @@ struct TableFilterContent: View {
         .onSubmit { Task { await viewModel.applyFilter() } }
       }
     }
+    .padding(Spacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.cellBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.lg).stroke(Color.border, lineWidth: 1))
   }
 
   /// Table columns, plus a column of a loaded saved filter that the table no longer has
@@ -123,14 +134,21 @@ struct TableFilterContent: View {
     guard viewModel.filterDraft.conditions.count > 1 else { return }
     viewModel.filterDraft.conditions.removeAll { $0.id == id }
   }
+}
 
-  // MARK: - Saved filters
+// MARK: - Saved filters
+
+/// Popover of the header Save button: name the current form and save it, load or delete saved ones
+struct SavedFiltersPopover: View {
+  @Bindable var viewModel: NotebookViewModel
+
+  @State private var saveName = ""
 
   private var trimmedSaveName: String {
     saveName.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  private var savedFiltersSection: some View {
+  var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       Text("Saved filters")
         .font(.small)
@@ -140,29 +158,37 @@ struct TableFilterContent: View {
         TextField("Name", text: $saveName)
           .textFieldStyle(.plain)
           .inputCapsuleStyle()
-        Button("Save") {
-          if viewModel.saveCurrentFilter(named: saveName) { saveName = "" }
-        }
-        .buttonStyle(SecondaryButtonStyle())
-        .disabled(trimmedSaveName.isEmpty)
+          .onSubmit(save)
+        Button("Save", action: save)
+          .buttonStyle(SecondaryButtonStyle())
+          .disabled(trimmedSaveName.isEmpty)
       }
 
-      ForEach(viewModel.savedFilters) { saved in
-        HStack(spacing: Spacing.xs) {
-          Text(saved.name)
-            .font(.small)
-            .foregroundColor(.foreground)
-            .lineLimit(1)
-          Spacer()
-          Button("Load") { viewModel.loadSavedFilter(saved) }
-            .buttonStyle(GhostButtonStyle())
-          Button(action: { viewModel.deleteSavedFilter(saved) }) {
-            Image(systemName: "trash")
+      if !viewModel.savedFilters.isEmpty {
+        Divider()
+        ForEach(viewModel.savedFilters) { saved in
+          HStack(spacing: Spacing.xs) {
+            Text(saved.name)
+              .font(.small)
+              .foregroundColor(.foreground)
+              .lineLimit(1)
+            Spacer()
+            Button("Load") { viewModel.loadSavedFilter(saved) }
+              .buttonStyle(GhostButtonStyle())
+            Button(action: { viewModel.deleteSavedFilter(saved) }) {
+              Image(systemName: "trash")
+            }
+            .buttonStyle(GhostButtonStyle(iconOnly: true))
+            .help("Delete saved filter")
           }
-          .buttonStyle(GhostButtonStyle(iconOnly: true))
-          .help("Delete saved filter")
         }
       }
     }
+    .padding(Spacing.md)
+    .frame(width: 280)
+  }
+
+  private func save() {
+    if viewModel.saveCurrentFilter(named: saveName) { saveName = "" }
   }
 }
