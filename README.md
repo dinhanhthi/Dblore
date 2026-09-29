@@ -12,7 +12,7 @@ Jupyter, but for SQL) or in a classic **SQL editor**, against PostgreSQL.
 
 </div>
 
-![Screenshot](assets/screenshot.png)
+![Screenshot](assets/poster.png)
 
 ## Features
 
