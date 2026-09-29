@@ -2,6 +2,35 @@
 
 All notable user-visible changes to SQLNotebook, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.3.0 (2026-09-29)
+
+### Added
+
+- **Column filters.** A filter sidebar with a header button builds `WHERE` conditions in card layout, and filters can be saved and reused from a popover in the header; the button shows an accent dot when a filter is applied. [#4d5bd5f](https://github.com/dinhanhthi/SQLNotebook/commit/4d5bd5f) [#cc39d89](https://github.com/dinhanhthi/SQLNotebook/commit/cc39d89) [#7880a78](https://github.com/dinhanhthi/SQLNotebook/commit/7880a78) [#fcd9505](https://github.com/dinhanhthi/SQLNotebook/commit/fcd9505)
+- **Highlight cells and rows.** Highlight matching cells or rows in the results grid from the sidebar, with a softer tint and a live cell/row toggle; the button shows an accent dot when applied. [#3513bd1](https://github.com/dinhanhthi/SQLNotebook/commit/3513bd1) [#a0ce3bd](https://github.com/dinhanhthi/SQLNotebook/commit/a0ce3bd) [#f97bb01](https://github.com/dinhanhthi/SQLNotebook/commit/f97bb01) [#fcd9505](https://github.com/dinhanhthi/SQLNotebook/commit/fcd9505)
+- **Favorites.** Save SQL snippets in a Favorites sidebar tab, with modals to add and edit them and insertion into the editor. [#a99a802](https://github.com/dinhanhthi/SQLNotebook/commit/a99a802) [#835cdac](https://github.com/dinhanhthi/SQLNotebook/commit/835cdac) [#a27b639](https://github.com/dinhanhthi/SQLNotebook/commit/a27b639)
+- **Results cell context menu** with copy, see more and highlight. [#8c0d6e3](https://github.com/dinhanhthi/SQLNotebook/commit/8c0d6e3)
+- **Sorted column tint** in the results grid. [#5a30d38](https://github.com/dinhanhthi/SQLNotebook/commit/5a30d38)
+- **Current line highlight** in the SQL editor. [#4a3dc39](https://github.com/dinhanhthi/SQLNotebook/commit/4a3dc39)
+- **Side-by-side editor layout** can be toggled and set as the default in settings, and the line number gutter fits its content. [#2d238bb](https://github.com/dinhanhthi/SQLNotebook/commit/2d238bb)
+- **Refresh button** in the cell details sidebar, which also refreshes automatically. [#ba23546](https://github.com/dinhanhthi/SQLNotebook/commit/ba23546)
+- **Rename a connection** from the connection info modal with an Apply button. [#d1382e9](https://github.com/dinhanhthi/SQLNotebook/commit/d1382e9)
+- **App version** is shown on the welcome screen. [#8a537dc](https://github.com/dinhanhthi/SQLNotebook/commit/8a537dc)
+
+### Improved
+
+- **New app logo.** [#b06839a](https://github.com/dinhanhthi/SQLNotebook/commit/b06839a)
+- **Faster app**: incremental SQL syntax highlighting, quicker schema loading with a non-blocking workspace open, a cached results grid display, debounced autocomplete and a delayed Sparkle update check. [#937b92a](https://github.com/dinhanhthi/SQLNotebook/commit/937b92a) [#3250c0b](https://github.com/dinhanhthi/SQLNotebook/commit/3250c0b) [#2b0252e](https://github.com/dinhanhthi/SQLNotebook/commit/2b0252e)
+- **Data viewer header** now holds the footer controls, with a simpler pagination label. [#2d84bb3](https://github.com/dinhanhthi/SQLNotebook/commit/2d84bb3)
+- **Remember connection** is on by default. [#a07c9ec](https://github.com/dinhanhthi/SQLNotebook/commit/a07c9ec)
+- **Safe mode** protection icons use the app accent color. [#e856710](https://github.com/dinhanhthi/SQLNotebook/commit/e856710)
+
+### Fixed
+
+- Undo and redo in editors and cells no longer interfere with each other. [#9aba555](https://github.com/dinhanhthi/SQLNotebook/commit/9aba555)
+- Tabs show the unsaved dot in the close button slot, which turns into an x on hover. [#8337c8f](https://github.com/dinhanhthi/SQLNotebook/commit/8337c8f)
+- A single flat border sits under the tab bar without a glass rim. [#1547df1](https://github.com/dinhanhthi/SQLNotebook/commit/1547df1)
+
 ## v0.2.2 (2026-09-29)
 
 ### Added
