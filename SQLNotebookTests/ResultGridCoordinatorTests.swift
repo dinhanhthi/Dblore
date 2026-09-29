@@ -238,4 +238,23 @@ struct ResultGridCoordinatorTests {
     #expect(
       coordinator.tableView(tableView, sizeToFitWidthOfColumn: 1) == max(ceil(headerWidth), 40))
   }
+
+  @Test("New columns fit their content; a sort change or re-run keeps a dragged width")
+  func autoFitOnNewColumns() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    let column = tableView.tableColumns[1]
+    #expect(column.width == coordinator.tableView(tableView, sizeToFitWidthOfColumn: 1))
+    column.width = 250
+    coordinator.update(tableView, result: result, sortColumn: "id", ascending: true)
+    #expect(column.width == 250)
+    let rerun = CellResult(columns: result.columns, rows: result.rows, rowCount: result.rowCount)
+    coordinator.update(tableView, result: rerun, sortColumn: "id", ascending: true)
+    #expect(column.width == 250)
+    let other = CellResult(
+      columns: [ColumnInfo(name: "other", type: "text")], rows: [[.string("x")]], rowCount: 1)
+    coordinator.update(tableView, result: other, sortColumn: nil, ascending: true)
+    #expect(
+      tableView.tableColumns[1].width
+        == coordinator.tableView(tableView, sizeToFitWidthOfColumn: 1))
+  }
 }

@@ -129,6 +129,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     updateHiddenColumns(tableView, result: result, hiddenColumns: hiddenColumns)
     tableView.tableColumn(withIdentifier: Self.rowNumberIdentifier)?.width =
       Self.rowNumberWidth(rowCount: result.rows.count)
+    let oldKey = key
     key = newKey
     let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
     self.model = model
@@ -150,6 +151,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     updateHeader(
       tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
       caseSensitive: caseSensitive, currentMatch: currentMatch)
+    // New columns fit like a divider double-click; a re-run keeps dragged widths
+    if newKey.columnNames != oldKey?.columnNames {
+      for (index, tableColumn) in tableView.tableColumns.enumerated() {
+        tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)
+      }
+    }
     tableView.reloadData()
     if let currentMatchCell {
       tableView.scrollRowToVisible(currentMatchCell.row)
