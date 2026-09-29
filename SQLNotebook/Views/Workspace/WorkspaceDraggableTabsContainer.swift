@@ -248,6 +248,7 @@ struct WorkspaceDraggableTabItem: View {
   let onClose: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringClose = false
 
   var body: some View {
     HStack(spacing: Spacing.xs) {
@@ -263,14 +264,7 @@ struct WorkspaceDraggableTabItem: View {
         .lineLimit(1)
         .foregroundColor(isActive ? .foreground : .foregroundMuted)
 
-      // Dirty indicator dot (separate from close button)
-      if tab.isDirty {
-        Circle()
-          .fill(Color.foregroundMuted)
-          .frame(width: 6, height: 6)
-      }
-
-      // Close button (always X)
+      // Close button slot; shows the dirty dot until the slot itself is hovered
       closeButton
     }
     .padding(.horizontal, Spacing.md)
@@ -300,14 +294,17 @@ struct WorkspaceDraggableTabItem: View {
     }
     .onMiddleClick { onClose() }
     .blockDoubleClickZoom()
-    .onHover { isHovering = $0 }
+    .onHover {
+      isHovering = $0
+      if !$0 { isHoveringClose = false }
+    }
     .animation(.easeInOut(duration: 0.15), value: isDragging)
     .animation(.easeInOut(duration: 0.15), value: isHovering)
   }
 
   @ViewBuilder
   private var closeButton: some View {
-    if isHovering || isActive {
+    if (isHovering || isActive) && !(tab.isDirty && !isHoveringClose) {
       Button {
         onClose()
       } label: {
@@ -320,6 +317,15 @@ struct WorkspaceDraggableTabItem: View {
       .buttonStyle(.plain)
       .linkPointer()
       .help("Close tab")
+      .onHover { isHoveringClose = $0 }
+    } else if tab.isDirty {
+      // Dot fills the close button slot; hovering it swaps in the X
+      Circle()
+        .fill(Color.foregroundMuted)
+        .frame(width: 8, height: 8)
+        .frame(width: 14, height: 14)
+        .contentShape(Rectangle())
+        .onHover { isHoveringClose = $0 }
     } else {
       Color.clear
         .frame(width: 14, height: 14)
