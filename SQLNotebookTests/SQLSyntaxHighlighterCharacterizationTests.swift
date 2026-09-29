@@ -163,14 +163,12 @@ struct SQLSyntaxHighlighterCharacterizationTests {
     #expect(isColored("/* SELECT count(1) integer 42 */", Token.comment.color, in: block))
   }
 
-  /// Known quirk. Strings are applied unconditionally after comments, so a quoted string inside
-  /// a `--` comment is repainted with the string color TODAY (the rest of the comment stays
-  /// comment-colored). Phase 2 task 2.2 flips this on purpose to comment color and renames the
-  /// test `stringInsideCommentIsComment`.
-  @Test("string inside a line comment currently gets the string color")
-  func stringInsideCommentCurrentBehavior() {
+  /// Intentional change from task 2.2: the block-token alternation matches the `--` comment
+  /// first, so a quoted string inside a line comment stays comment-colored.
+  @Test("string inside a line comment stays comment-colored")
+  func stringInsideCommentIsComment() {
     let a = highlight("-- before 'quoted' after")
-    #expect(isColored("'quoted'", Token.string.color, in: a))
+    #expect(isColored("'quoted'", Token.comment.color, in: a))
     #expect(isColored("-- before ", Token.comment.color, in: a))
     #expect(isColored(" after", Token.comment.color, in: a))
   }

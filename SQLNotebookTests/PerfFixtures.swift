@@ -138,6 +138,7 @@ final class OffscreenEditorHost {
     textView = SQLTextView()
     // Mirrors HighlightedTextEditorRepresentable.makeNSView (word wrap on)
     textView.delegate = nil  // the benchmark calls coordinator.textDidChange itself
+    textView.textStorage?.delegate = coordinator  // records edits like makeNSView does
     coordinator.textView = textView
     textView.isRichText = false
     textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)

@@ -2,7 +2,9 @@
 // Unit tests for SQLSyntaxHighlighter utility
 // Converted to Swift Testing framework
 
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import SQLNotebook
@@ -318,6 +320,52 @@ struct SQLSyntaxHighlighterTests {
     #expect(String(attributed.string) == sql)
   }
 
+  // MARK: - UTF-16 Coverage Tests
+
+  private func components(_ color: NSColor?) -> [CGFloat]? {
+    guard let c = color?.usingColorSpace(.sRGB) else { return nil }
+    return [c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent]
+  }
+
+  @Test("Font covers every UTF-16 unit with emoji/CJK")
+  func fontCoversEveryUTF16Unit() {
+    let sql = "SELECT '😀日本' AS a, 😀😀😀 FROM t WHERE x = 1"
+    let attributed = withSyntaxHighlightingEnabled { SQLSyntaxHighlighter.highlight(sql) }
+    let length = (sql as NSString).length
+    #expect(attributed.length == length)
+    for i in 0..<length {
+      #expect(attributed.attribute(.font, at: i, effectiveRange: nil) != nil)
+    }
+  }
+
+  @Test("String color covers the full string containing emoji")
+  func stringColorCoversEmojiString() {
+    let sql = "SELECT '😀日本' FROM t"
+    let attributed = withSyntaxHighlightingEnabled { SQLSyntaxHighlighter.highlight(sql) }
+    let literal = NSRange(location: 7, length: ("'😀日本'" as NSString).length)
+    let expected = components(NSColor(Color.syntaxString))
+    for i in literal.location..<NSMaxRange(literal) {
+      #expect(
+        components(attributed.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor)
+          == expected)
+    }
+  }
+
+  @Test("plainText covers full UTF-16 length")
+  func plainTextCoversFullLength() {
+    let settings = AppSettings.shared
+    let previous = settings.syntaxHighlightingEnabled
+    settings.syntaxHighlightingEnabled = false
+    defer { settings.syntaxHighlightingEnabled = previous }
+
+    let sql = "SELECT '😀日本' FROM t"
+    let attributed = SQLSyntaxHighlighter.highlight(sql)
+    let length = (sql as NSString).length
+    for i in 0..<length {
+      #expect(attributed.attribute(.font, at: i, effectiveRange: nil) != nil)
+    }
+  }
+
   // MARK: - Performance Tests
 
   @Test("Highlighting performance with repeated queries", .timeLimit(.minutes(1)))
@@ -337,5 +385,70 @@ struct SQLSyntaxHighlighterTests {
     sql += "id FROM large_table"
 
     _ = SQLSyntaxHighlighter.highlight(sql)
+  }
+
+  // MARK: - Equivalence with the original regexes
+
+  private static let oldBlockRegex = try! NSRegularExpression(
+    pattern: "--[^\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^'\\\\]|\\\\.)*'|\\$\\$[\\s\\S]*?\\$\\$")
+  private static let oldNumberRegex = try! NSRegularExpression(pattern: "\\b\\d+\\.?\\d*\\b")
+
+  private func randomStrings(
+    count: Int, alphabet: [String], maxLength: Int, seed: UInt64
+  )
+    -> [String]
+  {
+    var rng = SeededGenerator(seed: seed)
+    return (0..<count).map { _ in
+      let length = Int(rng.next() % UInt64(maxLength + 1))
+      return (0..<length).map { _ in alphabet[Int(rng.next() % UInt64(alphabet.count))] }.joined()
+    }
+  }
+
+  @Test("block scanner matches the original regex on random inputs and sub-ranges")
+  func blockScannerMatchesOldRegex() {
+    let alphabet = [
+      "/", "*", "-", "'", "\\", "$", "\n", "\r", "a", "1", " ", "\u{2028}", "\u{1F600}",
+    ]
+    var rng = SeededGenerator(seed: 7)
+    for text in randomStrings(count: 4000, alphabet: alphabet, maxLength: 40, seed: 42) {
+      let ns = text as NSString
+      // sub-range ends never split a surrogate pair (real ranges are paragraph-aligned)
+      func aligned(_ i: Int) -> Int {
+        i < ns.length && (0xDC00...0xDFFF).contains(ns.character(at: i)) ? i - 1 : i
+      }
+      let lo = ns.length == 0 ? 0 : aligned(Int(rng.next() % UInt64(ns.length + 1)))
+      let hi = max(lo, aligned(lo + Int(rng.next() % UInt64(ns.length - lo + 1))))
+      for range in [
+        NSRange(location: 0, length: ns.length), NSRange(location: lo, length: hi - lo),
+      ] {
+        var expected: [NSRange] = []
+        Self.oldBlockRegex.enumerateMatches(in: text, options: [], range: range) { m, _, _ in
+          if let r = m?.range { expected.append(r) }
+        }
+        let actual = SQLSyntaxHighlighter.scanBlockSpans(in: ns, range: range)
+        #expect(actual.map(\.range) == expected, "text \(text.debugDescription) range \(range)")
+        for block in actual {
+          let first = ns.character(at: block.range.location)
+          #expect(block.isComment == (first == 0x2D || first == 0x2F))
+        }
+      }
+    }
+  }
+
+  @Test("number regex matches the original on a table and on random inputs")
+  func numberRegexMatchesOld() {
+    let table = ["12abc", "1.", "1.5.3", "1.a", "1.5a", "42", "t1", "1.5", "a1.5b", "0.", "7.7.7"]
+    let random = randomStrings(
+      count: 4000, alphabet: ["1", "2", ".", "a", "_", " ", "-"], maxLength: 14, seed: 3)
+    for text in table + random {
+      let full = NSRange(location: 0, length: (text as NSString).length)
+      func matches(_ regex: NSRegularExpression) -> [NSRange] {
+        regex.matches(in: text, options: [], range: full).map(\.range)
+      }
+      #expect(
+        matches(SQLSyntaxHighlighter.numberRegex) == matches(Self.oldNumberRegex),
+        "text \(text.debugDescription)")
+    }
   }
 }

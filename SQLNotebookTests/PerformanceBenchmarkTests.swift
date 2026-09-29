@@ -29,7 +29,103 @@ struct PerformanceBenchmarkTests {
       let ms = PerfBench.median(of: 5) { length = SQLSyntaxHighlighter.highlight(sql).length }
       #expect(length == sql.utf16.count)
       PerfReport.record("fullHighlight2kLines", ms: ms)
+      #expect(ms < 50, "fullHighlight2kLines median \(ms) ms exceeds the 50 ms Debug budget")
     }
+  }
+
+  @Test("no regex is compiled per highlight call")
+  func noRegexCompiledPerCall() {
+    let before = SQLSyntaxHighlighter.scanRegexes
+    withSyntaxHighlightingEnabled {
+      _ = SQLSyntaxHighlighter.highlight("SELECT count(*) FROM t WHERE a = 'x' -- c")
+      _ = SQLSyntaxHighlighter.highlight("SELECT 1")
+    }
+    let after = SQLSyntaxHighlighter.scanRegexes
+    #expect(before.count == after.count)
+    for (b, a) in zip(before, after) { #expect(b === a) }
+  }
+
+  // MARK: - Adversarial inputs (ReDoS)
+
+  private func seconds(_ body: () -> Void) -> Double {
+    let d = ContinuousClock().measure(body)
+    return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+  }
+
+  private func expectNoColor(_ attributed: NSAttributedString, _ color: NSColor) {
+    var found = false
+    attributed.enumerateAttribute(
+      .foregroundColor, in: NSRange(location: 0, length: attributed.length), options: []
+    ) { value, _, stop in
+      if let c = value as? NSColor, c == color {
+        found = true
+        stop.pointee = true
+      }
+    }
+    #expect(!found)
+  }
+
+  @Test("unterminated block comments scan in linear time", .timeLimit(.minutes(1)))
+  func unterminatedBlockComments() {
+    let text = String(repeating: "/* ", count: 200_000)
+    withSyntaxHighlightingEnabled {
+      var spans: [NSRange] = []
+      var result = NSAttributedString()
+      let t = seconds {
+        spans = SQLSyntaxHighlighter.blockSpans(in: text as NSString)
+        result = SQLSyntaxHighlighter.highlight(text)
+      }
+      #expect(t < 1, "took \(t) s")
+      #expect(spans.isEmpty)
+      expectNoColor(result, SQLSyntaxHighlighter.Palette().comment)
+    }
+  }
+
+  @Test("a long digit run ending in a letter is not a number", .timeLimit(.minutes(1)))
+  func longDigitRunThenLetter() {
+    let text = String(repeating: "1", count: 100_000) + "a"
+    withSyntaxHighlightingEnabled {
+      var result = NSAttributedString()
+      let t = seconds { result = SQLSyntaxHighlighter.highlight(text) }
+      #expect(t < 1, "took \(t) s")
+      expectNoColor(result, SQLSyntaxHighlighter.Palette().number)
+    }
+  }
+
+  @Test("repeated quotes and dollar quotes without closer are linear", .timeLimit(.minutes(1)))
+  func repeatedQuotesAndDollars() {
+    let escapedQuotes = String(repeating: "\\'", count: 100_000)
+    let quotes = String(repeating: "'", count: 100_000)
+    let dollars = String(repeating: "$$ ", count: 100_000) + "$"
+    withSyntaxHighlightingEnabled {
+      for text in [quotes, dollars, "'" + escapedQuotes] {
+        let t = seconds {
+          _ = SQLSyntaxHighlighter.blockSpans(in: text as NSString)
+          _ = SQLSyntaxHighlighter.highlight(text)
+        }
+        #expect(t < 1, "took \(t) s")
+      }
+    }
+  }
+
+  @Test("highlight(in:range:palette:) only touches attributes inside the range")
+  func subRangeHighlightLeavesOutsideUntouched() {
+    let text = "SELECT 1 FROM t\nSELECT 2 FROM u\nSELECT 3 FROM v"
+    let ns = text as NSString
+    let palette = SQLSyntaxHighlighter.Palette()
+    let storage = NSMutableAttributedString(string: text)
+    storage.addAttributes(palette.defaultAttributes, range: NSRange(location: 0, length: ns.length))
+    let middle = ns.paragraphRange(for: NSRange(location: ns.range(of: "u").location, length: 0))
+    SQLSyntaxHighlighter.highlight(in: storage, range: middle, palette: palette)
+    for i in 0..<ns.length {
+      let color = storage.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor
+      if NSLocationInRange(i, middle) { continue }
+      #expect(color === palette.foreground, "offset \(i) outside range was modified")
+    }
+    let kw =
+      storage.attribute(
+        .foregroundColor, at: middle.location, effectiveRange: nil) as? NSColor
+    #expect(kw === palette.keyword)
   }
 
   @Test("keystrokeHighlight2kLines")
@@ -54,7 +150,9 @@ struct PerformanceBenchmarkTests {
       let storage = host.textView.textStorage!
       #expect(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) != nil)
       samples.sort()
-      PerfReport.record("keystrokeHighlight2kLines", ms: samples[samples.count / 2])
+      let median = samples[samples.count / 2]
+      PerfReport.record("keystrokeHighlight2kLines", ms: median)
+      #expect(median < 16, "keystroke median \(median) ms")
     }
   }
 

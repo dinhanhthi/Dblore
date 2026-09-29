@@ -34,10 +34,14 @@ struct SchemaLoadPerformanceTests {
     return manager
   }
 
-  /// The fetch sequence of `WorkspaceManager.loadDatabaseSchema`; returns the table count
+  /// The fetch sequence of `WorkspaceManager.loadDatabaseSchema`. The 7 list fetches are a constant
+  /// number of queries; the per-table/per-view loops only cover `testSchema`, so parallel suites
+  /// creating or dropping objects in the shared database cannot change the count.
+  /// Returns the number of tables of `testSchema`.
   private func runSchemaLoadSequence(_ manager: DatabaseConnectionManager) async throws -> Int {
-    let tables = try await manager.fetchTables()
-    let views = try await manager.fetchViews()
+    let ownSchema = Self.testSchema
+    let tables = try await manager.fetchTables().filter { $0.schema == ownSchema }
+    let views = try await manager.fetchViews().filter { $0.schema == ownSchema }
     _ = try await manager.fetchFunctions()
     _ = try await manager.fetchProcedures()
     _ = try await manager.fetchUsers()
@@ -102,8 +106,10 @@ struct SchemaLoadPerformanceTests {
       // The app-hosted test runner does not forward stdout to xcodebuild
       FileHandle.standardError.write(Data((line + "\n").utf8))
     }
-    #expect(large.tables == small.tables + 11)
-    // Today's behavior: catalog queries grow with the table count (replaced in Phase 3)
+    #expect(small.tables == 1)
+    #expect(large.tables == 12)
+    // Today's behavior: 4 catalog queries per table (replaced in Phase 3)
+    #expect(large.count - small.count == 4 * 11)
     #expect(large.count > small.count)
   }
 }
