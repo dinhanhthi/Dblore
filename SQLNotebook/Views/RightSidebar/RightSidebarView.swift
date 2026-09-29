@@ -115,6 +115,8 @@ struct RightSidebarView: View {
       return "Executed Query"
     case .tableFilter:
       return "Filter"
+    case .tableHighlight:
+      return "Highlight"
     }
   }
 
@@ -158,6 +160,8 @@ struct RightSidebarView: View {
       ExecutedQuerySidebarContent(query: query, cellId: cellId)
     case .tableFilter:
       TableFilterContent(viewModel: viewModel)
+    case .tableHighlight:
+      EmptyView()  // Form arrives in phase 2
     }
   }
 

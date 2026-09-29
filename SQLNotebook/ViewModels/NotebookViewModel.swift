@@ -27,6 +27,7 @@ enum SidebarContent: Equatable {
   )
   case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
   case tableFilter  // Filter form of the data viewer tab
+  case tableHighlight  // Highlight form of the data viewer tab
 }
 
 /// Main view model for the notebook editor
@@ -143,6 +144,12 @@ class NotebookViewModel {
   @ObservationIgnored var filterDraftRelation: String?
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
+  /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
+  var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
+  /// Highlights saved for the connection and table of the data viewer
+  var savedHighlights: [SavedHighlight] = []
+  /// Relation (`schema.name`) the highlight draft belongs to
+  @ObservationIgnored var highlightDraftRelation: String?
   /// An editor run is in flight (Cancel button, `WorkspaceManager.isTransactionOriginRunning`)
   var isEditorQueryRunning = false
   /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.
