@@ -50,14 +50,20 @@ struct WorkspaceWindowCloseGuard: NSViewRepresentable {
         WorkspaceTransactionRules.requiresResolution(
           state: manager.pendingTransaction, action: .closeWindow, originTabId: nil)
       else {
-        window.performClose(sender)
+        closeWindow(window)
         return
       }
       Task { @MainActor in
         if await manager.resolvePendingTransaction(action: .closeWindow) {
-          window.performClose(nil)
+          closeWindow(window)
         }
       }
+    }
+
+    // Not `performClose`: it clicks the close button, which re-enters `closeButtonClicked`
+    private func closeWindow(_ window: NSWindow) {
+      if window.delegate?.windowShouldClose?(window) == false { return }
+      window.close()
     }
   }
 }
