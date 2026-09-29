@@ -3,6 +3,15 @@
     <channel>
         <title>SQLNotebook</title>
         <item>
+            <title>0.2.2</title>
+            <pubDate>Tue, 29 Sep 2026 08:36:24 +0000</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/SQLNotebook/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/dinhanhthi/SQLNotebook/releases/download/v0.2.2/SQLNotebook-0.2.2.dmg" length="18182981" type="application/octet-stream" sparkle:edSignature="wtvy1BisPSv46TImNt23QorMFT7kSss02IBXjUBM4vpysNyWoq45R91vr7WGqHp6XWIkUAASOzcLqIqZcmbsDQ=="/>
+        </item>
+        <item>
             <title>0.2.1</title>
             <pubDate>Mon, 28 Sep 2026 13:31:12 +0000</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/SQLNotebook/releases</sparkle:fullReleaseNotesLink>
