@@ -168,11 +168,11 @@ final class ResultGridScrollView: NSScrollView {
   }
 }
 
-/// Header view with an opaque background and a bottom border. Super (not called) draws a
+/// Header view with an opaque background (distinct from the body, same as the "#" gutter) and a bottom border. Super (not called) draws a
 /// translucent background over the fill, so the header cells are drawn here.
 final class ResultGridHeaderView: NSTableHeaderView {
   override func draw(_ dirtyRect: NSRect) {
-    (tableView?.backgroundColor ?? .windowBackgroundColor).setFill()
+    ResultGridRowNumberCell.backgroundColor.setFill()
     dirtyRect.fill()
     if let tableView {
       for (index, column) in tableView.tableColumns.enumerated() where !column.isHidden {
