@@ -285,7 +285,7 @@ struct WorkspaceDraggableTabItem: View {
       } else if isHovering || isDragging {
         // Subtle hover state for inactive tabs
         Capsule()
-          .fill(Color.cellBackgroundHover.opacity(0.4))
+          .fill(Color.foreground.opacity(0.06))
       }
     }
     .contentShape(Capsule())
