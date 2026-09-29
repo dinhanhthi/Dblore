@@ -263,7 +263,7 @@ struct HeaderView: View {
       height: viewModel.dataViewer != nil
         ? ComponentSize.compactHeaderHeight : ComponentSize.headerHeight
     )
-    .chromeGlass()
+    .background(Color.appBackground)
     .overlay(alignment: .bottom) {
       Divider()
     }

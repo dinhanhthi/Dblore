@@ -79,7 +79,7 @@ struct WorkspaceContainerView: View {
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
-              .chromeGlass()
+              .background(Color.appBackground)
               .overlay(alignment: .trailing) {
                 // Buttons positioned at trailing edge of background
                 HStack(spacing: Spacing.xxs) {
@@ -114,9 +114,9 @@ struct WorkspaceContainerView: View {
             Spacer()
           }
           .frame(height: ComponentSize.tabBarHeight)
-          // Border bottom - overlay to match title bar's divider
+          // Single full-width border under the tab bar (flat, no glass rim)
           .overlay(alignment: .bottom) {
-            Divider()
+            Rectangle().fill(Color.borderSubtle).frame(height: 1)
           }
           .zIndex(1)
         }
@@ -726,7 +726,7 @@ struct WorkspaceTitleBarTabsView: View {
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
-    .chromeGlass()
+    .background(Color.appBackground)
     .background(WindowDragArea())
   }
 
