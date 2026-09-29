@@ -285,6 +285,37 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     columnIndex != 0 && newColumnIndex != 0
   }
 
+  /// Double-click on a header divider: the width that fits the column's header and cell text
+  func tableView(_ tableView: NSTableView, sizeToFitWidthOfColumn column: Int) -> CGFloat {
+    let tableColumn = tableView.tableColumns[column]
+    guard let model, let index = Int(tableColumn.identifier.rawValue) else {
+      return tableColumn.width
+    }
+    return Self.fitWidth(
+      column: index, model: model,
+      headerWidth: (tableColumn.headerCell as? ResultGridHeaderCell)?.fittingWidth() ?? 0,
+      minWidth: tableColumn.minWidth)
+  }
+
+  /// Width that fits `headerWidth` and the display text of the first `fitRowLimit` rows of
+  /// `column`, between `minWidth` and `maxFitWidth` (long text stays truncated)
+  static func fitWidth(
+    column: Int, model: ResultGridModel, headerWidth: CGFloat, minWidth: CGFloat
+  ) -> CGFloat {
+    var width = headerWidth
+    for row in 0..<min(model.rowCount, fitRowLimit) where width < maxFitWidth {
+      let text = model.displayText(row: row, column: column) as NSString
+      // Cell padding on both sides plus the text field's own inset
+      width = max(width, text.size(withAttributes: [.font: font]).width + 2 * Spacing.xsm + 4)
+    }
+    return min(max(ceil(width), minWidth), maxFitWidth)
+  }
+
+  /// Widest a column gets from a divider double-click; dragging can make it wider
+  static let maxFitWidth: CGFloat = 300
+  /// Rows measured by a divider double-click, so a large result fits instantly
+  static let fitRowLimit = 1000
+
   /// Reused row view, alternate on odd displayed rows
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
     let rowView =

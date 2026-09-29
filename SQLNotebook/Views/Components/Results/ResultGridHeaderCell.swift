@@ -125,6 +125,23 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     }
   }
 
+  /// Width that shows the name (with the key icon) and the type untruncated, with room for the
+  /// sort indicator so sorting the column doesn't truncate it
+  func fittingWidth() -> CGFloat {
+    var titleLine = (content.title as NSString).size(withAttributes: [.font: Self.titleFont])
+      .width
+    if content.isPrimaryKey, let key = Self.keyImage() { titleLine += key.size.width + Spacing.xs }
+    // Leading padding, name, gap, then the indicator up to the cell's trailing edge
+    let bounds = NSRect(x: 0, y: 0, width: 100, height: 20)
+    let sortTrailing = bounds.maxX - sortIndicatorRect(forBounds: bounds).minX
+    let titleWidth = Spacing.xsm + titleLine + Spacing.xs + sortTrailing
+    let typeWidth =
+      content.type.map {
+        ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width + 2 * Spacing.xsm
+      } ?? 0
+    return ceil(max(titleWidth, typeWidth))
+  }
+
   // MARK: - Private
 
   private func title() -> NSAttributedString {
