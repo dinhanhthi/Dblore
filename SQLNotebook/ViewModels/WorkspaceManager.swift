@@ -403,7 +403,8 @@ class WorkspaceManager: Identifiable {
       return
     }
 
-    let state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
+    var state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
+    state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
     if let index = tabs.firstIndex(where: \.isPreview) {
       if tabs[index].id == transactionOriginTabId {
         pinTab(id: tabs[index].id)
@@ -485,8 +486,10 @@ class WorkspaceManager: Identifiable {
   ) {
     let viewModel = createViewModel(for: SQLNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
-    viewModel.dataViewer = DataViewerState(
+    var state = DataViewerState(
       schema: ref.schema, name: ref.name, orderColumns: ref.orderColumns)
+    state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
+    viewModel.dataViewer = state
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }

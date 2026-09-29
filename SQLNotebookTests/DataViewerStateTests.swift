@@ -119,4 +119,49 @@ struct DataViewerStateTests {
     viewer.page = 2
     #expect(viewer.loadKey != key)
   }
+
+  private func filtered(_ dialect: DatabaseType = .postgresql) -> DataViewerState {
+    var viewer = state(orderColumns: ["id"])
+    viewer.databaseType = dialect
+    viewer.filter = TableFilter(conditions: [
+      FilterCondition(column: "name", op: .equals, value: "o'brien")
+    ])
+    return viewer
+  }
+
+  @Test("Filter adds WHERE after the relation and before ORDER BY/LIMIT")
+  func filterSQL() {
+    var viewer = filtered()
+    viewer.page = 2
+    #expect(
+      viewer.pageSQL
+        == #"SELECT * FROM "public"."users" WHERE "name" = 'o''brien' ORDER BY "id" LIMIT 100 OFFSET 100"#
+    )
+    #expect(
+      viewer.countSQL == #"SELECT count(*) FROM "public"."users" WHERE "name" = 'o''brien'"#)
+    #expect(CellUpdateStatement.singleRelation(in: viewer.pageSQL) != nil)
+  }
+
+  @Test("A filter without a complete condition leaves the SQL unchanged")
+  func incompleteFilterSQL() {
+    var viewer = state()
+    viewer.filter = TableFilter(conditions: [FilterCondition(column: "name", value: "")])
+    #expect(viewer.pageSQL == state().pageSQL)
+    #expect(viewer.countSQL == state().countSQL)
+  }
+
+  @Test("The dialect drives the filter literals")
+  func filterDialect() {
+    var viewer = filtered(.sqlite)
+    viewer.filter.conditions[0].op = .ilike
+    #expect(viewer.countSQL.hasSuffix(#"WHERE "name" LIKE 'o''brien'"#))
+    viewer.databaseType = .postgresql
+    #expect(viewer.countSQL.hasSuffix(#"WHERE "name"::text ILIKE 'o''brien'"#))
+  }
+
+  @Test("loadKey changes with the applied filter")
+  func loadKeyFilter() {
+    let viewer = state()
+    #expect(filtered().loadKey != viewer.loadKey)
+  }
 }

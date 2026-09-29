@@ -22,6 +22,10 @@ struct DataViewerState: Equatable {
   var totalRows: Int? = nil
   /// Result column names hidden in the grid
   var hiddenColumns: Set<String> = []
+  /// Dialect of the connection, for literal escaping in the WHERE clause
+  var databaseType: DatabaseType = .postgresql
+  /// The applied filter
+  var filter = TableFilter(conditions: [])
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {
@@ -29,10 +33,11 @@ struct DataViewerState: Equatable {
     let name: String
     let page: Int
     let pageSize: Int
+    let filter: TableFilter
   }
 
   var loadKey: LoadKey {
-    LoadKey(schema: schema, name: name, page: page, pageSize: pageSize)
+    LoadKey(schema: schema, name: name, page: page, pageSize: pageSize, filter: filter)
   }
 
   /// Tab title: `name` for the public (or no) schema, else `schema.name`
@@ -46,9 +51,14 @@ struct DataViewerState: Equatable {
     return schema.isEmpty ? table : CellUpdateStatement.quoteIdentifier(schema) + "." + table
   }
 
-  /// `SELECT * FROM rel [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1)
+  /// ` WHERE <clause>` for the applied filter, empty without a complete condition
+  private var whereSQL: String {
+    filter.whereClause(dialect: databaseType).map { " WHERE " + $0 } ?? ""
+  }
+
+  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1)
   var pageSQL: String {
-    var sql = "SELECT * FROM \(relation)"
+    var sql = "SELECT * FROM \(relation)\(whereSQL)"
     if !orderColumns.isEmpty {
       sql +=
         " ORDER BY " + orderColumns.map(CellUpdateStatement.quoteIdentifier).joined(separator: ", ")
@@ -58,7 +68,7 @@ struct DataViewerState: Equatable {
     return sql
   }
 
-  var countSQL: String { "SELECT count(*) FROM \(relation)" }
+  var countSQL: String { "SELECT count(*) FROM \(relation)\(whereSQL)" }
 
   /// Number of pages (at least 1), nil while the total is unknown
   var pageCount: Int? {
