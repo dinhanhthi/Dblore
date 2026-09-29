@@ -150,16 +150,42 @@ enum SQLSyntaxHighlighter {
     "~", "~*", "!~", "!~*",
   ]
 
+  // MARK: - Palette
+
+  /// Colors and font resolved once per highlight pass (theme colors are computed on each access)
+  struct Palette {
+    let keyword = NSColor(Color.syntaxKeyword)
+    let function = NSColor(Color.syntaxFunction)
+    let string = NSColor(Color.syntaxString)
+    let number = NSColor(Color.syntaxNumber)
+    let comment = NSColor(Color.syntaxComment)
+    let foreground = NSColor(Color.foreground)
+    let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+
+    var defaultAttributes: [NSAttributedString.Key: Any] {
+      [.font: font, .foregroundColor: foreground]
+    }
+
+    func color(for type: TokenType) -> NSColor {
+      switch type {
+      case .keyword: return keyword
+      case .function, .type: return function
+      case .string: return string
+      case .number: return number
+      case .comment: return comment
+      case .operator: return NSColor(Color.syntaxOperator)
+      case .identifier: return foreground
+      }
+    }
+  }
+
   // MARK: - Highlighting
 
   /// Returns plain text with default styling (no syntax highlighting)
   private static func plainText(_ text: String) -> NSAttributedString {
     let result = NSMutableAttributedString(string: text)
-    let defaultAttributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-      .foregroundColor: NSColor(Color.foreground),
-    ]
-    result.addAttributes(defaultAttributes, range: NSRange(location: 0, length: text.count))
+    result.addAttributes(
+      Palette().defaultAttributes, range: NSRange(location: 0, length: (text as NSString).length))
     return result
   }
 
@@ -170,21 +196,10 @@ enum SQLSyntaxHighlighter {
     }
 
     let result = NSMutableAttributedString(string: text)
-
-    // Default attributes
-    let defaultAttributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-      .foregroundColor: NSColor(Color.foreground),
-    ]
-    result.addAttributes(defaultAttributes, range: NSRange(location: 0, length: text.count))
-
-    // Apply highlighting
-    highlightComments(in: result, text: text)
-    highlightStrings(in: result, text: text)
-    highlightNumbers(in: result, text: text)
-    highlightKeywords(in: result, text: text)
-    highlightFunctions(in: result, text: text)
-    highlightTypes(in: result, text: text)
+    let palette = Palette()
+    let full = NSRange(location: 0, length: result.length)
+    result.addAttributes(palette.defaultAttributes, range: full)
+    highlight(in: result, range: full, palette: palette)
 
     return result
   }
@@ -238,93 +253,159 @@ enum SQLSyntaxHighlighter {
     return result
   }
 
+  // MARK: - Scanning
+
+  static let wordRegex = try! NSRegularExpression(pattern: "\\b[A-Za-z_][A-Za-z0-9_]*\\b")
+
+  /// Possessive digit run: same matches as `\b\d+\.?\d*\b`, without quadratic backtracking
+  static let numberRegex = try! NSRegularExpression(pattern: "\\b\\d++\\.?\\d*\\b")
+
+  /// The precompiled regexes, exposed so tests can assert they are never rebuilt per call
+  static var scanRegexes: [NSRegularExpression] { [wordRegex, numberRegex] }
+
+  // MARK: - Block Scanner
+
+  /// Comments and strings inside `range`, in order. Linear replacement of the regex
+  /// `--[^\n]*|/\*[\s\S]*?\*/|'(?:[^'\\]|\\.)*'|\$\$[\s\S]*?\$\$` (leftmost match wins, scanning
+  /// resumes after each match); an unterminated `/*`, `'` or `$$` matches nothing.
+  static func scanBlockSpans(
+    in text: NSString, range: NSRange
+  ) -> [(range: NSRange, isComment: Bool)] {
+    guard range.length > 0 else { return [] }
+    var buffer = [unichar](repeating: 0, count: range.length)
+    text.getCharacters(&buffer, range: range)
+    let n = buffer.count
+    let base = range.location
+    var result: [(range: NSRange, isComment: Bool)] = []
+
+    // A failed closer search from i also fails from every later start, so remember it
+    var noBlockCloser = false
+    var noDollarCloser = false
+    // A failed string scan stopped at this index; every later quote before it fails the same way
+    var stringFailsBefore = 0
+
+    func find(_ a: unichar, _ b: unichar, from start: Int) -> Int? {
+      var k = start
+      while k + 1 < n {
+        if buffer[k] == a && buffer[k + 1] == b { return k }
+        k += 1
+      }
+      return nil
+    }
+    func isLineTerminator(_ c: unichar) -> Bool {
+      c == 0x0A || c == 0x0D || c == 0x85 || c == 0x2028 || c == 0x2029
+    }
+
+    var i = 0
+    while i < n {
+      let c = buffer[i]
+      var end: Int?
+      var isComment = false
+      if c == 0x2D, i + 1 < n, buffer[i + 1] == 0x2D {  // --
+        var k = i + 2
+        while k < n && buffer[k] != 0x0A { k += 1 }
+        end = k
+        isComment = true
+      } else if c == 0x2F, i + 1 < n, buffer[i + 1] == 0x2A, !noBlockCloser {  // /*
+        if let k = find(0x2A, 0x2F, from: i + 2) {
+          end = k + 2
+          isComment = true
+        } else {
+          noBlockCloser = true
+        }
+      } else if c == 0x27, i >= stringFailsBefore {  // '
+        var k = i + 1
+        while k < n {
+          let d = buffer[k]
+          if d == 0x27 {
+            end = k + 1
+            break
+          } else if d == 0x5C {
+            if k + 1 < n, !isLineTerminator(buffer[k + 1]) { k += 2 } else { break }
+          } else {
+            k += 1
+          }
+        }
+        if end == nil { stringFailsBefore = k }
+      } else if c == 0x24, i + 1 < n, buffer[i + 1] == 0x24, !noDollarCloser {  // $$
+        if let k = find(0x24, 0x24, from: i + 2) {
+          end = k + 2
+        } else {
+          noDollarCloser = true
+        }
+      }
+
+      if let end {
+        result.append((NSRange(location: base + i, length: end - i), isComment))
+        i = max(end, i + 1)
+      } else {
+        i += 1
+      }
+    }
+    return result
+  }
+
   // MARK: - Token Highlighting
 
-  private static func highlightComments(in attributed: NSMutableAttributedString, text: String) {
-    // Single-line comments: -- ...
-    let singleLinePattern = "--[^\n]*"
-    applyPattern(singleLinePattern, to: attributed, text: text, type: .comment)
+  /// Colors comments, strings, numbers, keywords, functions and types inside `range` only. The
+  /// range must start and end at safe boundaries (outside any block token); the caller has set
+  /// the default attributes. Words and numbers inside a comment or string are left alone.
+  static func highlight(in storage: NSMutableAttributedString, range: NSRange, palette: Palette) {
+    guard range.length > 0 else { return }
+    let text = storage.string
+    let ns = text as NSString
 
-    // Multi-line comments: /* ... */
-    let multiLinePattern = "/\\*[\\s\\S]*?\\*/"
-    applyPattern(multiLinePattern, to: attributed, text: text, type: .comment)
-  }
-
-  private static func highlightStrings(in attributed: NSMutableAttributedString, text: String) {
-    // Single-quoted strings
-    let singleQuotePattern = "'(?:[^'\\\\]|\\\\.)*'"
-    applyPattern(singleQuotePattern, to: attributed, text: text, type: .string)
-
-    // Dollar-quoted strings (PostgreSQL)
-    let dollarQuotePattern = "\\$\\$[\\s\\S]*?\\$\\$"
-    applyPattern(dollarQuotePattern, to: attributed, text: text, type: .string)
-  }
-
-  private static func highlightNumbers(in attributed: NSMutableAttributedString, text: String) {
-    // Integers and decimals
-    let numberPattern = "\\b\\d+\\.?\\d*\\b"
-    applyPattern(numberPattern, to: attributed, text: text, type: .number)
-  }
-
-  private static func highlightKeywords(in attributed: NSMutableAttributedString, text: String) {
-    for keyword in keywords {
-      let pattern = "\\b\(keyword)\\b"
-      applyPattern(pattern, to: attributed, text: text, type: .keyword, caseSensitive: false)
-    }
-  }
-
-  private static func highlightFunctions(in attributed: NSMutableAttributedString, text: String) {
-    for function in functions {
-      let pattern = "\\b\(function)\\s*(?=\\()"
-      applyPattern(pattern, to: attributed, text: text, type: .function, caseSensitive: false)
-    }
-  }
-
-  private static func highlightTypes(in attributed: NSMutableAttributedString, text: String) {
-    for type in types {
-      let pattern = "\\b\(type)\\b"
-      applyPattern(pattern, to: attributed, text: text, type: .type, caseSensitive: false)
-    }
-  }
-
-  // MARK: - Helpers
-
-  private static func applyPattern(
-    _ pattern: String,
-    to attributed: NSMutableAttributedString,
-    text: String,
-    type: TokenType,
-    caseSensitive: Bool = true
-  ) {
-    var options: NSRegularExpression.Options = []
-    if !caseSensitive {
-      options.insert(.caseInsensitive)
+    // 1. Block tokens, colored first and remembered as protected spans (sorted, disjoint)
+    var spans: [NSRange] = []
+    for block in scanBlockSpans(in: ns, range: range) {
+      storage.addAttribute(
+        .foregroundColor, value: block.isComment ? palette.comment : palette.string,
+        range: block.range)
+      spans.append(block.range)
     }
 
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+    // 2. Numbers
+    numberRegex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+      guard let r = match?.range, !isProtected(r.location, in: spans) else { return }
+      storage.addAttribute(.foregroundColor, value: palette.number, range: r)
+    }
 
-    let range = NSRange(text.startIndex..., in: text)
-    let matches = regex.matches(in: text, options: [], range: range)
-
-    for match in matches {
-      // Check if this range is already inside a comment or string
-      // (we process comments and strings first, so skip if already colored differently)
-      var existingColor: NSColor?
-      attributed.enumerateAttribute(.foregroundColor, in: match.range, options: []) { value, _, _ in
-        existingColor = value as? NSColor
+    // 3. Words: type > function followed by "(" > keyword
+    let rangeEnd = NSMaxRange(range)
+    wordRegex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+      guard let r = match?.range, !isProtected(r.location, in: spans) else { return }
+      let upper = ns.substring(with: r).uppercased()
+      let isType = types.contains(upper)
+      if !isType && functions.contains(upper) {
+        var end = NSMaxRange(r)
+        while end < ns.length, isWhitespace(ns.character(at: end)) { end += 1 }
+        if end < ns.length, ns.character(at: end) == 0x28 {
+          let colored = NSRange(location: r.location, length: min(end, rangeEnd) - r.location)
+          storage.addAttribute(.foregroundColor, value: palette.function, range: colored)
+          return
+        }
       }
-
-      // Only apply highlighting if not already highlighted as comment or string
-      // (unless we're highlighting comments or strings themselves)
-      let commentColor = NSColor(Color.syntaxComment)
-      let stringColor = NSColor(Color.syntaxString)
-
-      if type == .comment || type == .string
-        || (existingColor != commentColor && existingColor != stringColor)
-      {
-        attributed.addAttribute(.foregroundColor, value: type.color, range: match.range)
+      if isType {
+        storage.addAttribute(.foregroundColor, value: palette.function, range: r)
+      } else if keywords.contains(upper) {
+        storage.addAttribute(.foregroundColor, value: palette.keyword, range: r)
       }
     }
+  }
+
+  private static func isWhitespace(_ c: unichar) -> Bool {
+    c == 0x20 || (0x09...0x0D).contains(c) || c == 0x85 || c == 0xA0 || c == 0x2028 || c == 0x2029
+  }
+
+  /// Binary search: is `location` inside one of the sorted, disjoint `spans`
+  private static func isProtected(_ location: Int, in spans: [NSRange]) -> Bool {
+    var lo = 0
+    var hi = spans.count
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if spans[mid].location <= location { lo = mid + 1 } else { hi = mid }
+    }
+    return lo > 0 && location < NSMaxRange(spans[lo - 1])
   }
 
   // MARK: - Query Processing

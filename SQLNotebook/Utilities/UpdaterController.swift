@@ -21,11 +21,24 @@ final class UpdaterController: ObservableObject {
   }
 
   private let updaterController: SPUStandardUpdaterController
+  private let startAction: () -> Void
+  private let checkAction: () -> Void
+  private let isTestHost: Bool
+  private var startTask: Task<Void, Never>?
+  private var didStart = false
 
-  private init() {
+  /// The seams (`startAction`, `checkAction`, `isTestHost`) exist so tests never start a real updater or check.
+  init(
+    isTestHost: Bool = SessionManager.isRunningAsTestHost,
+    startAction: (() -> Void)? = nil,
+    checkAction: (() -> Void)? = nil
+  ) {
     let controller = SPUStandardUpdaterController(
       startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
     updaterController = controller
+    self.isTestHost = isTestHost
+    self.startAction = startAction ?? { controller.startUpdater() }
+    self.checkAction = checkAction ?? { controller.checkForUpdates(nil) }
     // Plain init assignment: didSet does not fire, so nothing is written back to Sparkle
     automaticallyChecksForUpdates = controller.updater.automaticallyChecksForUpdates
 
@@ -35,14 +48,39 @@ final class UpdaterController: ObservableObject {
       .assign(to: &$canCheckForUpdates)
   }
 
-  /// Starts the updater; skipped under XCTest/Swift Testing so the hosted test run never checks for updates.
-  func start() {
-    guard !SessionManager.isRunningAsTestHost else { return }
-    updaterController.startUpdater()
+  /// Schedules the updater start after `delay` so Sparkle's startup work (XPC helper, scheduling) stays off
+  /// the launch path. Skipped under XCTest/Swift Testing so the hosted test run never checks for updates.
+  /// Idempotent. Returns the scheduled task (nil when skipped or already scheduled/started).
+  @discardableResult
+  func start(
+    after delay: Duration = .seconds(3),
+    sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+  ) -> Task<Void, Never>? {
+    guard !isTestHost, !didStart, startTask == nil else { return nil }
+    let task = Task { [weak self] in
+      do { try await sleep(delay) } catch { return }
+      guard !Task.isCancelled else { return }
+      self?.ensureStarted()
+    }
+    startTask = task
+    return task
   }
 
-  /// Triggers a user-initiated check; Sparkle shows its own standard UI.
+  /// Starts the updater now if it has not started yet, cancelling any pending delayed start.
+  private func ensureStarted() {
+    guard !didStart else { return }
+    didStart = true
+    startTask?.cancel()
+    startTask = nil
+    startAction()
+  }
+
+  /// Triggers a user-initiated check; Sparkle shows its own standard UI. Starts the updater first if the
+  /// delayed start has not fired yet. `canCheckForUpdates` is false until then, so the menu item is disabled
+  /// during the first seconds after launch; that is acceptable.
   func checkForUpdates() {
-    updaterController.checkForUpdates(nil)
+    guard !isTestHost else { return }
+    ensureStarted()
+    checkAction()
   }
 }

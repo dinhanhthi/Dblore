@@ -12,44 +12,62 @@ import SwiftUI
 
 extension SQLTextView {
 
-  /// Update autocomplete suggestions based on current cursor position
+  /// Update autocomplete suggestions based on current cursor position (debounced)
   func updateAutocompleteSuggestions() {
-    // Check if autocomplete is enabled in settings
-    Task { @MainActor in
-      let isEnabled = AppSettings.shared.isAutoCompleteEnabled
-      guard isEnabled else {
-        hideAutocomplete()
-        return
-      }
+    autocompleteTask?.cancel()
+    autocompleteTask = nil
 
-      guard let provider = autocompleteProvider else {
-        hideAutocomplete()
-        return
-      }
+    // Empty text: hide right away, no delay
+    if string.isEmpty {
+      hideAutocomplete()
+      return
+    }
 
-      // Early check: if text is empty, hide autocomplete
-      if string.isEmpty {
-        hideAutocomplete()
-        return
-      }
-
-      let cursorPosition = selectedRange().location
-      let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
-
-      if suggestions.isEmpty {
-        hideAutocomplete()
-      } else {
-        setAutocompleteSuggestions(suggestions)
-        setAutocompleteSelectedIndex(0)
-
-        // Show NSPopover at cursor position
-        showAutocompletePopover()
-      }
+    autocompleteTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.autocompleteDebounce)
+      guard !Task.isCancelled, let self else { return }
+      self.computeAutocompleteSuggestions()
     }
   }
 
-  /// Hide autocomplete popup
+  private func computeAutocompleteSuggestions() {
+    // The debounce gap may have overlapped an accept/format/paste: stay quiet
+    guard !isAutocompleteSuppressed else { return }
+
+    // Check if autocomplete is enabled in settings
+    guard AppSettings.shared.isAutoCompleteEnabled else {
+      hideAutocomplete()
+      return
+    }
+
+    guard let provider = autocompleteProvider else {
+      hideAutocomplete()
+      return
+    }
+
+    if string.isEmpty {
+      hideAutocomplete()
+      return
+    }
+
+    let cursorPosition = selectedRange().location
+    let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
+
+    if suggestions.isEmpty {
+      hideAutocomplete()
+    } else {
+      setAutocompleteSuggestions(suggestions)
+      setAutocompleteSelectedIndex(0)
+
+      // Show NSPopover at cursor position
+      showAutocompletePopover()
+    }
+  }
+
+  /// Hide autocomplete popup and cancel any pending computation
   func hideAutocomplete() {
+    autocompleteTask?.cancel()
+    autocompleteTask = nil
     setAutocompleteSuggestions([])
     setAutocompleteSelectedIndex(0)
     closeAutocompletePopover()

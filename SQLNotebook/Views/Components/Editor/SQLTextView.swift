@@ -26,6 +26,10 @@ class SQLTextView: NSTextView {
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []
   private var autocompleteSelectedIndex: Int = 0
   private var autocompletePopover: NSPopover?
+  /// Pending debounced suggestion computation (cancelled by newer edits and by hide)
+  var autocompleteTask: Task<Void, Never>?
+  /// Delay between the last edit and the suggestion computation
+  static var autocompleteDebounce: Duration = .milliseconds(80)
   private var isAcceptingSuggestion = false  // Flag to prevent retriggering autocomplete
   private var isProgrammaticEdit = false  // Flag to prevent autocomplete during programmatic edits
 
@@ -69,6 +73,11 @@ class SQLTextView: NSTextView {
 
   func setProgrammaticEditFlag(_ value: Bool) {
     isProgrammaticEdit = value
+  }
+
+  /// True while autocomplete must stay quiet (accepting a suggestion or a programmatic edit)
+  var isAutocompleteSuppressed: Bool {
+    isAcceptingSuggestion || isProgrammaticEdit
   }
 
   // MARK: - First Responder

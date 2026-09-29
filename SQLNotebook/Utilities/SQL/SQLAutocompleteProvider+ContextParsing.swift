@@ -10,12 +10,64 @@ import Foundation
 // MARK: - Context Detection & Parsing
 
 extension SQLAutocompleteProvider {
-  /// Extract the current word/token being typed at cursor position
-  func extractCurrentToken(from text: String, at position: Int) -> String {
-    guard position > 0, position <= text.count else { return "" }
+  /// Maximum size (UTF-16 units) of the statement window scanned around the cursor
+  static let maxStatementWindow = 10_240
 
-    let beforeCursor = String(text.prefix(position))
-    let afterCursor = String(text.suffix(text.count - position))
+  /// The statement around the cursor: bounds are the nearest `;` before and after the cursor
+  /// (the `;` themselves excluded), each side capped so the window is at most
+  /// `maxStatementWindow` UTF-16 units. A `;` inside a string literal or comment may
+  /// split the statement early; this is accepted for autocomplete purposes.
+  /// - Parameter position: cursor as a UTF-16 offset
+  /// - Returns: the window text and the cursor as a UTF-16 offset inside it
+  func statementWindow(in text: String, at position: Int) -> (text: String, cursor: Int) {
+    let nsText = text as NSString
+    let length = nsText.length
+    let cursor = min(max(position, 0), length)
+    let semicolon = UInt16(0x3B)  // ";"
+    let halfWindow = Self.maxStatementWindow / 2
+
+    var start = max(0, cursor - halfWindow)
+    var index = cursor
+    while index > start {
+      if nsText.character(at: index - 1) == semicolon {
+        start = index
+        break
+      }
+      index -= 1
+    }
+
+    var end = min(length, cursor + halfWindow)
+    index = cursor
+    while index < end {
+      if nsText.character(at: index) == semicolon {
+        end = index
+        break
+      }
+      index += 1
+    }
+
+    // Do not cut a surrogate pair in half
+    if start > 0, start < length, UTF16.isTrailSurrogate(nsText.character(at: start)) {
+      start += 1
+    }
+    if end > start, end < length, UTF16.isTrailSurrogate(nsText.character(at: end)) {
+      end -= 1
+    }
+    start = min(start, cursor)
+    end = max(end, cursor)
+
+    if start == 0 && end == length { return (text, cursor) }
+    return (nsText.substring(with: NSRange(location: start, length: end - start)), cursor - start)
+  }
+
+  /// Extract the current word/token being typed at cursor position
+  /// - Parameter position: cursor as a UTF-16 offset
+  func extractCurrentToken(from text: String, at position: Int) -> String {
+    let nsText = text as NSString
+    guard position > 0, position <= nsText.length else { return "" }
+
+    let beforeCursor = nsText.substring(to: position)
+    let afterCursor = nsText.substring(from: position)
 
     // Find start of token (word boundary) - search backwards in beforeCursor
     var tokenStart = 0
@@ -44,7 +96,10 @@ extension SQLAutocompleteProvider {
 
   /// Detect SQL context (what clause we're in)
   func detectContext(in text: String, before position: Int) -> SQLContext {
-    let textBefore = String(text.prefix(position)).uppercased()
+    let textBefore = (text as NSString).substring(
+      to: min(max(position, 0), (text as NSString).length)
+    )
+    .uppercased()
 
     // Find the last SQL keyword before cursor
     let keywords = ["SELECT", "FROM", "WHERE", "JOIN", "ON", "GROUP BY", "ORDER BY", "HAVING"]
@@ -74,76 +129,116 @@ extension SQLAutocompleteProvider {
 
   /// Extract table names and aliases from FROM/JOIN clauses
   /// Returns a mapping of [alias/tableName: fullTableKey] where fullTableKey is "schema.table"
+  ///
+  /// Linear in the text length: the text is uppercased once, the start of the nearest stop keyword
+  /// is precomputed for every position, and each FROM/JOIN occurrence only reads its own
+  /// "table [alias]" tokens. Keywords are matched as plain substrings (also inside identifiers) and
+  /// processed keyword by keyword in the same order as before, so the result is unchanged.
   func extractTableReferences(from text: String) -> [String: String] {
-    let upperText = text.uppercased()
+    // One code per Character (grapheme cluster): a plain scalar keeps its value, a multi-scalar
+    // cluster gets a code that no keyword contains. Integer compares keep the scan fast in Debug.
+    let characters = Array(text.uppercased())
+    let chars: [UInt32] = characters.map { char in
+      var scalars = char.unicodeScalars.makeIterator()
+      guard let first = scalars.next(), scalars.next() == nil else { return 0x11_0000 }
+      return first.value
+    }
+    let count = chars.count
     var tableRefs: [String: String] = [:]
 
-    // Pattern: FROM table_name [alias] or JOIN table_name [alias]
-    // We'll use a simple regex-like approach
-
-    // Find all FROM and JOIN positions
     let keywords = [
       "FROM", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN",
-    ]
+    ].map(Self.codes)
+    let stopKeywords = [
+      "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON", "GROUP", "ORDER",
+      "LIMIT", "UNION", "EXCEPT", "INTERSECT",
+    ].map(Self.codes)
+
+    // Cheap reject on the first letter (ASCII table) before comparing a whole word
+    func firstLetters(_ words: [[UInt32]]) -> [Bool] {
+      var table = [Bool](repeating: false, count: 128)
+      for word in words { table[Int(word[0])] = true }
+      return table
+    }
+    let keywordStarts = firstLetters(keywords)
+    let stopStarts = firstLetters(stopKeywords)
+    func canStart(_ table: [Bool], _ index: Int) -> Bool {
+      let code = chars[index]
+      return code < 128 && table[Int(code)]
+    }
+
+    func matches(_ word: [UInt32], at index: Int) -> Bool {
+      guard index + word.count <= count else { return false }
+      for offset in 0..<word.count where chars[index + offset] != word[offset] { return false }
+      return true
+    }
+
+    // nextStop[i]: start of the first stop keyword at or after i (count if none)
+    var nextStop = [Int](repeating: count, count: count + 1)
+    if count > 0 {
+      for index in stride(from: count - 1, through: 0, by: -1) {
+        nextStop[index] =
+          canStart(stopStarts, index) && stopKeywords.contains { matches($0, at: index) }
+          ? index : nextStop[index + 1]
+      }
+    }
+
+    let space = UInt32(0x20)
+    func isWhitespace(_ index: Int) -> Bool {
+      if let scalar = Unicode.Scalar(chars[index]) {
+        return CharacterSet.whitespacesAndNewlines.contains(scalar)
+      }
+      return characters[index].unicodeScalars.allSatisfy {
+        CharacterSet.whitespacesAndNewlines.contains($0)
+      }
+    }
+
+    /// Token "chars[from..<limit]" up to the next space, plus the index after it
+    func token(from start: Int, limit: Int) -> (text: String, next: Int) {
+      var end = start
+      while end < limit && chars[end] != space { end += 1 }
+      return (String(characters[start..<end]), end)
+    }
+
+    func record(afterKeywordAt start: Int) {
+      // Clause = text up to the next stop keyword, trimmed
+      var low = start
+      var high = nextStop[start]
+      while low < high && isWhitespace(low) { low += 1 }
+      while high > low && isWhitespace(high - 1) { high -= 1 }
+      guard low < high else { return }
+
+      let tableName = token(from: low, limit: high)
+      guard !tableName.text.isEmpty, let tableKey = findMatchingTableKey(for: tableName.text)
+      else { return }
+
+      // Add table name itself as a reference
+      tableRefs[tableName.text.lowercased()] = tableKey
+
+      // If there's an alias, add it too
+      var aliasStart = tableName.next
+      while aliasStart < high && chars[aliasStart] == space { aliasStart += 1 }
+      if aliasStart < high {
+        tableRefs[token(from: aliasStart, limit: high).text.lowercased()] = tableKey
+      }
+    }
 
     for keyword in keywords {
-      var searchRange = upperText.startIndex..<upperText.endIndex
-
-      while let range = upperText.range(of: keyword, range: searchRange) {
-        // Get text after keyword (until next major keyword or end)
-        let afterKeyword = upperText[range.upperBound...]
-        let afterKeywordString = String(afterKeyword)
-
-        // Extract the table reference (format: "table_name" or "table_name alias")
-        // Stop at next SQL keyword or comma
-        let stopKeywords = [
-          "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON", "GROUP", "ORDER",
-          "LIMIT", "UNION", "EXCEPT", "INTERSECT",
-        ]
-        var endIndex = afterKeywordString.endIndex
-
-        for stopKeyword in stopKeywords {
-          if let stopRange = afterKeywordString.range(of: stopKeyword) {
-            let currentEnd = afterKeywordString.distance(
-              from: afterKeywordString.startIndex, to: stopRange.lowerBound)
-            let proposedEnd = afterKeywordString.distance(
-              from: afterKeywordString.startIndex, to: endIndex)
-            if currentEnd < proposedEnd {
-              endIndex = stopRange.lowerBound
-            }
-          }
+      var index = 0
+      while index + keyword.count <= count {
+        if canStart(keywordStarts, index) && matches(keyword, at: index) {
+          record(afterKeywordAt: index + keyword.count)
+          index += keyword.count
+        } else {
+          index += 1
         }
-
-        let tableRef = String(afterKeywordString[..<endIndex]).trimmingCharacters(
-          in: .whitespacesAndNewlines)
-
-        // Parse "table_name" or "table_name alias"
-        // Split by whitespace, first part is table name, second part (if exists) is alias
-        let parts = tableRef.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-
-        if let tableName = parts.first, !tableName.isEmpty {
-          // Find full table key from schema cache
-          let matchingTableKey = findMatchingTableKey(for: tableName)
-
-          if let tableKey = matchingTableKey {
-            // Add table name itself as a reference
-            tableRefs[tableName.lowercased()] = tableKey
-
-            // If there's an alias, add it too
-            if parts.count > 1 {
-              let alias = parts[1]
-              tableRefs[alias.lowercased()] = tableKey
-            }
-          }
-        }
-
-        // Move search range forward
-        searchRange = range.upperBound..<upperText.endIndex
       }
     }
 
     return tableRefs
   }
+
+  private static func codes(_ word: String) -> [UInt32] { word.unicodeScalars.map(\.value) }
 
   /// Find full table key ("schema.table") from schema cache by table name
   func findMatchingTableKey(for tableName: String) -> String? {

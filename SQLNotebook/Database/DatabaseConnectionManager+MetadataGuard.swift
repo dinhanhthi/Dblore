@@ -18,6 +18,11 @@ extension DatabaseConnectionManager {
   func catalogConnection() throws -> PostgresConnection {
     guard let connection = _connection else { throw DatabaseError.notConnected }
     guard !isMetadataPaused else { throw DatabaseError.metadataPausedDuringTransaction }
+    catalogQueryCount += 1
     return connection
+  }
+
+  func resetCatalogQueryCount() {
+    catalogQueryCount = 0
   }
 }

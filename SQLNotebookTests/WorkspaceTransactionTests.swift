@@ -434,6 +434,7 @@ struct WorkspaceTransactionIntegrationTests {
     workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
     let tabId = workspace.newNotebook()
     try await workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    await workspace.awaitSchemaLoad()
     guard let viewModel = workspace.viewModel(for: tabId) else {
       throw DatabaseError.notConnected
     }

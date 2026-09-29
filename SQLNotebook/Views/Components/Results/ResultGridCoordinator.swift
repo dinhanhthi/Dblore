@@ -48,6 +48,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   private(set) var model: ResultGridModel?
+  /// Reused cells whose text field holds highlighted attributed text
+  private var highlightedCells = Set<ObjectIdentifier>()
   private var key: Key?
   /// Table (displayed) row and result column of the current search match
   private var currentMatchCell: (row: Int, column: Int)?
@@ -136,37 +138,40 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       Self.rowNumberWidth(rowCount: result.rows.count)
     let oldKey = key
     key = newKey
-    let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
-    self.model = model
-    highlightMatches =
-      highlight?.matches(
-        rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
-        dialect: highlightDialect) ?? [:]
-    currentMatchCell = nil
-    if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
-      let row = model.displayedRow(forOriginalRow: originalRow),
-      let column = model.columns.firstIndex(where: { $0.name == columnName })
-    {
-      currentMatchCell = (row, column)
-    }
-    tableView.dataSource = self
-    tableView.delegate = self
-    let sortDescriptors = sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
-    if tableView.sortDescriptors != sortDescriptors {
-      isShowingInputSort = true
-      tableView.sortDescriptors = sortDescriptors
-      isShowingInputSort = false
-    }
-    updateHeader(
-      tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
-      caseSensitive: caseSensitive, currentMatch: currentMatch)
-    // New columns fit like a divider double-click; a re-run keeps dragged widths
-    if newKey.columnNames != oldKey?.columnNames {
-      for (index, tableColumn) in tableView.tableColumns.enumerated() {
-        tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)
+    PerfSignpost.interval("grid.reload") {
+      let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
+      self.model = model
+      highlightMatches =
+        highlight?.matches(
+          rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
+          dialect: highlightDialect) ?? [:]
+      currentMatchCell = nil
+      if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
+        let row = model.displayedRow(forOriginalRow: originalRow),
+        let column = model.columns.firstIndex(where: { $0.name == columnName })
+      {
+        currentMatchCell = (row, column)
       }
+      tableView.dataSource = self
+      tableView.delegate = self
+      let sortDescriptors =
+        sortColumn.map { [NSSortDescriptor(key: $0, ascending: ascending)] } ?? []
+      if tableView.sortDescriptors != sortDescriptors {
+        isShowingInputSort = true
+        tableView.sortDescriptors = sortDescriptors
+        isShowingInputSort = false
+      }
+      updateHeader(
+        tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
+        caseSensitive: caseSensitive, currentMatch: currentMatch)
+      // New columns fit like a divider double-click; a re-run keeps dragged widths
+      if newKey.columnNames != oldKey?.columnNames {
+        for (index, tableColumn) in tableView.tableColumns.enumerated() {
+          tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)
+        }
+      }
+      tableView.reloadData()
     }
-    tableView.reloadData()
     if let currentMatchCell {
       tableView.scrollRowToVisible(currentMatchCell.row)
     }
@@ -365,16 +370,21 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let value = model.value(row: row, column: column)
     let isNull = value == .null
     let text = model.displayText(row: row, column: column)
-    cell.textField?.textColor = isNull ? Self.nullTextColor : Self.textColor
+    let textColor = isNull ? Self.nullTextColor : Self.textColor
+    if cell.textField?.textColor != textColor { cell.textField?.textColor = textColor }
+    let cellID = ObjectIdentifier(cell)
     if let key, !key.searchQuery.isEmpty {
+      highlightedCells.insert(cellID)
       cell.textField?.attributedStringValue = Self.highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
-        textColor: isNull ? Self.nullTextColor : Self.textColor,
+        textColor: textColor,
         isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
-    } else {
+    } else if highlightedCells.remove(cellID) != nil || cell.textField?.stringValue != text {
+      // A cell that showed search highlights is reset even when the plain text is the same
       cell.textField?.stringValue = text
     }
-    cell.textField?.alignment = Self.alignment(for: value)
+    let alignment = Self.alignment(for: value)
+    if cell.textField?.alignment != alignment { cell.textField?.alignment = alignment }
     applyHighlight(to: cell, row: row, column: column)
     cell.textField?.isEditable = false
     cell.textField?.isSelectable = false

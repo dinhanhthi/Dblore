@@ -98,6 +98,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     let textView = SQLTextView()
 
     textView.delegate = context.coordinator
+    // Records which characters each edit touched (see Coordinator.textStorage(_:didProcessEditing:))
+    textView.textStorage?.delegate = context.coordinator
     textView.onFocus = onFocus
 
     // Setup onBlur callback to update binding when editor loses focus
@@ -200,29 +202,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Update editor mode
     textView.isEditorMode = isEditorMode
 
-    // Update word wrap setting when it changes
-    if wordWrapEnabled {
-      textView.textContainer?.widthTracksTextView = true
-      textView.textContainer?.containerSize = NSSize(
-        width: scrollView.contentView.bounds.width,
-        height: CGFloat.greatestFiniteMagnitude
-      )
-      textView.isHorizontallyResizable = false
-      textView.autoresizingMask = [.width]
-      scrollView.hasHorizontalScroller = false
-    } else {
-      textView.textContainer?.widthTracksTextView = false
-      textView.textContainer?.containerSize = NSSize(
-        width: CGFloat.greatestFiniteMagnitude,
-        height: CGFloat.greatestFiniteMagnitude
-      )
-      textView.isHorizontallyResizable = true
-      textView.autoresizingMask = [.width, .height]
-      scrollView.hasHorizontalScroller = true
-    }
-
-    // Force layout update after word wrap change
-    textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+    // Update word wrap setting only when it changes (ensureLayout is a full-document layout)
+    context.coordinator.configureWordWrapIfNeeded(
+      wordWrapEnabled, scrollView: scrollView, textView: textView)
 
     // Only update text from external source if different
     // Note: We allow update even when first responder for external file reload scenarios
@@ -242,6 +224,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Clear delegate to prevent retain cycles
     textView.delegate = nil
+    textView.textStorage?.delegate = nil
+
+    // Stop any pending autocomplete computation and close the popover
+    textView.hideAutocomplete()
 
     // Clear callbacks
     textView.onFocus = nil
@@ -258,7 +244,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   }
 
   @MainActor
-  class Coordinator: NSObject, NSTextViewDelegate {
+  class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
     var text: Binding<String>
     var height: Binding<CGFloat>
     var isEmpty: Binding<Bool>
@@ -270,11 +256,63 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     var viewModelId: UUID?  // ID of the viewModel (for scoped search)
 
     // Search state
-    private var searchQuery: String = ""
-    private var isCaseSensitive: Bool = false
+    var searchQuery: String = ""
+    var isCaseSensitive: Bool = false
     private var currentMatchId: UUID?
     private var currentMatchRange: NSRange?
-    private var isSearchActive: Bool = false
+    var isSearchActive: Bool = false
+
+    // Word wrap state
+    /// Wrap value last applied to the text container (nil until the first update)
+    var appliedWordWrap: Bool?
+    /// Number of times the container was reconfigured (test hook)
+    var wordWrapReconfigureCount = 0
+
+    /// Applies the word-wrap container setup and relayout, only when the value changed
+    func configureWordWrapIfNeeded(
+      _ wordWrapEnabled: Bool, scrollView: NSScrollView, textView: NSTextView
+    ) {
+      guard appliedWordWrap != wordWrapEnabled else { return }
+      appliedWordWrap = wordWrapEnabled
+      wordWrapReconfigureCount += 1
+
+      if wordWrapEnabled {
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+          width: scrollView.contentView.bounds.width,
+          height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        scrollView.hasHorizontalScroller = false
+      } else {
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(
+          width: CGFloat.greatestFiniteMagnitude,
+          height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = true
+        textView.autoresizingMask = [.width, .height]
+        scrollView.hasHorizontalScroller = true
+      }
+
+      // Force layout update after word wrap change
+      textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+    }
+
+    // Incremental highlighting state
+    /// Comment and string spans of the text as last highlighted (nil until a full highlight)
+    private var blockSpans: [NSRange]?
+    /// UTF-16 length of the text as last highlighted
+    private var highlightedLength = 0
+    /// Union of the character edits since the last highlight, in new-text coordinates
+    private var pendingEditedRange: NSRange?
+    private var pendingChangeInLength = 0
+    /// Set when the pending edits cannot be trusted (several edits before one pass, or a pass
+    /// skipped); the next pass then does a full highlight, which re-records the state
+    private var pendingEditsInvalid = false
+    /// Number of highlight passes that fell back to the full path (test hook)
+    private(set) var fullFallbackCount = 0
 
     // Notification observers
     private var highlightObserver: NSObjectProtocol?
@@ -309,7 +347,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       guard textView.window != nil else { return }
 
       // Apply syntax highlighting without affecting undo stack
-      applyHighlightingWithoutUndo(to: textView, text: textView.string)
+      PerfSignpost.interval("editor.highlight.keystroke") {
+        applyIncrementalHighlighting(to: textView)
+      }
 
       // Update height to fit content
       updateHeight(textView: textView)
@@ -325,6 +365,87 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       onTextChanged?()
     }
 
+    // MARK: - NSTextStorageDelegate
+
+    func textStorage(
+      _ textStorage: NSTextStorage,
+      didProcessEditing editedMask: NSTextStorageEditActions,
+      range editedRange: NSRange,
+      changeInLength delta: Int
+    ) {
+      // Our own highlighting only changes attributes: ignore it
+      guard editedMask.contains(.editedCharacters) else { return }
+      if let pending = pendingEditedRange {
+        // A second edit before a pass: the ranges live in different coordinate systems
+        pendingEditsInvalid = true
+        pendingEditedRange = NSUnionRange(pending, editedRange)
+      } else {
+        pendingEditedRange = editedRange
+      }
+      pendingChangeInLength += delta
+    }
+
+    private func clearPendingEdit() {
+      pendingEditedRange = nil
+      pendingChangeInLength = 0
+      pendingEditsInvalid = false
+    }
+
+    /// Remember the block spans and length of the text that was just fully highlighted
+    private func recordFullHighlight(of text: String) {
+      clearPendingEdit()
+      let ns = text as NSString
+      highlightedLength = ns.length
+      blockSpans =
+        AppSettings.shared.syntaxHighlightingEnabled ? SQLSyntaxHighlighter.blockSpans(in: ns) : nil
+    }
+
+    /// Re-highlight only the range the last edit can affect; falls back to the full in-place
+    /// path when search is active, highlighting is off, or the edit bookkeeping is unusable
+    @MainActor
+    func applyIncrementalHighlighting(to textView: NSTextView) {
+      guard textView.window != nil, let textStorage = textView.textStorage else {
+        pendingEditsInvalid = true
+        return
+      }
+
+      let length = textStorage.length
+      guard !isSearchActive, !pendingEditsInvalid, AppSettings.shared.syntaxHighlightingEnabled,
+        let edited = pendingEditedRange, let oldSpans = blockSpans,
+        highlightedLength + pendingChangeInLength == length,
+        NSMaxRange(edited) <= length
+      else {
+        fullFallbackCount += 1
+        applyHighlightingWithoutUndo(to: textView, text: textView.string)
+        return
+      }
+
+      let text = textStorage.string as NSString
+      let newSpans = SQLSyntaxHighlighter.blockSpans(in: text)
+      let dirty = SQLSyntaxHighlighter.dirtyRange(
+        text: text, edited: edited, changeInLength: pendingChangeInLength, oldSpans: oldSpans,
+        newSpans: newSpans)
+      let palette = SQLSyntaxHighlighter.Palette()
+
+      // Settle the layout of the edit first (updateHeight forces it right after anyway). Styling
+      // a range that starts before a still-pending edit makes the layout manager re-lay out
+      // everything after it, ~20 ms on a 2k-line document.
+      if let container = textView.textContainer {
+        textView.layoutManager?.ensureLayout(for: container)
+      }
+
+      let undoManager = textView.undoManager
+      undoManager?.disableUndoRegistration()
+      textStorage.beginEditing()
+      SQLSyntaxHighlighter.rehighlight(storage: textStorage, range: dirty, palette: palette)
+      textStorage.endEditing()
+      undoManager?.enableUndoRegistration()
+
+      blockSpans = newSpans
+      highlightedLength = length
+      clearPendingEdit()
+    }
+
     @MainActor
     func applyHighlighting(to textView: NSTextView, text: String) {
       // SAFETY: Guard against deallocated textView or invalid state
@@ -332,30 +453,33 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         let textStorage = textView.textStorage
       else { return }
 
-      let attributed: NSAttributedString
-      if isSearchActive {
-        // Get current match range from NotebookViewModel's search state
-        let currentMatchRange = getCurrentMatchRange(for: textView.string)
-        attributed = SQLSyntaxHighlighter.highlightWithSearch(
-          text,
-          searchQuery: searchQuery,
-          isCaseSensitive: isCaseSensitive,
-          currentMatchRange: currentMatchRange
-        )
-      } else {
-        attributed = SQLSyntaxHighlighter.highlight(text)
+      PerfSignpost.interval("editor.highlight.full") {
+        let attributed: NSAttributedString
+        if isSearchActive {
+          // Get current match range from NotebookViewModel's search state
+          let currentMatchRange = getCurrentMatchRange(for: textView.string)
+          attributed = SQLSyntaxHighlighter.highlightWithSearch(
+            text,
+            searchQuery: searchQuery,
+            isCaseSensitive: isCaseSensitive,
+            currentMatchRange: currentMatchRange
+          )
+        } else {
+          attributed = SQLSyntaxHighlighter.highlight(text)
+        }
+
+        // Disable undo registration for programmatic text changes
+        let undoManager = textView.undoManager
+        undoManager?.disableUndoRegistration()
+
+        textStorage.beginEditing()
+        textStorage.setAttributedString(attributed)
+        textStorage.endEditing()
+
+        // Re-enable undo registration
+        undoManager?.enableUndoRegistration()
+        recordFullHighlight(of: textStorage.string)
       }
-
-      // Disable undo registration for programmatic text changes
-      let undoManager = textView.undoManager
-      undoManager?.disableUndoRegistration()
-
-      textStorage.beginEditing()
-      textStorage.setAttributedString(attributed)
-      textStorage.endEditing()
-
-      // Re-enable undo registration
-      undoManager?.enableUndoRegistration()
     }
 
     /// Apply syntax highlighting without creating undo operations
@@ -407,6 +531,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
       // Re-enable undo registration
       undoManager?.enableUndoRegistration()
+      recordFullHighlight(of: text)
     }
 
     @MainActor
