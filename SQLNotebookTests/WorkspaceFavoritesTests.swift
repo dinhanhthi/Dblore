@@ -85,6 +85,37 @@ struct WorkspaceFavoritesModelTests {
     #expect(favorites.items(in: UUID()).isEmpty)
   }
 
+  @Test("rootItems keeps items with no folder or an unknown folder, in order")
+  func rootItems() {
+    var favorites = WorkspaceFavorites.empty
+    let folder = favorites.addFolder(name: "F")
+    let noFolder = FavoriteStatement(name: "a", sql: "SELECT 1")
+    let unknown = FavoriteStatement(name: "b", sql: "SELECT 2", folderId: UUID())
+    let nested = FavoriteStatement(name: "c", sql: "SELECT 3", folderId: folder.id)
+    favorites.upsert(noFolder)
+    favorites.upsert(nested)
+    favorites.upsert(unknown)
+    #expect(favorites.rootItems == [noFolder, unknown])
+  }
+
+  @Test("resolvedFolderId is nil for nil or unknown ids and the id for a known folder")
+  func resolvedFolderId() {
+    var favorites = WorkspaceFavorites.empty
+    let folder = favorites.addFolder(name: "F")
+    #expect(favorites.resolvedFolderId(nil) == nil)
+    #expect(favorites.resolvedFolderId(UUID()) == nil)
+    #expect(favorites.resolvedFolderId(folder.id) == folder.id)
+  }
+
+  @Test("contains(itemId:) tells existing items from new ones")
+  func containsItemId() {
+    var favorites = WorkspaceFavorites.empty
+    let item = FavoriteStatement(name: "q", sql: "SELECT 1")
+    favorites.upsert(item)
+    #expect(favorites.contains(itemId: item.id))
+    #expect(!favorites.contains(itemId: UUID()))
+  }
+
   @Test("nextDefaultName starts at 1 when empty")
   func defaultNameEmpty() {
     #expect(WorkspaceFavorites.empty.nextDefaultName() == "Favorite statement 1")
@@ -186,6 +217,30 @@ struct WorkspaceManagerFavoritesTests {
     manager.createFolder(name: " Reports ")
     #expect(manager.workspace.favorites.folders.map(\.name) == ["Reports"])
     #expect(manager.isDirty)
+  }
+
+  @Test("renameFolder trims, ignores a blank name and marks dirty")
+  func renameFolderTrimsAndIgnoresBlank() throws {
+    let manager = makeManager()
+    manager.createFolder(name: "F")
+    let folder = try #require(manager.workspace.favorites.folders.first)
+    manager.isDirty = false
+
+    manager.renameFolder(id: folder.id, name: "   ")
+    #expect(manager.workspace.favorites.folders.map(\.name) == ["F"])
+    #expect(manager.isDirty == false)
+
+    manager.renameFolder(id: folder.id, name: "  Reports \n")
+    #expect(manager.workspace.favorites.folders.map(\.name) == ["Reports"])
+    #expect(manager.isDirty)
+  }
+
+  @Test("insertFavorite is a no-op without an active view model")
+  func insertFavoriteWithoutViewModel() {
+    let manager = makeManager()
+    #expect(manager.activeViewModel == nil)
+    manager.insertFavorite(FavoriteStatement(name: "q", sql: "SELECT 1"))
+    #expect(manager.workspace.favorites.items.isEmpty)
   }
 
   @Test("deleteFolder moves its favorites to the root")

@@ -92,6 +92,22 @@ struct WorkspaceFavorites: Codable, Equatable, Sendable {
     items.filter { $0.folderId == folderId }
   }
 
+  /// Items with no folder, or pointing at a folder that no longer exists
+  var rootItems: [FavoriteStatement] {
+    items.filter { resolvedFolderId($0.folderId) == nil }
+  }
+
+  /// The folder id if it exists, otherwise nil (root)
+  func resolvedFolderId(_ id: UUID?) -> UUID? {
+    guard let id, folders.contains(where: { $0.id == id }) else { return nil }
+    return id
+  }
+
+  /// Whether an item with this id exists (edit vs create)
+  func contains(itemId: UUID) -> Bool {
+    items.contains { $0.id == itemId }
+  }
+
   /// "Favorite statement N" with the smallest N >= items.count + 1 not used by an item
   func nextDefaultName() -> String {
     let used = Set(items.map(\.name))

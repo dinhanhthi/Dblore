@@ -15,12 +15,6 @@ struct FavoritesTabContent: View {
 
   private var favorites: WorkspaceFavorites { workspaceManager.workspace.favorites }
 
-  /// Items with no folder, or pointing at a folder that no longer exists
-  private var rootItems: [FavoriteStatement] {
-    let folderIds = Set(favorites.folders.map(\.id))
-    return favorites.items.filter { $0.folderId.map { !folderIds.contains($0) } ?? true }
-  }
-
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -30,6 +24,13 @@ struct FavoritesTabContent: View {
         emptyState
       } else {
         list
+      }
+    }
+    .onChange(of: favorites.items) { old, new in
+      // Reveal items that were added or moved to another folder
+      for item in new
+      where !old.contains(where: { $0.id == item.id && $0.folderId == item.folderId }) {
+        if let folderId = item.folderId { expandedFolders.insert(folderId) }
       }
     }
     .confirmationDialog(
@@ -95,6 +96,7 @@ struct FavoritesTabContent: View {
             onToggle: { toggle(folder.id) },
             onRename: { workspaceManager.favoriteModal = .folder(folder) },
             onNewFavorite: {
+              expandedFolders.insert(folder.id)
               workspaceManager.favoriteModal = .favorite(
                 FavoriteStatement(name: "", sql: "", folderId: folder.id))
             },
@@ -108,7 +110,7 @@ struct FavoritesTabContent: View {
           }
         }
 
-        ForEach(rootItems) { item in
+        ForEach(favorites.rootItems) { item in
           row(for: item, indented: false)
         }
       }

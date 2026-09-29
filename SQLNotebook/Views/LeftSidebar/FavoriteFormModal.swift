@@ -17,12 +17,12 @@ struct FavoriteFormModal: View {
   let favorite: FavoriteStatement?
 
   @Bindable private var appSettings = AppSettings.shared
-  @State private var name = ""
-  @State private var sql = ""
+  @State private var name: String
+  @State private var sql: String
   @State private var folderId: UUID?
-  @State private var placeholder = ""
+  @State private var placeholder: String
   @State private var textViewRef: SQLTextView?
-  @State private var isEditing = false
+  @State private var isEditing: Bool
 
   init(
     workspaceManager: WorkspaceManager, isPresented: Binding<Bool>, favorite: FavoriteStatement?
@@ -30,6 +30,12 @@ struct FavoriteFormModal: View {
     self.workspaceManager = workspaceManager
     self._isPresented = isPresented
     self.favorite = favorite
+    let favorites = workspaceManager.workspace.favorites
+    _placeholder = State(initialValue: favorites.nextDefaultName())
+    _isEditing = State(initialValue: favorite.map { favorites.contains(itemId: $0.id) } ?? false)
+    _name = State(initialValue: favorite?.name ?? "")
+    _sql = State(initialValue: favorite?.sql ?? "")
+    _folderId = State(initialValue: favorites.resolvedFolderId(favorite?.folderId))
   }
 
   private var folders: [FavoriteFolder] { workspaceManager.workspace.favorites.folders }
@@ -79,7 +85,6 @@ struct FavoriteFormModal: View {
           .disabled(!canSave)
       }
     }
-    .onAppear(perform: load)
   }
 
   private var queryEditor: some View {
@@ -103,16 +108,6 @@ struct FavoriteFormModal: View {
       .padding(.bottom, Spacing.sm)
     }
     .frame(maxHeight: 200)
-  }
-
-  private func load() {
-    let favorites = workspaceManager.workspace.favorites
-    placeholder = favorites.nextDefaultName()
-    guard let favorite else { return }
-    isEditing = favorites.items.contains { $0.id == favorite.id }
-    name = favorite.name
-    sql = favorite.sql
-    folderId = folders.contains { $0.id == favorite.folderId } ? favorite.folderId : nil
   }
 
   private func save() {

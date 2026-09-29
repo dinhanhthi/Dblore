@@ -50,13 +50,11 @@ struct WorkspaceLeftSidebarContent: View {
 
   @ViewBuilder
   private var contentForSelectedTab: some View {
-    switch selectedTab {
-    case .public:
-      publicTabContent
-    case .security:
+    // Favorite is handled in body; only the schema tabs reach here
+    if selectedTab == .security {
       securityTabContent
-    case .favorite:
-      FavoritesTabContent(workspaceManager: workspaceManager)
+    } else {
+      publicTabContent
     }
   }
 
