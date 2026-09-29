@@ -40,8 +40,9 @@ struct WorkspaceWelcomeView: View {
                 workspaceManager.showSettings()
               } label: {
                 Image(systemName: "gearshape")
+                  .frame(width: 14, height: 14)
               }
-              .buttonStyle(SecondaryButtonStyle())
+              .buttonStyle(SecondaryButtonStyle(iconOnly: true))
               .controlSize(.small)
               .help("Settings")
 
@@ -51,8 +52,9 @@ struct WorkspaceWelcomeView: View {
                   Task { try? await workspaceManager.saveWorkspace() }
                 } label: {
                   Image(systemName: "square.and.arrow.down")
+                    .frame(width: 14, height: 14)
                 }
-                .buttonStyle(SecondaryButtonStyle())
+                .buttonStyle(SecondaryButtonStyle(iconOnly: true))
                 .controlSize(.small)
                 .help("Save Workspace")
               }
