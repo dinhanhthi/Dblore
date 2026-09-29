@@ -57,6 +57,20 @@ struct WorkspaceWelcomeView: View {
               }
               .buttonStyle(SecondaryButtonStyle())
               .controlSize(.small)
+
+              // Save button, only for unsaved workspaces
+              if !workspaceManager.workspace.isSaved {
+                Button {
+                  Task { try? await workspaceManager.saveWorkspace() }
+                } label: {
+                  HStack(spacing: Spacing.xs) {
+                    Image(systemName: "square.and.arrow.down")
+                    Text("Save Workspace")
+                  }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .controlSize(.small)
+              }
             }
           }
 
