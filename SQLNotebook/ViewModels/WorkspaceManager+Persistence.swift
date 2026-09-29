@@ -109,12 +109,19 @@ extension WorkspaceManager {
 
   /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON
   func encodedWorkspaceData() throws -> Data {
-    // Data viewer tabs are session-only: an active one hands over to the latest persisted tab
-    let persisted = tabs.filter { $0.documentType != .dataViewer }
-    workspace.tabs = persisted.map { WorkspaceTabReference.from($0, bookmark: tabBookmarks[$0.id]) }
-    let activeIsViewer = tabs.contains { $0.id == activeTabId && $0.documentType == .dataViewer }
+    // Preview tabs are session-only: an active one hands over to the latest persisted tab
+    let persisted = tabs.filter { !$0.isPreview }
+    workspace.tabs = persisted.map { tab in
+      let state = viewModels[tab.id]?.dataViewer
+      return WorkspaceTabReference.from(
+        tab, bookmark: tabBookmarks[tab.id],
+        dataViewer: state.map {
+          .init(schema: $0.schema, name: $0.name, orderColumns: $0.orderColumns)
+        })
+    }
+    let activeIsPreview = tabs.contains { $0.id == activeTabId && $0.isPreview }
     workspace.activeTabId =
-      activeIsViewer ? persisted.max { $0.lastAccessed < $1.lastAccessed }?.id : activeTabId
+      activeIsPreview ? persisted.max { $0.lastAccessed < $1.lastAccessed }?.id : activeTabId
     workspace.lastOpenedAt = Date()
 
     let encoder = JSONEncoder()

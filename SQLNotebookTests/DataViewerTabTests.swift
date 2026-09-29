@@ -1,6 +1,7 @@
 // DataViewerTabTests.swift
 // Table/view data viewer tabs: a preview tab is reused by the next table, pinned tabs and the
-// transaction origin are kept, and viewer tabs are never dirty, persisted or reopened.
+// transaction origin are kept, viewer tabs are never dirty or reopened, and only pinned ones
+// are persisted.
 // Disconnected manager: page loads return early.
 
 import Foundation
@@ -104,7 +105,45 @@ struct DataViewerTabTests {
     #expect(manager.tabs.first?.isDirty == false)
   }
 
-  @Test("Encoded workspace drops data viewers and points at a persisted tab")
+  @Test("Encoded workspace keeps a pinned data viewer with its relation")
+  func persistencePinnedViewer() throws {
+    let manager = Self.manager()
+    manager.openDataViewer(schema: "sales", name: "orders", orderColumns: ["id"])
+    let id = try #require(manager.tabs.first?.id)
+    manager.pinTab(id: id)
+
+    let workspace = try Self.decode(manager.encodedWorkspaceData())
+    #expect(workspace.tabs.map(\.id) == [id])
+    #expect(
+      workspace.tabs.first?.dataViewer
+        == .init(schema: "sales", name: "orders", orderColumns: ["id"]))
+    #expect(workspace.activeTabId == id)
+  }
+
+  @Test("Loading a workspace restores a pinned data viewer tab")
+  func restoresPinnedViewer() async throws {
+    let manager = Self.manager()
+    manager.openDataViewer(schema: "sales", name: "orders", orderColumns: ["id"])
+    let id = try #require(manager.tabs.first?.id)
+    manager.pinTab(id: id)
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).sqlws")
+    try manager.encodedWorkspaceData().write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let loaded = try await WorkspaceManager.load(from: url)
+    let tab = try #require(loaded.tabs.first)
+    #expect(loaded.tabs.count == 1)
+    #expect(tab.id == id)
+    #expect(tab.documentType == .dataViewer)
+    #expect(!tab.isPreview)
+    #expect(tab.title == "sales.orders")
+    #expect(loaded.activeTabId == id)
+    let state = try #require(loaded.viewModel(for: id)?.dataViewer)
+    #expect(state.schema == "sales" && state.name == "orders" && state.orderColumns == ["id"])
+  }
+
+  @Test("Encoded workspace drops preview data viewers and points at a persisted tab")
   func persistenceDropsViewers() throws {
     let manager = Self.manager()
     let sqlId = manager.newSQLFile()

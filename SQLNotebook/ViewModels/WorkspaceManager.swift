@@ -294,6 +294,12 @@ class WorkspaceManager: Identifiable {
 
       // Update all tab ViewModels with connection state
       syncConnectionStateToTabs()
+
+      // Restored data viewers load once connected
+      for viewModel in viewModels.values
+      where viewModel.dataViewer != nil && viewModel.editorResult == nil {
+        Task { await viewModel.loadDataViewerPage() }
+      }
     } catch {
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
@@ -400,7 +406,7 @@ class WorkspaceManager: Identifiable {
     let state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
     if let index = tabs.firstIndex(where: \.isPreview) {
       if tabs[index].id == transactionOriginTabId {
-        tabs[index].isPreview = false
+        pinTab(id: tabs[index].id)
       } else if let viewModel = viewModels[tabs[index].id] {
         viewModel.dataViewer = state
         viewModel.editorResult = nil
@@ -427,8 +433,11 @@ class WorkspaceManager: Identifiable {
 
   /// Keep a preview tab (it is no longer replaced by the next preview)
   func pinTab(id: UUID) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+    guard let index = tabs.firstIndex(where: { $0.id == id }), tabs[index].isPreview else {
+      return
+    }
     tabs[index].isPreview = false
+    markDirtyAndScheduleAutoSave()  // Pinned tabs are persisted
   }
 
   /// Restore the saved tabs in order. The first tab file the app may not read (no usable
@@ -439,6 +448,10 @@ class WorkspaceManager: Identifiable {
     var askedForFolder = folderAccess != nil
     var deniedFiles: [String] = []
     for tabRef in tabRefs {
+      if let ref = tabRef.dataViewer {
+        restoreDataViewer(tabRef: tabRef, ref: ref)
+        continue
+      }
       guard let fileURL = tabRef.fileURL else { continue }
       do {
         do {
@@ -464,6 +477,18 @@ class WorkspaceManager: Identifiable {
         "No access to \(deniedFiles.joined(separator: ", ")): tab not restored", type: .warning)
     }
     return bookmarksChanged
+  }
+
+  /// Restore a pinned data viewer tab with its original ID; its page loads once connected
+  private func restoreDataViewer(
+    tabRef: WorkspaceTabReference, ref: WorkspaceTabReference.DataViewerReference
+  ) {
+    let viewModel = createViewModel(for: SQLNotebook(cells: [], documentType: .script))
+    viewModel.viewMode = .editor
+    viewModel.dataViewer = DataViewerState(
+      schema: ref.schema, name: ref.name, orderColumns: ref.orderColumns)
+    tabs.append(tabRef.toTabItem())
+    viewModels[tabRef.id] = viewModel
   }
 
   /// Ask once for the folder containing the .sqlws and hold access to it for the workspace
@@ -524,7 +549,7 @@ class WorkspaceManager: Identifiable {
       editorDocuments[tab.id] = document
 
     case .dataViewer:
-      return false  // Never persisted, so never restored
+      return false  // File-less: restored by restoreDataViewer
     }
     tabAccess[tab.id] = access?.token
     let bookmark = access?.bookmark ?? accessHooks.makeBookmark(fileURL)

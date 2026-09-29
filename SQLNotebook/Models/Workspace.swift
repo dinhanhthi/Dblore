@@ -176,35 +176,49 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
   var title: String
   /// App-scope security-scoped bookmark of `fileURL` (nil in workspaces saved before bookmarks)
   var bookmark: Data?
+  /// Relation shown by a data viewer tab (nil for file tabs)
+  var dataViewer: DataViewerReference?
+
+  /// Table/view of a pinned data viewer tab
+  struct DataViewerReference: Codable, Equatable, Sendable {
+    var schema: String
+    var name: String
+    var orderColumns: [String]
+  }
 
   init(
     id: UUID = UUID(),
     fileURL: URL? = nil,
     documentType: TabDocumentType,
     title: String,
-    bookmark: Data? = nil
+    bookmark: Data? = nil,
+    dataViewer: DataViewerReference? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
     self.documentType = documentType
     self.title = title
     self.bookmark = bookmark
+    self.dataViewer = dataViewer
   }
 
   /// Bookmark bytes differ between creations of the same file, so equality ignores them
   static func == (lhs: WorkspaceTabReference, rhs: WorkspaceTabReference) -> Bool {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.documentType == rhs.documentType
-      && lhs.title == rhs.title
+      && lhs.title == rhs.title && lhs.dataViewer == rhs.dataViewer
   }
 
   /// Create from a TabItem
-  static func from(_ tab: TabItem, bookmark: Data? = nil) -> WorkspaceTabReference {
+  static func from(
+    _ tab: TabItem, bookmark: Data? = nil, dataViewer: DataViewerReference? = nil
+  ) -> WorkspaceTabReference {
     WorkspaceTabReference(
       id: tab.id,
       fileURL: tab.fileURL,
       documentType: tab.documentType,
       title: tab.title,
-      bookmark: bookmark
+      bookmark: bookmark,
+      dataViewer: dataViewer
     )
   }
 
