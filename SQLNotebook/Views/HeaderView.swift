@@ -232,6 +232,12 @@ struct HeaderView: View {
               isActive: isFilterShown || !(viewModel.dataViewer?.filter.isEmpty ?? true),
               iconOnly: true)
           )
+          .overlay(alignment: .bottomTrailing) {
+            if !(viewModel.dataViewer?.filter.isEmpty ?? true) {
+              Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
+                .allowsHitTesting(false)
+            }
+          }
           .help("Filter rows")
 
           // Highlight rows: toggles the highlight form in the right sidebar
@@ -252,6 +258,12 @@ struct HeaderView: View {
               isActive: isHighlightShown || !(viewModel.dataViewer?.highlight.isEmpty ?? true),
               iconOnly: true)
           )
+          .overlay(alignment: .bottomTrailing) {
+            if !(viewModel.dataViewer?.highlight.isEmpty ?? true) {
+              Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
+                .allowsHitTesting(false)
+            }
+          }
           .help("Highlight rows")
         }
 
