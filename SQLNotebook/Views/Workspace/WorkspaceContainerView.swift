@@ -480,6 +480,21 @@ struct WorkspaceTabContentView: View {
         }
       }
 
+      // Cmd+Z / Cmd+Shift+Z outside any text input -> undo/redo cell operations
+      // (text views, including field editors, keep their own undo)
+      let flags = event.modifierFlags.intersection([.command, .shift, .control, .option])
+      if event.charactersIgnoringModifiers?.lowercased() == "z",
+        flags == .command || flags == [.command, .shift],
+        !(eventWindow.firstResponder is NSTextView),
+        self.viewModel.viewMode == .notebook
+      {
+        let isRedo = flags.contains(.shift)
+        Task { @MainActor [viewModel] in
+          if isRedo { viewModel.redoCellChange() } else { viewModel.undoCellChange() }
+        }
+        return nil
+      }
+
       return event
     }
   }

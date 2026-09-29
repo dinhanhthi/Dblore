@@ -179,12 +179,7 @@ enum SQLSyntaxHighlighter {
     result.addAttributes(defaultAttributes, range: NSRange(location: 0, length: text.count))
 
     // Apply highlighting
-    highlightComments(in: result, text: text)
-    highlightStrings(in: result, text: text)
-    highlightNumbers(in: result, text: text)
-    highlightKeywords(in: result, text: text)
-    highlightFunctions(in: result, text: text)
-    highlightTypes(in: result, text: text)
+    applyPatterns(to: result, text: text)
 
     return result
   }
@@ -240,90 +235,75 @@ enum SQLSyntaxHighlighter {
 
   // MARK: - Token Highlighting
 
-  private static func highlightComments(in attributed: NSMutableAttributedString, text: String) {
-    // Single-line comments: -- ...
-    let singleLinePattern = "--[^\n]*"
-    applyPattern(singleLinePattern, to: attributed, text: text, type: .comment)
+  /// Patterns in application order; later ones skip matches already colored as comment/string.
+  /// Compiled once: building them per call (one regex per keyword) dominated every keystroke,
+  /// undo and redo.
+  private static let patterns: [(regex: NSRegularExpression, type: TokenType)] = [
+    (regex("--[^\n]*"), .comment),
+    (regex("/\\*[\\s\\S]*?\\*/"), .comment),
+    (regex("'(?:[^'\\\\]|\\\\.)*'"), .string),
+    (regex("\\$\\$[\\s\\S]*?\\$\\$"), .string),
+    (regex("\\b\\d+\\.?\\d*\\b"), .number),
+  ]
 
-    // Multi-line comments: /* ... */
-    let multiLinePattern = "/\\*[\\s\\S]*?\\*/"
-    applyPattern(multiLinePattern, to: attributed, text: text, type: .comment)
+  /// Words are looked up in the keyword/function/type sets instead of matching one big
+  /// alternation per set, which is several times slower on long text.
+  private static let wordRegex = regex("\\w+")
+
+  private static func regex(_ pattern: String) -> NSRegularExpression {
+    // Force-try: the patterns are static and valid
+    try! NSRegularExpression(pattern: pattern)
   }
 
-  private static func highlightStrings(in attributed: NSMutableAttributedString, text: String) {
-    // Single-quoted strings
-    let singleQuotePattern = "'(?:[^'\\\\]|\\\\.)*'"
-    applyPattern(singleQuotePattern, to: attributed, text: text, type: .string)
-
-    // Dollar-quoted strings (PostgreSQL)
-    let dollarQuotePattern = "\\$\\$[\\s\\S]*?\\$\\$"
-    applyPattern(dollarQuotePattern, to: attributed, text: text, type: .string)
-  }
-
-  private static func highlightNumbers(in attributed: NSMutableAttributedString, text: String) {
-    // Integers and decimals
-    let numberPattern = "\\b\\d+\\.?\\d*\\b"
-    applyPattern(numberPattern, to: attributed, text: text, type: .number)
-  }
-
-  private static func highlightKeywords(in attributed: NSMutableAttributedString, text: String) {
-    for keyword in keywords {
-      let pattern = "\\b\(keyword)\\b"
-      applyPattern(pattern, to: attributed, text: text, type: .keyword, caseSensitive: false)
-    }
-  }
-
-  private static func highlightFunctions(in attributed: NSMutableAttributedString, text: String) {
-    for function in functions {
-      let pattern = "\\b\(function)\\s*(?=\\()"
-      applyPattern(pattern, to: attributed, text: text, type: .function, caseSensitive: false)
-    }
-  }
-
-  private static func highlightTypes(in attributed: NSMutableAttributedString, text: String) {
-    for type in types {
-      let pattern = "\\b\(type)\\b"
-      applyPattern(pattern, to: attributed, text: text, type: .type, caseSensitive: false)
-    }
-  }
-
-  // MARK: - Helpers
-
-  private static func applyPattern(
-    _ pattern: String,
-    to attributed: NSMutableAttributedString,
-    text: String,
-    type: TokenType,
-    caseSensitive: Bool = true
-  ) {
-    var options: NSRegularExpression.Options = []
-    if !caseSensitive {
-      options.insert(.caseInsensitive)
-    }
-
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-
+  private static func applyPatterns(to attributed: NSMutableAttributedString, text: String) {
+    // Resolve each color once per call (NSColor(Color) is not free)
+    let commentColor = TokenType.comment.color
+    let stringColor = TokenType.string.color
     let range = NSRange(text.startIndex..., in: text)
-    let matches = regex.matches(in: text, options: [], range: range)
 
-    for match in matches {
-      // Check if this range is already inside a comment or string
-      // (we process comments and strings first, so skip if already colored differently)
+    /// Color `range` unless it already is a comment or string (those are applied first)
+    func apply(_ color: NSColor, _ type: TokenType, _ range: NSRange) {
       var existingColor: NSColor?
-      attributed.enumerateAttribute(.foregroundColor, in: match.range, options: []) { value, _, _ in
+      attributed.enumerateAttribute(.foregroundColor, in: range, options: []) { value, _, _ in
         existingColor = value as? NSColor
       }
-
-      // Only apply highlighting if not already highlighted as comment or string
-      // (unless we're highlighting comments or strings themselves)
-      let commentColor = NSColor(Color.syntaxComment)
-      let stringColor = NSColor(Color.syntaxString)
-
       if type == .comment || type == .string
         || (existingColor != commentColor && existingColor != stringColor)
       {
-        attributed.addAttribute(.foregroundColor, value: type.color, range: match.range)
+        attributed.addAttribute(.foregroundColor, value: color, range: range)
       }
+    }
+
+    for (regex, type) in patterns {
+      let color = type == .comment ? commentColor : type == .string ? stringColor : type.color
+      for match in regex.matches(in: text, options: [], range: range) {
+        apply(color, type, match.range)
+      }
+    }
+
+    // Keywords, then functions (word + whitespace before "("), then types override
+    let keywordColor = TokenType.keyword.color
+    let functionColor = TokenType.function.color
+    let typeColor = TokenType.type.color
+    let nsText = text as NSString
+    for match in wordRegex.matches(in: text, options: [], range: range) {
+      let word = nsText.substring(with: match.range).uppercased()
+      if keywords.contains(word) { apply(keywordColor, .keyword, match.range) }
+      if functions.contains(word) {
+        var end = match.range.upperBound
+        while end < nsText.length,
+          let scalar = UnicodeScalar(nsText.character(at: end)),
+          CharacterSet.whitespacesAndNewlines.contains(scalar)
+        {
+          end += 1
+        }
+        if end < nsText.length, nsText.character(at: end) == 0x28 {  // "("
+          apply(
+            functionColor, .function,
+            NSRange(location: match.range.location, length: end - match.range.location))
+        }
+      }
+      if types.contains(word) { apply(typeColor, .type, match.range) }
     }
   }
 

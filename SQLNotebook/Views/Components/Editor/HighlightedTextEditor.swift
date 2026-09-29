@@ -247,6 +247,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     textView.onFocus = nil
     textView.onBlur = nil
 
+    // Drop undo actions that target this text view before emptying it
+    coordinator.undoManager.removeAllActions()
+
     // Clear text storage to free memory
     textView.textStorage?.setAttributedString(NSAttributedString())
   }
@@ -263,6 +266,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     var height: Binding<CGFloat>
     var isEmpty: Binding<Bool>
     var onTextChanged: (() -> Void)?  // Called when user types in the editor
+
+    /// This editor's own undo stack (see `undoManager(for:)`)
+    let undoManager = UndoManager()
 
     // Weak reference to text view for search highlighting
     weak var textView: NSTextView?
@@ -300,6 +306,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     deinit {
       // Observers will be automatically removed when this object deallocates
       // NotificationCenter holds weak references
+    }
+
+    /// Own stack instead of the window's: a shared one lets Cmd+Z in one cell edit another
+    /// cell, and keeps actions for text views that were torn down or replaced.
+    func undoManager(for view: NSTextView) -> UndoManager? {
+      undoManager
     }
 
     func textDidChange(_ notification: Notification) {
@@ -356,6 +368,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
       // Re-enable undo registration
       undoManager?.enableUndoRegistration()
+
+      // The old history points at text that no longer exists
+      undoManager?.removeAllActions()
     }
 
     /// Apply syntax highlighting without creating undo operations
@@ -393,14 +408,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
       textStorage.beginEditing()
 
-      // Remove all attributes first
-      textStorage.setAttributes([:], range: fullRange)
-
-      // Apply new attributes from syntax highlighting
-      attributed.enumerateAttributes(
-        in: NSRange(location: 0, length: attributed.length), options: []
-      ) { attrs, range, _ in
-        textStorage.addAttributes(attrs, range: range)
+      // Replace attributes run by run (setAttributes drops stale ones, no full-range clear)
+      attributed.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
+        textStorage.setAttributes(attrs, range: range)
       }
 
       textStorage.endEditing()
