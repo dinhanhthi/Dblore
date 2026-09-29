@@ -24,6 +24,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
   private static let rowIdentifier = NSUserInterfaceItemIdentifier("ResultGridRow")
+  private static let rowNumberCellIdentifier = NSUserInterfaceItemIdentifier("ResultGridRowNumber")
+  /// Leading "#" column: the displayed row number, not a result column (no Int identifier)
+  static let rowNumberIdentifier = NSUserInterfaceItemIdentifier("rowNumber")
+  static let rowNumberFont = NSFont.monospacedDigitSystemFont(
+    ofSize: NSFont.smallSystemFontSize, weight: .regular)
 
   /// What decides a reload: the result's identity, the sort and the search, not every SwiftUI
   /// update
@@ -123,6 +128,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       rebuildColumns(tableView, columns: result.columns)
     }
     updateHiddenColumns(tableView, result: result, hiddenColumns: hiddenColumns)
+    tableView.tableColumn(withIdentifier: Self.rowNumberIdentifier)?.width =
+      Self.rowNumberWidth(rowCount: result.rows.count)
     key = newKey
     let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
     self.model = model
@@ -272,6 +279,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - NSTableViewDelegate
 
+  /// The "#" column stays first
+  func tableView(
+    _ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int
+  ) -> Bool {
+    columnIndex != 0 && newColumnIndex != 0
+  }
+
   /// Reused row view, alternate on odd displayed rows
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
     let rowView =
@@ -287,6 +301,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   )
     -> NSView?
   {
+    if tableColumn?.identifier == Self.rowNumberIdentifier {
+      let cell =
+        tableView.makeView(withIdentifier: Self.rowNumberCellIdentifier, owner: nil)
+        as? ResultGridRowNumberCell ?? ResultGridRowNumberCell()
+      cell.identifier = Self.rowNumberCellIdentifier
+      cell.textField?.stringValue = String(row + 1)
+      return cell
+    }
     guard let model, let tableColumn, let column = Int(tableColumn.identifier.rawValue) else {
       return nil
     }
@@ -372,9 +394,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     return string
   }
 
-  /// Column identifiers are the model column index, so a reordered column still maps back
+  /// Width of the "#" column: the digits of the last row number plus the cell padding
+  static func rowNumberWidth(rowCount: Int) -> CGFloat {
+    let digits = String(max(rowCount, 1)).count
+    let digitWidth = ("0" as NSString).size(withAttributes: [.font: rowNumberFont]).width
+    return ceil(CGFloat(max(digits, 2)) * digitWidth) + 2 * Spacing.xsm
+  }
+
+  /// Column identifiers are the model column index, so a reordered column still maps back;
+  /// the "#" column comes first
   private func rebuildColumns(_ tableView: NSTableView, columns: [ColumnInfo]) {
     tableView.tableColumns.forEach(tableView.removeTableColumn)
+    let rowNumber = NSTableColumn(identifier: Self.rowNumberIdentifier)
+    let rowNumberHeader = ResultGridHeaderCell(textCell: "#")
+    rowNumberHeader.content.title = "#"
+    rowNumberHeader.content.isRowNumber = true
+    rowNumber.headerCell = rowNumberHeader
+    rowNumber.title = "#"
+    rowNumber.resizingMask = []
+    tableView.addTableColumn(rowNumber)
     for (index, info) in columns.enumerated() {
       let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(String(index)))
       // Before the title: the title is stored in the header cell
@@ -403,6 +441,38 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
     ])
     return cell
+  }
+}
+
+/// Cell of the "#" column: muted, right-aligned row number on a tinted background with a
+/// trailing separator, so it reads apart from the result columns
+final class ResultGridRowNumberCell: NSTableCellView {
+  static let textColor = NSColor(Color.foregroundMuted)
+  static let backgroundColor = NSColor(Color.tableHeaderBackground.opacity(0.6))
+
+  init() {
+    super.init(frame: .zero)
+    let textField = NSTextField(labelWithString: "")
+    textField.font = ResultGridCoordinator.rowNumberFont
+    textField.textColor = Self.textColor
+    textField.alignment = .right
+    textField.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(textField)
+    self.textField = textField
+    NSLayoutConstraint.activate([
+      textField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Spacing.xsm),
+      textField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Spacing.xsm),
+      textField.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func draw(_ dirtyRect: NSRect) {
+    Self.backgroundColor.setFill()
+    dirtyRect.fill()
+    NSColor(Color.border).setFill()
+    NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
   }
 }
 

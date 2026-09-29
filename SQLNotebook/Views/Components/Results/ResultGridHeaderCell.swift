@@ -24,6 +24,8 @@ struct ResultGridHeaderContent: Equatable {
   var isCurrentMatch = false
   var searchQuery = ""
   var caseSensitive = false
+  /// Header of the "#" row number column: muted title, right-aligned
+  var isRowNumber = false
 }
 
 final class ResultGridHeaderCell: NSTableHeaderCell {
@@ -120,6 +122,16 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
   // MARK: - Private
 
   private func title() -> NSAttributedString {
+    if content.isRowNumber {
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.alignment = .right
+      return NSAttributedString(
+        string: content.title,
+        attributes: [
+          .font: ResultGridCoordinator.rowNumberFont,
+          .foregroundColor: ResultGridRowNumberCell.textColor, .paragraphStyle: paragraph,
+        ])
+    }
     guard content.isHighlighted else {
       return NSAttributedString(
         string: content.title,
@@ -133,9 +145,11 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
 
   /// One line, truncated at the tail
   private func draw(_ text: NSAttributedString, in rect: NSRect) {
-    guard rect.width > 0 else { return }
+    guard rect.width > 0, text.length > 0 else { return }
     let string = NSMutableAttributedString(attributedString: text)
-    let paragraph = NSMutableParagraphStyle()
+    let paragraph =
+      (text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?
+      .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byTruncatingTail
     string.addAttribute(
       .paragraphStyle, value: paragraph, range: NSRange(location: 0, length: string.length))

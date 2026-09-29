@@ -55,7 +55,7 @@ struct ResultGridView: NSViewRepresentable {
 
   /// Header height (set on the header view): name and type lines, or the name only
   static func headerHeight(hideColumnTypes: Bool) -> CGFloat {
-    hideColumnTypes ? 28 : 54
+    hideColumnTypes ? 24 : 44
   }
 
   /// Fixed height of a grid in a List or LazyVStack: at most `maxVisibleRows` rows plus header,
@@ -166,13 +166,22 @@ final class ResultGridScrollView: NSScrollView {
   }
 }
 
-/// Header view with an opaque background: the default one is translucent, so rows scrolled
-/// under it show through
+/// Header view with an opaque background and a bottom border. Super (not called) draws a
+/// translucent background over the fill, so the header cells are drawn here.
 final class ResultGridHeaderView: NSTableHeaderView {
   override func draw(_ dirtyRect: NSRect) {
     (tableView?.backgroundColor ?? .windowBackgroundColor).setFill()
     dirtyRect.fill()
-    super.draw(dirtyRect)
+    if let tableView {
+      for (index, column) in tableView.tableColumns.enumerated() where !column.isHidden {
+        var rect = headerRect(ofColumn: index)
+        if index == draggedColumn { rect.origin.x += draggedDistance }
+        guard rect.intersects(dirtyRect) else { continue }
+        column.headerCell.draw(withFrame: rect, in: self)
+      }
+    }
+    NSColor(Color.border).setFill()
+    NSRect(x: bounds.minX, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
   }
 }
 
@@ -252,6 +261,7 @@ final class ResultGridTableView: NSTableView {
     let tableColumn = column(at: point)
     guard row >= 0, tableColumn >= 0, visibleRect.contains(point),
       coordinator?.isEditing != true,
+      tableColumns[tableColumn].identifier != ResultGridCoordinator.rowNumberIdentifier,
       let frame = Self.detailsButtonFrame(
         cellRect: frameOfCell(atColumn: tableColumn, row: row), visibleRect: visibleRect)
     else {
