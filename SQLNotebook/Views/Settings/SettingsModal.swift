@@ -26,9 +26,9 @@ struct SettingsModal: View {
     case editor = "Editor"
     case results = "Results"
     case save = "Save"
-    case updates = "Updates"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
+    case updates = "Updates"
 
     /// SF Symbol shown next to the label in the navigation sidebar
     var icon: String {
@@ -80,7 +80,7 @@ struct SettingsModal: View {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.lg) {
             Text(selectedTab.rawValue)
-              .font(.subheading)
+              .font(.heading)
               .foregroundColor(.foreground)
 
             selectedSection
@@ -125,7 +125,7 @@ struct SettingsModal: View {
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
-      SettingsModalKeyboardShortcutsSection(viewMode: effectiveViewMode)
+      SettingsModalKeyboardShortcutsSection()
     }
   }
 
@@ -324,8 +324,8 @@ struct SettingsModalDeveloperSection: View {
         }
         .font(.bodyText)
         .foregroundColor(.accent)
-        .frame(maxWidth: .infinity)
         .padding(.vertical, Spacing.sm)
+        .padding(.horizontal, Spacing.lg)
         .background(Color.accent.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
       }
@@ -344,48 +344,89 @@ struct SettingsModalDeveloperSection: View {
 // MARK: - Keyboard Shortcuts Section
 
 struct SettingsModalKeyboardShortcutsSection: View {
-  let viewMode: ViewMode
+  /// Sub-tabs at the top of the page (rawValue = label)
+  private enum ShortcutsTab: String, CaseIterable {
+    case app = "App"
+    case editor = "Editor"
+  }
+
+  @State private var selectedTab: ShortcutsTab = .app
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
+      CapsuleTabPicker(selection: $selectedTab, tabs: ShortcutsTab.allCases, height: 28)
+        .frame(width: 200)
+
       Text("Custom keyboard shortcuts will be available in a future update.")
         .font(.small)
         .foregroundColor(.foregroundSubtle)
 
-      // General shortcuts (both modes)
-      generalShortcutsList
-
-      Divider()
-        .padding(.vertical, Spacing.xs)
-
-      // Mode-specific shortcuts
-      Text(viewMode == .notebook ? "Notebook Shortcuts" : "Editor Shortcuts")
-        .font(.small)
-        .fontWeight(.medium)
-        .foregroundColor(.foregroundMuted)
-
-      if viewMode == .notebook {
-        notebookShortcutsList
-      } else {
-        editorShortcutsList
+      switch selectedTab {
+      case .app:
+        appShortcuts
+      case .editor:
+        editorShortcuts
       }
     }
   }
 
-  private var generalShortcutsList: some View {
+  private func groupTitle(_ title: String) -> some View {
+    Text(title)
+      .font(.small)
+      .fontWeight(.medium)
+      .foregroundColor(.foregroundMuted)
+  }
+
+  private var appShortcuts: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
+      groupTitle("Files")
       ShortcutRow(action: "New Notebook", shortcut: "Cmd+Shift+N")
       ShortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+J")
+      ShortcutRow(action: "Open", shortcut: "Cmd+O")
+      ShortcutRow(action: "Save", shortcut: "Cmd+S")
       ShortcutRow(action: "Save As", shortcut: "Cmd+Shift+S")
-      ShortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
-      ShortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("Workspace")
+      ShortcutRow(action: "New Workspace", shortcut: "Cmd+Ctrl+N")
+      ShortcutRow(action: "Open Workspace", shortcut: "Cmd+Option+O")
+      ShortcutRow(action: "Save Workspace", shortcut: "Cmd+Option+S")
+      ShortcutRow(action: "Save Workspace As", shortcut: "Cmd+Option+Shift+S")
+      ShortcutRow(action: "Close Workspace", shortcut: "Cmd+Option+W")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("Tabs")
+      ShortcutRow(action: "Close Tab", shortcut: "Cmd+W")
+      ShortcutRow(action: "Reopen Closed Tab", shortcut: "Cmd+Shift+T")
+      ShortcutRow(action: "Next Tab", shortcut: "Cmd+Shift+]")
+      ShortcutRow(action: "Previous Tab", shortcut: "Cmd+Shift+[")
+      ShortcutRow(action: "Go to Tab 1-9", shortcut: "Cmd+1 ... Cmd+9")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("View")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
     }
   }
 
-  private var notebookShortcutsList: some View {
+  private var editorShortcuts: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
+      groupTitle("SQL Editor")
+      ShortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
+      ShortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
+      ShortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
+      ShortcutRow(action: "Find", shortcut: "Cmd+F")
+      ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
+      ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
+      ShortcutRow(action: "Accept Autocomplete", shortcut: "Tab / Enter")
+      ShortcutRow(action: "Dismiss Autocomplete", shortcut: "Esc")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("Notebook Cells")
       ShortcutRow(action: "Add New Cell", shortcut: "Cmd+Option+N")
       ShortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
       ShortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
@@ -393,15 +434,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
       ShortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
       ShortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
-    }
-  }
-
-  private var editorShortcutsList: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      ShortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
-      ShortcutRow(action: "Find", shortcut: "Cmd+F")
-      ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
-      ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
+      ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
     }
   }
 }
