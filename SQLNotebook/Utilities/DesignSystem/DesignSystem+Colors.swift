@@ -63,6 +63,12 @@ extension Color {
     dark: Color(hex: "71717a")  // Zinc 500
   )
 
+  /// Result grid cells: softer than `foreground`, stronger than `foregroundMuted`
+  static let gridForeground = Color(
+    light: Color(hex: "3f3f46"),  // Zinc 700
+    dark: Color(hex: "d4d4d8")  // Zinc 300
+  )
+
   // Border colors
   static let border = Color(
     light: Color(hex: "e4e4e7"),  // Zinc 200

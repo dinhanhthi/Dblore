@@ -15,7 +15,7 @@ import SwiftUI
 final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate,
   NSTextFieldDelegate
 {
-  static let textColor = NSColor(Color.foreground)
+  static let textColor = NSColor(Color.gridForeground)
   static let nullTextColor = NSColor(Color.foregroundSubtle)
   /// Background of the current search match (the one Enter moved to), as in the result table
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
