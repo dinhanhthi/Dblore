@@ -2,6 +2,13 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.3.2 (2026-09-29)
+
+### Improved
+
+- **SQLNotebook is now Dblore.** The app has a new name, a new bundle identifier (`ace.thi.Dblore`) and a new update feed, and notebooks use the `.dblore` extension. Rename existing `.sqlnb` files to `.dblore` (the content is unchanged) to open them. Saved connections, passwords and settings from SQLNotebook are not carried over, and SQLNotebook 0.3.1 does not update itself: download Dblore from the releases page. [#4039647](https://github.com/dinhanhthi/Dblore/commit/4039647) [#e548ddf](https://github.com/dinhanhthi/Dblore/commit/e548ddf)
+- **Wording no longer assumes SQL only.** Welcome screens, the "Run all" confirmation, the cell placeholder and the settings group title now speak about queries and notebooks in general; the `.sql` editor, Format SQL and SQL keyword highlighting keep their names. [#b0dbdcf](https://github.com/dinhanhthi/Dblore/commit/b0dbdcf)
+
 ## v0.3.1 (2026-09-29)
 
 ### Added
