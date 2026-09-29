@@ -13,6 +13,8 @@ extension SQLTextView {
 
   /// Returns true if the event was handled as a cell shortcut
   func handleCellShortcut(with event: NSEvent) -> Bool {
+    // No owning notebook (e.g. the favorite form modal): nothing to run
+    guard viewModelId != nil else { return false }
     let isEnter = event.keyCode == 36
     guard isEnter else { return false }
 
@@ -52,6 +54,8 @@ extension SQLTextView {
   /// Handles up/down arrow navigation between cells (notebook mode) or line boundaries (editor mode)
   /// Returns true if the event was handled as a navigation action
   func handleArrowNavigation(with event: NSEvent) -> Bool {
+    // No owning notebook (e.g. the favorite form modal): no cells to navigate
+    guard viewModelId != nil else { return false }
     let isUpArrow = event.keyCode == 126
     let isDownArrow = event.keyCode == 125
 

@@ -177,6 +177,7 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
     .settingsModal(workspaceManager: workspaceManager)
+    .favoriteModals(workspaceManager: workspaceManager)
     .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
       // Toggle settings modal: if already showing, close it; otherwise show settings
@@ -477,6 +478,21 @@ struct WorkspaceTabContentView: View {
           }
           return nil
         }
+      }
+
+      // Cmd+Z / Cmd+Shift+Z outside any text input -> undo/redo cell operations
+      // (text views, including field editors, keep their own undo)
+      let flags = event.modifierFlags.intersection([.command, .shift, .control, .option])
+      if event.charactersIgnoringModifiers?.lowercased() == "z",
+        flags == .command || flags == [.command, .shift],
+        !(eventWindow.firstResponder is NSTextView),
+        self.viewModel.viewMode == .notebook
+      {
+        let isRedo = flags.contains(.shift)
+        Task { @MainActor [viewModel] in
+          if isRedo { viewModel.redoCellChange() } else { viewModel.undoCellChange() }
+        }
+        return nil
       }
 
       return event

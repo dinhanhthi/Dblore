@@ -34,7 +34,8 @@ struct DataViewerView: View {
           result: result, viewModel: viewModel,
           hiddenColumns: viewModel.dataViewer?.hiddenColumns ?? [],
           highlight: viewModel.dataViewer?.highlight,
-          dialect: viewModel.dataViewer?.databaseType ?? .postgresql
+          dialect: viewModel.dataViewer?.databaseType ?? .postgresql,
+          canHighlight: true
         )
         // New page or relation: reset sort, search match and scroll; a reload of the same
         // page (inline edit, Refresh, Cmd+R) keeps them

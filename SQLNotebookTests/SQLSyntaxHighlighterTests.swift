@@ -366,6 +366,62 @@ struct SQLSyntaxHighlighterTests {
     }
   }
 
+  // MARK: - Token Colors
+
+  /// sRGB hex of a (dynamic) color; `NSColor(Color)` instances never compare equal
+  private func hex(_ color: NSColor?) -> String? {
+    guard let rgb = color?.usingColorSpace(.sRGB) else { return nil }
+    return String(
+      format: "%02X%02X%02X%02X", Int(rgb.redComponent * 255), Int(rgb.greenComponent * 255),
+      Int(rgb.blueComponent * 255), Int(rgb.alphaComponent * 255))
+  }
+
+  private func hex(_ color: Color) -> String? { hex(NSColor(color)) }
+
+  /// Foreground color (sRGB hex) at the `occurrence`-th occurrence of `token`
+  private func color(
+    of token: String, in sql: String, occurrence: Int = 0
+  ) -> String? {
+    let attributed = withSyntaxHighlightingEnabled { SQLSyntaxHighlighter.highlight(sql) }
+    var range = (sql as NSString).range(of: token)
+    for _ in 0..<occurrence {
+      let start = range.upperBound
+      range = (sql as NSString).range(
+        of: token, range: NSRange(location: start, length: (sql as NSString).length - start))
+    }
+    return hex(
+      attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor)
+  }
+
+  @Test("Token colors: keyword, function, type, number, string, identifier")
+  func tokenColors() {
+    let sql = "select count(id), x::int FROM t WHERE n = 42 AND s = 'abc'"
+    #expect(color(of: "select", in: sql) == hex(Color.syntaxKeyword))
+    #expect(color(of: "count", in: sql) == hex(Color.syntaxFunction))
+    #expect(color(of: "int", in: sql) == hex(Color.syntaxFunction))
+    #expect(color(of: "42", in: sql) == hex(Color.syntaxNumber))
+    #expect(color(of: "'abc'", in: sql) == hex(Color.syntaxString))
+    #expect(color(of: "id", in: sql) == hex(Color.foreground))
+  }
+
+  @Test("Keywords inside comments and strings keep the comment/string color")
+  func keywordsInsideCommentsAndStrings() {
+    let sql = "SELECT 1 -- FROM here\n/* WHERE 2 */ 'SELECT 3' $$COUNT(4)$$"
+    #expect(color(of: "FROM", in: sql) == hex(Color.syntaxComment))
+    #expect(color(of: "WHERE", in: sql) == hex(Color.syntaxComment))
+    #expect(color(of: "2", in: sql) == hex(Color.syntaxComment))
+    #expect(color(of: "SELECT", in: sql, occurrence: 1) == hex(Color.syntaxString))
+    #expect(color(of: "COUNT", in: sql) == hex(Color.syntaxString))
+  }
+
+  @Test("Keywords only match whole words")
+  func keywordsWholeWords() {
+    let sql = "SELECT selection, inner_id FROM t INNER JOIN u ON true"
+    #expect(color(of: "selection", in: sql) == hex(Color.foreground))
+    #expect(color(of: "inner_id", in: sql) == hex(Color.foreground))
+    #expect(color(of: "INNER", in: sql) == hex(Color.syntaxKeyword))
+  }
+
   // MARK: - Performance Tests
 
   @Test("Highlighting performance with repeated queries", .timeLimit(.minutes(1)))

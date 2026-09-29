@@ -19,6 +19,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let nullTextColor = NSColor(Color.foregroundSubtle)
   /// Background of the current search match (the one Enter moved to), as in the result table
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
+  /// Faint tint over the cells of the sorted column, read on each cell (the accent can change)
+  static var sortedColumnColor: NSColor { NSColor(Color.accent.opacity(0.06)) }
   /// Same size as `Font.mono` (body, monospaced)
   static let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
@@ -70,6 +72,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Called with the displayed row values, its index into `CellResult.rows` and the result
   /// column index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
+  /// Called with the result column, its value and the style and color chosen in the context
+  /// menu; nil hides the highlight items (the grid has no highlight form)
+  var onHighlightCell:
+    ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)?
+  /// Called by the context menu's "Clear Highlight"
+  var onClearHighlight: (() -> Void)?
   /// True while `update` shows the input sort in the header, so it isn't reported back
   private var isShowingInputSort = false
 
@@ -185,6 +193,97 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       column < model.columns.count
     else { return }
     onShowCellDetails?(model.row(at: row), originalRow, column)
+  }
+
+  // MARK: - Context menu
+
+  /// Cell a context-menu item acts on, or the highlight chosen for it
+  private struct MenuTarget {
+    let row: Int
+    let column: Int
+    var style: HighlightStyle = .cell
+    var color: HighlightColor = .yellow
+  }
+
+  /// Context menu of the cell at a displayed row and result column: copy, details in the right
+  /// sidebar and, when the grid supports it, highlight by cell or row in a preset color
+  func contextMenu(row: Int, column: Int) -> NSMenu? {
+    guard let model, row >= 0, row < model.rowCount, column >= 0, column < model.columns.count
+    else { return nil }
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    addItem(to: menu, "Copy Value", #selector(copyValue(_:)), MenuTarget(row: row, column: column))
+    addItem(
+      to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
+    if onHighlightCell != nil {
+      menu.addItem(.separator())
+      for style in HighlightStyle.allCases {
+        let submenu = NSMenu()
+        for color in HighlightColor.allCases {
+          let item = addItem(
+            to: submenu, color.displayName, #selector(highlightCell(_:)),
+            MenuTarget(row: row, column: column, style: style, color: color))
+          item.image = Self.swatch(color.nsColor)
+        }
+        let parent = NSMenuItem(
+          title: style == .cell ? "Highlight Cell" : "Highlight Row", action: nil,
+          keyEquivalent: "")
+        parent.submenu = submenu
+        menu.addItem(parent)
+      }
+      if key?.highlight?.isEmpty == false {
+        addItem(
+          to: menu, "Clear Highlight", #selector(clearHighlight(_:)),
+          MenuTarget(row: row, column: column))
+      }
+    }
+    return menu
+  }
+
+  @discardableResult
+  private func addItem(
+    to menu: NSMenu, _ title: String, _ action: Selector, _ target: MenuTarget
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    item.representedObject = target
+    menu.addItem(item)
+    return item
+  }
+
+  private static func swatch(_ color: NSColor) -> NSImage {
+    NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+      color.setFill()
+      NSBezierPath(ovalIn: rect).fill()
+      return true
+    }
+  }
+
+  @objc private func copyValue(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget, let model,
+      target.row < model.rowCount
+    else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(
+      model.value(row: target.row, column: target.column).fullString, forType: .string)
+  }
+
+  @objc private func seeMore(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    showCellDetails(row: target.row, column: target.column)
+  }
+
+  @objc private func highlightCell(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget, let model,
+      target.row < model.rowCount
+    else { return }
+    onHighlightCell?(
+      target.column, model.value(row: target.row, column: target.column), target.style,
+      target.color)
+  }
+
+  @objc private func clearHighlight(_ sender: NSMenuItem) {
+    onClearHighlight?()
   }
 
   /// TSV of the selected rows, all columns in on-screen order (after a column move)
@@ -394,14 +493,17 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Private
 
-  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, and
-  /// always clears it otherwise, since cells are reused
+  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, else
+  /// with the sorted-column tint, and always clears it otherwise, since cells are reused
   private func applyHighlight(to cell: NSTableCellView, row: Int, column: Int) {
     let hits = highlightMatches[row]
     let isPainted =
       key?.highlight?.style == .row ? hits != nil : hits?.contains(column) == true
+    let isSorted = key?.sortColumn != nil && model?.columns[column].name == key?.sortColumn
     cell.layer?.backgroundColor =
-      isPainted ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor : nil
+      isPainted
+      ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor
+      : isSorted ? Self.sortedColumnColor.cgColor : nil
   }
 
   /// Header height from the flag, and each column's header content; the header view is

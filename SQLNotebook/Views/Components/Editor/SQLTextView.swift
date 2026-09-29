@@ -107,6 +107,45 @@ class SQLTextView: NSTextView {
     return result
   }
 
+  // MARK: - Current Line Highlight
+
+  override func setSelectedRanges(
+    _ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool
+  ) {
+    super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
+    if isEditorMode { needsDisplay = true }
+  }
+
+  override func drawBackground(in rect: NSRect) {
+    super.drawBackground(in: rect)
+    guard isEditorMode, selectedRange().length == 0,
+      let layoutManager, let textContainer,
+      let lineRect = currentLineRect(layoutManager, textContainer)
+    else { return }
+    NSColor(Color.inputBackground).setFill()
+    NSRect(x: 0, y: lineRect.minY, width: bounds.width, height: lineRect.height).fill()
+  }
+
+  /// Rect (view coordinates) of the logical line containing the caret, including wrapped fragments.
+  private func currentLineRect(
+    _ layoutManager: NSLayoutManager, _ textContainer: NSTextContainer
+  ) -> NSRect? {
+    let text = string as NSString
+    let caret = selectedRange().location
+    var rect: NSRect
+    if caret >= text.length && (text.length == 0 || text.character(at: text.length - 1) == 10) {
+      rect = layoutManager.extraLineFragmentRect
+      if rect.isEmpty { return nil }
+    } else {
+      let lineRange = text.lineRange(for: NSRange(location: min(caret, text.length - 1), length: 0))
+      let glyphRange = layoutManager.glyphRange(
+        forCharacterRange: lineRange, actualCharacterRange: nil)
+      rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+    }
+    rect.origin.y += textContainerOrigin.y
+    return rect
+  }
+
   // MARK: - Key Events
 
   override func keyDown(with event: NSEvent) {

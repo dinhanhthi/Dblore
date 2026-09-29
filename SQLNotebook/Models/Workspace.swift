@@ -36,6 +36,11 @@ struct Workspace: Codable, Identifiable, Sendable {
   /// Workspace-level settings (overrides user settings)
   var settings: WorkspaceSettings
 
+  // MARK: - Favorites
+
+  /// Saved SQL statements shown in the left sidebar
+  var favorites: WorkspaceFavorites
+
   // MARK: - Metadata
 
   let createdAt: Date
@@ -52,6 +57,7 @@ struct Workspace: Codable, Identifiable, Sendable {
     case tabs
     case activeTabId
     case settings
+    case favorites
     case createdAt
     case lastOpenedAt
   }
@@ -65,6 +71,7 @@ struct Workspace: Codable, Identifiable, Sendable {
     tabs: [WorkspaceTabReference] = [],
     activeTabId: UUID? = nil,
     settings: WorkspaceSettings = .empty,
+    favorites: WorkspaceFavorites = .empty,
     createdAt: Date = Date(),
     lastOpenedAt: Date = Date()
   ) {
@@ -76,6 +83,7 @@ struct Workspace: Codable, Identifiable, Sendable {
     self.tabs = tabs
     self.activeTabId = activeTabId
     self.settings = settings
+    self.favorites = favorites
     self.createdAt = createdAt
     self.lastOpenedAt = lastOpenedAt
   }
@@ -102,6 +110,8 @@ struct Workspace: Codable, Identifiable, Sendable {
     tabs = try container.decodeIfPresent([WorkspaceTabReference].self, forKey: .tabs) ?? []
     activeTabId = try container.decodeIfPresent(UUID.self, forKey: .activeTabId)
     settings = try container.decodeIfPresent(WorkspaceSettings.self, forKey: .settings) ?? .empty
+    favorites =
+      try container.decodeIfPresent(WorkspaceFavorites.self, forKey: .favorites) ?? .empty
     createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     lastOpenedAt = try container.decodeIfPresent(Date.self, forKey: .lastOpenedAt) ?? Date()
 
@@ -126,6 +136,7 @@ struct Workspace: Codable, Identifiable, Sendable {
     try container.encode(tabs, forKey: .tabs)
     try container.encodeIfPresent(activeTabId, forKey: .activeTabId)
     try container.encode(settings, forKey: .settings)
+    try container.encode(favorites, forKey: .favorites)
     try container.encode(createdAt, forKey: .createdAt)
     try container.encode(lastOpenedAt, forKey: .lastOpenedAt)
     // fileURL is not encoded

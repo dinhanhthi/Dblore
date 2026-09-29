@@ -94,12 +94,17 @@ extension NotebookViewModel {
 
     selectedCellId = restoreSelection
 
-    // Register redo
+    // Register redo: put the same cell (id, content) back where it was
     if registerUndo {
-      let afterId = deletedIndex > 0 ? notebook.cells[deletedIndex - 1].id : nil
       undoManager.registerUndo(withTarget: self) { target in
         MainActor.assumeIsolated {
-          target.addCell(type: deletedCell.cellType, after: afterId, registerUndo: true)
+          target.restoreCellForUndo(
+            cell: deletedCell,
+            at: deletedIndex,
+            restoreSelection: deletedCell.id,
+            currentSelection: nil,
+            registerUndo: true
+          )
         }
       }
     }
@@ -113,7 +118,8 @@ extension NotebookViewModel {
     currentSelection _: UUID?,
     registerUndo: Bool
   ) {
-    notebook.cells.insert(cell, at: index)
+    // Clamp: a trap here would take the whole app down if the stack ever drifts
+    notebook.cells.insert(cell, at: min(index, notebook.cells.count))
     selectedCellId = restoreSelection
 
     // Register redo
@@ -189,10 +195,11 @@ extension NotebookViewModel {
 
     notebook.cells.swapAt(index, index - 1)
 
-    // Register undo
+    // Register undo (reselect the moved cell: the selection may have changed since)
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
         MainActor.assumeIsolated {
+          target.selectedCellId = id
           target.moveSelectedCellDown(registerUndo: true)
         }
       }
@@ -210,16 +217,31 @@ extension NotebookViewModel {
 
     notebook.cells.swapAt(index, index + 1)
 
-    // Register undo
+    // Register undo (reselect the moved cell: the selection may have changed since)
     if registerUndo {
       undoManager.registerUndo(withTarget: self) { target in
         MainActor.assumeIsolated {
+          target.selectedCellId = id
           target.moveSelectedCellUp(registerUndo: true)
         }
       }
       undoManager.setActionName("Move Cell Down")
       onDocumentChanged?()
     }
+  }
+
+  /// Undo the last cell operation (Cmd+Z while no text editor is focused)
+  func undoCellChange() {
+    guard undoManager.canUndo else { return }
+    undoManager.undo()
+    onDocumentChanged?()
+  }
+
+  /// Redo the last undone cell operation (Cmd+Shift+Z while no text editor is focused)
+  func redoCellChange() {
+    guard undoManager.canRedo else { return }
+    undoManager.redo()
+    onDocumentChanged?()
   }
 
   /// Select next cell, create new one if at the end

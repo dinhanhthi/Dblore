@@ -114,6 +114,11 @@ class WorkspaceManager: Identifiable {
 
   var isSettingsModalVisible: Bool = false
 
+  // MARK: - Favorites Modals
+
+  var favoriteModal: FavoriteModalRoute?
+  var favoriteToDelete: FavoriteStatement?
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver

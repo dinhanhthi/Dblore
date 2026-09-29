@@ -136,6 +136,16 @@ struct RightSidebarView: View {
         }
       }
 
+      if case .cellInfo = viewModel.rightSidebarContent {
+        Button(action: { viewModel.refreshCellDetail() }) {
+          Image(systemName: "arrow.clockwise")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .help("Refresh value")
+      }
+
       Button(action: { viewModel.closeSidebar() }) {
         Image(systemName: "xmark")
           .foregroundColor(.foregroundMuted)

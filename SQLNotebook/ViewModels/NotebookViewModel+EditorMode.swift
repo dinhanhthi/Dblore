@@ -124,6 +124,7 @@ extension NotebookViewModel {
 
           // Update View Query sidebar if it's open for editor mode
           updateEditorExecutedQuerySidebarIfNeeded(result: editorResult!)
+          syncCellDetail(cellId: nil, result: editorResult)
         }
 
       } else {
@@ -165,6 +166,7 @@ extension NotebookViewModel {
 
         // Update View Query sidebar if it's open for editor mode
         updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)
+        syncCellDetail(cellId: nil, result: cellResult)
       }
 
     } catch {

@@ -34,6 +34,24 @@ extension NotebookViewModel {
     dataViewer?.highlight = applied
   }
 
+  /// Highlight from the grid context menu: rows where `column` equals `value` (is NULL for a NULL
+  /// cell), painted per `style` in `color`. Replaces the applied highlight and fills the form
+  /// with it, so the sidebar shows the same rule.
+  func highlightCell(
+    column: String, value: CellValue, style: HighlightStyle, color: HighlightColor
+  ) {
+    guard let state = dataViewer else { return }
+    let condition =
+      value.isNull
+      ? FilterCondition(column: column, op: .isNull)
+      : FilterCondition(column: column, op: .equals, value: value.fullString)
+    let highlight = TableHighlight(
+      filter: TableFilter(conditions: [condition]), color: color, style: style)
+    highlightDraftRelation = "\(state.schema).\(state.name)"
+    highlightDraft = highlight
+    dataViewer?.highlight = highlight
+  }
+
   /// Remove the applied highlight and reset the form to one empty row
   func clearHighlight() {
     guard dataViewer != nil else { return }

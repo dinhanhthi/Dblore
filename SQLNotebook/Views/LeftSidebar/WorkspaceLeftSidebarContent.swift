@@ -17,18 +17,19 @@ struct WorkspaceLeftSidebarContent: View {
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
     case security = "Security"
+    case favorite = "Favorite"
   }
 
   var body: some View {
     VStack(spacing: 0) {
-      // Tab selector (only when connected and not loading)
-      if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
-        tabSelector
-        Divider()
-      }
+      // Tab selector (always visible)
+      tabSelector
+      Divider()
 
       // Content
-      if !workspaceManager.connectionState.isConnected {
+      if selectedTab == .favorite {
+        FavoritesTabContent(workspaceManager: workspaceManager)
+      } else if !workspaceManager.connectionState.isConnected {
         emptyState
       } else if workspaceManager.isLoadingSchema {
         loadingState
@@ -49,11 +50,11 @@ struct WorkspaceLeftSidebarContent: View {
 
   @ViewBuilder
   private var contentForSelectedTab: some View {
-    switch selectedTab {
-    case .public:
-      publicTabContent
-    case .security:
+    // Favorite is handled in body; only the schema tabs reach here
+    if selectedTab == .security {
       securityTabContent
+    } else {
+      publicTabContent
     }
   }
 
