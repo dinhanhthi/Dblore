@@ -33,6 +33,13 @@ struct AISSEParserTests {
     }
   }
 
+  @Test("chatCompletions top-level string error throws its text")
+  func chatStringError() {
+    #expect(throws: AIStreamError.provider("model not found")) {
+      try run(.chatCompletions, [#"data: {"error":"model not found"}"#, ""])
+    }
+  }
+
   @Test("multi-line data is joined with newline")
   func multiLineData() throws {
     let out = try run(

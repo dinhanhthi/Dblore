@@ -95,6 +95,7 @@ nonisolated struct AISSEParser: Sendable {
   }
 
   private static func errorMessage(_ object: [String: Any]) -> String? {
-    (object["error"] as? [String: Any])?["message"] as? String
+    if let text = object["error"] as? String, !text.isEmpty { return text }
+    return (object["error"] as? [String: Any])?["message"] as? String
   }
 }

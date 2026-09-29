@@ -99,4 +99,18 @@ struct AIProviderConfigTests {
     settings.setAPIKey("", for: .openAI)
     #expect(settings.apiKey(for: .openAI) == nil)
   }
+
+  @Test("setAPIKey reports a failed save")
+  func failedSaveReported() {
+    let (settings, _, _) = makeSettings(keyStore: FailingAIKeyStore())
+    #expect(!settings.setAPIKey("sk-test", for: .openAI))
+    #expect(settings.apiKey(for: .openAI) == nil)
+    #expect(settings.setAPIKey("", for: .openAI))
+  }
+}
+
+private final class FailingAIKeyStore: AIKeyStore, @unchecked Sendable {
+  func load(account: String) -> String? { nil }
+  func save(_ value: String, account: String) -> Bool { false }
+  func delete(account: String) {}
 }

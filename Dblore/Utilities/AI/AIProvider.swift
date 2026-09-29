@@ -132,13 +132,15 @@ final class AISettings {
     keyStore.load(account: AIKeyStoreFactory.apiKeyAccount(kind.rawValue))
   }
 
-  func setAPIKey(_ value: String, for kind: AIProviderKind) {
+  /// Returns false when the key store could not save the key
+  @discardableResult
+  func setAPIKey(_ value: String, for kind: AIProviderKind) -> Bool {
     let account = AIKeyStoreFactory.apiKeyAccount(kind.rawValue)
     if value.isEmpty {
       keyStore.delete(account: account)
-    } else {
-      keyStore.save(value, account: account)
+      return true
     }
+    return keyStore.save(value, account: account)
   }
 
   func isConfigured(_ kind: AIProviderKind) -> Bool {
