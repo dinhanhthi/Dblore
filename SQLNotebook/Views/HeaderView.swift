@@ -209,6 +209,26 @@ struct HeaderView: View {
             try? await Task.sleep(for: .seconds(1))
             if !Task.isCancelled { canStopEditorQuery = true }
           }
+
+          // Filter rows: toggles the filter form in the right sidebar
+          let isFilterShown =
+            viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .tableFilter
+          Button(action: {
+            if isFilterShown {
+              viewModel.closeSidebar()
+            } else {
+              viewModel.prepareFilterDraft()
+              viewModel.showSidebar(content: .tableFilter)
+            }
+          }) {
+            Image(systemName: "line.3.horizontal.decrease")
+          }
+          .buttonStyle(
+            GhostButtonStyle(
+              isActive: isFilterShown || !(viewModel.dataViewer?.filter.isEmpty ?? true),
+              iconOnly: true)
+          )
+          .help("Filter rows")
         }
 
         // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right)

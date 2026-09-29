@@ -26,6 +26,7 @@ enum SidebarContent: Equatable {
     cellId: UUID?  // ID of the cell that produced this result (for re-running after edit)
   )
   case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
+  case tableFilter  // Filter form of the data viewer tab
 }
 
 /// Main view model for the notebook editor
@@ -133,6 +134,15 @@ class NotebookViewModel {
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   /// Table/view data viewer tab state (nil for every other tab)
   var dataViewer: DataViewerState?
+  /// Filter form of the data viewer: edited freely, only `applyFilter()` copies it to
+  /// `dataViewer.filter`
+  var filterDraft = TableFilter(conditions: [])
+  /// Filters saved for the connection and table of the data viewer (refreshed on save/delete)
+  var savedFilters: [SavedFilter] = []
+  /// Relation (`schema.name`) the draft belongs to, to reset it when the viewer shows another
+  @ObservationIgnored var filterDraftRelation: String?
+  /// Persistent store of the saved filters; tests inject an isolated one
+  @ObservationIgnored var savedFilterStore = SavedFilterStore()
   /// An editor run is in flight (Cancel button, `WorkspaceManager.isTransactionOriginRunning`)
   var isEditorQueryRunning = false
   /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.

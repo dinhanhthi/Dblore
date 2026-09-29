@@ -32,6 +32,13 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if case .tableFilter = content {
+          // TableFilterContent handles its own ScrollView
+          VStack(alignment: .leading, spacing: 0) {
+            contentView(for: content)
+              .padding(Spacing.md)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if case .executedQuery = content {
           // ExecutedQuerySidebarContent handles its own ScrollView
           VStack(alignment: .leading, spacing: 0) {
@@ -92,6 +99,8 @@ struct RightSidebarView: View {
       return "Cell Value"
     case .executedQuery:
       return "Executed Query"
+    case .tableFilter:
+      return "Filter"
     }
   }
 
@@ -133,6 +142,8 @@ struct RightSidebarView: View {
       .environment(viewModel)
     case .executedQuery(let query, let cellId):
       ExecutedQuerySidebarContent(query: query, cellId: cellId)
+    case .tableFilter:
+      TableFilterContent(viewModel: viewModel)
     }
   }
 
