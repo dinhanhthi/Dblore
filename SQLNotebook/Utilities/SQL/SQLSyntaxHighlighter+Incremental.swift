@@ -74,13 +74,16 @@ extension SQLSyntaxHighlighter {
     var forwardMemo = Memo()
     func align(_ r: NSRange) -> NSRange {
       guard length > 0 else { return NSRange(location: 0, length: 0) }
-      let start = startMemo.value(for: r.location) {
-        text.paragraphRange(for: NSRange(location: $0, length: 0)).location
-      }
+      let start =
+        startMemo.cached(for: r.location)
+        ?? startMemo.store(
+          text.paragraphRange(for: NSRange(location: r.location, length: 0)).location,
+          for: r.location)
       let last = r.length > 0 ? NSMaxRange(r) - 1 : r.location
-      let end = endMemo.value(for: last) {
-        NSMaxRange(text.paragraphRange(for: NSRange(location: $0, length: 0)))
-      }
+      let end =
+        endMemo.cached(for: last)
+        ?? endMemo.store(
+          NSMaxRange(text.paragraphRange(for: NSRange(location: last, length: 0))), for: last)
       return NSRange(location: start, length: end - start)
     }
 
@@ -96,15 +99,21 @@ extension SQLSyntaxHighlighter {
         lo = min(lo, newSpans[first].location)
         hi = max(hi, NSMaxRange(newSpans[end - 1]))
       }
-      lo = backMemo.value(for: lo) { lo in
+      if let c = backMemo.cached(for: lo) {
+        lo = c
+      } else {
         var p = lo
         while p > 0, isBlank(text.character(at: p - 1)) { p -= 1 }
-        return p < lo && p > 0 && endsWithFunctionName(text, before: p) ? p - 1 : lo
+        let grown = p < lo && p > 0 && endsWithFunctionName(text, before: p) ? p - 1 : lo
+        lo = backMemo.store(grown, for: lo)
       }
-      hi = forwardMemo.value(for: hi) { hi in
+      if let c = forwardMemo.cached(for: hi) {
+        hi = c
+      } else {
         var q = hi
         while q < length, isBlank(text.character(at: q)) { q += 1 }
-        return q > hi && endsWithWord(text, before: hi) ? q : hi
+        let grown = q > hi && endsWithWord(text, before: hi) ? q : hi
+        hi = forwardMemo.store(grown, for: hi)
       }
       next = align(clamp(lo, hi, length))
     }
@@ -142,14 +151,14 @@ extension SQLSyntaxHighlighter {
 
   /// Remembers the last computed (key, value) pair
   private struct Memo {
-    private var key = Int.min
-    private var cached = 0
-    mutating func value(for k: Int, _ compute: (Int) -> Int) -> Int {
-      if k != key {
-        cached = compute(k)
-        key = k
-      }
-      return cached
+    private var lastKey = Int.min
+    private var lastValue = 0
+    func cached(for k: Int) -> Int? { k == lastKey ? lastValue : nil }
+    @discardableResult
+    mutating func store(_ value: Int, for k: Int) -> Int {
+      lastKey = k
+      lastValue = value
+      return value
     }
   }
 
