@@ -29,6 +29,39 @@ class WindowDragView: NSView {
   }
 }
 
+/// Transparent backing view that makes the window unmovable while the pointer is over it, so a
+/// drag in the transparent titlebar reaches the SwiftUI gesture instead of moving the window
+/// (AppKit asks the NSHostingView, not this background view, whether a mouse-down moves the window)
+struct WindowDragBlocker: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { WindowDragBlockerView() }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+@MainActor
+class WindowDragBlockerView: NSView {
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    trackingAreas.forEach(removeTrackingArea)
+    addTrackingArea(
+      NSTrackingArea(
+        rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+        owner: self))
+  }
+
+  override func mouseEntered(with event: NSEvent) { window?.isMovable = false }
+
+  override func mouseExited(with event: NSEvent) { window?.isMovable = true }
+
+  override func viewWillMove(toWindow newWindow: NSWindow?) {
+    // A tab closed under the pointer never gets mouseExited
+    if newWindow == nil { window?.isMovable = true }
+    super.viewWillMove(toWindow: newWindow)
+  }
+
+  override nonisolated func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 // MARK: - Traffic Light Positioner
 
 /// NSViewRepresentable that adjusts traffic light button positions

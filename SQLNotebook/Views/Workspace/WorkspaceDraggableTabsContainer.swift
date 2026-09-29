@@ -288,6 +288,7 @@ struct WorkspaceDraggableTabItem: View {
           .fill(Color.foreground.opacity(0.06))
       }
     }
+    .background(WindowDragBlocker())
     .contentShape(Capsule())
     .opacity(isDragging ? 0.9 : 1.0)
     .scaleEffect(isDragging ? 1.02 : 1.0)
