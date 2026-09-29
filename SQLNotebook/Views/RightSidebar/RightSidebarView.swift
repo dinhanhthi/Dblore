@@ -9,6 +9,7 @@ struct RightSidebarView: View {
   @Bindable var viewModel: NotebookViewModel
   @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
   @State private var showSavedFilters = false
+  @State private var showSavedHighlights = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -33,13 +34,10 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if case .tableFilter = content {
-          // TableFilterContent handles its own ScrollView
-          VStack(alignment: .leading, spacing: 0) {
-            contentView(for: content)
-              .padding(Spacing.md)
-          }
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if content == .tableFilter || content == .tableHighlight {
+          // TableFilterContent and TableHighlightContent handle their own ScrollView; Apply and
+          // Clear sit in a footer pinned at the bottom
+          formWithFooter(content)
         } else if case .executedQuery = content {
           // ExecutedQuerySidebarContent handles its own ScrollView
           VStack(alignment: .leading, spacing: 0) {
@@ -68,6 +66,42 @@ struct RightSidebarView: View {
     }
   }
 
+  /// Form content filling the sidebar with a footer (Apply/Clear) pinned at the bottom
+  private func formWithFooter(_ content: SidebarContent) -> some View {
+    VStack(spacing: 0) {
+      contentView(for: content)
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+      Divider()
+
+      HStack(spacing: Spacing.sm) {
+        Button("Apply") { applyForm(content) }
+          .buttonStyle(PrimaryButtonStyle())
+        Button("Clear") { clearForm(content) }
+          .buttonStyle(SecondaryButtonStyle())
+        Spacer()
+      }
+      .padding(Spacing.md)
+    }
+  }
+
+  private func applyForm(_ content: SidebarContent) {
+    if content == .tableHighlight {
+      viewModel.applyHighlight()
+    } else {
+      Task { await viewModel.applyFilter() }
+    }
+  }
+
+  private func clearForm(_ content: SidebarContent) {
+    if content == .tableHighlight {
+      viewModel.clearHighlight()
+    } else {
+      Task { await viewModel.clearFilter() }
+    }
+  }
+
   private var sidebarHeader: some View {
     HStack {
       Text(headerTitle)
@@ -86,6 +120,19 @@ struct RightSidebarView: View {
         .help("Save filters")
         .popover(isPresented: $showSavedFilters, arrowEdge: .bottom) {
           SavedFiltersPopover(viewModel: viewModel)
+        }
+      }
+
+      if case .tableHighlight = viewModel.rightSidebarContent {
+        Button(action: { showSavedHighlights.toggle() }) {
+          Image(systemName: "bookmark")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .help("Save highlights")
+        .popover(isPresented: $showSavedHighlights, arrowEdge: .bottom) {
+          SavedHighlightsPopover(viewModel: viewModel)
         }
       }
 
@@ -115,6 +162,8 @@ struct RightSidebarView: View {
       return "Executed Query"
     case .tableFilter:
       return "Filter"
+    case .tableHighlight:
+      return "Highlight"
     }
   }
 
@@ -158,6 +207,8 @@ struct RightSidebarView: View {
       ExecutedQuerySidebarContent(query: query, cellId: cellId)
     case .tableFilter:
       TableFilterContent(viewModel: viewModel)
+    case .tableHighlight:
+      TableHighlightContent(viewModel: viewModel)
     }
   }
 

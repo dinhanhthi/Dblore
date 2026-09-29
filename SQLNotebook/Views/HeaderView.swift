@@ -233,6 +233,26 @@ struct HeaderView: View {
               iconOnly: true)
           )
           .help("Filter rows")
+
+          // Highlight rows: toggles the highlight form in the right sidebar
+          let isHighlightShown =
+            viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .tableHighlight
+          Button(action: {
+            if isHighlightShown {
+              viewModel.closeSidebar()
+            } else {
+              viewModel.prepareHighlightDraft()
+              viewModel.showSidebar(content: .tableHighlight)
+            }
+          }) {
+            Image(systemName: "highlighter")
+          }
+          .buttonStyle(
+            GhostButtonStyle(
+              isActive: isHighlightShown || !(viewModel.dataViewer?.highlight.isEmpty ?? true),
+              iconOnly: true)
+          )
+          .help("Highlight rows")
         }
 
         // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right)

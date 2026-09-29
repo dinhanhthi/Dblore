@@ -26,6 +26,8 @@ struct DataViewerState: Equatable {
   var databaseType: DatabaseType = .postgresql
   /// The applied filter
   var filter = TableFilter(conditions: [])
+  /// The applied highlight: painted client-side, so not part of `LoadKey`
+  var highlight = TableHighlight(filter: TableFilter(conditions: []))
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {
