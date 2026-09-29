@@ -30,8 +30,8 @@ struct ResultGridHeaderContent: Equatable {
 
 final class ResultGridHeaderCell: NSTableHeaderCell {
   static let titleFont = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-  /// Same size as `Font.small` (subheadline)
-  static let typeFont = NSFont.preferredFont(forTextStyle: .subheadline)
+  /// Smaller than `Font.small` (subheadline, 11pt)
+  static let typeFont = NSFont.systemFont(ofSize: 10)
   static let typeColor = NSColor(Color.foregroundSubtle)
   static let keyColor = NSColor(Color.warning)
 
