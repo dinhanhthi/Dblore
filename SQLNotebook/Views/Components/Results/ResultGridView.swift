@@ -206,6 +206,8 @@ final class ResultGridTableView: NSTableView {
   /// Table row and table (on-screen) column under the details button
   private var hoveredCell: (row: Int, tableColumn: Int)?
   private var hoverTrackingArea: NSTrackingArea?
+  /// Row currently drawn with the hover background
+  private(set) var hoveredRow = -1
   /// Clip view whose scrolling moves the details button
   private weak var observedClipView: NSClipView?
 
@@ -257,6 +259,7 @@ final class ResultGridTableView: NSTableView {
   override func mouseExited(with event: NSEvent) {
     super.mouseExited(with: event)
     guard event.trackingArea === hoverTrackingArea else { return }
+    setHoveredRow(-1)
     hideDetailsButton()
   }
 
@@ -264,6 +267,7 @@ final class ResultGridTableView: NSTableView {
   /// the point is on no visible cell or a cell is being edited
   func updateDetailsButton(at point: NSPoint) {
     let row = row(at: point)
+    setHoveredRow(visibleRect.contains(point) ? row : -1)
     let tableColumn = column(at: point)
     guard row >= 0, tableColumn >= 0, visibleRect.contains(point),
       coordinator?.isEditing != true,
@@ -280,6 +284,16 @@ final class ResultGridTableView: NSTableView {
     // Row views added while scrolling would cover the button
     if subviews.last !== button { addSubview(button, positioned: .above, relativeTo: nil) }
     button.isHidden = false
+  }
+
+  private func setHoveredRow(_ row: Int) {
+    guard row != hoveredRow else { return }
+    let previous = hoveredRow
+    hoveredRow = row
+    for (index, hovered) in [(previous, false), (row, true)]
+    where index >= 0 && index < numberOfRows {
+      (rowView(atRow: index, makeIfNecessary: false) as? ResultGridRowView)?.isHovered = hovered
+    }
   }
 
   private func hideDetailsButton() {

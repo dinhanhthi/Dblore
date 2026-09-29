@@ -330,6 +330,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       ?? ResultGridRowView()
     rowView.identifier = Self.rowIdentifier
     rowView.isAlternate = row % 2 == 1
+    rowView.isHovered = (tableView as? ResultGridTableView)?.hoveredRow == row
     return rowView
   }
 
