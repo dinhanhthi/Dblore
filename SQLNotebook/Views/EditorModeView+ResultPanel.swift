@@ -307,6 +307,8 @@ struct EditorResultGridView: View {
   /// Highlight of the data viewer, painted in the grid without changing its rows
   var highlight: TableHighlight? = nil
   var dialect: DatabaseType = .postgresql
+  /// Adds the highlight items to the cell context menu (data viewer)
+  var canHighlight = false
   @State private var sortColumn: String?
   @State private var sortAscending = true
   /// Current search match when it is in the result data or column names
@@ -331,6 +333,13 @@ struct EditorResultGridView: View {
         viewModel.showGridCellInSidebar(
           row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
       },
+      onHighlightCell: canHighlight
+        ? { column, value, style, color in
+          guard result.columns.indices.contains(column) else { return }
+          viewModel.highlightCell(
+            column: result.columns[column].name, value: value, style: style, color: color)
+        } : nil,
+      onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,
       currentMatch: currentMatch,

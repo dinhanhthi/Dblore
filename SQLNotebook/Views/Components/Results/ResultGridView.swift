@@ -27,6 +27,13 @@ struct ResultGridView: NSViewRepresentable {
   /// index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)? =
     nil
+  /// Receives the result column, its value and the style and color chosen in the context menu;
+  /// nil leaves the highlight items out of the menu
+  var onHighlightCell:
+    ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)? =
+      nil
+  /// Receives the context menu's "Clear Highlight"
+  var onClearHighlight: (() -> Void)? = nil
   /// Text highlighted in the cells (search)
   var searchQuery = ""
   var caseSensitive = false
@@ -124,6 +131,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onCommitEdit = onCommitEdit
     coordinator.onSortChange = onSortChange
     coordinator.onShowCellDetails = onShowCellDetails
+    coordinator.onHighlightCell = onHighlightCell
+    coordinator.onClearHighlight = onClearHighlight
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
@@ -231,6 +240,21 @@ final class ResultGridTableView: NSTableView {
     let column = self.column(at: convert(event.locationInWindow, from: nil))
     if column >= 0 { lastClickedColumn = column }
     super.mouseDown(with: event)
+  }
+
+  /// Right-click menu of the cell under the pointer (none on the "#" gutter or outside the
+  /// rows); an unselected row becomes the selection first, as in Finder
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let point = convert(event.locationInWindow, from: nil)
+    let row = row(at: point)
+    let tableColumn = column(at: point)
+    guard row >= 0, tableColumn >= 0,
+      let column = Int(tableColumns[tableColumn].identifier.rawValue)
+    else { return nil }
+    if !selectedRowIndexes.contains(row) {
+      selectRowIndexes([row], byExtendingSelection: false)
+    }
+    return coordinator?.contextMenu(row: row, column: column)
   }
 
   @objc func editClickedCell(_ sender: Any?) {
