@@ -1,6 +1,6 @@
 name: Deploy appcast
 
-# Publishes ONLY appcast.xml to GitHub Pages (https://dinhanhthi.github.io/SQLNotebook/appcast.xml).
+# Publishes ONLY appcast.xml to GitHub Pages (https://dinhanhthi.github.io/Dblore/appcast.xml).
 # Nothing else in the repo is published: the job copies just that one file into the Pages artifact.
 # Requires Settings > Pages > Source = "GitHub Actions".
 # release.yml dispatches this workflow after committing appcast.xml, because pushes made with

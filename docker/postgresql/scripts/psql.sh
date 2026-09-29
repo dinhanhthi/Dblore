@@ -8,4 +8,4 @@ echo "🔧 Opening psql shell..."
 echo "💡 Type \q to quit, \dt to list tables, \d table_name to describe table"
 echo ""
 
-docker compose exec postgres psql -U sqlnotebook -d sqlnotebook
+docker compose exec postgres psql -U dblore -d dblore

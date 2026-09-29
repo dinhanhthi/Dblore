@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Build, sign, notarize and package SQLNotebook as a Developer ID DMG.
-# Used both locally and by CI. Output: dist/SQLNotebook-<version>.dmg (+ .sha256)
+# Build, sign, notarize and package Dblore as a Developer ID DMG.
+# Used both locally and by CI. Output: dist/Dblore-<version>.dmg (+ .sha256)
 
 set -euo pipefail
 
-SCHEME="SQLNotebook"
-PROJECT="SQLNotebook.xcodeproj"
+SCHEME="Dblore"
+PROJECT="Dblore.xcodeproj"
 TEAM_ID="86H6CNLN4C"
 IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
-NOTARY_PROFILE="SQLNotebookNotary"
+NOTARY_PROFILE="DbloreNotary"
 
 usage() {
   cat <<EOF

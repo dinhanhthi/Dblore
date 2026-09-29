@@ -38,15 +38,15 @@ if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
 fi
 
 echo "🗑️  Dropping existing schema..."
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
+docker compose exec -T postgres psql -U dblore -d dblore -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" > /dev/null
 
 echo "📥 Restoring from backup..."
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook < "$BACKUP_FILE" > /dev/null 2>&1
+docker compose exec -T postgres psql -U dblore -d dblore < "$BACKUP_FILE" > /dev/null 2>&1
 
 echo "✅ Database restored successfully!"
 echo ""
 echo "📊 Verifying data..."
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook -c "
+docker compose exec -T postgres psql -U dblore -d dblore -c "
 SELECT
     'customers' as table_name, COUNT(*) as count FROM customers
 UNION ALL SELECT 'products', COUNT(*) FROM products

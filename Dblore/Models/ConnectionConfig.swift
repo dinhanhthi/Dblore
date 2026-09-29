@@ -1,0 +1,319 @@
+//
+//  ConnectionConfig.swift
+//  Dblore
+//
+
+import Foundation
+
+/// Database type supported by the application
+enum DatabaseType: String, Codable, CaseIterable, Sendable {
+  case postgresql = "PostgreSQL"
+  case sqlite = "SQLite"
+
+  var displayName: String {
+    rawValue
+  }
+
+  /// Asset catalog image name for the database type icon (from simpleicons.org)
+  var iconAssetName: String {
+    switch self {
+    case .postgresql:
+      return "postgresql"
+    case .sqlite:
+      return "sqlite"
+    }
+  }
+}
+
+/// Protection level for database connections
+/// Combines the previous readOnly and blockSchemaChanges into a single setting
+enum ConnectionProtectionLevel: String, Codable, CaseIterable, Sendable {
+  /// No protection - all queries allowed
+  case none
+  /// Block schema changes only (CREATE/DROP/ALTER/TRUNCATE)
+  /// Data modifications (INSERT/UPDATE/DELETE) are allowed
+  case schemaOnly = "schema"
+  /// Full read-only mode - block all modifications including data and schema
+  case readOnly = "readonly"
+
+  var displayName: String {
+    switch self {
+    case .none: return "None"
+    case .schemaOnly: return "Schema Protected"
+    case .readOnly: return "Read-Only"
+    }
+  }
+
+  var description: String {
+    switch self {
+    case .none:
+      return "All queries allowed"
+    case .schemaOnly:
+      return "Block CREATE, DROP, ALTER, TRUNCATE"
+    case .readOnly:
+      return "Block all data and schema modifications"
+    }
+  }
+
+  /// Icon for UI display
+  var iconName: String {
+    switch self {
+    case .none: return "lock.open"
+    case .schemaOnly: return "tablecells.badge.ellipsis"
+    case .readOnly: return "lock.fill"
+    }
+  }
+
+  /// Whether this level blocks schema changes
+  var blocksSchemaChanges: Bool {
+    self == .schemaOnly || self == .readOnly
+  }
+
+  /// Whether this level blocks data modifications
+  var blocksDataModifications: Bool {
+    self == .readOnly
+  }
+}
+
+/// Configuration for database connection
+struct ConnectionConfig: Codable, Equatable, Sendable {
+  var databaseType: DatabaseType
+  var host: String
+  var port: Int
+  var database: String
+  var username: String
+  var password: String
+  var sslMode: SSLMode
+  var rememberConnection: Bool
+  var timeoutSeconds: Int
+  var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
+  var name: String  // Optional label for the connection
+  var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
+  var protectedMode: Bool  // Protected mode (ON by default, also for legacy connections)
+  var statementTimeoutSeconds: Int  // Server-side statement_timeout
+  var lockTimeoutSeconds: Int  // Server-side lock_timeout
+  var idleInTransactionTimeoutSeconds: Int  // Server-side idle_in_transaction_session_timeout
+  var rowCapOverride: Int?  // Per-connection row cap (nil = use global setting)
+
+  // Custom CodingKeys for backward compatibility
+  private enum CodingKeys: String, CodingKey {
+    case databaseType, host, port, database, username, password, sslMode
+    case rememberConnection, timeoutSeconds, name, safeMode
+    case protectedMode, statementTimeoutSeconds, lockTimeoutSeconds
+    case idleInTransactionTimeoutSeconds, rowCapOverride
+    // New key
+    case protectionLevel
+    // Legacy keys (for reading old data)
+    case readOnly, blockSchemaChanges
+  }
+
+  // Custom decoder for backward compatibility with old readOnly/blockSchemaChanges format
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    databaseType = try container.decode(DatabaseType.self, forKey: .databaseType)
+    host = try container.decode(String.self, forKey: .host)
+    port = try container.decode(Int.self, forKey: .port)
+    database = try container.decode(String.self, forKey: .database)
+    username = try container.decode(String.self, forKey: .username)
+    password = try container.decode(String.self, forKey: .password)
+    sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
+    rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
+    timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
+    name = try container.decode(String.self, forKey: .name)
+    safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
+    protectedMode = try container.decodeIfPresent(Bool.self, forKey: .protectedMode) ?? true
+    statementTimeoutSeconds = SessionBrakeLimits.clampStatementTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60)
+    lockTimeoutSeconds = SessionBrakeLimits.clampLockTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .lockTimeoutSeconds) ?? 5)
+    idleInTransactionTimeoutSeconds = SessionBrakeLimits.clampIdleTimeout(
+      try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600)
+    rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
+
+    // Try to decode new protectionLevel first, fall back to legacy fields
+    if let level = try container.decodeIfPresent(
+      ConnectionProtectionLevel.self, forKey: .protectionLevel)
+    {
+      protectionLevel = level
+    } else {
+      // Migrate from legacy readOnly/blockSchemaChanges
+      let readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+      let blockSchemaChanges =
+        try container.decodeIfPresent(Bool.self, forKey: .blockSchemaChanges) ?? false
+
+      if readOnly {
+        protectionLevel = .readOnly
+      } else if blockSchemaChanges {
+        protectionLevel = .schemaOnly
+      } else {
+        protectionLevel = .none
+      }
+    }
+  }
+
+  // Custom encoder - only encode new format
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(databaseType, forKey: .databaseType)
+    try container.encode(host, forKey: .host)
+    try container.encode(port, forKey: .port)
+    try container.encode(database, forKey: .database)
+    try container.encode(username, forKey: .username)
+    try container.encode(password, forKey: .password)
+    try container.encode(sslMode, forKey: .sslMode)
+    try container.encode(rememberConnection, forKey: .rememberConnection)
+    try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+    try container.encode(protectionLevel, forKey: .protectionLevel)
+    try container.encode(name, forKey: .name)
+    try container.encodeIfPresent(safeMode, forKey: .safeMode)
+    try container.encode(protectedMode, forKey: .protectedMode)
+    try container.encode(statementTimeoutSeconds, forKey: .statementTimeoutSeconds)
+    try container.encode(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
+    try container.encode(idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
+    try container.encodeIfPresent(rowCapOverride, forKey: .rowCapOverride)
+  }
+
+  nonisolated init(
+    databaseType: DatabaseType = .postgresql,
+    host: String = "localhost",
+    port: Int = 5432,
+    database: String = "",
+    username: String = "",
+    password: String = "",
+    sslMode: SSLMode = .prefer,
+    rememberConnection: Bool = true,
+    timeoutSeconds: Int = 30,
+    protectionLevel: ConnectionProtectionLevel = .none,
+    name: String = "",
+    safeMode: SafeMode? = nil,
+    protectedMode: Bool = true,
+    statementTimeoutSeconds: Int = 60,
+    lockTimeoutSeconds: Int = 5,
+    idleInTransactionTimeoutSeconds: Int = 600,
+    rowCapOverride: Int? = nil
+  ) {
+    self.databaseType = databaseType
+    self.host = host
+    self.port = port
+    self.database = database
+    self.username = username
+    self.password = password
+    self.sslMode = sslMode
+    self.rememberConnection = rememberConnection
+    self.timeoutSeconds = timeoutSeconds
+    self.protectionLevel = protectionLevel
+    self.name = name
+    self.safeMode = safeMode
+    self.protectedMode = protectedMode
+    self.statementTimeoutSeconds = statementTimeoutSeconds
+    self.lockTimeoutSeconds = lockTimeoutSeconds
+    self.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds
+    self.rowCapOverride = rowCapOverride
+  }
+
+  // MARK: - Convenience accessors (for easier migration)
+
+  /// Whether this connection blocks all modifications (read-only mode)
+  var isReadOnly: Bool {
+    protectionLevel == .readOnly
+  }
+
+  /// Whether this connection blocks schema changes
+  var blocksSchemaChanges: Bool {
+    protectionLevel.blocksSchemaChanges
+  }
+
+  /// Display string for connection info
+  var displayString: String {
+    "\(database)@\(host):\(port)"
+  }
+
+  /// Safe display string for logging (redacts sensitive host information)
+  /// Examples:
+  /// - "mydb@db.example.com:5432" -> "mydb@db.*****.com:5432"
+  /// - "mydb@192.168.1.100:5432" -> "mydb@192.168.***.***:5432"
+  /// - "mydb@localhost:5432" -> "mydb@localhost:5432" (localhost is safe)
+  nonisolated var safeDisplayString: String {
+    let maskedHost = redactHost(host)
+    return "\(database)@\(maskedHost):\(port)"
+  }
+
+  /// Redact host/IP address for security (private helper)
+  private nonisolated func redactHost(_ host: String) -> String {
+    // Don't redact localhost (safe for debugging)
+    if host.lowercased() == "localhost" || host == "127.0.0.1" {
+      return host
+    }
+
+    // Redact IP addresses (e.g., 192.168.1.100 -> 192.168.***.***)
+    if host.contains(".") && host.split(separator: ".").count == 4 {
+      let parts = host.split(separator: ".")
+      if parts.count == 4 && parts.allSatisfy({ Int($0) != nil }) {
+        return "\(parts[0]).\(parts[1]).***. ***"
+      }
+    }
+
+    // Redact domain names (keep first and last part, e.g., db.example.com -> db.*****.com)
+    if host.contains(".") {
+      let parts = host.split(separator: ".")
+      if parts.count >= 2 {
+        let first = parts.first!
+        let last = parts.last!
+        return "\(first).*****.\(last)"
+      }
+    }
+
+    // Fallback: redact middle characters for short strings
+    if host.count > 4 {
+      let prefix = String(host.prefix(2))
+      let suffix = String(host.suffix(2))
+      return "\(prefix)***\(suffix)"
+    }
+
+    return "****"
+  }
+}
+
+/// SSL mode for database connections
+enum SSLMode: String, Codable, CaseIterable, Sendable {
+  case disable
+  case allow
+  case prefer
+  case require
+  case verifyCa = "verify-ca"
+  case verifyFull = "verify-full"
+
+  var displayName: String {
+    switch self {
+    case .disable: return "Disable"
+    case .allow: return "Allow"
+    case .prefer: return "Prefer"
+    case .require: return "Require"
+    case .verifyCa: return "Verify CA"
+    case .verifyFull: return "Verify Full"
+    }
+  }
+}
+
+/// State of the database connection
+enum ConnectionState: Equatable, Sendable {
+  case disconnected
+  case connecting
+  case connected
+  case error(String)
+
+  var isConnected: Bool {
+    if case .connected = self { return true }
+    return false
+  }
+
+  var isConnecting: Bool {
+    if case .connecting = self { return true }
+    return false
+  }
+
+  /// Width for connection buttons area (bolt + schema visualizer when connected)
+  var connectionButtonsWidth: CGFloat {
+    isConnected ? 78 : 47
+  }
+}

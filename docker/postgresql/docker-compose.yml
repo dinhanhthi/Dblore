@@ -1,13 +1,13 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: sqlnotebook-postgres
+    container_name: dblore-postgres
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-sqlnotebook}
-      POSTGRES_USER: ${POSTGRES_USER:-sqlnotebook}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sqlnotebook123}
+      POSTGRES_DB: ${POSTGRES_DB:-dblore}
+      POSTGRES_USER: ${POSTGRES_USER:-dblore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dblore123}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
 
     ports:
@@ -20,18 +20,18 @@ services:
       - ./init:/docker-entrypoint-initdb.d:ro
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sqlnotebook} -d ${POSTGRES_DB:-sqlnotebook}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dblore} -d ${POSTGRES_DB:-dblore}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
     networks:
-      - sqlnotebook
+      - dblore
 
 volumes:
   postgres_data:
-    name: sqlnotebook-postgres-data
+    name: dblore-postgres-data
 
 networks:
-  sqlnotebook:
-    name: sqlnotebook-network
+  dblore:
+    name: dblore-network

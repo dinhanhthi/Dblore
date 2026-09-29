@@ -1,4 +1,4 @@
--- SQLNotebook Example Database Schema
+-- Dblore Example Database Schema
 -- This script creates sample tables for testing and development
 
 -- =============================================================================
@@ -182,6 +182,6 @@ CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON products
 -- =============================================================================
 
 -- Grant permissions to the application user
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO sqlnotebook;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO sqlnotebook;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO sqlnotebook;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO dblore;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO dblore;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO dblore;

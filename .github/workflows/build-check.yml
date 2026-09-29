@@ -29,9 +29,9 @@ jobs:
       - name: Archive (Release, unsigned)
         run: |
           xcodebuild archive \
-            -project SQLNotebook.xcodeproj \
-            -scheme SQLNotebook \
+            -project Dblore.xcodeproj \
+            -scheme Dblore \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -archivePath "$RUNNER_TEMP/SQLNotebook.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Dblore.xcarchive" \
             CODE_SIGNING_ALLOWED=NO

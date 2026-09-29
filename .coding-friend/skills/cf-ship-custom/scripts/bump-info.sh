@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bump-info.sh — print everything needed to choose a version bump and write a
-# changelog entry for SQLNotebook. Read by an LLM, so the output is deliberately
+# changelog entry for Dblore. Read by an LLM, so the output is deliberately
 # explicit: every state is named, the legend is printed every run, and the
 # path→target mapping is stated rather than left to be inferred.
 #
@@ -50,7 +50,7 @@ done
 
 # Guard the path arithmetic above instead of letting a wrong REPO_ROOT surface
 # as a confusing grep error further down.
-PBXPROJ_REL="SQLNotebook.xcodeproj/project.pbxproj"
+PBXPROJ_REL="Dblore.xcodeproj/project.pbxproj"
 PBXPROJ="$REPO_ROOT/$PBXPROJ_REL"
 if [[ ! -f "$PBXPROJ" ]]; then
   echo "Error: $PBXPROJ_REL not found under REPO_ROOT=$REPO_ROOT"
@@ -86,7 +86,7 @@ fi
 # "Excluded" automatically. EXCLUDED_PATHS below is documentation for the
 # mapping legend, not a filter. `:(icase)` also matches commits made while git
 # tracked the project folder under a different letter case.
-APP_PATHS=(SQLNotebook/ SQLNotebookTests/ ':(icase)SQLNotebook.xcodeproj/' scripts/ assets/)
+APP_PATHS=(Dblore/ DbloreTests/ ':(icase)Dblore.xcodeproj/' scripts/ assets/)
 EXCLUDED_PATHS="website/ web/ landing/ docs/ .coding-friend/ .github/ examples/ *.md (root) appcast.xml (root)"
 # Conventional-commit scopes that never count toward a bump, however many app
 # files the commit touched.
@@ -97,7 +97,7 @@ EXCLUDED_SCOPE_RE='^[0-9a-f]+ [a-z]+\((website|landing|docs)\)!?:'
 REPO_URL="$(git remote get-url origin 2>/dev/null \
   | sed 's|git@github.com:|https://github.com/|' \
   | sed 's|\.git$||' || true)"
-[[ -z "$REPO_URL" ]] && REPO_URL="https://github.com/dinhanhthi/SQLNotebook"
+[[ -z "$REPO_URL" ]] && REPO_URL="https://github.com/dinhanhthi/Dblore"
 
 # ─── Latest published tag ─────────────────────────────────────────────────────
 #
@@ -296,7 +296,7 @@ print_commits() {
 
 # ─── Output ───────────────────────────────────────────────────────────────────
 
-echo "=== Bump Info — SQLNotebook (single target) ==="
+echo "=== Bump Info — Dblore (single target) ==="
 echo ""
 if [[ "$TEST_MODE" == "yes" ]]; then
   echo "TEST MODE: BUMP_INFO_TAG / BUMP_INFO_VERSION override in effect — not a real release state."
@@ -372,8 +372,8 @@ echo "                            something was tagged without bumping. STOP and
 echo "                            the user; do not release from this state."
 echo ""
 echo "--- Path→target mapping (authoritative — do not infer another) ---"
-echo "One target: SQLNotebook, the macOS app. There is nothing else to version."
-echo "  Bump-relevant:  ${APP_PATHS[*]}  → SQLNotebook"
+echo "One target: Dblore, the macOS app. There is nothing else to version."
+echo "  Bump-relevant:  ${APP_PATHS[*]}  → Dblore"
 echo "                  (the project path matches case-insensitively)"
 echo "  NOT relevant:   $EXCLUDED_PATHS"
 echo "                  → no bump, no version of their own. Any commit touching"

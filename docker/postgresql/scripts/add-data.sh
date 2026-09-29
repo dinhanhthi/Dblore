@@ -25,7 +25,7 @@ cd "$SCRIPT_DIR/.."
 echo "📁 Executing SQL file: $SQL_FILE"
 echo ""
 
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook < "$SQL_FILE"
+docker compose exec -T postgres psql -U dblore -d dblore < "$SQL_FILE"
 
 echo ""
 echo "✅ SQL executed successfully!"

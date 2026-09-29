@@ -10,7 +10,7 @@ echo ""
 
 # Build with settings similar to GitHub Actions
 xcodebuild \
-  -scheme SQLNotebook \
+  -scheme Dblore \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \
   CODE_SIGN_IDENTITY="" \

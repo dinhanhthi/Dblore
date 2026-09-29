@@ -1,4 +1,4 @@
-# SQLNotebook Docker Databases
+# Dblore Docker Databases
 
 Docker configurations for local development and testing databases.
 
@@ -30,16 +30,16 @@ cp .env.example .env
 docker compose up -d
 ```
 
-**Connect from SQLNotebook:**
+**Connect from Dblore:**
 ```
 Host: localhost
 Port: 5433
-Database: sqlnotebook
-User: sqlnotebook
-Password: sqlnotebook123
+Database: dblore
+User: dblore
+Password: dblore123
 ```
 
-Or connection string: `postgresql://sqlnotebook:sqlnotebook123@localhost:5433/sqlnotebook`
+Or connection string: `postgresql://dblore:dblore123@localhost:5433/dblore`
 
 > Port 5433 avoids conflict with local Postgres.app (5432)
 
@@ -69,7 +69,7 @@ cp .env.example .env
 docker compose up -d
 
 # 2. Restore from backup using script
-./scripts/restore-db.sh backups/sqlnotebook_backup_YYYY-MM-DD_HH-MM-SS.sql
+./scripts/restore-db.sh backups/dblore_backup_YYYY-MM-DD_HH-MM-SS.sql
 ```
 
 The script will:
@@ -87,10 +87,10 @@ cp .env.example .env
 docker compose up -d
 
 # 2. Drop existing schema (to avoid conflicts with init scripts)
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker compose exec -T postgres psql -U dblore -d dblore -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 # 3. Restore from backup
-docker compose exec -T postgres psql -U sqlnotebook -d sqlnotebook < backups/sqlnotebook_backup_YYYY-MM-DD_HH-MM-SS.sql
+docker compose exec -T postgres psql -U dblore -d dblore < backups/dblore_backup_YYYY-MM-DD_HH-MM-SS.sql
 ```
 
 > ⚠️ **Important**: When restoring to a fresh container, you must drop the existing schema first because init scripts automatically create tables when the container starts. This prevents duplicate key errors during restore.
@@ -138,7 +138,7 @@ cd docker/postgresql
 
 ### 📝 Add More Data (Without Changing Schema)
 
-**Option 1: Use SQLNotebook App** (Easiest)
+**Option 1: Use Dblore App** (Easiest)
 - Connect and run INSERT statements in a cell
 
 **Option 2: SQL File**
@@ -214,7 +214,7 @@ docker compose logs -f        # View logs
 
 ### 📚 Example Queries
 
-Connect from SQLNotebook and try:
+Connect from Dblore and try:
 
 ```sql
 -- Customer order summary
@@ -240,9 +240,9 @@ WHERE metadata->>'tier' = 'gold';
 Edit `.env` to customize database credentials or port:
 
 ```bash
-POSTGRES_DB=sqlnotebook
-POSTGRES_USER=sqlnotebook
-POSTGRES_PASSWORD=sqlnotebook123
+POSTGRES_DB=dblore
+POSTGRES_USER=dblore
+POSTGRES_PASSWORD=dblore123
 POSTGRES_PORT=5433
 ```
 
@@ -290,11 +290,11 @@ docker compose -f docker-compose.test.yml up -d
 |---------|-------|
 | Host | localhost |
 | Port | 5435 |
-| Database | sqlnotebook_test |
-| Username | sqlnotebook_test |
-| Password | sqlnotebook123 |
+| Database | dblore_test |
+| Username | dblore_test |
+| Password | dblore123 |
 
-Connection string: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/sqlnotebook_test`
+Connection string: `postgresql://dblore_test:dblore123@localhost:5435/dblore_test`
 
 > ⚠️ **Note:** Port 5435 is used to avoid conflicts with:
 > - Development database (port 5433)
@@ -308,15 +308,15 @@ Connection string: `postgresql://sqlnotebook_test:sqlnotebook123@localhost:5435/
 # Set environment variables for test database
 export TEST_DB_HOST=localhost
 export TEST_DB_PORT=5435
-export TEST_DB_NAME=sqlnotebook_test
-export TEST_DB_USER=sqlnotebook_test
-export TEST_DB_PASSWORD=sqlnotebook123
+export TEST_DB_NAME=dblore_test
+export TEST_DB_USER=dblore_test
+export TEST_DB_PASSWORD=dblore123
 
 # Run all tests
-xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
+xcodebuild test -scheme Dblore -destination 'platform=macOS'
 
 # Run only integration tests
-xcodebuild test -scheme SQLNotebook -destination 'platform=macOS' -only-testing:SQLNotebookTests/DatabaseIntegrationTests
+xcodebuild test -scheme Dblore -destination 'platform=macOS' -only-testing:DbloreTests/DatabaseIntegrationTests
 ```
 
 **Option 2: Xcode (Recommended)**
@@ -334,9 +334,9 @@ xcodebuild test -scheme SQLNotebook -destination 'platform=macOS' -only-testing:
    - Add the following environment variables:
      - Name: `TEST_DB_HOST`, Value: `localhost`
      - Name: `TEST_DB_PORT`, Value: `5435`
-     - Name: `TEST_DB_NAME`, Value: `sqlnotebook_test`
-     - Name: `TEST_DB_USER`, Value: `sqlnotebook_test`
-     - Name: `TEST_DB_PASSWORD`, Value: `sqlnotebook123`
+     - Name: `TEST_DB_NAME`, Value: `dblore_test`
+     - Name: `TEST_DB_USER`, Value: `dblore_test`
+     - Name: `TEST_DB_PASSWORD`, Value: `dblore123`
 
 3. **Run tests:**
    - Press **Cmd+U** to run all tests
@@ -347,7 +347,7 @@ xcodebuild test -scheme SQLNotebook -destination 'platform=macOS' -only-testing:
 If test database is not running, integration tests can be skipped:
 
 ```bash
-SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook -destination 'platform=macOS'
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore -destination 'platform=macOS'
 ```
 
 ### Test Database vs Development Database
@@ -358,7 +358,7 @@ SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme SQLNotebook -destination 'pl
 | **Purpose** | Manual testing, development | Automated integration tests |
 | **Sample Data** | ✅ Pre-loaded with schemas and data | ❌ Blank (tests create/drop tables) |
 | **Initialization** | Runs `init/` scripts on first start | No initialization scripts |
-| **Use Case** | Interactive testing in SQLNotebook app | CI/CD, automated testing |
+| **Use Case** | Interactive testing in Dblore app | CI/CD, automated testing |
 | **Data Persistence** | ✅ Persistent across restarts | ✅ Persistent (but tests clean up) |
 
 ### Managing Test Database
@@ -379,7 +379,7 @@ docker compose -f docker-compose.test.yml down
 docker compose -f docker-compose.test.yml ps
 
 # Connect to test database (for debugging)
-PGPASSWORD=sqlnotebook123 psql -h localhost -p 5435 -U sqlnotebook_test -d sqlnotebook_test
+PGPASSWORD=dblore123 psql -h localhost -p 5435 -U dblore_test -d dblore_test
 
 # Reset test database (delete all data)
 docker compose -f docker-compose.test.yml down -v
@@ -388,7 +388,7 @@ docker compose -f docker-compose.test.yml up -d
 
 ### Integration Test Details
 
-The integration tests (`SQLNotebookTests/DatabaseIntegrationTests.swift`) verify:
+The integration tests (`DbloreTests/DatabaseIntegrationTests.swift`) verify:
 
 - ✅ **NUMERIC type decoding** - PostgreSQL NUMERIC columns correctly decode to Swift Double
 - ✅ **NULL value handling** - NULL values decode to `CellValue.null`
@@ -406,10 +406,10 @@ Tests create temporary tables, run queries, then clean up automatically.
 **Tests failing with connection errors:**
 ```bash
 # Verify test database is running
-docker ps | grep sqlnotebook-postgres-test
+docker ps | grep dblore-postgres-test
 
 # Check container is healthy (should show "healthy")
-docker ps | grep sqlnotebook-postgres-test
+docker ps | grep dblore-postgres-test
 
 # View logs for errors
 docker compose -f docker-compose.test.yml logs postgres-test
@@ -425,7 +425,7 @@ lsof -i :5435
 
 **Tests timeout:**
 - Ensure test database is healthy: `docker ps` should show `(healthy)` not `(health: starting)`
-- Check network connectivity: `PGPASSWORD=sqlnotebook123 psql -h localhost -p 5435 -U sqlnotebook_test -d sqlnotebook_test -c "SELECT 1;"`
+- Check network connectivity: `PGPASSWORD=dblore123 psql -h localhost -p 5435 -U dblore_test -d dblore_test -c "SELECT 1;"`
 
 ---
 

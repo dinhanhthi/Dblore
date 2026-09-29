@@ -81,9 +81,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          dmg="dist/SQLNotebook-$version.dmg"
+          dmg="dist/Dblore-$version.dmg"
           gh release create "$GITHUB_REF_NAME" "$dmg" "$dmg.sha256" \
-            --title "SQLNotebook $version" \
+            --title "Dblore $version" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
 
       # Use the tools from the Sparkle SPM artifact the build already resolved (checksum-verified
@@ -115,7 +115,7 @@ jobs:
           git fetch --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
           git show FETCH_HEAD:appcast.xml > "$archives/appcast.xml"
           # DMG only, no release-notes .md: keeps the in-app update dialog compact.
-          cp "dist/SQLNotebook-$version.dmg" "$archives/"
+          cp "dist/Dblore-$version.dmg" "$archives/"
           # Key via stdin: the default keychain path blocks on a prompt on a headless runner.
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" "$archives" \
             --ed-key-file - \

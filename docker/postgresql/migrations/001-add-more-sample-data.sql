@@ -1,5 +1,5 @@
 -- Migration: Add more sample data to all tables
--- Purpose: Expand dataset for comprehensive testing of SQLNotebook
+-- Purpose: Expand dataset for comprehensive testing of Dblore
 
 -- =============================================================================
 -- MORE CUSTOMERS (adding 20 more)

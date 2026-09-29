@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bump.sh — set the app version in the Xcode project for SQLNotebook.
+# bump.sh — set the app version in the Xcode project for Dblore.
 #
 # Usage: bash bump.sh <new_version>
 #   e.g. bash bump.sh 0.2.0
@@ -7,7 +7,7 @@
 # The version is always the numeric core X.Y.Z: Apple requires three integers
 # for CFBundleShortVersionString.
 #
-# ONE file carries the version: SQLNotebook.xcodeproj/project.pbxproj. Every
+# ONE file carries the version: Dblore.xcodeproj/project.pbxproj. Every
 # build configuration has its own copy of two settings, and all of them move:
 #   MARKETING_VERSION        -> <new_version>           (CFBundleShortVersionString)
 #   CURRENT_PROJECT_VERSION  -> max(current) + 1        (CFBundleVersion)
@@ -42,7 +42,7 @@ if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-PBXPROJ_REL="SQLNotebook.xcodeproj/project.pbxproj"
+PBXPROJ_REL="Dblore.xcodeproj/project.pbxproj"
 PBXPROJ="${BUMP_PBXPROJ:-$REPO_ROOT/$PBXPROJ_REL}"
 if [[ ! -f "$PBXPROJ" ]]; then
   echo "Error: $PBXPROJ not found"
@@ -63,7 +63,7 @@ fi
 TMP_FILE="$(mktemp "$PBXPROJ.bump.XXXXXX")"
 trap 'rm -f "$TMP_FILE"' EXIT
 
-echo "Bumping SQLNotebook to ${NEW_VERSION}…"
+echo "Bumping Dblore to ${NEW_VERSION}…"
 python3 - "$PBXPROJ" "$TMP_FILE" "$NEW_VERSION" <<'PY'
 import re, sys
 

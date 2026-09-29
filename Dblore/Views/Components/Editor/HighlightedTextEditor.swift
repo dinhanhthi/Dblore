@@ -1,0 +1,729 @@
+//
+//  HighlightedTextEditor.swift
+//  Dblore
+//
+
+import AppKit
+import SwiftUI
+
+// MARK: - Passthrough Scroll View
+
+/// Custom NSScrollView that forwards scroll events to parent when content doesn't need scrolling
+class PassthroughScrollView: NSScrollView {
+  override func scrollWheel(with event: NSEvent) {
+    guard let textView = documentView as? NSTextView else {
+      super.scrollWheel(with: event)
+      return
+    }
+
+    let contentHeight = textView.frame.height
+    let visibleHeight = contentView.bounds.height
+
+    // If content doesn't need scrolling, forward to parent (SwiftUI List)
+    if contentHeight <= visibleHeight {
+      nextResponder?.scrollWheel(with: event)
+      return
+    }
+
+    // Content needs scrolling - check boundaries
+    let currentY = contentView.bounds.origin.y
+    let maxY = max(0, contentHeight - visibleHeight)
+
+    let isAtTop = currentY <= 0
+    let isAtBottom = currentY >= maxY - 1  // Small tolerance
+    let scrollingUp = event.scrollingDeltaY > 0
+    let scrollingDown = event.scrollingDeltaY < 0
+
+    // Forward to parent when at boundary and scrolling in that direction
+    if (isAtTop && scrollingUp) || (isAtBottom && scrollingDown) {
+      nextResponder?.scrollWheel(with: event)
+    } else {
+      super.scrollWheel(with: event)
+    }
+  }
+}
+
+// MARK: - Highlighted Text Editor
+
+struct HighlightedTextEditor: View {
+  @Binding var text: String
+  var onFocus: (() -> Void)?
+  var onTextChanged: (() -> Void)?  // Called when user types in the editor
+  @Binding var textViewRef: SQLTextView?
+  @Binding var isEmpty: Bool
+  @State private var height: CGFloat = 40
+
+  var autocompleteProvider: SQLAutocompleteProvider?
+  var cellId: UUID?  // For search highlighting
+  var viewModelId: UUID?  // ID of the viewModel (for scoped search)
+  var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
+  var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
+  var wordWrapEnabled: Bool = true  // Word wrap setting
+
+  var body: some View {
+    HighlightedTextEditorRepresentable(
+      text: $text,
+      height: $height,
+      isEmpty: $isEmpty,
+      onFocus: onFocus,
+      onTextChanged: onTextChanged,
+      textViewRef: $textViewRef,
+      autocompleteProvider: autocompleteProvider,
+      cellId: cellId,
+      viewModelId: viewModelId,
+      maxHeight: maxHeight,
+      isEditorMode: isEditorMode,
+      wordWrapEnabled: wordWrapEnabled
+    )
+    .frame(height: maxHeight ?? height)
+  }
+}
+
+struct HighlightedTextEditorRepresentable: NSViewRepresentable {
+  @Binding var text: String
+  @Binding var height: CGFloat
+  @Binding var isEmpty: Bool
+  var onFocus: (() -> Void)?
+  var onTextChanged: (() -> Void)?  // Called when user types in the editor
+  @Binding var textViewRef: SQLTextView?
+  var autocompleteProvider: SQLAutocompleteProvider?
+  var cellId: UUID?
+  var viewModelId: UUID?
+  var maxHeight: CGFloat?
+  var isEditorMode: Bool = false
+  var wordWrapEnabled: Bool = true
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let scrollView = PassthroughScrollView()
+    let textView = SQLTextView()
+
+    textView.delegate = context.coordinator
+    // Records which characters each edit touched (see Coordinator.textStorage(_:didProcessEditing:))
+    textView.textStorage?.delegate = context.coordinator
+    textView.onFocus = onFocus
+
+    // Setup onBlur callback to update binding when editor loses focus
+    textView.onBlur = { [weak coordinator = context.coordinator] newText in
+      coordinator?.text.wrappedValue = newText
+    }
+
+    // Setup autocomplete
+    textView.autocompleteProvider = autocompleteProvider
+
+    // Set editor mode
+    textView.isEditorMode = isEditorMode
+
+    // Store reference to textView
+    DispatchQueue.main.async {
+      textViewRef = textView
+    }
+
+    // Store weak reference in coordinator for search highlighting
+    context.coordinator.textView = textView
+    context.coordinator.cellId = cellId
+    context.coordinator.viewModelId = viewModelId
+    textView.viewModelId = viewModelId
+    textView.isRichText = false
+    textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    textView.textColor = NSColor(Color.foreground)
+    textView.backgroundColor = NSColor.clear
+    textView.drawsBackground = false
+    textView.isAutomaticQuoteSubstitutionEnabled = false
+    textView.isAutomaticDashSubstitutionEnabled = false
+    textView.isAutomaticTextReplacementEnabled = false
+    textView.allowsUndo = true
+
+    // Enable continuous undo grouping for better undo/redo behavior
+    textView.isContinuousSpellCheckingEnabled = false
+    if let undoManager = textView.undoManager {
+      undoManager.groupsByEvent = true
+    }
+
+    textView.textContainerInset = NSSize(width: 4, height: 2)
+    textView.textContainer?.lineFragmentPadding = 0
+
+    // Configure text container based on word wrap setting
+    if wordWrapEnabled {
+      // Word wrap enabled: text wraps at container width
+      textView.textContainer?.widthTracksTextView = true
+      textView.textContainer?.containerSize = NSSize(
+        width: 0,  // Will be set by widthTracksTextView
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = false
+    } else {
+      // Word wrap disabled: text extends horizontally, enable horizontal scroll
+      textView.textContainer?.widthTracksTextView = false
+      textView.textContainer?.containerSize = NSSize(
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+      )
+      textView.isHorizontallyResizable = true
+    }
+    textView.textContainer?.heightTracksTextView = false
+    textView.isVerticallyResizable = true
+    textView.autoresizingMask = wordWrapEnabled ? [.width] : [.width, .height]
+
+    scrollView.documentView = textView
+    // Enable scrolling when maxHeight is set (editor mode)
+    scrollView.hasVerticalScroller = maxHeight != nil
+    // Enable horizontal scroll when word wrap disabled
+    scrollView.hasHorizontalScroller = !wordWrapEnabled
+    scrollView.drawsBackground = false
+
+    // Set initial text with highlighting
+    context.coordinator.applyHighlighting(to: textView, text: text)
+
+    // Update height after setting text
+    DispatchQueue.main.async {
+      context.coordinator.updateHeight(textView: textView)
+    }
+
+    return scrollView
+  }
+
+  func updateNSView(_ scrollView: NSScrollView, context: Context) {
+    guard let textView = scrollView.documentView as? SQLTextView else { return }
+
+    // Update callbacks
+    textView.onFocus = onFocus
+
+    // Setup onBlur callback to update binding when editor loses focus
+    textView.onBlur = { [weak coordinator = context.coordinator] newText in
+      coordinator?.text.wrappedValue = newText
+    }
+
+    // Update onTextChanged callback in coordinator (for dirty state tracking)
+    context.coordinator.onTextChanged = onTextChanged
+
+    // Update autocomplete provider
+    textView.autocompleteProvider = autocompleteProvider
+
+    // Update editor mode
+    textView.isEditorMode = isEditorMode
+
+    // Update word wrap setting only when it changes (ensureLayout is a full-document layout)
+    context.coordinator.configureWordWrapIfNeeded(
+      wordWrapEnabled, scrollView: scrollView, textView: textView)
+
+    // Only update text from external source if different
+    // Note: We allow update even when first responder for external file reload scenarios
+    if textView.string != text {
+      // Apply syntax highlighting when updating from external source
+      context.coordinator.applyHighlighting(to: textView, text: text)
+
+      DispatchQueue.main.async {
+        context.coordinator.updateHeight(textView: textView)
+      }
+    }
+  }
+
+  static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+    // Cleanup when view is removed (e.g., cell scrolls off-screen)
+    guard let textView = scrollView.documentView as? SQLTextView else { return }
+
+    // Clear delegate to prevent retain cycles
+    textView.delegate = nil
+    textView.textStorage?.delegate = nil
+
+    // Stop any pending autocomplete computation and close the popover
+    textView.hideAutocomplete()
+
+    // Clear callbacks
+    textView.onFocus = nil
+    textView.onBlur = nil
+
+    // Drop undo actions that target this text view before emptying it
+    coordinator.undoManager.removeAllActions()
+
+    // Clear text storage to free memory
+    textView.textStorage?.setAttributedString(NSAttributedString())
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(
+      text: $text, height: $height, isEmpty: $isEmpty, onTextChanged: onTextChanged
+    )
+  }
+
+  @MainActor
+  class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
+    var text: Binding<String>
+    var height: Binding<CGFloat>
+    var isEmpty: Binding<Bool>
+    var onTextChanged: (() -> Void)?  // Called when user types in the editor
+
+    /// This editor's own undo stack (see `undoManager(for:)`)
+    let undoManager = UndoManager()
+
+    // Weak reference to text view for search highlighting
+    weak var textView: NSTextView?
+    var cellId: UUID?
+    var viewModelId: UUID?  // ID of the viewModel (for scoped search)
+
+    // Search state
+    var searchQuery: String = ""
+    var isCaseSensitive: Bool = false
+    private var currentMatchId: UUID?
+    private var currentMatchRange: NSRange?
+    var isSearchActive: Bool = false
+
+    // Word wrap state
+    /// Wrap value last applied to the text container (nil until the first update)
+    var appliedWordWrap: Bool?
+    /// Number of times the container was reconfigured (test hook)
+    var wordWrapReconfigureCount = 0
+
+    /// Applies the word-wrap container setup and relayout, only when the value changed
+    func configureWordWrapIfNeeded(
+      _ wordWrapEnabled: Bool, scrollView: NSScrollView, textView: NSTextView
+    ) {
+      guard appliedWordWrap != wordWrapEnabled else { return }
+      appliedWordWrap = wordWrapEnabled
+      wordWrapReconfigureCount += 1
+
+      if wordWrapEnabled {
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+          width: scrollView.contentView.bounds.width,
+          height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        scrollView.hasHorizontalScroller = false
+      } else {
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(
+          width: CGFloat.greatestFiniteMagnitude,
+          height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = true
+        textView.autoresizingMask = [.width, .height]
+        scrollView.hasHorizontalScroller = true
+      }
+
+      // Force layout update after word wrap change
+      textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+    }
+
+    // Incremental highlighting state
+    /// Comment and string spans of the text as last highlighted (nil until a full highlight)
+    private var blockSpans: [NSRange]?
+    /// UTF-16 length of the text as last highlighted
+    private var highlightedLength = 0
+    /// Union of the character edits since the last highlight, in new-text coordinates
+    private var pendingEditedRange: NSRange?
+    private var pendingChangeInLength = 0
+    /// Set when the pending edits cannot be trusted (several edits before one pass, or a pass
+    /// skipped); the next pass then does a full highlight, which re-records the state
+    private var pendingEditsInvalid = false
+    /// Number of highlight passes that fell back to the full path (test hook)
+    private(set) var fullFallbackCount = 0
+
+    // Notification observers
+    private var highlightObserver: NSObjectProtocol?
+    private var clearObserver: NSObjectProtocol?
+    private var unfocusObserver: NSObjectProtocol?
+    private var syntaxHighlightObserver: NSObjectProtocol?
+    private var accentColorObserver: NSObjectProtocol?
+
+    init(
+      text: Binding<String>, height: Binding<CGFloat>, isEmpty: Binding<Bool>,
+      onTextChanged: (() -> Void)?
+    ) {
+      self.text = text
+      self.height = height
+      self.isEmpty = isEmpty
+      self.onTextChanged = onTextChanged
+      super.init()
+
+      // Setup notification observers
+      setupNotificationObservers()
+    }
+
+    deinit {
+      // Observers will be automatically removed when this object deallocates
+      // NotificationCenter holds weak references
+    }
+
+    /// Own stack instead of the window's: a shared one lets Cmd+Z in one cell edit another
+    /// cell, and keeps actions for text views that were torn down or replaced.
+    func undoManager(for view: NSTextView) -> UndoManager? {
+      undoManager
+    }
+
+    func textDidChange(_ notification: Notification) {
+      guard let textView = notification.object as? NSTextView else { return }
+
+      // Safety check: ensure textView is still valid and attached to a window
+      guard textView.window != nil else { return }
+
+      // Apply syntax highlighting without affecting undo stack
+      PerfSignpost.interval("editor.highlight.keystroke") {
+        applyIncrementalHighlighting(to: textView)
+      }
+
+      // Update height to fit content
+      updateHeight(textView: textView)
+
+      // Update isEmpty state for placeholder reactivity (this is safe and doesn't affect undo)
+      isEmpty.wrappedValue = textView.string.isEmpty
+
+      // Update text binding IMMEDIATELY for document persistence
+      // This is critical for ReferenceFileDocument to have the latest content when saving
+      text.wrappedValue = textView.string
+
+      // Notify that text has changed (for dirty state tracking)
+      onTextChanged?()
+    }
+
+    // MARK: - NSTextStorageDelegate
+
+    func textStorage(
+      _ textStorage: NSTextStorage,
+      didProcessEditing editedMask: NSTextStorageEditActions,
+      range editedRange: NSRange,
+      changeInLength delta: Int
+    ) {
+      // Our own highlighting only changes attributes: ignore it
+      guard editedMask.contains(.editedCharacters) else { return }
+      if let pending = pendingEditedRange {
+        // A second edit before a pass: the ranges live in different coordinate systems
+        pendingEditsInvalid = true
+        pendingEditedRange = NSUnionRange(pending, editedRange)
+      } else {
+        pendingEditedRange = editedRange
+      }
+      pendingChangeInLength += delta
+    }
+
+    private func clearPendingEdit() {
+      pendingEditedRange = nil
+      pendingChangeInLength = 0
+      pendingEditsInvalid = false
+    }
+
+    /// Remember the block spans and length of the text that was just fully highlighted
+    private func recordFullHighlight(of text: String) {
+      clearPendingEdit()
+      let ns = text as NSString
+      highlightedLength = ns.length
+      blockSpans =
+        AppSettings.shared.syntaxHighlightingEnabled ? SQLSyntaxHighlighter.blockSpans(in: ns) : nil
+    }
+
+    /// Re-highlight only the range the last edit can affect; falls back to the full in-place
+    /// path when search is active, highlighting is off, or the edit bookkeeping is unusable
+    @MainActor
+    func applyIncrementalHighlighting(to textView: NSTextView) {
+      guard textView.window != nil, let textStorage = textView.textStorage else {
+        pendingEditsInvalid = true
+        return
+      }
+
+      let length = textStorage.length
+      guard !isSearchActive, !pendingEditsInvalid, AppSettings.shared.syntaxHighlightingEnabled,
+        let edited = pendingEditedRange, let oldSpans = blockSpans,
+        highlightedLength + pendingChangeInLength == length,
+        NSMaxRange(edited) <= length
+      else {
+        fullFallbackCount += 1
+        applyHighlightingWithoutUndo(to: textView, text: textView.string)
+        return
+      }
+
+      let text = textStorage.string as NSString
+      let newSpans = SQLSyntaxHighlighter.blockSpans(in: text)
+      let dirty = SQLSyntaxHighlighter.dirtyRange(
+        text: text, edited: edited, changeInLength: pendingChangeInLength, oldSpans: oldSpans,
+        newSpans: newSpans)
+      let palette = SQLSyntaxHighlighter.Palette()
+
+      // Settle the layout of the edit first (updateHeight forces it right after anyway). Styling
+      // a range that starts before a still-pending edit makes the layout manager re-lay out
+      // everything after it, ~20 ms on a 2k-line document.
+      if let container = textView.textContainer {
+        textView.layoutManager?.ensureLayout(for: container)
+      }
+
+      let undoManager = textView.undoManager
+      undoManager?.disableUndoRegistration()
+      textStorage.beginEditing()
+      SQLSyntaxHighlighter.rehighlight(storage: textStorage, range: dirty, palette: palette)
+      textStorage.endEditing()
+      undoManager?.enableUndoRegistration()
+
+      blockSpans = newSpans
+      highlightedLength = length
+      clearPendingEdit()
+    }
+
+    @MainActor
+    func applyHighlighting(to textView: NSTextView, text: String) {
+      // SAFETY: Guard against deallocated textView or invalid state
+      guard textView.window != nil,
+        let textStorage = textView.textStorage
+      else { return }
+
+      PerfSignpost.interval("editor.highlight.full") {
+        let attributed: NSAttributedString
+        if isSearchActive {
+          // Get current match range from NotebookViewModel's search state
+          let currentMatchRange = getCurrentMatchRange(for: textView.string)
+          attributed = SQLSyntaxHighlighter.highlightWithSearch(
+            text,
+            searchQuery: searchQuery,
+            isCaseSensitive: isCaseSensitive,
+            currentMatchRange: currentMatchRange
+          )
+        } else {
+          attributed = SQLSyntaxHighlighter.highlight(text)
+        }
+
+        // Disable undo registration for programmatic text changes
+        let undoManager = textView.undoManager
+        undoManager?.disableUndoRegistration()
+
+        textStorage.beginEditing()
+        textStorage.setAttributedString(attributed)
+        textStorage.endEditing()
+
+        // Re-enable undo registration
+        undoManager?.enableUndoRegistration()
+
+        // The old history points at text that no longer exists
+        undoManager?.removeAllActions()
+        recordFullHighlight(of: textStorage.string)
+      }
+    }
+
+    /// Apply syntax highlighting without creating undo operations
+    /// This prevents undo/redo lag when typing
+    @MainActor
+    func applyHighlightingWithoutUndo(to textView: NSTextView, text: String) {
+      // SAFETY: Guard against deallocated textView or invalid state
+      guard textView.window != nil,
+        let textStorage = textView.textStorage
+      else { return }
+
+      let attributed: NSAttributedString
+      if isSearchActive {
+        // Get current match range from NotebookViewModel's search state
+        let currentMatchRange = getCurrentMatchRange(for: text)
+        attributed = SQLSyntaxHighlighter.highlightWithSearch(
+          text,
+          searchQuery: searchQuery,
+          isCaseSensitive: isCaseSensitive,
+          currentMatchRange: currentMatchRange
+        )
+      } else {
+        attributed = SQLSyntaxHighlighter.highlight(text)
+      }
+
+      // Only apply if the text content matches (same length)
+      guard textStorage.length == attributed.length else { return }
+
+      let fullRange = NSRange(location: 0, length: textStorage.length)
+
+      // Disable undo registration while applying syntax highlighting
+      // This prevents syntax highlighting from interfering with text editing undo/redo
+      let undoManager = textView.undoManager
+      undoManager?.disableUndoRegistration()
+
+      textStorage.beginEditing()
+
+      // Replace attributes run by run (setAttributes drops stale ones, no full-range clear)
+      attributed.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
+        textStorage.setAttributes(attrs, range: range)
+      }
+
+      textStorage.endEditing()
+
+      // Re-enable undo registration
+      undoManager?.enableUndoRegistration()
+      recordFullHighlight(of: text)
+    }
+
+    @MainActor
+    func updateHeight(textView: NSTextView) {
+      guard let textContainer = textView.textContainer,
+        let layoutManager = textView.layoutManager
+      else { return }
+
+      // Force layout
+      layoutManager.ensureLayout(for: textContainer)
+
+      // Calculate the required height
+      let usedRect = layoutManager.usedRect(for: textContainer)
+      let insets = textView.textContainerInset
+      let requiredHeight = usedRect.height + insets.height * 2
+
+      // Set minimum height - increased to allow more clickable area when empty
+      let minHeight: CGFloat = 40
+      let newHeight = max(requiredHeight, minHeight)
+
+      // Update SwiftUI binding to trigger view update (only when not using maxHeight)
+      // When maxHeight is set, the frame is fixed and we rely on scrolling
+      if abs(height.wrappedValue - newHeight) > 1 {
+        height.wrappedValue = newHeight
+      }
+
+      // Update frame - textView can expand freely within scrollView
+      var frame = textView.frame
+      frame.size.height = newHeight
+      textView.frame = frame
+    }
+
+    // MARK: - Search Highlighting
+
+    private func setupNotificationObservers() {
+      // Listen for unfocus editor notification
+      unfocusObserver = NotificationCenter.default.addObserver(
+        forName: .unfocusEditor,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self, let textView = self.textView else { return }
+          // Unfocus the text view by resigning first responder
+          textView.window?.makeFirstResponder(nil)
+        }
+      }
+
+      // Listen for highlight search match notification
+      highlightObserver = NotificationCenter.default.addObserver(
+        forName: .highlightSearchMatch,
+        object: nil,
+        queue: .main
+      ) { [weak self] notification in
+        guard self != nil else { return }
+
+        // Extract notification data before entering MainActor context
+        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
+          let match = notification.userInfo?["match"] as? SearchMatch
+        else { return }
+
+        // Check match type (must be done before Task to avoid actor isolation issues)
+        let isSQLContent: Bool
+        switch match.matchType {
+        case .sqlContent:
+          isSQLContent = true
+        default:
+          isSQLContent = false
+        }
+
+        let matchId = match.id
+        let matchCellId = match.cellId
+        let matchRange = match.matchRange
+        let query = notification.userInfo?["query"] as? String ?? ""
+        let caseSensitive = notification.userInfo?["caseSensitive"] as? Bool ?? false
+
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+
+          // Only respond if this notification is for our viewModel instance
+          // Note: Check viewModelId here (inside MainActor) to avoid actor isolation warning
+          guard notificationViewModelId == self.viewModelId else { return }
+
+          // Update search state for ALL cells (to show yellow highlights)
+          self.searchQuery = query
+          self.isCaseSensitive = caseSensitive
+          self.isSearchActive = true
+
+          // In editor mode, cellId is nil - accept all SQL content matches
+          // In notebook mode, only accept matches for this cell
+          let isEditorMode = self.cellId == nil
+          let matchesThisCell = isEditorMode || matchCellId == self.cellId
+
+          // Only set currentMatchRange for the cell with the current match (orange highlight)
+          if isSQLContent && matchesThisCell {
+            // This cell has the current match - highlight it orange
+            guard let textView = self.textView else { return }
+            let nsRange = NSRange(matchRange, in: textView.string)
+            self.currentMatchId = matchId
+            self.currentMatchRange = nsRange
+
+            // Scroll to make the match visible
+            textView.scrollRangeToVisible(nsRange)
+          } else {
+            // This cell doesn't have current match - clear orange highlight
+            self.currentMatchId = nil
+            self.currentMatchRange = nil
+          }
+
+          // Reapply highlighting with search
+          self.reapplyHighlighting()
+        }
+      }
+
+      // Listen for clear search highlights notification
+      clearObserver = NotificationCenter.default.addObserver(
+        forName: .clearSearchHighlights,
+        object: nil,
+        queue: .main
+      ) { [weak self] notification in
+        guard self != nil else { return }
+
+        // Extract notification data before entering MainActor context
+        guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID
+        else { return }
+
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+
+          // Only respond if this notification is for our viewModel instance
+          // Note: Check viewModelId here (inside MainActor) to avoid actor isolation warning
+          guard notificationViewModelId == self.viewModelId else { return }
+
+          // Clear search state
+          self.searchQuery = ""
+          self.isCaseSensitive = false
+          self.currentMatchId = nil
+          self.currentMatchRange = nil
+          self.isSearchActive = false
+
+          // Reapply highlighting without search
+          self.reapplyHighlighting()
+        }
+      }
+
+      // Listen for syntax highlighting setting changes
+      syntaxHighlightObserver = NotificationCenter.default.addObserver(
+        forName: .syntaxHighlightingChanged,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          // Reapply highlighting with new setting
+          self.reapplyHighlighting()
+        }
+      }
+
+      // Listen for accent color changes to update syntax highlighting colors
+      accentColorObserver = NotificationCenter.default.addObserver(
+        forName: .accentColorChanged,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self = self else { return }
+          // Reapply highlighting with new accent color
+          self.reapplyHighlighting()
+        }
+      }
+    }
+
+    @MainActor
+    private func reapplyHighlighting() {
+      guard let textView = textView else { return }
+      applyHighlightingWithoutUndo(to: textView, text: textView.string)
+    }
+
+    /// Get NSRange of current match if this cell has the active match
+    @MainActor
+    private func getCurrentMatchRange(for text: String) -> NSRange? {
+      return currentMatchRange
+    }
+  }
+}

@@ -1,17 +1,17 @@
 #!/bin/bash
-# Diagnostic script to check if results are being saved in .sqlnb files
+# Diagnostic script to check if results are being saved in .dblore files
 
-echo "🔍 SQLNotebook Result Saving Diagnostic"
+echo "🔍 Dblore Result Saving Diagnostic"
 echo "========================================"
 echo ""
 
 # Check UserDefaults for includeResultsOnSave setting
 echo "1️⃣ Checking app settings..."
-defaults read com.sqlnotebook.SQLNotebook app.settings.includeResultsOnSave 2>/dev/null
+defaults read ace.thi.Dblore app.settings.includeResultsOnSave 2>/dev/null
 INCLUDE_RESULTS=$?
 
 if [ $INCLUDE_RESULTS -eq 0 ]; then
-    SETTING_VALUE=$(defaults read com.sqlnotebook.SQLNotebook app.settings.includeResultsOnSave)
+    SETTING_VALUE=$(defaults read ace.thi.Dblore app.settings.includeResultsOnSave)
     if [ "$SETTING_VALUE" == "1" ]; then
         echo "✅ includeResultsOnSave = TRUE (results should be saved)"
     else
@@ -23,8 +23,8 @@ else
 fi
 
 echo ""
-echo "2️⃣ Looking for recent .sqlnb files..."
-find ~/Documents -name "*.sqlnb" -type f -mtime -1 2>/dev/null | head -5 | while read file; do
+echo "2️⃣ Looking for recent .dblore files..."
+find ~/Documents -name "*.dblore" -type f -mtime -1 2>/dev/null | head -5 | while read file; do
     echo ""
     echo "📄 File: $file"
     echo "   Size: $(stat -f%z "$file") bytes"
@@ -46,16 +46,16 @@ find ~/Documents -name "*.sqlnb" -type f -mtime -1 2>/dev/null | head -5 | while
     fi
 done
 
-if [ ! -f ~/Documents/*.sqlnb ]; then
-    echo "   No .sqlnb files found in ~/Documents"
+if [ ! -f ~/Documents/*.dblore ]; then
+    echo "   No .dblore files found in ~/Documents"
     echo "   Please specify a file path:"
-    echo "   Usage: $0 /path/to/your/file.sqlnb"
+    echo "   Usage: $0 /path/to/your/file.dblore"
 fi
 
 echo ""
 echo "3️⃣ Testing result serialization..."
 swift /tmp/test_result_save.swift >/dev/null 2>&1
-if grep -q '"result"' /tmp/test_notebook.sqlnb; then
+if grep -q '"result"' /tmp/test_notebook.dblore; then
     echo "✅ Result serialization is working correctly"
 else
     echo "❌ Result serialization test failed"
@@ -64,7 +64,7 @@ fi
 echo ""
 echo "========================================"
 echo "💡 Quick Fixes:"
-echo "   1. Open SQLNotebook"
+echo "   1. Open Dblore"
 echo "   2. Click Settings icon (⚙️) in right sidebar"
 echo "   3. Enable 'Include Results When Saving' toggle"
 echo "   4. Save the file again (Cmd+S)"

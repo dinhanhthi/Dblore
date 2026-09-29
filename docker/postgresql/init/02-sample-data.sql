@@ -1,4 +1,4 @@
--- SQLNotebook Sample Data - Extended Version
+-- Dblore Sample Data - Extended Version
 -- This script populates the database with comprehensive example data for testing
 
 -- =============================================================================

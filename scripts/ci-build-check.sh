@@ -23,12 +23,12 @@ out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 echo "==> Archiving with $dev"
 DEVELOPER_DIR="$dev" xcodebuild archive \
-  -project SQLNotebook.xcodeproj \
-  -scheme SQLNotebook \
+  -project Dblore.xcodeproj \
+  -scheme Dblore \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$out/dd" \
-  -archivePath "$out/SQLNotebook.xcarchive" \
+  -archivePath "$out/Dblore.xcarchive" \
   CODE_SIGNING_ALLOWED=NO \
   | grep -E "error:|warning: .*(data race|Sendable|isolat)|\*\* ARCHIVE" || true
-test -d "$out/SQLNotebook.xcarchive" && echo "CI build check: OK (Xcode $want)"
+test -d "$out/Dblore.xcarchive" && echo "CI build check: OK (Xcode $want)"

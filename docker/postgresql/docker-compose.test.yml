@@ -1,13 +1,13 @@
 services:
   postgres-test:
     image: postgres:16-alpine
-    container_name: sqlnotebook-postgres-test
+    container_name: dblore-postgres-test
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: sqlnotebook_test
-      POSTGRES_USER: sqlnotebook_test
-      POSTGRES_PASSWORD: sqlnotebook123
+      POSTGRES_DB: dblore_test
+      POSTGRES_USER: dblore_test
+      POSTGRES_PASSWORD: dblore123
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
 
     ports:
@@ -19,18 +19,18 @@ services:
       # No initialization scripts for test DB - tests will create their own tables
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sqlnotebook_test -d sqlnotebook_test"]
+      test: ["CMD-SHELL", "pg_isready -U dblore_test -d dblore_test"]
       interval: 10s
       timeout: 5s
       retries: 5
 
     networks:
-      - sqlnotebook-test
+      - dblore-test
 
 volumes:
   postgres_test_data:
-    name: sqlnotebook-postgres-test-data
+    name: dblore-postgres-test-data
 
 networks:
-  sqlnotebook-test:
-    name: sqlnotebook-test-network
+  dblore-test:
+    name: dblore-test-network
