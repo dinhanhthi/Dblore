@@ -2,7 +2,7 @@
 
 # Archives the app like release.yml, with the Xcode pinned in .xcode-version (the CI toolchain).
 # Catches compiler differences between your Xcode and CI's before anything is pushed.
-# Needs that Xcode installed side by side, e.g. /Applications/Xcode_26.6.app.
+# Needs that Xcode installed side by side, e.g. /Applications/Xcode_27.app.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
