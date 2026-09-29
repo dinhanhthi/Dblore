@@ -72,25 +72,10 @@ extension SQLSyntaxHighlighter {
     var endMemo = Memo()
     var backMemo = Memo()
     var forwardMemo = Memo()
-    func align(_ r: NSRange) -> NSRange {
-      guard length > 0 else { return NSRange(location: 0, length: 0) }
-      let start =
-        startMemo.cached(for: r.location)
-        ?? startMemo.store(
-          text.paragraphRange(for: NSRange(location: r.location, length: 0)).location,
-          for: r.location)
-      let last = r.length > 0 ? NSMaxRange(r) - 1 : r.location
-      let end =
-        endMemo.cached(for: last)
-        ?? endMemo.store(
-          NSMaxRange(text.paragraphRange(for: NSRange(location: last, length: 0))), for: last)
-      return NSRange(location: start, length: end - start)
-    }
-
     var range = NSRange(location: NSNotFound, length: 0)
     var next = clamp(lo, hi, length)
     while next != range {
-      range = align(next)
+      range = align(next, in: text, startMemo: &startMemo, endMemo: &endMemo)
       lo = range.location
       hi = NSMaxRange(range)
       let first = firstSpan(in: newSpans) { NSMaxRange($0) > lo }
@@ -115,7 +100,8 @@ extension SQLSyntaxHighlighter {
         let grown = q > hi && endsWithWord(text, before: hi) ? q : hi
         hi = forwardMemo.store(grown, for: hi)
       }
-      next = align(clamp(lo, hi, length))
+      next = align(
+        clamp(lo, hi, length), in: text, startMemo: &startMemo, endMemo: &endMemo)
     }
     return range
   }
@@ -143,6 +129,29 @@ extension SQLSyntaxHighlighter {
     return low
   }
 
+  /// Grows `r` to whole paragraphs; the two bounds are memoized (see `dirtyRange`)
+  private static func align(
+    _ r: NSRange, in text: NSString, startMemo: inout Memo, endMemo: inout Memo
+  ) -> NSRange {
+    guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+    let start: Int
+    if let c = startMemo.cached(for: r.location) {
+      start = c
+    } else {
+      let paragraph = text.paragraphRange(for: NSRange(location: r.location, length: 0))
+      start = startMemo.store(paragraph.location, for: r.location)
+    }
+    let last = r.length > 0 ? NSMaxRange(r) - 1 : r.location
+    let end: Int
+    if let c = endMemo.cached(for: last) {
+      end = c
+    } else {
+      let paragraph = text.paragraphRange(for: NSRange(location: last, length: 0))
+      end = endMemo.store(NSMaxRange(paragraph), for: last)
+    }
+    return NSRange(location: start, length: end - start)
+  }
+
   private static func clamp(_ lo: Int, _ hi: Int, _ length: Int) -> NSRange {
     let l = max(0, min(lo, length))
     let h = max(l, min(hi, length))
@@ -154,7 +163,6 @@ extension SQLSyntaxHighlighter {
     private var lastKey = Int.min
     private var lastValue = 0
     func cached(for k: Int) -> Int? { k == lastKey ? lastValue : nil }
-    @discardableResult
     mutating func store(_ value: Int, for k: Int) -> Int {
       lastKey = k
       lastValue = value
