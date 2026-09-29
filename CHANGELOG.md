@@ -2,6 +2,36 @@
 
 All notable user-visible changes to SQLNotebook, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.2.2 (2026-09-29)
+
+### Added
+
+- **Table data viewer.** Open a table's data in its own tab, with a compact header, search and an icon-only refresh button; pinned data viewer tabs are restored with the workspace. [#3cf3643](https://github.com/dinhanhthi/SQLNotebook/commit/3cf3643) [#8d0a055](https://github.com/dinhanhthi/SQLNotebook/commit/8d0a055) [#11d9f9a](https://github.com/dinhanhthi/SQLNotebook/commit/11d9f9a) [#c564a5f](https://github.com/dinhanhthi/SQLNotebook/commit/c564a5f)
+- **Reopen the last closed tab** with `Cmd+Shift+T`. [#610854f](https://github.com/dinhanhthi/SQLNotebook/commit/610854f)
+- **Format SQL button** next to the syntax highlight toggle in the editor. [#2f9291e](https://github.com/dinhanhthi/SQLNotebook/commit/2f9291e)
+- **Results grid**: a row number column, double-click a column divider to fit its width to the content, column widths auto-fit when columns change, and the hovered row is highlighted. [#1017512](https://github.com/dinhanhthi/SQLNotebook/commit/1017512) [#4feca56](https://github.com/dinhanhthi/SQLNotebook/commit/4feca56) [#f949ef5](https://github.com/dinhanhthi/SQLNotebook/commit/f949ef5) [#024c1e4](https://github.com/dinhanhthi/SQLNotebook/commit/024c1e4)
+- **Gray accent color** option; the default accent is now blue. [#7e5f892](https://github.com/dinhanhthi/SQLNotebook/commit/7e5f892)
+- **Tooltips** on icon-only buttons. [#5efe9ab](https://github.com/dinhanhthi/SQLNotebook/commit/5efe9ab)
+
+### Improved
+
+- **Settings** now use a sidebar for navigation, and shortcuts are split into App and Editor tabs. [#04ae47a](https://github.com/dinhanhthi/SQLNotebook/commit/04ae47a) [#fdafe53](https://github.com/dinhanhthi/SQLNotebook/commit/fdafe53)
+- **Results grid look**: vertical lines between columns, a distinct row number gutter and header background, a smaller column type font in the header and softer text color. [#e999315](https://github.com/dinhanhthi/SQLNotebook/commit/e999315) [#4a7cac4](https://github.com/dinhanhthi/SQLNotebook/commit/4a7cac4) [#f344b7d](https://github.com/dinhanhthi/SQLNotebook/commit/f344b7d) [#752ca2d](https://github.com/dinhanhthi/SQLNotebook/commit/752ca2d) [#c8f0fb3](https://github.com/dinhanhthi/SQLNotebook/commit/c8f0fb3) [#0b7f8e5](https://github.com/dinhanhthi/SQLNotebook/commit/0b7f8e5)
+- **Cell details** now open with word wrap on and JSON auto-beautified. [#0acbd0a](https://github.com/dinhanhthi/SQLNotebook/commit/0acbd0a)
+- **Stronger hover background** for inactive tabs. [#635d44e](https://github.com/dinhanhthi/SQLNotebook/commit/635d44e)
+- **Faster UI**: smoother scrolling in large result grids and quicker tab switching. [#a8e2cb1](https://github.com/dinhanhthi/SQLNotebook/commit/a8e2cb1) [#7a549bb](https://github.com/dinhanhthi/SQLNotebook/commit/7a549bb)
+- **Large reads inside transactions** are now capped with a server-side cursor. [#a2876aa](https://github.com/dinhanhthi/SQLNotebook/commit/a2876aa)
+
+### Fixed
+
+- Closing a window no longer crashes the app. [#318f601](https://github.com/dinhanhthi/SQLNotebook/commit/318f601)
+- Dragging tabs to reorder no longer moves the window. [#7ca0bdc](https://github.com/dinhanhthi/SQLNotebook/commit/7ca0bdc)
+- Autocomplete suggests tables and columns in every editor. [#2a70af8](https://github.com/dinhanhthi/SQLNotebook/commit/2a70af8)
+- The SQL formatter keeps clause contents inline and aligns the `SELECT` list. [#6994523](https://github.com/dinhanhthi/SQLNotebook/commit/6994523)
+- Connecting uses the active tab's configuration and is blocked on an invalid connection string. [#020b13b](https://github.com/dinhanhthi/SQLNotebook/commit/020b13b)
+- The Save Workspace commands show in the File menu. [#7e3228a](https://github.com/dinhanhthi/SQLNotebook/commit/7e3228a)
+- Navigation arrows keep their spacing when the left sidebar is collapsed. [#f06c717](https://github.com/dinhanhthi/SQLNotebook/commit/f06c717)
+
 ## v0.2.1 (2026-09-28)
 
 ### Improved
