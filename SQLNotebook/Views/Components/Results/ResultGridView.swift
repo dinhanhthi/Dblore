@@ -180,6 +180,8 @@ final class ResultGridHeaderView: NSTableHeaderView {
         if index == draggedColumn { rect.origin.x += draggedDistance }
         guard rect.intersects(dirtyRect) else { continue }
         column.headerCell.draw(withFrame: rect, in: self)
+        // The "#" header cell draws its own, stronger separator
+        guard column.identifier != ResultGridCoordinator.rowNumberIdentifier else { continue }
         NSColor(Color.border).setFill()
         NSRect(x: rect.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
       }

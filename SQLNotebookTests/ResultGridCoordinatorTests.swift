@@ -32,8 +32,9 @@ struct ResultGridCoordinatorTests {
     -> NSTextField?
   {
     let (coordinator, tableView) = grid
+    // Table column 0 is the "#" row number column
     let view = coordinator.tableView(
-      tableView, viewFor: tableView.tableColumns[column], row: row)
+      tableView, viewFor: tableView.tableColumns[column + 1], row: row)
     return (view as? NSTableCellView)?.textField
   }
 
@@ -41,7 +42,7 @@ struct ResultGridCoordinatorTests {
   func rowColumnMapping() {
     let unsorted = makeGrid(sortColumn: nil)
     #expect(unsorted.0.numberOfRows(in: unsorted.1) == 3)
-    #expect(unsorted.1.tableColumns.map { $0.title } == ["id", "name"])
+    #expect(unsorted.1.tableColumns.map { $0.title } == ["#", "id", "name"])
     #expect(cell(unsorted, row: 0, column: 1)?.stringValue == "c")
 
     let descending = makeGrid(sortColumn: "id", ascending: false)
@@ -111,7 +112,7 @@ struct ResultGridCoordinatorTests {
   @Test("Copy follows the on-screen column order after a column is moved")
   func tsvCopyColumnOrder() {
     let (coordinator, tableView) = makeGrid(sortColumn: "id")
-    tableView.moveColumn(1, toColumn: 0)
+    tableView.moveColumn(2, toColumn: 1)
     tableView.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
     #expect(coordinator.selectionTSV(tableView) == "a\t1\nc\t3")
   }
@@ -128,22 +129,22 @@ struct ResultGridCoordinatorTests {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)
     coordinator.update(
       tableView, result: result, sortColumn: nil, ascending: true, hiddenColumns: ["name"])
-    #expect(tableView.tableColumns.map(\.isHidden) == [false, true])
-    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["0", "1"])
+    #expect(tableView.tableColumns.map(\.isHidden) == [false, false, true])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["rowNumber", "0", "1"])
 
     coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
-    #expect(tableView.tableColumns.map(\.isHidden) == [false, false])
-    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["0", "1"])
+    #expect(tableView.tableColumns.map(\.isHidden) == [false, false, false])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["rowNumber", "0", "1"])
   }
 
   @Test("A hidden column follows its identifier after a column move")
   func hiddenColumnAfterMove() {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)
-    tableView.moveColumn(1, toColumn: 0)
+    tableView.moveColumn(2, toColumn: 1)
     coordinator.update(
       tableView, result: result, sortColumn: nil, ascending: true, hiddenColumns: ["name"])
-    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["1", "0"])
-    #expect(tableView.tableColumns.map(\.isHidden) == [true, false])
+    #expect(tableView.tableColumns.map(\.identifier.rawValue) == ["rowNumber", "1", "0"])
+    #expect(tableView.tableColumns.map(\.isHidden) == [false, true, false])
   }
 
   @Test("Odd displayed rows get the design-system alternate row view, even rows don't")
@@ -159,5 +160,23 @@ struct ResultGridCoordinatorTests {
   func noSystemAlternatingRows() {
     let tableView = ResultGridView.makeTableView(coordinator: ResultGridCoordinator())
     #expect(!tableView.usesAlternatingRowBackgroundColors)
+  }
+
+  @Test("The \"#\" column numbers the displayed rows, stays first and is not copied")
+  func rowNumberColumn() {
+    let (coordinator, tableView) = makeGrid(sortColumn: "id", ascending: false)
+    let rowNumber = tableView.tableColumns[0]
+    #expect(rowNumber.identifier == ResultGridCoordinator.rowNumberIdentifier)
+    #expect(rowNumber.sortDescriptorPrototype == nil)
+    let numbers = (0..<3).map {
+      (coordinator.tableView(tableView, viewFor: rowNumber, row: $0) as? NSTableCellView)?
+        .textField?.stringValue
+    }
+    #expect(numbers == ["1", "2", "3"])
+    #expect(!coordinator.tableView(tableView, shouldReorderColumn: 0, toColumn: 1))
+    #expect(!coordinator.tableView(tableView, shouldReorderColumn: 2, toColumn: 0))
+    #expect(coordinator.tableView(tableView, shouldReorderColumn: 2, toColumn: 1))
+    tableView.selectRowIndexes(IndexSet([0]), byExtendingSelection: false)
+    #expect(coordinator.selectionTSV(tableView) == "3\tc")
   }
 }

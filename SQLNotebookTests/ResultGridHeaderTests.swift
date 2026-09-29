@@ -41,8 +41,8 @@ struct ResultGridHeaderTests {
 
   @Test("Header is 54 pt with column types and 28 pt without")
   func headerHeight() {
-    #expect(ResultGridView.headerHeight(hideColumnTypes: false) == 54)
-    #expect(ResultGridView.headerHeight(hideColumnTypes: true) == 28)
+    #expect(ResultGridView.headerHeight(hideColumnTypes: false) == 44)
+    #expect(ResultGridView.headerHeight(hideColumnTypes: true) == 24)
   }
 
   @Test("The coordinator sets the header view height from the flag")
@@ -51,10 +51,10 @@ struct ResultGridHeaderTests {
     let tableView = NSTableView()
     let result = result(editable: false)
     coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
-    #expect(tableView.headerView?.frame.height == 54)
+    #expect(tableView.headerView?.frame.height == 44)
     coordinator.update(
       tableView, result: result, sortColumn: nil, ascending: true, hideColumnTypes: true)
-    #expect(tableView.headerView?.frame.height == 28)
+    #expect(tableView.headerView?.frame.height == 24)
   }
 
   @Test(
@@ -116,8 +116,8 @@ struct ResultGridHeaderTests {
     coordinator.update(
       tableView, result: result(editable: true), sortColumn: nil, ascending: true,
       searchQuery: "name", caseSensitive: false, currentMatch: columnNameMatch("user_name"))
-    let cells = tableView.tableColumns.map { $0.headerCell as? ResultGridHeaderCell }
-    #expect(tableView.tableColumns.map(\.title) == ["id", "user_name"])
+    let cells = tableView.tableColumns.dropFirst().map { $0.headerCell as? ResultGridHeaderCell }
+    #expect(tableView.tableColumns.map(\.title) == ["#", "id", "user_name"])
     #expect(cells[0]?.content.isPrimaryKey == true)
     #expect(cells[1]?.content.isCurrentMatch == true)
     #expect(cells[1]?.content.type == "text")
@@ -135,8 +135,8 @@ struct ResultGridHeaderTests {
     let tableView = NSTableView()
     let result = result(editable: false)
     coordinator.update(tableView, result: result, sortColumn: "user_name", ascending: false)
-    let id = tableView.tableColumns[0]
-    let name = tableView.tableColumns[1]
+    let id = tableView.tableColumns[1]
+    let name = tableView.tableColumns[2]
     #expect(ResultGridHeaderCell.sortAscending(for: name, in: tableView) == false)
     #expect(ResultGridHeaderCell.sortAscending(for: id, in: tableView) == nil)
 

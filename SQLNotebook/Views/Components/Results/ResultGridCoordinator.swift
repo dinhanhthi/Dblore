@@ -27,8 +27,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private static let rowNumberCellIdentifier = NSUserInterfaceItemIdentifier("ResultGridRowNumber")
   /// Leading "#" column: the displayed row number, not a result column (no Int identifier)
   static let rowNumberIdentifier = NSUserInterfaceItemIdentifier("rowNumber")
-  static let rowNumberFont = NSFont.monospacedDigitSystemFont(
-    ofSize: NSFont.smallSystemFontSize, weight: .regular)
+  static let rowNumberFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
 
   /// What decides a reload: the result's identity, the sort and the search, not every SwiftUI
   /// update
@@ -444,11 +443,23 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 }
 
-/// Cell of the "#" column: muted, right-aligned row number on a tinted background with a
-/// trailing separator, so it reads apart from the result columns
+/// Cell of the "#" column, a gutter rather than a result column: small faint row number on the
+/// solid gutter background (no alternate rows) with a trailing separator; the header cell
+/// continues the strip up to the top
 final class ResultGridRowNumberCell: NSTableCellView {
-  static let textColor = NSColor(Color.foregroundMuted)
-  static let backgroundColor = NSColor(Color.tableHeaderBackground.opacity(0.6))
+  static let textColor = NSColor(Color.foregroundSubtle)
+  static let backgroundColor = NSColor(Color.tableHeaderBackground)
+
+  /// Stronger than the grid lines between result columns
+  static let separatorColor = NSColor(Color.foregroundMuted.opacity(0.35))
+
+  /// Gutter background and trailing separator over `rect`
+  static func drawGutter(in rect: NSRect) {
+    backgroundColor.setFill()
+    rect.fill()
+    separatorColor.setFill()
+    NSRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
+  }
 
   init() {
     super.init(frame: .zero)
@@ -469,10 +480,7 @@ final class ResultGridRowNumberCell: NSTableCellView {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   override func draw(_ dirtyRect: NSRect) {
-    Self.backgroundColor.setFill()
-    dirtyRect.fill()
-    NSColor(Color.border).setFill()
-    NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+    Self.drawGutter(in: bounds)
   }
 }
 

@@ -79,6 +79,12 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
   override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
     // AppKit draws the filler after the last column with a copy that has no title
     guard !stringValue.isEmpty else { return }
+    if content.isRowNumber {
+      let bounds = controlView.bounds
+      ResultGridRowNumberCell.drawGutter(
+        in: NSRect(x: cellFrame.minX, y: bounds.minY, width: cellFrame.width, height: bounds.height)
+      )
+    }
     var textFrame = cellFrame.insetBy(dx: Spacing.xsm, dy: 0)
     var sortArrow: (ascending: Bool, rect: NSRect)?
     if let tableView = (controlView as? NSTableHeaderView)?.tableView,

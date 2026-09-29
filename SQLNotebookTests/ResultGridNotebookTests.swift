@@ -117,22 +117,26 @@ struct ResultGridNotebookTests {
     let coordinator = ResultGridCoordinator()
     let tableView = ResultGridView.makeTableView(coordinator: coordinator)
     coordinator.update(tableView, result: result, sortColumn: "id", ascending: true)
-    tableView.frame = NSRect(x: 0, y: 0, width: 300, height: 78)
-    tableView.moveColumn(0, toColumn: 1)  // on screen: name, id
+    tableView.frame = NSRect(x: 0, y: 0, width: 400, height: 78)
+    tableView.moveColumn(1, toColumn: 2)  // on screen: #, name, id
     var shown: (originalRow: Int, column: Int)?
     coordinator.onShowCellDetails = { shown = ($1, $2) }
 
-    tableView.updateDetailsButton(at: NSPoint(x: 160, y: 30))  // row 1, second on-screen column
+    // Row 1, second on-screen result column
+    tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 2).midX, y: 30))
     let button = tableView.detailsButton
     #expect(!button.isHidden)
     #expect(
       button.frame
         == ResultGridTableView.detailsButtonFrame(
-          cellRect: tableView.frameOfCell(atColumn: 1, row: 1), visibleRect: tableView.visibleRect))
+          cellRect: tableView.frameOfCell(atColumn: 2, row: 1), visibleRect: tableView.visibleRect))
     button.sendAction(button.action, to: button.target)
     // Displayed row 1 of the ascending sort is id 2 (original row 2), column "id" is 0
     #expect(shown?.originalRow == 2)
     #expect(shown?.column == 0)
+
+    tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 0).midX, y: 30))
+    #expect(button.isHidden)  // the "#" column has no details
 
     tableView.updateDetailsButton(at: NSPoint(x: 10, y: 500))  // below the rows
     #expect(button.isHidden)
@@ -141,7 +145,7 @@ struct ResultGridNotebookTests {
   @Test("Search highlights the matching text of a cell, case-insensitively")
   func searchHighlight() {
     let (coordinator, tableView) = makeGrid(searchQuery: "B")
-    let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[1], row: 1)
+    let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[2], row: 1)
     let text = (view as? NSTableCellView)?.textField?.attributedStringValue
     #expect(text?.string == "ab")
     #expect(text?.attribute(.backgroundColor, at: 1, effectiveRange: nil) != nil)
@@ -166,7 +170,7 @@ struct ResultGridNotebookTests {
     #expect(tableView.scrolledRows == [9])
 
     func background(row: Int) -> Any? {
-      let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[1], row: row)
+      let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[2], row: row)
       return (view as? NSTableCellView)?.textField?.attributedStringValue
         .attribute(.backgroundColor, at: 0, effectiveRange: nil)
     }
