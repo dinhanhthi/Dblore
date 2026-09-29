@@ -28,7 +28,6 @@ struct ConnectionFormContent: View {
   @State private var inputMode: ConnectionInputMode = .form
   @State private var connectionString: String = ""
   @State private var parseError: String?
-  @State private var isPasswordVisible = false
   @State private var connectionStringSSLMode: SSLMode = .prefer
 
   // Connection history
@@ -126,10 +125,6 @@ struct ConnectionFormContent: View {
     $showDeleteConfirmation
   }
 
-  func getIsPasswordVisible() -> Bool {
-    _isPasswordVisible.wrappedValue
-  }
-
   func getConnectionHistory() -> [ConnectionHistoryEntry] {
     connectionHistory
   }
@@ -182,10 +177,6 @@ struct ConnectionFormContent: View {
   func clearParseErrorAndTestResult() {
     parseError = nil
     testResult = nil
-  }
-
-  func togglePasswordVisibility() {
-    _isPasswordVisible.wrappedValue.toggle()
   }
 
   // MARK: - Footer

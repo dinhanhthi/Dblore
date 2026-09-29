@@ -56,33 +56,7 @@ extension ConnectionFormContent {
 
     // Password
     FormField(label: "Password") {
-      HStack(spacing: 0) {
-        if getIsPasswordVisible() {
-          TextField("password", text: $connectionConfig.password)
-            .textFieldStyle(.plain)
-        } else {
-          SecureField("password", text: $connectionConfig.password)
-            .textFieldStyle(.plain)
-        }
-
-        Button(action: { togglePasswordVisibility() }) {
-          Image(systemName: getIsPasswordVisible() ? "eye.slash.fill" : "eye.fill")
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 20, height: 20)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .linkPointer()
-        .help(getIsPasswordVisible() ? "Hide password" : "Show password")
-        .onHover { hovering in
-          if hovering {
-            NSCursor.pointingHand.push()
-          } else {
-            NSCursor.pop()
-          }
-        }
-        .padding(.trailing, Spacing.sm)
-      }
-      .inputCapsuleStyle()
+      PasswordInputField(password: $connectionConfig.password)
     }
 
     // SSL Mode
@@ -361,5 +335,34 @@ extension ConnectionFormContent {
         if clamped != newValue { value.wrappedValue = clamped }
       }
     }
+  }
+}
+
+/// Password input with its own visibility state so the eye toggle re-renders reliably.
+private struct PasswordInputField: View {
+  @Binding var password: String
+  @State private var isVisible = false
+
+  var body: some View {
+    HStack(spacing: 0) {
+      if isVisible {
+        TextField("password", text: $password)
+          .textFieldStyle(.plain)
+      } else {
+        SecureField("password", text: $password)
+          .textFieldStyle(.plain)
+      }
+
+      Button(action: { isVisible.toggle() }) {
+        Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
+          .foregroundColor(.foregroundMuted)
+          .frame(width: 28, height: 28)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .linkPointer()
+      .help(isVisible ? "Hide password" : "Show password")
+    }
+    .inputCapsuleStyle()
   }
 }
