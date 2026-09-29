@@ -9,6 +9,7 @@ struct RightSidebarView: View {
   @Bindable var viewModel: NotebookViewModel
   @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
   @State private var showSavedFilters = false
+  @State private var showSavedHighlights = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -33,8 +34,8 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if case .tableFilter = content {
-          // TableFilterContent handles its own ScrollView
+        } else if content == .tableFilter || content == .tableHighlight {
+          // TableFilterContent and TableHighlightContent handle their own ScrollView
           VStack(alignment: .leading, spacing: 0) {
             contentView(for: content)
               .padding(Spacing.md)
@@ -86,6 +87,19 @@ struct RightSidebarView: View {
         .help("Save filters")
         .popover(isPresented: $showSavedFilters, arrowEdge: .bottom) {
           SavedFiltersPopover(viewModel: viewModel)
+        }
+      }
+
+      if case .tableHighlight = viewModel.rightSidebarContent {
+        Button(action: { showSavedHighlights.toggle() }) {
+          Image(systemName: "bookmark")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .help("Save highlights")
+        .popover(isPresented: $showSavedHighlights, arrowEdge: .bottom) {
+          SavedHighlightsPopover(viewModel: viewModel)
         }
       }
 
@@ -161,7 +175,7 @@ struct RightSidebarView: View {
     case .tableFilter:
       TableFilterContent(viewModel: viewModel)
     case .tableHighlight:
-      EmptyView()  // Form arrives in phase 2
+      TableHighlightContent(viewModel: viewModel)
     }
   }
 

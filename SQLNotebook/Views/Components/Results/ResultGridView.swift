@@ -41,6 +41,10 @@ struct ResultGridView: NSViewRepresentable {
   /// Names of result columns hidden in the grid; the result, column indices and edits are
   /// unchanged
   var hiddenColumns: Set<String> = []
+  /// Highlight painted on the matching cells or rows; the rows stay unchanged
+  var highlight: TableHighlight? = nil
+  /// Dialect the highlight is evaluated in (`like` case sensitivity)
+  var highlightDialect: DatabaseType = .postgresql
 
   /// Fixed row height of the grid
   static let rowHeight: CGFloat = 26
@@ -123,7 +127,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
-      hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns)
+      hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
+      highlight: highlight, highlightDialect: highlightDialect)
   }
 }
 

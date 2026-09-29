@@ -43,12 +43,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let hideColumnTypes: Bool
     let hasEditTarget: Bool
     let hiddenColumns: Set<String>
+    let highlight: TableHighlight?
+    let highlightDialect: DatabaseType
   }
 
   private(set) var model: ResultGridModel?
   private var key: Key?
   /// Table (displayed) row and result column of the current search match
   private var currentMatchCell: (row: Int, column: Int)?
+  /// Displayed row -> result columns of the applied highlight's matches, compiled once per update
+  private var highlightMatches: [Int: Set<Int>] = [:]
 
   /// Set by the caller from `NotebookViewModel.canEdit(_:)`: without it no cell can be edited
   var isEditable = false
@@ -112,7 +116,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
     searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil,
-    hideColumnTypes: Bool = false, hiddenColumns: Set<String> = []
+    hideColumnTypes: Bool = false, hiddenColumns: Set<String> = [],
+    highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql
   )
     -> Bool
   {
@@ -121,7 +126,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
-      hiddenColumns: hiddenColumns)
+      hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect)
     guard newKey != key else { return false }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -133,6 +138,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     key = newKey
     let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
     self.model = model
+    highlightMatches =
+      highlight?.matches(
+        rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
+        dialect: highlightDialect) ?? [:]
     currentMatchCell = nil
     if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
       let row = model.displayedRow(forOriginalRow: originalRow),
@@ -366,6 +375,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       cell.textField?.stringValue = text
     }
     cell.textField?.alignment = Self.alignment(for: value)
+    applyHighlight(to: cell, row: row, column: column)
     cell.textField?.isEditable = false
     cell.textField?.isSelectable = false
     cell.textField?.delegate = self
@@ -373,6 +383,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   // MARK: - Private
+
+  /// Paints the cell with the highlight color (dark text) when the highlight matches it, and
+  /// always clears it otherwise, since cells are reused
+  private func applyHighlight(to cell: NSTableCellView, row: Int, column: Int) {
+    let hits = highlightMatches[row]
+    let isPainted =
+      key?.highlight?.style == .row ? hits != nil : hits?.contains(column) == true
+    cell.layer?.backgroundColor = isPainted ? key?.highlight?.color.nsColor.cgColor : nil
+    if isPainted { cell.textField?.textColor = .black }
+  }
 
   /// Header height from the flag, and each column's header content; the header view is
   /// redrawn (reloadData doesn't) and re-tiled in its scroll view when its height changes
@@ -465,6 +485,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private func makeCell() -> NSTableCellView {
     let cell = NSTableCellView()
+    cell.wantsLayer = true
     cell.identifier = Self.cellIdentifier
     let textField = NSTextField(labelWithString: "")
     textField.font = Self.font

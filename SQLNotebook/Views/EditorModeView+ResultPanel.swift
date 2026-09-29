@@ -304,6 +304,9 @@ struct EditorResultGridView: View {
   @Bindable var viewModel: NotebookViewModel
   /// Names of result columns hidden in the grid (data viewer); empty shows every column
   var hiddenColumns: Set<String> = []
+  /// Highlight of the data viewer, painted in the grid without changing its rows
+  var highlight: TableHighlight? = nil
+  var dialect: DatabaseType = .postgresql
   @State private var sortColumn: String?
   @State private var sortAscending = true
   /// Current search match when it is in the result data or column names
@@ -333,7 +336,9 @@ struct EditorResultGridView: View {
       currentMatch: currentMatch,
       forwardsScrollToParent: false,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
-      hiddenColumns: hiddenColumns
+      hiddenColumns: hiddenColumns,
+      highlight: highlight,
+      highlightDialect: dialect
     )
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
