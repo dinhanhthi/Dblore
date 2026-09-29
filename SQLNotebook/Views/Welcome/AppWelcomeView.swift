@@ -196,6 +196,10 @@ struct AppWelcomeView: View {
 // MARK: - Welcome Header
 
 struct WelcomeHeader: View {
+  private var appVersion: String {
+    Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+  }
+
   var body: some View {
     VStack(spacing: Spacing.xs) {
       Image(nsImage: NSApp.applicationIconImage)
@@ -211,6 +215,10 @@ struct WelcomeHeader: View {
       Text("Open a workspace or connect to a database to get started")
         .font(.body)
         .foregroundColor(.foregroundMuted)
+
+      Text("Version \(appVersion)")
+        .font(.caption)
+        .foregroundColor(.foregroundSubtle)
     }
     .padding(.bottom, Spacing.lg)
   }
