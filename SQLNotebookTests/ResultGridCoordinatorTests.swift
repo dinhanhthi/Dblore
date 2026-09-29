@@ -179,4 +179,63 @@ struct ResultGridCoordinatorTests {
     tableView.selectRowIndexes(IndexSet([0]), byExtendingSelection: false)
     #expect(coordinator.selectionTSV(tableView) == "3\tc")
   }
+
+  private func fitWidth(
+    _ values: [CellValue], headerWidth: CGFloat = 0, minWidth: CGFloat = 40
+  ) -> CGFloat {
+    let result = CellResult(
+      columns: [ColumnInfo(name: "c", type: "text")], rows: values.map { [$0] },
+      rowCount: values.count)
+    return ResultGridCoordinator.fitWidth(
+      column: 0, model: ResultGridModel(result: result, sortColumn: nil, ascending: true),
+      headerWidth: headerWidth, minWidth: minWidth)
+  }
+
+  @Test("Divider double-click fits short values at the column min width")
+  func fitWidthShortValues() {
+    #expect(fitWidth([.int(1), .int(7), .int(3)]) == 40)
+  }
+
+  @Test("Divider double-click stops a long value at the max fit width")
+  func fitWidthLongValue() {
+    #expect(
+      fitWidth([.string(String(repeating: "x", count: 200))]) == ResultGridCoordinator.maxFitWidth)
+  }
+
+  @Test("Divider double-click fits a value between min and max")
+  func fitWidthMediumValue() {
+    let width = fitWidth([.int(1), .string(String(repeating: "x", count: 15))])
+    #expect(width > 40 && width < ResultGridCoordinator.maxFitWidth)
+  }
+
+  @Test("A header wider than the cells decides the fit width")
+  func fitWidthHeader() {
+    #expect(fitWidth([.int(1)], headerWidth: 120) == 120)
+  }
+
+  @Test("An empty result fits the header, never below the min width")
+  func fitWidthEmpty() {
+    #expect(fitWidth([], headerWidth: 90) == 90)
+    #expect(fitWidth([], headerWidth: 10) == 40)
+  }
+
+  @Test("Only the first fitRowLimit rows are measured")
+  func fitWidthRowLimit() {
+    let values =
+      Array(repeating: CellValue.int(1), count: ResultGridCoordinator.fitRowLimit)
+      + [.string(String(repeating: "x", count: 200))]
+    #expect(fitWidth(values) == 40)
+  }
+
+  @Test("Divider double-click keeps the \"#\" width and fits a result column to its header")
+  func sizeToFitDelegate() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    let rowNumber = tableView.tableColumns[0]
+    #expect(coordinator.tableView(tableView, sizeToFitWidthOfColumn: 0) == rowNumber.width)
+    let header = tableView.tableColumns[1].headerCell as? ResultGridHeaderCell
+    let headerWidth = header?.fittingWidth() ?? 0
+    #expect(headerWidth > 0)
+    #expect(
+      coordinator.tableView(tableView, sizeToFitWidthOfColumn: 1) == max(ceil(headerWidth), 40))
+  }
 }
