@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/sqlnb.png" alt="SQLNotebook" width="120" />
+<img src="assets/logo_256.png" alt="SQLNotebook" width="120" />
 
 # SQLNotebook
 
