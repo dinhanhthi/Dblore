@@ -181,7 +181,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     username: String = "",
     password: String = "",
     sslMode: SSLMode = .prefer,
-    rememberConnection: Bool = false,
+    rememberConnection: Bool = true,
     timeoutSeconds: Int = 30,
     protectionLevel: ConnectionProtectionLevel = .none,
     name: String = "",
