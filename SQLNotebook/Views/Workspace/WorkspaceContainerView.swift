@@ -177,6 +177,7 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
     .settingsModal(workspaceManager: workspaceManager)
+    .favoriteModals(workspaceManager: workspaceManager)
     .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
       // Toggle settings modal: if already showing, close it; otherwise show settings
