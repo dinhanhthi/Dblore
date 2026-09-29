@@ -19,6 +19,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let nullTextColor = NSColor(Color.foregroundSubtle)
   /// Background of the current search match (the one Enter moved to), as in the result table
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
+  /// Faint tint over the cells of the sorted column, read on each cell (the accent can change)
+  static var sortedColumnColor: NSColor { NSColor(Color.accent.opacity(0.06)) }
   /// Same size as `Font.mono` (body, monospaced)
   static let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
@@ -384,14 +386,17 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Private
 
-  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, and
-  /// always clears it otherwise, since cells are reused
+  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, else
+  /// with the sorted-column tint, and always clears it otherwise, since cells are reused
   private func applyHighlight(to cell: NSTableCellView, row: Int, column: Int) {
     let hits = highlightMatches[row]
     let isPainted =
       key?.highlight?.style == .row ? hits != nil : hits?.contains(column) == true
+    let isSorted = key?.sortColumn != nil && model?.columns[column].name == key?.sortColumn
     cell.layer?.backgroundColor =
-      isPainted ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor : nil
+      isPainted
+      ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor
+      : isSorted ? Self.sortedColumnColor.cgColor : nil
   }
 
   /// Header height from the flag, and each column's header content; the header view is
