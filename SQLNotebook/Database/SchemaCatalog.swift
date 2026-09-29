@@ -20,26 +20,6 @@ enum SchemaCatalog {
     let isIdentity: Bool
     let isPK: Bool
     let isUnique: Bool
-
-    nonisolated init(
-      schema: String,
-      relation: String,
-      name: String,
-      formatType: String,
-      notNull: Bool,
-      isIdentity: Bool,
-      isPK: Bool,
-      isUnique: Bool
-    ) {
-      self.schema = schema
-      self.relation = relation
-      self.name = name
-      self.formatType = formatType
-      self.notNull = notNull
-      self.isIdentity = isIdentity
-      self.isPK = isPK
-      self.isUnique = isUnique
-    }
   }
 
   /// Uppercases a `format_type` string and shortens the time zone suffixes.

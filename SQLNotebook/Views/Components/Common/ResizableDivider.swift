@@ -71,7 +71,8 @@ struct ResizableDivider: View {
               ? Color.accent.opacity(0.3) : (isHovering ? Color.accent.opacity(0.1) : Color.clear)
           )
           .frame(width: isSideBySide ? 8 : nil, height: isSideBySide ? nil : 8)
-          .offset(x: isSideBySide ? -3.5 : 0, y: isSideBySide ? 0 : -3.5)  // Match hit area position
+          // Match hit area position
+          .offset(x: isSideBySide ? -3.5 : 0, y: isSideBySide ? 0 : -3.5)
       )
       .cursor(isSideBySide ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown)
       .onHover { hovering in
