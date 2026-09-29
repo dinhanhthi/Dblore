@@ -52,6 +52,15 @@ extension WorkspaceManager {
     }
   }
 
+  /// Rename the workspace. Auto-saves if already saved; otherwise the name is kept in memory
+  /// and pre-fills the save panel on the first save.
+  func renameWorkspace(to name: String) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, workspace.name != trimmed else { return }
+    workspace.name = trimmed
+    markDirtyAndScheduleAutoSave()
+  }
+
   /// Save workspace to a specific URL
   func saveWorkspaceAs(url: URL) async throws {
     try await saveWorkspaceToURL(url)
@@ -81,8 +90,12 @@ extension WorkspaceManager {
 
   private func saveWorkspaceToURL(_ url: URL) async throws {
     // Update workspace with current state
+    // The name follows the file only on the first save or "Save As"; a renamed, already
+    // saved workspace keeps its name independent of the file name
+    if workspace.fileURL != url {
+      workspace.name = url.deletingPathExtension().lastPathComponent
+    }
     workspace.fileURL = url
-    workspace.name = url.deletingPathExtension().lastPathComponent
 
     let data = try encodedWorkspaceData()
     try SecurityScopedAccess.write(data, to: url)

@@ -17,15 +17,6 @@ struct WorkspaceWelcomeView: View {
     recentManager.recentDocuments
   }
 
-  /// Display name for workspace - shows "Untitled Workspace" if not saved
-  private var workspaceDisplayName: String {
-    if workspaceManager.workspace.isSaved {
-      return "Welcome to workspace \"\(workspaceManager.workspace.name)\""
-    } else {
-      return "Untitled Workspace"
-    }
-  }
-
   var body: some View {
     GeometryReader { geometry in
       ScrollView {
@@ -37,10 +28,8 @@ struct WorkspaceWelcomeView: View {
               .aspectRatio(contentMode: .fit)
               .frame(width: 56, height: 56)
 
-            Text(workspaceDisplayName)
-              .font(.title2)
-              .fontWeight(.semibold)
-              .foregroundColor(.foreground)
+            WorkspaceTitleView(workspaceManager: workspaceManager)
+              .padding(.bottom, Spacing.sm)
 
             // Connection status and Settings
             HStack(spacing: Spacing.md) {
@@ -50,26 +39,22 @@ struct WorkspaceWelcomeView: View {
               Button {
                 workspaceManager.showSettings()
               } label: {
-                HStack(spacing: Spacing.xs) {
-                  Image(systemName: "gearshape")
-                  Text("Settings")
-                }
+                Image(systemName: "gearshape")
               }
               .buttonStyle(SecondaryButtonStyle())
               .controlSize(.small)
+              .help("Settings")
 
               // Save button, only for unsaved workspaces
               if !workspaceManager.workspace.isSaved {
                 Button {
                   Task { try? await workspaceManager.saveWorkspace() }
                 } label: {
-                  HStack(spacing: Spacing.xs) {
-                    Image(systemName: "square.and.arrow.down")
-                    Text("Save Workspace")
-                  }
+                  Image(systemName: "square.and.arrow.down")
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .controlSize(.small)
+                .help("Save Workspace")
               }
             }
           }
@@ -153,6 +138,61 @@ struct WorkspaceWelcomeView: View {
           try? await workspaceManager.openFile(url: url)
         }
       }
+    }
+  }
+}
+
+// MARK: - Workspace Title
+
+/// Workspace title; click to rename inline (Return/blur commits, Escape cancels)
+struct WorkspaceTitleView: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  @State private var isEditing = false
+  @State private var draft = ""
+  @FocusState private var isFieldFocused: Bool
+
+  private var displayName: String {
+    let workspace = workspaceManager.workspace
+    return !workspace.isSaved && workspace.name == "Untitled"
+      ? "Untitled Workspace" : workspace.name
+  }
+
+  var body: some View {
+    Group {
+      if isEditing {
+        TextField("Workspace name", text: $draft)
+          .textFieldStyle(.plain)
+          .multilineTextAlignment(.center)
+          .focused($isFieldFocused)
+          .onSubmit(commit)
+          .onExitCommand { isEditing = false }
+          .onChange(of: isFieldFocused) { _, focused in
+            if !focused { commit() }
+          }
+          .frame(width: 280)
+      } else {
+        Text(displayName)
+          .lineLimit(1)
+          .contentShape(Rectangle())
+          .onTapGesture {
+            draft = displayName
+            isEditing = true
+            isFieldFocused = true
+          }
+          .linkPointer()
+          .help("Click to rename")
+      }
+    }
+    .font(.title2)
+    .fontWeight(.semibold)
+    .foregroundColor(.foreground)
+  }
+
+  private func commit() {
+    guard isEditing else { return }
+    isEditing = false
+    if draft != displayName {
+      workspaceManager.renameWorkspace(to: draft)
     }
   }
 }
