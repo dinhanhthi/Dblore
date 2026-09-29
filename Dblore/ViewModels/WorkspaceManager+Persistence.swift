@@ -379,4 +379,10 @@ extension WorkspaceManager {
 
 extension UTType {
   static let sqlWorkspace = UTType(exportedAs: "ace.thi.dblore.workspace", conformingTo: .json)
+
+  /// Types accepted when opening a workspace. Also includes whatever UTI LaunchServices
+  /// resolves ".sqlws" to, since a lingering pre-rename build (com.sqlnotebook.workspace)
+  /// can claim the extension and grey out files in open panels.
+  static let sqlWorkspaceOpenTypes: [UTType] = [.sqlWorkspace, UTType(filenameExtension: "sqlws")]
+    .compactMap { $0 }
 }

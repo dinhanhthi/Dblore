@@ -6,6 +6,7 @@
 import AppKit
 @preconcurrency import SQLite3
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - App Delegate for file handling
 
@@ -571,7 +572,7 @@ struct TabCommands: Commands {
   /// Open workspace with file panel and return the manager
   private func openWorkspaceWithPanel() async -> WorkspaceManager? {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.sqlWorkspace]
+    panel.allowedContentTypes = UTType.sqlWorkspaceOpenTypes
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
     panel.message = "Select a workspace file to open"

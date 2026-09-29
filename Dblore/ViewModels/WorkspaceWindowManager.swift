@@ -6,6 +6,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Manages multiple workspace windows.
 /// This is the top-level manager for the entire application.
@@ -138,7 +139,7 @@ class WorkspaceWindowManager {
   /// Open workspace with file panel
   func openWorkspaceWithPanel() async {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.sqlWorkspace]
+    panel.allowedContentTypes = UTType.sqlWorkspaceOpenTypes
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
     panel.message = "Select a workspace file to open"
