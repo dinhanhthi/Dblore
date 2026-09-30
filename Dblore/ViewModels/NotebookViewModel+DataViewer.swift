@@ -16,15 +16,24 @@ extension NotebookViewModel {
       let key = state.loadKey
       // maxRows = pageSize never truncates a LIMIT pageSize page (no cap notice)
       await executeEditorQuery(
-        state.pageSQL, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound))
+        state.pageSQL, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
+        source: .internal)
 
       if dataViewer?.totalRows == nil {
         // Busy during the count too: Cancel stops it, paging meanwhile is coalesced by the loop
         isEditorQueryRunning = true
         defer { isEditorQueryRunning = false }
         // Errors keep the total unknown (Next stays enabled), no toast
+        let started = Date()
         let result = try? await connectionManager.execute(
           userSQL: state.countSQL, policy: protectionPolicy, maxRows: 1, caller: id)
+        scheduleHistory(
+          [
+            QueryHistoryOutcome(
+              sql: state.countSQL, duration: Date().timeIntervalSince(started),
+              rowCount: result?.rowCount, status: result == nil ? .error : .success,
+              errorMessage: nil)
+          ], source: .internal)
         if let result { storeDataViewerTotal(DataViewerState.total(from: result), for: state) }
       }
 

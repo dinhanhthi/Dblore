@@ -216,6 +216,7 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
+    let started = Date()
     do {
       let policy = protectionPolicy
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
@@ -226,6 +227,12 @@ extension NotebookViewModel {
             protectionLevel: policy.protectionLevel, safeMode: policy.safeMode,
             protectedMode: true),
         connectionEpoch: target.connectionEpoch, caller: id, commitImmediately: autoCommit)
+      scheduleHistory(
+        [
+          QueryHistoryOutcome(
+            sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
+            rowCount: rowsAffected, status: .success, errorMessage: nil)
+        ], source: .dataViewerEdit)
       // Success needs no toast: the refreshed cell (and the pending banner) shows it
       if rowsAffected != 1 {
         showToast(
@@ -240,6 +247,9 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
+      recordFailure(
+        error, sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
+        source: .dataViewerEdit)
       showToast(
         "Failed to update '\(edit.columnName)': \(error.localizedDescription)", type: .error)
     }

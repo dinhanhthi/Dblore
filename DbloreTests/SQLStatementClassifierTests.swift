@@ -329,4 +329,25 @@ struct SQLStatementClassifierTests {
     #expect(SQLStatementClassifier.summary(result).changesPrivileges == expected)
     #expect(result.allSatisfy { !$0.isReadOnlySafe } || !expected)
   }
+
+  // A role/user create or alter whose text contains the word PASSWORD. SELECT is never flagged,
+  // including when a column or comment mentions PASSWORD.
+  static let passwordLiteralCases: [(String, Bool)] = [
+    ("CREATE ROLE alice PASSWORD 'x'", true),
+    ("create user bob with encrypted password 'x'", true),
+    ("ALTER ROLE carol LOGIN PASSWORD 'x'", true),
+    ("ALTER USER dave WITH PASSWORD 'x'", true),
+    ("CREATE ROLE alice LOGIN", false),
+    ("SELECT password FROM users", false),
+    ("SELECT 1 -- PASSWORD", false),
+    ("CREATE USER MAPPING FOR bob SERVER foreign OPTIONS (password 'x')", false),
+  ]
+
+  @Test(
+    "Password literals are role and user create or alter statements",
+    arguments: passwordLiteralCases
+  )
+  func containsPasswordLiteral(_ sql: String, _ expected: Bool) {
+    #expect(SQLStatementClassifier.containsPasswordLiteral(sql) == expected)
+  }
 }

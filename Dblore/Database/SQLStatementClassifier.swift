@@ -95,6 +95,15 @@ nonisolated enum SQLStatementClassifier {
       changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
   }
 
+  /// True when `sql` is a CREATE/ALTER ROLE or CREATE/ALTER USER (not `USER MAPPING`) whose
+  /// text contains the word PASSWORD, including `WITH ENCRYPTED PASSWORD`. ASCII
+  /// case-insensitive, and PASSWORD does not have to be the first clause.
+  /// A SELECT is never a match, even when a column or a comment contains PASSWORD.
+  nonisolated static func containsPasswordLiteral(_ sql: String) -> Bool {
+    guard isRoleOrUserAdmin(sql) else { return false }
+    return sql.range(of: #"\bPASSWORD\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+  }
+
   /// Aggregate flags. `EXPLAIN ANALYZE` counts as its inner statement; plain EXPLAIN as a read.
   static func summary(_ statements: [ClassifiedStatement]) -> ClassificationSummary {
     let kinds = statements.map { effectiveKind($0.kind) }
@@ -344,6 +353,17 @@ nonisolated enum SQLStatementClassifier {
       affectsAllRows: inner.affectsAllRows, nonTransactional: inner.nonTransactional,
       resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges,
       createsTable: inner.createsTable)
+  }
+
+  /// Leading verb is CREATE/ALTER ROLE or CREATE/ALTER USER, and not USER MAPPING.
+  private static func isRoleOrUserAdmin(_ sql: String) -> Bool {
+    let words = SQLTokenizer.tokens(sql).compactMap(\.keyword)
+    guard words.count >= 2 else { return false }
+    let createsOrAlters = words[0] == "CREATE" || words[0] == "ALTER"
+    let roleOrUser = words[1] == "ROLE" || words[1] == "USER"
+    guard createsOrAlters, roleOrUser else { return false }
+    if words[1] == "USER", words.count >= 3, words[2] == "MAPPING" { return false }
+    return true
   }
 
   private static func isAnalyzeWord(_ token: SQLToken) -> Bool {

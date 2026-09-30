@@ -717,6 +717,10 @@ class WorkspaceManager: Identifiable {
     // Protection level / Safe Mode come from the workspace connection config
     shareConnectionConfig(with: viewModel)
     attachTransactionHook(to: viewModel)
+    viewModel.historyWorkspace = { [weak self] in
+      guard let self else { return nil }
+      return (id: self.workspace.id, name: self.workspace.name)
+    }
 
     return viewModel
   }

@@ -129,6 +129,8 @@ extension NotebookViewModel {
         result = convertedStatements.last?.result
         notebook.cells[index].result = result
         notebook.cells[index].executionCount = executionCounter
+        recordResults(
+          convertedStatements.map { (sql: $0.queryText, result: $0.result) }, source: .cell)
       } else {
         // Single statement - use original logic
         // Connection identity before the query: the edit target must resolve on the same one
@@ -168,6 +170,9 @@ extension NotebookViewModel {
         notebook.cells[index].statementResults = []
         notebook.cells[index].selectedStatementIndex = 0
         notebook.cells[index].totalExecutionTime = nil
+        if let result {
+          recordResults([(sql: task.query, result: result)], source: .cell)
+        }
       }
     } catch let error as DatabaseError {
       // Handle database-specific errors
@@ -184,6 +189,8 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
+      recordFailure(
+        error, sql: task.query, duration: error.executionTime ?? 0, source: .cell)
     } catch {
       // Handle general errors
       executionCounter += 1
@@ -194,6 +201,7 @@ extension NotebookViewModel {
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
+      recordFailure(error, sql: task.query, duration: 0, source: .cell)
     }
 
     // A capped read reset the session: the queued cells must not run on the new one

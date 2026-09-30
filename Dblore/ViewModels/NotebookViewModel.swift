@@ -30,6 +30,11 @@ enum SidebarContent: Equatable {
   case tableHighlight  // Highlight form of the data viewer tab
 }
 
+/// Persists one history row. A failure stays inside the recorder and never fails the query.
+nonisolated protocol QueryHistoryRecording: Sendable {
+  func record(_ entry: QueryHistoryEntry) async
+}
+
 /// Main view model for the notebook editor
 @MainActor
 @Observable
@@ -146,6 +151,14 @@ class NotebookViewModel {
   @ObservationIgnored var filterDraftRelation: String?
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
+  /// Query history. The app uses the SQLite store; the test host uses memory so unit tests
+  /// never open `~/Library/Application Support/Dblore/History.sqlite`. Tests inject their own.
+  @ObservationIgnored var historyRecorder: any QueryHistoryRecording =
+    NotebookViewModel.defaultHistoryRecorder()
+  /// History on/off and retention. Defaults to the app settings; tests pass an isolated suite.
+  @ObservationIgnored var historySettings = AppSettings.shared
+  /// Workspace this tab belongs to, read when a statement is recorded.
+  @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer

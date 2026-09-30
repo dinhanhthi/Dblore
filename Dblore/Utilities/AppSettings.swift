@@ -251,6 +251,9 @@ class AppSettings {
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
     static let inlineEditAutoCommit = "app.settings.inlineEditAutoCommit"
+    static let historyEnabled = "app.settings.historyEnabled"
+    static let historyRetentionDays = "app.settings.historyRetentionDays"
+    static let historyMaxEntries = "app.settings.historyMaxEntries"
   }
 
   // MARK: - Settings Properties
@@ -420,6 +423,41 @@ class AppSettings {
     }
   }
 
+  /// Record executed statements in query history.
+  /// Default: true
+  var historyEnabled: Bool = true {
+    didSet {
+      defaults.set(historyEnabled, forKey: Keys.historyEnabled)
+    }
+  }
+
+  /// Days of query history to keep. `0` keeps history forever.
+  /// Allowed: 7, 30, 90, 365, and 0. Any other value becomes 90.
+  /// Default: 90
+  var historyRetentionDays: Int = AppSettings.defaultHistoryRetentionDays {
+    didSet {
+      let clampedValue = Self.clampHistoryRetentionDays(historyRetentionDays)
+      if clampedValue != historyRetentionDays {
+        historyRetentionDays = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays)
+    }
+  }
+
+  /// Maximum query-history rows, clamped to 1,000...500,000.
+  /// Default: 50,000
+  var historyMaxEntries: Int = AppSettings.defaultHistoryMaxEntries {
+    didSet {
+      let clampedValue = Self.clampHistoryMaxEntries(historyMaxEntries)
+      if clampedValue != historyMaxEntries {
+        historyMaxEntries = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(historyMaxEntries, forKey: Keys.historyMaxEntries)
+    }
+  }
+
   // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
   private var safeModeAuth: SafeModeAuthenticator { .shared }
@@ -577,6 +615,28 @@ class AppSettings {
       inlineEditAutoCommit = defaults.bool(forKey: Keys.inlineEditAutoCommit)
     }
 
+    if defaults.object(forKey: Keys.historyEnabled) != nil {
+      historyEnabled = defaults.bool(forKey: Keys.historyEnabled)
+    }
+
+    if defaults.object(forKey: Keys.historyRetentionDays) != nil {
+      let stored = defaults.integer(forKey: Keys.historyRetentionDays)
+      let clamped = Self.clampHistoryRetentionDays(stored)
+      if clamped != stored {
+        defaults.set(clamped, forKey: Keys.historyRetentionDays)
+      }
+      historyRetentionDays = clamped
+    }
+
+    if defaults.object(forKey: Keys.historyMaxEntries) != nil {
+      let stored = defaults.integer(forKey: Keys.historyMaxEntries)
+      let clamped = Self.clampHistoryMaxEntries(stored)
+      if clamped != stored {
+        defaults.set(clamped, forKey: Keys.historyMaxEntries)
+      }
+      historyMaxEntries = clamped
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -609,6 +669,9 @@ class AppSettings {
     hideColumnTypes = false
     safeMode = .alertRead
     inlineEditAutoCommit = false
+    historyEnabled = true
+    historyRetentionDays = Self.defaultHistoryRetentionDays
+    historyMaxEntries = Self.defaultHistoryMaxEntries
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

@@ -172,6 +172,7 @@ struct DbloreApp: App {
     // Migrate from single session to connection history (one-time operation)
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()
+      pruneQueryHistoryOnLaunch()
     }
 
     // Configure SQLite temp directory to use app's temp directory
@@ -204,6 +205,23 @@ struct DbloreApp: App {
     .defaultSize(width: 1200, height: 800)
     // Note: handlesExternalEvents doesn't work for file open events
     // Duplicate windows are closed in AppDelegate.application(_:open:)
+  }
+
+  /// Drop expired history rows. A failure is logged; launch continues either way.
+  /// Skipped under XCTest so the test host never opens History.sqlite.
+  private func pruneQueryHistoryOnLaunch() {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    Task { @MainActor in
+      let days = AppSettings.shared.historyRetentionDays
+      let olderThan = QueryHistoryStore.retentionCutoff(retentionDays: days)
+      let maxEntries = AppSettings.shared.historyMaxEntries
+      do {
+        try await QueryHistoryStore.shared.prune(olderThan: olderThan, maxEntries: maxEntries)
+      } catch {
+        await AppLogger.shared.error(
+          "Query history prune failed: \(error.localizedDescription)", category: "History")
+      }
+    }
   }
 
   /// Configure SQLite to use app's temporary directory to avoid sandbox issues
