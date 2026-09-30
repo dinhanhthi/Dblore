@@ -32,7 +32,6 @@ struct AIAssistantPanel: View {
   var body: some View {
     VStack(spacing: 0) {
       header
-      Divider()
       if assistant.needsSetup {
         setupState
       } else if assistant.messages.isEmpty {
@@ -89,7 +88,8 @@ struct AIAssistantPanel: View {
       .help("Close")
     }
     .padding(.horizontal, Spacing.md)
-    .frame(height: ComponentSize.headerHeight)
+    // Matches the tab bar so the workspace's full-width tab bar border doubles as this divider
+    .frame(height: ComponentSize.tabBarHeight)
   }
 
   private var configuredProviders: [AIProviderKind] {
