@@ -109,20 +109,12 @@ struct AIAssistantPanel: View {
         }
       }
     } label: {
-      HStack(spacing: Spacing.xs) {
-        Text(modelLabel)
-          .font(.small)
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .frame(maxWidth: 240, alignment: .leading)
-        Image(systemName: "chevron.down").font(.smallest)
-      }
-      .foregroundColor(.foregroundMuted)
-      .contentShape(Rectangle())
+      AIDropdownLabel(title: modelLabel, systemImage: "sparkles")
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
+    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     .disabled(configuredProviders.isEmpty)
     .linkPointer()
     .help("Model")
@@ -224,12 +216,18 @@ struct AIAssistantPanel: View {
       if canExplain || canFixError {
         quickActions
       }
-      AIContextPicker(selected: $assistant.selectedTableNames, tables: tables) { column in
-        let separator = assistant.draft.isEmpty || assistant.draft.hasSuffix(" ") ? "" : " "
-        assistant.draft += separator + column + " "
-        composerFocused = true
+      AIContextPicker(
+        selected: $assistant.selectedTableNames,
+        tables: tables,
+        onColumn: { column in
+          let separator = assistant.draft.isEmpty || assistant.draft.hasSuffix(" ") ? "" : " "
+          assistant.draft += separator + column + " "
+          composerFocused = true
+        }
+      ) {
+        modelMenu
       }
-      composer
+      inputRow
     }
     .padding(Spacing.md)
   }
@@ -252,13 +250,6 @@ struct AIAssistantPanel: View {
         .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
       }
-    }
-  }
-
-  private var composer: some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      modelMenu
-      inputRow
     }
   }
 

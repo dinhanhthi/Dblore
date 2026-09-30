@@ -42,6 +42,40 @@ struct AIChipButtonStyle: ButtonStyle {
   }
 }
 
+/// Compact menu label that keeps the chevron and ellipsizes a long title.
+struct AIDropdownLabel: View {
+  let title: String
+  var systemImage: String
+
+  var body: some View {
+    HStack(spacing: Spacing.xs) {
+      Image(systemName: systemImage)
+        .font(.system(size: 11))
+        .foregroundColor(.foregroundSubtle)
+
+      Text(title)
+        .font(.small)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+      Image(systemName: "chevron.down")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundColor(.foregroundSubtle)
+    }
+    .foregroundColor(.foregroundMuted)
+    .padding(.horizontal, Spacing.sm)
+    .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+    .background(Color.inputBackground)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.sm)
+        .stroke(Color.border, lineWidth: 1)
+    )
+    .contentShape(Rectangle())
+  }
+}
+
 /// Wraps children onto new lines when the row is full
 private struct AIFlowLayout: Layout {
   var spacing: CGFloat = 4
@@ -82,13 +116,27 @@ private struct AIFlowLayout: Layout {
   }
 }
 
-struct AIContextPicker: View {
+struct AIContextPicker<Accessory: View>: View {
   @Binding var selected: Set<String>
   let tables: [DatabaseTable]
   /// Called with `schema.table.column` when a column chip is clicked
   var onColumn: (String) -> Void = { _ in }
+  /// Sits beside the context menu. Empty when the picker is shown alone.
+  private var accessory: () -> Accessory
 
-  private static let searchThreshold = 30
+  init(
+    selected: Binding<Set<String>>,
+    tables: [DatabaseTable],
+    onColumn: @escaping (String) -> Void = { _ in },
+    @ViewBuilder accessory: @escaping () -> Accessory
+  ) {
+    _selected = selected
+    self.tables = tables
+    self.onColumn = onColumn
+    self.accessory = accessory
+  }
+
+  private let searchThreshold = 30
 
   @State private var expanded: String?
   @State private var showSearchPopover = false
@@ -103,15 +151,7 @@ struct AIContextPicker: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.xs) {
-        Text("Context")
-          .font(.small)
-          .foregroundColor(.foregroundMuted)
-        picker
-        Spacer(minLength: 0)
-      }
-
+    VStack(alignment: .leading, spacing: Spacing.sm) {
       if !selectedTables.isEmpty {
         AIFlowLayout {
           ForEach(selectedTables) { table in
@@ -129,6 +169,18 @@ struct AIContextPicker: View {
           }
         }
       }
+
+      HStack(alignment: .center, spacing: Spacing.sm) {
+        picker
+          .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+          .clipped()
+        if Accessory.self != EmptyView.self {
+          accessory()
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
+        }
+      }
+      .padding(.bottom, Spacing.sm)
     }
     .onChange(of: selected) { _, newValue in
       if let expanded, !newValue.contains(expanded) { self.expanded = nil }
@@ -139,14 +191,16 @@ struct AIContextPicker: View {
 
   @ViewBuilder
   private var picker: some View {
-    if tables.count > Self.searchThreshold {
+    if tables.count > searchThreshold {
       Button {
         showSearchPopover.toggle()
       } label: {
         pickerLabel
       }
       .buttonStyle(.plain)
+      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
       .linkPointer()
+      .help("Context")
       .popover(isPresented: $showSearchPopover, arrowEdge: .bottom) { searchPopover }
     } else {
       Menu {
@@ -157,20 +211,17 @@ struct AIContextPicker: View {
       .menuStyle(.button)
       .buttonStyle(.plain)
       .menuIndicator(.hidden)
-      .fixedSize()
+      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
       .linkPointer()
+      .help("Context")
     }
   }
 
   private var pickerLabel: some View {
-    HStack(spacing: Spacing.xs) {
-      Text(selected.isEmpty ? "Auto (relevant tables)" : "\(selected.count) selected")
-        .font(.small)
-      Image(systemName: "chevron.down")
-        .font(.smallest)
-    }
-    .foregroundColor(.foregroundMuted)
-    .contentShape(Rectangle())
+    AIDropdownLabel(
+      title: selected.isEmpty ? "Auto (relevant tables)" : "\(selected.count) selected",
+      systemImage: "tablecells"
+    )
   }
 
   @ViewBuilder
@@ -273,6 +324,16 @@ struct AIContextPicker: View {
       .linkPointer()
       .help("Remove \(table.qualifiedName)")
     }
+  }
+}
+
+extension AIContextPicker where Accessory == EmptyView {
+  init(
+    selected: Binding<Set<String>>,
+    tables: [DatabaseTable],
+    onColumn: @escaping (String) -> Void = { _ in }
+  ) {
+    self.init(selected: selected, tables: tables, onColumn: onColumn) { EmptyView() }
   }
 }
 
