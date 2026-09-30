@@ -57,7 +57,6 @@ struct AIAssistantPanel: View {
         .font(.subheading)
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.xs)
-      modelMenu
       Button {
         assistant.clear()
       } label: {
@@ -114,7 +113,8 @@ struct AIAssistantPanel: View {
         Text(modelLabel)
           .font(.small)
           .lineLimit(1)
-          .truncationMode(.middle)
+          .truncationMode(.tail)
+          .frame(maxWidth: 240, alignment: .leading)
         Image(systemName: "chevron.down").font(.smallest)
       }
       .foregroundColor(.foregroundMuted)
@@ -123,17 +123,16 @@ struct AIAssistantPanel: View {
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
-    .fixedSize()
     .disabled(configuredProviders.isEmpty)
     .linkPointer()
-    .help("Provider and model")
+    .help("Model")
   }
 
+  /// Model name only. Provider names stay inside the menu so a long label cannot overflow the sidebar.
   private var modelLabel: String {
-    guard let provider = assistant.activeProvider, !assistant.needsSetup else {
-      return "No provider"
-    }
-    return "\(provider.displayName) · \(assistant.activeModel)"
+    guard !assistant.needsSetup else { return "No provider" }
+    let model = assistant.activeModel
+    return model.isEmpty ? "Select model" : model
   }
 
   // MARK: - States
@@ -208,9 +207,19 @@ struct AIAssistantPanel: View {
 
   // MARK: - Footer
 
+  private var canExplain: Bool {
+    currentSQL != nil && !assistant.needsSetup
+  }
+
+  private var canFixError: Bool {
+    currentSQL != nil && lastError != nil && !assistant.needsSetup
+  }
+
   private var footer: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      quickActions
+      if canExplain || canFixError {
+        quickActions
+      }
       AIContextPicker(selected: $assistant.selectedTableNames, tables: tables) { column in
         let separator = assistant.draft.isEmpty || assistant.draft.hasSuffix(" ") ? "" : " "
         assistant.draft += separator + column + " "
@@ -223,24 +232,33 @@ struct AIAssistantPanel: View {
 
   private var quickActions: some View {
     HStack(spacing: Spacing.xs) {
-      Button("Explain query") {
-        if let sql = currentSQL { assistant.explain(sql: sql) }
-      }
-      .buttonStyle(AIChipButtonStyle())
-      .disabled(currentSQL == nil || assistant.isGenerating || assistant.needsSetup)
-      Button("Fix error") {
-        if let sql = currentSQL, let error = lastError {
-          assistant.fixError(sql: sql, error: error)
+      if canExplain {
+        Button("Explain query") {
+          if let sql = currentSQL { assistant.explain(sql: sql) }
         }
+        .buttonStyle(AIChipButtonStyle())
+        .disabled(assistant.isGenerating)
       }
-      .buttonStyle(AIChipButtonStyle())
-      .disabled(
-        currentSQL == nil || lastError == nil || assistant.isGenerating || assistant.needsSetup)
-      Spacer(minLength: 0)
+      if canFixError {
+        Button("Fix error") {
+          if let sql = currentSQL, let error = lastError {
+            assistant.fixError(sql: sql, error: error)
+          }
+        }
+        .buttonStyle(AIChipButtonStyle())
+        .disabled(assistant.isGenerating)
+      }
     }
   }
 
   private var composer: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      modelMenu
+      inputRow
+    }
+  }
+
+  private var inputRow: some View {
     HStack(alignment: .bottom, spacing: Spacing.sm) {
       TextField("Ask about your database", text: $assistant.draft, axis: .vertical)
         .textFieldStyle(.plain)

@@ -57,7 +57,7 @@ final class LocalModelManager {
     root: URL,
     sampleInterval: Duration = .milliseconds(500),
     downloader: @escaping Downloader = LocalModelManager.hubDownload,
-    unloader: @escaping Unloader = { await MLXEngine.shared.unload(modelID: $0) },
+    unloader: @escaping Unloader = { MLXEngine.shared.unload(modelID: $0) },
     scanner: @escaping Scanner = LocalModelManager.diskScan
   ) {
     self.root = root
@@ -152,8 +152,8 @@ final class LocalModelManager {
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
       }.value
       let downloader = self.downloader
-      let job = Task { @MainActor in
-        try await downloader(model, staging) { [weak self] progress in
+      let job = Task { @MainActor [weak self] in
+        try await downloader(model, staging) { progress in
           tracker.foundationFraction = progress.fractionCompleted
           self?.report(model, downloadedBytes: 0, tracker: tracker)
         }
