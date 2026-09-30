@@ -15,6 +15,13 @@ struct DataViewerControls: View {
   var body: some View {
     if let state = viewModel.dataViewer {
       HStack(spacing: Spacing.sm) {
+        Text(state.title)
+          .font(.system(size: 12, weight: .semibold, design: .monospaced))
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(state.title)
+
         pageSizeMenu(state: state)
         columnsButton(state: state)
 

@@ -12,6 +12,8 @@ import SwiftUI
 struct TableRowView: View {
   let table: DatabaseTable
   let isExpanded: Bool
+  /// Shown in the active data viewer tab
+  var isSelected = false
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
@@ -78,7 +80,10 @@ struct TableRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHoveringTable ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(
+            isSelected
+              ? Color.accent.opacity(0.15)
+              : (isHoveringTable ? Color.cellBackgroundHover.opacity(0.5) : Color.clear))
       )
       .onHover { hovering in
         isHoveringTable = hovering
@@ -120,6 +125,8 @@ struct TableRowView: View {
 struct ViewRowView: View {
   let view: DatabaseView
   let isExpanded: Bool
+  /// Shown in the active data viewer tab
+  var isSelected = false
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
@@ -172,7 +179,10 @@ struct ViewRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(
+            isSelected
+              ? Color.accent.opacity(0.15)
+              : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear))
       )
       .onHover { hovering in
         isHovering = hovering

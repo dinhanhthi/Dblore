@@ -64,6 +64,12 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
+  /// Whether the active tab is a data viewer showing this relation
+  private func isOpenInActiveTab(schema: String, name: String) -> Bool {
+    guard let state = workspaceManager.activeViewModel?.dataViewer else { return false }
+    return state.schema == schema && state.name == name
+  }
+
   private var publicKeywords: [String] {
     SidebarEntityFilter.keywords(in: publicFilter)
   }
@@ -181,6 +187,8 @@ struct WorkspaceLeftSidebarContent: View {
                   TableRowView(
                     table: table.display,
                     isExpanded: table.expandForMatch || table.source.isExpanded,
+                    isSelected: isOpenInActiveTab(
+                      schema: table.source.schema, name: table.source.name),
                     onToggle: {
                       if !table.expandForMatch {
                         workspaceManager.toggleTableExpansion(tableId: table.id)
@@ -213,6 +221,8 @@ struct WorkspaceLeftSidebarContent: View {
                   ViewRowView(
                     view: view.display,
                     isExpanded: view.expandForMatch || view.source.isExpanded,
+                    isSelected: isOpenInActiveTab(
+                      schema: view.source.schema, name: view.source.name),
                     onToggle: {
                       if !view.expandForMatch {
                         workspaceManager.toggleViewExpansion(viewId: view.id)
