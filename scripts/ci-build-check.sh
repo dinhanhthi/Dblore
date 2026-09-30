@@ -22,7 +22,13 @@ fi
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 echo "==> Archiving with $dev"
+# Both skip flags are needed (mlx-swift CudaBuild plugin + macros), and they are global to the
+# invocation; the resolved-file-only options bound that exposure to the committed Package.resolved.
 DEVELOPER_DIR="$dev" xcodebuild archive \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  -disableAutomaticPackageResolution \
+  -onlyUsePackageVersionsFromResolvedFile \
   -project Dblore.xcodeproj \
   -scheme Dblore \
   -configuration Release \

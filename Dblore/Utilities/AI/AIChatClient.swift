@@ -18,6 +18,8 @@ nonisolated struct AIChatRequest: Sendable {
 
 nonisolated enum AIStreamEvent: Sendable, Equatable {
   case text(String)
+  /// An on-device model is being loaded into memory before the first token
+  case loadingModel
 }
 
 nonisolated enum AIClientError: LocalizedError, Equatable, Sendable {
@@ -68,6 +70,8 @@ nonisolated enum AIClientFactory {
     if kind == .chatGPT {
       return ChatGPTCodexClient(tokenProvider: tokenProvider, session: session)
     }
+    // On-device: fully local, the base URL is ignored and nothing touches the network
+    if kind == .localMLX { return MLXChatClient() }
     let base: URL
     do {
       base = try AIEndpoint.normalize(config.baseURL)

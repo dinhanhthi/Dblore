@@ -5,7 +5,7 @@ import Foundation
 import Observation
 
 nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
-  case anthropic, openAI, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT
+  case anthropic, openAI, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT, localMLX
 
   var displayName: String {
     switch self {
@@ -17,6 +17,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .mlxServer: return "mlx_lm.server"
     case .custom: return "Custom (OpenAI-compatible)"
     case .chatGPT: return "ChatGPT (subscription, experimental)"
+    case .localMLX: return "On-device (MLX)"
     }
   }
 
@@ -38,13 +39,14 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .mlxServer: return "http://127.0.0.1:8080/v1"
     case .custom: return ""
     case .chatGPT: return "https://chatgpt.com/backend-api/codex"
+    case .localMLX: return ""
     }
   }
 
   var requiresAPIKey: Bool {
     switch self {
     case .anthropic, .openAI, .openRouter: return true
-    case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT: return false
+    case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT, .localMLX: return false
     }
   }
 
@@ -56,7 +58,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openRouter:
       return ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "google/gemini-2.5-pro"]
     case .chatGPT: return ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"]
-    case .ollama, .lmStudio, .mlxServer, .custom: return []
+    case .ollama, .lmStudio, .mlxServer, .custom, .localMLX: return []
     }
   }
 }
@@ -113,6 +115,10 @@ final class AISettings {
 
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let keyStore: AIKeyStore
+  /// Installed on-device model ids; a cached, observable set (no disk access while rendering)
+  @ObservationIgnored var installedLocalModels: @MainActor () -> Set<String> = {
+    LocalModelManager.shared.installedIDs
+  }
 
   init(defaults: UserDefaults, keyStore: AIKeyStore) {
     self.defaults = defaults
@@ -156,6 +162,10 @@ final class AISettings {
 
   func isConfigured(_ kind: AIProviderKind) -> Bool {
     guard !config(for: kind).model.isEmpty else { return false }
+    if kind == .localMLX {
+      guard let model = LocalModelCatalog.model(for: config(for: kind).model) else { return false }
+      return installedLocalModels().contains(model.id)
+    }
     if kind == .chatGPT { return ChatGPTTokenStorage.load(from: keyStore) != nil }
     guard kind.requiresAPIKey else { return true }
     return !(apiKey(for: kind) ?? "").isEmpty

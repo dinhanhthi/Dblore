@@ -54,12 +54,17 @@ struct AISettingsSection: View {
       providerRow
       if kind == .chatGPT {
         chatGPTRow
-      } else {
+      } else if kind != .localMLX {
         baseURLRow
       }
       if kind.requiresAPIKey { apiKeyRow }
-      modelRow
-      testRow
+      if kind == .localMLX {
+        // No network probe: models are chosen from the catalog below
+        AILocalModelsSection()
+      } else {
+        modelRow
+        testRow
+      }
       if ollamaDetected && kind == .ollama && !isActive {
         helpText("Ollama detected on this Mac. Click Set as active to use it.")
       }

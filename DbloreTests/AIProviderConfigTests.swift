@@ -36,7 +36,7 @@ struct AIProviderConfigTests {
 
   @Test("provider kind defaults")
   func kindDefaults() {
-    #expect(AIProviderKind.allCases.count == 8)
+    #expect(AIProviderKind.allCases.count == 9)
     #expect(AIProviderKind.anthropic.wire == .anthropicMessages)
     #expect(AIProviderKind.ollama.wire == .chatCompletions)
     #expect(AIProviderKind.ollama.defaultBaseURL == "http://127.0.0.1:11434/v1")
@@ -90,6 +90,21 @@ struct AIProviderConfigTests {
     settings.setAPIKey("sk-test", for: .anthropic)
     #expect(settings.apiKey(for: .anthropic) == "sk-test")
     #expect(settings.isConfigured(.anthropic))
+  }
+
+  @Test("isConfigured for on-device MLX needs an installed catalog model")
+  func localMLXConfigured() {
+    let (settings, _, _) = makeSettings()
+    let catalogID = LocalModelCatalog.all[0].id
+    settings.installedLocalModels = { [catalogID, "not-in-catalog"] }
+    #expect(!settings.isConfigured(.localMLX))  // empty model
+    settings.configuration.configs[.localMLX] = AIProviderConfig(
+      baseURL: "", model: "not-in-catalog")
+    #expect(!settings.isConfigured(.localMLX))  // not a catalog id, even if "installed"
+    settings.configuration.configs[.localMLX] = AIProviderConfig(baseURL: "", model: catalogID)
+    #expect(settings.isConfigured(.localMLX))
+    settings.installedLocalModels = { [] }
+    #expect(!settings.isConfigured(.localMLX))  // catalog id not installed
   }
 
   @Test("setAPIKey with empty string deletes the key")

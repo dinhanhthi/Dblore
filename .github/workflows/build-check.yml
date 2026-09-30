@@ -26,9 +26,21 @@ jobs:
 
       - uses: ./.github/actions/select-xcode
 
+      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      # -skipPackagePluginValidation: mlx-swift ships a build plugin (CudaBuild) that otherwise
+      # needs interactive trust. -skipMacroValidation: same for mlx-swift-lm macros.
+      # Both skip flags are global to the invocation; -disableAutomaticPackageResolution and
+      # -onlyUsePackageVersionsFromResolvedFile restrict the build to the committed Package.resolved.
       - name: Archive (Release, unsigned)
         run: |
           xcodebuild archive \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
             -project Dblore.xcodeproj \
             -scheme Dblore \
             -configuration Release \

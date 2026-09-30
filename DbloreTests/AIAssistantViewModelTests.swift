@@ -11,6 +11,8 @@ nonisolated private final class FakeAIChatClient: AIChatClient, @unchecked Senda
     case events([String])
     case eventsThenFail([String], Error)
     case eventsThenHang([String])
+    case loadingThenHang
+    case loadingThenText(String)
   }
 
   private let lock = NSLock()
@@ -39,6 +41,14 @@ nonisolated private final class FakeAIChatClient: AIChatClient, @unchecked Senda
         case .eventsThenFail(let texts, let error):
           texts.forEach { continuation.yield(.text($0)) }
           continuation.finish(throwing: error)
+        case .loadingThenHang:
+          continuation.yield(.loadingModel)
+          try? await Task.sleep(for: .seconds(60))
+          continuation.finish()
+        case .loadingThenText(let text):
+          continuation.yield(.loadingModel)
+          continuation.yield(.text(text))
+          continuation.finish()
         case .eventsThenHang(let texts):
           texts.forEach { continuation.yield(.text($0)) }
           try? await Task.sleep(for: .seconds(60))
@@ -105,6 +115,27 @@ struct AIAssistantViewModelTests {
     #expect(vm.messages[1].role == .assistant)
     #expect(vm.messages[1].text == "Hello")
     #expect(!vm.messages[1].isError)
+  }
+
+  @Test("loading state is set by the client event and cleared by the first text")
+  func loadingState() async {
+    let vm = makeVM(FakeAIChatClient(.loadingThenText("ok")))
+    vm.draft = "hi"
+    vm.send()
+    await finish(vm)
+    #expect(!vm.isLoadingModel)
+    #expect(vm.messages.last?.text == "ok")
+  }
+
+  @Test("stop during model load clears loading and generating")
+  func stopDuringLoad() async {
+    let vm = makeVM(FakeAIChatClient(.loadingThenHang))
+    vm.draft = "hi"
+    vm.send()
+    await waitUntil { vm.isLoadingModel }
+    #expect(vm.isLoadingModel && vm.isGenerating)
+    vm.stop()
+    #expect(!vm.isLoadingModel && !vm.isGenerating)
   }
 
   @Test("stop keeps partial text and stops generating")

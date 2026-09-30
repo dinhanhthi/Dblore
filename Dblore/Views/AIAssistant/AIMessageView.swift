@@ -10,6 +10,8 @@ import SwiftUI
 
 struct AIMessageView: View {
   let entry: AIChatEntry
+  /// Shown while the entry has no text yet
+  var placeholder = "Thinking…"
   /// Places SQL in the active tab; nil disables Insert. Never executes.
   let onInsert: ((String) -> Void)?
 
@@ -46,7 +48,7 @@ struct AIMessageView: View {
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     } else if entry.text.isEmpty {
-      Text("Thinking…")
+      Text(placeholder)
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
     } else {

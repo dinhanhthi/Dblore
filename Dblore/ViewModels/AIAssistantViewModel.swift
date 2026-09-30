@@ -12,7 +12,7 @@ struct AIChatEntry: Identifiable, Equatable {
 }
 
 /// Structure-only snapshot of the connected database, read at send time
-struct AISchemaSnapshot {
+struct AISchemaSnapshot: Sendable {
   var tables: [DatabaseTable]
   var foreignKeys: [ForeignKey]
   var databaseName: String?
@@ -27,6 +27,8 @@ final class AIAssistantViewModel {
   var messages: [AIChatEntry] = []
   var draft = ""
   var isGenerating = false
+  /// True while an on-device model is being loaded into memory (before the first token)
+  var isLoadingModel = false
   var isVisible = false
   var providerOverride: AIProviderKind?
   var modelOverride: String?
@@ -76,13 +78,13 @@ final class AIAssistantViewModel {
     messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
     draft = ""
 
-    let request = makeRequest(question: question)
     let entryId = UUID()
     messages.append(AIChatEntry(id: entryId, role: .assistant, text: "", isError: false))
 
+    let model = activeModel
     let client: any AIChatClient
     do {
-      guard !request.model.isEmpty else { throw AIClientError.missingModel }
+      guard !model.isEmpty else { throw AIClientError.missingModel }
       client = try makeClient(
         provider, settings.config(for: provider), settings.apiKey(for: provider))
     } catch {
@@ -90,14 +92,27 @@ final class AIAssistantViewModel {
       return
     }
 
+    // Schema selection and rendering can be large; they run off the main actor
+    let snapshot = schemaSource()
+    let explicit = selectedTableNames
+    let history = makeHistory()
     isGenerating = true
     generation += 1
     let token = generation
     generationTask = Task { [weak self] in
+      let request = await Self.buildRequest(
+        model: model, question: question, explicit: explicit, snapshot: snapshot,
+        history: history)
       do {
         for try await event in client.stream(request) {
           guard let self, !Task.isCancelled else { return }
-          if case .text(let delta) = event { self.append(delta, to: entryId) }
+          switch event {
+          case .text(let delta):
+            self.isLoadingModel = false
+            self.append(delta, to: entryId)
+          case .loadingModel:
+            self.isLoadingModel = true
+          }
         }
       } catch {
         if !Task.isCancelled { self?.markError(entryId, error) }
@@ -111,6 +126,7 @@ final class AIAssistantViewModel {
     generationTask = nil
     generation += 1
     isGenerating = false
+    isLoadingModel = false
     removeEmptyAssistantEntries()
   }
 
@@ -137,23 +153,30 @@ final class AIAssistantViewModel {
 
   // MARK: - Helpers
 
-  /// Builds the request from the current history (which already ends with the new question)
-  private func makeRequest(question: String) -> AIChatRequest {
-    let snapshot = schemaSource()
-    let selected = AISchemaContext.selectTables(
-      explicit: selectedTableNames, question: question, tables: snapshot.tables,
-      foreignKeys: snapshot.foreignKeys)
-    let schema = AISchemaContext.render(tables: selected, foreignKeys: snapshot.foreignKeys)
-    let history =
-      messages
+  /// History of the conversation (which already ends with the new question)
+  private func makeHistory() -> [AIChatMessage] {
+    messages
       .filter { !$0.isError && !$0.text.isEmpty }
       .suffix(Self.historyLimit)
       .drop(while: { $0.role == .assistant })  // Anthropic requires the first message to be user
       .map { AIChatMessage(role: $0.role, text: $0.text) }
-    return AIChatRequest(
-      model: activeModel,
-      system: AIPrompts.system(databaseName: snapshot.databaseName, schema: schema),
-      messages: Array(history))
+  }
+
+  /// Builds the request off the main actor: table selection and rendering are O(tables)
+  nonisolated private static func buildRequest(
+    model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
+    history: [AIChatMessage]
+  ) async -> AIChatRequest {
+    await Task.detached {
+      let selected = AISchemaContext.selectTables(
+        explicit: explicit, question: question, tables: snapshot.tables,
+        foreignKeys: snapshot.foreignKeys)
+      let schema = AISchemaContext.render(tables: selected, foreignKeys: snapshot.foreignKeys)
+      return AIChatRequest(
+        model: model,
+        system: AIPrompts.system(databaseName: snapshot.databaseName, schema: schema),
+        messages: history)
+    }.value
   }
 
   private func append(_ delta: String, to id: UUID) {
@@ -179,6 +202,7 @@ final class AIAssistantViewModel {
   private func finishGeneration(_ token: Int) {
     guard token == generation else { return }
     isGenerating = false
+    isLoadingModel = false
     generationTask = nil
     removeEmptyAssistantEntries()
   }

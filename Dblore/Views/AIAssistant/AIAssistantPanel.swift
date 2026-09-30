@@ -181,7 +181,9 @@ struct AIAssistantPanel: View {
       ScrollView {
         LazyVStack(spacing: Spacing.sm) {
           ForEach(assistant.messages) { entry in
-            AIMessageView(entry: entry, onInsert: insertHandler)
+            AIMessageView(
+              entry: entry, placeholder: assistant.isLoadingModel ? "Loading model…" : "Thinking…",
+              onInsert: insertHandler)
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
