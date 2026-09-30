@@ -148,6 +148,16 @@ class NotebookViewModel {
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   /// Table/view data viewer tab state (nil for every other tab)
   var dataViewer: DataViewerState?
+  /// How the user resolved a prompt that blocks paging, filter, sort, refresh, or tab close
+  /// while row changes are staged.
+  enum StagedLeaveChoice: Sendable {
+    case commit
+    case discard
+    case cancel
+  }
+  /// True while that prompt is open. The data viewer header presents it.
+  var stagedLeavePromptVisible = false
+  @ObservationIgnored var stagedLeaveContinuation: CheckedContinuation<StagedLeaveChoice, Never>?
   /// Filter form of the data viewer: edited freely, only `applyFilter()` copies it to
   /// `dataViewer.filter`
   var filterDraft = TableFilter(conditions: [])

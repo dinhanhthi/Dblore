@@ -6,34 +6,67 @@
 //  TSV of a selection. It holds only the displayed rows, so every row index it takes is a
 //  table (displayed) row and can never be confused with an index into `CellResult.rows`;
 //  only `displayedRow(forOriginalRow:)` takes, and `originalRow(forDisplayedRow:)` returns,
-//  an index into `CellResult.rows`.
+//  an index into `CellResult.rows`. `apply(changeSet:)` lays a staged overlay on those rows.
 //
 
 import Foundation
 
+/// How a displayed row relates to the staged change set.
+enum ResultGridRowState: Equatable {
+  case normal
+  case inserted
+  case deleted
+  case edited
+}
+
+/// Stable identity of one displayed row. `generation` changes only when that row's overlay does.
+struct ResultGridRowIdentity: Equatable {
+  /// Index into `CellResult.rows`. Nil for a staged insert.
+  var originalRow: Int?
+  /// Temporary id of a staged insert. Nil for a loaded row.
+  var insertID: UUID?
+  /// Bumps when this displayed row's staged values or state change.
+  var generation: Int
+}
+
 struct ResultGridModel {
   let columns: [ColumnInfo]
-  private let displayedRows: [[CellValue]]
-  /// Index into `CellResult.rows` of each displayed row
+  /// Loaded rows in display order, before staged inserts. Edits replace values on read.
+  private let loadedRows: [[CellValue]]
+  /// Index into `CellResult.rows` of each loaded displayed row
   private let originalRows: [Int]
   /// Displayed row of each index into `CellResult.rows`
   private let displayedRowByOriginalRow: [Int]
-  /// Lazily filled display text, shared by copies of this model (the rows are immutable, and
-  /// a new model, hence an empty cache, is built whenever the result or sort changes)
+  private let columnIndexByName: [String: Int]
+  /// Lazily filled display text of loaded cells. Staged edits and inserts skip it, so a copy
+  /// that does not share the overlay still reads the loaded text. A new model (empty cache) is
+  /// built whenever the result or sort changes.
   private let textCache: DisplayTextCache
+  /// Rows whose overlay changed on the last `apply`. Empty when that apply changed nothing.
+  private(set) var changedRows = IndexSet()
+  private var appliedChangeSet: RowChangeSet?
+  private var staging = Staging()
+  private var generations: [Int] = []
+  private var cachedKeyColumns: [String]?
+  private var cachedKeyRows: [RowChangeSet.RowKey: [Int]] = [:]
 
   init(
     result: CellResult, sortColumn: String?, ascending: Bool,
     valueFilter: ColumnValueFilter = ColumnValueFilter()
   ) {
     columns = result.columns
+    var indexByName: [String: Int] = [:]
+    for (index, column) in result.columns.enumerated() where indexByName[column.name] == nil {
+      indexByName[column.name] = index
+    }
+    columnIndexByName = indexByName
     let sorted = result.sortedRowIndices(byColumn: sortColumn, ascending: ascending)
     // A category filter drops rows from the grid only. `result.rows` (the LIMIT window) stays.
     let originalRows =
       valueFilter.isEmpty
       ? sorted
       : sorted.filter { valueFilter.includes(row: result.rows[$0], columns: result.columns) }
-    displayedRows = originalRows.map { result.rows[$0] }
+    loadedRows = originalRows.map { result.rows[$0] }
     self.originalRows = originalRows
     // Sized to the loaded result, so a filtered-out original row has no displayed row (-1)
     var displayedRowByOriginalRow = Array(repeating: -1, count: result.rows.count)
@@ -44,11 +77,11 @@ struct ResultGridModel {
     textCache = DisplayTextCache(rowCount: originalRows.count)
   }
 
-  var rowCount: Int { displayedRows.count }
+  var rowCount: Int { loadedRows.count + staging.inserts.count }
 
-  /// The displayed row at table row `row`
+  /// The displayed row at table row `row`, with staged edits and inserts applied
   func row(at row: Int) -> [CellValue] {
-    displayedRows[row]
+    values(at: row)
   }
 
   /// Table (displayed) row of `originalRow`, an index into `CellResult.rows` such as a search
@@ -92,10 +125,59 @@ struct ResultGridModel {
     }
   }
 
-  /// Value at a table row and column; NULL when the row is shorter than the columns
+  /// Value at a table row and column; NULL when the row is shorter than the columns.
+  /// A staged edit replaces the loaded value. A staged insert reads its own values.
   func value(row: Int, column: Int) -> CellValue {
-    let values = displayedRows[row]
+    let values = values(at: row)
     return column < values.count ? values[column] : .null
+  }
+
+  /// Loaded rows, then staged inserts. Deleted rows stay. Re-applying the same set reports
+  /// no changed rows and leaves each row's `rowIdentity` generation alone.
+  @discardableResult
+  mutating func apply(changeSet: RowChangeSet?) -> IndexSet {
+    let next = Self.stored(changeSet)
+    if next == appliedChangeSet {
+      changedRows = []
+      return []
+    }
+    let nextStaging = overlay(for: next)
+    let dirty = dirtyRows(from: staging, to: nextStaging)
+    staging = nextStaging
+    bumpGenerations(dirty, rowCount: loadedRows.count + nextStaging.inserts.count)
+    appliedChangeSet = next
+    changedRows = dirty
+    return dirty
+  }
+
+  /// `normal` when `row` is outside the displayed rows
+  func rowState(at row: Int) -> ResultGridRowState {
+    if row >= loadedRows.count {
+      return row < rowCount ? .inserted : .normal
+    }
+    guard staging.states.indices.contains(row) else { return .normal }
+    return staging.states[row]
+  }
+
+  /// Result columns with a staged edit on an existing row. Inserts are not cell edits.
+  func editedColumns(at row: Int) -> IndexSet {
+    guard staging.editedColumns.indices.contains(row) else { return [] }
+    return staging.editedColumns[row]
+  }
+
+  func isCellEdited(row: Int, column: Int) -> Bool {
+    editedColumns(at: row).contains(column)
+  }
+
+  /// Identity of displayed row `displayedRow`. Out of range traps, like `row(at:)`.
+  func rowIdentity(at displayedRow: Int) -> ResultGridRowIdentity {
+    let generation = generations.indices.contains(displayedRow) ? generations[displayedRow] : 0
+    if displayedRow < loadedRows.count {
+      return ResultGridRowIdentity(
+        originalRow: originalRows[displayedRow], insertID: nil, generation: generation)
+    }
+    let insert = staging.inserts[displayedRow - loadedRows.count]
+    return ResultGridRowIdentity(originalRow: nil, insertID: insert.id, generation: generation)
   }
 
   /// Longest text shown in a cell; longer text ends with "…"
@@ -105,6 +187,10 @@ struct ResultGridModel {
   /// (line breaks become spaces) and at most `maxDisplayLength` characters: the single-line
   /// text field still lays out every line of a long multi-line value, which made scrolling lag
   func displayText(row: Int, column: Int) -> String {
+    // Staged text must not land in the shared cache: a copy of this model keeps the loaded rows.
+    if row >= loadedRows.count || isCellEdited(row: row, column: column) {
+      return computeDisplayText(row: row, column: column)
+    }
     if let cached = textCache.text(row: row, column: column) { return cached }
     let text = computeDisplayText(row: row, column: column)
     textCache.store(text, row: row, column: column, columnCount: columns.count)
@@ -142,6 +228,129 @@ struct ResultGridModel {
     }
     .joined(separator: "\n")
   }
+
+  private func values(at row: Int) -> [CellValue] {
+    if row < loadedRows.count {
+      if staging.values.indices.contains(row), let staged = staging.values[row] {
+        return staged
+      }
+      return loadedRows[row]
+    }
+    return staging.inserts[row - loadedRows.count].values
+  }
+
+  /// Empty and nil sets both mean "no overlay".
+  private static func stored(_ changeSet: RowChangeSet?) -> RowChangeSet? {
+    guard let changeSet, !changeSet.isEmpty else { return nil }
+    return changeSet
+  }
+
+  private mutating func overlay(for set: RowChangeSet?) -> Staging {
+    guard let set else { return Staging() }
+    let matches = rowsByKey(primaryKeyColumns: set.primaryKeyColumns)
+    var next = Staging()
+    next.states = Array(repeating: .normal, count: loadedRows.count)
+    next.editedColumns = Array(repeating: IndexSet(), count: loadedRows.count)
+    next.values = Array(repeating: nil, count: loadedRows.count)
+    for (key, edits) in set.edits {
+      for row in matches[key] ?? [] {
+        var edited = IndexSet()
+        var values = loadedRows[row]
+        for (name, value) in edits {
+          guard let index = columnIndexByName[name] else { continue }
+          if index >= values.count {
+            values.append(contentsOf: Array(repeating: .null, count: index + 1 - values.count))
+          }
+          values[index] = value
+          edited.insert(index)
+        }
+        guard !edited.isEmpty else { continue }
+        next.states[row] = .edited
+        next.editedColumns[row] = edited
+        next.values[row] = values
+      }
+    }
+    for key in set.deletes {
+      for row in matches[key] ?? [] {
+        next.states[row] = .deleted
+        next.editedColumns[row] = []
+        next.values[row] = nil
+      }
+    }
+    next.inserts = set.inserts.map { insert in
+      Staging.StagedInsert(
+        id: insert.tempID, values: columns.map { insert.values[$0.name] ?? .null })
+    }
+    return next
+  }
+
+  /// Primary-key lookup for the loaded page. Reused while the key columns stay the same, so a
+  /// one-cell edit does not rebuild it.
+  private mutating func rowsByKey(primaryKeyColumns: [String]) -> [RowChangeSet.RowKey: [Int]] {
+    if cachedKeyColumns == primaryKeyColumns { return cachedKeyRows }
+    var map: [RowChangeSet.RowKey: [Int]] = [:]
+    let indexes = primaryKeyColumns.compactMap { columnIndexByName[$0] }
+    if indexes.count == primaryKeyColumns.count {
+      map.reserveCapacity(loadedRows.count)
+      for row in loadedRows.indices {
+        let source = loadedRows[row]
+        let values = indexes.map { $0 < source.count ? source[$0] : CellValue.null }
+        map[RowChangeSet.RowKey(values: values), default: []].append(row)
+      }
+    }
+    cachedKeyColumns = primaryKeyColumns
+    cachedKeyRows = map
+    return map
+  }
+
+  /// Loaded rows whose state or staged values differ, plus insert rows that were added,
+  /// removed, or edited. Unchanged loaded rows are left out.
+  private func dirtyRows(from old: Staging, to new: Staging) -> IndexSet {
+    var dirty = IndexSet()
+    for row in loadedRows.indices {
+      let oldState = old.states.indices.contains(row) ? old.states[row] : ResultGridRowState.normal
+      let newState = new.states.indices.contains(row) ? new.states[row] : .normal
+      let oldEdited = old.editedColumns.indices.contains(row) ? old.editedColumns[row] : IndexSet()
+      let newEdited = new.editedColumns.indices.contains(row) ? new.editedColumns[row] : IndexSet()
+      let oldValues = old.values.indices.contains(row) ? old.values[row] : nil
+      let newValues = new.values.indices.contains(row) ? new.values[row] : nil
+      if oldState != newState || oldEdited != newEdited || oldValues != newValues {
+        dirty.insert(row)
+      }
+    }
+    let insertCount = max(old.inserts.count, new.inserts.count)
+    for index in 0..<insertCount {
+      let previous = index < old.inserts.count ? old.inserts[index] : nil
+      let current = index < new.inserts.count ? new.inserts[index] : nil
+      if previous != current { dirty.insert(loadedRows.count + index) }
+    }
+    return dirty
+  }
+
+  private mutating func bumpGenerations(_ dirty: IndexSet, rowCount: Int) {
+    if generations.count < rowCount {
+      generations.append(contentsOf: repeatElement(0, count: rowCount - generations.count))
+    }
+    for row in dirty where row < generations.count {
+      generations[row] += 1
+    }
+    if generations.count > rowCount {
+      generations.removeLast(generations.count - rowCount)
+    }
+  }
+}
+
+/// Staged overlay currently shown. Empty arrays mean every loaded row is unchanged.
+private struct Staging: Equatable {
+  struct StagedInsert: Equatable {
+    var id: UUID
+    var values: [CellValue]
+  }
+
+  var states: [ResultGridRowState] = []
+  var editedColumns: [IndexSet] = []
+  var values: [[CellValue]?] = []
+  var inserts: [StagedInsert] = []
 }
 
 /// Per-cell display text of one `ResultGridModel`, filled on first request. A row's array is

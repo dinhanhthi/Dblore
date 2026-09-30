@@ -333,9 +333,41 @@ struct EditorResultGridView: View {
               row: row, column: column, newValue: newValue, result: result, cellId: nil,
               connectionManager: viewModel.connectionManager)
           },
+          stagesEdits: viewModel.stagingEnabled,
+          changeSet: viewModel.dataViewer?.changeSet,
+          onStageEdit: { row, column, newValue in
+            viewModel.handleStagedGridCellEdit(
+              row: row, column: column, newValue: newValue, result: result)
+          },
+          onStageInsert: {
+            if let message = viewModel.stageInsert() { viewModel.showToast(message, type: .error) }
+          },
+          onStageDuplicate: { rows in
+            if let message = viewModel.stageDuplicate(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
+          onStageDelete: { rows in
+            if let message = viewModel.stageDelete(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
+          onRevertStaged: { rows in
+            if let message = viewModel.revertStaged(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
           onSortChange: { column, ascending in
-            sortColumn = column
-            sortAscending = ascending
+            guard viewModel.hasPendingStagedChanges else {
+              sortColumn = column
+              sortAscending = ascending
+              return
+            }
+            Task { @MainActor in
+              guard await viewModel.confirmLeaveStagedChanges() else { return }
+              sortColumn = column
+              sortAscending = ascending
+            }
           },
           valueFilter: valueFilter,
           onValueFilterChange: { valueFilter = $0 },

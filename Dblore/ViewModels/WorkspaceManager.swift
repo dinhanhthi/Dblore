@@ -761,6 +761,8 @@ class WorkspaceManager: Identifiable {
     guard let tab = tabs.first(where: { $0.id == id }) else { return }
     // The tab that opened a pending Protected transaction resolves it first
     guard !deferCloseTabForPendingTransaction(id: id) else { return }
+    // Staged data-viewer rows: Commit / Discard / Cancel before the tab goes away
+    guard !deferCloseTabForStagedChanges(id: id) else { return }
 
     if tab.isDirty {
       tabToClose = id
@@ -792,6 +794,21 @@ class WorkspaceManager: Identifiable {
   func cancelClose() {
     tabToClose = nil
     showingCloseConfirmation = false
+  }
+
+  /// Staged data-viewer rows block the close until Commit, Discard, or Cancel.
+  /// Cancel leaves the rows and the tab. Commit closes only after the set is cleared.
+  /// The tab is selected first so the data viewer header can present the prompt.
+  private func deferCloseTabForStagedChanges(id: UUID) -> Bool {
+    guard let viewModel = viewModels[id], viewModel.hasPendingStagedChanges else { return false }
+    selectTab(id: id)
+    Task { @MainActor in
+      await Task.yield()
+      guard await viewModel.confirmLeaveStagedChanges() else { return }
+      guard tabs.contains(where: { $0.id == id }) else { return }
+      closeTabImmediately(id: id)
+    }
+    return true
   }
 
   private func closeTabImmediately(id: UUID) {

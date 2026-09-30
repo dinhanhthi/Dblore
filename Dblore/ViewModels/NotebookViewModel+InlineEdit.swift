@@ -256,8 +256,8 @@ extension NotebookViewModel {
     await onStatementsExecuted?()
   }
 
-  /// The edited text as a `CellValue` of the original's type (sidebar display only)
-  private static func editedCellValue(_ newValue: String, original: CellValue) -> CellValue {
+  /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits)
+  static func editedCellValue(_ newValue: String, original: CellValue) -> CellValue {
     switch original {
     case .string:
       return .string(newValue)

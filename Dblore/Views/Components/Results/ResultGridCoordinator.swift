@@ -5,7 +5,9 @@
 //  Data source and delegate of the result grid NSTableView. Rows, NULL text and TSV come
 //  from ResultGridModel; cells are reused through makeView(withIdentifier:owner:).
 //  Inline edit (double-click or Return) is allowed only when `isEditable`, and a commit
-//  delivers the displayed row's values, never a row index.
+//  delivers the displayed row's values, never a row index. A data viewer with `stagesEdits`
+//  stages that commit, and Delete/Backspace, instead of sending an UPDATE. `update`'s
+//  change set is applied onto the loaded rows so those staged rows tint.
 //
 
 import AppKit
@@ -51,6 +53,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   private(set) var model: ResultGridModel?
+  /// Change set last applied to `model`. Nil and an empty set are the same.
+  private var stagedChangeSet: RowChangeSet?
   /// Reused cells whose text field holds highlighted attributed text
   private var highlightedCells = Set<ObjectIdentifier>()
   private var key: Key?
@@ -61,11 +65,26 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// Set by the caller from `NotebookViewModel.canEdit(_:)`: without it no cell can be edited
   var isEditable = false
-  /// Called with the displayed row values, the edited result column index and the new text
+  /// Called with the displayed row values, the edited result column index and the new text.
+  /// Not called when `stagesEdits` is set.
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)?
-  /// Row values and column of the cell being edited, captured when editing starts so a reload
-  /// during the edit can't shift the committed row
-  private var editing: (row: [CellValue], column: Int)?
+  /// Data-viewer staging. Cell commits call `onStageEdit`; Delete and Backspace call
+  /// `onStageDelete`. Notebook grids leave this false and send one UPDATE.
+  var stagesEdits = false
+  /// Staged cell edit: a page row (an index into `CellResult.rows`, or past that for a staged
+  /// insert), the result column, and the new text
+  var onStageEdit: ((_ row: Int, _ column: Int, _ newValue: String) -> Void)?
+  /// Staged insert of one row
+  var onStageInsert: (() -> Void)?
+  /// Staged copies of the page rows
+  var onStageDuplicate: ((_ rows: [Int]) -> Void)?
+  /// Staged deletes of the page rows. Does not delete on the server.
+  var onStageDelete: ((_ rows: [Int]) -> Void)?
+  /// Drops staged changes for the page rows
+  var onRevertStaged: ((_ rows: [Int]) -> Void)?
+  /// Row values, column and page index of the cell being edited, captured when editing starts
+  /// so a reload during the edit can't shift the committed row
+  private var editing: (row: [CellValue], column: Int, pageIndex: Int?)?
   /// True while a cell is being edited (the details button stays hidden)
   var isEditing: Bool { editing != nil }
   /// Called with the column and direction chosen by a header click (nil column: no sort)
@@ -130,7 +149,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// Rebuilds the columns and reloads the table when the result, the sort, the search, the
   /// column type flag or the hidden columns changed, and scrolls to the row of `currentMatch`
-  /// (a match in this result's data). Returns whether the table was reloaded.
+  /// (a match in this result's data). `changeSet` is laid on the loaded rows; a change set
+  /// alone refreshes those staged rows. Returns whether the table was reloaded.
   @discardableResult
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
@@ -138,7 +158,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     hideColumnTypes: Bool = false, hiddenColumns: Set<String> = [],
     highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql,
     valueFilter: ColumnValueFilter = ColumnValueFilter(),
-    searchMatches: [SearchMatch] = []
+    searchMatches: [SearchMatch] = [],
+    changeSet: RowChangeSet? = nil
   )
     -> Bool
   {
@@ -150,7 +171,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
       hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect,
       valueFilter: valueFilter)
-    guard newKey != key else { return false }
+    let nextChangeSet = Self.normalizedChangeSet(changeSet)
+    if newKey == key {
+      guard nextChangeSet != stagedChangeSet else { return false }
+      applyStagedChangeSet(nextChangeSet, to: tableView)
+      return true
+    }
     if newKey.timestamp != key?.timestamp || newKey.columnNames != key?.columnNames {
       columnFilterPopover?.close()
       columnFilterPopover = nil
@@ -172,9 +198,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     sourceResult = result
     self.valueFilter = valueFilter
     PerfSignpost.interval("grid.reload") {
-      let model = ResultGridModel(
+      var model = ResultGridModel(
         result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter)
+      _ = model.apply(changeSet: nextChangeSet)
       self.model = model
+      self.stagedChangeSet = nextChangeSet
       highlightMatches =
         highlight?.matches(
           rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
@@ -240,6 +268,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     var insertRows: [Int] = []
     /// Values for "Copy as IN list" (empty when the selection spans more than one column)
     var inListValues: [CellValue] = []
+    /// Page rows (loaded indexes, then staged inserts) for Add/Duplicate/Delete/Revert
+    var pageIndexes: [Int] = []
   }
 
   /// Context menu of the cell at a displayed row and result column: copy, details in the right
@@ -266,6 +296,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     inList.isEnabled = selectedColumns.count <= 1
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
+    if stagesEdits {
+      let pages = pageIndexes(in: displayedRows)
+      menu.addItem(.separator())
+      addItem(to: menu, "Add Row", #selector(addRow(_:)), MenuTarget(row: row, column: column))
+      addItem(
+        to: menu, "Duplicate Row(s)", #selector(duplicateRows(_:)),
+        MenuTarget(row: row, column: column, pageIndexes: pages))
+      addItem(
+        to: menu, "Delete Row(s)", #selector(deleteRows(_:)),
+        MenuTarget(row: row, column: column, pageIndexes: pages))
+      addItem(
+        to: menu, "Revert Selected", #selector(revertRows(_:)),
+        MenuTarget(row: row, column: column, pageIndexes: pages))
+    }
     if onHighlightCell != nil {
       menu.addItem(.separator())
       for style in HighlightStyle.allCases {
@@ -349,6 +393,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     DataExporter.copyINList(values: target.inListValues, dialect: exportDialect)
   }
 
+  @objc private func addRow(_: NSMenuItem) {
+    onStageInsert?()
+  }
+
+  @objc private func duplicateRows(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    onStageDuplicate?(target.pageIndexes)
+  }
+
+  @objc private func deleteRows(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    onStageDelete?(target.pageIndexes)
+  }
+
+  @objc private func revertRows(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    onRevertStaged?(target.pageIndexes)
+  }
+
   /// Dialect of the grid's highlight database type (PostgreSQL when the grid has not updated)
   private var exportDialect: SQLDialect {
     key?.highlightDialect.dialect ?? .postgresql
@@ -400,24 +463,40 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         (tableView.view(atColumn: tableColumn, row: row, makeIfNecessary: true)
         as? NSTableCellView)?.textField
     else { return false }
-    editing = (model.row(at: row), column)
+    editing = (model.row(at: row), column, pageIndex(forDisplayedRow: row))
     textField.isEditable = true
     textField.stringValue = model.value(row: row, column: column).fullString
     textField.textColor = Self.textColor
     return tableView.window?.makeFirstResponder(textField) ?? false
   }
 
-  /// Delivers an edit of a displayed row to `onCommitEdit`; nothing when not editable or when
-  /// the text is the unchanged full value.
+  /// Delivers an edit of a displayed row to `onCommitEdit`, or to `onStageEdit` when
+  /// `stagesEdits` is set. Nothing when not editable or when the text is the unchanged full value.
   func commitEdit(row: Int, column: Int, newValue: String) {
     guard let model, row >= 0, row < model.rowCount, column < model.columns.count else { return }
-    commit(rowValues: model.row(at: row), column: column, newValue: newValue)
+    commit(
+      rowValues: model.row(at: row), column: column, newValue: newValue,
+      pageIndex: pageIndex(forDisplayedRow: row))
   }
 
-  private func commit(rowValues: [CellValue], column: Int, newValue: String) {
+  private func commit(rowValues: [CellValue], column: Int, newValue: String, pageIndex: Int?) {
     let original = column < rowValues.count ? rowValues[column] : .null
     guard isEditable, newValue != original.fullString else { return }
+    if stagesEdits {
+      guard let pageIndex else { return }
+      onStageEdit?(pageIndex, column, newValue)
+      return
+    }
     onCommitEdit?(rowValues, column, newValue)
+  }
+
+  /// Delete (key code 117) and Backspace (key code 51) stage the selected page rows when
+  /// `stagesEdits` is set. Returns true when the key was consumed.
+  func handleDeleteKey(_ event: NSEvent, tableView: NSTableView) -> Bool {
+    guard stagesEdits, Self.isDeleteOrBackspace(event) else { return false }
+    let rows = pageIndexes(in: tableView.selectedRowIndexes)
+    if !rows.isEmpty { onStageDelete?(rows) }
+    return true
   }
 
   func controlTextDidEndEditing(_ notification: Notification) {
@@ -430,7 +509,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let tableColumn = tableView.column(for: textField)
     if let editing {
       self.editing = nil
-      commit(rowValues: editing.row, column: editing.column, newValue: textField.stringValue)
+      commit(
+        rowValues: editing.row, column: editing.column, newValue: textField.stringValue,
+        pageIndex: editing.pageIndex)
     }
     guard row >= 0, tableColumn >= 0 else { return }
     // Show the stored value again; a successful edit re-runs the cell and reloads the grid
@@ -530,6 +611,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     rowView.identifier = Self.rowIdentifier
     rowView.isAlternate = row % 2 == 1
     rowView.isHovered = (tableView as? ResultGridTableView)?.hoveredRow == row
+    applyStagingAppearance(rowView, row: row)
     return rowView
   }
 
@@ -578,6 +660,71 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   // MARK: - Private
+
+  /// Nil and an empty set both mean the loaded rows, with no staged overlay.
+  private static func normalizedChangeSet(_ changeSet: RowChangeSet?) -> RowChangeSet? {
+    guard let changeSet, !changeSet.isEmpty else { return nil }
+    return changeSet
+  }
+
+  /// Backspace is key code 51; forward Delete is 117. The characters cover the same keys.
+  private static func isDeleteOrBackspace(_ event: NSEvent) -> Bool {
+    if event.keyCode == 51 || event.keyCode == 117 { return true }
+    let characters = event.charactersIgnoringModifiers ?? ""
+    return characters == "\u{7F}" || characters == "\u{F728}"
+  }
+
+  /// Page index `stageEdit` / `stageDelete` use. A loaded row is its index into
+  /// `CellResult.rows`. A staged insert, drawn after the loaded rows, is `rows.count + n`.
+  private func pageIndex(forDisplayedRow displayedRow: Int) -> Int? {
+    guard let model, displayedRow >= 0, displayedRow < model.rowCount else { return nil }
+    if let original = model.originalRow(forDisplayedRow: displayedRow) { return original }
+    guard let loadedCount = sourceResult?.rows.count else { return nil }
+    var loadedDisplayed = 0
+    while loadedDisplayed < model.rowCount,
+      model.originalRow(forDisplayedRow: loadedDisplayed) != nil
+    {
+      loadedDisplayed += 1
+    }
+    let insertIndex = displayedRow - loadedDisplayed
+    guard insertIndex >= 0 else { return nil }
+    return loadedCount + insertIndex
+  }
+
+  private func pageIndexes(in displayedRows: IndexSet) -> [Int] {
+    displayedRows.compactMap { pageIndex(forDisplayedRow: $0) }
+  }
+
+  /// Lays `changeSet` on the current model and refreshes only the rows whose overlay changed.
+  /// A new or removed insert reloads the table so the row count matches.
+  private func applyStagedChangeSet(_ changeSet: RowChangeSet?, to tableView: NSTableView) {
+    guard var model else {
+      stagedChangeSet = changeSet
+      return
+    }
+    let previousCount = model.rowCount
+    let dirty = model.apply(changeSet: changeSet)
+    self.model = model
+    stagedChangeSet = changeSet
+    if model.rowCount != previousCount {
+      tableView.reloadData()
+      return
+    }
+    guard !dirty.isEmpty else { return }
+    for row in dirty {
+      if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? ResultGridRowView {
+        applyStagingAppearance(rowView, row: row)
+      }
+    }
+    let columns = IndexSet(integersIn: 0..<tableView.numberOfColumns)
+    guard !columns.isEmpty else { return }
+    tableView.reloadData(forRowIndexes: dirty, columnIndexes: columns)
+  }
+
+  private func applyStagingAppearance(_ rowView: ResultGridRowView, row: Int) {
+    rowView.stagingState = model?.rowState(at: row) ?? .normal
+    rowView.editedColumns = model?.editedColumns(at: row) ?? []
+  }
 
   /// Paints the cell with a soft tint of the highlight color when the highlight matches it, else
   /// with the sorted-column tint, and always clears it otherwise, since cells are reused

@@ -20,10 +20,21 @@ struct PendingStagedBatch: Sendable {
 extension NotebookViewModel {
   /// Shown when the data viewer has no resolved edit target, or that target has no primary key.
   static let tableHasNoPrimaryKey = "Table has no primary key"
+  /// Shown when the connection's protection level blocks data changes.
+  static let connectionIsReadOnly = "This connection is read-only"
 
   /// Why staging actions do nothing, or nil when this data viewer can stage.
+  /// Read-only is checked first so + Row, grid staging, and Commit share one gate.
   var rowStagingUnavailableReason: String? {
-    stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
+    if protectionPolicy.protectionLevel == .readOnly { return Self.connectionIsReadOnly }
+    return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
+  }
+
+  /// False when there is no primary key or the connection is read-only.
+  var stagingEnabled: Bool { rowStagingUnavailableReason == nil }
+
+  var hasPendingStagedChanges: Bool {
+    dataViewer?.changeSet?.isEmpty == false
   }
 
   /// Stages a new row. `values` may include primary-key columns; later cell edits may not.
@@ -92,6 +103,42 @@ extension NotebookViewModel {
     return changeSet { $0.revert(rows: keys) }
   }
 
+  /// Asks Commit / Discard / Cancel when this data viewer has staged rows.
+  /// Cancel leaves the set. Discard drops it. Commit continues only when the set was cleared.
+  /// A prompt that is already open refuses the new request.
+  func confirmLeaveStagedChanges() async -> Bool {
+    guard hasPendingStagedChanges else { return true }
+    guard stagedLeaveContinuation == nil else { return false }
+    let choice = await withCheckedContinuation {
+      (continuation: CheckedContinuation<StagedLeaveChoice, Never>) in
+      stagedLeaveContinuation = continuation
+      stagedLeavePromptVisible = true
+    }
+    switch choice {
+    case .cancel:
+      return false
+    case .discard:
+      discardStaged()
+      return true
+    case .commit:
+      await commitStaged()
+      return !hasPendingStagedChanges
+    }
+  }
+
+  /// Resumes the leave prompt. A second call does nothing (the dialog also dismisses).
+  func resolveStagedLeavePrompt(_ choice: StagedLeaveChoice) {
+    guard let continuation = stagedLeaveContinuation else { return }
+    stagedLeaveContinuation = nil
+    stagedLeavePromptVisible = false
+    continuation.resume(returning: choice)
+  }
+
+  /// Cancel when the dialog closed without a button having resumed the prompt.
+  func cancelStagedLeavePromptIfNeeded() {
+    resolveStagedLeavePrompt(.cancel)
+  }
+
   /// Drops every staged change. A Safe Mode dialog for this batch is cancelled with it.
   func discardStaged() {
     dataViewer?.changeSet = nil
@@ -155,7 +202,7 @@ extension NotebookViewModel {
 
   // MARK: - Private
 
-  private static let rowNotOnPage = "That row is not on this page."
+  static let rowNotOnPage = "That row is not on this page."
 
   /// Live data-viewer target with a primary key. Notebook results are not a staging target.
   private var stagedEditTarget: EditTarget? {

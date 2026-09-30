@@ -27,7 +27,7 @@ struct DataViewerView: View {
     if let result = viewModel.editorResult {
       if let error = result.error {
         errorView(error: error)
-      } else if result.rows.isEmpty {
+      } else if result.rows.isEmpty && !hasStagedInserts {
         placeholder(icon: "tray", text: "No rows")
       } else {
         EditorResultGridView(
@@ -46,6 +46,11 @@ struct DataViewerView: View {
     } else {
       placeholder(icon: "tablecells", text: "No data loaded")
     }
+  }
+
+  /// A staged insert on an empty page still belongs in the grid.
+  private var hasStagedInserts: Bool {
+    viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
   }
 
   private func errorView(error: String) -> some View {

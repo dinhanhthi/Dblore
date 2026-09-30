@@ -5,6 +5,7 @@
 //  NSTableView-based result grid: view-based cell reuse renders only the visible rows.
 //  Columns can be resized and reordered; Cmd+C copies the selected rows as TSV.
 //  Double-click or Return edits a cell when `isEditable` (see NotebookViewModel.canEdit).
+//  `stagesEdits` stages that commit, and Delete/Backspace, instead of an immediate UPDATE.
 //  A click only selects; the details button shown over the hovered cell reports it
 //  (`onShowCellDetails`), a header click the sort (`onSortChange`), the filter icon a
 //  category filter of the loaded rows (`onValueFilterChange`).
@@ -19,9 +20,20 @@ struct ResultGridView: NSViewRepresentable {
   var ascending = true
   /// From `NotebookViewModel.canEdit(result)`; false keeps the grid read-only
   var isEditable = false
-  /// Receives the displayed row values, the result column index and the new text of an edit
+  /// Receives the displayed row values, the result column index and the new text of an edit.
+  /// Not called when `stagesEdits` is set.
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)? =
     nil
+  /// Data viewer with a primary-key edit target. Notebook grids leave this false.
+  var stagesEdits = false
+  /// Staged overlay painted on the loaded rows. Nil shows the result as loaded.
+  var changeSet: RowChangeSet? = nil
+  /// Page row, result column and new text of a staged cell edit
+  var onStageEdit: ((_ row: Int, _ column: Int, _ newValue: String) -> Void)? = nil
+  var onStageInsert: (() -> Void)? = nil
+  var onStageDuplicate: ((_ rows: [Int]) -> Void)? = nil
+  var onStageDelete: ((_ rows: [Int]) -> Void)? = nil
+  var onRevertStaged: ((_ rows: [Int]) -> Void)? = nil
   /// Receives the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
   /// Category keys hidden per column. Does not change the loaded result or its LIMIT.
@@ -136,7 +148,13 @@ struct ResultGridView: NSViewRepresentable {
 
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
     coordinator.isEditable = isEditable
+    coordinator.stagesEdits = stagesEdits
     coordinator.onCommitEdit = onCommitEdit
+    coordinator.onStageEdit = onStageEdit
+    coordinator.onStageInsert = onStageInsert
+    coordinator.onStageDuplicate = onStageDuplicate
+    coordinator.onStageDelete = onStageDelete
+    coordinator.onRevertStaged = onRevertStaged
     coordinator.onSortChange = onSortChange
     coordinator.onValueFilterChange = onValueFilterChange
     coordinator.onShowCellDetails = onShowCellDetails
@@ -147,7 +165,7 @@ struct ResultGridView: NSViewRepresentable {
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
       hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
-      searchMatches: searchMatches)
+      searchMatches: searchMatches, changeSet: changeSet)
   }
 }
 
@@ -514,6 +532,7 @@ final class ResultGridTableView: NSTableView {
     {
       return
     }
+    if coordinator?.handleDeleteKey(event, tableView: self) == true { return }
     super.keyDown(with: event)
   }
 

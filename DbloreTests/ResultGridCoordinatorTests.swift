@@ -286,4 +286,148 @@ struct ResultGridCoordinatorTests {
       tableView.tableColumns[1].width
         == coordinator.tableView(tableView, sizeToFitWidthOfColumn: 1))
   }
+
+  @Test("A staged cell commit calls the stage callback and not the immediate update")
+  func stagedCommitUsesStageCallback() {
+    let (coordinator, _) = makeGrid(sortColumn: "id")
+    coordinator.isEditable = true
+    coordinator.stagesEdits = true
+    var immediate: [String] = []
+    var staged: [(Int, Int, String)] = []
+    coordinator.onCommitEdit = { _, _, value in immediate.append(value) }
+    coordinator.onStageEdit = { staged.append(($0, $1, $2)) }
+
+    // Displayed row 0 is id 1 (result.rows[1]); unchanged text sends nothing
+    coordinator.commitEdit(row: 0, column: 1, newValue: "a")
+    coordinator.commitEdit(row: 0, column: 1, newValue: "new")
+
+    #expect(immediate.isEmpty)
+    #expect(staged.count == 1)
+    #expect(staged.first?.0 == 1)
+    #expect(staged.first?.1 == 1)
+    #expect(staged.first?.2 == "new")
+  }
+
+  @Test("Without staging, a cell commit still calls the immediate update")
+  func unstagedCommitUsesImmediateUpdate() {
+    let (coordinator, _) = makeGrid(sortColumn: "id")
+    coordinator.isEditable = true
+    var immediate: [([CellValue], Int, String)] = []
+    var staged = 0
+    coordinator.onCommitEdit = { immediate.append(($0, $1, $2)) }
+    coordinator.onStageEdit = { _, _, _ in staged += 1 }
+
+    coordinator.commitEdit(row: 0, column: 1, newValue: "new")
+
+    #expect(staged == 0)
+    #expect(immediate.count == 1)
+    #expect(immediate.first?.0 == [.int(1), .string("a")])
+    #expect(immediate.first?.1 == 1)
+    #expect(immediate.first?.2 == "new")
+  }
+
+  @Test("Delete and Backspace stage a delete of the selected rows when staging is on")
+  func deleteKeyStagesSelectedRows() throws {
+    let coordinator = ResultGridCoordinator()
+    let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+    coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
+    tableView.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+    var deleted: [[Int]] = []
+    coordinator.onStageDelete = { deleted.append($0) }
+
+    coordinator.stagesEdits = false
+    tableView.keyDown(with: try deleteKey(code: 51, characters: "\u{7F}"))
+    #expect(deleted.isEmpty)
+
+    coordinator.stagesEdits = true
+    tableView.keyDown(with: try deleteKey(code: 51, characters: "\u{7F}"))
+    tableView.keyDown(with: try deleteKey(code: 117, characters: "\u{F728}"))
+    #expect(deleted == [[0, 2], [0, 2]])
+  }
+
+  @Test("Staging adds row actions that call the stage callbacks; a notebook grid does not")
+  func stagingContextMenuCallsStageCallbacks() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    var inserted = 0
+    var duplicated: [[Int]] = []
+    var deleted: [[Int]] = []
+    var reverted: [[Int]] = []
+    coordinator.onStageInsert = { inserted += 1 }
+    coordinator.onStageDuplicate = { duplicated.append($0) }
+    coordinator.onStageDelete = { deleted.append($0) }
+    coordinator.onRevertStaged = { reverted.append($0) }
+
+    let plain = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(plain.contains("Copy Value"))
+    #expect(!plain.contains("Add Row"))
+    #expect(!plain.contains("Duplicate Row(s)"))
+    #expect(!plain.contains("Delete Row(s)"))
+    #expect(!plain.contains("Revert Selected"))
+
+    coordinator.stagesEdits = true
+    tableView.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+    let menu = coordinator.contextMenu(row: 0, column: 0)
+    let titles = menu?.items.map(\.title) ?? []
+    #expect(titles.contains("Copy Value"))
+    #expect(titles.contains("Copy as INSERT"))
+    #expect(titles.contains("Add Row"))
+    #expect(titles.contains("Duplicate Row(s)"))
+    #expect(titles.contains("Delete Row(s)"))
+    #expect(titles.contains("Revert Selected"))
+
+    invoke(menu?.items.first { $0.title == "Add Row" })
+    invoke(menu?.items.first { $0.title == "Duplicate Row(s)" })
+    invoke(menu?.items.first { $0.title == "Delete Row(s)" })
+    invoke(menu?.items.first { $0.title == "Revert Selected" })
+    #expect(inserted == 1)
+    #expect(duplicated == [[0, 2]])
+    #expect(deleted == [[0, 2]])
+    #expect(reverted == [[0, 2]])
+  }
+
+  @Test("Update applies a change set so the staged row tint and value show")
+  func updateAppliesChangeSet() throws {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    var set = RowChangeSet(
+      target: EditTarget(qualifiedName: "public.t", oid: 1, primaryKeyColumns: ["id"]))
+    set.stageDelete(row: RowChangeSet.RowKey(values: [.int(3)]))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(1)]), column: "name", value: .string("z"),
+      original: .string("a"))
+
+    #expect(
+      coordinator.update(
+        tableView, result: result, sortColumn: nil, ascending: true, changeSet: set))
+
+    let deleted = coordinator.tableView(tableView, rowViewForRow: 0) as? ResultGridRowView
+    let edited = coordinator.tableView(tableView, rowViewForRow: 1) as? ResultGridRowView
+    #expect(deleted?.stagingState == .deleted)
+    #expect(edited?.stagingState == .edited)
+    #expect(edited?.editedColumns == IndexSet(integer: 1))
+    #expect(cell((coordinator, tableView), row: 1, column: 1)?.stringValue == "z")
+    #expect(cell((coordinator, tableView), row: 0, column: 0)?.stringValue == "3")
+  }
+
+  private func deleteKey(code: UInt16, characters: String) throws -> NSEvent {
+    guard
+      let event = NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+        context: nil, characters: characters, charactersIgnoringModifiers: characters,
+        isARepeat: false, keyCode: code)
+    else {
+      Issue.record("Could not make a key event")
+      throw TestError.deleteKey
+    }
+    return event
+  }
+
+  private func invoke(_ item: NSMenuItem?) {
+    guard let item, let action = item.action else {
+      Issue.record("missing menu item")
+      return
+    }
+    _ = item.target?.perform(action, with: item)
+  }
+
+  private enum TestError: Error { case deleteKey }
 }
