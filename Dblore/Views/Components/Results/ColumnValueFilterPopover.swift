@@ -2,8 +2,9 @@
 //  ColumnValueFilterPopover.swift
 //  Dblore
 //
-//  Header filter popover: one checkbox per distinct value in the column. Unchecked values
-//  are hidden in the grid. The loaded result is unchanged.
+//  Header filter popover: checkboxes for distinct values in the column, capped so a unique
+//  column does not mount one toggle per loaded row. Unchecked values are hidden in the grid.
+//  The loaded result is unchanged.
 //
 
 import SwiftUI

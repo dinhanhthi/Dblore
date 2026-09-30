@@ -151,6 +151,45 @@ struct ResultGridView: NSViewRepresentable {
   }
 }
 
+/// The match the grid should highlight. When `match` is a table-data row `valueFilter` hides,
+/// the notebook search moves to the next hit that is still on screen, so find-next does not
+/// stay on a row the grid cannot show. Nil when that hit is not drawn in the grid.
+@MainActor
+func gridSearchMatchOnScreen(
+  _ match: SearchMatch?,
+  result: CellResult,
+  sortColumn: String?,
+  ascending: Bool,
+  valueFilter: ColumnValueFilter,
+  viewModel: NotebookViewModel
+) -> SearchMatch? {
+  guard let match else { return nil }
+  let model = ResultGridModel(
+    result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter)
+  guard let shown = model.shownSearchMatch(match, matches: viewModel.searchState.matches) else {
+    return nil
+  }
+  if shown.id != match.id,
+    let index = viewModel.searchState.matches.firstIndex(where: { $0.id == shown.id }),
+    index != viewModel.searchState.currentMatchIndex
+  {
+    viewModel.searchState.currentMatchIndex = index
+    if shown.cellId != match.cellId {
+      viewModel.selectedCellId = shown.cellId
+    }
+    NotificationCenter.default.post(
+      name: .highlightSearchMatch,
+      object: nil,
+      userInfo: [
+        "match": shown,
+        "query": viewModel.searchState.query,
+        "caseSensitive": viewModel.searchState.isCaseSensitive,
+        "viewModelId": viewModel.id,
+      ])
+  }
+  return shown.isInResultGrid ? shown : nil
+}
+
 /// Scroll view that hands a vertical scroll gesture to the enclosing scroll view (the notebook
 /// list) when the grid can't scroll that way, so the list keeps scrolling over a result.
 /// The choice is made once per gesture; horizontal scrolling stays in the grid.

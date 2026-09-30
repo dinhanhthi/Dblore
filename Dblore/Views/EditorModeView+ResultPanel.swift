@@ -347,6 +347,7 @@ struct EditorResultGridView: View {
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,
       currentMatch: currentMatch,
+      searchMatches: viewModel.searchState.matches,
       forwardsScrollToParent: false,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
       hiddenColumns: hiddenColumns,
@@ -354,12 +355,19 @@ struct EditorResultGridView: View {
       highlightDialect: dialect
     )
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
+    .onChange(of: valueFilter) {
+      currentMatch = gridSearchMatchOnScreen(
+        currentMatch, result: result, sortColumn: sortColumn, ascending: sortAscending,
+        valueFilter: valueFilter, viewModel: viewModel)
+    }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
         notificationViewModelId == viewModel.id
       else { return }
       if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
-        currentMatch = match
+        currentMatch = gridSearchMatchOnScreen(
+          match, result: result, sortColumn: sortColumn, ascending: sortAscending,
+          valueFilter: valueFilter, viewModel: viewModel)
       } else {
         currentMatch = nil
       }

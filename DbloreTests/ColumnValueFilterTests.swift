@@ -152,11 +152,74 @@ struct ColumnValueFilterTests {
       tableView, result: result, sortColumn: nil, ascending: true,
       valueFilter: ColumnValueFilter().settingHidden([hidden], for: 0))
 
-    // The old index 1 now draws 3. Empty is a cleared selection; 0 is the same loaded row.
-    let selected = tableView.selectedRowIndexes
-    #expect(selected == IndexSet(integer: 99))
-    if let row = selected.first {
-      #expect(coordinator.model?.row(at: row) == [.int(2)])
+    // Value 2 moved from displayed index 1 to 0. Index 1 would now be the loaded value 3.
+    #expect(tableView.selectedRowIndexes == IndexSet(integer: 0))
+    #expect(coordinator.model?.row(at: 0) == [.int(2)])
+  }
+
+  @Test("The checkbox list stops before one toggle per loaded row")
+  func listedCategoriesAreCapped() {
+    let categories = (0..<ColumnValueFilter.listedCategoryLimit + 40).map { index in
+      ColumnCategory(key: "k\(index)", label: "v\(index)", count: 1)
     }
+    let listed = ColumnValueFilter.listedCategories(categories)
+    #expect(listed.count == ColumnValueFilter.listedCategoryLimit)
+    #expect(listed.map(\.key) == categories.prefix(ColumnValueFilter.listedCategoryLimit).map(\.key))
+  }
+
+  @Test("A hidden search match moves to the next row the grid can show")
+  func hiddenSearchMatchMovesToNextShownRow() {
+    let columns = [
+      ColumnInfo(name: "status", type: "text"), ColumnInfo(name: "name", type: "text"),
+    ]
+    let rows: [[CellValue]] = [
+      [.string("hidden"), .string("find")],
+      [.string("shown"), .string("other")],
+      [.string("shown"), .string("find")],
+    ]
+    let result = CellResult(columns: columns, rows: rows, rowCount: rows.count)
+    let filter = ColumnValueFilter().settingHidden(
+      [ColumnValueFilter.categoryKey(for: .string("hidden"))], for: 0)
+    let model = ResultGridModel(
+      result: result, sortColumn: nil, ascending: true, valueFilter: filter)
+    #expect(model.displayedRow(forOriginalRow: 0) == nil)
+
+    let cellId = UUID()
+    let hidden = dataMatch(cellId: cellId, row: 0, column: "name", text: "find")
+    let later = dataMatch(cellId: cellId, row: 2, column: "name", text: "find")
+    #expect(model.shownSearchMatch(hidden, matches: [hidden]) == nil)
+    #expect(model.shownSearchMatch(hidden, matches: [hidden, later])?.id == later.id)
+
+    let coordinator = ResultGridCoordinator()
+    let tableView = FilterScrollTableView()
+    coordinator.update(
+      tableView, result: result, sortColumn: nil, ascending: true, searchQuery: "find",
+      currentMatch: hidden, valueFilter: filter, searchMatches: [hidden, later])
+    #expect(model.displayedRow(forOriginalRow: 2) == 1)
+    #expect(tableView.scrolledRows == [1])
+
+    let viewModel = NotebookViewModel()
+    viewModel.searchState.matches = [hidden, later]
+    viewModel.searchState.currentMatchIndex = 0
+    let shown = gridSearchMatchOnScreen(
+      hidden, result: result, sortColumn: nil, ascending: true, valueFilter: filter,
+      viewModel: viewModel)
+    #expect(shown?.id == later.id)
+    #expect(viewModel.searchState.currentMatchIndex == 1)
+    #expect(viewModel.searchState.currentMatch?.id == later.id)
+  }
+}
+
+private func dataMatch(cellId: UUID, row: Int, column: String, text: String) -> SearchMatch {
+  SearchMatch(
+    cellId: cellId, matchType: .tableData(rowIndex: row, columnName: column),
+    matchRange: text.startIndex..<text.endIndex, contextText: text, lineNumber: nil)
+}
+
+private final class FilterScrollTableView: NSTableView {
+  var scrolledRows: [Int] = []
+
+  override func scrollRowToVisible(_ row: Int) {
+    scrolledRows.append(row)
   }
 }

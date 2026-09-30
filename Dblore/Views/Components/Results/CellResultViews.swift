@@ -546,6 +546,7 @@ struct NotebookResultGridView: View {
         searchQuery: viewModel.searchState.query,
         caseSensitive: viewModel.searchState.isCaseSensitive,
         currentMatch: currentMatch,
+        searchMatches: viewModel.searchState.matches,
         hideColumnTypes: AppSettings.shared.hideColumnTypes
       )
       .frame(
@@ -569,6 +570,11 @@ struct NotebookResultGridView: View {
       }
     }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
+    .onChange(of: valueFilter) {
+      currentMatch = gridSearchMatchOnScreen(
+        currentMatch, result: result, sortColumn: sortColumn, ascending: sortAscending,
+        valueFilter: valueFilter, viewModel: viewModel)
+    }
     .onReceive(
       NotificationCenter.default.publisher(
         for: NSScroller.preferredScrollerStyleDidChangeNotification)
@@ -582,7 +588,9 @@ struct NotebookResultGridView: View {
       if let match = notification.userInfo?["match"] as? SearchMatch, match.cellId == cellId,
         match.isInResultGrid
       {
-        currentMatch = match
+        currentMatch = gridSearchMatchOnScreen(
+          match, result: result, sortColumn: sortColumn, ascending: sortAscending,
+          valueFilter: valueFilter, viewModel: viewModel)
       } else {
         currentMatch = nil
       }
