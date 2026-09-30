@@ -75,6 +75,9 @@ nonisolated final class InMemoryAIKeyStore: AIKeyStore, @unchecked Sendable {
 }
 
 nonisolated enum AIKeyStoreFactory {
+  /// The one app-wide store: `AISettings` reads and `ChatGPTTokenProvider` writes through it
+  static let shared: AIKeyStore = makeDefault()
+
   /// Keychain in the app, in-memory under the test host
   static func makeDefault() -> AIKeyStore {
     SessionManager.isRunningAsTestHost ? InMemoryAIKeyStore() : KeychainAIKeyStore()

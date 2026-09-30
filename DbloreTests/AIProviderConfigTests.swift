@@ -36,7 +36,7 @@ struct AIProviderConfigTests {
 
   @Test("provider kind defaults")
   func kindDefaults() {
-    #expect(AIProviderKind.allCases.count == 7)
+    #expect(AIProviderKind.allCases.count == 8)
     #expect(AIProviderKind.anthropic.wire == .anthropicMessages)
     #expect(AIProviderKind.ollama.wire == .chatCompletions)
     #expect(AIProviderKind.ollama.defaultBaseURL == "http://127.0.0.1:11434/v1")

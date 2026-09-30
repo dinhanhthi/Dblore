@@ -1,5 +1,5 @@
 // AISSEParser.swift
-// Incremental Server-Sent Events parser for chat-completions and Anthropic Messages streams
+// Incremental Server-Sent Events parser for chat-completions, Anthropic Messages and Responses streams
 
 import Foundation
 
@@ -64,6 +64,7 @@ nonisolated struct AISSEParser: Sendable {
     switch wire {
     case .chatCompletions: return try chatDeltas(object)
     case .anthropicMessages: return try anthropicDeltas(object)
+    case .responses: return try responsesDeltas(object)
     }
   }
 
@@ -89,6 +90,26 @@ nonisolated struct AISSEParser: Sendable {
         let text = delta["text"] as? String, !text.isEmpty
       else { return [] }
       return [.text(text)]
+    default:
+      return []
+    }
+  }
+
+  private func responsesDeltas(_ object: [String: Any]) throws(AIStreamError) -> [AIStreamDelta] {
+    let type = (object["type"] as? String) ?? eventName
+    switch type {
+    case "response.output_text.delta":
+      guard let text = object["delta"] as? String, !text.isEmpty else { return [] }
+      return [.text(text)]
+    case "response.completed", "response.incomplete":
+      return [.done]
+    case "response.failed":
+      let response = object["response"] as? [String: Any]
+      let message = (response?["error"] as? [String: Any])?["message"] as? String
+      throw .provider(message ?? "The provider returned an error.")
+    case "error":
+      let message = Self.errorMessage(object) ?? (object["message"] as? String)
+      throw .provider(message ?? "The provider returned an error.")
     default:
       return []
     }

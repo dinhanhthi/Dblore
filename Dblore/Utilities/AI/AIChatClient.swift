@@ -61,8 +61,13 @@ extension AIChatClient {
 nonisolated enum AIClientFactory {
   static func make(
     kind: AIProviderKind, config: AIProviderConfig, apiKey: String?,
-    session: URLSession = .shared
+    session: URLSession = .shared, tokenProvider: ChatGPTTokenProvider = .shared
   ) throws -> any AIChatClient {
+    // The ChatGPT endpoint is fixed: the configured base URL is ignored so the bearer token can
+    // only ever go to chatgpt.com
+    if kind == .chatGPT {
+      return ChatGPTCodexClient(tokenProvider: tokenProvider, session: session)
+    }
     let base: URL
     do {
       base = try AIEndpoint.normalize(config.baseURL)
@@ -75,6 +80,7 @@ nonisolated enum AIClientFactory {
     case .anthropicMessages: return AnthropicClient(baseURL: base, apiKey: key, session: session)
     case .chatCompletions:
       return OpenAICompatibleClient(baseURL: base, apiKey: key, session: session)
+    case .responses: throw AIClientError.invalidEndpoint("Unsupported provider.")
     }
   }
 

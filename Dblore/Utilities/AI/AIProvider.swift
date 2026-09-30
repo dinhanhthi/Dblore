@@ -5,7 +5,7 @@ import Foundation
 import Observation
 
 nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
-  case anthropic, openAI, openRouter, ollama, lmStudio, mlxServer, custom
+  case anthropic, openAI, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT
 
   var displayName: String {
     switch self {
@@ -16,11 +16,16 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .lmStudio: return "LM Studio"
     case .mlxServer: return "mlx_lm.server"
     case .custom: return "Custom (OpenAI-compatible)"
+    case .chatGPT: return "ChatGPT (subscription, experimental)"
     }
   }
 
   var wire: AIWire {
-    self == .anthropic ? .anthropicMessages : .chatCompletions
+    switch self {
+    case .anthropic: return .anthropicMessages
+    case .chatGPT: return .responses
+    default: return .chatCompletions
+    }
   }
 
   var defaultBaseURL: String {
@@ -32,13 +37,14 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .lmStudio: return "http://127.0.0.1:1234/v1"
     case .mlxServer: return "http://127.0.0.1:8080/v1"
     case .custom: return ""
+    case .chatGPT: return "https://chatgpt.com/backend-api/codex"
     }
   }
 
   var requiresAPIKey: Bool {
     switch self {
     case .anthropic, .openAI, .openRouter: return true
-    case .ollama, .lmStudio, .mlxServer, .custom: return false
+    case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT: return false
     }
   }
 
@@ -49,6 +55,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openAI: return ["gpt-4.1", "gpt-4.1-mini", "gpt-4o"]
     case .openRouter:
       return ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "google/gemini-2.5-pro"]
+    case .chatGPT: return ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"]
     case .ollama, .lmStudio, .mlxServer, .custom: return []
     }
   }
@@ -96,7 +103,7 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
 @MainActor @Observable
 final class AISettings {
   static let shared = AISettings(
-    defaults: AppSettings.sharedDefaults, keyStore: AIKeyStoreFactory.makeDefault())
+    defaults: AppSettings.sharedDefaults, keyStore: AIKeyStoreFactory.shared)
 
   private static let defaultsKey = "app.settings.aiConfiguration"
 
@@ -143,8 +150,13 @@ final class AISettings {
     return keyStore.save(value, account: account)
   }
 
+  func chatGPTTokens() -> ChatGPTTokens? {
+    ChatGPTTokenStorage.load(from: keyStore)
+  }
+
   func isConfigured(_ kind: AIProviderKind) -> Bool {
     guard !config(for: kind).model.isEmpty else { return false }
+    if kind == .chatGPT { return ChatGPTTokenStorage.load(from: keyStore) != nil }
     guard kind.requiresAPIKey else { return true }
     return !(apiKey(for: kind) ?? "").isEmpty
   }

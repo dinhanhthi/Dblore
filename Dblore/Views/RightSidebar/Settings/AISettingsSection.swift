@@ -21,6 +21,12 @@ struct AISettingsSection: View {
   @State private var runningTask: Task<Void, Never>?
   @State private var didLoad = false
   @State private var ollamaDetected = false
+  @State private var signedInEmail: String?
+  @State private var isSignedIn = false
+  @State private var signingIn = false
+  @State private var signInError: String?
+  @State private var signInTask: Task<Void, Never>?
+  @State private var signInServer: OAuthLoopbackServer?
 
   private enum Status: Equatable {
     case idle
@@ -31,6 +37,8 @@ struct AISettingsSection: View {
   }
 
   private var isRunning: Bool { status == .running }
+  /// ChatGPT needs a sign-in before it can list models
+  private var canRun: Bool { kind != .chatGPT || isSignedIn }
   private var isActive: Bool { settings.configuration.activeProvider == kind }
 
   private var availableModels: [String] {
@@ -44,7 +52,11 @@ struct AISettingsSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
       providerRow
-      baseURLRow
+      if kind == .chatGPT {
+        chatGPTRow
+      } else {
+        baseURLRow
+      }
       if kind.requiresAPIKey { apiKeyRow }
       modelRow
       testRow
@@ -56,6 +68,11 @@ struct AISettingsSection: View {
         helpText(
           "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
         )
+        if kind == .chatGPT {
+          helpText(
+            "Experimental: uses the unofficial Codex endpoint with your ChatGPT plan's limits. OpenAI may change or block it at any time."
+          )
+        }
         if kind == .anthropic {
           helpText(
             "Claude Pro/Max subscriptions can't be used here — Anthropic's terms don't allow third-party apps to reuse them. Use an Anthropic API key."
@@ -65,9 +82,13 @@ struct AISettingsSection: View {
     }
     .onAppear(perform: loadInitial)
     .task { await detectOllamaIfNeeded() }
-    .onDisappear { runningTask?.cancel() }
+    .onDisappear {
+      runningTask?.cancel()
+      cancelSignIn()
+    }
     .onChange(of: kind) { _, _ in
       runningTask?.cancel()
+      cancelSignIn()
       status = .idle
       loadFields()
     }
@@ -133,6 +154,45 @@ struct AISettingsSection: View {
     }
   }
 
+  private var chatGPTRow: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      label("Account")
+      if isSignedIn {
+        HStack(spacing: Spacing.md) {
+          Text(signedInEmail.map { "Signed in as \($0)" } ?? "Signed in")
+            .font(.bodyText)
+            .foregroundColor(.foregroundMuted)
+          Button("Sign out") { signOut() }
+            .buttonStyle(SecondaryButtonStyle())
+            .linkPointer()
+        }
+      } else {
+        HStack(spacing: Spacing.md) {
+          Button("Sign in with ChatGPT") { signIn() }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(signingIn)
+            .linkPointer()
+          if signingIn {
+            ProgressView()
+              .controlSize(.small)
+            Text("Waiting for the browser...")
+              .font(.small)
+              .foregroundColor(.foregroundMuted)
+            Button("Cancel") { cancelSignIn() }
+              .buttonStyle(SecondaryButtonStyle())
+              .linkPointer()
+          }
+        }
+      }
+      if let signInError {
+        Text(signInError)
+          .font(.small)
+          .foregroundColor(.destructive)
+          .textSelection(.enabled)
+      }
+    }
+  }
+
   private var apiKeyRow: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       label("API key")
@@ -188,7 +248,7 @@ struct AISettingsSection: View {
 
         Button("Refresh") { run(reportSuccess: false) }
           .buttonStyle(SecondaryButtonStyle())
-          .disabled(isRunning)
+          .disabled(isRunning || !canRun)
           .linkPointer()
       }
     }
@@ -198,7 +258,7 @@ struct AISettingsSection: View {
     HStack(spacing: Spacing.md) {
       Button("Test connection") { run(reportSuccess: true) }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(isRunning)
+        .disabled(isRunning || !canRun)
         .linkPointer()
 
       switch status {
@@ -256,6 +316,14 @@ struct AISettingsSection: View {
     keyInput = ""
     keyError = nil
     hasSavedKey = !(settings.apiKey(for: kind) ?? "").isEmpty
+    refreshSignInState()
+  }
+
+  private func refreshSignInState() {
+    let tokens = kind == .chatGPT ? settings.chatGPTTokens() : nil
+    isSignedIn = tokens != nil
+    signedInEmail = tokens?.email
+    signInError = nil
   }
 
   /// Writes the edited fields back, only when they differ from what is stored
@@ -312,7 +380,102 @@ struct AISettingsSection: View {
       } catch {
         guard !Task.isCancelled else { return }
         status = .failure(error.localizedDescription)
+        // A refresh that found the sign-in dead wiped the tokens: stop showing "Signed in as"
+        if (error as? AIClientError) == ChatGPTTokenProvider.signedOutError {
+          refreshSignInState()
+        }
       }
+    }
+  }
+
+  // MARK: - ChatGPT sign in
+
+  private func cancelSignIn() {
+    signInTask?.cancel()
+    signInTask = nil
+    signInServer?.cancel()
+    signInServer = nil
+    signingIn = false
+  }
+
+  private func signIn() {
+    guard !signingIn else { return }
+    signingIn = true
+    signInError = nil
+    let server = OAuthLoopbackServer()
+    signInServer = server
+    signInTask = Task {
+      do {
+        let pkce = PKCE.generate()
+        let state = ChatGPTOAuth.generateState()
+        let port = try await server.start()
+        try Task.checkCancellation()
+        NSWorkspace.shared.open(ChatGPTOAuth.authorizeURL(pkce: pkce, state: state, port: port))
+        let code = try await server.waitForCallback(expectedState: state)
+        let tokens = try await Self.exchange(code: code, verifier: pkce.verifier, port: port)
+        guard !Task.isCancelled else { return }
+        await finishSignIn(tokens)
+      } catch is CancellationError {
+        server.cancel()
+      } catch {
+        server.cancel()
+        guard !Task.isCancelled else { return }
+        signInError = error.localizedDescription
+        signingIn = false
+        signInServer = nil
+      }
+    }
+  }
+
+  private static func exchange(
+    code: String, verifier: String, port: Int
+  ) async throws
+    -> ChatGPTTokens
+  {
+    let request = ChatGPTOAuth.tokenRequest(code: code, verifier: verifier, port: port)
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await URLSession.shared.data(
+        for: request, delegate: AIRedirectGuard())
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw AIClientError.transport("Could not reach ChatGPT to finish signing in.")
+    }
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    guard (200..<300).contains(status) else {
+      throw AIClientError.http(status: status, message: "ChatGPT rejected the sign-in.")
+    }
+    return try ChatGPTOAuth.parseTokenResponse(data)
+  }
+
+  private func finishSignIn(_ tokens: ChatGPTTokens) async {
+    signingIn = false
+    signInServer = nil
+    guard await ChatGPTTokenProvider.shared.store(tokens) else {
+      signInError = "Could not save the ChatGPT sign-in to the Keychain."
+      return
+    }
+    // Write the configuration so observers refresh; activeProvider stays unchanged
+    var config = settings.config(for: .chatGPT)
+    if config.baseURL.isEmpty { config.baseURL = AIProviderKind.chatGPT.defaultBaseURL }
+    if config.model.isEmpty { config.model = availableModels.first ?? "" }
+    settings.configuration.configs[.chatGPT] = config
+    loadFields()
+  }
+
+  private func signOut() {
+    cancelSignIn()
+    Task {
+      await ChatGPTTokenProvider.shared.signOut()
+      if settings.configuration.activeProvider == .chatGPT {
+        settings.configuration.activeProvider = nil
+      } else {
+        // Touch the configuration so observers refresh even when nothing else changed
+        settings.configuration.configs[.chatGPT] = settings.config(for: .chatGPT)
+      }
+      refreshSignInState()
     }
   }
 

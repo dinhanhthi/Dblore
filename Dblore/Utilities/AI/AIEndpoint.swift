@@ -7,6 +7,7 @@ import Foundation
 nonisolated enum AIWire: String, Codable, Sendable {
   case anthropicMessages
   case chatCompletions
+  case responses
 }
 
 nonisolated enum AIEndpointError: LocalizedError, Sendable, Equatable {
@@ -75,6 +76,7 @@ nonisolated enum AIEndpoint: Sendable {
     switch wire {
     case .chatCompletions: return base.appendingPathComponent("chat/completions")
     case .anthropicMessages: return base.appendingPathComponent("messages")
+    case .responses: return base.appendingPathComponent("responses")
     }
   }
 
