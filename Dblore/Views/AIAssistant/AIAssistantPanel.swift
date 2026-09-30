@@ -147,7 +147,11 @@ struct AIAssistantPanel: View {
         .foregroundColor(.foregroundMuted)
         .multilineTextAlignment(.center)
       Button("Set up a provider") {
-        NotificationCenter.default.post(name: .openSettings, object: nil)
+        NotificationCenter.default.post(
+          name: .openSettings,
+          object: nil,
+          userInfo: [SettingsPage.userInfoKey: SettingsPage.ai.rawValue]
+        )
       }
       .buttonStyle(PrimaryButtonStyle())
     }
@@ -268,8 +272,12 @@ struct AIAssistantPanel: View {
         .focused($composerFocused)
         .disabled(assistant.needsSetup)
         .onKeyPress(.return, phases: .down) { press in
-          // Shift+Return is left to the multiline field; never send mid IME composition
-          guard !press.modifiers.contains(.shift), !Self.isComposing else { return .ignored }
+          // Never send or insert while an IME composition is in progress
+          guard !Self.isComposing else { return .ignored }
+          if press.modifiers.contains(.shift) {
+            insertComposerNewline()
+            return .handled
+          }
           assistant.send()
           return .handled
         }
@@ -301,9 +309,18 @@ struct AIAssistantPanel: View {
           assistant.needsSetup
             || assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         )
-        .help("Send (Return)")
+        .help("Send (Return). New line (Shift+Return)")
       }
     }
+  }
+
+  /// Shift+Return does not insert a newline in the macOS text field, so place one at the caret.
+  private func insertComposerNewline() {
+    guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView else {
+      assistant.draft.append("\n")
+      return
+    }
+    textView.insertText("\n", replacementRange: textView.selectedRange())
   }
 }
 
