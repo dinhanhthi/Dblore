@@ -453,6 +453,13 @@ struct SettingsModalKeyboardShortcutsSection: View {
       groupTitle("View")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
+      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("AI")
+      ShortcutRow(action: "Send Message", shortcut: "Return")
+      ShortcutRow(action: "New Line in Message", shortcut: "Shift+Return")
     }
   }
 
@@ -465,6 +472,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
       ShortcutRow(action: "Find", shortcut: "Cmd+F")
       ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
       ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
+      ShortcutRow(action: "Close Search", shortcut: "Esc")
       ShortcutRow(action: "Accept Autocomplete", shortcut: "Tab / Enter")
       ShortcutRow(action: "Dismiss Autocomplete", shortcut: "Esc")
 
@@ -478,6 +486,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
       ShortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
       ShortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
+      ShortcutRow(action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
       ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
     }
   }

@@ -737,7 +737,7 @@ struct WorkspaceTitleBarTabsView: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .controlSize(.small)
         .blockDoubleClickZoom()
-        .help("Settings (⌘,)")
+        .help("Settings")
 
         // New tab button
         Menu {

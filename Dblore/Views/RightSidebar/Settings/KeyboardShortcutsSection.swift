@@ -41,8 +41,14 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
-      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
+      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
       ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
+      ShortcutRow(action: "Find", shortcut: "Cmd+F")
+      ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
+      ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
+      ShortcutRow(action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
+      ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
+      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
     }
   }
 
@@ -57,8 +63,9 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Find", shortcut: "Cmd+F")
       ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
       ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
+      ShortcutRow(action: "Close Search", shortcut: "Esc")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
-      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
+      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
       ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
     }
   }
