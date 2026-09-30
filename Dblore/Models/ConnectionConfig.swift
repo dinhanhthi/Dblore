@@ -123,7 +123,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     port = try container.decode(Int.self, forKey: .port)
     database = try container.decode(String.self, forKey: .database)
     username = try container.decode(String.self, forKey: .username)
-    password = try container.decode(String.self, forKey: .password)
+    password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)

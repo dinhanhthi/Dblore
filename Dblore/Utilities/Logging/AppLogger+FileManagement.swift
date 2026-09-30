@@ -176,12 +176,34 @@ extension AppLogger {
     let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
       .first!
     let logDirectory = appSupportURL.appendingPathComponent("Dblore/Logs", isDirectory: true)
+    return logDirectory.appendingPathComponent(Self.currentLogFileName())
+  }
 
+  /// File name of the log that is still being written, `dblore-yyyy-MM-dd.log`.
+  nonisolated static func currentLogFileName(on date: Date = Date()) -> String {
     let dateFormatter = DateFormatter()
     dateFormatter.dateFormat = "yyyy-MM-dd"
-    let dateString = dateFormatter.string(from: Date())
+    return "dblore-\(dateFormatter.string(from: date)).log"
+  }
 
-    return logDirectory.appendingPathComponent("dblore-\(dateString).log")
+  /// Deletes closed log files and truncates the current one. Other files in `directory` stay.
+  nonisolated static func clearLogFiles(in directory: URL, now: Date = Date()) throws {
+    let current = currentLogFileName(on: now)
+    for file in logFiles(in: directory) {
+      if file.lastPathComponent == current {
+        try Data().write(to: file, options: .atomic)
+      } else {
+        try FileManager.default.removeItem(at: file)
+      }
+    }
+  }
+
+  nonisolated static func logFiles(in directory: URL) -> [URL] {
+    guard
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+    else { return [] }
+    return files.filter { $0.pathExtension.lowercased() == "log" }
   }
 
   /// Get log file size

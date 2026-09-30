@@ -11,10 +11,10 @@ import Security
 @MainActor
 class SessionManager {
   // Legacy key for migration
-  private static let legacySessionKey = "ace.thi.dblore.savedSession"
+  private nonisolated static let legacySessionKey = "ace.thi.dblore.savedSession"
   // New key for connection history
-  private static let historyKey = "ace.thi.dblore.connectionHistory"
-  private static let keychainService = "ace.thi.dblore.database"
+  private nonisolated static let historyKey = "ace.thi.dblore.connectionHistory"
+  nonisolated static let keychainService = "ace.thi.dblore.database"
 
   // MARK: - Launch Restore
 
@@ -257,5 +257,56 @@ class SessionManager {
     ]
 
     SecItemDelete(query as CFDictionary)
+  }
+
+  // MARK: - Local data (UserDefaults only)
+
+  /// History blobs in `domainName`, still containing whatever was stored.
+  nonisolated static func storedHistory(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    history: Data?, legacy: Data?
+  ) {
+    let domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    return (domain[historyKey] as? Data, domain[legacySessionKey] as? Data)
+  }
+
+  /// Same blobs with password fields removed, for export.
+  nonisolated static func exportSnapshot(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    history: Data?, legacy: Data?
+  ) {
+    let stored = storedHistory(defaults: defaults, domainName: domainName)
+    return (
+      LocalDataJSON.omitting(stored.history, keysSatisfying: LocalDataJSON.isPasswordKey),
+      LocalDataJSON.omitting(stored.legacy, keysSatisfying: LocalDataJSON.isPasswordKey)
+    )
+  }
+
+  /// Replaces the history blobs. Does not read or write the Keychain.
+  nonisolated static func replace(
+    history: Data?, legacySession: Data?, defaults: UserDefaults, domainName: String
+  ) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    if let history {
+      domain[historyKey] = history
+    } else {
+      domain.removeValue(forKey: historyKey)
+    }
+    if let legacySession {
+      domain[legacySessionKey] = legacySession
+    } else {
+      domain.removeValue(forKey: legacySessionKey)
+    }
+    defaults.setPersistentDomain(domain, forName: domainName)
+  }
+
+  /// Removes connection-history entries from `domainName` only.
+  nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    domain.removeValue(forKey: historyKey)
+    domain.removeValue(forKey: legacySessionKey)
+    defaults.setPersistentDomain(domain, forName: domainName)
   }
 }

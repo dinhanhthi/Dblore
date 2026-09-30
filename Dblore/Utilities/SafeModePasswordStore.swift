@@ -18,14 +18,14 @@ protocol SafeModePasswordStore: AnyObject {
 /// Keychain-backed store: generic password, service `ace.thi.dblore.safemode`,
 /// accessible only while unlocked and never migrated to another device.
 final class KeychainPasswordStore: SafeModePasswordStore {
-  private let service = "ace.thi.dblore.safemode"
-  private let account = "safe-mode-password"
+  nonisolated static let serviceName = "ace.thi.dblore.safemode"
+  nonisolated static let accountName = "safe-mode-password"
 
   private var baseQuery: [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
+      kSecAttrService as String: Self.serviceName,
+      kSecAttrAccount as String: Self.accountName,
     ]
   }
 

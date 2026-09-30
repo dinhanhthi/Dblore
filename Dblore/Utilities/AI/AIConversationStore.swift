@@ -45,4 +45,31 @@ final class AIConversationStore {
       Task { await AppLogger.shared.error(message, category: "AI") }
     }
   }
+
+  /// JSON conversation files directly under `root`.
+  nonisolated static func conversationFiles(in root: URL) -> [URL] {
+    guard
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: root, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles])
+    else { return [] }
+    return files.filter { $0.pathExtension.lowercased() == "json" }
+  }
+
+  nonisolated static func export(from root: URL, to folder: URL) throws {
+    try LocalDataFiles.exportChildren(of: root, to: folder) {
+      $0.pathExtension.lowercased() == "json"
+    }
+  }
+
+  nonisolated static func replace(root: URL, with folder: URL) throws {
+    try LocalDataFiles.replaceChildren(of: root, with: folder) {
+      $0.pathExtension.lowercased() == "json"
+    }
+  }
+
+  nonisolated static func clear(root: URL) throws {
+    for file in conversationFiles(in: root) {
+      try FileManager.default.removeItem(at: file)
+    }
+  }
 }

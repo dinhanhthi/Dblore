@@ -40,7 +40,7 @@ class TabStateManager {
 
   // MARK: - Persistence Keys
 
-  private static let sessionKey = "Dblore.TabSession"
+  private nonisolated static let sessionKey = "Dblore.TabSession"
 
   // MARK: - Computed Properties
 
@@ -480,6 +480,28 @@ class TabStateManager {
   /// Clear saved state
   func clearSavedState() {
     UserDefaults.standard.removeObject(forKey: Self.sessionKey)
+  }
+
+  nonisolated static func storedSession(defaults: UserDefaults, domainName: String) -> Data? {
+    defaults.persistentDomain(forName: domainName)?[sessionKey] as? Data
+  }
+
+  nonisolated static func exportSnapshot(defaults: UserDefaults, domainName: String) -> Data? {
+    storedSession(defaults: defaults, domainName: domainName)
+  }
+
+  nonisolated static func replace(_ data: Data?, defaults: UserDefaults, domainName: String) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    if let data {
+      domain[sessionKey] = data
+    } else {
+      domain.removeValue(forKey: sessionKey)
+    }
+    defaults.setPersistentDomain(domain, forName: domainName)
+  }
+
+  nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
+    replace(nil, defaults: defaults, domainName: domainName)
   }
 }
 

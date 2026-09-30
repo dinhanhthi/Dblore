@@ -261,3 +261,45 @@ class RecentManager {
     !recentWorkspaces.isEmpty && !recentConnections.isEmpty
   }
 }
+
+extension RecentManager {
+  nonisolated static func storedRecents(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    workspaces: Data?, bookmarks: Data?
+  ) {
+    let domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    return (domain[workspacesKey] as? Data, domain[documentBookmarksKey] as? Data)
+  }
+
+  nonisolated static func exportSnapshot(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    workspaces: Data?, bookmarks: Data?
+  ) {
+    storedRecents(defaults: defaults, domainName: domainName)
+  }
+
+  /// Replaces workspace and file-bookmark entries. Does not touch connection history.
+  nonisolated static func replace(
+    workspaces: Data?, bookmarks: Data?, defaults: UserDefaults, domainName: String
+  ) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    set(&domain, workspacesKey, workspaces)
+    set(&domain, documentBookmarksKey, bookmarks)
+    defaults.setPersistentDomain(domain, forName: domainName)
+  }
+
+  /// Clears recent workspaces and file bookmarks in `domainName` only.
+  nonisolated static func clearStoredData(defaults: UserDefaults, domainName: String) {
+    replace(workspaces: nil, bookmarks: nil, defaults: defaults, domainName: domainName)
+  }
+
+  private nonisolated static func set(_ domain: inout [String: Any], _ key: String, _ data: Data?) {
+    if let data {
+      domain[key] = data
+    } else {
+      domain.removeValue(forKey: key)
+    }
+  }
+}

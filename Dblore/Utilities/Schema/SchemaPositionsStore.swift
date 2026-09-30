@@ -11,7 +11,7 @@ import Foundation
 /// Stores and retrieves schema node positions for each database connection
 /// Positions are persisted locally using UserDefaults, keyed by connection identifier
 enum SchemaPositionsStore {
-  private static let storageKey = "app.schema.nodePositions"
+  private nonisolated static let storageKey = "app.schema.nodePositions"
 
   /// Generate a unique key for a database connection
   /// Format: "host:port/database"
@@ -78,5 +78,27 @@ enum SchemaPositionsStore {
   /// Load all positions data from UserDefaults
   private static func loadAllPositions() -> [String: Any] {
     UserDefaults.standard.dictionary(forKey: storageKey) ?? [:]
+  }
+
+  nonisolated static func storedPositions(defaults: UserDefaults, domainName: String) -> Any? {
+    defaults.persistentDomain(forName: domainName)?[storageKey]
+  }
+
+  nonisolated static func exportSnapshot(defaults: UserDefaults, domainName: String) -> Any? {
+    storedPositions(defaults: defaults, domainName: domainName)
+  }
+
+  nonisolated static func replace(_ positions: Any?, defaults: UserDefaults, domainName: String) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    if let positions {
+      domain[storageKey] = positions
+    } else {
+      domain.removeValue(forKey: storageKey)
+    }
+    defaults.setPersistentDomain(domain, forName: domainName)
+  }
+
+  nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
+    replace(nil, defaults: defaults, domainName: domainName)
   }
 }
