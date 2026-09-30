@@ -79,4 +79,34 @@ extension EditorModeView {
   func getActualExecutedQuery(result: CellResult) -> String {
     result.sourceQuery ?? ""
   }
+
+  /// Explain menu for the editor result header. Both actions go through the view model.
+  @ViewBuilder
+  func explainToolbarMenu() -> some View {
+    Menu {
+      Button("Explain") {
+        Task { await viewModel.explainSelectedStatement(analyze: false) }
+      }
+      Button("Explain Analyze (runs the statement)") {
+        Task { await viewModel.explainSelectedStatement(analyze: true) }
+      }
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Text("Explain")
+          .font(.system(size: 11))
+          .foregroundStyle(Color.foreground)
+        Image(systemName: "chevron.down")
+          .font(.system(size: 9))
+          .foregroundStyle(Color.foregroundMuted)
+      }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(Capsule().fill(Color.inputBackground))
+      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Explain the current statement")
+  }
 }

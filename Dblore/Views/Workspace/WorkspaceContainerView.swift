@@ -606,6 +606,10 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
           syncDocument()
         }
       }
+      .onExplainCommands(
+        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
+        syncDocument: syncDocument
+      )
       .confirmationDialog(
         "Run all cells?",
         isPresented: $showRunAllConfirmation,
@@ -640,6 +644,34 @@ struct WorkspaceEditorNotificationHandler: ViewModifier {
           syncDocument()
         }
       }
+      .onExplainCommands(
+        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
+        syncDocument: syncDocument)
+  }
+}
+
+extension View {
+  /// Explain commands from the Cell and Query menus. Only the active tab runs them.
+  fileprivate func onExplainCommands(
+    tabId: UUID,
+    workspaceManager: WorkspaceManager,
+    viewModel: NotebookViewModel,
+    syncDocument: @escaping () -> Void
+  ) -> some View {
+    onReceive(NotificationCenter.default.publisher(for: .explainStatement)) { _ in
+      guard workspaceManager.activeTabId == tabId else { return }
+      Task {
+        await viewModel.explainSelectedStatement(analyze: false)
+        syncDocument()
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .explainAnalyzeStatement)) { _ in
+      guard workspaceManager.activeTabId == tabId else { return }
+      Task {
+        await viewModel.explainSelectedStatement(analyze: true)
+        syncDocument()
+      }
+    }
   }
 }
 

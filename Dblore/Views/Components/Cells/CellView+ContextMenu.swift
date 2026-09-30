@@ -23,6 +23,20 @@ extension CellView {
       }
     }
 
+    Button {
+      viewModel.selectedCellId = cell.id
+      Task { await viewModel.explainSelectedStatement(analyze: false) }
+    } label: {
+      Label("Explain", systemImage: "list.bullet.indent")
+    }
+
+    Button {
+      viewModel.selectedCellId = cell.id
+      Task { await viewModel.explainSelectedStatement(analyze: true) }
+    } label: {
+      Label("Explain Analyze (runs the statement)", systemImage: "timer")
+    }
+
     Divider()
 
     Button {

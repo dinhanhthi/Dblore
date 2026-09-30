@@ -126,6 +126,9 @@ class NotebookViewModel {
 
   // MARK: - Query Confirmation State (10.3.2 optimization)
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
+  /// Explain script waiting on the Safe Mode dialog. A normal run leaves this nil, so
+  /// confirmation still executes the cell or editor text.
+  @ObservationIgnored var pendingExplainSQL: String?
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
@@ -309,7 +312,15 @@ class NotebookViewModel {
   func executePendingQuery() async {
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
+      pendingExplainSQL = nil
       executeUnlockedRunAll()
+      return
+    }
+    if let sql = pendingExplainSQL {
+      let cellId = queryConfirmationState.pendingCellId
+      pendingExplainSQL = nil
+      queryConfirmationState.clear()
+      await runExplained(sql, cellId: cellId)
       return
     }
     // Check if it's editor mode or notebook mode
@@ -326,6 +337,7 @@ class NotebookViewModel {
 
   /// Cancel the pending query execution
   func cancelPendingQuery() {
+    pendingExplainSQL = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }

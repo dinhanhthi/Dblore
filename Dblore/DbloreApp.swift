@@ -723,6 +723,10 @@ struct NotebookCommands: Commands {
 
         Divider()
 
+        ExplainCommandButtons()
+
+        Divider()
+
         Button("Clear Cell Output") {
           NotificationCenter.default.post(name: .clearCellOutput, object: nil)
         }
@@ -808,6 +812,10 @@ struct EditorCommands: Commands {
           NotificationCenter.default.post(name: .runEditorQuery, object: nil)
         }
         .keyboardShortcut(.return, modifiers: .command)
+
+        Divider()
+
+        ExplainCommandButtons()
       }
 
       // Edit commands - use focused actions for tab-specific behavior
@@ -908,6 +916,30 @@ struct SchemaVisualizerCommands: Commands {
   }
 }
 
+/// Explain actions for the Cell and Query menus. Shortcuts stay on these items.
+private struct ExplainCommandButtons: View {
+  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+
+  private var isDisabled: Bool {
+    guard let activeViewModel else { return true }
+    return activeViewModel.viewMode == .editor && activeViewModel.dataViewer != nil
+  }
+
+  var body: some View {
+    Button("Explain") {
+      NotificationCenter.default.post(name: .explainStatement, object: nil)
+    }
+    .keyboardShortcut("e", modifiers: .command)
+    .disabled(isDisabled)
+
+    Button("Explain Analyze (runs the statement)") {
+      NotificationCenter.default.post(name: .explainAnalyzeStatement, object: nil)
+    }
+    .keyboardShortcut("e", modifiers: [.command, .shift])
+    .disabled(isDisabled)
+  }
+}
+
 // MARK: - Notification Names
 
 extension Notification.Name {
@@ -944,6 +976,8 @@ extension Notification.Name {
 
   // Editor mode notifications
   static let runEditorQuery = Notification.Name("runEditorQuery")
+  static let explainStatement = Notification.Name("explainStatement")
+  static let explainAnalyzeStatement = Notification.Name("explainAnalyzeStatement")
   static let toggleWordWrap = Notification.Name("toggleWordWrap")
 
   // Settings change notifications
