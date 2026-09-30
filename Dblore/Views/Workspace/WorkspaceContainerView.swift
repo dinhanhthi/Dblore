@@ -649,6 +649,8 @@ struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
 
+  @State private var isHoveringNewTabButton = false
+
   /// Whether can navigate to previous tab
   private var canGoToPreviousTab: Bool {
     guard let activeId = workspaceManager.activeTabId,
@@ -715,15 +717,12 @@ struct WorkspaceTitleBarTabsView: View {
           withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
         } label: {
           Image(systemName: "sparkles")
-            .font(.system(size: 12, weight: .medium))
             .foregroundColor(
               workspaceManager.aiAssistant.isVisible ? .foreground : .foregroundMuted
             )
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .linkPointer()
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
         .blockDoubleClickZoom()
         .help("AI Assistant (⌘⇧A)")
 
@@ -732,13 +731,10 @@ struct WorkspaceTitleBarTabsView: View {
           NotificationCenter.default.post(name: .openSettings, object: nil)
         } label: {
           Image(systemName: "gearshape")
-            .font(.system(size: 12, weight: .medium))
             .foregroundColor(.foregroundMuted)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .linkPointer()
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
         .blockDoubleClickZoom()
         .help("Settings (⌘,)")
 
@@ -771,15 +767,21 @@ struct WorkspaceTitleBarTabsView: View {
           }
         } label: {
           Image(systemName: "plus")
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 11))
             .foregroundColor(.foregroundMuted)
             .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
+            .contentShape(Circle())
         }
         .menuStyle(.borderlessButton)
         .linkPointer()
         .menuIndicator(.hidden)
         .fixedSize()
+        .background {
+          Circle()
+            .fill(isHoveringNewTabButton ? Color.cellBackgroundHover : Color.clear)
+        }
+        .animation(.easeInOut(duration: 0.15), value: isHoveringNewTabButton)
+        .onHover { isHoveringNewTabButton = $0 }
         .blockDoubleClickZoom()
         .help("New or open tab")
       }
