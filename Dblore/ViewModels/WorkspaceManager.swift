@@ -34,6 +34,8 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager = DatabaseConnectionManager()
+  /// AI chat state shared by the workspace (schema structure only, never row data)
+  let aiAssistant = AIAssistantViewModel()
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
@@ -166,6 +168,13 @@ class WorkspaceManager: Identifiable {
     isLeftSidebarVisible = settingsResolver.isLeftSidebarVisible
 
     startSessionLossListener()
+    aiAssistant.schemaSource = { [weak self] in
+      guard let self else { return .empty }
+      let name = self.workspace.connectionConfig?.database
+      return AISchemaSnapshot(
+        tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
+        databaseName: name?.isEmpty == false ? name : nil)
+    }
 
     // Only restore tabs for new workspaces (not loading from disk)
     // When loading from disk, load() will handle tab restoration with proper viewModels

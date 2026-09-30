@@ -66,6 +66,16 @@ struct WorkspaceContainerView: View {
                 WorkspaceWelcomeView(workspaceManager: workspaceManager)
               }
             }
+
+            // AI assistant panel (schema structure only, never row data)
+            if workspaceManager.aiAssistant.isVisible {
+              AIAssistantPanel(
+                assistant: workspaceManager.aiAssistant,
+                activeTab: activeViewModel,
+                tables: workspaceManager.databaseTables
+              )
+              .transition(.move(edge: .trailing))
+            }
           }
           .zIndex(0)
 
@@ -172,6 +182,9 @@ struct WorkspaceContainerView: View {
       {
         viewModel.toggleSidebar()
       }
+    }
+    .focusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
+      withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
     }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
@@ -683,6 +696,23 @@ struct WorkspaceTitleBarTabsView: View {
       }
 
       HStack(spacing: Spacing.xxs) {
+        // AI assistant button
+        Button {
+          withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
+        } label: {
+          Image(systemName: "sparkles")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(
+              workspaceManager.aiAssistant.isVisible ? .foreground : .foregroundMuted
+            )
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
+        .blockDoubleClickZoom()
+        .help("AI Assistant (⌘⇧A)")
+
         // Settings button
         Button {
           NotificationCenter.default.post(name: .openSettings, object: nil)
