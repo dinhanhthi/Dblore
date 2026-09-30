@@ -9,19 +9,27 @@ import SwiftUI
 
 struct FavoritesTabContent: View {
   @Bindable var workspaceManager: WorkspaceManager
+  @Binding var filterText: String
 
   @State private var expandedFolders: Set<UUID> = []
   @State private var selectedItemId: UUID?
 
   private var favorites: WorkspaceFavorites { workspaceManager.workspace.favorites }
 
+  private var keywords: [String] {
+    SidebarEntityFilter.keywords(in: filterText)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
+      SidebarFilterField(text: $filterText)
       header
       Divider()
 
       if favorites.folders.isEmpty && favorites.items.isEmpty {
         emptyState
+      } else if !keywords.isEmpty && !hasFilterMatches {
+        noMatchesState
       } else {
         list
       }
@@ -85,32 +93,83 @@ struct FavoritesTabContent: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  private var noMatchesState: some View {
+    Text("No matches")
+      .font(.caption)
+      .foregroundColor(.foregroundMuted)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var hasFilterMatches: Bool {
+    favorites.folders.contains { folderPresentation($0) != nil }
+      || favorites.rootItems.contains {
+        SidebarEntityFilter.matchesAll($0.name, keywords: keywords)
+      }
+  }
+
+  private struct FolderPresentation {
+    var expanded: Bool
+    var items: [FavoriteStatement]
+    /// Child matches force the folder open. Toggling must not write `expandedFolders`.
+    var locksExpansion: Bool
+  }
+
+  /// Folder stays when its name matches, or when a saved statement inside it matches.
+  /// A name match keeps every statement. A statement match opens the folder and shows those rows.
+  private func folderPresentation(_ folder: FavoriteFolder) -> FolderPresentation? {
+    let items = favorites.items(in: folder.id)
+    guard !keywords.isEmpty else {
+      return FolderPresentation(
+        expanded: expandedFolders.contains(folder.id),
+        items: items,
+        locksExpansion: false
+      )
+    }
+    if SidebarEntityFilter.matchesAll(folder.name, keywords: keywords) {
+      return FolderPresentation(
+        expanded: expandedFolders.contains(folder.id),
+        items: items,
+        locksExpansion: false
+      )
+    }
+    let matching = items.filter { SidebarEntityFilter.matchesAll($0.name, keywords: keywords) }
+    guard !matching.isEmpty else { return nil }
+    return FolderPresentation(expanded: true, items: matching, locksExpansion: true)
+  }
+
   private var list: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
         ForEach(favorites.folders) { folder in
-          let isExpanded = expandedFolders.contains(folder.id)
-          FolderRowView(
-            folder: folder,
-            isExpanded: isExpanded,
-            onToggle: { toggle(folder.id) },
-            onRename: { workspaceManager.favoriteModal = .folder(folder) },
-            onNewFavorite: {
-              expandedFolders.insert(folder.id)
-              workspaceManager.favoriteModal = .favorite(
-                FavoriteStatement(name: "", sql: "", folderId: folder.id))
-            },
-            onDelete: { workspaceManager.deleteFolder(id: folder.id) }
-          )
+          if let presentation = folderPresentation(folder) {
+            FolderRowView(
+              folder: folder,
+              isExpanded: presentation.expanded,
+              onToggle: {
+                if !presentation.locksExpansion { toggle(folder.id) }
+              },
+              onRename: { workspaceManager.favoriteModal = .folder(folder) },
+              onNewFavorite: {
+                expandedFolders.insert(folder.id)
+                workspaceManager.favoriteModal = .favorite(
+                  FavoriteStatement(name: "", sql: "", folderId: folder.id))
+              },
+              onDelete: { workspaceManager.deleteFolder(id: folder.id) }
+            )
 
-          if isExpanded {
-            ForEach(favorites.items(in: folder.id)) { item in
-              row(for: item, indented: true)
+            if presentation.expanded {
+              ForEach(presentation.items) { item in
+                row(for: item, indented: true)
+              }
             }
           }
         }
 
-        ForEach(favorites.rootItems) { item in
+        ForEach(
+          favorites.rootItems.filter {
+            SidebarEntityFilter.matchesAll($0.name, keywords: keywords)
+          }
+        ) { item in
           row(for: item, indented: false)
         }
       }
