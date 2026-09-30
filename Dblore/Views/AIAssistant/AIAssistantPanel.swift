@@ -43,9 +43,28 @@ struct AIAssistantPanel: View {
       footer
     }
     .frame(width: ComponentSize.sidebarWidth)
-    .background(Color.appBackground)
+    .background(background)
     .overlay(alignment: .leading) {
-      Rectangle().fill(Color.borderSubtle).frame(width: 1)
+      Rectangle()
+        .fill(
+          LinearGradient(
+            colors: [Color.accent.opacity(0.7), Color.accent.opacity(0.25), Color.borderSubtle],
+            startPoint: .top, endPoint: .bottom)
+        )
+        .frame(width: 1)
+    }
+  }
+
+  /// Accent glow from the top so the panel reads as the AI surface, fading out before the messages
+  private var background: some View {
+    ZStack {
+      Color.appBackground
+      LinearGradient(
+        colors: [Color.accent.opacity(0.10), .clear],
+        startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.45))
+      RadialGradient(
+        colors: [Color.accent.opacity(0.16), .clear],
+        center: .topTrailing, startRadius: 0, endRadius: ComponentSize.sidebarWidth * 1.1)
     }
   }
 
@@ -53,6 +72,12 @@ struct AIAssistantPanel: View {
 
   private var header: some View {
     HStack(spacing: Spacing.xs) {
+      Image(systemName: "sparkles")
+        .font(.subheading)
+        .foregroundStyle(
+          LinearGradient(
+            colors: [Color.accent, Color.accent.opacity(0.55)],
+            startPoint: .topLeading, endPoint: .bottomTrailing))
       Text("AI Assistant")
         .font(.subheading)
         .foregroundColor(.foreground)
