@@ -11,9 +11,14 @@ struct RightSidebarContainer: View {
   let viewModel: NotebookViewModel
 
   var body: some View {
-    if viewModel.isRightSidebarVisible {
-      RightSidebarView(viewModel: viewModel)
-        .transition(.move(edge: .trailing))
+    // The `if` and its animation live in this view so removal slides off the
+    // trailing edge the same way insertion slides in from it.
+    Group {
+      if viewModel.isRightSidebarVisible {
+        RightSidebarView(viewModel: viewModel)
+          .transition(SidebarAnimation.trailingSlide)
+      }
     }
+    .animation(SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
   }
 }

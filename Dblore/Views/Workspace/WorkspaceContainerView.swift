@@ -76,9 +76,10 @@ struct WorkspaceContainerView: View {
                 activeTab: activeViewModel,
                 tables: workspaceManager.databaseTables
               )
-              .transition(.move(edge: .trailing))
+              .transition(SidebarAnimation.trailingSlide)
             }
           }
+          .animation(SidebarAnimation.animation, value: workspaceManager.aiAssistant.isVisible)
           .zIndex(0)
 
           // Traffic light area background + toggle button + connection button (z-index 1)

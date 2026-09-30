@@ -80,7 +80,7 @@ struct AIAssistantPanel: View {
       .disabled(assistant.messages.isEmpty)
       .help("New chat")
       Button {
-        assistant.isVisible = false
+        withSidebarAnimation { assistant.isVisible = false }
       } label: {
         Image(systemName: "xmark").foregroundColor(.foregroundMuted)
       }

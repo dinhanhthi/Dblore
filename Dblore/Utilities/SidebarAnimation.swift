@@ -17,9 +17,16 @@ extension Transaction {
   }
 }
 
+enum SidebarAnimation {
+  /// Shared by every sidebar show/hide so opening and closing use the same curve.
+  static let animation = Animation.easeInOut(duration: 0.2)
+  /// Slides in from the trailing edge and back out to that edge.
+  static let trailingSlide = AnyTransition.move(edge: .trailing)
+}
+
 /// Like `withAnimation`, but survives the app-wide `.transaction` that disables animations.
 func withSidebarAnimation(_ body: () -> Void) {
-  var transaction = Transaction(animation: .easeInOut(duration: 0.2))
+  var transaction = Transaction(animation: SidebarAnimation.animation)
   transaction.isSidebarAnimation = true
   withTransaction(transaction, body)
 }

@@ -59,7 +59,7 @@ struct DocumentLayoutView<Content: View>: View {
       }
       // Slide the sidebar (and resize the content beside it) whichever entry point toggled it,
       // including callers that change the visibility without `withAnimation`
-      .animation(.easeInOut(duration: 0.2), value: viewModel.isRightSidebarVisible)
+      .animation(SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
 
       // Toast notification overlay (app-level via WorkspaceWindowManager)
       ToastOverlay()
