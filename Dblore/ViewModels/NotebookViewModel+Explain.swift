@@ -57,6 +57,7 @@ extension NotebookViewModel {
     let targetCell = viewMode == .editor ? nil : (cellId ?? selectedCellId)
     if presentConfirmationIfNeeded(for: sql, cellId: targetCell) {
       pendingExplainSQL = sql
+      pendingStagedBatch = nil
       return
     }
     await runExplained(sql, cellId: targetCell)

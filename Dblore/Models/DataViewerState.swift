@@ -28,6 +28,9 @@ struct DataViewerState: Equatable {
   var filter = TableFilter(conditions: [])
   /// The applied highlight: painted client-side, so not part of `LoadKey`
   var highlight = TableHighlight(filter: TableFilter(conditions: []))
+  /// Staged inserts, deletes, and cell edits. Nil when nothing is staged.
+  /// Session-only: a saved tab stores the relation, not this set.
+  var changeSet: RowChangeSet? = nil
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {

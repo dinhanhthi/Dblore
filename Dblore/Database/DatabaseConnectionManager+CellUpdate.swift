@@ -14,17 +14,25 @@ import PostgresNIO
 nonisolated extension CellUpdateStatement {
   /// Bind parameters: untyped text (the server infers each parameter's type from the column,
   /// like libpq's `PQexecParams` without `paramTypes`), NULL for nil.
-  var bindings: PostgresBindings {
-    var bindings = PostgresBindings(capacity: values.count)
-    for value in values {
-      if let value {
-        bindings.append(UntypedText(value))
-      } else {
-        bindings.appendNull()
-      }
+  var bindings: PostgresBindings { untypedTextBindings(values) }
+}
+
+nonisolated extension BoundStatement {
+  /// Bind parameters: untyped text, NULL for nil. Same encoding as `CellUpdateStatement`.
+  var bindings: PostgresBindings { untypedTextBindings(values) }
+}
+
+/// Untyped text binds. Nil is SQL NULL. File-private so both statement types share `UntypedText`.
+private nonisolated func untypedTextBindings(_ values: [String?]) -> PostgresBindings {
+  var bindings = PostgresBindings(capacity: values.count)
+  for value in values {
+    if let value {
+      bindings.append(UntypedText(value))
+    } else {
+      bindings.appendNull()
     }
-    return bindings
   }
+  return bindings
 }
 
 extension ColumnInfo {

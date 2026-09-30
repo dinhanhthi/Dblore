@@ -129,6 +129,9 @@ class NotebookViewModel {
   /// Explain script waiting on the Safe Mode dialog. A normal run leaves this nil, so
   /// confirmation still executes the cell or editor text.
   @ObservationIgnored var pendingExplainSQL: String?
+  /// Staged data-viewer batch waiting on the Safe Mode dialog. Confirmation runs this
+  /// through `executeGatedBatch`, not the preview text as user SQL.
+  @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
@@ -313,6 +316,7 @@ class NotebookViewModel {
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
       pendingExplainSQL = nil
+      pendingStagedBatch = nil
       executeUnlockedRunAll()
       return
     }
@@ -321,6 +325,12 @@ class NotebookViewModel {
       pendingExplainSQL = nil
       queryConfirmationState.clear()
       await runExplained(sql, cellId: cellId)
+      return
+    }
+    if let batch = pendingStagedBatch {
+      pendingStagedBatch = nil
+      queryConfirmationState.clear()
+      await runConfirmedStagedBatch(batch)
       return
     }
     // Check if it's editor mode or notebook mode
@@ -338,6 +348,7 @@ class NotebookViewModel {
   /// Cancel the pending query execution
   func cancelPendingQuery() {
     pendingExplainSQL = nil
+    pendingStagedBatch = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }
