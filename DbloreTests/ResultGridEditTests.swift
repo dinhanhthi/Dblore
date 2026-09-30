@@ -13,14 +13,23 @@ import Testing
 struct ResultGridEditTests {
   private let cellId = UUID()
 
+  private static let usersID = TableRef.postgresql(oid: 16_400)
+
   private func makeResult(primaryKeyColumns: [String]) -> CellResult {
     CellResult(
-      columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "name", type: "text")],
+      columns: [
+        ColumnInfo(
+          name: "id", type: "int4",
+          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 1)),
+        ColumnInfo(
+          name: "name", type: "text",
+          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2)),
+      ],
       rows: [[.int(3), .string("c")], [.int(1), .string("a")], [.int(2), .string("b")]],
       rowCount: 3, sourceQuery: "SELECT * FROM users", tableName: "public.users",
       primaryKeyColumns: primaryKeyColumns,
       editTarget: EditTarget(
-        qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: primaryKeyColumns))
+        qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: primaryKeyColumns))
   }
 
   private func makeViewModel(result: CellResult, config: ConnectionConfig) -> NotebookViewModel {

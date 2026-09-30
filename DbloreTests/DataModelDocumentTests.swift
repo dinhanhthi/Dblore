@@ -344,7 +344,7 @@ struct DocumentLegacyCompatibilityTests {
       sourceQuery: "SELECT id FROM users", tableName: "public.users", primaryKeyColumns: ["id"]
     )
     result.editTarget = EditTarget(
-      qualifiedName: "public.users", oid: 16400, primaryKeyColumns: ["id"])
+      qualifiedName: "public.users", tableID: .postgresql(oid: 16400), primaryKeyColumns: ["id"])
     let statement = StatementResult(
       queryText: "SELECT id FROM users", result: result, statementIndex: 0
     )

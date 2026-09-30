@@ -14,6 +14,8 @@ actor DatabaseConnectionManager {
   var session: (any DatabaseSession)?
   /// Production uses `PostgresSessionFactory`. Tests inject another `DatabaseSessionFactory`.
   private let sessionFactory: any DatabaseSessionFactory
+  /// PostgreSQL catalog SQL. Public `fetch*` methods delegate here after the metadata guard.
+  let introspector = PostgresSchemaIntrospector()
   private(set) var config: ConnectionConfig?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
@@ -44,8 +46,9 @@ actor DatabaseConnectionManager {
   var txOwner: UUID?
   /// A transaction the user opened with BEGIN while Protected mode was off
   var userTxOpen = false
-  /// Inline edit tables resolved outside any app transaction, by table OID (see `cachedEditTable`)
-  var editTableCache: [UInt32: EditTable] = [:]
+  /// Inline edit tables resolved outside any app transaction, by table identity
+  /// (see `cachedEditTable`)
+  var editTableCache: [TableRef: EditTable] = [:]
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
   /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with

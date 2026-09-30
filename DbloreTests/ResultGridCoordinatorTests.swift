@@ -389,7 +389,8 @@ struct ResultGridCoordinatorTests {
   func updateAppliesChangeSet() throws {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)
     var set = RowChangeSet(
-      target: EditTarget(qualifiedName: "public.t", oid: 1, primaryKeyColumns: ["id"]))
+      target: EditTarget(
+        qualifiedName: "public.t", tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"]))
     set.stageDelete(row: RowChangeSet.RowKey(values: [.int(3)]))
     try set.stageEdit(
       row: RowChangeSet.RowKey(values: [.int(1)]), column: "name", value: .string("z"),

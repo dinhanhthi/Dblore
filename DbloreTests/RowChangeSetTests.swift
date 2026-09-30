@@ -147,7 +147,7 @@ private func sampleTarget(
 ) -> EditTarget {
   EditTarget(
     qualifiedName: "public.items",
-    oid: 42,
+    tableID: .postgresql(oid: 42),
     primaryKeyColumns: ["id"],
     connectionEpoch: connectionEpoch,
     generation: generation

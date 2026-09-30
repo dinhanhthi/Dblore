@@ -10,7 +10,8 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Inline Edit Transaction - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
+@Suite(
+  "Inline Edit Transaction - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct InlineEditTransactionIntegrationTests {
   private let open = ProtectionPolicy(protectionLevel: .none)
@@ -179,7 +180,7 @@ struct InlineEditTransactionIntegrationTests {
 
       let inside = try #require(try await target("SELECT * FROM \(table)", manager))
       #expect(inside.qualifiedName == "public.\(table)")
-      #expect(inside.oid == before.oid)
+      #expect(inside.tableID == before.tableID)
       #expect(try await edit(manager, table, id: 2, to: "21") == 1)
       #expect(await manager.transactionSnapshot().pending.count == 2)
 

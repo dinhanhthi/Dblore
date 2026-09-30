@@ -149,7 +149,8 @@ struct InlineEditSessionOnlyTests {
   @Test("Edit-target fields are not written to the document any more")
   func editTargetNotPersisted() throws {
     var result = craftedResult()
-    result.editTarget = EditTarget(qualifiedName: "public.users", oid: 1, primaryKeyColumns: ["id"])
+    result.editTarget = EditTarget(
+      qualifiedName: "public.users", tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"])
     let data = try DocumentCoder.encode(
       makeViewModel(result: result).notebook, includeResultsOnSave: true)
     let text = try #require(String(data: data, encoding: .utf8))
@@ -170,12 +171,14 @@ struct InlineEditSessionOnlyTests {
 
   @Test("A target from another (stale) result generation is refused before sending")
   func staleGenerationRefused() {
-    let target = EditTarget(qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: ["id"])
+    let target = EditTarget(
+      qualifiedName: "public.users", tableID: .postgresql(oid: 16_400), primaryKeyColumns: ["id"])
     var live = craftedResult()
     live.editTarget = target
     let viewModel = makeViewModel(result: live)
     // The sidebar was opened on an older run of the cell: same table, other generation
-    let stale = EditTarget(qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: ["id"])
+    let stale = EditTarget(
+      qualifiedName: "public.users", tableID: .postgresql(oid: 16_400), primaryKeyColumns: ["id"])
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: "users",
       rowData: rowData, primaryKeyColumns: ["id"], editTarget: stale, cellId: cellId)
@@ -186,7 +189,8 @@ struct InlineEditSessionOnlyTests {
 
   @Test("Live target: the edit is accepted and sent without a confirmation")
   func liveTargetAccepted() {
-    let target = EditTarget(qualifiedName: "s6a.users", oid: 16_400, primaryKeyColumns: ["id"])
+    let target = EditTarget(
+      qualifiedName: "s6a.users", tableID: .postgresql(oid: 16_400), primaryKeyColumns: ["id"])
     var live = craftedResult()
     live.editTarget = target
     let viewModel = makeViewModel(result: live)

@@ -170,7 +170,8 @@ struct InlineEditViewModelTests {
       rows: [[.int(1), .string("old")]], rowCount: 1, sourceQuery: "SELECT * FROM users",
       tableName: "public.users", primaryKeyColumns: primaryKeyColumns,
       editTarget: EditTarget(
-        qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: primaryKeyColumns))
+        qualifiedName: "public.users", tableID: .postgresql(oid: 16_400),
+        primaryKeyColumns: primaryKeyColumns))
     let notebook = DbloreNotebook(
       id: UUID(),
       cells: [

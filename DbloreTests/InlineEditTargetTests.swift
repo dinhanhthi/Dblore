@@ -83,4 +83,54 @@ struct InlineEditTargetTests {
     let columns = [column("id", Self.ordersOID, 1)]
     #expect(CellUpdateStatement.editablePrimaryKey(columns: columns, table: table).isEmpty)
   }
+
+  @Test("A pending transaction resolves the edit target from the column table identity")
+  @MainActor
+  func pendingTransactionResolvesColumnTableIdentity() async {
+    let orders = TableRef.postgresql(oid: Self.ordersOID)
+    let target = await cachedTarget(cachedID: orders, columnID: orders)
+    #expect(target?.tableID == orders)
+    #expect(target?.primaryKeyColumns == ["id"])
+    #expect(target?.qualifiedName == "public.orders")
+  }
+
+  @Test("The edit-table cache does not match a different table identity")
+  @MainActor
+  func cacheDoesNotMatchADifferentTableIdentity() async {
+    let orders = TableRef.postgresql(oid: Self.ordersOID)
+    let customers = TableRef.postgresql(oid: Self.customersOID)
+    #expect(await cachedTarget(cachedID: customers, columnID: orders) == nil)
+  }
+
+  /// Catalog lookup is paused. The only stored table is `cachedID`; columns name `columnID`.
+  @MainActor
+  private func cachedTarget(cachedID: TableRef, columnID: TableRef) async -> EditTarget? {
+    let manager = DatabaseConnectionManager()
+    let table = EditTable(
+      oid: Self.ordersOID,
+      attributeNames: [1: "id", 2: "customer_id", 3: "total"],
+      primaryKeyColumns: ["id"],
+      qualifiedName: "public.orders",
+      connectionEpoch: 0,
+      updateOnly: true)
+    await manager.seedPausedEditTable(table, id: cachedID)
+    let columns = [
+      ColumnInfo(
+        name: "id", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 1)),
+      ColumnInfo(
+        name: "total", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 3)),
+    ]
+    let result = QueryResult(
+      columns: columns, rows: [[.int(1), .int(9)]], rowCount: 1, executionTime: 0)
+    return await NotebookViewModel().editTarget(
+      for: "SELECT id, total FROM orders", result: result, connectionManager: manager, epoch: 0)
+  }
+}
+
+extension DatabaseConnectionManager {
+  /// Pauses catalog lookup and stores one edit table under `id`.
+  fileprivate func seedPausedEditTable(_ table: EditTable, id: TableRef) {
+    txState = .appTx(pending: [])
+    editTableCache = [id: table]
+  }
 }

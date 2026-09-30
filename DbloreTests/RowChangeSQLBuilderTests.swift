@@ -158,7 +158,8 @@ private func target(
   primaryKeyColumns: [String] = ["id"], updateOnly: Bool = false
 ) -> EditTarget {
   EditTarget(
-    qualifiedName: #""t""#, oid: 1, primaryKeyColumns: primaryKeyColumns, updateOnly: updateOnly)
+    qualifiedName: #""t""#, tableID: .postgresql(oid: 1), primaryKeyColumns: primaryKeyColumns,
+    updateOnly: updateOnly)
 }
 
 private func columns() -> [ColumnInfo] {

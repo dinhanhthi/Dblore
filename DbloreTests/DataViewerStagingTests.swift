@@ -62,15 +62,18 @@ struct DataViewerStagingTests {
       protectionLevel: protection, safeMode: .silent, protectedMode: false)
     viewModel.dataViewer = DataViewerState(
       schema: "public", name: "users", orderColumns: ["id"])
+    let usersID = TableRef.postgresql(oid: 1)
     viewModel.editorResult = CellResult(
       columns: [
-        ColumnInfo(name: "id", type: "int4"),
-        ColumnInfo(name: "nickname", type: "text"),
+        ColumnInfo(
+          name: "id", type: "int4", origin: ColumnOrigin(tableID: usersID, columnOrdinal: 1)),
+        ColumnInfo(
+          name: "nickname", type: "text", origin: ColumnOrigin(tableID: usersID, columnOrdinal: 2)),
       ],
       rows: [[.int(1), .string("old")]],
       rowCount: 1,
       editTarget: EditTarget(
-        qualifiedName: "public.users", oid: 1, primaryKeyColumns: primaryKey,
+        qualifiedName: "public.users", tableID: usersID, primaryKeyColumns: primaryKey,
         connectionEpoch: 0, updateOnly: true))
     return viewModel
   }

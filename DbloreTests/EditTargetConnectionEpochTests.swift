@@ -70,8 +70,10 @@ struct EditTargetConnectionEpochTests {
 
   // MARK: - ViewModel clearing
 
-  private func target() -> EditTarget {
-    EditTarget(qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: ["id"])
+  private func target(
+    tableID: TableRef = .postgresql(oid: 16_400)
+  ) -> EditTarget {
+    EditTarget(qualifiedName: "public.users", tableID: tableID, primaryKeyColumns: ["id"])
   }
 
   private func result(_ target: EditTarget) -> CellResult {
@@ -129,6 +131,27 @@ struct EditTargetConnectionEpochTests {
     await manager.disconnect()
     #expect(hasNoEditTarget(first))
     #expect(hasNoEditTarget(second))
+  }
+
+  @Test("Refreshing the same table keeps the open sidebar edit target")
+  func carryKeepsMatchingTableIdentity() {
+    let tableID = TableRef.postgresql(oid: 16_400)
+    let current = target(tableID: tableID)
+    let refreshed = target(tableID: tableID)
+    let viewModel = NotebookViewModel()
+    viewModel.cellDetailEditTarget = current
+    viewModel.carryCellDetailEditTarget(from: result(current), to: result(refreshed))
+    #expect(viewModel.cellDetailEditTarget == refreshed)
+  }
+
+  @Test("Refreshing a different table drops the open sidebar edit target")
+  func carryDropsDifferentTableIdentity() {
+    let current = target()
+    let refreshed = target(tableID: .postgresql(oid: 99))
+    let viewModel = NotebookViewModel()
+    viewModel.cellDetailEditTarget = current
+    viewModel.carryCellDetailEditTarget(from: result(current), to: result(refreshed))
+    #expect(viewModel.cellDetailEditTarget == nil)
   }
 
   @Test("A protection change does not clear edit targets (same connection)")

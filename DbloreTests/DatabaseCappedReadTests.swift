@@ -495,10 +495,9 @@ struct DatabaseCappedReadTests {
       #expect(await manager.cursorReadCount == 1)
       #expect(cursor.columns.map(\.name) == ["id", "v"])
       // Non-nil and non-zero, so the comparison below is not vacuous
-      #expect(cursor.columns.allSatisfy { ($0.tableOID ?? 0) != 0 })
-      #expect(cursor.columns.allSatisfy { ($0.attributeNumber ?? 0) != 0 })
-      #expect(cursor.columns.map(\.tableOID) == plain.columns.map(\.tableOID))
-      #expect(cursor.columns.map(\.attributeNumber) == plain.columns.map(\.attributeNumber))
+      #expect(cursor.columns.allSatisfy { $0.origin?.tableID != TableRef.postgresql(oid: 0) })
+      #expect(cursor.columns.allSatisfy { ($0.origin?.columnOrdinal ?? 0) != 0 })
+      #expect(cursor.columns.map(\.origin) == plain.columns.map(\.origin))
       _ = try await manager.execute(userSQL: "ROLLBACK", policy: open)
     } catch {
       Issue.record(error)

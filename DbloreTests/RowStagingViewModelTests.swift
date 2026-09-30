@@ -78,8 +78,19 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
   }
 
+  @Test("A result whose columns name another table cannot be staged")
+  func otherTableIdentityCannotBeStaged() {
+    let viewModel = makeViewModel(
+      primaryKey: ["id"], columnTableID: .postgresql(oid: 99))
+    #expect(viewModel.rowStagingUnavailableReason == NotebookViewModel.tableHasNoPrimaryKey)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+  }
+
+  private static let usersID = TableRef.postgresql(oid: 1)
+
   private func makeViewModel(
-    primaryKey: [String], epoch: UInt64 = 0, safeMode: SafeMode = .silent
+    primaryKey: [String], epoch: UInt64 = 0, safeMode: SafeMode = .silent,
+    columnTableID: TableRef = RowStagingViewModelTests.usersID
   ) -> NotebookViewModel {
     let viewModel = NotebookViewModel()
     viewModel.viewMode = .editor
@@ -90,13 +101,17 @@ struct RowStagingViewModelTests {
       schema: "public", name: "users", orderColumns: ["id"])
     viewModel.editorResult = CellResult(
       columns: [
-        ColumnInfo(name: "id", type: "int4"),
-        ColumnInfo(name: "nickname", type: "text"),
+        ColumnInfo(
+          name: "id", type: "int4",
+          origin: ColumnOrigin(tableID: columnTableID, columnOrdinal: 1)),
+        ColumnInfo(
+          name: "nickname", type: "text",
+          origin: ColumnOrigin(tableID: columnTableID, columnOrdinal: 2)),
       ],
       rows: [[.int(1), .string("old")]],
       rowCount: 1,
       editTarget: EditTarget(
-        qualifiedName: "public.users", oid: 1, primaryKeyColumns: primaryKey,
+        qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: primaryKey,
         connectionEpoch: epoch, updateOnly: true))
     viewModel.connectionManager = DatabaseConnectionManager()
     return viewModel

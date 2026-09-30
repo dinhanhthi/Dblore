@@ -10,6 +10,40 @@ import NIOCore
 import NIOFoundationCompat
 import PostgresNIO
 
+// MARK: - PostgreSQL table identity
+
+extension TableRef {
+  /// PostgreSQL table identity. The `pg:<oid>` string is built only here.
+  nonisolated static func postgresql(oid: UInt32) -> TableRef {
+    TableRef("pg:\(oid)")
+  }
+}
+
+extension ColumnInfo {
+  /// Row description: table OID becomes `TableRef`, attribute number becomes `columnOrdinal`.
+  nonisolated init(name: String, type: String, origin: PostgresColumn?) {
+    if let origin {
+      self.init(
+        name: name, type: type, tableOID: UInt32(bitPattern: origin.tableOID),
+        attributeNumber: origin.columnAttributeNumber)
+    } else {
+      self.init(name: name, type: type, origin: nil as ColumnOrigin?)
+    }
+  }
+
+  /// Same identity as a row description, for callers that already hold the OID and attribute number.
+  nonisolated init(name: String, type: String, tableOID: UInt32?, attributeNumber: Int16?) {
+    let columnOrigin: ColumnOrigin?
+    if let tableOID, let attributeNumber {
+      columnOrigin = ColumnOrigin(
+        tableID: .postgresql(oid: tableOID), columnOrdinal: Int(attributeNumber))
+    } else {
+      columnOrigin = nil
+    }
+    self.init(name: name, type: type, origin: columnOrigin)
+  }
+}
+
 // MARK: - PostgreSQL Type Mapping & Parsing
 
 extension DatabaseConnectionManager {
@@ -160,7 +194,7 @@ extension DatabaseConnectionManager {
         return .string(value)
       }
 
-    case .char, .varchar, .text:
+    case .char, .varchar, .text, .name:
       if let value = try? cell.decode(String.self, context: .default) {
         return .string(value)
       }

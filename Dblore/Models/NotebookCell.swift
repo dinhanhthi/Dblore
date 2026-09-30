@@ -202,24 +202,70 @@ struct CellResult: Codable, Sendable {
   }
 }
 
+/// Opaque table identity. Callers compare values. PostgreSQL builds `pg:<oid>` in `Dblore/Database`.
+nonisolated struct TableRef: Hashable, Sendable, Codable {
+  private let rawValue: String
+
+  nonisolated init(_ rawValue: String) {
+    self.rawValue = rawValue
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    rawValue = try container.decode(String.self)
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(rawValue)
+  }
+}
+
+/// Where a result column came from: a table identity and a column ordinal in that table.
+nonisolated struct ColumnOrigin: Hashable, Sendable, Codable {
+  let tableID: TableRef
+  let columnOrdinal: Int
+}
+
 /// Information about a result column
 struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated var id: String { name }
   nonisolated let name: String
   nonisolated let type: String
-  /// Source table OID from the server's RowDescription (0 = not a plain table column,
-  /// nil = unknown). Used to decide whether inline edit may target the row.
-  nonisolated let tableOID: UInt32?
-  /// Source column attribute number from the RowDescription (0 = not a table column)
-  nonisolated let attributeNumber: Int16?
+  /// Source table and column from the server's row description. nil when unknown.
+  nonisolated let origin: ColumnOrigin?
 
-  nonisolated init(
-    name: String, type: String, tableOID: UInt32? = nil, attributeNumber: Int16? = nil
-  ) {
+  nonisolated init(name: String, type: String, origin: ColumnOrigin? = nil) {
     self.name = name
     self.type = type
-    self.tableOID = tableOID
-    self.attributeNumber = attributeNumber
+    self.origin = origin
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, type, origin, tableOID, attributeNumber
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    name = try container.decode(String.self, forKey: .name)
+    type = try container.decode(String.self, forKey: .type)
+    if let origin = try container.decodeIfPresent(ColumnOrigin.self, forKey: .origin) {
+      self.origin = origin
+    } else if let oid = try container.decodeIfPresent(UInt32.self, forKey: .tableOID),
+      let attributeNumber = try container.decodeIfPresent(Int16.self, forKey: .attributeNumber)
+    {
+      self.origin = ColumnOrigin(
+        tableID: TableRef.postgresql(oid: oid), columnOrdinal: Int(attributeNumber))
+    } else {
+      self.origin = nil
+    }
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(name, forKey: .name)
+    try container.encode(type, forKey: .type)
+    try container.encodeIfPresent(origin, forKey: .origin)
   }
 }
 

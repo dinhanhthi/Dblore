@@ -19,7 +19,7 @@ struct ResultGridStagingTests {
 
   private var target: EditTarget {
     EditTarget(
-      qualifiedName: "public.items", oid: 42, primaryKeyColumns: ["id"],
+      qualifiedName: "public.items", tableID: .postgresql(oid: 42), primaryKeyColumns: ["id"],
       generation: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!)
   }
 

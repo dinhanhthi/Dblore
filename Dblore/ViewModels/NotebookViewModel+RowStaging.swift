@@ -204,10 +204,11 @@ extension NotebookViewModel {
 
   static let rowNotOnPage = "That row is not on this page."
 
-  /// Live data-viewer target with a primary key. Notebook results are not a staging target.
+  /// Live data-viewer target with a primary key, when every column origin names that table.
+  /// Notebook results are not a staging target.
   private var stagedEditTarget: EditTarget? {
-    guard dataViewer != nil, let target = editorResult?.editTarget,
-      !target.primaryKeyColumns.isEmpty
+    guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
+      !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID
     else { return nil }
     return target
   }

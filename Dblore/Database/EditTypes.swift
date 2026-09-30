@@ -138,7 +138,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
 
   /// Primary key columns an inline edit of a result with `columns` may use, or empty when the
   /// result is not editable. Fail closed: EVERY column must be a plain column of `table`
-  /// (server-reported source table OID equal to the table's OID and an attribute number whose
+  /// (source table identity equal to the table, and an attribute number whose
   /// name is the column name), and every primary key column must be in the result. So joins,
   /// comma joins, computed or aliased columns and scalar subqueries make the result read-only,
   /// and a PK value can never come from another table or expression (duplicate names included).
@@ -146,8 +146,10 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     guard let table, table.oid != 0, !table.primaryKeyColumns.isEmpty, !columns.isEmpty else {
       return []
     }
+    let tableID = TableRef.postgresql(oid: table.oid)
     for column in columns {
-      guard column.tableOID == table.oid, let attnum = column.attributeNumber,
+      guard let origin = column.origin, origin.tableID == tableID,
+        let attnum = Int16(exactly: origin.columnOrdinal),
         table.attributeNames[attnum] == column.name
       else { return [] }
     }
@@ -194,13 +196,13 @@ nonisolated struct EditTable: Sendable, Equatable {
 }
 
 /// The validated target of inline edits for one live result: server-resolved qualified name,
-/// table OID and primary key columns in key order. Session-only (never persisted); each live
+/// table identity and primary key columns in key order. Session-only (never persisted); each live
 /// execution creates a new `generation`, so an edit can be checked against the result it was
 /// opened from, and carries the `connectionEpoch` it was resolved on, so the actor refuses it
-/// after a reconnect or connection switch.
+/// after a reconnect or connection switch. Callers compare `tableID`; they do not read a catalog OID.
 nonisolated struct EditTarget: Sendable, Equatable {
   let qualifiedName: String
-  let oid: UInt32
+  let tableID: TableRef
   let primaryKeyColumns: [String]
   let connectionEpoch: UInt64
   /// Emit `UPDATE ONLY` (plain table)
@@ -208,11 +210,11 @@ nonisolated struct EditTarget: Sendable, Equatable {
   let generation: UUID
 
   init(
-    qualifiedName: String, oid: UInt32, primaryKeyColumns: [String], connectionEpoch: UInt64 = 0,
-    updateOnly: Bool = false, generation: UUID = UUID()
+    qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
+    connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID()
   ) {
     self.qualifiedName = qualifiedName
-    self.oid = oid
+    self.tableID = tableID
     self.primaryKeyColumns = primaryKeyColumns
     self.connectionEpoch = connectionEpoch
     self.updateOnly = updateOnly
