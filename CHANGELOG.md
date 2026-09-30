@@ -2,6 +2,12 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- PDF export and SQL INSERT / IN-list copy are available.
+
 ## v0.3.2 (2026-09-29)
 
 ### Improved

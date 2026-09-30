@@ -300,6 +300,26 @@ enum DataExporter {
     return markdown
   }
 
+  /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
+  /// The table is `table` when that is non-nil, otherwise `result.tableName`.
+  static func sqlInsert(
+    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+  ) -> String {
+    let exported = queryResult(from: result, rowIndexes: rows)
+    let name = SQLInsertRenderer.tableName(for: exported, fallback: table ?? result.tableName)
+    return SQLInsertRenderer.insertScript(result: exported, table: name, dialect: dialect)
+  }
+
+  /// Parenthesized IN list for `values`.
+  static func sqlINList(values: [CellValue], dialect: SQLDialect) -> String {
+    SQLInsertRenderer.inList(values: values, dialect: dialect)
+  }
+
+  /// PDF of the cell result. `query` is drawn only when the caller passes it.
+  static func pdfData(result: CellResult, title: String, query: String?) -> Data {
+    ResultPDFRenderer.render(result: queryResult(from: result), title: title, query: query)
+  }
+
   // MARK: - Download Functions
 
   /// Download result as CSV file
@@ -340,6 +360,25 @@ enum DataExporter {
     saveFile(content: markdown, defaultFilename: defaultName, allowedFileTypes: ["md", "markdown"])
   }
 
+  /// Download the result as a PDF. The title is the filename without its extension.
+  static func downloadPDF(
+    result: CellResult, filename: String? = nil, queryIndex: Int? = nil, query: String? = nil
+  ) {
+    let defaultName = filename ?? generateFilename(extension: "pdf", queryIndex: queryIndex)
+    let data = pdfData(result: result, title: pdfTitle(defaultName), query: query)
+    saveFile(data: data, defaultFilename: defaultName, allowedFileTypes: ["pdf"])
+  }
+
+  /// Download an INSERT script for every row.
+  static func downloadSQLInsert(
+    result: CellResult, table: String? = nil, dialect: SQLDialect, filename: String? = nil,
+    queryIndex: Int? = nil
+  ) {
+    let sql = sqlInsert(result: result, table: table, dialect: dialect)
+    let defaultName = filename ?? generateFilename(extension: "sql", queryIndex: queryIndex)
+    saveFile(content: sql, defaultFilename: defaultName, allowedFileTypes: ["sql"])
+  }
+
   /// Copy result to clipboard in TSV format (Excel-compatible)
   static func copyTSV(result: CellResult) {
     let tsv = toTSV(result: result)
@@ -358,7 +397,46 @@ enum DataExporter {
     copyToClipboard(markdown)
   }
 
+  /// Copy an INSERT script to the clipboard.
+  static func copyInsert(
+    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+  ) {
+    copyToClipboard(sqlInsert(result: result, rows: rows, table: table, dialect: dialect))
+  }
+
+  /// Copy an IN list to the clipboard.
+  static func copyINList(values: [CellValue], dialect: SQLDialect) {
+    copyToClipboard(sqlINList(values: values, dialect: dialect))
+  }
+
   // MARK: - Private Helpers
+
+  /// `CellResult` as a `QueryResult`. `rowIndexes` nil keeps every row; out-of-range indexes drop.
+  private static func queryResult(from result: CellResult, rowIndexes: [Int]? = nil) -> QueryResult
+  {
+    let selectedRows: [[CellValue]]
+    if let rowIndexes {
+      selectedRows = rowIndexes.compactMap { index in
+        guard result.rows.indices.contains(index) else { return nil }
+        return result.rows[index]
+      }
+    } else {
+      selectedRows = result.rows
+    }
+    return QueryResult(
+      columns: result.columns,
+      rows: selectedRows,
+      rowCount: selectedRows.count,
+      executionTime: result.executionTime,
+      wasLimited: result.wasLimited,
+      affectedRows: result.affectedRows)
+  }
+
+  /// Filename without its extension, or `"Result"` when that stem is empty.
+  private static func pdfTitle(_ filename: String) -> String {
+    let stem = (filename as NSString).deletingPathExtension
+    return stem.isEmpty ? "Result" : stem
+  }
 
   /// Generate filename with format: query_<i>-YYYY-MM-DD_HHMMSS.<extension>
   private static func generateFilename(extension: String, queryIndex: Int?) -> String {

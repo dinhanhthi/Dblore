@@ -119,6 +119,19 @@ struct ResultGridModel {
     return prefix.endIndex < text.endIndex ? flat + "…" : flat
   }
 
+  /// Indexes into `CellResult.rows` for the selected displayed rows, in ascending
+  /// displayed-row order.
+  func selectedRowIndices(rows: IndexSet) -> [Int] {
+    rows.compactMap { originalRow(forDisplayedRow: $0) }
+  }
+
+  /// Values of the one column in `columns` for `rows`, in displayed-row order.
+  /// Empty when `columns` spans more than one column.
+  func selectedColumnValues(rows: IndexSet, columns: [Int]) -> [CellValue] {
+    guard columns.count == 1, let column = columns.first else { return [] }
+    return rows.map { value(row: $0, column: column) }
+  }
+
   /// Tab-separated selected cells (no header, no trailing newline), full values like the
   /// TSV copy, `columns` (model column indices) in the given order. A value with a tab,
   /// newline or quote is quoted with quotes doubled, as in CSV.

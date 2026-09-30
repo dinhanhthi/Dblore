@@ -85,6 +85,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)?
   /// Called by the context menu's "Clear Highlight"
   var onClearHighlight: (() -> Void)?
+  /// Table updated last, so the context menu can read the current row and column selection
+  private weak var gridTableView: NSTableView?
   /// True while `update` shows the input sort in the header, so it isn't reported back
   private var isShowingInputSort = false
 
@@ -140,6 +142,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   )
     -> Bool
   {
+    gridTableView = tableView
     let newKey = Key(
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
@@ -233,6 +236,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let column: Int
     var style: HighlightStyle = .cell
     var color: HighlightColor = .yellow
+    /// Indexes into `CellResult.rows` for "Copy as INSERT"
+    var insertRows: [Int] = []
+    /// Values for "Copy as IN list" (empty when the selection spans more than one column)
+    var inListValues: [CellValue] = []
   }
 
   /// Context menu of the cell at a displayed row and result column: copy, details in the right
@@ -240,9 +247,23 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   func contextMenu(row: Int, column: Int) -> NSMenu? {
     guard let model, row >= 0, row < model.rowCount, column >= 0, column < model.columns.count
     else { return nil }
+    let displayedRows = displayedRowsForExport(clickedRow: row)
+    let insertRows = model.selectedRowIndices(rows: displayedRows)
+    let selectedColumns = selectedResultColumns()
+    let inListColumns =
+      selectedColumns.count <= 1
+      ? (selectedColumns.isEmpty ? [column] : selectedColumns) : selectedColumns
+    let inListValues = model.selectedColumnValues(rows: displayedRows, columns: inListColumns)
     let menu = NSMenu()
     menu.autoenablesItems = false
     addItem(to: menu, "Copy Value", #selector(copyValue(_:)), MenuTarget(row: row, column: column))
+    addItem(
+      to: menu, "Copy as INSERT", #selector(copyAsInsert(_:)),
+      MenuTarget(row: row, column: column, insertRows: insertRows))
+    let inList = addItem(
+      to: menu, "Copy as IN list", #selector(copyAsINList(_:)),
+      MenuTarget(row: row, column: column, inListValues: inListValues))
+    inList.isEnabled = selectedColumns.count <= 1
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
     if onHighlightCell != nil {
@@ -314,6 +335,41 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   @objc private func clearHighlight(_ sender: NSMenuItem) {
     onClearHighlight?()
+  }
+
+  @objc private func copyAsInsert(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget, let sourceResult else { return }
+    DataExporter.copyInsert(
+      result: sourceResult, rows: target.insertRows, table: sourceResult.tableName,
+      dialect: exportDialect)
+  }
+
+  @objc private func copyAsINList(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    DataExporter.copyINList(values: target.inListValues, dialect: exportDialect)
+  }
+
+  /// Dialect of the grid's highlight database type (PostgreSQL when the grid has not updated)
+  private var exportDialect: SQLDialect {
+    key?.highlightDialect.dialect ?? .postgresql
+  }
+
+  /// Selected displayed rows when they include the clicked row; otherwise just that row
+  private func displayedRowsForExport(clickedRow: Int) -> IndexSet {
+    guard let selected = gridTableView?.selectedRowIndexes, selected.contains(clickedRow) else {
+      return IndexSet(integer: clickedRow)
+    }
+    return selected
+  }
+
+  /// Result-column indexes of the table's column selection, in column order.
+  /// The "#" gutter is not a result column. Empty when only rows are selected.
+  private func selectedResultColumns() -> [Int] {
+    guard let gridTableView else { return [] }
+    return gridTableView.selectedColumnIndexes.sorted().compactMap { index in
+      guard gridTableView.tableColumns.indices.contains(index) else { return nil }
+      return Int(gridTableView.tableColumns[index].identifier.rawValue)
+    }
   }
 
   /// TSV of the selected rows, all columns in on-screen order (after a column move)

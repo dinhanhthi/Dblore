@@ -42,6 +42,9 @@ struct QueryCopyBar: View {
   /// Optional query index for multi-statement downloads (nil for single statement)
   var queryIndex: Int?
 
+  /// Dialect of INSERT export and clipboard copy. Notebook call sites keep PostgreSQL.
+  var dialect: SQLDialect = .postgresql
+
   /// Binding to track copy state (for icon animation)
   @State private var isQueryCopied: Bool = false
   @State private var showCopyFeedback: CopyFeedbackType? = nil
@@ -205,6 +208,20 @@ struct QueryCopyBar: View {
             Text("Download as Markdown")
           }
         }
+
+        Button(action: { handleDownloadPDF(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("PDF")
+          }
+        }
+
+        Button(action: { handleDownloadSQLInsert(result: result) }) {
+          HStack {
+            Image(systemName: "arrow.down.doc")
+            Text("SQL INSERT")
+          }
+        }
       }
 
       Divider()
@@ -240,6 +257,18 @@ struct QueryCopyBar: View {
             Image(systemName: showCopyFeedback == .markdown ? "checkmark" : "doc.on.clipboard")
             Text("Markdown")
             if showCopyFeedback == .markdown {
+              Spacer()
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+          }
+        }
+
+        Button(action: { handleCopyInsert(result: result) }) {
+          HStack {
+            Image(systemName: showCopyFeedback == .insert ? "checkmark" : "doc.on.clipboard")
+            Text(CopyFeedbackType.insert.title)
+            if showCopyFeedback == .insert {
               Spacer()
               Image(systemName: "checkmark.circle.fill")
                 .foregroundColor(.green)
@@ -288,6 +317,19 @@ struct QueryCopyBar: View {
     case tsv
     case json
     case markdown
+    case insert
+    case inList
+
+    /// Menu title for this clipboard format. `.inList` is the grid's IN-list copy.
+    var title: String {
+      switch self {
+      case .tsv: "TSV/Excel"
+      case .json: "JSON"
+      case .markdown: "Markdown"
+      case .insert: "INSERT statements"
+      case .inList: "IN list"
+      }
+    }
   }
 
   private func handleDownloadCSV(result: CellResult) {
@@ -304,6 +346,16 @@ struct QueryCopyBar: View {
 
   private func handleDownloadMarkdown(result: CellResult) {
     DataExporter.downloadMarkdown(result: result, queryIndex: queryIndex)
+  }
+
+  private func handleDownloadPDF(result: CellResult) {
+    DataExporter.downloadPDF(
+      result: result, queryIndex: queryIndex, query: result.sourceQuery)
+  }
+
+  private func handleDownloadSQLInsert(result: CellResult) {
+    DataExporter.downloadSQLInsert(
+      result: result, table: result.tableName, dialect: dialect, queryIndex: queryIndex)
   }
 
   private func handleCopyTSV(result: CellResult) {
@@ -325,6 +377,14 @@ struct QueryCopyBar: View {
   private func handleCopyMarkdown(result: CellResult) {
     DataExporter.copyMarkdown(result: result)
     showCopyFeedback = .markdown
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      showCopyFeedback = nil
+    }
+  }
+
+  private func handleCopyInsert(result: CellResult) {
+    DataExporter.copyInsert(result: result, table: result.tableName, dialect: dialect)
+    showCopyFeedback = .insert
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
       showCopyFeedback = nil
     }

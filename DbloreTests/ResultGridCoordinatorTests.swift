@@ -67,6 +67,35 @@ struct ResultGridCoordinatorTests {
     #expect(coordinator.selectionTSV(tableView) == "1\ta\n3\tc")
   }
 
+  @Test("The context menu contains Copy as INSERT and Copy as IN list")
+  func contextMenuCopySQL() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    let titles = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(titles.contains("Copy Value"))
+    #expect(titles.contains("Copy as INSERT"))
+    #expect(titles.contains("Copy as IN list"))
+  }
+
+  @Test("Copy as IN list is enabled for one column and disabled across more than one")
+  func contextMenuINListFollowsColumnSelection() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    tableView.allowsColumnSelection = true
+    tableView.selectRowIndexes(IndexSet([0, 1]), byExtendingSelection: false)
+
+    // Table column 0 is the "#" gutter; result columns start at 1
+    tableView.selectColumnIndexes(IndexSet([1]), byExtendingSelection: false)
+    let single = coordinator.contextMenu(row: 0, column: 0)?.items.first {
+      $0.title == "Copy as IN list"
+    }
+    #expect(single?.isEnabled == true)
+
+    tableView.selectColumnIndexes(IndexSet([1, 2]), byExtendingSelection: false)
+    let many = coordinator.contextMenu(row: 0, column: 0)?.items.first {
+      $0.title == "Copy as IN list"
+    }
+    #expect(many?.isEnabled == false)
+  }
+
   @Test(
     "A header click sorts ascending, then descending, then clears; another column starts ascending",
     arguments: [
