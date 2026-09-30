@@ -17,6 +17,8 @@ class SQLTextView: NSTextView {
   var onFocus: (() -> Void)?
   var onBlur: ((String) -> Void)?  // Callback with current text when losing focus
   var autocompleteProvider: SQLAutocompleteProvider?
+  /// Lexical rules for format, highlight, and autocomplete. PostgreSQL until a caller sets it.
+  var dialect: SQLDialect = .postgresql
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var viewModelId: UUID?  // ID of the viewModel that owns this text view (for scoped search)
 

@@ -97,7 +97,8 @@ struct FavoriteFormModal: View {
         autocompleteProvider: workspaceManager.autocompleteProvider,
         maxHeight: 200,
         isEditorMode: false,
-        wordWrapEnabled: appSettings.wordWrapEnabled
+        wordWrapEnabled: appSettings.wordWrapEnabled,
+        dialect: workspaceManager.workspace.connectionConfig?.databaseType.dialect ?? .postgresql
       )
 
       HStack(spacing: Spacing.xs) {

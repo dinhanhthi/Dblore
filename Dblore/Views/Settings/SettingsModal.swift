@@ -361,9 +361,17 @@ struct SettingsModalUpdatesSection: View {
 
 struct SettingsModalDeveloperSection: View {
   @Binding var isExportingLogs: Bool
+  @Bindable private var appSettings = AppSettings.shared
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
+      SettingsToggle(
+        title: "Show experimental engines",
+        description:
+          "Include database engines that are not ready for general use in the connection form.",
+        isOn: $appSettings.showExperimentalEngines
+      )
+
       // Export logs button
       Button(action: {
         isExportingLogs = true

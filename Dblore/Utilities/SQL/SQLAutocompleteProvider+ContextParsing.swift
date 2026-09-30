@@ -19,7 +19,12 @@ extension SQLAutocompleteProvider {
   /// split the statement early; this is accepted for autocomplete purposes.
   /// - Parameter position: cursor as a UTF-16 offset
   /// - Returns: the window text and the cursor as a UTF-16 offset inside it
-  func statementWindow(in text: String, at position: Int) -> (text: String, cursor: Int) {
+  func statementWindow(
+    in text: String, at position: Int, dialect: SQLDialect = .postgresql
+  ) -> (text: String, cursor: Int) {
+    if dialect == .sqlite {
+      return sqliteStatementWindow(in: text, at: position)
+    }
     let nsText = text as NSString
     let length = nsText.length
     let cursor = min(max(position, 0), length)
@@ -58,6 +63,65 @@ extension SQLAutocompleteProvider {
 
     if start == 0 && end == length { return (text, cursor) }
     return (nsText.substring(with: NSRange(location: start, length: end - start)), cursor - start)
+  }
+
+  /// Same window as `statementWindow`, but a `;` inside a string, comment, or quoted
+  /// identifier is not a statement boundary. The scan is still capped at `maxStatementWindow`.
+  private func sqliteStatementWindow(
+    in text: String, at position: Int
+  ) -> (text: String, cursor: Int) {
+    let nsText = text as NSString
+    let length = nsText.length
+    let cursor = min(max(position, 0), length)
+    let halfWindow = Self.maxStatementWindow / 2
+    var start = max(0, cursor - halfWindow)
+    var end = min(length, cursor + halfWindow)
+    if start > 0, start < length, UTF16.isTrailSurrogate(nsText.character(at: start)) {
+      start += 1
+    }
+    if end > start, end < length, UTF16.isTrailSurrogate(nsText.character(at: end)) {
+      end -= 1
+    }
+    start = min(start, cursor)
+    end = max(end, cursor)
+
+    let window = nsText.substring(with: NSRange(location: start, length: end - start))
+    let scalars = Array(window.unicodeScalars)
+    var utf16At = [Int](repeating: 0, count: scalars.count + 1)
+    var unit = 0
+    for (index, scalar) in scalars.enumerated() {
+      utf16At[index] = unit
+      unit += scalar.utf16.count
+    }
+    utf16At[scalars.count] = unit
+
+    let localCursor = cursor - start
+    let tokenizer = SQLTokenizer(dialect: .sqlite)
+    var splitBefore: Int?
+    var splitAfter: Int?
+    var i = 0
+    while i < scalars.count {
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      if case .symbol = lexeme.kind, scalars[lexeme.range.lowerBound] == ";" {
+        let at = utf16At[lexeme.range.lowerBound]
+        if at < localCursor {
+          splitBefore = at + 1
+        } else if splitAfter == nil {
+          splitAfter = at
+        }
+      }
+      let next = lexeme.range.upperBound
+      i = next > i ? next : i + 1
+    }
+
+    let localStart = splitBefore ?? 0
+    let localEnd = splitAfter ?? (end - start)
+    if localStart == 0 && localEnd == end - start && start == 0 && end == length {
+      return (text, cursor)
+    }
+    let slice = (window as NSString).substring(
+      with: NSRange(location: localStart, length: localEnd - localStart))
+    return (slice, localCursor - localStart)
   }
 
   /// Extract the current word/token being typed at cursor position

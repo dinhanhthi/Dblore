@@ -4,54 +4,70 @@
 import Foundation
 
 /// Stateless SQL scanning helpers. Safe to call from any isolation domain.
-/// Both entry points lex Unicode scalars with the shared scanner in
+/// `dialect` selects the lexical rules. The default, and every static entry point, is
+/// PostgreSQL. Both entry points lex Unicode scalars with the shared scanner in
 /// `SQLTokenizer+Scanning.swift`, so the splitter and the tokenizer agree on every token.
-nonisolated enum SQLTokenizer {
+nonisolated struct SQLTokenizer: Sendable {
 
-  /// Split SQL string into individual statements at `;` tokens.
-  /// Handles:
+  /// Lexical rules for this scanner. PostgreSQL keeps dollar quotes, `E'…'` escapes,
+  /// nested block comments, and `.backslashString`.
+  let dialect: SQLDialect
+
+  init(dialect: SQLDialect = .postgresql) {
+    self.dialect = dialect
+  }
+
+  /// Split SQL string into individual statements at `;` tokens, using `dialect`.
+  /// The PostgreSQL rules (also used by `splitStatements(_:)` with no receiver) are:
   /// - String literals (single and double quotes, `''` escapes)
   /// - Escape strings (`E'...'`) with backslash escapes
   /// - Dollar-quoted strings (`$$...$$`, `$tag$...$tag$`)
   /// - Comments (single-line -- and nested multi-line /* */)
+  /// SQLite strings are `'…'` with doubled quotes only, identifiers may use `"…"`, `[…]`,
+  /// or backticks, block comments do not nest, and `$` is not a quote.
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
-  static func splitStatements(_ sql: String) -> [String] {
+  func splitStatements(_ sql: String) -> [String] {
     let scalars = Array(sql.unicodeScalars)
     var statements: [String] = []
     var start = 0
     var i = 0
     while i < scalars.count {
-      let lexeme = lexeme(in: scalars, at: i)
+      let lexeme = self.lexeme(in: scalars, at: i)
       if case .symbol = lexeme.kind, scalars[i] == ";" {
-        appendTrimmed(scalars, start..<i, to: &statements)
+        Self.appendTrimmed(scalars, start..<i, to: &statements)
         start = lexeme.range.upperBound
       }
       i = lexeme.range.upperBound
     }
-    appendTrimmed(scalars, start..<scalars.count, to: &statements)
+    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
     return statements
   }
 
+  /// PostgreSQL `splitStatements`. Callers that have no dialect keep this path.
+  static func splitStatements(_ sql: String) -> [String] {
+    SQLTokenizer().splitStatements(sql)
+  }
+
   /// Lex a single SQL statement into tokens, dropping whitespace and comments.
-  /// Words and numbers are uppercased (ASCII letters only, see `asciiUppercased`); string literals (including `E'...'` and dollar quotes)
+  /// Words and numbers are uppercased (ASCII letters only, see `asciiUppercased`); string literals (including `E'...'` and dollar quotes on PostgreSQL)
   /// and quoted identifiers are opaque tokens, so their contents never match keywords.
   /// `depth` is the parenthesis nesting level: `(`/`)` carry the outer depth, tokens
   /// between them carry outer + 1.
-  /// Block comments nest and line comments end at CR or LF, as in PostgreSQL.
-  static func tokens(_ sql: String) -> [SQLToken] {
+  /// On PostgreSQL, block comments nest and line comments end at CR or LF.
+  func tokens(_ sql: String) -> [SQLToken] {
     let scalars = Array(sql.unicodeScalars)
     var result: [SQLToken] = []
     var depth = 0
     var i = 0
     while i < scalars.count {
-      let lexeme = lexeme(in: scalars, at: i)
-      let raw = text(scalars, lexeme.range)
+      let lexeme = self.lexeme(in: scalars, at: i)
+      let raw = Self.text(scalars, lexeme.range)
       switch lexeme.kind {
       case .whitespace, .comment:
         break
       case .word, .number:
-        result.append(SQLToken(kind: .word, text: asciiUppercased(raw), depth: depth))
+        result.append(SQLToken(kind: .word, text: Self.asciiUppercased(raw), depth: depth))
       case .quoted(let kind, let content):
         result.append(SQLToken(kind: kind, text: content, depth: depth))
       case .dollarString:
@@ -64,6 +80,11 @@ nonisolated enum SQLTokenizer {
       i = lexeme.range.upperBound
     }
     return result
+  }
+
+  /// PostgreSQL `tokens`. Callers that have no dialect keep this path.
+  static func tokens(_ sql: String) -> [SQLToken] {
+    SQLTokenizer().tokens(sql)
   }
 
   /// `text` with only ASCII `a`-`z` mapped to `A`-`Z`, as PostgreSQL folds identifiers

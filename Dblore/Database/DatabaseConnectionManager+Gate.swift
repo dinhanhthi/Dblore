@@ -99,7 +99,7 @@ extension DatabaseConnectionManager {
     let effective = effectivePolicy(for: policy)
     // Decision is pure and finishes before any await that could send SQL.
     if case .blocked(let index, let kind, let reason) = Self.evaluateBatch(
-      statements, policy: effective)
+      statements, policy: effective, dialect: Self.dialect(of: config))
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
@@ -153,12 +153,25 @@ extension DatabaseConnectionManager {
     _ sql: String, policy: ProtectionPolicy
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
     let effective = effectivePolicy(for: policy)
-    let statements = SQLStatementClassifier.classify(sql)
+    let statements = Self.classifyUserSQL(sql, config: config)
     if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
     return (statements, effective.protectedMode)
+  }
+
+  /// Dialect of the connected database. No connection keeps today's PostgreSQL rules.
+  nonisolated static func dialect(of config: ConnectionConfig?) -> SQLDialect {
+    config?.databaseType.dialect ?? .postgresql
+  }
+
+  /// Classify user SQL with the connection's dialect. PostgreSQL connections, and a missing
+  /// config, use the PostgreSQL classifier.
+  nonisolated static func classifyUserSQL(
+    _ sql: String, config: ConnectionConfig?
+  ) -> [ClassifiedStatement] {
+    SQLStatementClassifier.classify(sql, dialect: dialect(of: config))
   }
 
   /// Pure policy check: the first statement the policy forbids, or `.allowed`.
@@ -185,11 +198,12 @@ extension DatabaseConnectionManager {
   /// `statementIndex` is the index in `statements`, so one violation rejects the whole batch
   /// before anything is sent. An empty batch is allowed.
   nonisolated static func evaluateBatch(
-    _ statements: [BoundStatement], policy: ProtectionPolicy
+    _ statements: [BoundStatement], policy: ProtectionPolicy,
+    dialect: SQLDialect = .postgresql
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {
       if case .blocked(_, let kind, let reason) = evaluate(
-        SQLStatementClassifier.classify(statement.sql), policy: policy)
+        SQLStatementClassifier.classify(statement.sql, dialect: dialect), policy: policy)
       {
         return .blocked(statementIndex: index, kind: kind, reason: reason)
       }

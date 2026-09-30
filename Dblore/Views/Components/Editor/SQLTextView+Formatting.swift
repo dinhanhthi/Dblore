@@ -17,7 +17,7 @@ extension SQLTextView {
 
     let caret = selectedRange().location
     let fullRange = NSRange(location: 0, length: textStorage.length)
-    let newText = SQLFormatter.format(textStorage.string)
+    let newText = SQLFormatter.format(textStorage.string, dialect: dialect)
     guard newText != textStorage.string else { return }
 
     // Set flag to prevent autocomplete from showing during formatting

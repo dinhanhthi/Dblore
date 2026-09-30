@@ -254,6 +254,7 @@ class AppSettings {
     static let historyEnabled = "app.settings.historyEnabled"
     static let historyRetentionDays = "app.settings.historyRetentionDays"
     static let historyMaxEntries = "app.settings.historyMaxEntries"
+    static let showExperimentalEngines = "app.settings.showExperimentalEngines"
   }
 
   // MARK: - Settings Properties
@@ -445,6 +446,14 @@ class AppSettings {
     }
   }
 
+  /// Show database engines with `isAvailable == false` in the connection type picker.
+  /// Default: false (the picker stays hidden while only PostgreSQL is available)
+  var showExperimentalEngines: Bool = false {
+    didSet {
+      defaults.set(showExperimentalEngines, forKey: Keys.showExperimentalEngines)
+    }
+  }
+
   /// Maximum query-history rows, clamped to 1,000...500,000.
   /// Default: 50,000
   var historyMaxEntries: Int = AppSettings.defaultHistoryMaxEntries {
@@ -628,6 +637,10 @@ class AppSettings {
       historyRetentionDays = clamped
     }
 
+    if defaults.object(forKey: Keys.showExperimentalEngines) != nil {
+      showExperimentalEngines = defaults.bool(forKey: Keys.showExperimentalEngines)
+    }
+
     if defaults.object(forKey: Keys.historyMaxEntries) != nil {
       let stored = defaults.integer(forKey: Keys.historyMaxEntries)
       let clamped = Self.clampHistoryMaxEntries(stored)
@@ -672,6 +685,7 @@ class AppSettings {
     historyEnabled = true
     historyRetentionDays = Self.defaultHistoryRetentionDays
     historyMaxEntries = Self.defaultHistoryMaxEntries
+    showExperimentalEngines = false
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

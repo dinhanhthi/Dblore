@@ -22,6 +22,7 @@ struct SQLEditorView: View {
   var maxHeight: CGFloat?  // Optional max height for scrollable editors (e.g., in editor mode)
   var isEditorMode: Bool = false  // True when used in Editor mode (removes border/focus effects)
   var wordWrapEnabled: Bool = true  // Word wrap setting (default: enabled)
+  var dialect: SQLDialect = .postgresql
 
   var body: some View {
     editorContent
@@ -60,7 +61,8 @@ struct SQLEditorView: View {
         viewModelId: viewModelId,
         maxHeight: maxHeight,
         isEditorMode: isEditorMode,
-        wordWrapEnabled: wordWrapEnabled
+        wordWrapEnabled: wordWrapEnabled,
+        dialect: dialect
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)

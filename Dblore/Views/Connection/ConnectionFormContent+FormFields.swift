@@ -5,7 +5,9 @@
 //  Form fields for connection configuration
 //
 
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Form Fields Extension
 
@@ -43,11 +45,14 @@ extension ConnectionFormContent {
       }
     }
 
-    // Database
-    FormField(label: "Database") {
-      TextField("database_name", text: $connectionConfig.database)
-        .textFieldStyle(.plain)
-        .inputCapsuleStyle()
+    if connectionConfig.databaseType == .sqlite {
+      sqliteFileSection()
+    } else {
+      FormField(label: "Database") {
+        TextField("database_name", text: $connectionConfig.database)
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
+      }
     }
 
     // Username
@@ -167,6 +172,136 @@ extension ConnectionFormContent {
 
     // Common toggles and pickers
     connectionTogglesAndPickers()
+  }
+
+  /// Database type menu. Hidden unless more than one engine is offered
+  /// (experimental engines join the list only while the developer toggle is on).
+  @ViewBuilder
+  func databaseTypePicker() -> some View {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: AppSettings.shared.showExperimentalEngines)
+    if types.count > 1 {
+      FormField(label: "Database Type") {
+        Menu {
+          ForEach(types, id: \.self) { type in
+            Button(type.displayName) {
+              connectionConfig.databaseType = type
+            }
+          }
+        } label: {
+          HStack {
+            Text(connectionConfig.databaseType.displayName)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  /// File path (`database`), bookmark, and the open-read-only flag. No file password.
+  @ViewBuilder
+  func sqliteFileSection() -> some View {
+    FormField(label: "Database file") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        TextField("/path/to/database.sqlite", text: sqliteFilePath)
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
+
+        HStack(spacing: Spacing.sm) {
+          Button("Choose…", action: chooseSQLiteFile)
+            .buttonStyle(SecondaryButtonStyle())
+          Button("Create new file…", action: createSQLiteFile)
+            .buttonStyle(SecondaryButtonStyle())
+        }
+      }
+    }
+
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Read-only")
+          .font(.body)
+        Text("Open this file without writing to it")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $connectionConfig.readOnlyFile)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
+    }
+  }
+
+  /// Typing a path drops the bookmark; choosing a file sets both together.
+  private var sqliteFilePath: Binding<String> {
+    Binding(
+      get: { connectionConfig.database },
+      set: { newValue in
+        var updated = connectionConfig
+        if newValue != updated.database {
+          updated.fileBookmark = nil
+        }
+        updated.database = newValue
+        connectionConfig = updated
+      }
+    )
+  }
+
+  private func chooseSQLiteFile() {
+    presentSQLitePanel(SQLiteFilePicker.openPanel())
+  }
+
+  private func createSQLiteFile() {
+    presentSQLitePanel(SQLiteFilePicker.savePanel())
+  }
+
+  private func presentSQLitePanel(_ panel: NSSavePanel) {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    panel.begin { response in
+      guard response == .OK, let url = panel.url else { return }
+      Task { @MainActor in
+        let bookmark = try? SecurityScopedAccess.makeBookmark(for: url)
+        storeSQLiteFile(path: url.path, bookmark: bookmark)
+      }
+    }
+  }
+
+  private func storeSQLiteFile(path: String, bookmark: Data?) {
+    var updated = connectionConfig
+    updated.database = path
+    updated.fileBookmark = bookmark
+    connectionConfig = updated
+  }
+
+  /// Refresh the stored path from the security-scoped bookmark, and replace a stale bookmark.
+  func refreshSQLiteFileBookmark() {
+    guard connectionConfig.databaseType == .sqlite, let bookmark = connectionConfig.fileBookmark
+    else { return }
+    do {
+      let resolved = try SecurityScopedAccess.resolve(bookmark)
+      var updated = connectionConfig
+      updated.database = resolved.url.path
+      if resolved.isStale {
+        let token = SecurityScopedAccessToken(url: resolved.url)
+        defer { token.release() }
+        if token.isGranted {
+          updated.fileBookmark = try SecurityScopedAccess.makeBookmark(for: resolved.url)
+        }
+      }
+      connectionConfig = updated
+    } catch {
+      // Keep the stored path. The user can pick the file again.
+    }
   }
 
   /// Common toggles and pickers used in both form and connection string modes
@@ -343,6 +478,39 @@ extension ConnectionFormContent {
         if clamped != newValue { value.wrappedValue = clamped }
       }
     }
+  }
+}
+
+/// Open and save panels for a SQLite file. Suggested extensions, plus any other file.
+private enum SQLiteFilePicker {
+  static let extensions = ["sqlite", "sqlite3", "db", "db3"]
+
+  static var contentTypes: [UTType] {
+    extensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
+  }
+
+  static func openPanel() -> NSOpenPanel {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = contentTypes
+    panel.allowsOtherFileTypes = true
+    panel.prompt = "Choose"
+    panel.message = "Choose a SQLite database file"
+    return panel
+  }
+
+  static func savePanel() -> NSSavePanel {
+    let panel = NSSavePanel()
+    panel.canCreateDirectories = true
+    panel.allowedContentTypes = contentTypes
+    panel.allowsOtherFileTypes = true
+    panel.isExtensionHidden = false
+    panel.nameFieldStringValue = "database.sqlite"
+    panel.prompt = "Create"
+    panel.message = "Create a new SQLite database file"
+    return panel
   }
 }
 

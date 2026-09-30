@@ -59,6 +59,7 @@ struct HighlightedTextEditor: View {
   var maxHeight: CGFloat?  // Optional max height - if set, enables scrolling
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var wordWrapEnabled: Bool = true  // Word wrap setting
+  var dialect: SQLDialect = .postgresql
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -73,7 +74,8 @@ struct HighlightedTextEditor: View {
       viewModelId: viewModelId,
       maxHeight: maxHeight,
       isEditorMode: isEditorMode,
-      wordWrapEnabled: wordWrapEnabled
+      wordWrapEnabled: wordWrapEnabled,
+      dialect: dialect
     )
     .frame(height: maxHeight ?? height)
   }
@@ -92,6 +94,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var maxHeight: CGFloat?
   var isEditorMode: Bool = false
   var wordWrapEnabled: Bool = true
+  var dialect: SQLDialect = .postgresql
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
@@ -109,6 +112,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Setup autocomplete
     textView.autocompleteProvider = autocompleteProvider
+    textView.dialect = dialect
 
     // Set editor mode
     textView.isEditorMode = isEditorMode
@@ -198,6 +202,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Update autocomplete provider
     textView.autocompleteProvider = autocompleteProvider
+    let dialectChanged = textView.dialect != dialect
+    textView.dialect = dialect
 
     // Update editor mode
     textView.isEditorMode = isEditorMode
@@ -215,6 +221,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       DispatchQueue.main.async {
         context.coordinator.updateHeight(textView: textView)
       }
+    } else if dialectChanged {
+      context.coordinator.applyHighlighting(to: textView, text: text)
     }
   }
 
@@ -403,13 +411,18 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       pendingEditsInvalid = false
     }
 
+    private func sqlDialect(of textView: NSTextView) -> SQLDialect {
+      (textView as? SQLTextView)?.dialect ?? .postgresql
+    }
+
     /// Remember the block spans and length of the text that was just fully highlighted
-    private func recordFullHighlight(of text: String) {
+    private func recordFullHighlight(of text: String, dialect: SQLDialect) {
       clearPendingEdit()
       let ns = text as NSString
       highlightedLength = ns.length
       blockSpans =
-        AppSettings.shared.syntaxHighlightingEnabled ? SQLSyntaxHighlighter.blockSpans(in: ns) : nil
+        AppSettings.shared.syntaxHighlightingEnabled
+        ? SQLSyntaxHighlighter.blockSpans(in: ns, dialect: dialect) : nil
     }
 
     /// Re-highlight only the range the last edit can affect; falls back to the full in-place
@@ -433,7 +446,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       }
 
       let text = textStorage.string as NSString
-      let newSpans = SQLSyntaxHighlighter.blockSpans(in: text)
+      let dialect = sqlDialect(of: textView)
+      let newSpans = SQLSyntaxHighlighter.blockSpans(in: text, dialect: dialect)
       let dirty = SQLSyntaxHighlighter.dirtyRange(
         text: text, edited: edited, changeInLength: pendingChangeInLength, oldSpans: oldSpans,
         newSpans: newSpans)
@@ -449,7 +463,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       let undoManager = textView.undoManager
       undoManager?.disableUndoRegistration()
       textStorage.beginEditing()
-      SQLSyntaxHighlighter.rehighlight(storage: textStorage, range: dirty, palette: palette)
+      SQLSyntaxHighlighter.rehighlight(
+        storage: textStorage, range: dirty, palette: palette, dialect: dialect)
       textStorage.endEditing()
       undoManager?.enableUndoRegistration()
 
@@ -466,6 +481,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       else { return }
 
       PerfSignpost.interval("editor.highlight.full") {
+        let dialect = sqlDialect(of: textView)
         let attributed: NSAttributedString
         if isSearchActive {
           // Get current match range from NotebookViewModel's search state
@@ -474,10 +490,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
             text,
             searchQuery: searchQuery,
             isCaseSensitive: isCaseSensitive,
-            currentMatchRange: currentMatchRange
+            currentMatchRange: currentMatchRange,
+            dialect: dialect
           )
         } else {
-          attributed = SQLSyntaxHighlighter.highlight(text)
+          attributed = SQLSyntaxHighlighter.highlight(text, dialect: dialect)
         }
 
         // Disable undo registration for programmatic text changes
@@ -493,7 +510,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
         // The old history points at text that no longer exists
         undoManager?.removeAllActions()
-        recordFullHighlight(of: textStorage.string)
+        recordFullHighlight(of: textStorage.string, dialect: dialect)
       }
     }
 
@@ -506,6 +523,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         let textStorage = textView.textStorage
       else { return }
 
+      let dialect = sqlDialect(of: textView)
       let attributed: NSAttributedString
       if isSearchActive {
         // Get current match range from NotebookViewModel's search state
@@ -514,10 +532,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           text,
           searchQuery: searchQuery,
           isCaseSensitive: isCaseSensitive,
-          currentMatchRange: currentMatchRange
+          currentMatchRange: currentMatchRange,
+          dialect: dialect
         )
       } else {
-        attributed = SQLSyntaxHighlighter.highlight(text)
+        attributed = SQLSyntaxHighlighter.highlight(text, dialect: dialect)
       }
 
       // Only apply if the text content matches (same length)
@@ -541,7 +560,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
       // Re-enable undo registration
       undoManager?.enableUndoRegistration()
-      recordFullHighlight(of: text)
+      recordFullHighlight(of: text, dialect: dialect)
     }
 
     @MainActor

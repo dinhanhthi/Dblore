@@ -75,26 +75,30 @@ struct ConnectionFormContent: View {
             connectionHistorySection()
           }
 
-          // Input Mode Picker with Sliding Animation
-          customTabPicker()
-            .onChange(of: inputMode) { _, newMode in
-              parseError = nil
-              testResult = nil
-              if newMode == .connectionString {
-                // Generate connection string from current config only if we have valid data
-                let config = connectionConfig
-                if !config.username.isEmpty && !config.database.isEmpty {
-                  connectionString = generateConnectionString()
-                } else {
-                  // Keep empty to show placeholder
-                  connectionString = ""
-                }
-                // Sync SSL mode state with current config
-                connectionStringSSLMode = connectionConfig.sslMode
-              }
-            }
+          databaseTypePicker()
 
-          if inputMode == .form {
+          // Input Mode Picker with Sliding Animation. File engines have no connection string.
+          if connectionConfig.databaseType.capabilities.usesNetwork {
+            customTabPicker()
+              .onChange(of: inputMode) { _, newMode in
+                parseError = nil
+                testResult = nil
+                if newMode == .connectionString {
+                  // Generate connection string from current config only if we have valid data
+                  let config = connectionConfig
+                  if !config.username.isEmpty && !config.database.isEmpty {
+                    connectionString = generateConnectionString()
+                  } else {
+                    // Keep empty to show placeholder
+                    connectionString = ""
+                  }
+                  // Sync SSL mode state with current config
+                  connectionStringSSLMode = connectionConfig.sslMode
+                }
+              }
+          }
+
+          if inputMode == .form || !connectionConfig.databaseType.capabilities.usesNetwork {
             formFields()
           } else {
             connectionStringFields()
@@ -104,6 +108,7 @@ struct ConnectionFormContent: View {
       }
       .onAppear {
         loadConnectionHistory()
+        refreshSQLiteFileBookmark()
       }
 
       // Fixed Footer at bottom
@@ -235,16 +240,20 @@ struct ConnectionFormContent: View {
 
   // MARK: - Validation
 
+  /// Form fields are complete enough to test or connect.
+  /// A file engine does not use the network, so an empty host is allowed.
+  /// Password stays optional, including when the password field is shown.
+  static func isFormInputValid(_ config: ConnectionConfig) -> Bool {
+    let capabilities = config.databaseType.capabilities
+    let hostSatisfied = !capabilities.usesNetwork || !config.host.isEmpty
+    return hostSatisfied && !config.database.isEmpty && !config.username.isEmpty
+  }
+
   private var isFormValid: Bool {
-    if inputMode == .connectionString {
+    if inputMode == .connectionString && connectionConfig.databaseType.capabilities.usesNetwork {
       return !connectionString.isEmpty && parseError == nil
     }
-    let capabilities = connectionConfig.databaseType.capabilities
-    let hostSatisfied = !capabilities.usesNetwork || !connectionConfig.host.isEmpty
-    // Password stays optional, including when the password field is shown.
-    return hostSatisfied
-      && !connectionConfig.database.isEmpty
-      && !connectionConfig.username.isEmpty
+    return Self.isFormInputValid(connectionConfig)
   }
 
   // MARK: - Tab Picker

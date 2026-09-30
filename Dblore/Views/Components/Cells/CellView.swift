@@ -194,7 +194,8 @@ struct CellView: View {
       autocompleteProvider: viewModel.autocompleteProvider,
       cellId: cell.id,
       viewModelId: viewModel.id,
-      wordWrapEnabled: appSettings.wordWrapEnabled
+      wordWrapEnabled: appSettings.wordWrapEnabled,
+      dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql
     )
     .focused($isEditorFocused)
     .id(cell.id)  // Force recreate view when cell ID changes to prevent content leakage

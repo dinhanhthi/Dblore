@@ -66,8 +66,17 @@ class SQLAutocompleteProvider {
   /// - Returns: Array of suggestions
   func getSuggestions(for fullText: String, at fullCursorPosition: Int) -> [AutocompleteSuggestion]
   {
+    getSuggestions(for: fullText, at: fullCursorPosition, dialect: .postgresql)
+  }
+
+  /// Suggestions for `dialect`. The two-argument method stays PostgreSQL so existing callers,
+  /// including overrides, keep that path until they pass a dialect.
+  func getSuggestions(
+    for fullText: String, at fullCursorPosition: Int, dialect: SQLDialect
+  ) -> [AutocompleteSuggestion] {
     // Only the current statement matters (bounded scan, see statementWindow)
-    let (text, cursorPosition) = statementWindow(in: fullText, at: fullCursorPosition)
+    let (text, cursorPosition) = statementWindow(
+      in: fullText, at: fullCursorPosition, dialect: dialect)
 
     // Find the word being typed (token at cursor position)
     let token = extractCurrentToken(from: text, at: cursorPosition)
