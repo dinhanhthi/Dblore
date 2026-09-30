@@ -296,15 +296,80 @@ struct AIAssistantViewModelTests {
     #expect(!sent.contains { $0.text == "bad" })
   }
 
-  @Test("clear stops and empties messages")
-  func clearEmpties() async {
+  @Test("new chat stops, empties messages and keeps the partial chat in history")
+  func newChatEmpties() async {
     let vm = makeVM(FakeAIChatClient(.eventsThenHang(["a"])))
+    let previousId = vm.conversationId
     vm.draft = "hi"
     vm.send()
     await waitUntil { vm.messages.last?.text == "a" }
-    vm.clear()
+    vm.newChat()
     #expect(vm.messages.isEmpty)
     #expect(!vm.isGenerating)
+    #expect(vm.conversationId != previousId)
+    #expect(vm.conversations.map(\.id) == [previousId])
+    #expect(vm.conversations.first?.messages.map(\.text) == ["hi", "a"])
+  }
+
+  private func makeStore() -> AIConversationStore {
+    AIConversationStore(
+      fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent("AIConversationStoreTests-\(UUID().uuidString).json"))
+  }
+
+  @Test("finished chats are saved, newest first, and reload from the store")
+  func historyPersists() async {
+    let store = makeStore()
+    let vm = makeVM(FakeAIChatClient(.events(["answer"])))
+    vm.historyStore = store
+    vm.draft = "first   question\nwith lines"
+    vm.send()
+    await finish(vm)
+    vm.newChat()
+    vm.draft = "second"
+    vm.send()
+    await finish(vm)
+
+    #expect(vm.conversations.map(\.title) == ["second", "first question with lines"])
+    let reloaded = makeVM(FakeAIChatClient(.events([])))
+    reloaded.historyStore = store
+    #expect(reloaded.conversations == vm.conversations)
+  }
+
+  @Test("opening a chat restores its messages without reordering history")
+  func openConversation() async {
+    let vm = makeVM(FakeAIChatClient(.events(["answer"])))
+    vm.historyStore = makeStore()
+    vm.draft = "first"
+    vm.send()
+    await finish(vm)
+    let firstId = vm.conversationId
+    vm.newChat()
+    vm.draft = "second"
+    vm.send()
+    await finish(vm)
+
+    vm.openConversation(id: firstId)
+    #expect(vm.conversationId == firstId)
+    #expect(vm.messages.map(\.text) == ["first", "answer"])
+    #expect(vm.conversations.map(\.title) == ["second", "first"])
+  }
+
+  @Test("deleting the current chat starts an empty one")
+  func deleteCurrentConversation() async {
+    let store = makeStore()
+    let vm = makeVM(FakeAIChatClient(.events(["answer"])))
+    vm.historyStore = store
+    vm.draft = "hi"
+    vm.send()
+    await finish(vm)
+    let id = vm.conversationId
+
+    vm.deleteConversation(id: id)
+    #expect(vm.messages.isEmpty)
+    #expect(vm.conversationId != id)
+    #expect(vm.conversations.isEmpty)
+    #expect(store.load().isEmpty)
   }
 
   @Test("needsSetup is true with empty config and false after configuring Ollama")

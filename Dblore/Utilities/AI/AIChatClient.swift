@@ -4,7 +4,7 @@
 import Foundation
 
 nonisolated struct AIChatMessage: Sendable, Equatable {
-  enum Role: String, Sendable { case user, assistant }
+  enum Role: String, Sendable, Codable { case user, assistant }
   let role: Role
   let text: String
 }

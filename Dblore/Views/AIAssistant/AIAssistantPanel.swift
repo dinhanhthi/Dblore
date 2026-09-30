@@ -14,6 +14,7 @@ struct AIAssistantPanel: View {
   let tables: [DatabaseTable]
 
   @FocusState private var composerFocused: Bool
+  @State private var showHistory = false
 
   private static let examples = [
     "Top 10 customers by order total",
@@ -58,14 +59,26 @@ struct AIAssistantPanel: View {
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.xs)
       Button {
-        assistant.clear()
+        showHistory.toggle()
       } label: {
-        Image(systemName: "trash").foregroundColor(.foregroundMuted)
+        Image(systemName: "clock.arrow.circlepath").foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .help("Chat history")
+      .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+        AIChatHistoryPopover(assistant: assistant)
+      }
+      Button {
+        assistant.newChat()
+        composerFocused = true
+      } label: {
+        Image(systemName: "square.and.pencil").foregroundColor(.foregroundMuted)
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
       .disabled(assistant.messages.isEmpty)
-      .help("Clear conversation")
+      .help("New chat")
       Button {
         assistant.isVisible = false
       } label: {

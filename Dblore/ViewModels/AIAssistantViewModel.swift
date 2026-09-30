@@ -4,7 +4,7 @@
 import Foundation
 import Observation
 
-struct AIChatEntry: Identifiable, Equatable {
+struct AIChatEntry: Identifiable, Equatable, Codable {
   let id: UUID
   let role: AIChatMessage.Role
   var text: String
@@ -23,8 +23,13 @@ struct AISchemaSnapshot: Sendable {
 @MainActor @Observable
 final class AIAssistantViewModel {
   private static let historyLimit = 20
+  private static let conversationLimit = 100
+  private static let titleLength = 80
 
   var messages: [AIChatEntry] = []
+  /// Saved conversations of the workspace, most recently updated first
+  private(set) var conversations: [AIConversation] = []
+  private(set) var conversationId = UUID()
   var draft = ""
   var isGenerating = false
   /// True while an on-device model is being loaded into memory (before the first token)
@@ -42,6 +47,10 @@ final class AIAssistantViewModel {
   @ObservationIgnored private let makeClient:
     (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
+  /// nil keeps conversations in memory only
+  @ObservationIgnored var historyStore: AIConversationStore? {
+    didSet { conversations = historyStore?.load() ?? [] }
+  }
 
   init(
     settings: AISettings = .shared,
@@ -77,6 +86,7 @@ final class AIAssistantViewModel {
 
     messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
     draft = ""
+    saveConversation()
 
     let entryId = UUID()
     messages.append(AIChatEntry(id: entryId, role: .assistant, text: "", isError: false))
@@ -89,6 +99,7 @@ final class AIAssistantViewModel {
         provider, settings.config(for: provider), settings.apiKey(for: provider))
     } catch {
       markError(entryId, error)
+      saveConversation()
       return
     }
 
@@ -128,6 +139,7 @@ final class AIAssistantViewModel {
     isGenerating = false
     isLoadingModel = false
     removeEmptyAssistantEntries()
+    saveConversation()
   }
 
   /// Query text and error messages can contain row values, so these only fill the draft;
@@ -146,9 +158,46 @@ final class AIAssistantViewModel {
       ? prompt : draft + "\n\n" + prompt
   }
 
-  func clear() {
+  /// The current conversation is already saved, so this only starts an empty one
+  func newChat() {
     stop()
     messages = []
+    conversationId = UUID()
+  }
+
+  func openConversation(id: UUID) {
+    guard id != conversationId, let conversation = conversations.first(where: { $0.id == id })
+    else { return }
+    stop()
+    messages = conversation.messages
+    conversationId = id
+  }
+
+  func deleteConversation(id: UUID) {
+    if id == conversationId { newChat() }
+    conversations.removeAll { $0.id == id }
+    historyStore?.save(conversations)
+  }
+
+  // MARK: - History
+
+  /// Upserts the current conversation and moves it to the top; unchanged or empty ones are skipped
+  private func saveConversation() {
+    guard
+      let firstQuestion = messages.first(where: { $0.role == .user })?.text
+    else { return }
+    if let index = conversations.firstIndex(where: { $0.id == conversationId }) {
+      guard conversations[index].messages != messages else { return }
+      conversations.remove(at: index)
+    }
+    let title = firstQuestion.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    conversations.insert(
+      AIConversation(
+        id: conversationId, title: String(title.prefix(Self.titleLength)), updatedAt: Date(),
+        messages: messages),
+      at: 0)
+    conversations = Array(conversations.prefix(Self.conversationLimit))
+    historyStore?.save(conversations)
   }
 
   // MARK: - Helpers
@@ -205,6 +254,7 @@ final class AIAssistantViewModel {
     isLoadingModel = false
     generationTask = nil
     removeEmptyAssistantEntries()
+    saveConversation()
   }
 
   /// An assistant entry that never received text would show "Thinking…" forever

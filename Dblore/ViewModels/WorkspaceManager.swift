@@ -175,6 +175,7 @@ class WorkspaceManager: Identifiable {
         tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
         databaseName: name?.isEmpty == false ? name : nil)
     }
+    aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
 
     // Only restore tabs for new workspaces (not loading from disk)
     // When loading from disk, load() will handle tab restoration with proper viewModels
