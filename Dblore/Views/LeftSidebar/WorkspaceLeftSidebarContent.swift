@@ -21,6 +21,7 @@ struct WorkspaceLeftSidebarContent: View {
     case `public` = "Public"
     case security = "Security"
     case favorite = "Favorite"
+    case history = "History"
   }
 
   var body: some View {
@@ -29,12 +30,14 @@ struct WorkspaceLeftSidebarContent: View {
       tabSelector
       Divider()
 
-      // Content
+      // Content. Favorites and history read local data, so they stay up while disconnected.
       if selectedTab == .favorite {
         FavoritesTabContent(
           workspaceManager: workspaceManager,
           filterText: $favoriteFilter
         )
+      } else if selectedTab == .history {
+        HistoryTabContent(workspaceManager: workspaceManager)
       } else if !workspaceManager.connectionState.isConnected {
         emptyState
       } else if workspaceManager.isLoadingSchema {
@@ -50,13 +53,35 @@ struct WorkspaceLeftSidebarContent: View {
       selection: $selectedTab,
       tabs: SidebarTab.allCases,
       height: 28
-    )
+    ) { tab in
+      tabLabel(tab)
+    }
     .padding(Spacing.sm)
+  }
+
+  /// History is a clock icon. The schema and favorite tabs keep their titles.
+  @ViewBuilder
+  private func tabLabel(_ tab: SidebarTab) -> some View {
+    let isSelected = selectedTab == tab
+    if tab == .history {
+      Image(systemName: "clock")
+        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+        .foregroundColor(isSelected ? .white : .foreground)
+        .accessibilityLabel("History")
+        .help("History")
+    } else {
+      Text(tab.rawValue)
+        .font(.body)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .foregroundColor(isSelected ? .white : .foreground)
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
   }
 
   @ViewBuilder
   private var contentForSelectedTab: some View {
-    // Favorite is handled in body; only the schema tabs reach here
+    // Favorite and history are handled in body; only the schema tabs reach here
     if selectedTab == .security {
       securityTabContent
     } else {

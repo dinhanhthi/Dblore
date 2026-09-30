@@ -152,6 +152,48 @@ struct DataModelBasicTests {
     #expect(abs(decodedCell.result!.executionTime - 0.042) < 0.001)
   }
 
+  @Test("NotebookCell chartSpec round-trips")
+  func notebookCellChartSpecRoundTrip() throws {
+    let spec = ChartSpec(
+      kind: .area, xColumn: "day", yColumns: ["total", "count"], seriesColumn: "region")
+    let cell = NotebookCell(
+      id: UUID(),
+      cellType: .sql,
+      content: "SELECT day, total FROM sales;",
+      chartSpec: spec
+    )
+
+    let data = try JSONEncoder().encode(cell)
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.chartSpec == spec)
+    let raw = try JSONSerialization.jsonObject(with: data)
+    let object = try #require(raw as? [String: Any])
+    #expect(object["chartSpec"] != nil)
+  }
+
+  @Test("NotebookCell without chartSpec still decodes")
+  func notebookCellWithoutChartSpecDecodes() throws {
+    let id = UUID()
+    let legacy = """
+      {"id":"\(id.uuidString)","cellType":"sql","content":"SELECT 1"}
+      """
+    let data = try #require(legacy.data(using: .utf8))
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.id == id)
+    #expect(decoded.content == "SELECT 1")
+    #expect(decoded.chartSpec == nil)
+
+    let plain = NotebookCell(id: id, cellType: .sql, content: "SELECT 1")
+    let encoded = try JSONEncoder().encode(plain)
+    let raw = try JSONSerialization.jsonObject(with: encoded)
+    let object = try #require(raw as? [String: Any])
+    #expect(object["chartSpec"] == nil)
+    let roundTrip = try JSONDecoder().decode(NotebookCell.self, from: encoded)
+    #expect(roundTrip.chartSpec == nil)
+  }
+
   // MARK: - NotebookMetadata Tests
 
   @Test("NotebookMetadata encoding and decoding")

@@ -20,6 +20,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var selectedStatementIndex: Int
   /// Total execution time for all statements (for multi-statement queries)
   var totalExecutionTime: TimeInterval?
+  /// Chart configuration for this cell's result. Absent in older `.sqlnb` files.
+  var chartSpec: ChartSpec?
 
   // MARK: - Codable
 
@@ -34,6 +36,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case statementResults
     case selectedStatementIndex
     case totalExecutionTime
+    case chartSpec
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -52,6 +55,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
+    chartSpec = try container.decodeIfPresent(ChartSpec.self, forKey: .chartSpec)
     // Legacy `paginationInfo` / `statementPaginationInfo` (LIMIT-rewrite pagination) are ignored
   }
 
@@ -67,6 +71,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encode(statementResults, forKey: .statementResults)
     try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
     try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
+    try container.encodeIfPresent(chartSpec, forKey: .chartSpec)
   }
 
   nonisolated init(
@@ -79,7 +84,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     isResultVisible: Bool = true,
     statementResults: [StatementResult] = [],
     selectedStatementIndex: Int = 0,
-    totalExecutionTime: TimeInterval? = nil
+    totalExecutionTime: TimeInterval? = nil,
+    chartSpec: ChartSpec? = nil
   ) {
     self.id = id
     self.cellType = cellType
@@ -91,6 +97,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.statementResults = statementResults
     self.selectedStatementIndex = selectedStatementIndex
     self.totalExecutionTime = totalExecutionTime
+    self.chartSpec = chartSpec
   }
 }
 

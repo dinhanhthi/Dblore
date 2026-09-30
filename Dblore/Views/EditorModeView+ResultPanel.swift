@@ -311,49 +311,53 @@ struct EditorResultGridView: View {
   var canHighlight = false
   @State private var sortColumn: String?
   @State private var sortAscending = true
+  /// Session chart for this editor result. A new result view starts from the suggestion.
+  @State private var chartSpec: ChartSpec?
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
 
   var body: some View {
-    ResultGridView(
-      result: result,
-      sortColumn: sortColumn,
-      ascending: sortAscending,
-      isEditable: viewModel.canEdit(result),
-      onCommitEdit: { row, column, newValue in
-        viewModel.handleGridCellEdit(
-          row: row, column: column, newValue: newValue, result: result, cellId: nil,
-          connectionManager: viewModel.connectionManager)
-      },
-      onSortChange: { column, ascending in
-        sortColumn = column
-        sortAscending = ascending
-      },
-      valueFilter: valueFilter,
-      onValueFilterChange: { valueFilter = $0 },
-      onShowCellDetails: { row, originalRow, column in
-        viewModel.showGridCellInSidebar(
-          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
-      },
-      onHighlightCell: canHighlight
-        ? { column, value, style, color in
-          guard result.columns.indices.contains(column) else { return }
-          viewModel.highlightCell(
-            column: result.columns[column].name, value: value, style: style, color: color)
-        } : nil,
-      onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
-      searchQuery: viewModel.searchState.query,
-      caseSensitive: viewModel.searchState.isCaseSensitive,
-      currentMatch: currentMatch,
-      searchMatches: viewModel.searchState.matches,
-      forwardsScrollToParent: false,
-      hideColumnTypes: AppSettings.shared.hideColumnTypes,
-      hiddenColumns: hiddenColumns,
-      highlight: highlight,
-      highlightDialect: dialect
-    )
+    ChartableResult(result: result, chartSpec: $chartSpec, fillsAvailableHeight: true) {
+      ResultGridView(
+        result: result,
+        sortColumn: sortColumn,
+        ascending: sortAscending,
+        isEditable: viewModel.canEdit(result),
+        onCommitEdit: { row, column, newValue in
+          viewModel.handleGridCellEdit(
+            row: row, column: column, newValue: newValue, result: result, cellId: nil,
+            connectionManager: viewModel.connectionManager)
+        },
+        onSortChange: { column, ascending in
+          sortColumn = column
+          sortAscending = ascending
+        },
+        valueFilter: valueFilter,
+        onValueFilterChange: { valueFilter = $0 },
+        onShowCellDetails: { row, originalRow, column in
+          viewModel.showGridCellInSidebar(
+            row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+        },
+        onHighlightCell: canHighlight
+          ? { column, value, style, color in
+            guard result.columns.indices.contains(column) else { return }
+            viewModel.highlightCell(
+              column: result.columns[column].name, value: value, style: style, color: color)
+          } : nil,
+        onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
+        searchQuery: viewModel.searchState.query,
+        caseSensitive: viewModel.searchState.isCaseSensitive,
+        currentMatch: currentMatch,
+        searchMatches: viewModel.searchState.matches,
+        forwardsScrollToParent: false,
+        hideColumnTypes: AppSettings.shared.hideColumnTypes,
+        hiddenColumns: hiddenColumns,
+        highlight: highlight,
+        highlightDialect: dialect
+      )
+    }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
       currentMatch = gridSearchMatchOnScreen(

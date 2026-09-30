@@ -130,10 +130,7 @@ extension NotebookViewModel {
   /// connection name, or `host/database` when it has none.
   private func historyConnection() -> (key: String, label: String) {
     guard let config = notebook.connectionConfig else { return ("", "") }
-    let key = [
-      config.databaseType.rawValue, config.host, String(config.port), config.database,
-      config.username,
-    ].joined(separator: "|")
+    let key = QueryHistoryIdentity.connectionKey(for: config)
     let name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
     let label = name.isEmpty ? "\(config.host)/\(config.database)" : name
     return (key, label)

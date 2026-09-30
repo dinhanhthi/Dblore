@@ -121,6 +121,13 @@ class WorkspaceManager: Identifiable {
   var favoriteModal: FavoriteModalRoute?
   var favoriteToDelete: FavoriteStatement?
 
+  // MARK: - Query History
+
+  /// Sidebar history. The app database opens on first search; tests set `historyBrowser`.
+  let historyList = HistoryListModel()
+  /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
+  @ObservationIgnored var historyBrowser: QueryHistoryStore?
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver
@@ -176,6 +183,9 @@ class WorkspaceManager: Identifiable {
         databaseName: name?.isEmpty == false ? name : nil)
     }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
+    historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
+    historyList.connectionKey = { [weak self] in self?.activeHistoryConnectionKey }
+    historyList.workspaceID = { [weak self] in self?.workspace.id }
 
     // Only restore tabs for new workspaces (not loading from disk)
     // When loading from disk, load() will handle tab restoration with proper viewModels
