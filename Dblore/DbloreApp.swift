@@ -74,21 +74,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     return false  // Keep app running even when all windows are closed
   }
 
-  /// Closing the last workspace/welcome window brings the Welcome window back
-  /// (About and other small windows are not resizable, so they never trigger this)
+  /// Closing the last workspace/welcome window opens a new window on the welcome screen.
+  /// Another document window (including a minimized one) just lets this window close.
+  /// About and other small windows are not resizable, so they never trigger this.
   @MainActor
   private func reopenWelcomeIfLastWindowClosed(_ closed: NSWindow) {
-    guard !isTerminating, !SessionManager.isRunningAsTestHost,
-      closed.canBecomeMain, closed.styleMask.contains(.resizable)
+    guard !isTerminating, !SessionManager.isRunningAsTestHost, closed.isDbloreDocumentWindow
     else { return }
+    let frame = closed.frame
     // Let a quit in progress (which closes the windows too) win over the reopen
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
       guard let self, !self.isTerminating else { return }
-      let hasWindow = NSApp.windows.contains {
-        $0 !== closed && $0.isVisible && $0.canBecomeMain && $0.styleMask.contains(.resizable)
+      let hasOtherDocumentWindow = NSApp.windows.contains {
+        $0 !== closed && $0.isOpenDbloreDocumentWindow
       }
-      guard !hasWindow else { return }
-      NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+      guard !hasOtherDocumentWindow else { return }
+      NewWindowStore.shared.openWelcomeWindow(frame: frame)
     }
   }
 
