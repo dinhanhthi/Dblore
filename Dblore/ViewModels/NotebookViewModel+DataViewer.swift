@@ -98,7 +98,7 @@ extension NotebookViewModel {
   /// Apply the draft: back to page 1 with the count recomputed
   func applyFilter() async {
     guard let state = dataViewer else { return }
-    let blank = filterDraft.whereClause(dialect: state.databaseType) == nil
+    let blank = filterDraft.whereClause(dialect: state.databaseType.dialect) == nil
     dataViewer?.filter = blank ? TableFilter(conditions: []) : filterDraft
     dataViewer?.page = 1
     dataViewer?.totalRows = nil

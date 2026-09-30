@@ -22,7 +22,7 @@ struct TableFilterTests {
   )
     -> String?
   {
-    TableFilter(conditions: conditions).whereClause(dialect: dialect)
+    TableFilter(conditions: conditions).whereClause(dialect: dialect.dialect)
   }
 
   @Test(

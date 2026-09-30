@@ -14,6 +14,8 @@ struct TableRowView: View {
   let isExpanded: Bool
   /// Shown in the active data viewer tab
   var isSelected = false
+  /// Connection type; its default schema is omitted from the row label
+  var databaseType: DatabaseType = .postgresql
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
@@ -49,7 +51,7 @@ struct TableRowView: View {
             .font(.monoMedium)
             .foregroundColor(.foreground)
 
-          if !table.schema.isEmpty && table.schema != "public" {
+          if !table.schema.isEmpty && table.schema != databaseType.dialect.defaultSchema {
             Text("(\(table.schema))")
               .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)
@@ -127,6 +129,8 @@ struct ViewRowView: View {
   let isExpanded: Bool
   /// Shown in the active data viewer tab
   var isSelected = false
+  /// Connection type; its default schema is omitted from the row label
+  var databaseType: DatabaseType = .postgresql
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
@@ -162,7 +166,7 @@ struct ViewRowView: View {
             .font(.monoMedium)
             .foregroundColor(.foreground)
 
-          if !view.schema.isEmpty && view.schema != "public" {
+          if !view.schema.isEmpty && view.schema != databaseType.dialect.defaultSchema {
             Text("(\(view.schema))")
               .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)

@@ -28,7 +28,7 @@ struct TableHighlightMatcherTests {
     style: HighlightStyle = .cell
   ) -> [Int: Set<Int>] {
     TableHighlight(filter: TableFilter(conditions: conditions), style: style)
-      .matches(rows: rows, columns: columns, dialect: dialect)
+      .matches(rows: rows, columns: columns, dialect: dialect.dialect)
   }
 
   @Test("Equality and inequality, NULL never matches a comparison")
@@ -88,7 +88,7 @@ struct TableHighlightMatcherTests {
   private func matchTyped(_ cell: CellValue, _ op: FilterOperator, _ value: String) -> Bool {
     TableHighlight(
       filter: TableFilter(conditions: [cond("c", op, value)]), style: .cell
-    ).matches(rows: [[cell]], columns: ["c"], dialect: .postgresql).isEmpty == false
+    ).matches(rows: [[cell]], columns: ["c"], dialect: SQLDialect.postgresql).isEmpty == false
   }
 
   @Test("Dates compare by value: date-only literal by UTC day, full ISO8601 by instant")

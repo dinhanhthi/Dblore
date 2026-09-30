@@ -28,7 +28,7 @@ extension NotebookViewModel {
   func applyHighlight() {
     guard let state = dataViewer else { return }
     var applied = highlightDraft
-    if applied.filter.whereClause(dialect: state.databaseType) == nil {
+    if applied.filter.whereClause(dialect: state.databaseType.dialect) == nil {
       applied.filter = TableFilter(conditions: [])
     }
     dataViewer?.highlight = applied

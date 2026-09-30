@@ -23,6 +23,14 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "sqlite"
     }
   }
+
+  /// Quoting and literal rules for this database.
+  nonisolated var dialect: SQLDialect {
+    switch self {
+    case .postgresql: .postgresql
+    case .sqlite: .sqlite
+    }
+  }
 }
 
 /// Protection level for database connections

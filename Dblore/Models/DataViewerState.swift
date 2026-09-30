@@ -42,31 +42,44 @@ struct DataViewerState: Equatable {
     LoadKey(schema: schema, name: name, page: page, pageSize: pageSize, filter: filter)
   }
 
-  /// Tab title: `name` for the public (or no) schema, else `schema.name`
+  /// Tab title: `name` for the default (or no) schema, else `schema.name`
   var title: String {
-    schema.isEmpty || schema == "public" ? name : "\(schema).\(name)"
+    schema.isEmpty || schema == databaseType.dialect.defaultSchema ? name : "\(schema).\(name)"
   }
 
-  /// Quoted `"schema"."name"` (or `"name"` without a schema)
+  /// Quoted `"schema"."name"` when `schema` is non-empty, including the default schema.
+  /// An empty schema is `"name"` alone. `SQLDialect.qualified` would drop the default schema.
   private var relation: String {
-    let table = CellUpdateStatement.quoteIdentifier(name)
-    return schema.isEmpty ? table : CellUpdateStatement.quoteIdentifier(schema) + "." + table
+    let table = quotedIdentifier(name)
+    return schema.isEmpty ? table : quotedIdentifier(schema) + "." + table
+  }
+
+  /// Dialect quoting, or the historical non-throwing quote when the name contains NUL.
+  private func quotedIdentifier(_ name: String) -> String {
+    do {
+      return try databaseType.dialect.quoteIdentifier(name)
+    } catch {
+      return CellUpdateStatement.quoteIdentifier(name)
+    }
   }
 
   /// ` WHERE <clause>` for the applied filter, empty without a complete condition
   private var whereSQL: String {
-    filter.whereClause(dialect: databaseType).map { " WHERE " + $0 } ?? ""
+    filter.whereClause(dialect: databaseType.dialect).map { " WHERE " + $0 } ?? ""
   }
 
   /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1)
   var pageSQL: String {
     var sql = "SELECT * FROM \(relation)\(whereSQL)"
     if !orderColumns.isEmpty {
-      sql +=
-        " ORDER BY " + orderColumns.map(CellUpdateStatement.quoteIdentifier).joined(separator: ", ")
+      sql += " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
     }
-    sql += " LIMIT \(pageSize)"
-    if page > 1 { sql += " OFFSET \((page - 1) * pageSize)" }
+    if page > 1 {
+      let offset = (page - 1) * pageSize
+      sql += " " + databaseType.dialect.limitOffset(limit: pageSize, offset: offset)
+    } else {
+      sql += " LIMIT \(pageSize)"
+    }
     return sql
   }
 

@@ -64,6 +64,11 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
+  /// Database of the open connection; PostgreSQL when the workspace has no config yet
+  private var connectionDatabaseType: DatabaseType {
+    workspaceManager.workspace.connectionConfig?.databaseType ?? .postgresql
+  }
+
   /// Whether the active tab is a data viewer showing this relation
   private func isOpenInActiveTab(schema: String, name: String) -> Bool {
     guard let state = workspaceManager.activeViewModel?.dataViewer else { return false }
@@ -189,6 +194,7 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: table.expandForMatch || table.source.isExpanded,
                     isSelected: isOpenInActiveTab(
                       schema: table.source.schema, name: table.source.name),
+                    databaseType: connectionDatabaseType,
                     onToggle: {
                       if !table.expandForMatch {
                         workspaceManager.toggleTableExpansion(tableId: table.id)
@@ -223,6 +229,7 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: view.expandForMatch || view.source.isExpanded,
                     isSelected: isOpenInActiveTab(
                       schema: view.source.schema, name: view.source.name),
+                    databaseType: connectionDatabaseType,
                     onToggle: {
                       if !view.expandForMatch {
                         workspaceManager.toggleViewExpansion(viewId: view.id)

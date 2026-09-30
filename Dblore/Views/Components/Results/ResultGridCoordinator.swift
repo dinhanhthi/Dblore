@@ -175,7 +175,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       highlightMatches =
         highlight?.matches(
           rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
-          dialect: highlightDialect) ?? [:]
+          dialect: highlightDialect.dialect) ?? [:]
       let gridMatch = Self.shownGridMatch(
         currentMatch, matches: searchMatches, model: model)
       currentMatchCell = nil
