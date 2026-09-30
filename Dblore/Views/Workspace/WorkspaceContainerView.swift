@@ -725,7 +725,7 @@ struct WorkspaceTitleBarTabsView: View {
         .buttonStyle(.plain)
         .linkPointer()
         .blockDoubleClickZoom()
-        .help("AI Assistant (⌘⇧A)")
+        .help("AI Assistant (⌘L)")
 
         // Settings button
         Button {
@@ -740,7 +740,7 @@ struct WorkspaceTitleBarTabsView: View {
         .buttonStyle(.plain)
         .linkPointer()
         .blockDoubleClickZoom()
-        .help("Settings (⌘,)")
+        .help("Settings")
 
         // New tab button
         Menu {

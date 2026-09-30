@@ -36,7 +36,7 @@ struct HeaderView: View {
           .linkPointer()
           .disabled(viewModel.isFileSizeLarge)
           .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
-          .help("New Cell (⌘N)")
+          .help("New Cell (⌘⌥N)")
 
           Button(action: {
             showRunAllConfirmation = true
