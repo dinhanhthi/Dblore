@@ -10,6 +10,8 @@ import SwiftUI
 struct WorkspaceContainerView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @State private var showSafeModeModal = false
+  @State private var settingsSection: SettingsPage?
+  @State private var settingsOpenToken = UUID()
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -189,12 +191,24 @@ struct WorkspaceContainerView: View {
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
-    .settingsModal(workspaceManager: workspaceManager)
+    .settingsModal(
+      workspaceManager: workspaceManager,
+      section: settingsSection,
+      openToken: settingsOpenToken
+    )
     .favoriteModals(workspaceManager: workspaceManager)
     .safeModeModal(isPresented: $showSafeModeModal)
-    .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-      // Toggle settings modal: if already showing, close it; otherwise show settings
-      workspaceManager.isSettingsModalVisible.toggle()
+    .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
+      if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
+        let section = SettingsPage(rawValue: raw)
+      {
+        settingsSection = section
+        settingsOpenToken = UUID()
+        workspaceManager.isSettingsModalVisible = true
+      } else {
+        settingsSection = nil
+        workspaceManager.isSettingsModalVisible.toggle()
+      }
     }
   }
 }

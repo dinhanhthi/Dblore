@@ -148,7 +148,11 @@ struct AIAssistantPanel: View {
         .foregroundColor(.foregroundMuted)
         .multilineTextAlignment(.center)
       Button("Set up a provider") {
-        NotificationCenter.default.post(name: .openSettings, object: nil)
+        NotificationCenter.default.post(
+          name: .openSettings,
+          object: nil,
+          userInfo: [SettingsPage.userInfoKey: SettingsPage.ai.rawValue]
+        )
       }
       .buttonStyle(PrimaryButtonStyle())
     }

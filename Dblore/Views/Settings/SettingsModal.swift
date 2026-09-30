@@ -8,6 +8,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// A settings tab that another screen can request when it opens Settings.
+enum SettingsPage: String {
+  case ai
+
+  static let userInfoKey = "settingsSection"
+}
+
 // MARK: - Settings Modal
 
 /// Main settings modal for workspace level
@@ -15,10 +22,25 @@ import UniformTypeIdentifiers
 struct SettingsModal: View {
   @Binding var isPresented: Bool
   let viewMode: ViewMode?
+  let section: SettingsPage?
+  let openToken: UUID
 
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
-  @State private var selectedTab: SettingsTab = .appearance
+  @State private var selectedTab: SettingsTab
+
+  init(
+    isPresented: Binding<Bool>,
+    viewMode: ViewMode?,
+    section: SettingsPage? = nil,
+    openToken: UUID = UUID()
+  ) {
+    _isPresented = isPresented
+    self.viewMode = viewMode
+    self.section = section
+    self.openToken = openToken
+    _selectedTab = State(initialValue: SettingsTab.tab(for: section))
+  }
 
   /// Tabs shown in the settings tab row (rawValue = label)
   private enum SettingsTab: String, CaseIterable {
@@ -42,6 +64,13 @@ struct SettingsModal: View {
       case .updates: return "arrow.triangle.2.circlepath"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
+      }
+    }
+
+    fileprivate static func tab(for section: SettingsPage?) -> SettingsTab {
+      switch section {
+      case .ai: .ai
+      case nil: .appearance
       }
     }
   }
@@ -100,6 +129,10 @@ struct SettingsModal: View {
       defaultFilename: "dblore-logs-\(formattedDate).txt"
     ) { _ in
       // Export completed, no action needed
+    }
+    .onChange(of: openToken) { _, _ in
+      guard let section else { return }
+      selectedTab = SettingsTab.tab(for: section)
     }
   }
 
@@ -456,12 +489,16 @@ extension View {
   /// Shows a settings modal with zoom animation from center
   func settingsModal(
     isPresented: Binding<Bool>,
-    viewMode: ViewMode?
+    viewMode: ViewMode?,
+    section: SettingsPage? = nil,
+    openToken: UUID = UUID()
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
       SettingsModal(
         isPresented: isPresented,
-        viewMode: viewMode
+        viewMode: viewMode,
+        section: section,
+        openToken: openToken
       )
     }
   }
@@ -471,13 +508,19 @@ extension View {
 
 extension View {
   /// Shows a settings modal bound to a WorkspaceManager
-  func settingsModal(workspaceManager: WorkspaceManager) -> some View {
+  func settingsModal(
+    workspaceManager: WorkspaceManager,
+    section: SettingsPage? = nil,
+    openToken: UUID = UUID()
+  ) -> some View {
     self.settingsModal(
       isPresented: Binding(
         get: { workspaceManager.isSettingsModalVisible },
         set: { workspaceManager.isSettingsModalVisible = $0 }
       ),
-      viewMode: workspaceManager.activeViewModel?.viewMode
+      viewMode: workspaceManager.activeViewModel?.viewMode,
+      section: section,
+      openToken: openToken
     )
   }
 }
