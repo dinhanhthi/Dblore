@@ -118,12 +118,10 @@ private struct AICodeBlock: View {
         if modifiesData { modifiesBadge }
         Spacer(minLength: 0)
         Button(copied ? "Copied" : "Copy") { copy() }
-          .buttonStyle(SecondaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
-          .controlSize(.mini)
+          .buttonStyle(AICodeActionButtonStyle())
         if isSQL {
           Button("Insert") { onInsert?(code) }
-            .buttonStyle(SecondaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
-            .controlSize(.mini)
+            .buttonStyle(AICodeActionButtonStyle())
             .disabled(onInsert == nil)
             .help(onInsert == nil ? "No active tab" : "Insert into the active tab (does not run)")
         }
@@ -166,6 +164,39 @@ private struct AICodeBlock: View {
       try? await Task.sleep(for: .seconds(1.5))
       copied = false
     }
+  }
+}
+
+/// Compact bordered action on the code-block header, with a hover fill that
+/// contrasts against `cardHeaderBackground`.
+private struct AICodeActionButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    AICodeActionButton(configuration: configuration)
+  }
+}
+
+private struct AICodeActionButton: View {
+  let configuration: ButtonStyleConfiguration
+  @Environment(\.isEnabled) private var isEnabled
+  @State private var isHovering = false
+
+  private var isHighlighted: Bool { isEnabled && (isHovering || configuration.isPressed) }
+
+  var body: some View {
+    configuration.label
+      .font(.system(.caption2, weight: .medium))
+      .foregroundColor(.foreground)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xxs)
+      .background(Capsule().fill(isHighlighted ? Color.gutterBackground : Color.clear))
+      .overlay(
+        Capsule().stroke(isHighlighted ? Color.borderSubtle : Color.border, lineWidth: 1)
+      )
+      .contentShape(Capsule())
+      .opacity(isEnabled ? 1 : 0.5)
+      .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .onHover { isHovering = $0 }
+      .cursor(.pointingHand)
   }
 }
 
