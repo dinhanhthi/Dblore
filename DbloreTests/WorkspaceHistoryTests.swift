@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Workspace history")
+@Suite("Workspace history", .serialized)
 @MainActor
 struct WorkspaceHistoryTests {
   @Test("A query change waits, then searches")
@@ -167,6 +167,38 @@ struct WorkspaceHistoryTests {
     #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
   }
 
+  @Test("A history data change reloads the first page and other categories do not")
+  func localDataChangeReloadsHistory() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(Self.entry(sql: "SELECT old", at: start))
+    let list = HistoryListModel()
+    list.browser = { store }
+
+    await list.searchNow()
+    #expect(list.results.map(\.sql) == ["SELECT old"])
+
+    try await store.record(Self.entry(sql: "SELECT new", at: start.addingTimeInterval(10)))
+    postLocalDataChange(.logs)
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(list.results.map(\.sql) == ["SELECT old"])
+
+    postLocalDataChange(.queryHistory)
+    await waitUntil { list.results.map(\.sql) == ["SELECT new", "SELECT old"] }
+    #expect(list.results.map(\.sql) == ["SELECT new", "SELECT old"])
+
+    try await store.record(Self.entry(sql: "SELECT all", at: start.addingTimeInterval(20)))
+    postLocalDataChange(nil)
+    await waitUntil {
+      list.results.map(\.sql) == ["SELECT all", "SELECT new", "SELECT old"]
+    }
+    #expect(list.results.map(\.sql) == ["SELECT all", "SELECT new", "SELECT old"])
+  }
+
   @Test("refreshHistory reloads the first page")
   func refreshHistoryReloadsFirstPage() async throws {
     let url = temporaryDatabaseURL()
@@ -219,6 +251,25 @@ struct WorkspaceHistoryTests {
       workspace: Workspace(id: id, connectionConfig: connection), restoreTabs: false)
     manager.historyBrowser = store
     return manager
+  }
+
+  private func postLocalDataChange(_ category: LocalDataCategory?) {
+    var userInfo: [AnyHashable: Any]?
+    if let category {
+      userInfo = [LocalDataCategory.userInfoKey: category.rawValue]
+    }
+    NotificationCenter.default.post(name: .localDataChanged, object: nil, userInfo: userInfo)
+  }
+
+  private func waitUntil(
+    _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(2)
+  ) async {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while clock.now < deadline {
+      if condition() { return }
+      try? await Task.sleep(for: .milliseconds(20))
+    }
   }
 
   private func temporaryDatabaseURL() -> URL {

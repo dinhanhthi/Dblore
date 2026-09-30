@@ -114,9 +114,13 @@ struct HistoryTabContent: View {
         .foregroundColor(.foregroundMuted)
 
       Button {
-        workspaceManager.showSettings()
+        NotificationCenter.default.post(
+          name: .openSettings,
+          object: nil,
+          userInfo: [SettingsPage.userInfoKey: SettingsPage.data.rawValue]
+        )
       } label: {
-        Label("Settings", systemImage: "gearshape")
+        Label("Data settings", systemImage: "externaldrive")
       }
       .buttonStyle(SecondaryButtonStyle())
       .controlSize(.small)

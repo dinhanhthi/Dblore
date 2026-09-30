@@ -44,6 +44,7 @@ final class AIAssistantViewModel {
 
   @ObservationIgnored private var generationTask: Task<Void, Never>?
   @ObservationIgnored private var generation = 0
+  @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
 
   @ObservationIgnored let settings: AISettings
   @ObservationIgnored private let makeClient:
@@ -62,6 +63,12 @@ final class AIAssistantViewModel {
   ) {
     self.settings = settings
     self.makeClient = makeClient
+    localDataChanges.start { [weak self] note in
+      guard LocalDataCategory.notification(note, includes: .aiChats) else { return }
+      Task { @MainActor [weak self] in
+        self?.reloadConversationsFromStore()
+      }
+    }
   }
 
   // MARK: - Derived state
@@ -191,6 +198,12 @@ final class AIAssistantViewModel {
   }
 
   // MARK: - History
+
+  /// Replaces `conversations` from disk. A nil store keeps the in-memory list.
+  private func reloadConversationsFromStore() {
+    guard let historyStore else { return }
+    conversations = historyStore.load()
+  }
 
   /// Upserts the current conversation and moves it to the top; unchanged or empty ones are skipped
   private func saveConversation() {

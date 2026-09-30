@@ -70,6 +70,16 @@ final class HistoryListModel {
   @ObservationIgnored private var searchEpoch = 0
   @ObservationIgnored private var nextOffset = 0
   @ObservationIgnored private var hasMore = false
+  @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
+
+  init() {
+    localDataChanges.start { [weak self] note in
+      guard LocalDataCategory.notification(note, includes: .queryHistory) else { return }
+      Task { @MainActor [weak self] in
+        await self?.searchNow()
+      }
+    }
+  }
 
   /// Reloads the first page. The debounced query change calls this.
   func searchNow() async {

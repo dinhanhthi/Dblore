@@ -25,6 +25,12 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   /// Key in the `localDataChanged` userInfo dictionary. The value is `rawValue`.
   nonisolated static let userInfoKey = "category"
 
+  /// True when `notification` names `category`, or names no category (everything changed).
+  static func notification(_ notification: Notification, includes category: Self) -> Bool {
+    guard let info = notification.userInfo, info[userInfoKey] != nil else { return true }
+    return (info[userInfoKey] as? String) == category.rawValue
+  }
+
   var title: String {
     switch self {
     case .queryHistory: "Query History"
@@ -63,7 +69,7 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .queryHistory: "Statements you have run"
     case .connectionHistory: "Saved database connections, without passwords"
     case .recentItems: "Workspaces and files you opened recently"
-    case .openTabs: "Tabs restored when the app launches"
+    case .openTabs: "Tabs restored at the next launch. Open tabs stay until you quit."
     case .savedFilters: "Filters and highlights saved for tables"
     case .schemaLayout: "Positions of tables on the schema diagram"
     case .aiChats: "Conversations with the AI assistant"
@@ -76,6 +82,23 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
 
   /// Local AI models are large enough that a full backup should leave them out unless asked.
   var isLarge: Bool { self == .localModels }
+}
+
+/// Removes its `localDataChanged` token when released, so the owner stops observing on deinit.
+nonisolated final class LocalDataChangeObserver: @unchecked Sendable {
+  private var token: NSObjectProtocol?
+
+  func start(_ handle: @escaping @Sendable (Notification) -> Void) {
+    guard token == nil else { return }
+    token = NotificationCenter.default.addObserver(
+      forName: .localDataChanged, object: nil, queue: .main, using: handle)
+  }
+
+  deinit {
+    if let token {
+      NotificationCenter.default.removeObserver(token)
+    }
+  }
 }
 
 /// How much of one category is on disk.

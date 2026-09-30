@@ -65,6 +65,8 @@ class RecentManager {
   /// Bumped when the connection history changes, so views reading `recentConnections` refresh
   private var connectionsRevision = 0
 
+  @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
+
   // MARK: - Initialization
 
   init(defaults: UserDefaults, documentController: NSDocumentController? = nil) {
@@ -73,6 +75,26 @@ class RecentManager {
     loadWorkspaces()
     loadDocumentBookmarks()
     refreshRecentDocuments()
+    localDataChanges.start { [weak self] note in
+      let recents = LocalDataCategory.notification(note, includes: .recentItems)
+      let connections = LocalDataCategory.notification(note, includes: .connectionHistory)
+      guard recents || connections else { return }
+      Task { @MainActor [weak self] in
+        self?.reloadAfterLocalDataChange(recents: recents, connections: connections)
+      }
+    }
+  }
+
+  /// Reloads stored recents and connection history. Does not call `clearAll()` (that also
+  /// clears Keychain passwords).
+  private func reloadAfterLocalDataChange(recents: Bool, connections: Bool) {
+    if recents {
+      loadWorkspaces()
+      loadDocumentBookmarks()
+    }
+    if connections {
+      connectionsRevision += 1
+    }
   }
 
   // MARK: - Workspace Management
@@ -235,7 +257,10 @@ class RecentManager {
   private func loadDocumentBookmarks() {
     guard let data = defaults.data(forKey: Self.documentBookmarksKey),
       let stored = try? JSONDecoder().decode([DocumentBookmark].self, from: data)
-    else { return }
+    else {
+      documentBookmarks = []
+      return
+    }
     documentBookmarks = stored
   }
 
