@@ -6,7 +6,8 @@
 //  Columns can be resized and reordered; Cmd+C copies the selected rows as TSV.
 //  Double-click or Return edits a cell when `isEditable` (see NotebookViewModel.canEdit).
 //  A click only selects; the details button shown over the hovered cell reports it
-//  (`onShowCellDetails`), a header click the sort (`onSortChange`).
+//  (`onShowCellDetails`), a header click the sort (`onSortChange`), the filter icon a
+//  category filter of the loaded rows (`onValueFilterChange`).
 //
 
 import AppKit
@@ -23,6 +24,10 @@ struct ResultGridView: NSViewRepresentable {
     nil
   /// Receives the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
+  /// Category keys hidden per column. Does not change the loaded result or its LIMIT.
+  var valueFilter = ColumnValueFilter()
+  /// Receives the filter after a value is shown or hidden in the header popover
+  var onValueFilterChange: ((ColumnValueFilter) -> Void)? = nil
   /// Receives the displayed row values, its index into `CellResult.rows` and the result column
   /// index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)? =
@@ -38,8 +43,11 @@ struct ResultGridView: NSViewRepresentable {
   var searchQuery = ""
   var caseSensitive = false
   /// Current search match (the one Enter moved to): the grid scrolls to it and shows it on the
-  /// current-match color when it is in this result's data
+  /// current-match color when it is in this result's data. A match on a filtered-out row is
+  /// skipped for the next entry in `searchMatches` the grid can show.
   var currentMatch: SearchMatch? = nil
+  /// Notebook search hits, in find-next order, used to leave a filtered-out row
+  var searchMatches: [SearchMatch] = []
   /// Hand a vertical scroll the grid can't take to the parent (notebook list); false for a
   /// grid that fills its panel (editor)
   var forwardsScrollToParent = true
@@ -130,6 +138,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.isEditable = isEditable
     coordinator.onCommitEdit = onCommitEdit
     coordinator.onSortChange = onSortChange
+    coordinator.onValueFilterChange = onValueFilterChange
     coordinator.onShowCellDetails = onShowCellDetails
     coordinator.onHighlightCell = onHighlightCell
     coordinator.onClearHighlight = onClearHighlight
@@ -137,7 +146,8 @@ struct ResultGridView: NSViewRepresentable {
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
       hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
-      highlight: highlight, highlightDialect: highlightDialect)
+      highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
+      searchMatches: searchMatches)
   }
 }
 
@@ -184,7 +194,51 @@ final class ResultGridScrollView: NSScrollView {
 
 /// Header view with an opaque background (distinct from the body, same as the "#" gutter) and a bottom border. Super (not called) draws a
 /// translucent background over the fill, so the header cells are drawn here.
+/// A click on a column's filter icon opens the value popover and does not sort.
 final class ResultGridHeaderView: NSTableHeaderView {
+  override func mouseDown(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    if let hit = filterButton(at: point) {
+      (tableView as? ResultGridTableView)?.coordinator?.showColumnFilter(
+        resultColumn: hit.column, relativeTo: hit.rect, of: self)
+      return
+    }
+    super.mouseDown(with: event)
+  }
+
+  override func resetCursorRects() {
+    super.resetCursorRects()
+    guard let tableView else { return }
+    for index in tableView.tableColumns.indices {
+      guard let button = filterButtonRect(tableColumn: index) else { continue }
+      addCursorRect(button, cursor: .pointingHand)
+    }
+  }
+
+  /// Result column index and button rect when `point` is on a filter icon
+  private func filterButton(at point: NSPoint) -> (column: Int, rect: NSRect)? {
+    guard let tableView else { return nil }
+    for index in tableView.tableColumns.indices {
+      guard let button = filterButtonRect(tableColumn: index)?.insetBy(dx: -2, dy: -2),
+        button.contains(point),
+        let resultColumn = Int(tableView.tableColumns[index].identifier.rawValue)
+      else { continue }
+      return (resultColumn, button)
+    }
+    return nil
+  }
+
+  private func filterButtonRect(tableColumn index: Int) -> NSRect? {
+    guard let tableView, tableView.tableColumns.indices.contains(index) else { return nil }
+    let column = tableView.tableColumns[index]
+    guard !column.isHidden, let cell = column.headerCell as? ResultGridHeaderCell else {
+      return nil
+    }
+    var columnRect = headerRect(ofColumn: index)
+    if index == draggedColumn { columnRect.origin.x += draggedDistance }
+    return cell.filterButtonRect(columnRect: columnRect, headerBounds: bounds)
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     ResultGridRowNumberCell.backgroundColor.setFill()
     dirtyRect.fill()

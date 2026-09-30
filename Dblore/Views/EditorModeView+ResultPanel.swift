@@ -311,6 +311,8 @@ struct EditorResultGridView: View {
   var canHighlight = false
   @State private var sortColumn: String?
   @State private var sortAscending = true
+  /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
+  @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
 
@@ -329,6 +331,8 @@ struct EditorResultGridView: View {
         sortColumn = column
         sortAscending = ascending
       },
+      valueFilter: valueFilter,
+      onValueFilterChange: { valueFilter = $0 },
       onShowCellDetails: { row, originalRow, column in
         viewModel.showGridCellInSidebar(
           row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
@@ -349,6 +353,7 @@ struct EditorResultGridView: View {
       highlight: highlight,
       highlightDialect: dialect
     )
+    .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
         notificationViewModelId == viewModel.id

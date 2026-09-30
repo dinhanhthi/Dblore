@@ -22,12 +22,21 @@ struct ResultGridModel {
   /// a new model, hence an empty cache, is built whenever the result or sort changes)
   private let textCache: DisplayTextCache
 
-  init(result: CellResult, sortColumn: String?, ascending: Bool) {
+  init(
+    result: CellResult, sortColumn: String?, ascending: Bool,
+    valueFilter: ColumnValueFilter = ColumnValueFilter()
+  ) {
     columns = result.columns
-    let originalRows = result.sortedRowIndices(byColumn: sortColumn, ascending: ascending)
+    let sorted = result.sortedRowIndices(byColumn: sortColumn, ascending: ascending)
+    // A category filter drops rows from the grid only. `result.rows` (the LIMIT window) stays.
+    let originalRows =
+      valueFilter.isEmpty
+      ? sorted
+      : sorted.filter { valueFilter.includes(row: result.rows[$0], columns: result.columns) }
     displayedRows = originalRows.map { result.rows[$0] }
     self.originalRows = originalRows
-    var displayedRowByOriginalRow = Array(repeating: 0, count: originalRows.count)
+    // Sized to the loaded result, so a filtered-out original row has no displayed row (-1)
+    var displayedRowByOriginalRow = Array(repeating: -1, count: result.rows.count)
     for (displayedRow, originalRow) in originalRows.enumerated() {
       displayedRowByOriginalRow[originalRow] = displayedRow
     }
@@ -45,14 +54,42 @@ struct ResultGridModel {
   /// Table (displayed) row of `originalRow`, an index into `CellResult.rows` such as a search
   /// match's row; nil when out of range
   func displayedRow(forOriginalRow originalRow: Int) -> Int? {
-    displayedRowByOriginalRow.indices.contains(originalRow)
-      ? displayedRowByOriginalRow[originalRow] : nil
+    guard displayedRowByOriginalRow.indices.contains(originalRow) else { return nil }
+    let displayed = displayedRowByOriginalRow[originalRow]
+    return displayed >= 0 ? displayed : nil
   }
 
   /// Index into `CellResult.rows` of table (displayed) row `displayedRow`; nil when out of
   /// range
   func originalRow(forDisplayedRow displayedRow: Int) -> Int? {
     originalRows.indices.contains(displayedRow) ? originalRows[displayedRow] : nil
+  }
+
+  /// The search match the grid should treat as current. A table-data match on a row this
+  /// model hides is not current: the later matches are walked (wrapping once) until one
+  /// that is still on screen, or that is not a row of this cell. Nil when every candidate
+  /// is a hidden row, so the hidden match does not stay current.
+  func shownSearchMatch(_ current: SearchMatch, matches: [SearchMatch]) -> SearchMatch? {
+    guard let start = matches.firstIndex(where: { $0.id == current.id }) else {
+      return isSearchMatchShown(current, anchorCell: current.cellId) ? current : nil
+    }
+    for step in 0..<matches.count {
+      let candidate = matches[(start + step) % matches.count]
+      if isSearchMatchShown(candidate, anchorCell: current.cellId) { return candidate }
+    }
+    return nil
+  }
+
+  /// A table-data match of `anchorCell` is shown only when this model still displays that
+  /// original row. Matches in another cell, and matches that are not rows, are not hidden here.
+  private func isSearchMatchShown(_ match: SearchMatch, anchorCell: UUID) -> Bool {
+    switch match.matchType {
+    case .tableData(let row, _):
+      if match.cellId != anchorCell { return true }
+      return displayedRow(forOriginalRow: row) != nil
+    case .columnName, .sqlContent, .errorMessage:
+      return true
+    }
   }
 
   /// Value at a table row and column; NULL when the row is shorter than the columns

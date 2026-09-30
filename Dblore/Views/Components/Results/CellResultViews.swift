@@ -509,6 +509,8 @@ struct NotebookResultGridView: View {
   let cellId: UUID
   @State private var sortColumn: String?
   @State private var sortAscending = true
+  /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
+  @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in this cell's result data or column names
   @State private var currentMatch: SearchMatch?
   /// System scroller style ("Show scroll bars"), for the grid height
@@ -535,6 +537,8 @@ struct NotebookResultGridView: View {
           sortColumn = column
           sortAscending = ascending
         },
+        valueFilter: valueFilter,
+        onValueFilterChange: { valueFilter = $0 },
         onShowCellDetails: { row, originalRow, column in
           viewModel.showGridCellInSidebar(
             row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
@@ -564,6 +568,7 @@ struct NotebookResultGridView: View {
         ResultMetadataView(result: result)
       }
     }
+    .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onReceive(
       NotificationCenter.default.publisher(
         for: NSScroller.preferredScrollerStyleDidChangeNotification)

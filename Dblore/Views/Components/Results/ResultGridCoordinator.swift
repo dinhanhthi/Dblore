@@ -47,6 +47,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let hiddenColumns: Set<String>
     let highlight: TableHighlight?
     let highlightDialect: DatabaseType
+    let valueFilter: ColumnValueFilter
   }
 
   private(set) var model: ResultGridModel?
@@ -69,6 +70,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   var isEditing: Bool { editing != nil }
   /// Called with the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)?
+  /// Called with the category filter after a header filter popover toggles a value
+  var onValueFilterChange: ((ColumnValueFilter) -> Void)?
+  /// Loaded result, so the filter popover can list values the grid is currently hiding
+  private var sourceResult: CellResult?
+  private var valueFilter = ColumnValueFilter()
+  private var columnFilterPopover: NSPopover?
   /// Called with the displayed row values, its index into `CellResult.rows` and the result
   /// column index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
@@ -104,7 +111,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// `currentMatch` is this column's name
   static func headerContent(
     for column: ColumnInfo, result: CellResult, hideColumnTypes: Bool, searchQuery: String,
-    caseSensitive: Bool, currentMatch: SearchMatch?
+    caseSensitive: Bool, currentMatch: SearchMatch?, isFiltered: Bool = false
   ) -> ResultGridHeaderContent {
     let isHighlighted =
       !searchQuery.isEmpty
@@ -116,7 +123,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       isPrimaryKey: result.editTarget != nil && result.primaryKeyColumns.contains(column.name),
       isHighlighted: isHighlighted,
       isCurrentMatch: isHighlighted && currentMatch?.matchType == .columnName(column.name),
-      searchQuery: searchQuery, caseSensitive: caseSensitive)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, isFiltered: isFiltered)
   }
 
   /// Rebuilds the columns and reloads the table when the result, the sort, the search, the
@@ -127,7 +134,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
     searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil,
     hideColumnTypes: Bool = false, hiddenColumns: Set<String> = [],
-    highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql
+    highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql,
+    valueFilter: ColumnValueFilter = ColumnValueFilter(),
+    searchMatches: [SearchMatch] = []
   )
     -> Bool
   {
@@ -136,8 +145,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
-      hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect)
+      hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect,
+      valueFilter: valueFilter)
     guard newKey != key else { return false }
+    if newKey.timestamp != key?.timestamp || newKey.columnNames != key?.columnNames {
+      columnFilterPopover?.close()
+      columnFilterPopover = nil
+    }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
     }
@@ -145,16 +159,27 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     tableView.tableColumn(withIdentifier: Self.rowNumberIdentifier)?.width =
       Self.rowNumberWidth(rowCount: result.rows.count)
     let oldKey = key
+    // Displayed indexes survive reloadData and then point at other loaded rows.
+    let filterChanged = oldKey != nil && newKey.valueFilter != oldKey?.valueFilter
+    let selectedOriginalRows: [Int] =
+      filterChanged
+      ? tableView.selectedRowIndexes.compactMap { self.model?.originalRow(forDisplayedRow: $0) }
+      : []
     key = newKey
+    sourceResult = result
+    self.valueFilter = valueFilter
     PerfSignpost.interval("grid.reload") {
-      let model = ResultGridModel(result: result, sortColumn: sortColumn, ascending: ascending)
+      let model = ResultGridModel(
+        result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter)
       self.model = model
       highlightMatches =
         highlight?.matches(
           rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
           dialect: highlightDialect) ?? [:]
+      let gridMatch = Self.shownGridMatch(
+        currentMatch, matches: searchMatches, model: model)
       currentMatchCell = nil
-      if case .tableData(let originalRow, let columnName) = currentMatch?.matchType,
+      if case .tableData(let originalRow, let columnName) = gridMatch?.matchType,
         let row = model.displayedRow(forOriginalRow: originalRow),
         let column = model.columns.firstIndex(where: { $0.name == columnName })
       {
@@ -171,7 +196,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       }
       updateHeader(
         tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
-        caseSensitive: caseSensitive, currentMatch: currentMatch)
+        caseSensitive: caseSensitive, currentMatch: gridMatch)
       // New columns fit like a divider double-click; a re-run keeps dragged widths
       if newKey.columnNames != oldKey?.columnNames {
         for (index, tableColumn) in tableView.tableColumns.enumerated() {
@@ -179,6 +204,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         }
       }
       tableView.reloadData()
+      if filterChanged {
+        let indexes = IndexSet(
+          selectedOriginalRows.compactMap { model.displayedRow(forOriginalRow: $0) })
+        tableView.selectRowIndexes(indexes, byExtendingSelection: false)
+      }
     }
     if let currentMatchCell {
       tableView.scrollRowToVisible(currentMatchCell.row)
@@ -518,7 +548,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       else { continue }
       cell.content = Self.headerContent(
         for: result.columns[index], result: result, hideColumnTypes: hideColumnTypes,
-        searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch)
+        searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
+        isFiltered: valueFilter.isActive(index))
     }
     guard let headerView = tableView.headerView else { return }
     let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
@@ -527,6 +558,46 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       tableView.enclosingScrollView?.tile()
     }
     headerView.needsDisplay = true
+    headerView.window?.invalidateCursorRects(for: headerView)
+  }
+
+  /// The match the grid highlights. A table-data match on a filtered-out row is replaced by
+  /// the next match `model` can show, so find-next does not sit on a hidden row.
+  private static func shownGridMatch(
+    _ current: SearchMatch?, matches: [SearchMatch], model: ResultGridModel
+  ) -> SearchMatch? {
+    guard let current,
+      let shown = model.shownSearchMatch(current, matches: matches),
+      shown.cellId == current.cellId, shown.isInResultGrid
+    else { return nil }
+    return shown
+  }
+
+  /// Popover of the distinct values in result column `resultColumn`. Toggling one hides or
+  /// shows those rows in the grid; the loaded result is not replaced.
+  func showColumnFilter(resultColumn: Int, relativeTo rect: NSRect, of view: NSView) {
+    guard let sourceResult, sourceResult.columns.indices.contains(resultColumn) else { return }
+    let name = sourceResult.columns[resultColumn].name
+    let categories = ColumnValueFilter.categories(in: sourceResult, columnIndex: resultColumn)
+    let listed = ColumnValueFilter.listedCategories(categories)
+    let hidden = valueFilter.hiddenKeys[resultColumn] ?? []
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.animates = true
+    popover.contentViewController = NSHostingController(
+      rootView: ColumnValueFilterPopover(
+        columnName: name, categories: listed, hidden: hidden,
+        allKeys: Set(categories.map(\.key)),
+        onHiddenChange: { [weak self] keys in
+          guard let self else { return }
+          let next = self.valueFilter.settingHidden(keys, for: resultColumn)
+          self.valueFilter = next
+          self.onValueFilterChange?(next)
+        }))
+    columnFilterPopover?.close()
+    columnFilterPopover = popover
+    // Header is flipped: maxY is the bottom edge, so the popover opens under the icon
+    popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
   }
 
   /// Hides the table columns whose result column name is in `hiddenColumns`, found by

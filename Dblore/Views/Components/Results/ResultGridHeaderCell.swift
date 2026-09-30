@@ -5,7 +5,8 @@
 //  Two-line header cell of the result grid, as in the old result table: the column name
 //  (yellow key before it for a primary-key column, search highlight on a column-name match)
 //  over the column type in a smaller muted font. The coordinator decides the content
-//  (ResultGridHeaderContent); the cell only draws it, plus the table's sort indicator.
+//  (ResultGridHeaderContent); the cell only draws it, plus the sort indicator and the
+//  filter icon on the type line.
 //
 
 import AppKit
@@ -26,6 +27,8 @@ struct ResultGridHeaderContent: Equatable {
   var caseSensitive = false
   /// Header of the "#" row number column: muted title, right-aligned
   var isRowNumber = false
+  /// A category filter is hiding at least one value of this column
+  var isFiltered = false
 }
 
 final class ResultGridHeaderCell: NSTableHeaderCell {
@@ -34,6 +37,8 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
   static let typeFont = NSFont.systemFont(ofSize: 10)
   static let typeColor = NSColor(Color.foregroundSubtle)
   static let keyColor = NSColor(Color.warning)
+  /// Side of the filter icon's hit target, on the type line under the sort indicator
+  static let filterButtonSide: CGFloat = 16
 
   var content = ResultGridHeaderContent()
 
@@ -86,21 +91,25 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
       )
     }
     var textFrame = cellFrame.insetBy(dx: Spacing.xsm, dy: 0)
-    var sortArrow: (ascending: Bool, rect: NSRect)?
-    if let tableView = (controlView as? NSTableHeaderView)?.tableView,
-      let column = tableView.tableColumns.first(where: { $0.headerCell === self }),
-      let ascending = Self.sortAscending(for: column, in: tableView)
-    {
-      sortArrow = (ascending, sortIndicatorRect(forBounds: cellFrame))
-      textFrame.size.width =
-        sortIndicatorRect(forBounds: cellFrame).minX - Spacing.xs - textFrame.minX
+    let indicator = sortIndicatorRect(forBounds: cellFrame)
+    let filterButton = filterButtonRect(columnRect: cellFrame, headerBounds: controlView.bounds)
+    if !content.isRowNumber {
+      // The filter icon always occupies the sort-indicator column (on the type line)
+      let reserved = min(indicator.minX, filterButton?.minX ?? indicator.minX)
+      textFrame.size.width = max(0, reserved - Spacing.xs - textFrame.minX)
     }
     let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
     let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
     // Lines centered over the full header height (cellFrame is a one-line strip)
     let top = Self.linesTop(in: controlView.bounds, hasType: content.type != nil)
-    if let (ascending, rect) = sortArrow {
-      drawSortArrow(ascending: ascending, centerX: rect.midX, centerY: top + titleHeight / 2)
+    if let tableView = (controlView as? NSTableHeaderView)?.tableView,
+      let column = tableView.tableColumns.first(where: { $0.headerCell === self }),
+      let ascending = Self.sortAscending(for: column, in: tableView)
+    {
+      drawSortArrow(ascending: ascending, centerX: indicator.midX, centerY: top + titleHeight / 2)
+    }
+    if let filterButton {
+      drawFilterIcon(in: filterButton, active: content.isFiltered)
     }
     var titleX = textFrame.minX
     if content.isPrimaryKey, let key = Self.keyImage() {
@@ -131,15 +140,42 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     var titleLine = (content.title as NSString).size(withAttributes: [.font: Self.titleFont])
       .width
     if content.isPrimaryKey, let key = Self.keyImage() { titleLine += key.size.width + Spacing.xs }
-    // Leading padding, name, gap, then the indicator up to the cell's trailing edge
+    // Leading padding, name, gap, then the indicator (filter icon, and the sort arrow when sorted)
     let bounds = NSRect(x: 0, y: 0, width: 100, height: 20)
-    let sortTrailing = bounds.maxX - sortIndicatorRect(forBounds: bounds).minX
-    let titleWidth = Spacing.xsm + titleLine + Spacing.xs + sortTrailing
+    let indicator = sortIndicatorRect(forBounds: bounds)
+    let sortTrailing = bounds.maxX - indicator.minX
+    let filterExtra: CGFloat =
+      content.type == nil && !content.isRowNumber ? Self.filterButtonSide + Spacing.xs : 0
+    let titleWidth = Spacing.xsm + titleLine + Spacing.xs + sortTrailing + filterExtra
     let typeWidth =
       content.type.map {
-        ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width + 2 * Spacing.xsm
+        ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width + Spacing.xsm
+          + Spacing.xs + sortTrailing
       } ?? 0
     return ceil(max(titleWidth, typeWidth))
+  }
+
+  /// Hit target of the filter icon, in the header view's coordinates. On the type line, under
+  /// the sort arrow. Nil for the row-number gutter. Without a type line it sits just left of
+  /// the sort indicator so the two don't overlap in the short header.
+  func filterButtonRect(columnRect: NSRect, headerBounds: NSRect) -> NSRect? {
+    guard !content.isRowNumber else { return nil }
+    let indicator = sortIndicatorRect(forBounds: columnRect)
+    guard indicator.width > 1 else { return nil }
+    let side = Self.filterButtonSide
+    let centerX: CGFloat
+    let centerY: CGFloat
+    if content.type != nil {
+      centerX = indicator.midX
+      let top = Self.linesTop(in: headerBounds, hasType: true)
+      let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
+      let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
+      centerY = top + titleHeight + Spacing.xxs + typeHeight / 2
+    } else {
+      centerX = indicator.minX - Spacing.xs - side / 2
+      centerY = headerBounds.midY
+    }
+    return NSRect(x: centerX - side / 2, y: centerY - side / 2, width: side, height: side)
   }
 
   // MARK: - Private
@@ -177,6 +213,25 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     string.addAttribute(
       .paragraphStyle, value: paragraph, range: NSRange(location: 0, length: string.length))
     string.draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+  }
+
+  /// Filter icon in the indicator column. Accent when this column is hiding values.
+  private func drawFilterIcon(in rect: NSRect, active: Bool) {
+    let color = active ? NSColor(Color.accent) : Self.typeColor
+    guard
+      let image = NSImage(
+        systemSymbolName: "line.3.horizontal.decrease",
+        accessibilityDescription: active ? "Column filtered" : "Filter column")?
+        .withSymbolConfiguration(
+          NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color])))
+    else { return }
+    let size = image.size
+    image.draw(
+      in: NSRect(
+        x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width,
+        height: size.height),
+      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
   }
 
   /// Sort chevron in the app accent color, centered on the name line
