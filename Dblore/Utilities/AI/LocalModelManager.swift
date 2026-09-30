@@ -338,9 +338,14 @@ final class LocalModelManager {
       throw LocalModelManagerError.invalidRepo
     }
     let client = HubClient(cache: nil)
-    _ = try await client.downloadSnapshot(
-      of: repo, to: staging, revision: model.revision, matching: patterns,
-      progressHandler: onProgress)
+    do {
+      _ = try await client.downloadSnapshot(
+        of: repo, to: staging, revision: model.revision, matching: patterns,
+        progressHandler: onProgress)
+    } catch HubCacheError.snapshotRequiresCacheOrDestination {
+      // swift-huggingface (<= 0.11) throws this after every file is already in `staging` when
+      // no cache is set; `verifyAndInstall` still checks the staged files.
+    }
   }
 }
 
