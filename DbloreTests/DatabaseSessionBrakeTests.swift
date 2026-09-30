@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Session Brakes - Integration (Requires PostgreSQL)")
+@Suite("Session Brakes - Integration (Requires PostgreSQL)", .requiresPostgres)
 struct DatabaseSessionBrakeTests {
   static func testConfig(statementTimeoutSeconds: Int = 60) -> ConnectionConfig {
     ConnectionConfig(

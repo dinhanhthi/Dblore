@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Protected Transaction - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Protected Transaction - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct ProtectedTransactionTests {
   private static func config(protectedMode: Bool = true, idleTimeout: Int = 600) -> ConnectionConfig

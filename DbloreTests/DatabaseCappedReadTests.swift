@@ -38,7 +38,7 @@ private final class Box<Value: Sendable>: @unchecked Sendable {
   }
 }
 
-@Suite("Capped Read - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Capped Read - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct DatabaseCappedReadTests {
   private static let largeRead = "SELECT * FROM generate_series(1, 1000000)"

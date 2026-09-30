@@ -394,7 +394,7 @@ struct WorkspaceTransactionCommitFlowTests {
 
 // MARK: - Integration
 
-@Suite("Workspace Transaction - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Workspace Transaction - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct WorkspaceTransactionIntegrationTests {
   private static func config(protectedMode: Bool = true) -> ConnectionConfig {

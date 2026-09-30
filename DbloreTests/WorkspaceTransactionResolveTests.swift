@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Workspace Transaction - Resolve (Requires PostgreSQL)", .serialized)
+@Suite("Workspace Transaction - Resolve (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct WorkspaceTransactionResolveTests {
   private static func config(protectedMode: Bool = true) -> ConnectionConfig {

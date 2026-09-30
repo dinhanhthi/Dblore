@@ -33,7 +33,7 @@ private final class Shared<Value: Sendable>: @unchecked Sendable {
   }
 }
 
-@Suite("Cap Reset on a Shared Session - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Cap Reset on a Shared Session - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct CapResetSharedSessionTests {
   private static let cap = 100

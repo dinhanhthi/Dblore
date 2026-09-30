@@ -28,7 +28,7 @@ private final class Collected<Value: Sendable>: @unchecked Sendable {
   }
 }
 
-@Suite("Query Cancel - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Query Cancel - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct QueryCancelTests {
   private static let sleepSQL = "SELECT pg_sleep(30)"

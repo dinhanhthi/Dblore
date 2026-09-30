@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Protection Merge - Integration (Requires PostgreSQL)")
+@Suite("Protection Merge - Integration (Requires PostgreSQL)", .requiresPostgres)
 struct ProtectionMergeIntegrationTests {
   private static func config(_ level: ConnectionProtectionLevel) -> ConnectionConfig {
     return ConnectionConfig(

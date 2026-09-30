@@ -33,7 +33,15 @@ Thanks for your interest — contributions are welcome!
        upstream repo, never to a floating branch.
 
      If your change touches database code, also run the integration tests against the
-     test PostgreSQL container (`docker/README.md`, "Integration Test Database").
+     test PostgreSQL container (`docker/README.md`, "Integration Test Database"):
+
+     ```bash
+     docker compose -f docker/postgresql/docker-compose.test.yml up -d
+     xcodebuild test -scheme Dblore \
+       -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
+       -skipPackagePluginValidation -skipMacroValidation
+     ```
+
   2. Match the existing style: the project is Swift 6 with strict concurrency, formatted
      with `swift-format` (`.swift-format`). Check the files you changed with
      `swift-format lint --strict <files>`.

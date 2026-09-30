@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Database Integration - NUMERIC Tests (Requires PostgreSQL)")
+@Suite("Database Integration - NUMERIC Tests (Requires PostgreSQL)", .requiresPostgres)
 @MainActor
 struct DatabaseIntegrationNumericTests {
 

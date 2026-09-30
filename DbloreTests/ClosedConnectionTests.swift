@@ -58,7 +58,7 @@ func bounded(
   }
 }
 
-@Suite("Closed Connection - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Closed Connection - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct ClosedConnectionTests {
   private static func config(protectedMode: Bool, idleTimeout: Int = 600) -> ConnectionConfig {

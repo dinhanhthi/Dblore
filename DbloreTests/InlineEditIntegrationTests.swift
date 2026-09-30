@@ -6,7 +6,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Inline Edit - Integration (Requires PostgreSQL)")
+@Suite("Inline Edit - Integration (Requires PostgreSQL)", .requiresPostgres)
 @MainActor
 struct InlineEditIntegrationTests {
   static let testConfig = ConnectionConfig(

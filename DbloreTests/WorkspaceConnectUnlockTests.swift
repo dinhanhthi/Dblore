@@ -135,7 +135,7 @@ struct WorkspaceConnectUnlockTests {
   }
 }
 
-@Suite("Workspace Connect Unlock - Integration (Requires PostgreSQL)")
+@Suite("Workspace Connect Unlock - Integration (Requires PostgreSQL)", .requiresPostgres)
 @MainActor
 struct WorkspaceConnectUnlockIntegrationTests {
   private static func config(
