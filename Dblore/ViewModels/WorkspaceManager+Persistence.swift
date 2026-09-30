@@ -212,6 +212,26 @@ extension WorkspaceManager {
     await schemaLoadTask?.value
   }
 
+  private func fetchFunctions(supported: Bool) async throws -> [DatabaseFunction] {
+    guard supported else { return [] }
+    return try await connectionManager.fetchFunctions()
+  }
+
+  private func fetchProcedures(supported: Bool) async throws -> [DatabaseProcedure] {
+    guard supported else { return [] }
+    return try await connectionManager.fetchProcedures()
+  }
+
+  private func fetchUsers(supported: Bool) async throws -> [DatabaseUser] {
+    guard supported else { return [] }
+    return try await connectionManager.fetchUsers()
+  }
+
+  private func fetchRoles(supported: Bool) async throws -> [DatabaseRole] {
+    guard supported else { return [] }
+    return try await connectionManager.fetchRoles()
+  }
+
   /// Load database schema. While a Protected transaction is pending the cached schema is kept
   /// and no catalog query is sent (the actor refuses them too).
   func loadDatabaseSchema() async {
@@ -227,13 +247,15 @@ extension WorkspaceManager {
 
     await PerfSignpost.interval("schema.load") {
       do {
-        // Fetch basic schema info in parallel
+        let capabilities = (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities
+        // Fetch basic schema info in parallel. Users, roles, functions, and procedures
+        // are skipped (left empty) when this engine does not support them.
         async let tablesTask = connectionManager.fetchTables()
         async let viewsTask = connectionManager.fetchViews()
-        async let functionsTask = connectionManager.fetchFunctions()
-        async let proceduresTask = connectionManager.fetchProcedures()
-        async let usersTask = connectionManager.fetchUsers()
-        async let rolesTask = connectionManager.fetchRoles()
+        async let functionsTask = fetchFunctions(supported: capabilities.supportsFunctions)
+        async let proceduresTask = fetchProcedures(supported: capabilities.supportsFunctions)
+        async let usersTask = fetchUsers(supported: capabilities.supportsRolesAndUsers)
+        async let rolesTask = fetchRoles(supported: capabilities.supportsRolesAndUsers)
         async let foreignKeysTask = connectionManager.fetchForeignKeys()
 
         async let columnsTask = connectionManager.fetchAllColumns()

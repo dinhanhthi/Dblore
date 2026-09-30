@@ -47,10 +47,12 @@ class SessionManager {
       return
     }
 
-    // Load password from keychain
-    let keychainKey = keychainKey(for: config)
-    if let password = loadPasswordFromKeychain(key: keychainKey) {
-      config.password = password
+    // Engines without passwords never touch the Keychain
+    if config.databaseType.capabilities.usesPassword {
+      let keychainKey = keychainKey(for: config)
+      if let password = KeychainConnectionPasswordStore().loadPassword(forKey: keychainKey) {
+        config.password = password
+      }
     }
 
     // Create history entry
@@ -64,17 +66,20 @@ class SessionManager {
   // MARK: - History Management
 
   /// Load connection history (sorted by most recent first)
-  static func loadHistory() -> [ConnectionHistoryEntry] {
-    guard let data = UserDefaults.standard.data(forKey: historyKey),
+  static func loadHistory(
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) -> [ConnectionHistoryEntry] {
+    guard let data = defaults.data(forKey: historyKey),
       var entries = try? JSONDecoder().decode([ConnectionHistoryEntry].self, from: data)
     else {
       return []
     }
 
-    // Load passwords from keychain for each entry
-    for i in 0..<entries.count {
+    // Load passwords for engines that store one. Others are not queried.
+    for i in 0..<entries.count where entries[i].config.databaseType.capabilities.usesPassword {
       let key = entries[i].keychainKey
-      if let password = loadPasswordFromKeychain(key: key) {
+      if let password = passwords.loadPassword(forKey: key) {
         entries[i].config.password = password
       }
     }
@@ -84,7 +89,9 @@ class SessionManager {
   }
 
   /// Save connection history (private helper)
-  private static func saveHistory(_ entries: [ConnectionHistoryEntry]) {
+  private static func saveHistory(
+    _ entries: [ConnectionHistoryEntry], defaults: UserDefaults = .standard
+  ) {
     // Remove passwords before saving
     var cleanEntries = entries
     for i in 0..<cleanEntries.count {
@@ -92,7 +99,7 @@ class SessionManager {
     }
 
     if let encoded = try? JSONEncoder().encode(cleanEntries) {
-      UserDefaults.standard.set(encoded, forKey: historyKey)
+      defaults.set(encoded, forKey: historyKey)
     }
   }
 
@@ -100,19 +107,24 @@ class SessionManager {
   private static let maxConnectionHistorySize = 6
 
   /// Add or update connection in history
-  static func saveConnection(_ config: ConnectionConfig) {
+  static func saveConnection(
+    _ config: ConnectionConfig,
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
       return
     }
 
-    var history = loadHistory()
+    var history = loadHistory(defaults: defaults, passwords: passwords)
     let newEntry = ConnectionHistoryEntry(config: config)
 
-    // Save password to keychain BEFORE adding to history
-    // (because ConnectionHistoryEntry.init strips password from config)
-    if !config.password.isEmpty {
-      savePasswordToKeychain(password: config.password, key: newEntry.keychainKey)
+    // Save password BEFORE adding to history
+    // (because ConnectionHistoryEntry.init strips password from config).
+    // Engines without passwords are not written.
+    if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
+      passwords.savePassword(config.password, forKey: newEntry.keychainKey)
     }
 
     // Check if connection already exists (same host+port+db+user)
@@ -129,12 +141,12 @@ class SessionManager {
       // Remove oldest entries and their passwords
       let entriesToRemove = history.suffix(history.count - maxConnectionHistorySize)
       for entry in entriesToRemove {
-        deletePasswordFromKeychain(key: entry.keychainKey)
+        deleteStoredPassword(for: entry, passwords: passwords)
       }
       history = Array(history.prefix(maxConnectionHistorySize))
     }
 
-    saveHistory(history)
+    saveHistory(history, defaults: defaults)
   }
 
   /// Get most recent connection
@@ -143,28 +155,33 @@ class SessionManager {
   }
 
   /// Clear all connection history
-  static func clearAllHistory() {
-    let history = loadHistory()
+  static func clearAllHistory(
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
+    let history = loadHistory(defaults: defaults, passwords: passwords)
 
-    // Delete all passwords from keychain
     for entry in history {
-      deletePasswordFromKeychain(key: entry.keychainKey)
+      deleteStoredPassword(for: entry, passwords: passwords)
     }
 
-    UserDefaults.standard.removeObject(forKey: historyKey)
+    defaults.removeObject(forKey: historyKey)
   }
 
   /// Remove specific connection from history
-  static func removeConnection(id: UUID) {
-    var history = loadHistory()
+  static func removeConnection(
+    id: UUID,
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
+    var history = loadHistory(defaults: defaults, passwords: passwords)
 
     if let index = history.firstIndex(where: { $0.id == id }) {
-      // Delete password from keychain
-      deletePasswordFromKeychain(key: history[index].keychainKey)
+      deleteStoredPassword(for: history[index], passwords: passwords)
 
       // Remove from array
       history.remove(at: index)
-      saveHistory(history)
+      saveHistory(history, defaults: defaults)
     }
   }
 
@@ -202,7 +219,7 @@ class SessionManager {
   /// - Parameter key: The keychain key (format: host:port:database:username)
   /// - Returns: The password if found, nil otherwise
   static func getPasswordFromKeychain(for key: String) -> String? {
-    return loadPasswordFromKeychain(key: key)
+    return KeychainConnectionPasswordStore().loadPassword(forKey: key)
   }
 
   private static func keychainKey(for config: ConnectionConfig) -> String {
@@ -210,53 +227,12 @@ class SessionManager {
     return "\(config.host):\(config.port):\(config.database):\(config.username)"
   }
 
-  private static func savePasswordToKeychain(password: String, key: String) {
-    guard let passwordData = password.data(using: .utf8) else { return }
-
-    // Delete existing item first
-    deletePasswordFromKeychain(key: key)
-
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: keychainService,
-      kSecAttrAccount as String: key,
-      kSecValueData as String: passwordData,
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-    ]
-
-    SecItemAdd(query as CFDictionary, nil)
-  }
-
-  private static func loadPasswordFromKeychain(key: String) -> String? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: keychainService,
-      kSecAttrAccount as String: key,
-      kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-
-    var result: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-    guard status == errSecSuccess,
-      let passwordData = result as? Data,
-      let password = String(data: passwordData, encoding: .utf8)
-    else {
-      return nil
-    }
-
-    return password
-  }
-
-  private static func deletePasswordFromKeychain(key: String) {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: keychainService,
-      kSecAttrAccount as String: key,
-    ]
-
-    SecItemDelete(query as CFDictionary)
+  /// Deletes a stored password only when this engine uses one.
+  private static func deleteStoredPassword(
+    for entry: ConnectionHistoryEntry, passwords: any ConnectionPasswordStore
+  ) {
+    guard entry.config.databaseType.capabilities.usesPassword else { return }
+    passwords.deletePassword(forKey: entry.keychainKey)
   }
 
   // MARK: - Local data (UserDefaults only)
@@ -308,5 +284,65 @@ class SessionManager {
     domain.removeValue(forKey: historyKey)
     domain.removeValue(forKey: legacySessionKey)
     defaults.setPersistentDomain(domain, forName: domainName)
+  }
+}
+
+/// Saves, loads, and deletes one connection password.
+/// The app uses `KeychainConnectionPasswordStore`.
+protocol ConnectionPasswordStore {
+  func savePassword(_ password: String, forKey key: String)
+  func loadPassword(forKey key: String) -> String?
+  func deletePassword(forKey key: String)
+}
+
+/// Keychain implementation of `ConnectionPasswordStore`.
+struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
+  func savePassword(_ password: String, forKey key: String) {
+    guard let passwordData = password.data(using: .utf8) else { return }
+
+    // Delete existing item first
+    deletePassword(forKey: key)
+
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: SessionManager.keychainService,
+      kSecAttrAccount as String: key,
+      kSecValueData as String: passwordData,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+    ]
+
+    SecItemAdd(query as CFDictionary, nil)
+  }
+
+  func loadPassword(forKey key: String) -> String? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: SessionManager.keychainService,
+      kSecAttrAccount as String: key,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+
+    var result: AnyObject?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+    guard status == errSecSuccess,
+      let passwordData = result as? Data,
+      let password = String(data: passwordData, encoding: .utf8)
+    else {
+      return nil
+    }
+
+    return password
+  }
+
+  func deletePassword(forKey key: String) {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: SessionManager.keychainService,
+      kSecAttrAccount as String: key,
+    ]
+
+    SecItemDelete(query as CFDictionary)
   }
 }

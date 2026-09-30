@@ -1,6 +1,7 @@
 // EditTypes.swift
 // Inline grid edit types: the primary-key UPDATE statement, the server-resolved table,
-// and the live edit target. Bind parameters stay in DatabaseConnectionManager+CellUpdate.
+// and the live edit target. Neutral binds live on the statement; PostgresNIO bindings
+// stay in DatabaseConnectionManager+CellUpdate.
 
 import Foundation
 
@@ -10,6 +11,11 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
   /// `$1` is the new value, `$2...` the primary-key values in key order; nil binds NULL
   let values: [String?]
+
+  /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
+  var binds: [SQLBindValue] {
+    values.map(SQLBindValue.init(optionalText:))
+  }
 
   /// Builds the UPDATE for one cell of `rowData`, keyed by `primaryKeyColumns` only.
   /// - Parameters:

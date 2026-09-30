@@ -13,6 +13,8 @@ extension ConnectionFormContent {
 
   @ViewBuilder
   func formFields() -> some View {
+    let capabilities = connectionConfig.databaseType.capabilities
+
     // Connection Name (required)
     FormField(label: "Connection Name") {
       TextField(
@@ -22,21 +24,22 @@ extension ConnectionFormContent {
       .inputCapsuleStyle()
     }
 
-    // Host and Port
-    HStack(spacing: Spacing.md) {
-      FormField(label: "Host") {
-        TextField("localhost", text: $connectionConfig.host)
+    if capabilities.usesNetwork {
+      HStack(spacing: Spacing.md) {
+        FormField(label: "Host") {
+          TextField("localhost", text: $connectionConfig.host)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
+        }
+
+        FormField(label: "Port") {
+          TextField(
+            "5432", value: $connectionConfig.port, format: .number.grouping(.never)
+          )
           .textFieldStyle(.plain)
           .inputCapsuleStyle()
-      }
-
-      FormField(label: "Port") {
-        TextField(
-          "5432", value: $connectionConfig.port, format: .number.grouping(.never)
-        )
-        .textFieldStyle(.plain)
-        .inputCapsuleStyle()
-        .frame(width: 80)
+          .frame(width: 80)
+        }
       }
     }
 
@@ -54,32 +57,34 @@ extension ConnectionFormContent {
         .inputCapsuleStyle()
     }
 
-    // Password
-    FormField(label: "Password") {
-      PasswordInputField(password: $connectionConfig.password)
+    if capabilities.usesPassword {
+      FormField(label: "Password") {
+        PasswordInputField(password: $connectionConfig.password)
+      }
     }
 
-    // SSL Mode
-    FormField(label: "SSL Mode") {
-      Menu {
-        ForEach(SSLMode.allCases, id: \.self) { mode in
-          Button(mode.displayName) {
-            connectionConfig.sslMode = mode
+    if capabilities.supportsSSL {
+      FormField(label: "SSL Mode") {
+        Menu {
+          ForEach(SSLMode.allCases, id: \.self) { mode in
+            Button(mode.displayName) {
+              connectionConfig.sslMode = mode
+            }
           }
+        } label: {
+          HStack {
+            Text(connectionConfig.sslMode.displayName)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
         }
-      } label: {
-        HStack {
-          Text(connectionConfig.sslMode.displayName)
-          Spacer()
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-        .dropdownCapsuleStyle()
+        .buttonStyle(.plain)
+        .linkPointer()
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // Timeout
@@ -99,6 +104,8 @@ extension ConnectionFormContent {
 
   @ViewBuilder
   func connectionStringFields() -> some View {
+    let capabilities = connectionConfig.databaseType.capabilities
+
     // Connection Name (required)
     FormField(label: "Connection Name") {
       TextField(
@@ -131,30 +138,31 @@ extension ConnectionFormContent {
       }
     }
 
-    // SSL Mode picker for connection string mode
-    FormField(label: "SSL Mode") {
-      Menu {
-        ForEach(SSLMode.allCases, id: \.self) { mode in
-          Button(mode.displayName) {
-            connectionStringSSLModeBinding.wrappedValue = mode
-            // Update the config when SSL mode changes
-            connectionConfig.sslMode = mode
-            clearTestResult()
+    if capabilities.supportsSSL {
+      FormField(label: "SSL Mode") {
+        Menu {
+          ForEach(SSLMode.allCases, id: \.self) { mode in
+            Button(mode.displayName) {
+              connectionStringSSLModeBinding.wrappedValue = mode
+              // Update the config when SSL mode changes
+              connectionConfig.sslMode = mode
+              clearTestResult()
+            }
           }
+        } label: {
+          HStack {
+            Text(connectionStringSSLModeBinding.wrappedValue.displayName)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
         }
-      } label: {
-        HStack {
-          Text(connectionStringSSLModeBinding.wrappedValue.displayName)
-          Spacer()
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-        .dropdownCapsuleStyle()
+        .buttonStyle(.plain)
+        .linkPointer()
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // Common toggles and pickers

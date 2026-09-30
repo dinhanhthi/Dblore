@@ -13,22 +13,23 @@ import PostgresNIO
 
 nonisolated extension CellUpdateStatement {
   /// Bind parameters: untyped text (the server infers each parameter's type from the column,
-  /// like libpq's `PQexecParams` without `paramTypes`), NULL for nil.
-  var bindings: PostgresBindings { untypedTextBindings(values) }
+  /// like libpq's `PQexecParams` without `paramTypes`), NULL for `.null`.
+  var bindings: PostgresBindings { untypedTextBindings(binds) }
 }
 
 nonisolated extension BoundStatement {
-  /// Bind parameters: untyped text, NULL for nil. Same encoding as `CellUpdateStatement`.
-  var bindings: PostgresBindings { untypedTextBindings(values) }
+  /// Bind parameters: untyped text, NULL for `.null`. Same encoding as `CellUpdateStatement`.
+  var bindings: PostgresBindings { untypedTextBindings(binds) }
 }
 
-/// Untyped text binds. Nil is SQL NULL. File-private so both statement types share `UntypedText`.
-private nonisolated func untypedTextBindings(_ values: [String?]) -> PostgresBindings {
-  var bindings = PostgresBindings(capacity: values.count)
-  for value in values {
-    if let value {
+/// Untyped text binds (OID 0). `.null` is SQL NULL. The only conversion from `SQLBindValue`.
+private nonisolated func untypedTextBindings(_ binds: [SQLBindValue]) -> PostgresBindings {
+  var bindings = PostgresBindings(capacity: binds.count)
+  for bind in binds {
+    switch bind {
+    case .text(let value):
       bindings.append(UntypedText(value))
-    } else {
+    case .null:
       bindings.appendNull()
     }
   }

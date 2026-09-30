@@ -31,6 +31,44 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .sqlite: .sqlite
     }
   }
+
+  /// Feature set for this engine. SQLite is described and is not a working database.
+  nonisolated var capabilities: DatabaseCapabilities {
+    switch self {
+    case .postgresql:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
+        supportsRolesAndUsers: true,
+        supportsFunctions: true,
+        supportsServerCursor: true,
+        supportsSessionBrakes: true,
+        cancelStrategy: .reconnect,
+        cappedReadResetsSession: true,
+        supportsExplainJSON: true,
+        supportsUpdateOnly: true,
+        isAvailable: true
+      )
+    case .sqlite:
+      DatabaseCapabilities(
+        usesNetwork: false,
+        usesPassword: false,
+        supportsSSL: false,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: false,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsUpdateOnly: false,
+        isAvailable: false
+      )
+    }
+  }
 }
 
 /// Protection level for database connections

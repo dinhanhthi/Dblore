@@ -66,6 +66,8 @@ struct RowChangeSQLBuilderTests {
     #expect(statements.count == 1)
     #expect(statements[0].sql == #"DELETE FROM "t" WHERE "id" = $1 AND "sub" = $2"#)
     #expect(statements[0].values == [nil, "a"])
+    #expect(statements[0].binds == [.null, .text("a")])
+    #expect(!statements[0].sql.contains("'a'"))
 
     let preview = RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
@@ -145,6 +147,8 @@ struct RowChangeSQLBuilderTests {
 
     #expect(bound[0].sql == #"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#)
     #expect(bound[0].values == ["o'brien", "1"])
+    #expect(bound[0].binds == [.text("o'brien"), .text("1")])
+    #expect(!bound[0].sql.contains("o'brien"))
     #expect(preview == #"UPDATE "t" SET "name" = 'o''brien' WHERE "id" = 1;"#)
     #expect(preview != bound[0].sql)
   }

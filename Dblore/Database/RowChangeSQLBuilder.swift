@@ -8,6 +8,11 @@ import Foundation
 nonisolated struct BoundStatement: Equatable, Sendable {
   var sql: String
   var values: [String?]
+
+  /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
+  var binds: [SQLBindValue] {
+    values.map(SQLBindValue.init(optionalText:))
+  }
 }
 
 /// Builds bound DML, then a display-only preview, for a `RowChangeSet`.

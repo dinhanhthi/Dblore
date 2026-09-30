@@ -239,7 +239,10 @@ struct ConnectionFormContent: View {
     if inputMode == .connectionString {
       return !connectionString.isEmpty && parseError == nil
     }
-    return !connectionConfig.host.isEmpty
+    let capabilities = connectionConfig.databaseType.capabilities
+    let hostSatisfied = !capabilities.usesNetwork || !connectionConfig.host.isEmpty
+    // Password stays optional, including when the password field is shown.
+    return hostSatisfied
       && !connectionConfig.database.isEmpty
       && !connectionConfig.username.isEmpty
   }
