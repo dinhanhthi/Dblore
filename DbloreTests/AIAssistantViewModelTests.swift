@@ -393,4 +393,18 @@ struct AIAssistantViewModelTests {
     #expect(vm.activeProvider == .openAI)
     #expect(vm.activeModel == "gpt-x")
   }
+
+  @Test("viewer table replaces the previous one and keeps tables the user picked")
+  func attachViewerTable() {
+    let vm = makeVM(FakeAIChatClient(.events([])))
+    vm.selectedTableNames = ["public.users"]
+    vm.attachViewerTable("public.orders")
+    #expect(vm.selectedTableNames == ["public.users", "public.orders"])
+    vm.attachViewerTable("public.items")
+    #expect(vm.selectedTableNames == ["public.users", "public.items"])
+    vm.attachViewerTable("public.users")
+    #expect(vm.selectedTableNames == ["public.users"])
+    vm.attachViewerTable(nil)
+    #expect(vm.selectedTableNames == ["public.users"])
+  }
 }

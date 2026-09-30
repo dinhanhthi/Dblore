@@ -29,6 +29,12 @@ struct AIAssistantPanel: View {
   private var currentSQL: String? { activeTab?.aiCurrentSQL }
   private var lastError: String? { activeTab?.aiLastError }
 
+  /// Qualified name of the table shown in the active data viewer, if it is a known table
+  private var viewerTableName: String? {
+    guard let viewer = activeTab?.dataViewer else { return nil }
+    return tables.first { $0.schema == viewer.schema && $0.name == viewer.name }?.qualifiedName
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -53,6 +59,9 @@ struct AIAssistantPanel: View {
         )
         .frame(width: 1)
     }
+    .onAppear { assistant.attachViewerTable(viewerTableName) }
+    .onChange(of: viewerTableName) { _, name in assistant.attachViewerTable(name) }
+    .onDisappear { assistant.attachViewerTable(nil) }
   }
 
   /// Accent glow from the top so the panel reads as the AI surface, fading out before the messages

@@ -39,6 +39,8 @@ final class AIAssistantViewModel {
   var modelOverride: String?
   /// Qualified table names; empty means automatic selection
   var selectedTableNames: Set<String> = []
+  /// Table added to `selectedTableNames` by `attachViewerTable`, nil when the user already had it
+  @ObservationIgnored private var viewerTableName: String?
 
   @ObservationIgnored private var generationTask: Task<Void, Never>?
   @ObservationIgnored private var generation = 0
@@ -79,6 +81,15 @@ final class AIAssistantViewModel {
   }
 
   // MARK: - Actions
+
+  /// Follows the table shown in the active data viewer: the previously attached table is
+  /// replaced, tables the user picked are left as they are. nil detaches.
+  func attachViewerTable(_ name: String?) {
+    guard name != viewerTableName else { return }
+    if let old = viewerTableName { selectedTableNames.remove(old) }
+    viewerTableName = nil
+    if let name, selectedTableNames.insert(name).inserted { viewerTableName = name }
+  }
 
   func send() {
     let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
