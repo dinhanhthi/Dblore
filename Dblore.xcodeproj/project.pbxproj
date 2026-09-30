@@ -9,6 +9,11 @@
 /* Begin PBXBuildFile section */
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 		D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC222EF71234009A0E5A /* Sparkle */; };
+		D3E0FC302EF71234009A0E5A /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC312EF71234009A0E5A /* MLXLLM */; };
+		D3E0FC322EF71234009A0E5A /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC332EF71234009A0E5A /* MLXLMCommon */; };
+		D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC352EF71234009A0E5A /* HuggingFace */; };
+		D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC392EF71234009A0E5A /* Tokenizers */; };
+		D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +73,11 @@
 			files = (
 				D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */,
 				D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */,
+				D3E0FC302EF71234009A0E5A /* MLXLLM in Frameworks */,
+				D3E0FC322EF71234009A0E5A /* MLXLMCommon in Frameworks */,
+				D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */,
+				D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */,
+				D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,6 +157,11 @@
 			packageProductDependencies = (
 				D3E0FC002EF71234009A0E5B /* PostgresNIO */,
 				D3E0FC222EF71234009A0E5A /* Sparkle */,
+				D3E0FC312EF71234009A0E5A /* MLXLLM */,
+				D3E0FC332EF71234009A0E5A /* MLXLMCommon */,
+				D3E0FC352EF71234009A0E5A /* HuggingFace */,
+				D3E0FC392EF71234009A0E5A /* Tokenizers */,
+				D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */,
 			);
 			productName = Dblore;
 			productReference = D3E0FB932EF70DBB009A0E5A /* Dblore.app */;
@@ -183,6 +198,9 @@
 			packageReferences = (
 				D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */,
 				D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */,
+				D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */,
+				D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D3E0FB942EF70DBB009A0E5A /* Products */;
@@ -241,6 +259,7 @@
 		D304257B2F0310D3008916E0 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
@@ -265,6 +284,7 @@
 		D304257C2F0310D3008916E0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
@@ -413,6 +433,7 @@
 		D3E0FB9F2EF70DBC009A0E5A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = logo;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -461,6 +482,7 @@
 		D3E0FBA02EF70DBC009A0E5A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = logo;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
@@ -557,6 +579,30 @@
 				minimumVersion = 2.9.3;
 			};
 		};
+		D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = exactVersion;
+				version = 3.31.4;
+			};
+		};
+		D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-huggingface.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.9.0;
+			};
+		};
+		D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers";
+			requirement = {
+				kind = exactVersion;
+				version = 1.3.3;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -569,6 +615,31 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		D3E0FC312EF71234009A0E5A /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		D3E0FC332EF71234009A0E5A /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		D3E0FC352EF71234009A0E5A /* HuggingFace */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */;
+			productName = HuggingFace;
+		};
+		D3E0FC392EF71234009A0E5A /* Tokenizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Tokenizers;
+		};
+		D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXHuggingFace;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -24,6 +24,7 @@ struct SettingsModal: View {
   private enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
     case editor = "Editor"
+    case ai = "AI"
     case results = "Results"
     case save = "Save"
     case developer = "Developer"
@@ -35,6 +36,7 @@ struct SettingsModal: View {
       switch self {
       case .appearance: return "paintbrush"
       case .editor: return "text.cursor"
+      case .ai: return "sparkles"
       case .results: return "tablecells"
       case .save: return "square.and.arrow.down"
       case .updates: return "arrow.triangle.2.circlepath"
@@ -112,6 +114,8 @@ struct SettingsModal: View {
         appSettings: appSettings,
         viewMode: effectiveViewMode
       )
+    case .ai:
+      AISettingsSection()
     case .results:
       SettingsModalResultTableSection(
         appSettings: appSettings,
