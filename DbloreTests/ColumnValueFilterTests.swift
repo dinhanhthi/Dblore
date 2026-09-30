@@ -208,6 +208,37 @@ struct ColumnValueFilterTests {
     #expect(viewModel.searchState.currentMatchIndex == 1)
     #expect(viewModel.searchState.currentMatch?.id == later.id)
   }
+
+  @Test("A hit handed to another cell is assigned there, not searched again")
+  func hiddenSearchMatchHandsOffWithoutSearchingAgain() {
+    let columns = [ColumnInfo(name: "name", type: "text")]
+    let rows: [[CellValue]] = [[.string("find")], [.string("other")]]
+    let result = CellResult(columns: columns, rows: rows, rowCount: rows.count)
+    let filter = ColumnValueFilter().settingHidden(
+      [ColumnValueFilter.categoryKey(for: .string("find"))], for: 0)
+    let hitA = dataMatch(cellId: UUID(), row: 0, column: "name", text: "find")
+    let hitB = dataMatch(cellId: UUID(), row: 0, column: "name", text: "find")
+    let viewModel = NotebookViewModel()
+    viewModel.searchState.matches = [hitA, hitB]
+    viewModel.searchState.currentMatchIndex = 0
+
+    let shown = gridSearchMatchOnScreen(
+      hitA, result: result, sortColumn: nil, ascending: true, valueFilter: filter,
+      viewModel: viewModel)
+    #expect(shown == nil)
+    #expect(viewModel.searchState.currentMatchIndex == 1)
+
+    // The receiving cell draws the hit only when its own filter still shows that row.
+    // It does not call gridSearchMatchOnScreen again.
+    #expect(
+      assignedSearchMatch(
+        hitB, cellId: hitB.cellId, result: result, sortColumn: nil, ascending: true,
+        valueFilter: filter) == nil)
+    #expect(
+      assignedSearchMatch(
+        hitB, cellId: hitB.cellId, result: result, sortColumn: nil, ascending: true,
+        valueFilter: ColumnValueFilter())?.id == hitB.id)
+  }
 }
 
 private func dataMatch(cellId: UUID, row: Int, column: String, text: String) -> SearchMatch {

@@ -177,6 +177,8 @@ func gridSearchMatchOnScreen(
     if shown.cellId != match.cellId {
       viewModel.selectedCellId = shown.cellId
     }
+    // Terminal: grids assign this match. They must not call back into this function,
+    // or two cells that each hide the other's hit re-enter until the main thread overflows.
     NotificationCenter.default.post(
       name: .highlightSearchMatch,
       object: nil,
@@ -185,9 +187,29 @@ func gridSearchMatchOnScreen(
         "query": viewModel.searchState.query,
         "caseSensitive": viewModel.searchState.isCaseSensitive,
         "viewModelId": viewModel.id,
+        "resolved": true,
       ])
   }
-  return shown.isInResultGrid ? shown : nil
+  guard shown.cellId == match.cellId, shown.isInResultGrid else { return nil }
+  return shown
+}
+
+/// A match published with `resolved: true`. This grid draws it only when the row is still
+/// on screen. It does not search onward — the publisher already picked the match.
+@MainActor
+func assignedSearchMatch(
+  _ match: SearchMatch?,
+  cellId: UUID,
+  result: CellResult,
+  sortColumn: String?,
+  ascending: Bool,
+  valueFilter: ColumnValueFilter
+) -> SearchMatch? {
+  guard let match, match.cellId == cellId, match.isInResultGrid else { return nil }
+  guard case .tableData(let row, _) = match.matchType else { return match }
+  let model = ResultGridModel(
+    result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter)
+  return model.displayedRow(forOriginalRow: row) != nil ? match : nil
 }
 
 /// Scroll view that hands a vertical scroll gesture to the enclosing scroll view (the notebook

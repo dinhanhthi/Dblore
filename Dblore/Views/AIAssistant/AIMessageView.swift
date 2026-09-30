@@ -118,12 +118,12 @@ private struct AICodeBlock: View {
         if modifiesData { modifiesBadge }
         Spacer(minLength: 0)
         Button(copied ? "Copied" : "Copy") { copy() }
-          .buttonStyle(GhostButtonStyle())
-          .font(.small)
+          .buttonStyle(SecondaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
+          .controlSize(.mini)
         if isSQL {
           Button("Insert") { onInsert?(code) }
-            .buttonStyle(GhostButtonStyle())
-            .font(.small)
+            .buttonStyle(SecondaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
+            .controlSize(.mini)
             .disabled(onInsert == nil)
             .help(onInsert == nil ? "No active tab" : "Insert into the active tab (does not run)")
         }

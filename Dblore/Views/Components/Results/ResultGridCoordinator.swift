@@ -697,9 +697,13 @@ final class ResultGridRowNumberCell: NSTableCellView {
   static let separatorColor = NSColor(Color.foregroundMuted.opacity(0.35))
 
   /// Gutter background and trailing separator over `rect`
-  static func drawGutter(in rect: NSRect) {
+  static func drawGutter(in rect: NSRect, overlay: NSColor? = nil) {
     backgroundColor.setFill()
     rect.fill()
+    if let overlay {
+      overlay.setFill()
+      rect.fill()
+    }
     separatorColor.setFill()
     NSRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
   }
@@ -722,8 +726,18 @@ final class ResultGridRowNumberCell: NSTableCellView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  /// Number turns light on an emphasized (accent) selection, like the other cells
+  override var backgroundStyle: NSView.BackgroundStyle {
+    didSet {
+      guard backgroundStyle != oldValue else { return }
+      textField?.textColor =
+        backgroundStyle == .emphasized ? .alternateSelectedControlTextColor : Self.textColor
+      needsDisplay = true
+    }
+  }
+
   override func draw(_ dirtyRect: NSRect) {
-    Self.drawGutter(in: bounds)
+    Self.drawGutter(in: bounds, overlay: (superview as? ResultGridRowView)?.gutterOverlayColor)
   }
 }
 

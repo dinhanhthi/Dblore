@@ -26,8 +26,33 @@ final class ResultGridRowView: NSTableRowView {
   /// Row under the mouse, set by the table view
   var isHovered = false {
     didSet {
-      if isHovered != oldValue { needsDisplay = true }
+      if isHovered != oldValue {
+        needsDisplay = true
+        redrawGutterCells()
+      }
     }
+  }
+
+  /// Tint the "#" gutter cell shows over its own background so it follows the row state:
+  /// the selection color when selected, the hover tint when hovered, nil otherwise
+  var gutterOverlayColor: NSColor? {
+    if isSelected {
+      return isEmphasized
+        ? .selectedContentBackgroundColor : .unemphasizedSelectedContentBackgroundColor
+    }
+    return isHovered ? Self.hoverColor : nil
+  }
+
+  override var isSelected: Bool {
+    didSet { if isSelected != oldValue { redrawGutterCells() } }
+  }
+
+  override var isEmphasized: Bool {
+    didSet { if isEmphasized != oldValue { redrawGutterCells() } }
+  }
+
+  private func redrawGutterCells() {
+    for case let cell as ResultGridRowNumberCell in subviews { cell.needsDisplay = true }
   }
 
   override func drawBackground(in dirtyRect: NSRect) {

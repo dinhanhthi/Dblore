@@ -585,8 +585,13 @@ struct NotebookResultGridView: View {
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
         notificationViewModelId == viewModel.id
       else { return }
-      if let match = notification.userInfo?["match"] as? SearchMatch, match.cellId == cellId,
-        match.isInResultGrid
+      if notification.userInfo?["resolved"] as? Bool == true {
+        currentMatch = assignedSearchMatch(
+          notification.userInfo?["match"] as? SearchMatch,
+          cellId: cellId, result: result, sortColumn: sortColumn, ascending: sortAscending,
+          valueFilter: valueFilter)
+      } else if let match = notification.userInfo?["match"] as? SearchMatch,
+        match.cellId == cellId, match.isInResultGrid
       {
         currentMatch = gridSearchMatchOnScreen(
           match, result: result, sortColumn: sortColumn, ascending: sortAscending,

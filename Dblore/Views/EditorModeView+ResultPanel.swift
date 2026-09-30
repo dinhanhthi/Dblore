@@ -364,7 +364,15 @@ struct EditorResultGridView: View {
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,
         notificationViewModelId == viewModel.id
       else { return }
-      if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
+      if notification.userInfo?["resolved"] as? Bool == true {
+        if let match = notification.userInfo?["match"] as? SearchMatch {
+          currentMatch = assignedSearchMatch(
+            match, cellId: match.cellId, result: result, sortColumn: sortColumn,
+            ascending: sortAscending, valueFilter: valueFilter)
+        } else {
+          currentMatch = nil
+        }
+      } else if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
         currentMatch = gridSearchMatchOnScreen(
           match, result: result, sortColumn: sortColumn, ascending: sortAscending,
           valueFilter: valueFilter, viewModel: viewModel)
