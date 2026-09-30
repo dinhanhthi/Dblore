@@ -29,10 +29,14 @@ struct WorkspaceDraggableTabsContainer: View {
   /// Original index of the dragging tab
   @State private var originalIndex: Int?
 
+  /// Tab under the current mouse press, so selection fires once per press
+  @State private var pressedTabId: UUID?
+
   /// Namespace for the active tab capsule that slides between tabs
   @Namespace private var tabCapsuleNamespace
 
   private let tabSpacing: CGFloat = Spacing.xxs
+  private let dragThreshold: CGFloat = 5
 
   var body: some View {
     tabsRow
@@ -51,8 +55,6 @@ struct WorkspaceDraggableTabsContainer: View {
           isActive: isActive,
           isDragging: isDragging,
           capsuleNamespace: tabCapsuleNamespace,
-          onSelect: { workspaceManager.selectTab(id: tab.id) },
-          onPin: { workspaceManager.pinTab(id: tab.id) },
           onClose: { workspaceManager.requestCloseTab(id: tab.id) }
         )
         .id(tab.id)
@@ -75,12 +77,22 @@ struct WorkspaceDraggableTabsContainer: View {
         .animation(draggingTabId != nil ? .easeInOut(duration: 0.2) : nil, value: targetIndex)
         .zIndex(isDragging ? 100 : (isActive ? 50 : 0))
         .gesture(
-          DragGesture(minimumDistance: 5)
+          // Zero distance so the tab activates on mouse-down (like Chrome); a tap gesture
+          // waits for mouse-up. Reordering starts only past `dragThreshold`.
+          DragGesture(minimumDistance: 0)
             .onChanged { value in
+              if pressedTabId == nil {
+                pressedTabId = tab.id
+                workspaceManager.selectTab(id: tab.id)
+                if NSApp.currentEvent?.clickCount == 2 { workspaceManager.pinTab(id: tab.id) }
+              }
+              guard draggingTabId != nil || abs(value.translation.width) >= dragThreshold
+              else { return }
               handleDragChanged(tab: tab, index: index, translation: value.translation.width)
             }
             .onEnded { _ in
-              handleDragEnded()
+              pressedTabId = nil
+              if draggingTabId != nil { handleDragEnded() }
             }
         )
       }
@@ -243,8 +255,6 @@ struct WorkspaceDraggableTabItem: View {
   let isActive: Bool
   let isDragging: Bool
   let capsuleNamespace: Namespace.ID
-  let onSelect: () -> Void
-  let onPin: () -> Void
   let onClose: () -> Void
 
   @State private var isHovering = false
@@ -287,11 +297,6 @@ struct WorkspaceDraggableTabItem: View {
     .opacity(isDragging ? 0.9 : 1.0)
     .scaleEffect(isDragging ? 1.02 : 1.0)
     .shadow(color: isDragging ? Color.black.opacity(0.2) : Color.clear, radius: 4, y: 2)
-    .onTapGesture {
-      onSelect()
-      // Double-click pins a preview tab; reading clickCount keeps single-click switching instant
-      if NSApp.currentEvent?.clickCount == 2 { onPin() }
-    }
     .onMiddleClick { onClose() }
     .blockDoubleClickZoom()
     .onHover {
