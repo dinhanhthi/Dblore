@@ -42,7 +42,7 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
-      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+Shift+A")
+      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
     }
   }
 
@@ -59,7 +59,7 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+,")
-      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+Shift+A")
+      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
     }
   }
 }

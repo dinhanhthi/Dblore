@@ -725,7 +725,7 @@ struct WorkspaceTitleBarTabsView: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .controlSize(.small)
         .blockDoubleClickZoom()
-        .help("AI Assistant (⌘⇧A)")
+        .help("AI Assistant (⌘L)")
 
         // Settings button
         Button {

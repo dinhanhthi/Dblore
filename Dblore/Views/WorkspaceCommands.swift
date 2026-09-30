@@ -41,7 +41,7 @@ struct WorkspaceCommands: Commands {
       } label: {
         Label("Toggle AI Assistant", systemImage: "sparkles")
       }
-      .keyboardShortcut("a", modifiers: [.command, .shift])
+      .keyboardShortcut("l", modifiers: .command)
       .disabled(toggleAIAssistantAction == nil)
     }
   }

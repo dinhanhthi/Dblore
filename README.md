@@ -33,7 +33,7 @@ today; more engines (such as MongoDB) are planned.
   Commit / Rollback banner for pending transactions, with Touch ID to unlock
 - **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
   canvas of tables with foreign-key lines
-- **AI assistant**: chat panel (`Cmd+Shift+A`) that writes SQL from plain-language questions
+- **AI assistant**: chat panel (`Cmd+L`) that writes SQL from plain-language questions
   and explains or fixes queries. Works with Anthropic, OpenAI, OpenRouter, Ollama,
   LM Studio, `mlx_lm.server` or any custom OpenAI-compatible endpoint (bring your own API
   key; Claude Pro/Max subscriptions are not supported). Table and column names, types
