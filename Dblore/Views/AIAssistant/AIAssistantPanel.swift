@@ -57,7 +57,6 @@ struct AIAssistantPanel: View {
         .font(.subheading)
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.xs)
-      modelMenu
       Button {
         assistant.clear()
       } label: {
@@ -110,20 +109,12 @@ struct AIAssistantPanel: View {
         }
       }
     } label: {
-      HStack(spacing: Spacing.xs) {
-        Text(modelLabel)
-          .font(.small)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        Image(systemName: "chevron.down").font(.smallest)
-      }
-      .foregroundColor(.foregroundMuted)
-      .contentShape(Rectangle())
+      AIDropdownLabel(title: modelLabel, systemImage: "sparkles")
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
-    .fixedSize()
+    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     .disabled(configuredProviders.isEmpty)
     .linkPointer()
     .help("Provider and model")
@@ -215,10 +206,16 @@ struct AIAssistantPanel: View {
   private var footer: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       quickActions
-      AIContextPicker(selected: $assistant.selectedTableNames, tables: tables) { column in
-        let separator = assistant.draft.isEmpty || assistant.draft.hasSuffix(" ") ? "" : " "
-        assistant.draft += separator + column + " "
-        composerFocused = true
+      AIContextPicker(
+        selected: $assistant.selectedTableNames,
+        tables: tables,
+        onColumn: { column in
+          let separator = assistant.draft.isEmpty || assistant.draft.hasSuffix(" ") ? "" : " "
+          assistant.draft += separator + column + " "
+          composerFocused = true
+        }
+      ) {
+        modelMenu
       }
       composer
     }
