@@ -19,7 +19,6 @@
 //   rows past the cap counted but not kept. Closing mid-stream would roll back its changes.
 
 import Foundation
-import Logging
 import PostgresNIO
 
 /// Why the manager closed and reopened the session
@@ -50,7 +49,7 @@ nonisolated enum ScriptCheckpoint: Sendable, Equatable {
 }
 
 /// Rows read from a stream, at most the row cap.
-struct CollectedRows {
+struct CollectedRows: Sendable {
   var columns: [ColumnInfo] = []
   var rows: [[CellValue]] = []
   /// Rows the stream returned (past the cap only when read to the end)
@@ -60,31 +59,26 @@ struct CollectedRows {
 }
 
 extension DatabaseConnectionManager {
-  /// Read at most `maxRows` rows of `stream`, taking column names / types from the first row.
-  /// One row past the cap is looked at to know whether the result was truncated. Then the loop
-  /// breaks (PostgresNIO drains the rest on the next query, unless the session is closed), or,
-  /// with `readToEnd`, keeps counting rows without keeping them.
+  /// Read at most `maxRows` rows of `source`, taking column names / types from the first row
+  /// that is kept. One row past the cap is looked at to know whether the result was truncated.
+  /// Then the loop breaks (the session stops reading and PostgresNIO drains the rest on the
+  /// next query, unless the session is closed), or, with `readToEnd`, keeps counting rows
+  /// without keeping them.
   func readCapped(
-    _ stream: PostgresRowSequence, maxRows: Int, readToEnd: Bool
+    _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
   ) async throws -> CollectedRows {
     var collected = CollectedRows()
-    for try await row in stream {
+    for try await row in source.rows {
       collected.total += 1
       if collected.rows.count >= maxRows {
         collected.truncated = true
         if readToEnd { continue }
         break
       }
-      let randomAccess = row.makeRandomAccess()
       if collected.total == 1 {
-        for (index, cell) in randomAccess.enumerated() {
-          collected.columns.append(
-            ColumnInfo(
-              name: cell.columnName, type: postgresDataTypeName(cell.dataType),
-              origin: stream.columns.dropFirst(index).first))
-        }
+        collected.columns = source.columns
       }
-      collected.rows.append(randomAccess.map { parseCellValue(from: $0) })
+      collected.rows.append(row)
     }
     return collected
   }
@@ -112,16 +106,15 @@ extension DatabaseConnectionManager {
     var reset = result
     reset.sessionReset = true
     // Forgotten in this actor turn: no caller entering meanwhile can send on the closing session
-    let (closing, group) = forgetConnection()
+    let forgotten = forgetConnection()
     lastSessionLoss = nil
     do {
-      try? await closing?.close()
-      try? await group?.shutdownGracefully()
+      await Self.closeForgotten(forgotten, includingConnection: true)
       try await connect(config: config)
       sessionResetsContinuation.yield(
         SessionResetEvent(epoch: connectionEpoch, userTxRolledBack: false))
     } catch {
-      guard _connection == nil else { return reset }
+      guard session == nil else { return reset }
       let event = SessionLostEvent(
         state: .idle, userTxOpen: false, epoch: connectionEpoch)
       lastSessionLoss = event
@@ -136,23 +129,35 @@ extension DatabaseConnectionManager {
   /// CLOSE. The server stops at the cap instead of draining. Errors point at the text sent
   /// (the server position is relative to it).
   func executeCursorRead(
-    _ query: String, on connection: PostgresConnection, maxRows: Int, startTime: Date
+    _ query: String, maxRows: Int, startTime: Date
   ) async throws -> QueryResult {
-    let name = "dblore_cap_" + UUID().uuidString.prefix(8).lowercased()
-    let declare = "DECLARE \(name) NO SCROLL CURSOR FOR \(query)"
-    let fetch = "FETCH FORWARD \(maxRows + 1) FROM \(name)"
-    let close = "CLOSE \(name)"
-    _ = try await executeCommand(declare, on: connection, startTime: startTime)
+    let cursor: SessionCursor
+    do {
+      cursor = try await withSession { session in
+        try await session.openCursor(query, binds: [])
+      }
+    } catch {
+      throw unwrapFailure(error, fallbackSQL: query, startTime: startTime)
+    }
+    let fetchCount = maxRows + 1
+    let fetchSQL = PostgresSession.fetchSQL(name: cursor.name, maxRows: fetchCount)
     let collected: CollectedRows
     do {
-      let stream = try await send(on: connection) {
-        try await $0.query(PostgresQuery(unsafeSQL: fetch), logger: Logger(label: "dblore"))
+      collected = try await withSession { session in
+        let source = try await session.fetch(cursor, maxRows: fetchCount)
+        return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
       }
-      collected = try await readCapped(stream, maxRows: maxRows, readToEnd: false)
     } catch {
-      throw queryFailure(error, query: fetch, startTime: startTime)
+      throw unwrapFailure(error, fallbackSQL: fetchSQL, startTime: startTime)
     }
-    _ = try await executeCommand(close, on: connection, startTime: startTime)
+    let closeSQL = PostgresSession.closeSQL(name: cursor.name)
+    do {
+      try await withSession { session in
+        try await session.closeCursor(cursor)
+      }
+    } catch {
+      throw unwrapFailure(error, fallbackSQL: closeSQL, startTime: startTime)
+    }
     let executionTime = Date().timeIntervalSince(startTime)
     // Not after a truncated read, as on the drain path: a failed catalog query inside the
     // user's BEGIN would abort their transaction

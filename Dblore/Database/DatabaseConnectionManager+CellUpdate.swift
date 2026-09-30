@@ -23,7 +23,7 @@ nonisolated extension BoundStatement {
 }
 
 /// Untyped text binds (OID 0). `.null` is SQL NULL. The only conversion from `SQLBindValue`.
-private nonisolated func untypedTextBindings(_ binds: [SQLBindValue]) -> PostgresBindings {
+nonisolated func untypedTextBindings(_ binds: [SQLBindValue]) -> PostgresBindings {
   var bindings = PostgresBindings(capacity: binds.count)
   for bind in binds {
     switch bind {

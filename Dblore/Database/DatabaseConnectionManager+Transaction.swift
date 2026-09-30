@@ -3,7 +3,6 @@
 // that waits for Commit / Rollback. Rules live in `ProtectedTransactionRules` (pure).
 
 import Foundation
-import Logging
 import PostgresNIO
 
 extension DatabaseConnectionManager {
@@ -44,7 +43,7 @@ extension DatabaseConnectionManager {
     _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?,
     expectedEpoch: UInt64? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
-    guard _connection != nil else { throw DatabaseError.notConnected }
+    guard session != nil else { throw DatabaseError.notConnected }
     guard !statements.isEmpty else { throw DatabaseError.emptyQuery }
     if let expectedEpoch, expectedEpoch != connectionEpoch {
       throw DatabaseError.sessionChanged(skippedStatements: statements.count)
@@ -137,7 +136,7 @@ extension DatabaseConnectionManager {
   ///   A failed COMMIT ends the transaction on the server, so the state is `.idle` afterwards.
   func commitAppTransaction(expectedGeneration: UInt64) async throws {
     // The server ended the session (and its transaction): never report a silent success
-    if _connection == nil, let loss = lastSessionLoss {
+    if session == nil, let loss = lastSessionLoss {
       throw DatabaseError.connectionLost(loss.message)
     }
     try refuseIfEnding()
@@ -157,7 +156,7 @@ extension DatabaseConnectionManager {
       // Marked before the first suspension: statements entering meanwhile are refused
       txState = .ending(kind: .commit, pending: pending)
       await transactionEndHook?(.commit)
-      let metadata: PostgresQueryMetadata
+      let metadata: CommandResult
       do {
         metadata = try await sendTransactionControl("COMMIT")
       } catch {
@@ -173,7 +172,7 @@ extension DatabaseConnectionManager {
       }
       txState = .idle
       // COMMIT of a transaction the server already aborted answers with a ROLLBACK tag
-      guard metadata.command == "COMMIT" else {
+      guard metadata.tag == "COMMIT" else {
         throw DatabaseError.transactionAborted(
           "The server rolled back the transaction instead of committing it (a statement had "
             + "failed); the \(pending.count) pending statement(s) were discarded.")
@@ -329,7 +328,9 @@ extension DatabaseConnectionManager {
   }
 
   private var isConnectionLost: Bool {
-    _connection?.isClosed ?? true
+    guard session != nil else { return true }
+    guard let postgres = postgresSession else { return false }
+    return postgres.connection?.isClosed ?? true
   }
 
   /// The server may close the session on its own (e.g. `idle_in_transaction_session_timeout`
@@ -337,7 +338,7 @@ extension DatabaseConnectionManager {
   /// (`markSessionLost`, which also ends the user transaction) and the caller gets
   /// `DatabaseError.connectionLost` asking to reconnect.
   func refuseIfConnectionClosed() throws {
-    guard let connection = _connection, connection.isClosed else { return }
+    guard let connection = _postgresConnection, connection.isClosed else { return }
     throw sessionLostError(connection, epoch: connectionEpoch)
   }
 
@@ -347,14 +348,11 @@ extension DatabaseConnectionManager {
         + "the server. \(error.localizedDescription)")
   }
 
-  func sendTransactionControl(_ sql: String) async throws -> PostgresQueryMetadata {
-    guard let connection = _connection else { throw DatabaseError.notConnected }
+  func sendTransactionControl(_ sql: String) async throws -> CommandResult {
     let startTime = Date()
     do {
-      return try await send(on: connection) {
-        try await $0.query(
-          PostgresQuery(unsafeSQL: sql), logger: Logger(label: "dblore.transaction")
-        ).get().metadata
+      return try await withSession { session in
+        try await session.command(sql, binds: [])
       }
     } catch let error as DatabaseError {
       throw error

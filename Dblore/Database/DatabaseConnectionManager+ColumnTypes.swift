@@ -17,7 +17,7 @@ extension DatabaseConnectionManager {
   /// app transaction is pending: a failing catalog query would abort it.
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
     // Only proceed if we have columns and connection
-    guard !columns.isEmpty, !isMetadataPaused, let connection = _connection,
+    guard !columns.isEmpty, !isMetadataPaused, let connection = _postgresConnection,
       databaseType == .postgresql
     else {
       return columns

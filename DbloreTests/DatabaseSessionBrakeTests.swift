@@ -51,7 +51,7 @@ struct DatabaseSessionBrakeTests {
     defer { Task { await manager.disconnect() } }
     #expect(try await show(manager, "statement_timeout") == "1s")
 
-    let connection = try #require(await manager._connection)
+    let connection = try #require(await manager._postgresConnection)
     var sqlState: String?
     do {
       _ = try await connection.query(

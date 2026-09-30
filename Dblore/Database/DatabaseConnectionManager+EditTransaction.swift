@@ -79,7 +79,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.editRowCountMismatch(updated: rows, rolledBack: true)
     }
     let metadata = try await sendTransactionControl("COMMIT")
-    guard metadata.command == "COMMIT" else {
+    guard metadata.tag == "COMMIT" else {
       throw DatabaseError.transactionAborted(
         "The server rolled back the edit instead of saving it.")
     }
@@ -144,7 +144,7 @@ extension DatabaseConnectionManager {
       throw error
     }
     let metadata = try await sendTransactionControl("COMMIT")
-    guard metadata.command == "COMMIT" else {
+    guard metadata.tag == "COMMIT" else {
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
@@ -219,7 +219,7 @@ extension DatabaseConnectionManager {
   private func affectedRows(
     sql: String, binds: PostgresBindings, logLabel: String
   ) async throws -> Int {
-    guard let connection = _connection else { throw DatabaseError.notConnected }
+    guard let connection = _postgresConnection else { throw DatabaseError.notConnected }
     let startTime = Date()
     do {
       let query = PostgresQuery(unsafeSQL: sql, binds: binds)

@@ -10,11 +10,69 @@ import PostgresNIO
 
 // MARK: - Error Formatting
 
-extension DatabaseConnectionManager {
+extension PostgresSession {
+  static func formatPostgresError(
+    _ error: PSQLError, query: String?, statementTimeoutSeconds: Int
+  ) -> String {
+    if let timeout = statementTimeoutMessage(
+      error, statementTimeoutSeconds: statementTimeoutSeconds)
+    {
+      return timeout
+    }
+    var message = ""
+
+    if let serverInfo = error.serverInfo {
+      if let errorMessage = serverInfo[.message] {
+        message = errorMessage
+      } else if let severity = serverInfo[.severity] {
+        if let friendlyMessage = humanReadableErrorMessage(for: error.code.description) {
+          message = "\(severity): \(friendlyMessage)"
+        } else {
+          message = "\(severity): \(error.code.description)"
+        }
+      } else {
+        message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
+      }
+
+      if let detail = serverInfo[.detail] {
+        message += "\n\nDetail: \(detail)"
+      }
+
+      if let hint = serverInfo[.hint] {
+        message += "\n\nHint: \(hint)"
+      }
+
+      if let positionStr = serverInfo[.position],
+        let position = Int(positionStr)
+      {
+        if let query, position > 0 && position <= query.count {
+          let errorContext = extractErrorContext(from: query, at: position)
+          message += "\n\nNear: \"\(errorContext)\""
+        } else {
+          message += "\n\nPosition: \(positionStr)"
+        }
+      }
+    } else {
+      message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
+    }
+
+    return message
+  }
+
+  /// The server brake `statement_timeout` (applied on connect) stopped the statement: SQLSTATE
+  /// 57014 "canceling statement due to statement timeout" (57014 is also an administrator's
+  /// `pg_cancel_backend`, which keeps the server message). Nil for any other error.
+  static func statementTimeoutMessage(_ error: PSQLError, statementTimeoutSeconds: Int) -> String? {
+    guard let info = error.serverInfo, info[.sqlState] == "57014",
+      info[.message]?.contains("statement timeout") == true
+    else { return nil }
+    let seconds = SessionBrakeLimits.clampStatementTimeout(statementTimeoutSeconds)
+    return "Statement timed out after \(seconds)s (statement_timeout, SQLSTATE 57014) — change it "
+      + "in the connection's Safety settings"
+  }
+
   /// Convert error code to user-friendly message
-  /// - Parameter errorCode: The error code string
-  /// - Returns: Human-readable error message
-  func humanReadableErrorMessage(for errorCode: String) -> String? {
+  static func humanReadableErrorMessage(for errorCode: String) -> String? {
     // Map common error codes to friendly messages
     switch errorCode {
     case "sslUnsupported":
@@ -40,81 +98,12 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Format a PostgreSQL error with detailed information
-  /// - Parameters:
-  ///   - error: The PostgreSQL error
-  ///   - query: The SQL query that caused the error (optional, for better position reporting)
-  func formatPostgresError(_ error: PSQLError, query: String? = nil) -> String {
-    if let timeout = statementTimeoutMessage(error) { return timeout }
-    var message = ""
-
-    // Get the main error message
-    if let serverInfo = error.serverInfo {
-      // Extract message from server info
-      if let errorMessage = serverInfo[.message] {
-        message = errorMessage
-      } else if let severity = serverInfo[.severity] {
-        // Try to get human-readable message first
-        if let friendlyMessage = humanReadableErrorMessage(for: error.code.description) {
-          message = "\(severity): \(friendlyMessage)"
-        } else {
-          message = "\(severity): \(error.code.description)"
-        }
-      } else {
-        // Try to get human-readable message first
-        message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
-      }
-
-      // Add detail if available
-      if let detail = serverInfo[.detail] {
-        message += "\n\nDetail: \(detail)"
-      }
-
-      // Add hint if available
-      if let hint = serverInfo[.hint] {
-        message += "\n\nHint: \(hint)"
-      }
-
-      // Add position if available (where in the query the error occurred)
-      if let positionStr = serverInfo[.position],
-        let position = Int(positionStr)
-      {
-        // If we have the query text, extract the problematic keyword/text
-        if let query = query, position > 0 && position <= query.count {
-          let errorContext = extractErrorContext(from: query, at: position)
-          message += "\n\nNear: \"\(errorContext)\""
-        } else {
-          // Fallback to position number
-          message += "\n\nPosition: \(positionStr)"
-        }
-      }
-    } else {
-      // Fallback to human-readable message or basic error description
-      message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
-    }
-
-    return message
-  }
-
-  /// The server brake `statement_timeout` (applied on connect) stopped the statement: SQLSTATE
-  /// 57014 "canceling statement due to statement timeout" (57014 is also an administrator's
-  /// `pg_cancel_backend`, which keeps the server message). Nil for any other error.
-  func statementTimeoutMessage(_ error: PSQLError) -> String? {
-    guard let info = error.serverInfo, info[.sqlState] == "57014",
-      info[.message]?.contains("statement timeout") == true
-    else { return nil }
-    let seconds = SessionBrakeLimits.clampStatementTimeout(
-      config?.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout)
-    return "Statement timed out after \(seconds)s (statement_timeout, SQLSTATE 57014) — change it "
-      + "in the connection's Safety settings"
-  }
-
   /// Extract the problematic keyword or context from query at the given position
   /// - Parameters:
   ///   - query: The SQL query text
   ///   - position: Character position in the query (1-indexed)
   /// - Returns: The word/keyword at the position or surrounding context
-  func extractErrorContext(from query: String, at position: Int) -> String {
+  static func extractErrorContext(from query: String, at position: Int) -> String {
     // Convert to 0-indexed
     let index = position - 1
 
@@ -165,5 +154,18 @@ extension DatabaseConnectionManager {
     }
 
     return word
+  }
+}
+
+extension DatabaseConnectionManager {
+  /// Postgres error text. Uses the live session when one is published.
+  func formatPostgresError(_ error: PSQLError, query: String? = nil) -> String {
+    if let postgresSession {
+      return postgresSession.formatPostgresError(error, query: query)
+    }
+    return PostgresSession.formatPostgresError(
+      error, query: query,
+      statementTimeoutSeconds: config?.statementTimeoutSeconds
+        ?? SessionBrakeLimits.defaultStatementTimeout)
   }
 }

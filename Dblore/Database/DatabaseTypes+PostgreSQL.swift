@@ -14,7 +14,7 @@ import PostgresNIO
 
 extension DatabaseConnectionManager {
   /// Map PostgreSQL data type to display name
-  func postgresDataTypeName(_ dataType: PostgresDataType) -> String {
+  nonisolated static func postgresDataTypeName(_ dataType: PostgresDataType) -> String {
     switch dataType {
     case .bool:
       return "BOOLEAN"
@@ -85,7 +85,7 @@ extension DatabaseConnectionManager {
   }
 
   /// Parse a cell value from PostgresCell
-  func parseCellValue(from cell: PostgresCell) -> CellValue {
+  nonisolated static func parseCellValue(from cell: PostgresCell) -> CellValue {
     // Check for NULL first
     // PostgresNIO represents NULL as nil bytes
     guard let bytes = cell.bytes, bytes.readableBytes > 0 else {
@@ -253,7 +253,7 @@ extension DatabaseConnectionManager {
   /// - Parameter buffer: Raw bytes from PostgreSQL containing pgvector binary data
   /// - Returns: CellValue.string containing formatted array like "[0.123, 0.456, 0.789]",
   ///            or nil if the data doesn't match pgvector format
-  private func parseVectorValue(from buffer: ByteBuffer) -> CellValue? {
+  private nonisolated static func parseVectorValue(from buffer: ByteBuffer) -> CellValue? {
     var buffer = buffer
 
     // Check minimum size (4 bytes for dimension)

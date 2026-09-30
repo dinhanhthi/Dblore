@@ -741,7 +741,7 @@ struct ProtectedTransactionTests {
       // The server closed the session: nothing is sent, the caller is asked to reconnect (C0:
       // the session is forgotten as soon as it closes, so the manager may already be
       // disconnected)
-      #expect(await manager._connection?.isClosed ?? true)
+      #expect(await manager._postgresConnection?.isClosed ?? true)
       let error = await #expect(throws: DatabaseError.self) {
         _ = try await manager.execute(userSQL: "SELECT 1", policy: open)
       }

@@ -10,7 +10,6 @@
 //
 
 import Foundation
-import Logging
 import PostgresNIO
 
 extension DatabaseConnectionManager {
@@ -27,7 +26,7 @@ extension DatabaseConnectionManager {
   ) async throws
     -> QueryResult
   {
-    guard _connection != nil else {
+    guard session != nil else {
       throw DatabaseError.notConnected
     }
 
@@ -165,7 +164,7 @@ extension DatabaseConnectionManager {
   func executeSingleStatement(
     _ query: String, maxRows: Int, inTransaction: Bool = false
   ) async throws -> QueryResult {
-    guard let connection = _connection else {
+    guard session != nil else {
       throw DatabaseError.notConnected
     }
 
@@ -185,17 +184,18 @@ extension DatabaseConnectionManager {
     let statement = SQLStatementClassifier.classifyStatement(query)
     switch StatementRoute.route(for: statement) {
     case .command:
-      return try await executeCommand(query, on: connection, startTime: startTime)
+      return try await executeCommand(query, startTime: startTime)
     case .returningRows:
       return try await executeUnwrapped(
-        query, on: connection, countRows: true, maxRows: maxRows, startTime: startTime)
+        query, countRows: true, maxRows: maxRows, startTime: startTime)
     case .unwrappedRows:
       return try await executeUnwrapped(
-        query, on: connection, countRows: false, maxRows: maxRows, startTime: startTime)
+        query, countRows: false, maxRows: maxRows, startTime: startTime)
     case .read:
-      if inTransaction, let statement, Self.usesCursor(statement) {
-        return try await executeCursorRead(
-          query, on: connection, maxRows: maxRows, startTime: startTime)
+      if inTransaction, let statement, Self.usesCursor(statement),
+        session?.capabilities.supportsServerCursor == true
+      {
+        return try await executeCursorRead(query, maxRows: maxRows, startTime: startTime)
       }
     }
 
@@ -203,10 +203,10 @@ extension DatabaseConnectionManager {
     // `maxRows` rows and breaks; the caller decides whether the session is reset
     // (`resetSessionIfCapped`) or drained.
     do {
-      let stream = try await send(on: connection) {
-        try await $0.query(PostgresQuery(unsafeSQL: query), logger: Logger(label: "dblore"))
+      let collected = try await withSession { current in
+        let source = try await current.query(query, binds: [])
+        return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
       }
-      let collected = try await readCapped(stream, maxRows: maxRows, readToEnd: false)
       let executionTime = Date().timeIntervalSince(startTime)
       // Try to enrich column type information with modifiers. Not after a truncated read: the
       // catalog query would first wait for the rest of the result to drain.

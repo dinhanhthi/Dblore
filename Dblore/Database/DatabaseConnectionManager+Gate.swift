@@ -70,7 +70,7 @@ extension DatabaseConnectionManager {
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
-    guard _connection != nil else { throw DatabaseError.notConnected }
+    guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
@@ -107,7 +107,7 @@ extension DatabaseConnectionManager {
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
-    guard _connection != nil else { throw DatabaseError.notConnected }
+    guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
