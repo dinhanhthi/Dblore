@@ -769,13 +769,13 @@ struct WorkspaceTitleBarTabsView: View {
           Image(systemName: "plus")
             .font(.system(size: 11))
             .foregroundColor(.foregroundMuted)
-            .frame(width: 24, height: 24)
-            .contentShape(Circle())
         }
         .menuStyle(.borderlessButton)
         .linkPointer()
         .menuIndicator(.hidden)
         .fixedSize()
+        .padding(Spacing.sm - 2)
+        .contentShape(Circle())
         .background {
           Circle()
             .fill(isHoveringNewTabButton ? Color.cellBackgroundHover : Color.clear)
