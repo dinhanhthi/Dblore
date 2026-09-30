@@ -180,7 +180,6 @@ struct AIContextPicker<Accessory: View>: View {
             .clipped()
         }
       }
-      .padding(.bottom, Spacing.sm)
     }
     .onChange(of: selected) { _, newValue in
       if let expanded, !newValue.contains(expanded) { self.expanded = nil }
