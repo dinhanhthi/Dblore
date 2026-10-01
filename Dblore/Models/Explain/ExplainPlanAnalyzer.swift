@@ -70,7 +70,8 @@ nonisolated enum ExplainPlanAnalyzer {
     let useTime = plan.root.actualTotalTime != nil
     let rootInclusive = inclusiveMetric(plan.root, useTime: useTime)
     var nodes: [AnalyzedNode] = []
-    visit(plan.root, useTime: useTime, rootInclusive: rootInclusive, into: &nodes)
+    // The root inclusive value is already in rootInclusive. Child calls use the return.
+    _ = visit(plan.root, useTime: useTime, rootInclusive: rootInclusive, into: &nodes)
     return AnalyzedPlan(nodes: nodes, hotNodes: hottest(nodes))
   }
 
