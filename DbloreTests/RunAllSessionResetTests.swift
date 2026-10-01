@@ -26,7 +26,7 @@ private final class Flag: @unchecked Sendable {
   }
 }
 
-@Suite("Run All Session Reset - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Run All Session Reset - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct RunAllSessionResetTests {
   private static let cap = 100

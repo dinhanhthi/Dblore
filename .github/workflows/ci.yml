@@ -1,0 +1,70 @@
+name: CI
+
+# Unit tests on pull requests and on pushes to main. Integration suites stay off
+# (SKIP_INTEGRATION_TESTS); they need the local PostgreSQL container.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dblore/**'
+      - 'DbloreTests/**'
+      - 'Dblore.xcodeproj/**'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Dblore/**'
+      - 'DbloreTests/**'
+      - 'Dblore.xcodeproj/**'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+# A new push to the same PR (or to main) cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/select-xcode
+
+      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      # -skipPackagePluginValidation: mlx-swift ships a build plugin (CudaBuild) that otherwise
+      # needs interactive trust. -skipMacroValidation: same for mlx-swift-lm macros.
+      # Both skip flags are global to the invocation; -disableAutomaticPackageResolution and
+      # -onlyUsePackageVersionsFromResolvedFile restrict the build to the committed Package.resolved.
+      # The result bundle lives under RUNNER_TEMP so a failed run can upload it.
+      - name: Test
+        run: |
+          SKIP_INTEGRATION_TESTS=true xcodebuild test \
+            -scheme Dblore \
+            -destination 'platform=macOS,arch=arm64' \
+            -enableCodeCoverage NO \
+            -parallel-testing-enabled NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -resultBundlePath "$RUNNER_TEMP/Dblore.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: xcresult-${{ github.sha }}
+          path: ${{ runner.temp }}/Dblore.xcresult
+          retention-days: 7

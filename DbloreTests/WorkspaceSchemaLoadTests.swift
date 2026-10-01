@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Workspace Schema Load - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Workspace Schema Load - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct WorkspaceSchemaLoadTests {
   private static func config(protectedMode: Bool = false) -> ConnectionConfig {

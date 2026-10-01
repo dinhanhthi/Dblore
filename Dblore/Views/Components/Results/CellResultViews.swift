@@ -521,38 +521,55 @@ struct NotebookResultGridView: View {
     viewModel.notebook.cells.first(where: { $0.id == cellId })
   }
 
+  private var chartSpecBinding: Binding<ChartSpec?> {
+    Binding(
+      get: { cell?.chartSpec },
+      set: { newValue in
+        guard let index = viewModel.notebook.cells.firstIndex(where: { $0.id == cellId }) else {
+          return
+        }
+        viewModel.notebook.cells[index].chartSpec = newValue
+        viewModel.onDocumentChanged?()
+      }
+    )
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      ResultGridView(
-        result: result,
-        sortColumn: sortColumn,
-        ascending: sortAscending,
-        isEditable: viewModel.canEdit(result),
-        onCommitEdit: { row, column, newValue in
-          viewModel.handleGridCellEdit(
-            row: row, column: column, newValue: newValue, result: result, cellId: cellId,
-            connectionManager: viewModel.connectionManager)
-        },
-        onSortChange: { column, ascending in
-          sortColumn = column
-          sortAscending = ascending
-        },
-        valueFilter: valueFilter,
-        onValueFilterChange: { valueFilter = $0 },
-        onShowCellDetails: { row, originalRow, column in
-          viewModel.showGridCellInSidebar(
-            row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
-        },
-        searchQuery: viewModel.searchState.query,
-        caseSensitive: viewModel.searchState.isCaseSensitive,
-        currentMatch: currentMatch,
-        searchMatches: viewModel.searchState.matches,
-        hideColumnTypes: AppSettings.shared.hideColumnTypes
-      )
-      .frame(
-        height: ResultGridView.height(
-          rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
-          scrollerStyle: scrollerStyle))
+      ExplainableResult(result: result) {
+        ChartableResult(result: result, chartSpec: chartSpecBinding) {
+          ResultGridView(
+            result: result,
+            sortColumn: sortColumn,
+            ascending: sortAscending,
+            isEditable: viewModel.canEdit(result),
+            onCommitEdit: { row, column, newValue in
+              viewModel.handleGridCellEdit(
+                row: row, column: column, newValue: newValue, result: result, cellId: cellId,
+                connectionManager: viewModel.connectionManager)
+            },
+            onSortChange: { column, ascending in
+              sortColumn = column
+              sortAscending = ascending
+            },
+            valueFilter: valueFilter,
+            onValueFilterChange: { valueFilter = $0 },
+            onShowCellDetails: { row, originalRow, column in
+              viewModel.showGridCellInSidebar(
+                row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
+            },
+            searchQuery: viewModel.searchState.query,
+            caseSensitive: viewModel.searchState.isCaseSensitive,
+            currentMatch: currentMatch,
+            searchMatches: viewModel.searchState.matches,
+            hideColumnTypes: AppSettings.shared.hideColumnTypes
+          )
+          .frame(
+            height: ResultGridView.height(
+              rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
+              scrollerStyle: scrollerStyle))
+        }
+      }
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
       if let cell = cell, cell.statementResults.count > 1 {

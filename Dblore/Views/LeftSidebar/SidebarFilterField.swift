@@ -7,10 +7,47 @@
 
 import SwiftUI
 
-struct SidebarFilterField: View {
+struct SidebarFilterField<Trailing: View>: View {
   @Binding var text: String
+  /// Fixed capsule height for the field and its trailing control. Nil keeps the field's padding.
+  var controlHeight: CGFloat? = nil
+  var topPadding: CGFloat = Spacing.sm
+  var bottomPadding: CGFloat = Spacing.xs
+  private var trailing: Trailing
+
+  init(
+    text: Binding<String>,
+    controlHeight: CGFloat? = nil,
+    topPadding: CGFloat = Spacing.sm,
+    bottomPadding: CGFloat = Spacing.xs,
+    @ViewBuilder trailing: () -> Trailing
+  ) {
+    self._text = text
+    self.controlHeight = controlHeight
+    self.topPadding = topPadding
+    self.bottomPadding = bottomPadding
+    self.trailing = trailing()
+  }
+
+  /// Empty trailing must not take a slot, or the field picks up a gap on the right.
+  private var showsTrailing: Bool {
+    Trailing.self != EmptyView.self
+  }
 
   var body: some View {
+    HStack(alignment: .center, spacing: showsTrailing ? Spacing.sm : 0) {
+      field
+      if showsTrailing {
+        trailing
+          .frame(height: controlHeight)
+      }
+    }
+    .padding(.horizontal, Spacing.sm)
+    .padding(.top, topPadding)
+    .padding(.bottom, bottomPadding)
+  }
+
+  private var field: some View {
     HStack(spacing: Spacing.xs) {
       Image(systemName: "magnifyingglass")
         .font(.system(size: 11))
@@ -34,17 +71,16 @@ struct SidebarFilterField: View {
       }
     }
     .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, Spacing.xsm)
-    .background(
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(Color.inputBackground)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .strokeBorder(Color.border, lineWidth: 1)
-    )
-    .padding(.horizontal, Spacing.sm)
-    .padding(.top, Spacing.sm)
-    .padding(.bottom, Spacing.xs)
+    .padding(.vertical, controlHeight == nil ? Spacing.xsm : 0)
+    .frame(maxWidth: .infinity)
+    .frame(height: controlHeight)
+    .background(Capsule().fill(Color.inputBackground))
+    .overlay(Capsule().strokeBorder(Color.border, lineWidth: 1))
+  }
+}
+
+extension SidebarFilterField where Trailing == EmptyView {
+  init(text: Binding<String>) {
+    self.init(text: text) { EmptyView() }
   }
 }

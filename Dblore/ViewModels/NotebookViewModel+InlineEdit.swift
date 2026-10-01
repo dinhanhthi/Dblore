@@ -37,8 +37,8 @@ extension NotebookViewModel {
   /// Validated edit target of `result`, produced by the live execution of `query`, or nil (not
   /// editable). `query` must be a SELECT from exactly one relation
   /// (`CellUpdateStatement.singleRelation`), which the server resolves (same session, so same
-  /// search_path) to its OID and `%I.%I` name; every result column must be a plain column of
-  /// that table (`CellUpdateStatement.editablePrimaryKey`). `epoch` is the connection epoch
+  /// search_path) to its table identity and `%I.%I` name; every result column must be a plain
+  /// column of that table (`CellUpdateStatement.editablePrimaryKey`). `epoch` is the connection epoch
   /// read before `query` ran: if the table resolves on another connection (reconnect in
   /// between), the rows and the table may not match, so there is no target.
   func editTarget(
@@ -46,29 +46,36 @@ extension NotebookViewModel {
     epoch: UInt64
   ) async -> EditTarget? {
     guard !result.columns.isEmpty, let relation = CellUpdateStatement.singleRelation(in: query),
-      let table = await editTable(relation, columns: result.columns, connectionManager),
+      let tableID = Self.columnTableID(result.columns),
+      let table = await editTable(relation, tableID: tableID, connectionManager),
       table.connectionEpoch == epoch,
       CellUpdateStatement.isServerQualifiedName(table.qualifiedName)
     else { return nil }
     let primaryKey = CellUpdateStatement.editablePrimaryKey(columns: result.columns, table: table)
     guard !primaryKey.isEmpty else { return nil }
     return EditTarget(
-      qualifiedName: table.qualifiedName, oid: table.oid, primaryKeyColumns: primaryKey,
+      qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly)
   }
 
+  /// The one table identity shared by every column, or nil when any column came from elsewhere.
+  static func columnTableID(_ columns: [ColumnInfo]) -> TableRef? {
+    guard let tableID = columns.first?.origin?.tableID,
+      columns.allSatisfy({ $0.origin?.tableID == tableID })
+    else { return nil }
+    return tableID
+  }
+
   /// `relation` resolved by the server, or, while the app transaction is pending (no catalog
-  /// query is sent), the table resolved before it for the result's source table OID.
+  /// query is sent), the table cached under the result columns' `tableID`.
   private func editTable(
-    _ relation: String, columns: [ColumnInfo], _ connectionManager: DatabaseConnectionManager
+    _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager
   ) async -> EditTable? {
+    if await connectionManager.isMetadataPaused {
+      return await connectionManager.cachedEditTable(id: tableID)
+    }
     do {
-      return try await connectionManager.fetchEditTable(tableName: relation)
-    } catch DatabaseError.metadataPausedDuringTransaction {
-      guard let oid = columns.first?.tableOID, columns.allSatisfy({ $0.tableOID == oid }) else {
-        return nil
-      }
-      return await connectionManager.cachedEditTable(oid: oid)
+      return try await connectionManager.fetchEditTable(tableName: relation, tableID: tableID)
     } catch {
       return nil
     }
@@ -124,7 +131,7 @@ extension NotebookViewModel {
     guard let current = cellDetailEditTarget, old?.editTarget == current else { return }
     let next = new?.editTarget
     let sameTable =
-      next?.oid == current.oid && next?.qualifiedName == current.qualifiedName
+      next?.tableID == current.tableID && next?.qualifiedName == current.qualifiedName
       && next?.primaryKeyColumns == current.primaryKeyColumns
     cellDetailEditTarget = sameTable ? next : nil
   }
@@ -216,6 +223,7 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
+    let started = Date()
     do {
       let policy = protectionPolicy
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
@@ -226,6 +234,12 @@ extension NotebookViewModel {
             protectionLevel: policy.protectionLevel, safeMode: policy.safeMode,
             protectedMode: true),
         connectionEpoch: target.connectionEpoch, caller: id, commitImmediately: autoCommit)
+      scheduleHistory(
+        [
+          QueryHistoryOutcome(
+            sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
+            rowCount: rowsAffected, status: .success, errorMessage: nil)
+        ], source: .dataViewerEdit)
       // Success needs no toast: the refreshed cell (and the pending banner) shows it
       if rowsAffected != 1 {
         showToast(
@@ -240,14 +254,17 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
+      recordFailure(
+        error, sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
+        source: .dataViewerEdit)
       showToast(
         "Failed to update '\(edit.columnName)': \(error.localizedDescription)", type: .error)
     }
     await onStatementsExecuted?()
   }
 
-  /// The edited text as a `CellValue` of the original's type (sidebar display only)
-  private static func editedCellValue(_ newValue: String, original: CellValue) -> CellValue {
+  /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits)
+  static func editedCellValue(_ newValue: String, original: CellValue) -> CellValue {
     switch original {
     case .string:
       return .string(newValue)

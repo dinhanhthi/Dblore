@@ -4,17 +4,23 @@
 //
 
 import Foundation
-import Logging
 import NIOCore
-import NIOSSL
 import PostgresNIO
 
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
-  private var connection: PostgresConnection?
-  /// Fails in-flight queries when `connection` closes (see `send(on:_:)`)
-  private(set) var closeWatch: ConnectionCloseWatch?
-  private var eventLoopGroup: EventLoopGroup?
+  /// Published only after `open` and session brakes succeed. The gate and transaction
+  /// bookkeeping stay on this actor; the session owns the socket.
+  var session: (any DatabaseSession)?
+  /// Production uses `AppDatabaseSessionFactory`. Tests inject another `DatabaseSessionFactory`.
+  private let sessionFactory: any DatabaseSessionFactory
+  /// Catalog SQL for the connected engine. PostgreSQL until a SQLite file is connected.
+  var introspector: any SchemaIntrospector {
+    if config?.databaseType == .sqlite {
+      return SQLiteSchemaIntrospector()
+    }
+    return PostgresSchemaIntrospector()
+  }
   private(set) var config: ConnectionConfig?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
@@ -33,11 +39,14 @@ actor DatabaseConnectionManager {
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
   /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
+  /// Nil until a file grant is stored. Must not call back into this actor.
+  var sqliteFileAccessRelease: (@Sendable () -> Void)?
   /// Reads that went through a server-side cursor (`executeCursorRead`); observed by tests
   var cursorReadCount = 0
   /// App catalog queries that passed `catalogConnection()`; observed by performance tests
   var catalogQueryCount = 0
-  /// Queries waiting in `send(on:)`: queued on the connection or running (see
+  /// Queries waiting in `performSend`: queued on the connection or running (see
   /// `resetSessionIfCapped`)
   var activeSends = 0
   /// Caller token (tab) that opened the app transaction: while it is pending, only this caller
@@ -45,8 +54,9 @@ actor DatabaseConnectionManager {
   var txOwner: UUID?
   /// A transaction the user opened with BEGIN while Protected mode was off
   var userTxOpen = false
-  /// Inline edit tables resolved outside any app transaction, by table OID (see `cachedEditTable`)
-  var editTableCache: [UInt32: EditTable] = [:]
+  /// Inline edit tables resolved outside any app transaction, by table identity
+  /// (see `cachedEditTable`)
+  var editTableCache: [TableRef: EditTable] = [:]
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
   /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
@@ -59,7 +69,8 @@ actor DatabaseConnectionManager {
   nonisolated let sessionResets: AsyncStream<SessionResetEvent>
   let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
 
-  init() {
+  init(sessionFactory: any DatabaseSessionFactory = AppDatabaseSessionFactory()) {
+    self.sessionFactory = sessionFactory
     (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
       of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
     (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
@@ -67,6 +78,7 @@ actor DatabaseConnectionManager {
   }
 
   deinit {
+    sqliteFileAccessRelease?()
     sessionEventsContinuation.finish()
     sessionResetsContinuation.finish()
   }
@@ -75,11 +87,6 @@ actor DatabaseConnectionManager {
   /// Callers pass the effective result row cap (`NotebookViewModel.effectiveRowCap`)
   static let defaultMaxFetchRows = 100
 
-  /// Retry configuration for connection attempts
-  private static let maxRetries = 3
-  // 1s, 2s, 4s in nanoseconds
-  private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]
-
   /// Current database type (nil if not connected)
   var databaseType: DatabaseType? {
     config?.databaseType
@@ -87,233 +94,191 @@ actor DatabaseConnectionManager {
 
   // MARK: - Connection Management
 
-  /// Helper method to perform connection with retry logic
-  /// Implements exponential backoff: 1s, 2s, 4s delays
-  /// - Parameters:
-  ///   - group: EventLoopGroup for the connection
-  ///   - config: PostgreSQL connection configuration
-  ///   - timeoutSeconds: Connection timeout in seconds
-  ///   - attempt: Current attempt number (0-indexed)
-  /// - Returns: Connected PostgresConnection
-  /// - Throws: DatabaseError after max retries (3) exhausted or timeout
-  private func attemptConnection(
-    group: EventLoopGroup,
-    config: PostgresConnection.Configuration,
-    timeoutSeconds: Int,
-    attempt: Int = 0
-  ) async throws -> PostgresConnection {
-    do {
-      // Create a task with timeout
-      let timeoutDuration = Duration.seconds(timeoutSeconds)
-      let conn = try await withTimeout(of: timeoutDuration) {
-        try await PostgresConnection.connect(
-          on: group.next(),
-          configuration: config,
-          id: 1,
-          logger: Logger(label: "dblore.connection")
-        )
-      }
-      return conn
-    } catch is TimeoutError {
-      // If timeout occurs, throw immediately without retry
-      throw DatabaseError.connectionFailed("Connection timeout after \(timeoutSeconds) seconds")
-    } catch {
-      // If we've exhausted retries, throw the error
-      if attempt >= Self.maxRetries {
-        throw error
-      }
-
-      // Wait with exponential backoff before retry
-      let delay = Self.retryDelays[min(attempt, Self.retryDelays.count - 1)]
-      try await Task.sleep(nanoseconds: delay)
-
-      // Retry with incremented attempt counter
-      return try await attemptConnection(
-        group: group, config: config, timeoutSeconds: timeoutSeconds, attempt: attempt + 1)
-    }
-  }
-
-  /// Connect to PostgreSQL database
+  /// Connect to PostgreSQL. The session is published only after its brakes are applied, so
+  /// no user statement can run before the timeouts are set.
   func connect(config: ConnectionConfig) async throws {
-    // Log connection attempt (with sanitized config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
-    // Disconnect if already connected. Nothing of the new connection (connection, config,
+    // Disconnect if already connected. Nothing of the new connection (session, config,
     // epoch) is published until its session brakes are applied.
     await disconnect()
 
-    // Create event loop group
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    eventLoopGroup = group
-
-    // Configure PostgreSQL connection with TLS
-    let tlsConfig: PostgresConnection.Configuration.TLS
+    let prepared: PreparedSQLiteOpen
     do {
-      tlsConfig = try configureTLS(for: config.sslMode)
+      prepared = try await prepareSQLiteOpen(config)
     } catch {
-      // Cleanup on TLS configuration failure
-      try? await group.shutdownGracefully()
-      eventLoopGroup = nil
-      throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
+      throw error
+    }
+    let opening = sessionFactory.makeSession(config: prepared.config)
+    do {
+      try await opening.open()
+    } catch {
+      await opening.close()
+      prepared.release?()
+      throw error
     }
 
-    let postgresConfig = PostgresConnection.Configuration(
-      host: config.host,
-      port: config.port,
-      username: config.username,
-      password: config.password,
-      database: config.database,
-      tls: tlsConfig
-    )
-
-    // Establish connection with retry logic
-    let conn: PostgresConnection
     do {
-      conn = try await attemptConnection(
-        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
-    } catch let error as PSQLError {
-      // Log connection failure
-      await AppLogger.shared.error(
-        "Failed to connect to database: \(formatPostgresError(error))", category: "Database")
-      // Cleanup on failure
-      try? await group.shutdownGracefully()
-      self.eventLoopGroup = nil
-      let errorMessage = formatPostgresError(error)
-      throw DatabaseError.connectionFailed(errorMessage)
-    } catch {
-      // Cleanup on failure
-      try? await group.shutdownGracefully()
-      eventLoopGroup = nil
-      throw DatabaseError.connectionFailed(error.localizedDescription)
-    }
-
-    // Session brakes are mandatory and applied on the local connection before it is published,
-    // so no user statement (actor reentrancy) can run before the timeouts are set. On failure
-    // the connection is closed and nothing was published.
-    let watch = ConnectionCloseWatch(closeFuture: conn.closeFuture)
-    do {
-      try await applySessionBrakes(on: conn, watch: watch, config: config)
-      await applyDisconnectCheck(on: conn, watch: watch)
+      try await opening.applySessionSettings(
+        statementTimeoutSeconds: SessionBrakeLimits.clampStatementTimeout(
+          prepared.config.statementTimeoutSeconds),
+        lockTimeoutSeconds: SessionBrakeLimits.clampLockTimeout(
+          prepared.config.lockTimeoutSeconds),
+        idleTimeoutSeconds: SessionBrakeLimits.clampIdleTimeout(
+          prepared.config.idleInTransactionTimeoutSeconds))
+      if let postgres = opening as? PostgresSession {
+        await postgres.applyDisconnectCheck()
+      }
     } catch {
       await AppLogger.shared.error(
         "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
-      try? await conn.close()
-      try? await group.shutdownGracefully()
-      eventLoopGroup = nil
+      await opening.close()
+      prepared.release?()
       throw error
     }
-    connection = conn
-    closeWatch = watch
-    self.config = config
+
+    session = opening
+    self.config = prepared.config
+    sqliteFileAccessRelease = prepared.release
     connectionEpoch &+= 1
     lastSessionLoss = nil
-    // The UI learns about a session the server closed even when no query is running. The
-    // epoch names this connection exactly (an ObjectIdentifier can be reused after a reset).
-    let epoch = connectionEpoch
-    conn.closeFuture.whenComplete { [weak self] _ in
-      Task { await self?.markSessionLost(epoch: epoch) }
-    }
+    // The UI learns about a session the server closed even when no query is running.
+    observeSession(opening, epoch: connectionEpoch)
 
     await AppLogger.shared.info(
       "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
   }
 
-  /// Test connection without storing it
-  /// Performs a real connection AND executes a test query to verify credentials
+  /// Test connection without storing it.
+  /// Performs a real connection AND executes a test query to verify credentials.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-
-    // Configure TLS
-    let tlsConfig: PostgresConnection.Configuration.TLS
-    do {
-      tlsConfig = try configureTLS(for: config.sslMode)
-    } catch {
-      try? await group.shutdownGracefully()
-      throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
+    switch config.databaseType {
+    case .postgresql:
+      return try await PostgresSession(config: config).probe()
+    case .sqlite:
+      return try await probeSQLite(config)
     }
+  }
 
-    let postgresConfig = PostgresConnection.Configuration(
-      host: config.host,
-      port: config.port,
-      username: config.username,
-      password: config.password,
-      database: config.database,
-      tls: tlsConfig
-    )
+  /// Bookmark present: sandbox grant, then the resolved path. No bookmark: the path as given
+  /// (a file the process can already open, including a temporary file in tests).
+  private func prepareSQLiteOpen(_ config: ConnectionConfig) async throws -> PreparedSQLiteOpen {
+    guard config.databaseType == .sqlite else {
+      return PreparedSQLiteOpen(config: config, release: nil)
+    }
+    guard config.fileBookmark != nil else {
+      return PreparedSQLiteOpen(config: config, release: nil)
+    }
+    let grant = try await SQLiteFileAccess.open(config: config)
+    var resolved = config
+    resolved.database = grant.url.path
+    if grant.readOnly { resolved.readOnlyFile = true }
+    if let bookmark = grant.bookmark { resolved.fileBookmark = bookmark }
+    return PreparedSQLiteOpen(config: resolved, release: { grant.release() })
+  }
 
+  /// `SELECT 1` on a SQLite file, then close. The grant is released either way.
+  private func probeSQLite(_ config: ConnectionConfig) async throws -> Bool {
+    let prepared = try await prepareSQLiteOpen(config)
+    let session = SQLiteSession(config: prepared.config)
     do {
-      let conn = try await attemptConnection(
-        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
-
-      // Execute a test query to verify the connection actually works
-      // This ensures credentials are valid and we have proper permissions
-      let testQuery = PostgresQuery(unsafeSQL: "SELECT 1 as test")
-      let stream = try await conn.query(testQuery, logger: Logger(label: "dblore.testquery"))
-
-      // Consume the stream to ensure query completes
-      var rowCount = 0
-      for try await _ in stream {
-        rowCount += 1
+      try await session.open()
+      let source = try await session.query("SELECT 1", binds: [])
+      var count = 0
+      for try await _ in source.rows {
+        count += 1
       }
-
-      // Verify we got exactly one row back
-      guard rowCount == 1 else {
-        try await conn.close()
-        try await group.shutdownGracefully()
+      await session.close()
+      prepared.release?()
+      guard count == 1 else {
         throw DatabaseError.connectionFailed("Test query returned unexpected results")
       }
-
-      try await conn.close()
-      try await group.shutdownGracefully()
       return true
-    } catch let error as PSQLError {
-      try? await group.shutdownGracefully()
-      let errorMessage = formatPostgresError(error)
-      throw DatabaseError.connectionFailed(errorMessage)
     } catch {
-      try? await group.shutdownGracefully()
-      throw DatabaseError.connectionFailed(error.localizedDescription)
+      await session.close()
+      prepared.release?()
+      if error is DatabaseError { throw error }
+      throw DatabaseError.connectionFailed(session.formatError(error))
     }
+  }
+
+  /// Stores the hook `disconnect` calls after the session closes. Passing nil clears it.
+  func setSQLiteFileAccessRelease(_ release: (@Sendable () -> Void)?) {
+    sqliteFileAccessRelease = release
   }
 
   /// Disconnect from database
   func disconnect() async {
-    let (closing, group) = forgetConnection()
+    let releaseFileAccess = sqliteFileAccessRelease
+    sqliteFileAccessRelease = nil
+
+    let forgotten = forgetConnection()
     lastSessionLoss = nil
 
-    if let closing {
+    if forgotten.session != nil {
       await AppLogger.shared.info("Disconnecting from database", category: "Database")
-      try? await closing.close()
+      await Self.closeForgotten(forgotten, includingConnection: true)
     }
-    try? await group?.shutdownGracefully()
 
     // A statement that resumed during the awaits above must not leave a stale state
-    if connection == nil {
+    if session == nil {
       txState = .idle
       userTxOpen = false
     }
+
+    // After the session is closed, so a SQLite file is not yanked while it is still open.
+    releaseFileAccess?()
   }
 
   /// Forget the current connection before any suspension point: no edit can use its targets,
   /// and a statement failing meanwhile sees the connection gone (state stays idle). Closing it
   /// (or the server closing it) rolls back any open transaction on the server.
-  func forgetConnection() -> (connection: PostgresConnection?, group: EventLoopGroup?) {
+  /// A PostgreSQL session is detached synchronously (`.closedByApp`) so its socket close is not
+  /// a loss. Any other session is closed by the caller.
+  func forgetConnection() -> ForgottenSession {
     connectionEpoch &+= 1
-    let forgotten = (connection, eventLoopGroup)
-    connection = nil
-    closeWatch = nil
-    eventLoopGroup = nil
+    let forgotten = session
+    let resources = (forgotten as? PostgresSession)?.detach() ?? (nil, nil)
+    session = nil
     config = nil
     txState = .idle
     userTxOpen = false
     editTableCache.removeAll()
-    return forgotten
+    return ForgottenSession(
+      session: forgotten, connection: resources.0, group: resources.1)
+  }
+
+  /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket and its
+  /// event-loop group. Any other session closes itself.
+  static func closeForgotten(_ forgotten: ForgottenSession, includingConnection: Bool) async {
+    if forgotten.connection != nil || forgotten.group != nil {
+      if includingConnection { try? await forgotten.connection?.close() }
+      try? await forgotten.group?.shutdownGracefully()
+      return
+    }
+    await forgotten.session?.close()
   }
 
   /// Check if currently connected
   var isConnected: Bool {
-    connection != nil
+    session != nil
+  }
+
+  /// The PostgreSQL session, when the published session is one.
+  var postgresSession: PostgresSession? {
+    session as? PostgresSession
+  }
+
+  /// One reason from `session`, mapped onto session loss. `.closedByApp` is disconnect,
+  /// cancel, or a reconnect: the actor has already forgotten that session.
+  private func observeSession(_ session: any DatabaseSession, epoch: UInt64) {
+    Task { [weak self] in
+      for await reason in session.closeEvents {
+        guard reason == .connectionLost else { continue }
+        await self?.markSessionLost(epoch: epoch)
+      }
+    }
   }
 
   // MARK: - Connected Protection
@@ -335,59 +300,35 @@ actor DatabaseConnectionManager {
 
   // MARK: - Internal Access
 
-  /// Access to internal connection for extensions
-  var _connection: PostgresConnection? {
-    connection
+  /// Live `PostgresConnection` when the published session is PostgreSQL.
+  var _postgresConnection: PostgresConnection? {
+    postgresSession?.connection
   }
+}
 
-  // MARK: - TLS Configuration
+/// What `forgetConnection` dropped, so the caller can close it after the epoch has moved on.
+nonisolated struct ForgottenSession: Sendable {
+  var session: (any DatabaseSession)?
+  var connection: PostgresConnection?
+  var group: EventLoopGroup?
+}
 
-  /// Configure TLS settings based on SSL mode
-  /// - Parameter sslMode: The SSL mode from connection configuration
-  /// - Returns: PostgreSQL TLS configuration
-  /// - Throws: Error if TLS configuration fails
-  private func configureTLS(for sslMode: SSLMode) throws -> PostgresConnection.Configuration.TLS {
-    switch sslMode {
-    case .disable:
-      return .disable
+/// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
+/// and for a SQLite path the process can already open.
+private struct PreparedSQLiteOpen: Sendable {
+  var config: ConnectionConfig
+  var release: (@Sendable () -> Void)?
+}
 
-    case .allow, .prefer:
-      // For .allow/.prefer modes, try to use TLS but fall back to unencrypted if unavailable
-      // Use default client configuration with full verification
-      do {
-        let context = try NIOSSLContext(configuration: .makeClientConfiguration())
-        return .prefer(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for prefer mode: \(error.localizedDescription)")
-      }
-
-    case .require:
-      // For .require mode, use full certificate verification
-      // This is the PostgreSQL standard behavior - verify certificates if possible
-      // Note: If you need to connect to servers with self-signed certificates,
-      // you should add the CA certificate to the system trust store or use .allow/.prefer modes
-      do {
-        let sslConfig = TLSConfiguration.makeClientConfiguration()
-        let context = try NIOSSLContext(configuration: sslConfig)
-        return .require(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for require mode: \(error.localizedDescription)")
-      }
-
-    case .verifyCa, .verifyFull:
-      // For .verifyCa/.verifyFull modes, enforce full certificate verification
-      // These modes provide the highest security by validating the server certificate
-      do {
-        var sslConfig = TLSConfiguration.makeClientConfiguration()
-        sslConfig.certificateVerification = .fullVerification
-        let context = try NIOSSLContext(configuration: sslConfig)
-        return .require(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for verify mode: \(error.localizedDescription)")
-      }
+/// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` after the caller has resolved
+/// sandbox access.
+nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
+  func makeSession(config: ConnectionConfig) -> any DatabaseSession {
+    switch config.databaseType {
+    case .postgresql:
+      PostgresSession(config: config)
+    case .sqlite:
+      SQLiteSession(config: config)
     }
   }
 }

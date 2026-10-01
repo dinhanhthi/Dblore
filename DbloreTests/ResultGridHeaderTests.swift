@@ -21,7 +21,9 @@ struct ResultGridHeaderTests {
       columns: columns, rows: [[.int(1), .string("a")]], rowCount: 1, tableName: "users",
       primaryKeyColumns: ["id"],
       editTarget: editable
-        ? EditTarget(qualifiedName: "public.users", oid: 1, primaryKeyColumns: ["id"]) : nil)
+        ? EditTarget(
+          qualifiedName: "public.users", tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"])
+        : nil)
   }
 
   private func columnNameMatch(_ name: String) -> SearchMatch {

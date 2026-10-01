@@ -21,6 +21,7 @@ struct WorkspaceLeftSidebarContent: View {
     case `public` = "Public"
     case security = "Security"
     case favorite = "Favorite"
+    case history = "History"
   }
 
   var body: some View {
@@ -29,12 +30,14 @@ struct WorkspaceLeftSidebarContent: View {
       tabSelector
       Divider()
 
-      // Content
+      // Content. Favorites and history read local data, so they stay up while disconnected.
       if selectedTab == .favorite {
         FavoritesTabContent(
           workspaceManager: workspaceManager,
           filterText: $favoriteFilter
         )
+      } else if selectedTab == .history {
+        HistoryTabContent(workspaceManager: workspaceManager)
       } else if !workspaceManager.connectionState.isConnected {
         emptyState
       } else if workspaceManager.isLoadingSchema {
@@ -50,18 +53,43 @@ struct WorkspaceLeftSidebarContent: View {
       selection: $selectedTab,
       tabs: SidebarTab.allCases,
       height: 28
-    )
+    ) { tab in
+      tabLabel(tab)
+    }
     .padding(Spacing.sm)
+  }
+
+  /// "History" keeps the four titles on one row. The tooltip still says History.
+  @ViewBuilder
+  private func tabLabel(_ tab: SidebarTab) -> some View {
+    let isSelected = selectedTab == tab
+    let label = Text(tab == .history ? "History" : tab.rawValue)
+      .font(.body)
+      .fontWeight(isSelected ? .semibold : .regular)
+      .foregroundColor(isSelected ? .white : .foreground)
+      .lineLimit(1)
+      .minimumScaleFactor(0.7)
+      .accessibilityLabel(tab.rawValue)
+    if tab == .history {
+      label.help("History")
+    } else {
+      label
+    }
   }
 
   @ViewBuilder
   private var contentForSelectedTab: some View {
-    // Favorite is handled in body; only the schema tabs reach here
+    // Favorite and history are handled in body; only the schema tabs reach here
     if selectedTab == .security {
       securityTabContent
     } else {
       publicTabContent
     }
+  }
+
+  /// Database of the open connection; PostgreSQL when the workspace has no config yet
+  private var connectionDatabaseType: DatabaseType {
+    workspaceManager.workspace.connectionConfig?.databaseType ?? .postgresql
   }
 
   /// Whether the active tab is a data viewer showing this relation
@@ -189,6 +217,7 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: table.expandForMatch || table.source.isExpanded,
                     isSelected: isOpenInActiveTab(
                       schema: table.source.schema, name: table.source.name),
+                    databaseType: connectionDatabaseType,
                     onToggle: {
                       if !table.expandForMatch {
                         workspaceManager.toggleTableExpansion(tableId: table.id)
@@ -223,6 +252,7 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: view.expandForMatch || view.source.isExpanded,
                     isSelected: isOpenInActiveTab(
                       schema: view.source.schema, name: view.source.name),
+                    databaseType: connectionDatabaseType,
                     onToggle: {
                       if !view.expandForMatch {
                         workspaceManager.toggleViewExpansion(viewId: view.id)

@@ -706,46 +706,6 @@ private enum PreviewData {
           name: "Local Dev"
         )
       ),
-      ConnectionHistoryEntry(
-        config: ConnectionConfig(
-          databaseType: .sqlite,
-          host: "",
-          port: 0,
-          database: "/Users/dev/data.sqlite",
-          username: "",
-          name: "Local SQLite"
-        )
-      ),
-      ConnectionHistoryEntry(
-        config: ConnectionConfig(
-          databaseType: .sqlite,
-          host: "",
-          port: 0,
-          database: "/Users/dev/data.sqlite",
-          username: "",
-          name: "Local SQLite"
-        )
-      ),
-      ConnectionHistoryEntry(
-        config: ConnectionConfig(
-          databaseType: .sqlite,
-          host: "",
-          port: 0,
-          database: "/Users/dev/data.sqlite",
-          username: "",
-          name: "Local SQLite"
-        )
-      ),
-      ConnectionHistoryEntry(
-        config: ConnectionConfig(
-          databaseType: .sqlite,
-          host: "",
-          port: 0,
-          database: "/Users/dev/data.sqlite",
-          username: "",
-          name: "Local SQLite"
-        )
-      ),
     ]
   }
 }

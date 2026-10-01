@@ -9,8 +9,9 @@ import Foundation
 
 extension SQLSyntaxHighlighter {
   /// Sorted, disjoint ranges of every comment and string in `text` (multi-line included)
-  static func blockSpans(in text: NSString) -> [NSRange] {
-    scanBlockSpans(in: text, range: NSRange(location: 0, length: text.length)).map(\.range)
+  static func blockSpans(in text: NSString, dialect: SQLDialect = .postgresql) -> [NSRange] {
+    scanBlockSpans(in: text, range: NSRange(location: 0, length: text.length), dialect: dialect)
+      .map(\.range)
   }
 
   /// The smallest paragraph-aligned range of the NEW `text` whose colors can differ after an
@@ -108,10 +109,11 @@ extension SQLSyntaxHighlighter {
 
   /// Resets `range` to the default attributes, then highlights it
   static func rehighlight(
-    storage: NSMutableAttributedString, range: NSRange, palette: Palette
+    storage: NSMutableAttributedString, range: NSRange, palette: Palette,
+    dialect: SQLDialect = .postgresql
   ) {
     storage.addAttributes(palette.defaultAttributes, range: range)
-    highlight(in: storage, range: range, palette: palette)
+    highlight(in: storage, range: range, palette: palette, dialect: dialect)
   }
 
   private static func spanPrecedes(_ a: NSRange, _ b: NSRange) -> Bool {

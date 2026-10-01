@@ -43,6 +43,10 @@ struct DatabaseColumn: Identifiable, Sendable {
   let isPrimaryKey: Bool
   let isIdentity: Bool
   let isUnique: Bool
+  /// Virtual-table hidden column. PostgreSQL leaves this false.
+  let isHidden: Bool
+  /// Generated column (virtual or stored). PostgreSQL leaves this false.
+  let isGenerated: Bool
 
   nonisolated init(
     name: String,
@@ -50,7 +54,9 @@ struct DatabaseColumn: Identifiable, Sendable {
     isNullable: Bool = true,
     isPrimaryKey: Bool = false,
     isIdentity: Bool = false,
-    isUnique: Bool = false
+    isUnique: Bool = false,
+    isHidden: Bool = false,
+    isGenerated: Bool = false
   ) {
     self.name = name
     self.type = type
@@ -58,6 +64,8 @@ struct DatabaseColumn: Identifiable, Sendable {
     self.isPrimaryKey = isPrimaryKey
     self.isIdentity = isIdentity
     self.isUnique = isUnique
+    self.isHidden = isHidden
+    self.isGenerated = isGenerated
   }
 
   /// Returns the appropriate SF Symbol icon name for this column's data type

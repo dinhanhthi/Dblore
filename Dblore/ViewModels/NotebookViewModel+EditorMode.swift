@@ -58,8 +58,12 @@ extension NotebookViewModel {
     queryConfirmationState.clear()
   }
 
-  /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page)
-  func executeEditorQuery(_ query: String, maxRows: Int? = nil) async {
+  /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page).
+  /// `source` is `.editor` for a user run and `.internal` for a data-viewer page, which is not
+  /// recorded.
+  func executeEditorQuery(
+    _ query: String, maxRows: Int? = nil, source: QueryHistoryRecordSource = .editor
+  ) async {
     guard let connectionManager = connectionManager else {
       showToast("No database connection available", type: .error)
       return
@@ -126,6 +130,7 @@ extension NotebookViewModel {
           updateEditorExecutedQuerySidebarIfNeeded(result: editorResult!)
           syncCellDetail(cellId: nil, result: editorResult)
         }
+        recordResults(results.map { (sql: $0.queryText, result: $0.result) }, source: source)
 
       } else {
         // Single statement - use existing logic
@@ -167,6 +172,7 @@ extension NotebookViewModel {
         // Update View Query sidebar if it's open for editor mode
         updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)
         syncCellDetail(cellId: nil, result: cellResult)
+        recordResults([(sql: query, result: cellResult)], source: source)
       }
 
     } catch {
@@ -182,6 +188,7 @@ extension NotebookViewModel {
         executionTime: executionTime,
         sourceQuery: query
       )
+      recordFailure(error, sql: query, duration: executionTime, source: source)
     }
     await onStatementsExecuted?()
   }

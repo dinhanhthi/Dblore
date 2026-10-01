@@ -48,7 +48,7 @@ struct ConnectionSafetyBadge: Equatable, Sendable {
       lines.append("Protected mode: changes stay pending until you Commit or Roll Back")
     }
 
-    if config.databaseType == .postgresql {
+    if config.databaseType.capabilities.supportsSSL {
       let status = Self.sslStatus(config.sslMode)
       ssl = status
       lines.append(

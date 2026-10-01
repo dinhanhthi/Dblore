@@ -189,7 +189,7 @@ enum SQLSyntaxHighlighter {
     return result
   }
 
-  static func highlight(_ text: String) -> NSAttributedString {
+  static func highlight(_ text: String, dialect: SQLDialect = .postgresql) -> NSAttributedString {
     // Check if syntax highlighting is disabled
     if !AppSettings.shared.syntaxHighlightingEnabled {
       return plainText(text)
@@ -199,7 +199,7 @@ enum SQLSyntaxHighlighter {
     let palette = Palette()
     let full = NSRange(location: 0, length: result.length)
     result.addAttributes(palette.defaultAttributes, range: full)
-    highlight(in: result, range: full, palette: palette)
+    highlight(in: result, range: full, palette: palette, dialect: dialect)
 
     return result
   }
@@ -209,10 +209,11 @@ enum SQLSyntaxHighlighter {
     _ text: String,
     searchQuery: String,
     isCaseSensitive: Bool,
-    currentMatchRange: NSRange?
+    currentMatchRange: NSRange?,
+    dialect: SQLDialect = .postgresql
   ) -> NSAttributedString {
     // First apply syntax highlighting (or plain text if disabled)
-    let result = NSMutableAttributedString(attributedString: highlight(text))
+    let result = NSMutableAttributedString(attributedString: highlight(text, dialect: dialect))
 
     // Then apply search highlighting on top
     guard !searchQuery.isEmpty else { return result }
@@ -269,8 +270,11 @@ enum SQLSyntaxHighlighter {
   /// `--[^\n]*|/\*[\s\S]*?\*/|'(?:[^'\\]|\\.)*'|\$\$[\s\S]*?\$\$` (leftmost match wins, scanning
   /// resumes after each match); an unterminated `/*`, `'` or `$$` matches nothing.
   static func scanBlockSpans(
-    in text: NSString, range: NSRange
+    in text: NSString, range: NSRange, dialect: SQLDialect = .postgresql
   ) -> [(range: NSRange, isComment: Bool)] {
+    if dialect == .sqlite {
+      return sqliteBlockSpans(in: text, range: range)
+    }
     guard range.length > 0 else { return [] }
     var buffer = [unichar](repeating: 0, count: range.length)
     text.getCharacters(&buffer, range: range)
@@ -345,19 +349,62 @@ enum SQLSyntaxHighlighter {
     return result
   }
 
+  /// Comments and `'…'` strings for SQLite. Dollar quotes are not strings, and a backslash
+  /// does not escape a quote. Ranges are UTF-16, matching `scanBlockSpans`.
+  private static func sqliteBlockSpans(
+    in text: NSString, range: NSRange
+  ) -> [(range: NSRange, isComment: Bool)] {
+    guard range.length > 0 else { return [] }
+    let substring = text.substring(with: range)
+    let scalars = Array(substring.unicodeScalars)
+    var utf16At = [Int](repeating: 0, count: scalars.count + 1)
+    var unit = 0
+    for (index, scalar) in scalars.enumerated() {
+      utf16At[index] = unit
+      unit += scalar.utf16.count
+    }
+    utf16At[scalars.count] = unit
+
+    let tokenizer = SQLTokenizer(dialect: .sqlite)
+    var result: [(range: NSRange, isComment: Bool)] = []
+    var i = 0
+    while i < scalars.count {
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      let end = lexeme.range.upperBound
+      let isString: Bool
+      switch lexeme.kind {
+      case .comment:
+        isString = false
+      case .quoted(.string, _), .quoted(.backslashString, _):
+        isString = true
+      default:
+        i = end > i ? end : i + 1
+        continue
+      }
+      let location = range.location + utf16At[lexeme.range.lowerBound]
+      let length = utf16At[end] - utf16At[lexeme.range.lowerBound]
+      result.append((NSRange(location: location, length: length), !isString))
+      i = end > i ? end : i + 1
+    }
+    return result
+  }
+
   // MARK: - Token Highlighting
 
   /// Colors comments, strings, numbers, keywords, functions and types inside `range` only. The
   /// range must start and end at safe boundaries (outside any block token); the caller has set
   /// the default attributes. Words and numbers inside a comment or string are left alone.
-  static func highlight(in storage: NSMutableAttributedString, range: NSRange, palette: Palette) {
+  static func highlight(
+    in storage: NSMutableAttributedString, range: NSRange, palette: Palette,
+    dialect: SQLDialect = .postgresql
+  ) {
     guard range.length > 0 else { return }
     let text = storage.string
     let ns = text as NSString
 
     // 1. Block tokens, colored first and remembered as protected spans (sorted, disjoint)
     var spans: [NSRange] = []
-    for block in scanBlockSpans(in: ns, range: range) {
+    for block in scanBlockSpans(in: ns, range: range, dialect: dialect) {
       storage.addAttribute(
         .foregroundColor, value: block.isComment ? palette.comment : palette.string,
         range: block.range)

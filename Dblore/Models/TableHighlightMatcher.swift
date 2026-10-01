@@ -12,7 +12,7 @@ extension TableHighlight {
   /// Row index -> column indexes of the individually-true conditions, only for rows where the
   /// whole expression is true (AND binds tighter than OR). The `row` style uses just the keys.
   /// Incomplete conditions and unknown columns are skipped, like the filter skips incomplete ones.
-  func matches(rows: [[CellValue]], columns: [String], dialect: DatabaseType) -> [Int: Set<Int>] {
+  func matches(rows: [[CellValue]], columns: [String], dialect: SQLDialect) -> [Int: Set<Int>] {
     // OR of AND-groups; each entry is (column index, condition)
     var groups: [[(Int, FilterCondition)]] = []
     for condition in filter.conditions
@@ -42,7 +42,7 @@ extension TableHighlight {
   }
 
   private static func test(
-    _ cell: CellValue, _ condition: FilterCondition, dialect: DatabaseType
+    _ cell: CellValue, _ condition: FilterCondition, dialect: SQLDialect
   )
     -> Bool
   {
@@ -62,9 +62,9 @@ extension TableHighlight {
       return inItems(value).contains { compare(cell, $0) == .orderedSame }
     case .like, .notLike, .ilike, .notIlike:
       let negated = condition.op == .notLike || condition.op == .notIlike
-      // Postgres LIKE is case sensitive; SQLite LIKE (which the filter also uses for ilike) is not
+      // PostgreSQL LIKE is case sensitive; SQLite LIKE (also used for ilike) is not
       let insensitive =
-        dialect == .sqlite || condition.op == .ilike || condition.op == .notIlike
+        dialect.likeIsCaseInsensitive || condition.op == .ilike || condition.op == .notIlike
       return like(text, pattern: value, insensitive: insensitive) != negated
     case .isNull, .isNotNull: return false
     }

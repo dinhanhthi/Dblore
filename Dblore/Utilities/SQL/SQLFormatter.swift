@@ -11,13 +11,14 @@ import Foundation
 /// operators like `>=` and `::` are never split.
 nonisolated enum SQLFormatter {
 
-  static func format(_ sql: String) -> String {
-    let items = lex(sql)
+  static func format(_ sql: String, dialect: SQLDialect = .postgresql) -> String {
+    let items = lex(sql, dialect: dialect)
     guard !items.isEmpty else { return sql }
     var printer = Printer(items: items)
     printer.run()
     // Safety net: never return text whose tokens differ from the input's
-    return signature(of: lex(printer.output)) == signature(of: items) ? printer.output : sql
+    return signature(of: lex(printer.output, dialect: dialect)) == signature(of: items)
+      ? printer.output : sql
   }
 
   /// Everything about `items` that affects meaning: kinds, texts (ASCII words by their
@@ -89,15 +90,16 @@ nonisolated enum SQLFormatter {
     var isComment: Bool { kind == .lineComment || kind == .blockComment }
   }
 
-  private static func lex(_ sql: String) -> [Item] {
+  private static func lex(_ sql: String, dialect: SQLDialect) -> [Item] {
     let scalars = Array(sql.unicodeScalars)
+    let tokenizer = SQLTokenizer(dialect: dialect)
     var items: [Item] = []
     var spaced = false
     var hadNewline = false
     var startsLine = false
     var i = 0
     while i < scalars.count {
-      let lexeme = SQLTokenizer.lexeme(in: scalars, at: i)
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
       let raw = SQLTokenizer.text(scalars, lexeme.range)
       i = lexeme.range.upperBound
       let kind: ItemKind

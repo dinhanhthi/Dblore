@@ -11,7 +11,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case sqlite = "SQLite"
 
   var displayName: String {
-    rawValue
+    switch self {
+    case .postgresql: rawValue
+    case .sqlite: "SQLite (Beta)"
+    }
   }
 
   /// Asset catalog image name for the database type icon (from simpleicons.org)
@@ -22,6 +25,59 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .sqlite:
       return "sqlite"
     }
+  }
+
+  /// Quoting and literal rules for this database.
+  nonisolated var dialect: SQLDialect {
+    switch self {
+    case .postgresql: .postgresql
+    case .sqlite: .sqlite
+    }
+  }
+
+  /// Feature set for this engine. SQLite is a beta file database.
+  nonisolated var capabilities: DatabaseCapabilities {
+    switch self {
+    case .postgresql:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
+        supportsRolesAndUsers: true,
+        supportsFunctions: true,
+        supportsServerCursor: true,
+        supportsSessionBrakes: true,
+        cancelStrategy: .reconnect,
+        cappedReadResetsSession: true,
+        supportsExplainJSON: true,
+        supportsUpdateOnly: true,
+        isAvailable: true
+      )
+    case .sqlite:
+      DatabaseCapabilities(
+        usesNetwork: false,
+        usesPassword: false,
+        supportsSSL: false,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: false,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsUpdateOnly: false,
+        isAvailable: true
+      )
+    }
+  }
+
+  /// Engines listed in the connection form. Unavailable engines appear only when
+  /// `showExperimental` is on. SQLite is available, so the picker lists PostgreSQL and
+  /// SQLite (Beta) without that toggle.
+  nonisolated static func connectionPickerTypes(showExperimental: Bool) -> [DatabaseType] {
+    allCases.filter { $0.capabilities.isAvailable || showExperimental }
   }
 }
 
@@ -94,6 +150,10 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var lockTimeoutSeconds: Int  // Server-side lock_timeout
   var idleInTransactionTimeoutSeconds: Int  // Server-side idle_in_transaction_session_timeout
   var rowCapOverride: Int?  // Per-connection row cap (nil = use global setting)
+  /// Security-scoped bookmark for a file database. The path itself is `database`. Never a password.
+  var fileBookmark: Data?
+  /// Open a file database without writing. Distinct from `protectionLevel` and from `readOnly`.
+  var readOnlyFile: Bool
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
@@ -103,6 +163,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     case idleInTransactionTimeoutSeconds, rowCapOverride
     // New key
     case protectionLevel
+    // File database (absent on connections saved before SQLite config)
+    case fileBookmark, readOnlyFile
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -115,7 +177,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     port = try container.decode(Int.self, forKey: .port)
     database = try container.decode(String.self, forKey: .database)
     username = try container.decode(String.self, forKey: .username)
-    password = try container.decode(String.self, forKey: .password)
+    password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
@@ -129,6 +191,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     idleInTransactionTimeoutSeconds = SessionBrakeLimits.clampIdleTimeout(
       try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600)
     rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
+    fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
+    readOnlyFile = try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? false
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -171,6 +235,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
     try container.encode(idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
     try container.encodeIfPresent(rowCapOverride, forKey: .rowCapOverride)
+    try container.encodeIfPresent(fileBookmark, forKey: .fileBookmark)
+    try container.encode(readOnlyFile, forKey: .readOnlyFile)
   }
 
   nonisolated init(
@@ -190,7 +256,9 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     statementTimeoutSeconds: Int = 60,
     lockTimeoutSeconds: Int = 5,
     idleInTransactionTimeoutSeconds: Int = 600,
-    rowCapOverride: Int? = nil
+    rowCapOverride: Int? = nil,
+    fileBookmark: Data? = nil,
+    readOnlyFile: Bool = false
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -209,6 +277,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.lockTimeoutSeconds = lockTimeoutSeconds
     self.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds
     self.rowCapOverride = rowCapOverride
+    self.fileBookmark = fileBookmark
+    self.readOnlyFile = readOnlyFile
   }
 
   // MARK: - Convenience accessors (for easier migration)

@@ -51,7 +51,7 @@ extension SQLTextView {
     }
 
     let cursorPosition = selectedRange().location
-    let suggestions = provider.getSuggestions(for: string, at: cursorPosition)
+    let suggestions = provider.getSuggestions(for: string, at: cursorPosition, dialect: dialect)
 
     if suggestions.isEmpty {
       hideAutocomplete()

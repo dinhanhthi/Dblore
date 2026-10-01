@@ -18,12 +18,12 @@ nonisolated protocol AIKeyStore: AnyObject, Sendable {
 /// Keychain-backed store: generic password, service `ace.thi.dblore.ai`,
 /// accessible only while unlocked and never migrated to another device.
 nonisolated final class KeychainAIKeyStore: AIKeyStore, Sendable {
-  private let service = "ace.thi.dblore.ai"
+  static let serviceName = "ace.thi.dblore.ai"
 
   private func baseQuery(account: String) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
+      kSecAttrService as String: Self.serviceName,
       kSecAttrAccount as String: account,
     ]
   }

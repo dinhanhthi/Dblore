@@ -12,16 +12,18 @@ import UniformTypeIdentifiers
 enum DataExporter {
 
   /// Export result to CSV format
-  static func toCSV(result: CellResult) -> String {
+  static func toCSV(
+    result: CellResult, includeHeader: Bool = true, quote: ExportQuote = .ifNeeded
+  ) -> String {
     var csv = ""
 
-    // Header row
-    let headers = result.columns.map { escapeCSV($0.name) }
-    csv += headers.joined(separator: ",") + "\n"
+    if includeHeader {
+      let headers = result.columns.map { escapeCSV($0.name, quote: quote) }
+      csv += headers.joined(separator: ",") + "\n"
+    }
 
-    // Data rows
     for row in result.rows {
-      let values = row.map { escapeCSV($0.fullString) }
+      let values = row.map { escapeCSV($0.fullString, quote: quote) }
       csv += values.joined(separator: ",") + "\n"
     }
 
@@ -254,19 +256,24 @@ enum DataExporter {
   }
 
   /// Export result to JSON format
-  static func toJSON(result: CellResult) -> String {
+  static func toJSON(
+    result: CellResult, pretty: Bool = true, includeNull: Bool = true, valuesAsString: Bool = false
+  ) -> String {
     var objects: [[String: Any]] = []
 
     for row in result.rows {
       var obj: [String: Any] = [:]
       for (index, column) in result.columns.enumerated() {
-        obj[column.name] = cellValueToJSON(row[index])
+        let value = row[index]
+        if !includeNull && value.isNull { continue }
+        obj[column.name] = valuesAsString ? value.fullString : cellValueToJSON(value)
       }
       objects.append(obj)
     }
 
+    let writing: JSONSerialization.WritingOptions = pretty ? .prettyPrinted : []
     guard
-      let jsonData = try? JSONSerialization.data(withJSONObject: objects, options: .prettyPrinted),
+      let jsonData = try? JSONSerialization.data(withJSONObject: objects, options: writing),
       let jsonString = String(data: jsonData, encoding: .utf8)
     else {
       return "[]"
@@ -276,28 +283,96 @@ enum DataExporter {
   }
 
   /// Export result to Markdown table format
-  static func toMarkdown(result: CellResult) -> String {
+  static func toMarkdown(result: CellResult, includeHeader: Bool = true) -> String {
     guard !result.columns.isEmpty else {
       return "No data"
     }
 
     var markdown = ""
 
-    // Header row
-    let headers = result.columns.map { "| \($0.name) " }
-    markdown += headers.joined() + "|\n"
+    if includeHeader {
+      let headers = result.columns.map { "| \($0.name) " }
+      markdown += headers.joined() + "|\n"
+      let separators = result.columns.map { _ in "| --- " }
+      markdown += separators.joined() + "|\n"
+    }
 
-    // Separator row
-    let separators = result.columns.map { _ in "| --- " }
-    markdown += separators.joined() + "|\n"
-
-    // Data rows
     for row in result.rows {
       let values = row.map { "| \(escapeMarkdown($0.fullString)) " }
       markdown += values.joined() + "|\n"
     }
 
     return markdown
+  }
+
+  /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
+  /// The table is `table` when that is non-nil, otherwise `result.tableName`.
+  static func sqlInsert(
+    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect,
+    includeColumns: Bool = true
+  ) -> String {
+    let exported = queryResult(from: result, rowIndexes: rows)
+    let name = SQLInsertRenderer.tableName(for: exported, fallback: table ?? result.tableName)
+    return SQLInsertRenderer.insertScript(
+      result: exported, table: name, dialect: dialect, includeColumns: includeColumns)
+  }
+
+  /// Parenthesized IN list for `values`.
+  static func sqlINList(values: [CellValue], dialect: SQLDialect) -> String {
+    SQLInsertRenderer.inList(values: values, dialect: dialect)
+  }
+
+  /// PDF of the cell result. `query` is drawn only when the caller passes it.
+  static func pdfData(
+    result: CellResult, title: String, query: String?, wrapText: Bool = false
+  ) -> Data {
+    ResultPDFRenderer.render(
+      result: queryResult(from: result), title: title, query: query, wrapText: wrapText)
+  }
+
+  /// Save the result using the sheet's format and options. Copy actions do not call this.
+  static func download(
+    result: CellResult, options: ExportOptions, queryIndex: Int? = nil,
+    dialect: SQLDialect = .postgresql
+  ) {
+    let prepared = applying(options, to: result)
+    switch options.format {
+    case .csv:
+      let csv = toCSV(
+        result: prepared, includeHeader: options.includeHeader, quote: options.quote)
+      let name = generateFilename(extension: "csv", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: csv, options: options), defaultFilename: name,
+        allowedFileTypes: ["csv"])
+    case .excel:
+      downloadExcel(result: prepared, queryIndex: queryIndex)
+    case .json:
+      let json = toJSON(
+        result: prepared, pretty: options.jsonPretty, includeNull: options.jsonIncludeNull,
+        valuesAsString: options.jsonValuesAsString)
+      let name = generateFilename(extension: "json", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: json, options: options), defaultFilename: name,
+        allowedFileTypes: ["json"])
+    case .markdown:
+      let markdown = toMarkdown(result: prepared, includeHeader: options.includeHeader)
+      let name = generateFilename(extension: "md", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: markdown, options: options), defaultFilename: name,
+        allowedFileTypes: ["md", "markdown"])
+    case .pdf:
+      downloadPDF(
+        result: prepared, queryIndex: queryIndex, query: result.sourceQuery,
+        wrapText: options.wrapText)
+    case .sqlInsert:
+      let sql = sqlInsert(
+        result: prepared, table: result.tableName, dialect: dialect,
+        includeColumns: options.includeHeader)
+      let name = generateFilename(extension: "sql", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: sql, options: options), defaultFilename: name,
+        allowedFileTypes: ["sql"])
+    }
   }
 
   // MARK: - Download Functions
@@ -340,6 +415,27 @@ enum DataExporter {
     saveFile(content: markdown, defaultFilename: defaultName, allowedFileTypes: ["md", "markdown"])
   }
 
+  /// Download the result as a PDF. The title is the filename without its extension.
+  static func downloadPDF(
+    result: CellResult, filename: String? = nil, queryIndex: Int? = nil, query: String? = nil,
+    wrapText: Bool = false
+  ) {
+    let defaultName = filename ?? generateFilename(extension: "pdf", queryIndex: queryIndex)
+    let data = pdfData(
+      result: result, title: pdfTitle(defaultName), query: query, wrapText: wrapText)
+    saveFile(data: data, defaultFilename: defaultName, allowedFileTypes: ["pdf"])
+  }
+
+  /// Download an INSERT script for every row.
+  static func downloadSQLInsert(
+    result: CellResult, table: String? = nil, dialect: SQLDialect, filename: String? = nil,
+    queryIndex: Int? = nil
+  ) {
+    let sql = sqlInsert(result: result, table: table, dialect: dialect)
+    let defaultName = filename ?? generateFilename(extension: "sql", queryIndex: queryIndex)
+    saveFile(content: sql, defaultFilename: defaultName, allowedFileTypes: ["sql"])
+  }
+
   /// Copy result to clipboard in TSV format (Excel-compatible)
   static func copyTSV(result: CellResult) {
     let tsv = toTSV(result: result)
@@ -358,7 +454,46 @@ enum DataExporter {
     copyToClipboard(markdown)
   }
 
+  /// Copy an INSERT script to the clipboard.
+  static func copyInsert(
+    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+  ) {
+    copyToClipboard(sqlInsert(result: result, rows: rows, table: table, dialect: dialect))
+  }
+
+  /// Copy an IN list to the clipboard.
+  static func copyINList(values: [CellValue], dialect: SQLDialect) {
+    copyToClipboard(sqlINList(values: values, dialect: dialect))
+  }
+
   // MARK: - Private Helpers
+
+  /// `CellResult` as a `QueryResult`. `rowIndexes` nil keeps every row; out-of-range indexes drop.
+  private static func queryResult(from result: CellResult, rowIndexes: [Int]? = nil) -> QueryResult
+  {
+    let selectedRows: [[CellValue]]
+    if let rowIndexes {
+      selectedRows = rowIndexes.compactMap { index in
+        guard result.rows.indices.contains(index) else { return nil }
+        return result.rows[index]
+      }
+    } else {
+      selectedRows = result.rows
+    }
+    return QueryResult(
+      columns: result.columns,
+      rows: selectedRows,
+      rowCount: selectedRows.count,
+      executionTime: result.executionTime,
+      wasLimited: result.wasLimited,
+      affectedRows: result.affectedRows)
+  }
+
+  /// Filename without its extension, or `"Result"` when that stem is empty.
+  private static func pdfTitle(_ filename: String) -> String {
+    let stem = (filename as NSString).deletingPathExtension
+    return stem.isEmpty ? "Result" : stem
+  }
 
   /// Generate filename with format: query_<i>-YYYY-MM-DD_HHMMSS.<extension>
   private static func generateFilename(extension: String, queryIndex: Int?) -> String {
@@ -373,13 +508,20 @@ enum DataExporter {
     }
   }
 
-  private static func escapeCSV(_ value: String) -> String {
-    // If value contains comma, quote, or newline, wrap in quotes and escape quotes
-    if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
-      let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-      return "\"\(escaped)\""
+  private static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
+    switch quote {
+    case .always:
+      return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    case .never:
+      return value
+    case .ifNeeded:
+      if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
+      {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+      }
+      return value
     }
-    return value
   }
 
   private static func escapeMarkdown(_ value: String) -> String {
@@ -499,16 +641,8 @@ enum DataExporter {
 
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
-
-      do {
+      completeSave(url) {
         try content.write(to: url, atomically: true, encoding: .utf8)
-      } catch {
-        // Show error alert
-        let alert = NSAlert()
-        alert.messageText = "Export Failed"
-        alert.informativeText = "Could not save file: \(error.localizedDescription)"
-        alert.alertStyle = .critical
-        alert.runModal()
       }
     }
   }
@@ -521,17 +655,49 @@ enum DataExporter {
 
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
-
-      do {
+      completeSave(url) {
         try data.write(to: url)
-      } catch {
-        // Show error alert
-        let alert = NSAlert()
-        alert.messageText = "Export Failed"
-        alert.informativeText = "Could not save file: \(error.localizedDescription)"
-        alert.alertStyle = .critical
-        alert.runModal()
       }
+    }
+  }
+
+  /// Writes the file, then asks whether to open it or reveal it. Cancel leaves the saved file as is.
+  private static func completeSave(_ url: URL, write: () throws -> Void) {
+    do {
+      try write()
+    } catch {
+      let alert = NSAlert()
+      alert.messageText = "Export Failed"
+      alert.informativeText = "Could not save file: \(error.localizedDescription)"
+      alert.alertStyle = .critical
+      alert.runModal()
+      return
+    }
+
+    // The save panel is still dismissing. Presenting now stacks the two modals.
+    DispatchQueue.main.async {
+      presentSavedFile(url)
+    }
+  }
+
+  private static func presentSavedFile(_ url: URL) {
+    let alert = NSAlert()
+    alert.messageText = "Export Complete"
+    alert.informativeText = "Saved \(url.lastPathComponent)."
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Open File")
+    alert.addButton(withTitle: "Open Location")
+    alert.addButton(withTitle: "Cancel")
+    if alert.buttons.count > 2 {
+      alert.buttons[2].keyEquivalent = "\u{1b}"
+    }
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      NSWorkspace.shared.open(url)
+    case .alertSecondButtonReturn:
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    default:
+      break
     }
   }
 }

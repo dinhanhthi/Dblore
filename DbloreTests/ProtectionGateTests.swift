@@ -271,7 +271,7 @@ struct ClassifierCreatesTableTests {
 
 // MARK: - Integration (docker test DB)
 
-@Suite("Protection Gate - Integration (Requires PostgreSQL)")
+@Suite("Protection Gate - Integration (Requires PostgreSQL)", .requiresPostgres)
 @MainActor
 struct ProtectionGateIntegrationTests {
   static let testConfig = ConnectionConfig(

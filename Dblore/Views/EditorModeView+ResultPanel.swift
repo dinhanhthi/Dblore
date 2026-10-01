@@ -24,6 +24,10 @@ extension EditorModeView {
   /// - Parameter result: The query result containing metadata and optional error
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
+    resultPanelHeader(result: result, displayMode: resultDisplayModeBinding(for: result))
+  }
+
+  func resultPanelHeader(result: CellResult, displayMode: Binding<ResultDisplayMode>) -> some View {
     VStack(spacing: 0) {
       // Warning banner (row cap reached; session reset details when the cap closed it)
       if result.error == nil, let notice = result.capNotice {
@@ -62,14 +66,17 @@ extension EditorModeView {
 
         Spacer()
 
-        // Clear button
+        if ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
+          ResultDisplayPicker(mode: displayMode)
+        }
+
+        explainToolbarMenu()
+
         Button(action: clearResult) {
           Image(systemName: "xmark")
-            .font(.system(size: 10))
-            .foregroundColor(.foregroundSubtle)
         }
-        .buttonStyle(.plain)
-        .linkPointer()
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
         .help("Clear result")
       }
       .padding(.horizontal, Spacing.md)
@@ -311,49 +318,94 @@ struct EditorResultGridView: View {
   var canHighlight = false
   @State private var sortColumn: String?
   @State private var sortAscending = true
+  /// Session chart for this editor result. A new result view starts from the suggestion.
+  @State private var chartSpec: ChartSpec?
+  /// Nil keeps an internal mode. The editor and data viewer headers pass the shared mode
+  /// and set `showsDisplayPicker` to false so this grid does not draw a second slider.
+  var displayMode: Binding<ResultDisplayMode>? = nil
+  var showsDisplayPicker = true
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
 
   var body: some View {
-    ResultGridView(
-      result: result,
-      sortColumn: sortColumn,
-      ascending: sortAscending,
-      isEditable: viewModel.canEdit(result),
-      onCommitEdit: { row, column, newValue in
-        viewModel.handleGridCellEdit(
-          row: row, column: column, newValue: newValue, result: result, cellId: nil,
-          connectionManager: viewModel.connectionManager)
-      },
-      onSortChange: { column, ascending in
-        sortColumn = column
-        sortAscending = ascending
-      },
-      valueFilter: valueFilter,
-      onValueFilterChange: { valueFilter = $0 },
-      onShowCellDetails: { row, originalRow, column in
-        viewModel.showGridCellInSidebar(
-          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
-      },
-      onHighlightCell: canHighlight
-        ? { column, value, style, color in
-          guard result.columns.indices.contains(column) else { return }
-          viewModel.highlightCell(
-            column: result.columns[column].name, value: value, style: style, color: color)
-        } : nil,
-      onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
-      searchQuery: viewModel.searchState.query,
-      caseSensitive: viewModel.searchState.isCaseSensitive,
-      currentMatch: currentMatch,
-      searchMatches: viewModel.searchState.matches,
-      forwardsScrollToParent: false,
-      hideColumnTypes: AppSettings.shared.hideColumnTypes,
-      hiddenColumns: hiddenColumns,
-      highlight: highlight,
-      highlightDialect: dialect
-    )
+    ExplainableResult(result: result, fillsAvailableHeight: true) {
+      ChartableResult(
+        result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
+        showsPicker: showsDisplayPicker
+      ) {
+        ResultGridView(
+          result: result,
+          sortColumn: sortColumn,
+          ascending: sortAscending,
+          isEditable: viewModel.canEdit(result),
+          onCommitEdit: { row, column, newValue in
+            viewModel.handleGridCellEdit(
+              row: row, column: column, newValue: newValue, result: result, cellId: nil,
+              connectionManager: viewModel.connectionManager)
+          },
+          stagesEdits: viewModel.stagingEnabled,
+          changeSet: viewModel.dataViewer?.changeSet,
+          onStageEdit: { row, column, newValue in
+            viewModel.handleStagedGridCellEdit(
+              row: row, column: column, newValue: newValue, result: result)
+          },
+          onStageInsert: {
+            if let message = viewModel.stageInsert() { viewModel.showToast(message, type: .error) }
+          },
+          onStageDuplicate: { rows in
+            if let message = viewModel.stageDuplicate(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
+          onStageDelete: { rows in
+            if let message = viewModel.stageDelete(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
+          onRevertStaged: { rows in
+            if let message = viewModel.revertStaged(rows: rows) {
+              viewModel.showToast(message, type: .error)
+            }
+          },
+          onSortChange: { column, ascending in
+            guard viewModel.hasPendingStagedChanges else {
+              sortColumn = column
+              sortAscending = ascending
+              return
+            }
+            Task { @MainActor in
+              guard await viewModel.confirmLeaveStagedChanges() else { return }
+              sortColumn = column
+              sortAscending = ascending
+            }
+          },
+          valueFilter: valueFilter,
+          onValueFilterChange: { valueFilter = $0 },
+          onShowCellDetails: { row, originalRow, column in
+            viewModel.showGridCellInSidebar(
+              row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+          },
+          onHighlightCell: canHighlight
+            ? { column, value, style, color in
+              guard result.columns.indices.contains(column) else { return }
+              viewModel.highlightCell(
+                column: result.columns[column].name, value: value, style: style, color: color)
+            } : nil,
+          onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
+          searchQuery: viewModel.searchState.query,
+          caseSensitive: viewModel.searchState.isCaseSensitive,
+          currentMatch: currentMatch,
+          searchMatches: viewModel.searchState.matches,
+          forwardsScrollToParent: false,
+          hideColumnTypes: AppSettings.shared.hideColumnTypes,
+          hiddenColumns: hiddenColumns,
+          highlight: highlight,
+          highlightDialect: dialect
+        )
+      }
+    }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
       currentMatch = gridSearchMatchOnScreen(

@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Query Sent As Written - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Query Sent As Written - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct QuerySentAsWrittenTests {
   private static func config() -> ConnectionConfig {

@@ -10,7 +10,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Edit target connection and relation kind - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Edit target connection and relation kind - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct EditTargetConnectionIntegrationTests {
   private let open = ProtectionPolicy(protectionLevel: .none)

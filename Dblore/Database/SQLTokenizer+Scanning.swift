@@ -27,10 +27,20 @@ nonisolated struct SQLLexeme {
 
 /// PostgreSQL lexes UTF-8 bytes: every comparison below is against exact ASCII scalars
 /// (no grapheme clustering, no canonical equivalence), and any non-ASCII scalar is an
-/// identifier character.
+/// identifier character. `lexeme(in:at:)` on a value follows `dialect`; the static
+/// `lexeme(in:at:)` is the PostgreSQL scanner and stays the implementation of that path.
 nonisolated extension SQLTokenizer {
 
   /// The lexeme starting at scalar offset `i` (which must be a token boundary).
+  func lexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
+    if dialect == .sqlite {
+      return sqliteLexeme(in: s, at: i)
+    }
+    return SQLTokenizer.lexeme(in: s, at: i)
+  }
+
+  /// The lexeme starting at scalar offset `i` (which must be a token boundary).
+  /// PostgreSQL rules. SQLite goes through the instance method.
   static func lexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
     let char = s[i]
     let next: Unicode.Scalar? = i + 1 < s.count ? s[i + 1] : nil
@@ -99,7 +109,8 @@ nonisolated extension SQLTokenizer {
   /// quote is at `quoteAt`. A doubled quote is an escaped quote; `escape` enables backslash
   /// escapes (E'...'). Unterminated quotes run to the end of the input.
   private static func quoted(
-    _ s: [Unicode.Scalar], start: Int, quoteAt: Int, escape: Bool, kind: SQLToken.Kind
+    _ s: [Unicode.Scalar], start: Int, quoteAt: Int, escape: Bool, kind: SQLToken.Kind,
+    markBackslash: Bool = true
   ) -> SQLLexeme {
     let quote = s[quoteAt]
     var content = String.UnicodeScalarView()
@@ -124,7 +135,8 @@ nonisolated extension SQLTokenizer {
       content.append(char)
       j += 1
     }
-    let isBackslashString = !escape && kind == .string && content.contains("\\")
+    let isBackslashString =
+      markBackslash && !escape && kind == .string && content.contains("\\")
     return SQLLexeme(
       kind: .quoted(isBackslashString ? .backslashString : kind, content: String(content)),
       range: start..<j)
@@ -205,5 +217,78 @@ nonisolated extension SQLTokenizer {
   /// except in first position.
   private static func isTagCharacter(_ scalar: Unicode.Scalar, first: Bool) -> Bool {
     isIdentifierStart(scalar) || (!first && isDigit(scalar))
+  }
+
+  /// SQLite lexeme. Strings are `'…'` with doubled quotes only. Identifiers use `"…"`,
+  /// `[…]` (closed by the first `]`), and backticks (doubled backtick is one backtick).
+  /// Block comments end at the first `*/`. `$` is a symbol or an identifier character, never a quote.
+  private func sqliteLexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
+    let char = s[i]
+    let next: Unicode.Scalar? = i + 1 < s.count ? s[i + 1] : nil
+
+    if Self.isWhitespace(char) {
+      return SQLLexeme(
+        kind: .whitespace, range: i..<Self.scan(s, from: i + 1, while: Self.isWhitespace))
+    }
+    if char == "-" && next == "-" {
+      let end = Self.scan(s, from: i, while: { !Self.isLineBreak($0) })
+      return SQLLexeme(kind: .comment, range: i..<end)
+    }
+    if let end = Self.sqliteBlockCommentEnd(in: s, at: i) {
+      return SQLLexeme(kind: .comment, range: i..<end)
+    }
+    if char == "'" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: false, kind: .string, markBackslash: false)
+    }
+    if char == "\"" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: false, kind: .quotedIdentifier, markBackslash: false)
+    }
+    if char == "[" {
+      return Self.bracketIdentifier(s, start: i)
+    }
+    if char == "`" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: false, kind: .quotedIdentifier, markBackslash: false)
+    }
+    if Self.isIdentifierStart(char) {
+      let end = Self.scan(s, from: i + 1, while: Self.isIdentifierCharacter)
+      return SQLLexeme(kind: .word, range: i..<end)
+    }
+    if Self.isDigit(char) {
+      return SQLLexeme(kind: .number, range: i..<Self.scan(s, from: i + 1, while: Self.isDigit))
+    }
+    return SQLLexeme(kind: .symbol, range: i..<(i + 1))
+  }
+
+  /// `[…]` identifier. The first `]` closes it; `]]` is not an escape.
+  private static func bracketIdentifier(_ s: [Unicode.Scalar], start: Int) -> SQLLexeme {
+    var content = String.UnicodeScalarView()
+    var j = start + 1
+    while j < s.count {
+      if s[j] == "]" {
+        j += 1
+        break
+      }
+      content.append(s[j])
+      j += 1
+    }
+    return SQLLexeme(
+      kind: .quoted(.quotedIdentifier, content: String(content)), range: start..<j)
+  }
+
+  /// If a block comment starts at `i`, returns the offset after the first `*/`
+  /// (or `s.count` when unterminated). SQLite comments do not nest.
+  private static func sqliteBlockCommentEnd(in s: [Unicode.Scalar], at i: Int) -> Int? {
+    guard i + 1 < s.count, s[i] == "/", s[i + 1] == "*" else { return nil }
+    var j = i + 2
+    while j + 1 < s.count {
+      if s[j] == "*" && s[j + 1] == "/" {
+        return j + 2
+      }
+      j += 1
+    }
+    return s.count
   }
 }

@@ -22,8 +22,27 @@ struct FavoritesTabContent: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      SidebarFilterField(text: $filterText)
-      header
+      SidebarFilterField(text: $filterText) {
+        HStack(spacing: Spacing.sm) {
+          Button {
+            workspaceManager.favoriteModal = .folder(nil)
+          } label: {
+            Image(systemName: "folder.badge.plus")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .help("New Folder")
+
+          Button {
+            workspaceManager.favoriteModal = .favorite(nil)
+          } label: {
+            Image(systemName: "plus")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .help("New Favorite")
+        }
+      }
       Divider()
 
       if favorites.folders.isEmpty && favorites.items.isEmpty {
@@ -54,30 +73,6 @@ struct FavoritesTabContent: View {
     } message: { item in
       Text("\"\(item.name)\" will be removed from your favorites.")
     }
-  }
-
-  private var header: some View {
-    HStack(spacing: Spacing.sm) {
-      Spacer()
-
-      Button {
-        workspaceManager.favoriteModal = .folder(nil)
-      } label: {
-        Image(systemName: "folder.badge.plus")
-      }
-      .help("New Folder")
-
-      Button {
-        workspaceManager.favoriteModal = .favorite(nil)
-      } label: {
-        Image(systemName: "plus")
-      }
-      .help("New Favorite")
-    }
-    .buttonStyle(.plain)
-    .foregroundColor(.foregroundMuted)
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
   }
 
   private var emptyState: some View {

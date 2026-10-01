@@ -74,18 +74,24 @@ nonisolated struct ClassificationSummary: Sendable, Equatable {
 nonisolated enum SQLStatementClassifier {
 
   /// Split `sql` into statements and classify each. Empty / comment-only statements are dropped.
-  static func classify(_ sql: String) -> [ClassifiedStatement] {
-    SQLTokenizer.splitStatements(sql).compactMap(classifyStatement)
+  /// `dialect` defaults to PostgreSQL, which keeps every existing caller on today's rules.
+  static func classify(
+    _ sql: String, dialect: SQLDialect = .postgresql
+  ) -> [ClassifiedStatement] {
+    let tokenizer = SQLTokenizer(dialect: dialect)
+    return tokenizer.splitStatements(sql).compactMap { classifyStatement($0, dialect: dialect) }
   }
 
   /// Classify one already-split statement; nil if it is empty / comment-only.
   /// Fails closed (`.unknown`) when the text may be lexed differently by the server:
   /// a `;` token (the splitter and the tokenizer disagree on a statement boundary) or a
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`).
-  static func classifyStatement(_ text: String) -> ClassifiedStatement? {
-    let tokens = SQLTokenizer.tokens(text)
+  static func classifyStatement(
+    _ text: String, dialect: SQLDialect = .postgresql
+  ) -> ClassifiedStatement? {
+    let tokens = SQLTokenizer(dialect: dialect).tokens(text)
     guard !tokens.isEmpty else { return nil }
-    let analysis = analyze(tokens[...])
+    let analysis = analyze(tokens[...], dialect: dialect)
     let ambiguous = tokens.contains { $0.isSymbol(";") || $0.kind == .backslashString }
     return ClassifiedStatement(
       text: text, kind: ambiguous ? .unknown : analysis.kind, hasReturning: analysis.hasReturning,
@@ -93,6 +99,15 @@ nonisolated enum SQLStatementClassifier {
       affectsAllRows: analysis.affectsAllRows, nonTransactional: analysis.nonTransactional,
       resetsSessionBrakes: analysis.resetsSessionBrakes,
       changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
+  }
+
+  /// True when `sql` is a CREATE/ALTER ROLE or CREATE/ALTER USER (not `USER MAPPING`) whose
+  /// text contains the word PASSWORD, including `WITH ENCRYPTED PASSWORD`. ASCII
+  /// case-insensitive, and PASSWORD does not have to be the first clause.
+  /// A SELECT is never a match, even when a column or a comment contains PASSWORD.
+  nonisolated static func containsPasswordLiteral(_ sql: String) -> Bool {
+    guard isRoleOrUserAdmin(sql) else { return false }
+    return sql.range(of: #"\bPASSWORD\b"#, options: [.regularExpression, .caseInsensitive]) != nil
   }
 
   /// Aggregate flags. `EXPLAIN ANALYZE` counts as its inner statement; plain EXPLAIN as a read.
@@ -130,33 +145,43 @@ nonisolated enum SQLStatementClassifier {
     var createsTable = false
   }
 
-  private static func analyze(_ tokens: ArraySlice<SQLToken>) -> Analysis {
+  private static func analyze(
+    _ tokens: ArraySlice<SQLToken>, dialect: SQLDialect
+  ) -> Analysis {
     let body = tokens.drop { $0.isSymbol("(") }
-    guard let first = body.first, first.kind == .word else { return Analysis(kind: .unknown) }
+    guard let first = body.first, first.kind == .word else {
+      return sqliteAdjusted(Analysis(kind: .unknown), body: body, dialect: dialect)
+    }
     let base = first.depth
     let topWords = body.filter { $0.kind == .word && $0.depth == base }.map { $0.keyword ?? "" }
 
     if first.isWord("EXPLAIN") {
-      return explain(body)
+      return sqliteAdjusted(explain(body, dialect: dialect), body: body, dialect: dialect)
     }
-    let kind = kind(of: body, keyword: first.keyword ?? "", topWords: topWords)
+    let kind = kind(
+      of: body, keyword: first.keyword ?? "", topWords: topWords, dialect: dialect)
     let discardsAll = topWords.starts(with: ["DISCARD", "ALL"])
-    return Analysis(
-      kind: kind,
-      hasReturning: body.contains { $0.isWord("RETURNING") },
-      hasTopLevelReturning: topWords.contains("RETURNING"),
-      affectsAllRows: affectsAllRows(body),
-      nonTransactional: nonTransactional(topWords),
-      resetsSessionBrakes: kind == .sessionSet(touchesBrake: true) || discardsAll
-        || beginsReadWrite(topWords),
-      changesPrivileges: discardsAll || changesPrivileges(body),
-      createsTable: createsTable(body, kind: kind))
+    return sqliteAdjusted(
+      Analysis(
+        kind: kind,
+        hasReturning: body.contains { $0.isWord("RETURNING") },
+        hasTopLevelReturning: topWords.contains("RETURNING"),
+        affectsAllRows: affectsAllRows(body),
+        nonTransactional: nonTransactional(topWords),
+        resetsSessionBrakes: kind == .sessionSet(touchesBrake: true) || discardsAll
+          || beginsReadWrite(topWords),
+        changesPrivileges: discardsAll || changesPrivileges(body),
+        createsTable: createsTable(body, kind: kind)),
+      body: body, dialect: dialect)
   }
 
   private static func kind(
-    of body: ArraySlice<SQLToken>, keyword: String, topWords: [String]
+    of body: ArraySlice<SQLToken>, keyword: String, topWords: [String], dialect: SQLDialect
   ) -> StatementKind {
-    switch keyword {
+    if dialect == .sqlite, let sqlite = sqliteKind(of: body, keyword: keyword) {
+      return sqlite
+    }
+    return switch keyword {
     case "SELECT", "VALUES", "TABLE": selectKind(body)
     case "WITH": hasDataModifyingPart(body) || body.contains { $0.isWord("INTO") } ? .dml : .read
     case "SET", "RESET": .sessionSet(touchesBrake: touchesBrake(body))
@@ -167,6 +192,105 @@ nonisolated enum SQLStatementClassifier {
     case _ where tclKeywords.contains(keyword): .tcl
     case _ where utilityKeywords.contains(keyword): .utility
     default: .unknown
+    }
+  }
+
+  /// SQLite commands that PostgreSQL classifies differently. Nil leaves the shared rules.
+  private static func sqliteKind(
+    of body: ArraySlice<SQLToken>, keyword: String
+  ) -> StatementKind? {
+    switch keyword {
+    case "PRAGMA": pragmaKind(body)
+    case _ where sqliteDmlKeywords.contains(keyword): .dml
+    case _ where sqliteUtilityKeywords.contains(keyword): .utility
+    default: nil
+    }
+  }
+
+  /// `PRAGMA name` and `PRAGMA schema.name` query the setting. Assignment (`=` or the
+  /// parenthesized form) is schema-changing: `journal_mode`, `writable_schema`,
+  /// `foreign_keys`, and every other assignment. A bare `PRAGMA` with no name is unrecognized.
+  private static func pragmaKind(_ body: ArraySlice<SQLToken>) -> StatementKind {
+    let depth = body.first?.depth ?? 0
+    let top = body.filter { $0.depth == depth }
+    if isBarePragmaQuery(top) { return .read }
+    return top.count > 1 ? .ddl : .unknown
+  }
+
+  /// `PRAGMA name` or `PRAGMA schema.name`, with nothing assigned.
+  private static func isBarePragmaQuery(_ top: [SQLToken]) -> Bool {
+    let rest = top.dropFirst()
+    switch rest.count {
+    case 1:
+      return isIdentifier(rest.first)
+    case 3:
+      let parts = Array(rest)
+      return isIdentifier(parts[0]) && parts[1].isSymbol(".") && isIdentifier(parts[2])
+    default:
+      return false
+    }
+  }
+
+  private static func isIdentifier(_ token: SQLToken?) -> Bool {
+    token?.kind == .word || token?.kind == .quotedIdentifier
+  }
+
+  /// Commands whose effect cannot be checked from the text: another database file, a backup
+  /// file, or a native `load_extension(` call. A read, including plain EXPLAIN of one, becomes
+  /// a utility so read-only and schema protection both block it.
+  private static func sqliteAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>, dialect: SQLDialect
+  ) -> Analysis {
+    guard dialect == .sqlite else { return analysis }
+    var analysis = analysis
+    if callsLoadExtension(body) || containsAttachOrDetach(body) || isVacuumInto(body) {
+      analysis.kind = .utility
+    }
+    if isVacuumInto(body) { analysis.nonTransactional = true }
+    return analysis
+  }
+
+  /// `load_extension(` at any depth, including a quoted, bracketed, or backticked name.
+  /// A mention inside a string or comment is not a call: those are not word tokens.
+  private static func callsLoadExtension(_ body: ArraySlice<SQLToken>) -> Bool {
+    body.indices.contains { index in
+      let next = body.index(after: index)
+      guard next < body.endIndex, body[next].isSymbol("(") else { return false }
+      return isLoadExtension(body[index])
+    }
+  }
+
+  private static func isLoadExtension(_ token: SQLToken) -> Bool {
+    if token.isWord(sqliteLoadExtensionFunction) { return true }
+    guard token.kind == .quotedIdentifier, let text = token.asciiText else { return false }
+    return SQLTokenizer.asciiUppercased(text) == sqliteLoadExtensionFunction
+  }
+
+  /// `ATTACH` / `DETACH` as the statement, or the same words inside a `WITH` (a column named
+  /// `attach` there counts, the same way a column named `update` does).
+  private static func containsAttachOrDetach(_ body: ArraySlice<SQLToken>) -> Bool {
+    if let keyword = body.first?.keyword, sqliteUtilityKeywords.contains(keyword) {
+      return true
+    }
+    guard body.first?.isWord("WITH") == true else { return false }
+    return !statementStarts(in: body, keywords: sqliteUtilityKeywords).isEmpty
+  }
+
+  /// `VACUUM INTO`, as its own statement or after `WITH` / `EXPLAIN`. A `SELECT` that merely
+  /// mentions both words is left alone.
+  private static func isVacuumInto(_ body: ArraySlice<SQLToken>) -> Bool {
+    let starts: [Int]
+    if body.first?.isWord("VACUUM") == true {
+      starts = [body.startIndex]
+    } else if body.first?.isWord("WITH") == true || body.first?.isWord("EXPLAIN") == true {
+      starts = statementStarts(in: body, keywords: ["VACUUM"])
+    } else {
+      return false
+    }
+    return starts.contains { index in
+      let depth = body[index].depth
+      let rest = body[body.index(after: index)...].prefix { $0.depth >= depth }
+      return rest.contains { $0.depth == depth && $0.isWord("INTO") }
     }
   }
 
@@ -309,7 +433,10 @@ nonisolated enum SQLStatementClassifier {
   /// Option names: words fold ASCII case; quoted identifiers are not folded (as in
   /// PostgreSQL) and match only in lowercase. An unrecognized option yields `.unknown`, and
   /// ANALYZE counts unless its value is plainly false (ASCII case-insensitive, like parse_bool).
-  private static func explain(_ body: ArraySlice<SQLToken>) -> Analysis {
+  private static func explain(
+    _ body: ArraySlice<SQLToken>, dialect: SQLDialect
+  ) -> Analysis {
+    if dialect == .sqlite { return sqliteExplain(body) }
     var rest = body.dropFirst()
     var isAnalyze = false
     if let open = rest.first, open.isSymbol("("),
@@ -336,7 +463,7 @@ nonisolated enum SQLStatementClassifier {
         rest = rest.dropFirst()
       }
     }
-    let inner = analyze(rest)
+    let inner = analyze(rest, dialect: dialect)
     guard isAnalyze else { return Analysis(kind: .explain(inner: inner.kind, analyze: false)) }
     return Analysis(
       kind: .explain(inner: inner.kind, analyze: true), hasReturning: inner.hasReturning,
@@ -344,6 +471,28 @@ nonisolated enum SQLStatementClassifier {
       affectsAllRows: inner.affectsAllRows, nonTransactional: inner.nonTransactional,
       resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges,
       createsTable: inner.createsTable)
+  }
+
+  /// SQLite `EXPLAIN` and `EXPLAIN QUERY PLAN` return a grid. They do not run the statement,
+  /// so Analyze stays off (`supportsExplainJSON` is false for this engine).
+  private static func sqliteExplain(_ body: ArraySlice<SQLToken>) -> Analysis {
+    var rest = body.dropFirst()
+    if rest.first?.isWord("QUERY") == true, rest.dropFirst().first?.isWord("PLAN") == true {
+      rest = rest.dropFirst(2)
+    }
+    let inner = analyze(rest, dialect: .sqlite)
+    return Analysis(kind: .explain(inner: inner.kind, analyze: false))
+  }
+
+  /// Leading verb is CREATE/ALTER ROLE or CREATE/ALTER USER, and not USER MAPPING.
+  private static func isRoleOrUserAdmin(_ sql: String) -> Bool {
+    let words = SQLTokenizer.tokens(sql).compactMap(\.keyword)
+    guard words.count >= 2 else { return false }
+    let createsOrAlters = words[0] == "CREATE" || words[0] == "ALTER"
+    let roleOrUser = words[1] == "ROLE" || words[1] == "USER"
+    guard createsOrAlters, roleOrUser else { return false }
+    if words[1] == "USER", words.count >= 3, words[2] == "MAPPING" { return false }
+    return true
   }
 
   private static func isAnalyzeWord(_ token: SQLToken) -> Bool {

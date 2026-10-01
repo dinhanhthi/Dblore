@@ -3,7 +3,6 @@
 // server command tag (no RETURNING) or from the rows read (RETURNING).
 
 import Foundation
-import Logging
 import PostgresNIO
 
 /// How `executeSingleStatement` sends one statement.
@@ -49,25 +48,34 @@ nonisolated enum StatementRoute: Sendable, Equatable {
     guard parts.count == 2, parts[0] == "MERGE" else { return nil }
     return Int(parts[1])
   }
+
+  /// Affected rows from `DatabaseSession.command`. A tag the server counts
+  /// (`INSERT` / `UPDATE` / `DELETE` / `MERGE` / `SELECT`) keeps `affectedRows`, including 0.
+  /// Anything else (`BEGIN`, `COMMIT`, DDL) is nil: `CommandResult` stores 0 when the tag
+  /// has no count.
+  static func commandAffectedRows(_ result: CommandResult) -> Int? {
+    let verb = result.tag.split(separator: " ").first.map(String.init) ?? ""
+    switch verb {
+    case "INSERT", "UPDATE", "DELETE", "MERGE", "SELECT":
+      return result.affectedRows
+    default:
+      return nil
+    }
+  }
 }
 
 extension DatabaseConnectionManager {
   /// Send `query` unchanged and read the command tag (rows, if any, are discarded).
-  func executeCommand(
-    _ query: String, on connection: PostgresConnection, startTime: Date
-  ) async throws -> QueryResult {
+  func executeCommand(_ query: String, startTime: Date) async throws -> QueryResult {
     do {
-      let metadata = try await send(on: connection) {
-        try await $0.query(PostgresQuery(unsafeSQL: query), logger: Logger(label: "dblore")) {
-          _ in
-        }.get()
+      let result = try await withSession { session in
+        try await session.command(query, binds: [])
       }
       return QueryResult(
         columns: [], rows: [], rowCount: 0, executionTime: Date().timeIntervalSince(startTime),
-        affectedRows: StatementRoute.affectedRowCount(
-          rows: metadata.rows, command: metadata.command))
+        affectedRows: StatementRoute.commandAffectedRows(result))
     } catch {
-      throw queryFailure(error, query: query, startTime: startTime)
+      throw unwrapFailure(error, fallbackSQL: query, startTime: startTime)
     }
   }
 
@@ -75,14 +83,13 @@ extension DatabaseConnectionManager {
   /// write: the session is never closed mid-stream). With `countRows`, every row returned is
   /// an affected row (DML with RETURNING).
   func executeUnwrapped(
-    _ query: String, on connection: PostgresConnection, countRows: Bool, maxRows: Int,
-    startTime: Date
+    _ query: String, countRows: Bool, maxRows: Int, startTime: Date
   ) async throws -> QueryResult {
     do {
-      let stream = try await send(on: connection) {
-        try await $0.query(PostgresQuery(unsafeSQL: query), logger: Logger(label: "dblore"))
+      let collected = try await withSession { session in
+        let source = try await session.query(query, binds: [])
+        return try await self.readCapped(source, maxRows: maxRows, readToEnd: true)
       }
-      let collected = try await readCapped(stream, maxRows: maxRows, readToEnd: true)
       var result = QueryResult(
         columns: collected.columns, rows: collected.rows, rowCount: collected.rows.count,
         executionTime: Date().timeIntervalSince(startTime), wasLimited: collected.truncated,
@@ -92,6 +99,14 @@ extension DatabaseConnectionManager {
     } catch {
       throw queryFailure(error, query: query, startTime: startTime)
     }
+  }
+
+  /// `PostgresSentError` carries the text that was actually sent (DECLARE / FETCH / CLOSE).
+  func unwrapFailure(_ error: Error, fallbackSQL: String, startTime: Date) -> DatabaseError {
+    if let sent = error as? PostgresSentError {
+      return queryFailure(sent.underlying, query: sent.sql, startTime: startTime)
+    }
+    return queryFailure(error, query: fallbackSQL, startTime: startTime)
   }
 
   /// The error thrown for a failed statement (PostgreSQL details when available; a lost

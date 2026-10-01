@@ -76,14 +76,15 @@ extension GenericModal where Footer == EmptyView {
 
 // MARK: - Modal Header
 
-struct GenericModalHeader: View {
+struct GenericModalHeader<Trailing: View>: View {
   let title: String
   var titleIcon: String?
   var titleIconColor: Color = .foreground
   let onClose: () -> Void
+  @ViewBuilder var trailing: () -> Trailing
 
   var body: some View {
-    HStack {
+    HStack(spacing: Spacing.sm) {
       HStack(spacing: Spacing.xs) {
         if let icon = titleIcon {
           Image(systemName: icon)
@@ -95,24 +96,37 @@ struct GenericModalHeader: View {
           .foregroundColor(.foreground)
       }
 
-      Spacer()
+      Spacer(minLength: Spacing.sm)
+
+      trailing()
 
       Button(action: onClose) {
         Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
       .keyboardShortcut(.escape, modifiers: [])
       .help("Close (Esc)")
     }
-    .padding(.horizontal, Spacing.md)
-    .frame(height: ComponentSize.headerHeight)
+    .modalBarPadding(vertical: Spacing.sm)
     .background(Color.cardHeaderBackground)
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+}
+
+extension GenericModalHeader where Trailing == EmptyView {
+  init(
+    title: String,
+    titleIcon: String? = nil,
+    titleIconColor: Color = .foreground,
+    onClose: @escaping () -> Void
+  ) {
+    self.title = title
+    self.titleIcon = titleIcon
+    self.titleIconColor = titleIconColor
+    self.onClose = onClose
+    self.trailing = { EmptyView() }
   }
 }
 
@@ -128,9 +142,18 @@ struct GenericModalFooter<Content: View>: View {
       HStack {
         content()
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
     }
     .background(Color.cardBackground)
+  }
+}
+
+extension View {
+  /// Horizontal inset stays at the body margin. Title bars and action bars share
+  /// the same vertical room.
+  func modalBarPadding(vertical: CGFloat = Spacing.sm) -> some View {
+    padding(.horizontal, Spacing.md)
+      .padding(.vertical, vertical)
   }
 }
 

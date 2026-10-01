@@ -15,12 +15,10 @@ struct ConnectionFormModal: View {
   var onConnect: ((ConnectionConfig) async throws -> Void)?
 
   var body: some View {
-    GenericModal(
-      title: "Connect to Database",
-      width: 420,
-      height: 580,
-      isPresented: $isPresented
-    ) {
+    VStack(spacing: 0) {
+      GenericModalHeader(title: "Connect to Database", onClose: { isPresented = false }) {
+        databaseTypeMenu
+      }
       ConnectionFormContent(
         connectionConfig: $connectionConfig,
         onTestConnection: onTestConnection,
@@ -28,6 +26,29 @@ struct ConnectionFormModal: View {
         onConnectionSuccess: { isPresented = false }
       )
     }
+    .frame(width: 440, height: connectionConfig.databaseType == .sqlite ? 420 : 640)
+    .background(Color.cardBackground)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.xxl)
+        .stroke(Color.border.opacity(0.5), lineWidth: 1)
+    )
+    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
+    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
+  }
+
+  /// Engine picker, sitting on the right of the title and before the close button.
+  private var databaseTypeMenu: some View {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: AppSettings.shared.showExperimentalEngines)
+    return Picker("Database", selection: $connectionConfig.databaseType) {
+      ForEach(types, id: \.self) { type in
+        Text(type.displayName).tag(type)
+      }
+    }
+    .pickerStyle(.menu)
+    .labelsHidden()
+    .fixedSize()
   }
 }
 

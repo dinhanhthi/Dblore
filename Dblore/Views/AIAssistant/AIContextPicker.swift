@@ -7,21 +7,32 @@
 
 import SwiftUI
 
-/// Pill-shaped chip button with hover, pressed and disabled states
+/// Chip button with hover, pressed and disabled states.
+/// Footer actions use a capsule; empty-state examples keep a small corner radius.
 struct AIChipButtonStyle: ButtonStyle {
   var isActive = false
+  var capsule = false
 
   func makeBody(configuration: Configuration) -> some View {
-    ChipBody(configuration: configuration, isActive: isActive)
+    ChipBody(configuration: configuration, isActive: isActive, capsule: capsule)
   }
 
   private struct ChipBody: View {
     let configuration: Configuration
     let isActive: Bool
+    let capsule: Bool
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
     var body: some View {
+      if capsule {
+        chrome(Capsule())
+      } else {
+        chrome(RoundedRectangle(cornerRadius: CornerRadius.sm))
+      }
+    }
+
+    private func chrome<S: InsettableShape>(_ shape: S) -> some View {
       configuration.label
         .font(.small)
         .foregroundColor(isActive ? .accent : .foreground)
@@ -30,11 +41,9 @@ struct AIChipButtonStyle: ButtonStyle {
         .background(
           configuration.isPressed || isHovering ? Color.cellBackgroundHover : Color.inputBackground
         )
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.sm)
-            .stroke(isActive ? Color.accent : Color.border, lineWidth: 1)
-        )
+        .clipShape(shape)
+        .overlay(shape.stroke(isActive ? Color.accent : Color.border, lineWidth: 1))
+        .contentShape(shape)
         .opacity(isEnabled ? 1 : 0.5)
         .onHover { isHovering = $0 }
         .linkPointer()
@@ -67,12 +76,9 @@ struct AIDropdownLabel: View {
     .padding(.horizontal, Spacing.sm)
     .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
     .background(Color.inputBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.sm)
-        .stroke(Color.border, lineWidth: 1)
-    )
-    .contentShape(Rectangle())
+    .clipShape(Capsule())
+    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .contentShape(Capsule())
   }
 }
 
@@ -164,7 +170,7 @@ struct AIContextPicker<Accessory: View>: View {
         AIFlowLayout {
           ForEach(table.columns) { column in
             Button(column.name) { onColumn("\(table.qualifiedName).\(column.name)") }
-              .buttonStyle(AIChipButtonStyle())
+              .buttonStyle(AIChipButtonStyle(capsule: true))
               .help("Add \(table.qualifiedName).\(column.name) to the message")
           }
         }
@@ -309,18 +315,16 @@ struct AIContextPicker<Accessory: View>: View {
       } label: {
         Text(table.qualifiedName)
       }
-      .buttonStyle(AIChipButtonStyle(isActive: isExpanded))
+      .buttonStyle(AIChipButtonStyle(isActive: isExpanded, capsule: true))
       .help("Show columns")
 
       Button {
         selected.remove(table.qualifiedName)
       } label: {
         Image(systemName: "xmark")
-          .font(.smallest)
-          .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help("Remove \(table.qualifiedName)")
     }
   }

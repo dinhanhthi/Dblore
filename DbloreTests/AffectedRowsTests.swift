@@ -8,7 +8,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Affected Rows - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Affected Rows - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct AffectedRowsTests {
   private static func config(protectedMode: Bool) -> ConnectionConfig {

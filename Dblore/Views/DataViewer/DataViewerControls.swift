@@ -2,7 +2,8 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: rows-per-page, column visibility and paging
+//  Data viewer header controls: rows-per-page, column visibility, paging,
+//  + Row, the Grid / Chart slider, and staged-change actions.
 //
 
 import SwiftUI
@@ -11,6 +12,21 @@ import SwiftUI
 struct DataViewerControls: View {
   @Bindable var viewModel: NotebookViewModel
   @State private var showColumns = false
+  @State private var showPreview = false
+  @State private var confirmDiscard = false
+
+  /// Commit is click-only. Cmd+S stays Save in `DbloreApp`.
+  static let commitKeyEquivalent: KeyEquivalent? = nil
+
+  /// "14 changes · 2 inserts, 4 edits, 8 deletes"
+  static func stagedChangesSummary(_ counts: RowChangeSet.Counts) -> String {
+    let total = counts.inserts + counts.edits + counts.deletes
+    let changes = total == 1 ? "change" : "changes"
+    let inserts = countPhrase(counts.inserts, "insert")
+    let edits = countPhrase(counts.edits, "edit")
+    let deletes = countPhrase(counts.deletes, "delete")
+    return "\(total) \(changes) · \(inserts), \(edits), \(deletes)"
+  }
 
   var body: some View {
     if let state = viewModel.dataViewer {
@@ -37,8 +53,61 @@ struct DataViewerControls: View {
             await viewModel.goToPage(state.page + 1)
           }
         }
+
+        Divider().frame(height: 14)
+
+        addRowButton
+
+        if showsChartPicker {
+          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode)
+        }
+
+        if let set = state.changeSet, !set.isEmpty {
+          stagedSummary(set.counts)
+          previewButton
+          discardButton
+          commitButton
+        }
+      }
+      .sheet(isPresented: $showPreview) {
+        StagedChangesPreviewSheet(viewModel: viewModel)
+      }
+      .confirmationDialog(
+        "Discard staged changes?",
+        isPresented: $confirmDiscard,
+        titleVisibility: .visible
+      ) {
+        Button("Discard", role: .destructive) { viewModel.discardStaged() }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Staged inserts, edits, and deletes on this page will be dropped.")
+      }
+      .confirmationDialog(
+        "Staged changes",
+        isPresented: leavePromptPresented,
+        titleVisibility: .visible
+      ) {
+        Button("Commit") { viewModel.resolveStagedLeavePrompt(.commit) }
+        Button("Discard", role: .destructive) { viewModel.resolveStagedLeavePrompt(.discard) }
+        Button("Cancel", role: .cancel) { viewModel.resolveStagedLeavePrompt(.cancel) }
+      } message: {
+        Text(
+          "Commit or discard staged row changes before continuing. Cancel keeps them."
+        )
       }
     }
+  }
+
+  /// Dialog dismissal without a button choice cancels on the next turn, after a button
+  /// has already resumed the prompt.
+  private var leavePromptPresented: Binding<Bool> {
+    Binding(
+      get: { viewModel.stagedLeavePromptVisible },
+      set: { isPresented in
+        guard !isPresented else { return }
+        Task { @MainActor in viewModel.cancelStagedLeavePromptIfNeeded() }
+      }
+    )
   }
 
   /// "a–b of N" once the total is known, "a–b" while it is not; "0 rows" or "Page X" when the
@@ -148,15 +217,129 @@ struct DataViewerControls: View {
   ) -> some View {
     Button(action: { Task { await action() } }) {
       Image(systemName: icon)
-        .font(.system(size: 10))
-        .foregroundColor(.foregroundSubtle)
-        .frame(width: 20, height: 20)
-        .contentShape(Rectangle())
+    }
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
+    .help(help)
+    .disabled(!enabled || viewModel.isEditorQueryRunning)
+  }
+
+  private static func countPhrase(_ count: Int, _ singular: String) -> String {
+    "\(count) \(count == 1 ? singular : singular + "s")"
+  }
+
+  /// Same rule as the in-grid picker: a loaded page that can be plotted.
+  private var showsChartPicker: Bool {
+    guard let result = viewModel.editorResult, result.error == nil else { return false }
+    let showingRows =
+      !result.rows.isEmpty
+      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
+    guard showingRows else { return false }
+    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
+  }
+
+  private var addRowButton: some View {
+    Button(action: stageNewRow) {
+      capsuleLabel {
+        Text("+ Row")
+          .font(.system(size: 11))
+          .foregroundColor(viewModel.stagingEnabled ? .foreground : .foregroundMuted)
+      }
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .help(help)
-    .disabled(!enabled || viewModel.isEditorQueryRunning)
+    .fixedSize()
+    .disabled(!viewModel.stagingEnabled)
+    .help(viewModel.rowStagingUnavailableReason ?? "Stage a new row")
+    .overlay { disabledStagingHelp }
+  }
+
+  private func stageNewRow() {
+    if let message = viewModel.stageInsert() {
+      viewModel.showToast(message, type: .error)
+    }
+  }
+
+  private func stagedSummary(_ counts: RowChangeSet.Counts) -> some View {
+    let total = counts.inserts + counts.edits + counts.deletes
+    let changes = total == 1 ? "change" : "changes"
+    return
+      (Text("\(total) \(changes)")
+      .foregroundColor(.foreground)
+      + Text(" · ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.inserts, "insert"))
+      .foregroundColor(.success)
+      + Text(", ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.edits, "edit"))
+      .foregroundColor(.warning)
+      + Text(", ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.deletes, "delete"))
+      .foregroundColor(.destructive))
+      .font(.monoSmall)
+      .lineLimit(1)
+      .help(Self.stagedChangesSummary(counts))
+      .accessibilityLabel(Self.stagedChangesSummary(counts))
+  }
+
+  private var previewButton: some View {
+    Button(action: { showPreview = true }) {
+      capsuleLabel {
+        Text("Preview SQL")
+          .font(.system(size: 11))
+          .foregroundColor(.foreground)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Show the staged SQL. Nothing is sent to the database.")
+  }
+
+  private var discardButton: some View {
+    Button(action: { confirmDiscard = true }) {
+      capsuleLabel {
+        Text("Discard")
+          .font(.system(size: 11))
+          .foregroundColor(.destructive)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Discard staged changes")
+  }
+
+  @ViewBuilder
+  private var commitButton: some View {
+    if let key = Self.commitKeyEquivalent {
+      commitButtonBase.keyboardShortcut(key)
+    } else {
+      commitButtonBase
+    }
+  }
+
+  private var commitButtonBase: some View {
+    Button(action: { Task { await viewModel.commitStaged() } }) {
+      Text("Commit")
+    }
+    .buttonStyle(PrimaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
+    .controlSize(.small)
+    .disabled(!viewModel.stagingEnabled)
+    .help(viewModel.rowStagingUnavailableReason ?? "Commit staged changes")
+    .overlay { disabledStagingHelp }
+  }
+
+  /// Disabled controls do not show help on their own; this overlay does.
+  @ViewBuilder
+  private var disabledStagingHelp: some View {
+    if !viewModel.stagingEnabled, let reason = viewModel.rowStagingUnavailableReason {
+      Color.clear
+        .contentShape(Rectangle())
+        .help(reason)
+    }
   }
 
   /// Capsule control look of the result panel's statement Menu

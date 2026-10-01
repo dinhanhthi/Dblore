@@ -90,6 +90,8 @@ enum DocumentCoder {
         }
 
         // Legacy paginationInfo / statementPaginationInfo are not read: pagination is gone.
+        // A missing or malformed chartSpec leaves the cell chartable from a suggestion.
+        let chartSpec = (cellDict["chartSpec"] as? [String: Any]).flatMap(Self.chartSpec(from:))
 
         let cell = NotebookCell(
           id: cellId,
@@ -101,7 +103,8 @@ enum DocumentCoder {
           isResultVisible: isResultVisible,
           statementResults: statementResults,
           selectedStatementIndex: selectedStatementIndex,
-          totalExecutionTime: totalExecutionTime
+          totalExecutionTime: totalExecutionTime,
+          chartSpec: chartSpec
         )
         cells.append(cell)
       }
@@ -182,6 +185,10 @@ enum DocumentCoder {
         }
       }
 
+      if let chartSpec = cell.chartSpec {
+        cellDict["chartSpec"] = chartSpecObject(chartSpec)
+      }
+
       cellsArray.append(cellDict)
     }
     json["cells"] = cellsArray
@@ -190,6 +197,35 @@ enum DocumentCoder {
     // Removed .prettyPrinted to improve save speed by 50%
     let options: JSONSerialization.WritingOptions = [.sortedKeys]
     return try JSONSerialization.data(withJSONObject: json, options: options)
+  }
+
+  /// Encodes a chart spec. Nil columns are omitted so older readers ignore an absent key.
+  private nonisolated static func chartSpecObject(_ spec: ChartSpec) -> [String: Any] {
+    var object: [String: Any] = [
+      "kind": spec.kind.rawValue,
+      "yColumns": spec.yColumns,
+    ]
+    if let xColumn = spec.xColumn {
+      object["xColumn"] = xColumn
+    }
+    if let seriesColumn = spec.seriesColumn {
+      object["seriesColumn"] = seriesColumn
+    }
+    return object
+  }
+
+  /// Nil when the object is missing fields, so a bad chart spec does not reject the file.
+  private nonisolated static func chartSpec(from dict: [String: Any]) -> ChartSpec? {
+    guard let kindRaw = dict["kind"] as? String, let kind = ChartKind(rawValue: kindRaw) else {
+      return nil
+    }
+    let yColumns = dict["yColumns"] as? [String] ?? []
+    return ChartSpec(
+      kind: kind,
+      xColumn: dict["xColumn"] as? String,
+      yColumns: yColumns,
+      seriesColumn: dict["seriesColumn"] as? String
+    )
   }
 
   // MARK: - Result Encoding/Decoding Helpers

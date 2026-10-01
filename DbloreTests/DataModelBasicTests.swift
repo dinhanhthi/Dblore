@@ -111,6 +111,96 @@ struct DataModelBasicTests {
     #expect(decodedCell.result == nil)
   }
 
+  @Test("An old notebook column decodes tableOID into a column origin")
+  func legacyNotebookColumnOriginDecodes() throws {
+    let id = UUID()
+    let cellID = UUID()
+    let legacy = """
+      {
+        "id": "\(id.uuidString)",
+        "cells": [{
+          "id": "\(cellID.uuidString)",
+          "cellType": "sql",
+          "content": "SELECT id FROM users",
+          "result": {
+            "columns": [{
+              "name": "id",
+              "type": "int4",
+              "tableOID": 16400,
+              "attributeNumber": 1
+            }],
+            "rows": [],
+            "executionTime": 0,
+            "rowCount": 0,
+            "timestamp": "2001-01-01T00:00:00Z",
+            "wasLimited": false,
+            "primaryKeyColumns": []
+          }
+        }],
+        "metadata": {
+          "createdAt": "2001-01-01T00:00:00Z",
+          "modifiedAt": "2001-01-01T00:00:00Z",
+          "title": "Legacy"
+        },
+        "settings": {},
+        "documentType": "notebook"
+      }
+      """
+    let data = try #require(legacy.data(using: .utf8))
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(DbloreNotebook.self, from: data)
+    let origin = decoded.cells.first?.result?.columns.first?.origin
+    #expect(origin == ColumnOrigin(tableID: TableRef("pg:16400"), columnOrdinal: 1))
+  }
+
+  @Test("A new notebook writes column origin and omits tableOID")
+  func notebookColumnOriginRoundTrip() throws {
+    let origin = ColumnOrigin(tableID: TableRef("pg:16400"), columnOrdinal: 3)
+    let notebook = DbloreNotebook(
+      id: UUID(),
+      cells: [
+        NotebookCell(
+          id: UUID(),
+          cellType: .sql,
+          content: "SELECT id FROM users;",
+          result: CellResult(
+            columns: [ColumnInfo(name: "id", type: "int4", origin: origin)],
+            rows: [],
+            executionTime: 0.01,
+            rowCount: 0,
+            timestamp: Date(timeIntervalSince1970: 0)
+          )
+        )
+      ],
+      metadata: NotebookMetadata(
+        createdAt: Date(timeIntervalSince1970: 0),
+        modifiedAt: Date(timeIntervalSince1970: 0),
+        title: "Origin"
+      ),
+      connectionConfig: nil,
+      settings: NotebookSettings()
+    )
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(notebook)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(DbloreNotebook.self, from: data)
+    #expect(decoded.cells.first?.result?.columns.first?.origin == origin)
+
+    let raw = try JSONSerialization.jsonObject(with: data)
+    let object = try #require(raw as? [String: Any])
+    let cells = try #require(object["cells"] as? [[String: Any]])
+    let result = try #require(cells.first?["result"] as? [String: Any])
+    let columns = try #require(result["columns"] as? [[String: Any]])
+    let column = try #require(columns.first)
+    #expect(column["origin"] != nil)
+    #expect(column["tableOID"] == nil)
+    #expect(column["attributeNumber"] == nil)
+  }
+
   @Test("NotebookCell with results")
   func notebookCellWithResults() throws {
     // Arrange
@@ -150,6 +240,48 @@ struct DataModelBasicTests {
     #expect(decodedCell.result?.columns.count == 2)
     #expect(decodedCell.result?.rows.count == 2)
     #expect(abs(decodedCell.result!.executionTime - 0.042) < 0.001)
+  }
+
+  @Test("NotebookCell chartSpec round-trips")
+  func notebookCellChartSpecRoundTrip() throws {
+    let spec = ChartSpec(
+      kind: .area, xColumn: "day", yColumns: ["total", "count"], seriesColumn: "region")
+    let cell = NotebookCell(
+      id: UUID(),
+      cellType: .sql,
+      content: "SELECT day, total FROM sales;",
+      chartSpec: spec
+    )
+
+    let data = try JSONEncoder().encode(cell)
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.chartSpec == spec)
+    let raw = try JSONSerialization.jsonObject(with: data)
+    let object = try #require(raw as? [String: Any])
+    #expect(object["chartSpec"] != nil)
+  }
+
+  @Test("NotebookCell without chartSpec still decodes")
+  func notebookCellWithoutChartSpecDecodes() throws {
+    let id = UUID()
+    let legacy = """
+      {"id":"\(id.uuidString)","cellType":"sql","content":"SELECT 1"}
+      """
+    let data = try #require(legacy.data(using: .utf8))
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.id == id)
+    #expect(decoded.content == "SELECT 1")
+    #expect(decoded.chartSpec == nil)
+
+    let plain = NotebookCell(id: id, cellType: .sql, content: "SELECT 1")
+    let encoded = try JSONEncoder().encode(plain)
+    let raw = try JSONSerialization.jsonObject(with: encoded)
+    let object = try #require(raw as? [String: Any])
+    #expect(object["chartSpec"] == nil)
+    let roundTrip = try JSONDecoder().decode(NotebookCell.self, from: encoded)
+    #expect(roundTrip.chartSpec == nil)
   }
 
   // MARK: - NotebookMetadata Tests

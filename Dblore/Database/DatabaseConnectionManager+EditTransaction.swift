@@ -2,6 +2,7 @@
 // Inline grid edits must update exactly one row. Protected mode runs the edit in the app
 // transaction behind an app-owned savepoint; without Protected mode the edit gets its own
 // app-owned BEGIN ... COMMIT, or runs inside the transaction the user opened.
+// A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement.
 
 import Foundation
 import Logging
@@ -10,6 +11,8 @@ import PostgresNIO
 extension DatabaseConnectionManager {
   /// App-owned savepoint around one inline edit (user-typed SAVEPOINT stays blocked)
   static let editSavepoint = "dblore_edit"
+  /// App-owned savepoint around one staged batch (not reused for a single-cell edit)
+  static let batchSavepoint = "dblore_batch"
 
   /// Protected mode: adopt an open user transaction or open the app transaction (no second
   /// BEGIN), then run the edit between `SAVEPOINT dblore_edit` and `RELEASE SAVEPOINT`, and record
@@ -63,7 +66,7 @@ extension DatabaseConnectionManager {
       }
       return rows
     }
-    _ = try await sendTransactionControl("BEGIN")
+    _ = try await sendTransactionControl(appOwnedBeginSQL)
     let rows: Int
     do {
       rows = try await sendEdit(statement)
@@ -76,22 +79,123 @@ extension DatabaseConnectionManager {
       throw DatabaseError.editRowCountMismatch(updated: rows, rolledBack: true)
     }
     let metadata = try await sendTransactionControl("COMMIT")
-    guard metadata.command == "COMMIT" else {
+    guard metadata.tag == "COMMIT" else {
       throw DatabaseError.transactionAborted(
         "The server rolled back the edit instead of saving it.")
     }
     return rows
   }
 
+  /// Staged batch. Protected mode: adopt or begin the app transaction, run every statement
+  /// inside `SAVEPOINT dblore_batch`, require exactly one affected row each, then `RELEASE` and
+  /// record one pending summary per statement. A failure or any other row count rolls back to
+  /// the savepoint (nothing from the batch is recorded) and names the statement. A transaction
+  /// this batch opened, with nothing else pending, is rolled back the way `undoEdit` does.
+  /// Unprotected, no user transaction: `BEGIN`, run each, `COMMIT`; any failure rolls the batch
+  /// back. Unprotected with a user transaction already open: run inside it, and do not roll that
+  /// transaction back on a bad row count.
+  func runStagedBatch(
+    _ statements: [BoundStatement], caller: UUID?, protectedMode: Bool
+  ) async throws -> [Int] {
+    if protectedMode {
+      return try await runProtectedBatch(statements, caller: caller)
+    }
+    return try await runUnprotectedBatch(statements)
+  }
+
   // MARK: - Private
+
+  private func runProtectedBatch(
+    _ statements: [BoundStatement], caller: UUID?
+  ) async throws -> [Int] {
+    try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
+    let opens = txState.isIdle
+    if opens { try await beginAppTransaction(caller: caller) }
+    do {
+      _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+    } catch {
+      throw await transactionFailure(error, openedHere: opens)
+    }
+    let counts: [Int]
+    do {
+      counts = try await applyBatch(statements, rolledBack: true)
+    } catch {
+      throw await undoBatch(error, openedHere: opens)
+    }
+    do {
+      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+    } catch {
+      throw await transactionFailure(error, openedHere: opens)
+    }
+    recordBatch(statements, counts: counts)
+    return counts
+  }
+
+  private func runUnprotectedBatch(_ statements: [BoundStatement]) async throws -> [Int] {
+    if userTxOpen {
+      return try await applyBatch(statements, rolledBack: false)
+    }
+    _ = try await sendTransactionControl(appOwnedBeginSQL)
+    let counts: [Int]
+    do {
+      counts = try await applyBatch(statements, rolledBack: true)
+    } catch {
+      _ = try? await sendTransactionControl("ROLLBACK")
+      throw error
+    }
+    let metadata = try await sendTransactionControl("COMMIT")
+    guard metadata.tag == "COMMIT" else {
+      throw DatabaseError.transactionAborted(
+        "The server rolled back the batch instead of saving it.")
+    }
+    return counts
+  }
+
+  /// Send each statement and require exactly one affected row. Does not begin, commit, or roll
+  /// back; the caller owns the transaction. `rolledBack` is only the flag on the thrown error.
+  private func applyBatch(_ statements: [BoundStatement], rolledBack: Bool) async throws -> [Int] {
+    var counts: [Int] = []
+    counts.reserveCapacity(statements.count)
+    for (index, statement) in statements.enumerated() {
+      let rows: Int
+      do {
+        rows = try await sendBound(statement)
+      } catch {
+        throw Self.batchStatementFailed(
+          index, sql: statement.sql, underlying: error, rolledBack: rolledBack)
+      }
+      guard rows == 1 else {
+        throw Self.batchStatementFailed(
+          index, sql: statement.sql, reason: "expected to affect 1 row, affected \(rows)",
+          rolledBack: rolledBack)
+      }
+      counts.append(rows)
+    }
+    return counts
+  }
+
+  private func recordBatch(_ statements: [BoundStatement], counts: [Int]) {
+    for (index, statement) in statements.enumerated() {
+      guard let classified = SQLStatementClassifier.classify(statement.sql).first else { continue }
+      recordPending(StatementSummary(statement: classified, affectedRows: counts[index]))
+    }
+  }
 
   /// Undo the edit with `ROLLBACK TO SAVEPOINT` (+ `RELEASE`) and return `editError` to throw. A
   /// transaction this edit opened with nothing else pending is rolled back (back to idle). If
   /// the undo fails, the state follows `transactionFailure`.
   private func undoEdit(_ editError: Error, openedHere: Bool) async -> Error {
+    await undoSavepoint(Self.editSavepoint, editError, openedHere: openedHere)
+  }
+
+  private func undoBatch(_ batchError: Error, openedHere: Bool) async -> Error {
+    await undoSavepoint(Self.batchSavepoint, batchError, openedHere: openedHere)
+  }
+
+  private func undoSavepoint(_ name: String, _ editError: Error, openedHere: Bool) async -> Error {
     do {
-      _ = try await sendTransactionControl("ROLLBACK TO SAVEPOINT \(Self.editSavepoint)")
-      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.editSavepoint)")
+      _ = try await sendTransactionControl("ROLLBACK TO SAVEPOINT \(name)")
+      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(name)")
     } catch {
       return await transactionFailure(editError, openedHere: openedHere)
     }
@@ -105,22 +209,54 @@ extension DatabaseConnectionManager {
 
   /// Send the app-built UPDATE (values as bind parameters) and return the command tag row count.
   private func sendEdit(_ statement: CellUpdateStatement) async throws -> Int {
-    guard let connection = _connection else { throw DatabaseError.notConnected }
+    try await affectedRows(sql: statement.sql, binds: statement.bindings, logLabel: "dblore.update")
+  }
+
+  private func sendBound(_ statement: BoundStatement) async throws -> Int {
+    try await affectedRows(sql: statement.sql, binds: statement.bindings, logLabel: "dblore.batch")
+  }
+
+  private func affectedRows(
+    sql: String, binds: PostgresBindings, logLabel: String
+  ) async throws -> Int {
+    guard let connection = _postgresConnection else { throw DatabaseError.notConnected }
     let startTime = Date()
     do {
-      let query = PostgresQuery(unsafeSQL: statement.sql, binds: statement.bindings)
+      let query = PostgresQuery(unsafeSQL: sql, binds: binds)
       let metadata = try await send(on: connection) {
-        try await $0.query(query, logger: Logger(label: "dblore.update")).get().metadata
+        try await $0.query(query, logger: Logger(label: logLabel)).get().metadata
       }
       return metadata.rows ?? 0
     } catch let error as DatabaseError {
       throw error
     } catch let error as PSQLError {
       throw DatabaseError.queryFailed(
-        formatPostgresError(error, query: statement.sql), Date().timeIntervalSince(startTime))
+        formatPostgresError(error, query: sql), Date().timeIntervalSince(startTime))
     } catch {
       throw DatabaseError.queryFailed(
         error.localizedDescription, Date().timeIntervalSince(startTime))
     }
+  }
+
+  private nonisolated static func batchStatementFailed(
+    _ index: Int, sql: String, reason: String, rolledBack: Bool
+  ) -> DatabaseError {
+    .batchStatementFailed(
+      index: index, sqlPrefix: batchSQLPrefix(sql), reason: reason, rolledBack: rolledBack)
+  }
+
+  private nonisolated static func batchStatementFailed(
+    _ index: Int, sql: String, underlying: Error, rolledBack: Bool
+  ) -> DatabaseError {
+    let reason =
+      (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
+    return batchStatementFailed(index, sql: sql, reason: reason, rolledBack: rolledBack)
+  }
+
+  private nonisolated static func batchSQLPrefix(_ sql: String) -> String {
+    let limit = 80
+    let collapsed = sql.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    guard collapsed.count > limit else { return collapsed }
+    return String(collapsed.prefix(limit)) + "…"
   }
 }

@@ -67,6 +67,10 @@ enum DatabaseError: LocalizedError {
   /// An inline edit updated `updated` rows instead of exactly one. `rolledBack`: the change was
   /// undone by the app; false: it stays in the user's own open transaction
   case editRowCountMismatch(updated: Int, rolledBack: Bool)
+  /// One statement of a staged batch failed or affected a row count other than 1.
+  /// `index` is 0-based. When `rolledBack` is true the whole batch was undone; when false the
+  /// statement stays in the user's own open transaction.
+  case batchStatementFailed(index: Int, sqlPrefix: String, reason: String, rolledBack: Bool)
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -121,6 +125,12 @@ enum DatabaseError: LocalizedError {
     case .editRowCountMismatch(let updated, false):
       return "Expected to update 1 row, updated \(updated) — the change is still in your open "
         + "transaction; roll it back (ROLLBACK) to undo it"
+    case .batchStatementFailed(let index, let sqlPrefix, let reason, let rolledBack):
+      let outcome =
+        rolledBack
+        ? "The batch was rolled back."
+        : "It is still in your open transaction; roll it back (ROLLBACK) to undo it."
+      return "Batch statement \(index + 1) (\(sqlPrefix)) failed: \(reason). \(outcome)"
     case .queryCancelled(let pendingCount, let userTxRolledBack):
       return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
     case .sessionChanged(let count):

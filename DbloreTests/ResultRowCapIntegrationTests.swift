@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Result Row Cap - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Result Row Cap - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct ResultRowCapIntegrationTests {
   private static let query = "SELECT * FROM generate_series(1, 1000)"

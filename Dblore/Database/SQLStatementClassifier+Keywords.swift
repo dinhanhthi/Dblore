@@ -25,6 +25,17 @@ nonisolated extension SQLStatementClassifier {
     "SECURITY",
   ]
 
+  /// SQLite writes that do not start with a PostgreSQL DML verb. `INSERT OR …` and
+  /// `ON CONFLICT … DO UPDATE` already start with INSERT.
+  static let sqliteDmlKeywords: Set<String> = ["REPLACE"]
+
+  /// SQLite commands that open or leave another database file. Effects are not visible from
+  /// the text, so they are utilities. `VACUUM INTO` stays on `utilityKeywords` (`VACUUM`).
+  static let sqliteUtilityKeywords: Set<String> = ["ATTACH", "DETACH"]
+
+  /// SQLite function that loads a native library. A call fails closed.
+  static let sqliteLoadExtensionFunction = "LOAD_EXTENSION"
+
   /// GUCs that the app uses as safety brakes (compared lowercased).
   static let brakeSettings: Set<String> = [
     "statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout",

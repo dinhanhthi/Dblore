@@ -19,6 +19,8 @@ struct CellUpdateStatementTests {
       primaryKeyColumns: ["id"], rowData: ["id": .int(7), "co\"l": .string("old")])
     #expect(statement.sql == #"UPDATE public."we""ird" SET "co""l" = $1 WHERE "id" = $2"#)
     #expect(statement.values == ["x'; DROP TABLE t; --", "7"])
+    #expect(statement.binds == [.text("x'; DROP TABLE t; --"), .text("7")])
+    #expect(!statement.sql.contains("DROP TABLE"))
   }
 
   @Test("Schema-qualified table and composite primary key keep key order")
@@ -39,6 +41,8 @@ struct CellUpdateStatementTests {
       qualifiedName: "public.t", columnName: "note", newValue: nil, primaryKeyColumns: ["id"],
       rowData: ["id": .string("a1")])
     #expect(statement.values == [nil, "a1"])
+    #expect(statement.binds == [.null, .text("a1")])
+    #expect(!statement.sql.contains("a1"))
   }
 
   @Test("No primary key is refused (no all-columns fallback)")
@@ -166,7 +170,8 @@ struct InlineEditViewModelTests {
       rows: [[.int(1), .string("old")]], rowCount: 1, sourceQuery: "SELECT * FROM users",
       tableName: "public.users", primaryKeyColumns: primaryKeyColumns,
       editTarget: EditTarget(
-        qualifiedName: "public.users", oid: 16_400, primaryKeyColumns: primaryKeyColumns))
+        qualifiedName: "public.users", tableID: .postgresql(oid: 16_400),
+        primaryKeyColumns: primaryKeyColumns))
     let notebook = DbloreNotebook(
       id: UUID(),
       cells: [

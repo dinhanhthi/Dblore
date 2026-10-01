@@ -15,14 +15,39 @@ extension DatabaseConnectionManager {
   /// The connection for one app catalog query.
   /// - Throws: `DatabaseError.notConnected`; `DatabaseError.metadataPausedDuringTransaction`
   ///   while the app transaction is pending (nothing is sent).
-  func catalogConnection() throws -> PostgresConnection {
-    guard let connection = _connection else { throw DatabaseError.notConnected }
+  /// The pause guard for one app catalog query. PostgreSQL also returns its socket; a file
+  /// session returns nil and the caller reads through `withSession`.
+  func catalogConnection() throws -> PostgresConnection? {
+    guard session != nil else { throw DatabaseError.notConnected }
     guard !isMetadataPaused else { throw DatabaseError.metadataPausedDuringTransaction }
     catalogQueryCount += 1
-    return connection
+    return _postgresConnection
   }
 
   func resetCatalogQueryCount() {
     catalogQueryCount = 0
+  }
+
+  /// One app catalog read on the open session. The pause guard and the query counter stay here.
+  func withCatalogSession<T: Sendable>(
+    _ body: (any DatabaseSession) async throws -> T
+  ) async throws -> T {
+    _ = try catalogConnection()
+    return try await withSession(body)
+  }
+
+  /// `withCatalogSession`, with a query failure wrapped as `Failed to fetch \(what)`.
+  /// `catalogConnection()` errors (`notConnected`, `metadataPausedDuringTransaction`) stay as they are.
+  func fetchCatalog<T: Sendable>(
+    _ what: String,
+    _ body: (any DatabaseSession) async throws -> T
+  ) async throws -> T {
+    _ = try catalogConnection()
+    do {
+      return try await withSession(body)
+    } catch {
+      throw DatabaseError.queryFailed(
+        "Failed to fetch \(what): \(error.localizedDescription)", 0)
+    }
   }
 }

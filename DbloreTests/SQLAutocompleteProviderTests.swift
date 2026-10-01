@@ -300,10 +300,8 @@ struct SQLAutocompleteProviderTests {
 private final class SpyProvider: SQLAutocompleteProvider {
   var calls = 0
   override func getSuggestions(
-    for fullText: String, at fullCursorPosition: Int
-  )
-    -> [AutocompleteSuggestion]
-  {
+    for fullText: String, at fullCursorPosition: Int, dialect: SQLDialect
+  ) -> [AutocompleteSuggestion] {
     calls += 1
     return []
   }

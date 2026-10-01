@@ -14,7 +14,7 @@ extension NotebookViewModel {
   func presentConfirmationIfNeeded(for query: String, cellId: UUID?) -> Bool {
     // Use per-connection SafeMode if set, otherwise fall back to global setting
     let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
-    let classified = SQLStatementClassifier.classify(query)
+    let classified = SQLStatementClassifier.classify(query, dialect: sqlDialect)
     guard let statements = Self.statementsNeedingConfirmation(classified, safeMode: safeMode)
     else { return false }
 

@@ -30,6 +30,11 @@ enum SidebarContent: Equatable {
   case tableHighlight  // Highlight form of the data viewer tab
 }
 
+/// Persists one history row. A failure stays inside the recorder and never fails the query.
+nonisolated protocol QueryHistoryRecording: Sendable {
+  func record(_ entry: QueryHistoryEntry) async
+}
+
 /// Main view model for the notebook editor
 @MainActor
 @Observable
@@ -121,6 +126,12 @@ class NotebookViewModel {
 
   // MARK: - Query Confirmation State (10.3.2 optimization)
   var queryConfirmationState: QueryConfirmationState = QueryConfirmationState()
+  /// Explain script waiting on the Safe Mode dialog. A normal run leaves this nil, so
+  /// confirmation still executes the cell or editor text.
+  @ObservationIgnored var pendingExplainSQL: String?
+  /// Staged data-viewer batch waiting on the Safe Mode dialog. Confirmation runs this
+  /// through `executeGatedBatch`, not the preview text as user SQL.
+  @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
@@ -137,6 +148,18 @@ class NotebookViewModel {
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   /// Table/view data viewer tab state (nil for every other tab)
   var dataViewer: DataViewerState?
+  /// Grid / Chart for the data viewer header. The grid reads the same value.
+  var dataViewerDisplayMode: ResultDisplayMode = .grid
+  /// How the user resolved a prompt that blocks paging, filter, sort, refresh, or tab close
+  /// while row changes are staged.
+  enum StagedLeaveChoice: Sendable {
+    case commit
+    case discard
+    case cancel
+  }
+  /// True while that prompt is open. The data viewer header presents it.
+  var stagedLeavePromptVisible = false
+  @ObservationIgnored var stagedLeaveContinuation: CheckedContinuation<StagedLeaveChoice, Never>?
   /// Filter form of the data viewer: edited freely, only `applyFilter()` copies it to
   /// `dataViewer.filter`
   var filterDraft = TableFilter(conditions: [])
@@ -146,6 +169,14 @@ class NotebookViewModel {
   @ObservationIgnored var filterDraftRelation: String?
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
+  /// Query history. The app uses the SQLite store; the test host uses memory so unit tests
+  /// never open `~/Library/Application Support/Dblore/History.sqlite`. Tests inject their own.
+  @ObservationIgnored var historyRecorder: any QueryHistoryRecording =
+    NotebookViewModel.defaultHistoryRecorder()
+  /// History on/off and retention. Defaults to the app settings; tests pass an isolated suite.
+  @ObservationIgnored var historySettings = AppSettings.shared
+  /// Workspace this tab belongs to, read when a statement is recorded.
+  @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer
@@ -263,11 +294,21 @@ class NotebookViewModel {
       override: notebook.connectionConfig?.rowCapOverride, global: globalRowCap())
   }
 
+  /// Dialect of this notebook's connection. Safe Mode prompts use the same rules as the gate.
+  var sqlDialect: SQLDialect {
+    notebook.connectionConfig?.databaseType.dialect ?? .postgresql
+  }
+
+  /// Explain Analyze needs a JSON plan. SQLite shows `EXPLAIN QUERY PLAN` as a grid instead.
+  var canExplainAnalyze: Bool {
+    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainJSON
+  }
+
   /// The gate's error message if the connection's protection level blocks `query`, else nil.
   /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
   func protectionBlockMessage(for query: String) -> String? {
     let decision = DatabaseConnectionManager.evaluate(
-      SQLStatementClassifier.classify(query), policy: protectionPolicy)
+      SQLStatementClassifier.classify(query, dialect: sqlDialect), policy: protectionPolicy)
     guard case .blocked(let index, let kind, let reason) = decision else { return nil }
     return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
       .localizedDescription
@@ -296,7 +337,22 @@ class NotebookViewModel {
   func executePendingQuery() async {
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
+      pendingExplainSQL = nil
+      pendingStagedBatch = nil
       executeUnlockedRunAll()
+      return
+    }
+    if let sql = pendingExplainSQL {
+      let cellId = queryConfirmationState.pendingCellId
+      pendingExplainSQL = nil
+      queryConfirmationState.clear()
+      await runExplained(sql, cellId: cellId)
+      return
+    }
+    if let batch = pendingStagedBatch {
+      pendingStagedBatch = nil
+      queryConfirmationState.clear()
+      await runConfirmedStagedBatch(batch)
       return
     }
     // Check if it's editor mode or notebook mode
@@ -313,6 +369,8 @@ class NotebookViewModel {
 
   /// Cancel the pending query execution
   func cancelPendingQuery() {
+    pendingExplainSQL = nil
+    pendingStagedBatch = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }

@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 /// A settings tab that another screen can request when it opens Settings.
 enum SettingsPage: String {
   case ai
+  case data
 
   static let userInfoKey = "settingsSection"
 }
@@ -49,6 +50,7 @@ struct SettingsModal: View {
     case ai = "AI"
     case results = "Results"
     case save = "Save"
+    case data = "Data"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
     case updates = "Updates"
@@ -61,6 +63,7 @@ struct SettingsModal: View {
       case .ai: return "sparkles"
       case .results: return "tablecells"
       case .save: return "square.and.arrow.down"
+      case .data: return "externaldrive"
       case .updates: return "arrow.triangle.2.circlepath"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
@@ -70,6 +73,7 @@ struct SettingsModal: View {
     fileprivate static func tab(for section: SettingsPage?) -> SettingsTab {
       switch section {
       case .ai: .ai
+      case .data: .data
       case nil: .appearance
       }
     }
@@ -157,6 +161,8 @@ struct SettingsModal: View {
     case .save:
       // Save Options (Notebook Mode Only)
       SettingsModalSaveOptionsSection(appSettings: appSettings)
+    case .data:
+      DataSettingsSection()
     case .updates:
       SettingsModalUpdatesSection()
     case .developer:
@@ -355,9 +361,17 @@ struct SettingsModalUpdatesSection: View {
 
 struct SettingsModalDeveloperSection: View {
   @Binding var isExportingLogs: Bool
+  @Bindable private var appSettings = AppSettings.shared
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
+      SettingsToggle(
+        title: "Show experimental engines",
+        description:
+          "Include database engines that are not ready for general use in the connection form.",
+        isOn: $appSettings.showExperimentalEngines
+      )
+
       // Export logs button
       Button(action: {
         isExportingLogs = true

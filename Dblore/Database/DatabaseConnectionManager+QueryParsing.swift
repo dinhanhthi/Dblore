@@ -141,6 +141,11 @@ extension DatabaseConnectionManager {
   /// Extract single table name from a simple SELECT query
   /// Returns nil for complex queries (JOINs, subqueries, CTEs)
   func extractSingleTableName(_ query: String) -> String? {
+    Self.singleTableName(in: query)
+  }
+
+  /// `extractSingleTableName` for callers that are not the connection actor.
+  nonisolated static func singleTableName(in query: String) -> String? {
     // Normalize query for parsing
     let normalized =
       query

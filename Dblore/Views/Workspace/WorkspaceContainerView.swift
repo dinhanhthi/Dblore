@@ -82,17 +82,22 @@ struct WorkspaceContainerView: View {
           .animation(SidebarAnimation.animation, value: workspaceManager.aiAssistant.isVisible)
           .zIndex(0)
 
-          // Traffic light area background + toggle button + connection button (z-index 1)
-          // This covers sidebar buttons during animation
+          // Traffic light controls stay above the sidebar while it slides (z-index 1).
+          // Solid fill only while the sidebar is closed, matching the tab bar.
+          // While it is open, leave the strip clear so the sidebar chromeGlass
+          // shows through: the same surface as Expand all and Refresh schema.
           HStack(spacing: 0) {
-            // Background for traffic light area + buttons
             Color.clear
               .frame(
                 width: ComponentSize.trafficLightAndToggleWidth
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
-              .background(Color.appBackground)
+              .background {
+                if !workspaceManager.isLeftSidebarVisible {
+                  Color.appBackground
+                }
+              }
               .overlay(alignment: .trailing) {
                 // Buttons positioned at trailing edge of background
                 HStack(spacing: Spacing.xxs) {
@@ -606,6 +611,10 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
           syncDocument()
         }
       }
+      .onExplainCommands(
+        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
+        syncDocument: syncDocument
+      )
       .confirmationDialog(
         "Run all cells?",
         isPresented: $showRunAllConfirmation,
@@ -640,6 +649,34 @@ struct WorkspaceEditorNotificationHandler: ViewModifier {
           syncDocument()
         }
       }
+      .onExplainCommands(
+        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
+        syncDocument: syncDocument)
+  }
+}
+
+extension View {
+  /// Explain commands from the Cell and Query menus. Only the active tab runs them.
+  fileprivate func onExplainCommands(
+    tabId: UUID,
+    workspaceManager: WorkspaceManager,
+    viewModel: NotebookViewModel,
+    syncDocument: @escaping () -> Void
+  ) -> some View {
+    onReceive(NotificationCenter.default.publisher(for: .explainStatement)) { _ in
+      guard workspaceManager.activeTabId == tabId else { return }
+      Task {
+        await viewModel.explainSelectedStatement(analyze: false)
+        syncDocument()
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .explainAnalyzeStatement)) { _ in
+      guard workspaceManager.activeTabId == tabId else { return }
+      Task {
+        await viewModel.explainSelectedStatement(analyze: true)
+        syncDocument()
+      }
+    }
   }
 }
 
@@ -857,21 +894,14 @@ struct TabNavigationArrowButton: View {
   let isEnabled: Bool
   let action: () -> Void
 
-  @State private var isHovering = false
-
   var body: some View {
     Button(action: action) {
       Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(isEnabled ? .foregroundMuted : .foregroundMuted.opacity(0.3))
-        .frame(width: 18, height: 18)
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .linkPointer()
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
     .disabled(!isEnabled)
     .blockDoubleClickZoom()
-    .onHover { isHovering = $0 }
     .help(direction == .left ? "Previous tab" : "Next tab")
   }
 }

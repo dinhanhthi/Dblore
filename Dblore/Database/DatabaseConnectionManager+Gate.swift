@@ -70,7 +70,7 @@ extension DatabaseConnectionManager {
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
-    guard _connection != nil else { throw DatabaseError.notConnected }
+    guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
@@ -79,6 +79,41 @@ extension DatabaseConnectionManager {
       return try await runProtectedEdit(statement, classified: statements.first, caller: caller)
     }
     return try await runUnprotectedEdit(statement)
+  }
+
+  /// Send a staged batch (app-built DELETE / UPDATE / INSERT, values as bind parameters).
+  /// Every statement is classified and checked against the same merged policy as `authorize`
+  /// before anything is sent: the first violation throws `DatabaseError.blockedByProtection`
+  /// and the batch is not sent. An empty batch returns `[]`. `connectionEpoch` must still be
+  /// `epoch` (`DatabaseError.notEditable` otherwise). Each statement must affect exactly one
+  /// row. Returns those counts (all 1s). Under Protected mode the batch joins the app
+  /// transaction (`runStagedBatch`); otherwise it commits on its own or runs in the user's
+  /// open transaction.
+  func executeGatedBatch(
+    _ statements: [BoundStatement], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
+    caller: UUID? = nil
+  ) async throws -> [Int] {
+    guard epoch == connectionEpoch else {
+      throw DatabaseError.notEditable("the connection changed; run the query again to edit")
+    }
+    let effective = effectivePolicy(for: policy)
+    // Decision is pure and finishes before any await that could send SQL.
+    if case .blocked(let index, let kind, let reason) = Self.evaluateBatch(
+      statements, policy: effective, dialect: Self.dialect(of: config))
+    {
+      throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
+    }
+    if statements.isEmpty { return [] }
+    try refuseIfEnding()
+    try refuseIfOwnedByAnotherCaller(caller)
+    try refuseIfAborted()
+    guard session != nil else { throw DatabaseError.notConnected }
+    try refuseIfConnectionClosed()
+    // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
+    commitGuard.inFlight += 1
+    defer { commitGuard.inFlight -= 1 }
+    return try await runStagedBatch(
+      statements, caller: caller, protectedMode: effective.protectedMode)
   }
 
   /// One result for a whole script: a single statement's result as is; otherwise the last
@@ -100,6 +135,15 @@ extension DatabaseConnectionManager {
 
   // MARK: - Gate
 
+  /// The stricter of `policy` and the connected config. A pending app transaction keeps
+  /// Protected mode rules until Commit / Rollback, even if the toggle was turned off.
+  private func effectivePolicy(for policy: ProtectionPolicy) -> ProtectionPolicy {
+    let merged = policy.stricter(connectedPolicy)
+    return ProtectionPolicy(
+      protectionLevel: merged.protectionLevel, safeMode: merged.safeMode,
+      protectedMode: merged.protectedMode || !txState.isIdle)
+  }
+
   /// Classify every statement of `sql` and throw if the stricter of `policy` and the connected
   /// config's protection blocks any of them (a caller can never weaken the connection).
   /// A pending app transaction keeps Protected mode rules until Commit / Rollback, even if the
@@ -108,16 +152,26 @@ extension DatabaseConnectionManager {
   private func authorize(
     _ sql: String, policy: ProtectionPolicy
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
-    let merged = policy.stricter(connectedPolicy)
-    let effective = ProtectionPolicy(
-      protectionLevel: merged.protectionLevel, safeMode: merged.safeMode,
-      protectedMode: merged.protectedMode || !txState.isIdle)
-    let statements = SQLStatementClassifier.classify(sql)
+    let effective = effectivePolicy(for: policy)
+    let statements = Self.classifyUserSQL(sql, config: config)
     if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
     return (statements, effective.protectedMode)
+  }
+
+  /// Dialect of the connected database. No connection keeps today's PostgreSQL rules.
+  nonisolated static func dialect(of config: ConnectionConfig?) -> SQLDialect {
+    config?.databaseType.dialect ?? .postgresql
+  }
+
+  /// Classify user SQL with the connection's dialect. PostgreSQL connections, and a missing
+  /// config, use the PostgreSQL classifier.
+  nonisolated static func classifyUserSQL(
+    _ sql: String, config: ConnectionConfig?
+  ) -> [ClassifiedStatement] {
+    SQLStatementClassifier.classify(sql, dialect: dialect(of: config))
   }
 
   /// Pure policy check: the first statement the policy forbids, or `.allowed`.
@@ -135,6 +189,23 @@ extension DatabaseConnectionManager {
         ?? (policy.protectedMode ? protectedModeViolation(statement) : nil)
       {
         return .blocked(statementIndex: index, kind: statement.kind, reason: reason)
+      }
+    }
+    return .allowed
+  }
+
+  /// Pure batch gate: the first bound statement `policy` forbids, or `.allowed`.
+  /// `statementIndex` is the index in `statements`, so one violation rejects the whole batch
+  /// before anything is sent. An empty batch is allowed.
+  nonisolated static func evaluateBatch(
+    _ statements: [BoundStatement], policy: ProtectionPolicy,
+    dialect: SQLDialect = .postgresql
+  ) -> GateDecision {
+    for (index, statement) in statements.enumerated() {
+      if case .blocked(_, let kind, let reason) = evaluate(
+        SQLStatementClassifier.classify(statement.sql, dialect: dialect), policy: policy)
+      {
+        return .blocked(statementIndex: index, kind: kind, reason: reason)
       }
     }
     return .allowed

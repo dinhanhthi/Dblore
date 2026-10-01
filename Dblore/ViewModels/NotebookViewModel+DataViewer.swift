@@ -16,15 +16,24 @@ extension NotebookViewModel {
       let key = state.loadKey
       // maxRows = pageSize never truncates a LIMIT pageSize page (no cap notice)
       await executeEditorQuery(
-        state.pageSQL, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound))
+        state.pageSQL, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
+        source: .internal)
 
       if dataViewer?.totalRows == nil {
         // Busy during the count too: Cancel stops it, paging meanwhile is coalesced by the loop
         isEditorQueryRunning = true
         defer { isEditorQueryRunning = false }
         // Errors keep the total unknown (Next stays enabled), no toast
+        let started = Date()
         let result = try? await connectionManager.execute(
           userSQL: state.countSQL, policy: protectionPolicy, maxRows: 1, caller: id)
+        scheduleHistory(
+          [
+            QueryHistoryOutcome(
+              sql: state.countSQL, duration: Date().timeIntervalSince(started),
+              rowCount: result?.rowCount, status: result == nil ? .error : .success,
+              errorMessage: nil)
+          ], source: .internal)
         if let result { storeDataViewerTotal(DataViewerState.total(from: result), for: state) }
       }
 
@@ -41,24 +50,31 @@ extension NotebookViewModel {
     dataViewer?.totalRows = total
   }
 
-  /// Go to `page`, clamped to 1...pageCount (no upper bound while the total is unknown)
+  /// Go to `page`, clamped to 1...pageCount (no upper bound while the total is unknown).
+  /// Staged changes must be committed or discarded first. Cancel leaves the page.
   func goToPage(_ page: Int) async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
     guard let state = dataViewer else { return }
     let upper = state.pageCount ?? max(page, 1)
     dataViewer?.page = min(max(page, 1), upper)
     await loadDataViewerPage()
   }
 
-  /// Change the rows per page and go back to page 1
+  /// Change the rows per page and go back to page 1. Staged changes must be resolved first.
   func setPageSize(_ size: Int) async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
     guard dataViewer != nil else { return }
     dataViewer?.pageSize = size
     dataViewer?.page = 1
     await loadDataViewerPage()
   }
 
-  /// Reload the current page and recount the rows
+  /// Reload the current page and recount the rows. Staged changes must be resolved first.
   func refreshDataViewer() async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
     guard dataViewer != nil else { return }
     dataViewer?.totalRows = nil
     await loadDataViewerPage()
@@ -95,18 +111,24 @@ extension NotebookViewModel {
     refreshSavedFilters()
   }
 
-  /// Apply the draft: back to page 1 with the count recomputed
+  /// Apply the draft: back to page 1 with the count recomputed.
+  /// Staged changes must be resolved first.
   func applyFilter() async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
     guard let state = dataViewer else { return }
-    let blank = filterDraft.whereClause(dialect: state.databaseType) == nil
+    let blank = filterDraft.whereClause(dialect: state.databaseType.dialect) == nil
     dataViewer?.filter = blank ? TableFilter(conditions: []) : filterDraft
     dataViewer?.page = 1
     dataViewer?.totalRows = nil
     await loadDataViewerPage()
   }
 
-  /// Remove the applied filter and reset the form to one empty row
+  /// Remove the applied filter and reset the form to one empty row.
+  /// Staged changes must be resolved first.
   func clearFilter() async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
     guard dataViewer != nil else { return }
     filterDraft = TableFilter(conditions: [FilterCondition()])
     dataViewer?.filter = TableFilter(conditions: [])

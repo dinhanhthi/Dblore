@@ -9,7 +9,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Protected Transaction - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Protected Transaction - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct ProtectedTransactionTests {
   private static func config(protectedMode: Bool = true, idleTimeout: Int = 600) -> ConnectionConfig
@@ -741,7 +741,7 @@ struct ProtectedTransactionTests {
       // The server closed the session: nothing is sent, the caller is asked to reconnect (C0:
       // the session is forgotten as soon as it closes, so the manager may already be
       // disconnected)
-      #expect(await manager._connection?.isClosed ?? true)
+      #expect(await manager._postgresConnection?.isClosed ?? true)
       let error = await #expect(throws: DatabaseError.self) {
         _ = try await manager.execute(userSQL: "SELECT 1", policy: open)
       }

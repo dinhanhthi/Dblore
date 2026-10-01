@@ -20,6 +20,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var selectedStatementIndex: Int
   /// Total execution time for all statements (for multi-statement queries)
   var totalExecutionTime: TimeInterval?
+  /// Chart configuration for this cell's result. Absent in older `.sqlnb` files.
+  var chartSpec: ChartSpec?
 
   // MARK: - Codable
 
@@ -34,6 +36,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case statementResults
     case selectedStatementIndex
     case totalExecutionTime
+    case chartSpec
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -52,6 +55,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
+    chartSpec = try container.decodeIfPresent(ChartSpec.self, forKey: .chartSpec)
     // Legacy `paginationInfo` / `statementPaginationInfo` (LIMIT-rewrite pagination) are ignored
   }
 
@@ -67,6 +71,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encode(statementResults, forKey: .statementResults)
     try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
     try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
+    try container.encodeIfPresent(chartSpec, forKey: .chartSpec)
   }
 
   nonisolated init(
@@ -79,7 +84,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     isResultVisible: Bool = true,
     statementResults: [StatementResult] = [],
     selectedStatementIndex: Int = 0,
-    totalExecutionTime: TimeInterval? = nil
+    totalExecutionTime: TimeInterval? = nil,
+    chartSpec: ChartSpec? = nil
   ) {
     self.id = id
     self.cellType = cellType
@@ -91,6 +97,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.statementResults = statementResults
     self.selectedStatementIndex = selectedStatementIndex
     self.totalExecutionTime = totalExecutionTime
+    self.chartSpec = chartSpec
   }
 }
 
@@ -195,24 +202,73 @@ struct CellResult: Codable, Sendable {
   }
 }
 
+/// Opaque table identity. Callers compare values. PostgreSQL builds `pg:<oid>` in `Dblore/Database`.
+nonisolated struct TableRef: Hashable, Sendable, Codable {
+  private let rawValue: String
+
+  nonisolated init(_ rawValue: String) {
+    self.rawValue = rawValue
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    rawValue = try container.decode(String.self)
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    try container.encode(rawValue)
+  }
+
+  /// Identity text. An engine parses its own prefix next to the factory that builds it.
+  var identity: String { rawValue }
+}
+
+/// Where a result column came from: a table identity and a column ordinal in that table.
+nonisolated struct ColumnOrigin: Hashable, Sendable, Codable {
+  let tableID: TableRef
+  let columnOrdinal: Int
+}
+
 /// Information about a result column
 struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated var id: String { name }
   nonisolated let name: String
   nonisolated let type: String
-  /// Source table OID from the server's RowDescription (0 = not a plain table column,
-  /// nil = unknown). Used to decide whether inline edit may target the row.
-  nonisolated let tableOID: UInt32?
-  /// Source column attribute number from the RowDescription (0 = not a table column)
-  nonisolated let attributeNumber: Int16?
+  /// Source table and column from the server's row description. nil when unknown.
+  nonisolated let origin: ColumnOrigin?
 
-  nonisolated init(
-    name: String, type: String, tableOID: UInt32? = nil, attributeNumber: Int16? = nil
-  ) {
+  nonisolated init(name: String, type: String, origin: ColumnOrigin? = nil) {
     self.name = name
     self.type = type
-    self.tableOID = tableOID
-    self.attributeNumber = attributeNumber
+    self.origin = origin
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, type, origin, tableOID, attributeNumber
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    name = try container.decode(String.self, forKey: .name)
+    type = try container.decode(String.self, forKey: .type)
+    if let origin = try container.decodeIfPresent(ColumnOrigin.self, forKey: .origin) {
+      self.origin = origin
+    } else if let oid = try container.decodeIfPresent(UInt32.self, forKey: .tableOID),
+      let attributeNumber = try container.decodeIfPresent(Int16.self, forKey: .attributeNumber)
+    {
+      self.origin = ColumnOrigin(
+        tableID: TableRef.postgresql(oid: oid), columnOrdinal: Int(attributeNumber))
+    } else {
+      self.origin = nil
+    }
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(name, forKey: .name)
+    try container.encode(type, forKey: .type)
+    try container.encodeIfPresent(origin, forKey: .origin)
   }
 }
 

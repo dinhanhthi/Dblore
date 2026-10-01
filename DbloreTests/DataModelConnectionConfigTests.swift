@@ -137,6 +137,48 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.lockTimeoutSeconds == 5)
     #expect(decoded.idleInTransactionTimeoutSeconds == 600)
     #expect(decoded.rowCapOverride == nil)
+    #expect(decoded.fileBookmark == nil)
+    #expect(decoded.readOnlyFile == false)
+  }
+
+  @Test("SQLite config round-trips the file path, bookmark, and read-only flag")
+  func sqliteFileConfigRoundTrip() throws {
+    let bookmark = Data([0xAB, 0xCD, 0x01, 0x02])
+    let config = ConnectionConfig(
+      databaseType: .sqlite,
+      host: "",
+      database: "/Users/me/Library/notes.sqlite",
+      fileBookmark: bookmark,
+      readOnlyFile: true
+    )
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
+
+    #expect(decoded.databaseType == .sqlite)
+    #expect(decoded.database == "/Users/me/Library/notes.sqlite")
+    #expect(decoded.fileBookmark == bookmark)
+    #expect(decoded.readOnlyFile == true)
+    #expect(decoded == config)
+  }
+
+  @Test("Validation does not require a host or username for SQLite")
+  func sqliteValidationDoesNotRequireHost() {
+    let missingHost = ConnectionConfig(
+      databaseType: .sqlite,
+      host: "",
+      database: "/tmp/notes.sqlite",
+      username: ""
+    )
+    #expect(ConnectionFormContent.isFormInputValid(missingHost))
+
+    let missingFile = ConnectionConfig(
+      databaseType: .sqlite,
+      host: "localhost",
+      database: "",
+      username: "file"
+    )
+    #expect(!ConnectionFormContent.isFormInputValid(missingFile))
   }
 
   @Test("Encode/decode round trip preserves custom safety/session values")

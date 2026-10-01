@@ -21,8 +21,8 @@ struct SavedHighlight: Codable, Identifiable, Equatable {
 
 /// Saved table filters and highlights per connection and table, stored as JSON in UserDefaults
 final class SavedFilterStore {
-  private static let storageKey = "ace.thi.dblore.savedFilters"
-  private static let highlightStorageKey = "ace.thi.dblore.savedHighlights"
+  private nonisolated static let storageKey = "ace.thi.dblore.savedFilters"
+  private nonisolated static let highlightStorageKey = "ace.thi.dblore.savedHighlights"
 
   private let defaults: UserDefaults
 
@@ -97,5 +97,43 @@ final class SavedFilterStore {
   ) {
     guard let data = try? JSONEncoder().encode(all) else { return }
     defaults.set(data, forKey: storageKey)
+  }
+
+  nonisolated static func storedData(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    filters: Data?, highlights: Data?
+  ) {
+    let domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    return (domain[storageKey] as? Data, domain[highlightStorageKey] as? Data)
+  }
+
+  nonisolated static func exportSnapshot(
+    defaults: UserDefaults, domainName: String
+  ) -> (
+    filters: Data?, highlights: Data?
+  ) {
+    storedData(defaults: defaults, domainName: domainName)
+  }
+
+  nonisolated static func replace(
+    filters: Data?, highlights: Data?, defaults: UserDefaults, domainName: String
+  ) {
+    var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    if let filters {
+      domain[storageKey] = filters
+    } else {
+      domain.removeValue(forKey: storageKey)
+    }
+    if let highlights {
+      domain[highlightStorageKey] = highlights
+    } else {
+      domain.removeValue(forKey: highlightStorageKey)
+    }
+    defaults.setPersistentDomain(domain, forName: domainName)
+  }
+
+  nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
+    replace(filters: nil, highlights: nil, defaults: defaults, domainName: domainName)
   }
 }

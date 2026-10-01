@@ -272,14 +272,22 @@ extension NotebookViewModel {
   // MARK: - Cell Value Editing
 
   /// Inline edit committed in the result grid at result column `index`: `row` is the displayed
-  /// row's values, so the primary key is that row's. Goes through `handleCellValueEdit` (live
-  /// target, protection gate, Safe Mode) with the result's live edit target, without opening
-  /// the sidebar.
+  /// row's values, so the primary key is that row's. A data viewer with a primary-key edit
+  /// target stages the cell (`stageEdit`). A notebook grid goes through `handleCellValueEdit`
+  /// (live target, protection gate) and sends one UPDATE, without opening the sidebar.
   func handleGridCellEdit(
     row: [CellValue], column index: Int, newValue: String, result: CellResult, cellId: UUID?,
     connectionManager: DatabaseConnectionManager?
   ) {
     guard result.columns.indices.contains(index) else { return }
+    if dataViewer != nil, rowStagingUnavailableReason == nil {
+      if let page = stagedPageIndex(matching: row, result: result) {
+        handleStagedGridCellEdit(row: page, column: index, newValue: newValue, result: result)
+      } else {
+        showToast(Self.rowNotOnPage, type: .error)
+      }
+      return
+    }
     let column = result.columns[index]
     let originalValue = index < row.count ? row[index] : .null
     cellDetailEditTarget = result.editTarget
@@ -294,6 +302,56 @@ extension NotebookViewModel {
       cellId: cellId,
       connectionManager: connectionManager
     )
+  }
+
+  /// Staged cell edit from the data-viewer grid. `row` is a loaded-page index, or a staged
+  /// insert appended after those rows. Does not send an UPDATE.
+  func handleStagedGridCellEdit(
+    row: Int, column index: Int, newValue: String, result: CellResult
+  ) {
+    guard result.columns.indices.contains(index) else { return }
+    let name = result.columns[index].name
+    let original = originalStagedCell(row: row, column: name, index: index, result: result)
+    let value = Self.editedCellValue(newValue, original: original)
+    if let message = stageEdit(row: row, column: name, value: value) {
+      showToast(message, type: .error)
+    }
+  }
+
+  /// Loaded-page index of `row`, matched on the primary key. Nil when it is not on the page.
+  private func stagedPageIndex(matching row: [CellValue], result: CellResult) -> Int? {
+    guard let target = editorResult?.editTarget, !target.primaryKeyColumns.isEmpty else {
+      return nil
+    }
+    let columns = result.columns
+    func key(_ values: [CellValue]) -> [CellValue]? {
+      var primaryKey: [CellValue] = []
+      primaryKey.reserveCapacity(target.primaryKeyColumns.count)
+      for name in target.primaryKeyColumns {
+        guard let index = columns.firstIndex(where: { $0.name == name }), index < values.count
+        else { return nil }
+        primaryKey.append(values[index])
+      }
+      return primaryKey
+    }
+    guard let wanted = key(row) else { return nil }
+    return result.rows.firstIndex { candidate in
+      guard let candidateKey = key(candidate) else { return false }
+      return candidateKey == wanted
+    }
+  }
+
+  /// Loaded cell, or the staged insert's current value, used to keep the edited type.
+  private func originalStagedCell(
+    row: Int, column name: String, index: Int, result: CellResult
+  ) -> CellValue {
+    if result.rows.indices.contains(row) {
+      return result.rows[row].indices.contains(index) ? result.rows[row][index] : .null
+    }
+    let insertIndex = row - result.rows.count
+    guard let inserts = dataViewer?.changeSet?.inserts, inserts.indices.contains(insertIndex)
+    else { return .null }
+    return inserts[insertIndex].values[name] ?? .null
   }
 
   /// Handle JSON value edit from sidebar

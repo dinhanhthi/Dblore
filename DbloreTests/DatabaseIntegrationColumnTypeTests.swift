@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Database Integration - Column Type Enrichment Tests (Requires PostgreSQL)")
+@Suite("Database Integration - Column Type Enrichment Tests (Requires PostgreSQL)", .requiresPostgres)
 @MainActor
 struct DatabaseIntegrationColumnTypeTests {
 

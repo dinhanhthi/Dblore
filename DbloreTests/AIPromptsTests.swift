@@ -16,6 +16,12 @@ struct AIPromptsTests {
     #expect(prompt.contains("PostgreSQL"))
   }
 
+  @Test func systemPromptUsesTheConnectionDialect() {
+    let prompt = AIPrompts.system(databaseName: "notes", schema: "items(id)", dialect: .sqlite)
+    #expect(prompt.contains("Use the SQLite dialect."))
+    #expect(!prompt.contains("PostgreSQL"))
+  }
+
   @Test func systemPromptStatesCannotRunRule() {
     let prompt = AIPrompts.system(databaseName: nil, schema: "")
     #expect(prompt.contains("cannot run queries"))

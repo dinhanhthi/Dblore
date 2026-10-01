@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Inline Edit Target - Integration (Requires PostgreSQL)", .serialized)
+@Suite("Inline Edit Target - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct InlineEditTargetIntegrationTests {
   private let open = ProtectionPolicy(protectionLevel: .none)

@@ -67,48 +67,94 @@ struct ConnectionFormContent: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Main scrollable content
       ScrollView {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-          // Connection History Dropdown (if available)
+        VStack(alignment: .leading, spacing: Spacing.md) {
           if !connectionHistory.isEmpty {
-            connectionHistorySection()
+            sectionCard {
+              sectionTitle("Recent connections")
+              connectionHistorySection()
+            }
           }
 
-          // Input Mode Picker with Sliding Animation
-          customTabPicker()
-            .onChange(of: inputMode) { _, newMode in
-              parseError = nil
-              testResult = nil
-              if newMode == .connectionString {
-                // Generate connection string from current config only if we have valid data
-                let config = connectionConfig
-                if !config.username.isEmpty && !config.database.isEmpty {
-                  connectionString = generateConnectionString()
-                } else {
-                  // Keep empty to show placeholder
-                  connectionString = ""
-                }
-                // Sync SSL mode state with current config
-                connectionStringSSLMode = connectionConfig.sslMode
+          if connectionConfig.databaseType == .sqlite {
+            sectionCard {
+              sectionTitle("Connection")
+              sqliteSimpleFields()
+            }
+          } else {
+            sectionCard {
+              sectionTitle("Connection")
+              if connectionConfig.databaseType.capabilities.usesNetwork {
+                customTabPicker()
+                  .onChange(of: inputMode) { _, newMode in
+                    parseError = nil
+                    testResult = nil
+                    if newMode == .connectionString {
+                      let config = connectionConfig
+                      if !config.username.isEmpty && !config.database.isEmpty {
+                        connectionString = generateConnectionString()
+                      } else {
+                        connectionString = ""
+                      }
+                      connectionStringSSLMode = connectionConfig.sslMode
+                    }
+                  }
+              }
+              if inputMode == .form || !connectionConfig.databaseType.capabilities.usesNetwork {
+                formFields()
+              } else {
+                connectionStringFields()
               }
             }
 
-          if inputMode == .form {
-            formFields()
-          } else {
-            connectionStringFields()
+            sectionCard {
+              sectionTitle("Options")
+              connectionTogglesAndPickers()
+            }
+
+            sectionCard {
+              sectionTitle("Safety")
+              safetySection()
+            }
           }
         }
-        .padding(Spacing.lg)
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.appBackground)
       .onAppear {
         loadConnectionHistory()
+        refreshSQLiteFileBookmark()
+      }
+      .onChange(of: connectionConfig.databaseType) { _, newType in
+        clearParseErrorAndTestResult()
+        if !newType.capabilities.usesNetwork {
+          inputMode = .form
+        }
       }
 
-      // Fixed Footer at bottom
       footerView()
     }
+  }
+
+  func sectionTitle(_ title: String) -> some View {
+    Text(title)
+      .font(.subheading.weight(.semibold))
+      .foregroundColor(.foreground)
+  }
+
+  /// Bordered group, same chrome as the export sheet sections.
+  func sectionCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm, content: content)
+      .padding(Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.cardHeaderBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)
+          .stroke(Color.border, lineWidth: 1)
+      )
   }
 
   // MARK: - State Accessors (for extensions)
@@ -184,17 +230,22 @@ struct ConnectionFormContent: View {
   @ViewBuilder
   private func footerView() -> some View {
     VStack(spacing: 0) {
-      // Status messages below buttons
-      if let error = parseError {
-        errorView(error)
+      Divider()
+      if parseError != nil || testResult != nil {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          if let error = parseError {
+            errorView(error)
+          }
+          if let result = testResult {
+            testResultView(result)
+          }
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.top, Spacing.sm)
       }
 
-      if let result = testResult {
-        testResultView(result)
-      }
-
-      // Action Buttons
-      HStack(spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
+        Spacer(minLength: Spacing.sm)
         Button(action: testConnection) {
           HStack(spacing: Spacing.sm) {
             if isTesting {
@@ -223,25 +274,28 @@ struct ConnectionFormContent: View {
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isConnecting || !isFormValid)
       }
-      .frame(maxWidth: .infinity, alignment: .trailing)
-      .padding(.top, Spacing.md)
-      .padding(.horizontal, Spacing.md)
+      .modalBarPadding()
     }
-    .padding(.bottom, Spacing.md)
-    .overlay(alignment: .top) {
-      Divider()
-    }
+    .background(Color.appBackground)
   }
 
   // MARK: - Validation
 
+  /// Form fields are complete enough to test or connect.
+  /// A file engine only needs the file path. Password stays optional.
+  static func isFormInputValid(_ config: ConnectionConfig) -> Bool {
+    let capabilities = config.databaseType.capabilities
+    if !capabilities.usesNetwork {
+      return !config.database.isEmpty
+    }
+    return !config.host.isEmpty && !config.database.isEmpty && !config.username.isEmpty
+  }
+
   private var isFormValid: Bool {
-    if inputMode == .connectionString {
+    if inputMode == .connectionString && connectionConfig.databaseType.capabilities.usesNetwork {
       return !connectionString.isEmpty && parseError == nil
     }
-    return !connectionConfig.host.isEmpty
-      && !connectionConfig.database.isEmpty
-      && !connectionConfig.username.isEmpty
+    return Self.isFormInputValid(connectionConfig)
   }
 
   // MARK: - Tab Picker

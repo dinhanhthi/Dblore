@@ -311,10 +311,48 @@ struct AIAssistantViewModelTests {
     #expect(vm.conversations.first?.messages.map(\.text) == ["hi", "a"])
   }
 
+  private func postLocalDataChange(_ category: LocalDataCategory) {
+    NotificationCenter.default.post(
+      name: .localDataChanged, object: nil,
+      userInfo: [LocalDataCategory.userInfoKey: category.rawValue])
+  }
+
   private func makeStore() -> AIConversationStore {
     AIConversationStore(
       fileURL: FileManager.default.temporaryDirectory
         .appendingPathComponent("AIConversationStoreTests-\(UUID().uuidString).json"))
+  }
+
+  @Test("a local data change reloads saved chats and leaves a memory-only list")
+  func localDataChangeReloadsConversations() async {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
+    let store = makeStore()
+    let vm = makeVM(FakeAIChatClient(.events([])))
+    vm.historyStore = store
+    let kept = AIConversation(
+      id: UUID(), title: "kept", updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+      messages: [AIChatEntry(id: UUID(), role: .user, text: "hi", isError: false)])
+    store.save([kept])
+    #expect(vm.conversations.isEmpty)
+
+    postLocalDataChange(.logs)
+    try? await Task.sleep(for: .milliseconds(200))
+    #expect(vm.conversations.isEmpty)
+
+    postLocalDataChange(.aiChats)
+    await waitUntil { vm.conversations == [kept] }
+    #expect(vm.conversations == [kept])
+
+    let memoryOnly = makeVM(FakeAIChatClient(.events(["x"])))
+    memoryOnly.draft = "hi"
+    memoryOnly.send()
+    await finish(memoryOnly)
+    let snapshot = memoryOnly.conversations
+    #expect(!snapshot.isEmpty)
+    postLocalDataChange(.aiChats)
+    try? await Task.sleep(for: .milliseconds(200))
+    #expect(memoryOnly.conversations == snapshot)
   }
 
   @Test("finished chats are saved, newest first, and reload from the store")

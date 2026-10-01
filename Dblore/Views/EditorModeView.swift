@@ -18,6 +18,9 @@ struct EditorModeView: View {
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isErrorCopied: Bool = false
+  /// Grid / Chart for the editor result. A new result (different timestamp) reads as Grid.
+  @State private var resultDisplayMode: ResultDisplayMode = .grid
+  @State private var resultDisplayModeStamp: Date?
 
   /// Width of the line number gutter: fits the widest line number (12pt monospaced digits are
   /// about 7.3pt wide) plus 8pt padding on each side; at least 2 digits wide
@@ -39,6 +42,20 @@ struct EditorModeView: View {
 
   func setIsErrorCopied(_ value: Bool) {
     isErrorCopied = value
+  }
+
+  /// Binding shared by the result header and the grid. A different result timestamp reads as Grid
+  /// until the user picks a mode for that result.
+  func resultDisplayModeBinding(for result: CellResult) -> Binding<ResultDisplayMode> {
+    Binding(
+      get: {
+        resultDisplayModeStamp == result.timestamp ? resultDisplayMode : .grid
+      },
+      set: { newValue in
+        resultDisplayModeStamp = result.timestamp
+        resultDisplayMode = newValue
+      }
+    )
   }
 
   // MARK: - Computed Properties
@@ -128,7 +145,8 @@ struct EditorModeView: View {
           viewModelId: viewModel.id,
           maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
           isEditorMode: true,  // Remove border and focus effects
-          wordWrapEnabled: appSettings.wordWrapEnabled
+          wordWrapEnabled: appSettings.wordWrapEnabled,
+          dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql
         )
       }
 
@@ -160,7 +178,7 @@ struct EditorModeView: View {
         } else if result.rows.isEmpty && result.columns.isEmpty {
           emptyResultView()
         } else {
-          resultTableSection(result: result)
+          resultTableSection(result: result, displayMode: resultDisplayModeBinding(for: result))
         }
 
         // Footer at bottom (shows source query)
@@ -192,10 +210,14 @@ struct EditorModeView: View {
 
   /// Result table section
   @ViewBuilder
-  private func resultTableSection(result: CellResult) -> some View {
-    EditorResultGridView(result: result, viewModel: viewModel)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
-      .id(result.timestamp)  // New result: reset sort and search match
+  private func resultTableSection(
+    result: CellResult, displayMode: Binding<ResultDisplayMode>
+  ) -> some View {
+    EditorResultGridView(
+      result: result, viewModel: viewModel, displayMode: displayMode, showsDisplayPicker: false
+    )
+    .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
+    .id(result.timestamp)  // New result: reset sort and search match
   }
 
   /// Empty state view (no results yet)

@@ -121,6 +121,13 @@ class WorkspaceManager: Identifiable {
   var favoriteModal: FavoriteModalRoute?
   var favoriteToDelete: FavoriteStatement?
 
+  // MARK: - Query History
+
+  /// Sidebar history. The app database opens on first search; tests set `historyBrowser`.
+  let historyList = HistoryListModel()
+  /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
+  @ObservationIgnored var historyBrowser: QueryHistoryStore?
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver
@@ -173,9 +180,13 @@ class WorkspaceManager: Identifiable {
       let name = self.workspace.connectionConfig?.database
       return AISchemaSnapshot(
         tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
-        databaseName: name?.isEmpty == false ? name : nil)
+        databaseName: name?.isEmpty == false ? name : nil,
+        dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
     }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
+    historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
+    historyList.connectionKey = { [weak self] in self?.activeHistoryConnectionKey }
+    historyList.workspaceID = { [weak self] in self?.workspace.id }
 
     // Only restore tabs for new workspaces (not loading from disk)
     // When loading from disk, load() will handle tab restoration with proper viewModels
@@ -466,6 +477,7 @@ class WorkspaceManager: Identifiable {
         viewModel.dataViewer = state
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
+        viewModel.dataViewerDisplayMode = .grid
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -717,6 +729,10 @@ class WorkspaceManager: Identifiable {
     // Protection level / Safe Mode come from the workspace connection config
     shareConnectionConfig(with: viewModel)
     attachTransactionHook(to: viewModel)
+    viewModel.historyWorkspace = { [weak self] in
+      guard let self else { return nil }
+      return (id: self.workspace.id, name: self.workspace.name)
+    }
 
     return viewModel
   }
@@ -747,6 +763,8 @@ class WorkspaceManager: Identifiable {
     guard let tab = tabs.first(where: { $0.id == id }) else { return }
     // The tab that opened a pending Protected transaction resolves it first
     guard !deferCloseTabForPendingTransaction(id: id) else { return }
+    // Staged data-viewer rows: Commit / Discard / Cancel before the tab goes away
+    guard !deferCloseTabForStagedChanges(id: id) else { return }
 
     if tab.isDirty {
       tabToClose = id
@@ -778,6 +796,21 @@ class WorkspaceManager: Identifiable {
   func cancelClose() {
     tabToClose = nil
     showingCloseConfirmation = false
+  }
+
+  /// Staged data-viewer rows block the close until Commit, Discard, or Cancel.
+  /// Cancel leaves the rows and the tab. Commit closes only after the set is cleared.
+  /// The tab is selected first so the data viewer header can present the prompt.
+  private func deferCloseTabForStagedChanges(id: UUID) -> Bool {
+    guard let viewModel = viewModels[id], viewModel.hasPendingStagedChanges else { return false }
+    selectTab(id: id)
+    Task { @MainActor in
+      await Task.yield()
+      guard await viewModel.confirmLeaveStagedChanges() else { return }
+      guard tabs.contains(where: { $0.id == id }) else { return }
+      closeTabImmediately(id: id)
+    }
+    return true
   }
 
   private func closeTabImmediately(id: UUID) {

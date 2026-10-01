@@ -62,7 +62,7 @@ extension DatabaseConnectionManager {
   func cancelRunningStatement(
     expectedGeneration: UInt64, expectedUserTxOpen: Bool, expectedEpoch: UInt64
   ) async -> QueryCancelOutcome {
-    guard commitGuard.inFlight > 0, _connection != nil, let config else { return .nothingRunning }
+    guard commitGuard.inFlight > 0, session != nil, let config else { return .nothingRunning }
     // Reset meanwhile (e.g. a double-click Cancel): the statement the user saw is gone, and what
     // runs now on the new connection was not confirmed
     guard connectionEpoch == expectedEpoch else { return .nothingRunning }
@@ -75,6 +75,11 @@ extension DatabaseConnectionManager {
       userTxRolledBack: userTxOpen)
     lastCancel = record
     await AppLogger.shared.info("Cancelling the running statement", category: "Database")
+    if session?.capabilities.cancelStrategy == .interrupt {
+      await session?.interrupt()
+      return .cancelled
+    }
+    // PostgreSQL stays reconnect: close the session and open another one.
     // Not cancelled with the caller: `connect` sleeps between retries
     let reconnect = Task { try await self.connect(config: config) }
     do {
@@ -85,7 +90,7 @@ extension DatabaseConnectionManager {
           epoch: connectionEpoch, userTxRolledBack: record.userTxRolledBack,
           reason: .cancelled(pendingCount: record.pendingCount)))
     } catch {
-      guard _connection == nil else { return .cancelled }
+      guard session == nil else { return .cancelled }
       let lost = SessionLostEvent(
         state: stateBefore, userTxOpen: record.userTxRolledBack, epoch: connectionEpoch)
       lastSessionLoss = lost
