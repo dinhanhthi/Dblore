@@ -37,9 +37,7 @@ struct ResultExportSheet: View {
               .font(.small)
               .foregroundColor(.foregroundMuted)
               .fixedSize(horizontal: false, vertical: true)
-            Text(rowSummary)
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
+            rowBadge
             sizeSummary
           }
           if showsFormatOptions {
@@ -57,7 +55,7 @@ struct ResultExportSheet: View {
       Divider()
       footer
     }
-    .frame(width: 440, height: 520)
+    .frame(width: 440, height: 560)
     .background(Color.appBackground)
     .onChange(of: options) { _, updated in
       estimate = ExportSize.estimate(result: result, options: updated)
@@ -83,12 +81,14 @@ struct ResultExportSheet: View {
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Close")
     }
-    .modalBarPadding()
+    .modalBarPadding(vertical: Spacing.sm)
   }
 
   private var showsFormatOptions: Bool {
-    options.format.offersHeaderToggle || options.format.offersNullAsEmpty
-      || options.format.offersWrap
+    let format = options.format
+    return format.offersHeaderToggle || format.offersNullAsEmpty || format.offersWrap
+      || format.offersLineBreakToSpace || format.offersFormulaSanitize || format.offersEncoding
+      || format.offersQuote || format.offersLineBreak || format.offersJsonPretty
   }
 
   private func sectionTitle(_ title: String) -> some View {
@@ -130,24 +130,104 @@ struct ResultExportSheet: View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       sectionTitle("Options")
       if options.format.offersHeaderToggle {
-        Toggle("Put field names in the first row", isOn: $options.includeHeader)
-          .toggleStyle(.checkbox)
-          .font(.bodyText)
-          .help("The first row lists the column names.")
+        optionToggle(
+          options.format.headerToggleTitle, isOn: $options.includeHeader,
+          help: options.format == .sqlInsert
+            ? "Each INSERT lists the column names."
+            : "The first row lists the column names.")
       }
       if options.format.offersNullAsEmpty {
-        Toggle("Convert NULL to empty", isOn: $options.nullAsEmpty)
-          .toggleStyle(.checkbox)
-          .font(.bodyText)
-          .help("NULL cells become an empty field. Turn off to write the text NULL.")
+        optionToggle(
+          "Convert NULL to empty", isOn: $options.nullAsEmpty,
+          help: options.format == .sqlInsert
+            ? "NULL cells become an empty string. Turn off to write NULL."
+            : "NULL cells become an empty field. Turn off to write the text NULL.")
+      }
+      if options.format.offersLineBreakToSpace {
+        optionToggle(
+          "Convert line break to space", isOn: $options.convertLineBreaksToSpace,
+          help: "Replaces a line break inside a cell with a space.")
+      }
+      if options.format.offersFormulaSanitize {
+        optionToggle(
+          "Sanitize formula-like values", isOn: $options.sanitizeFormulas,
+          help:
+            "Prefixes text that starts with =, +, -, @, or a tab so a spreadsheet does not run it as a formula."
+        )
       }
       if options.format.offersWrap {
-        Toggle("Wrap long text", isOn: $options.wrapText)
-          .toggleStyle(.checkbox)
-          .font(.bodyText)
-          .help("Keeps the full cell text. Turn off to cut long cells with an ellipsis.")
+        optionToggle(
+          "Wrap long text", isOn: $options.wrapText,
+          help: "Keeps the full cell text. Turn off to cut long cells with an ellipsis.")
+      }
+      if options.format.offersJsonPretty {
+        optionToggle(
+          "Pretty print", isOn: $options.jsonPretty,
+          help: "Indents the JSON. Turn off for one line.")
+        optionToggle(
+          "Include null", isOn: $options.jsonIncludeNull,
+          help: "Keeps keys whose value is null. Turn off to omit them.")
+        optionToggle(
+          "Preserve all values as string", isOn: $options.jsonValuesAsString,
+          help: "Writes numbers, booleans, and null as text. Null becomes the text NULL.")
+      }
+      if options.format.offersEncoding {
+        optionPicker(
+          "Encoding", selection: $options.encoding,
+          help:
+            "UTF-16 LE includes a byte order mark. Windows-1252 drops characters it cannot store."
+        ) {
+          ForEach(ExportEncoding.allCases) { encoding in
+            Text(encoding.title).tag(encoding)
+          }
+        }
+      }
+      if options.format.offersQuote {
+        optionPicker(
+          "Quote", selection: $options.quote,
+          help:
+            "Quote if needed wraps a field with a comma, a quote, or a line break. Never can split a field."
+        ) {
+          ForEach(ExportQuote.allCases) { quote in
+            Text(quote.title).tag(quote)
+          }
+        }
+      }
+      if options.format.offersLineBreak {
+        optionPicker(
+          "Line break", selection: $options.lineBreak,
+          help: "Record separators and line breaks inside fields use this ending."
+        ) {
+          ForEach(ExportLineBreak.allCases) { lineBreak in
+            Text(lineBreak.title).tag(lineBreak)
+          }
+        }
       }
     }
+  }
+
+  private func optionToggle(_ title: String, isOn: Binding<Bool>, help: String) -> some View {
+    Toggle(title, isOn: isOn)
+      .toggleStyle(.checkbox)
+      .font(.bodyText)
+      .help(help)
+  }
+
+  private func optionPicker<Selection: Hashable>(
+    _ title: String, selection: Binding<Selection>, help: String,
+    @ViewBuilder content: () -> some View
+  ) -> some View {
+    HStack(spacing: Spacing.sm) {
+      Text(title)
+        .font(.bodyText)
+        .foregroundColor(.foreground)
+      Spacer(minLength: Spacing.sm)
+      Picker(title, selection: selection, content: content)
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
+    }
+    .help(help)
   }
 
   private var sensitiveColumns: some View {
@@ -186,6 +266,10 @@ struct ResultExportSheet: View {
 
   private var footer: some View {
     HStack {
+      Button("Reset to Default") {
+        options = ExportOptions(format: options.format)
+      }
+      .buttonStyle(GhostButtonStyle())
       Spacer()
       Button("Cancel", action: onCancel)
         .buttonStyle(GhostButtonStyle())
@@ -217,13 +301,37 @@ struct ResultExportSheet: View {
     }
   }
 
-  private var rowSummary: String {
+  private var rowBadge: some View {
     let count = result.rows.count
+    let tint = rowTint(ExportRowScale.level(for: count))
+    return HStack(spacing: Spacing.xs) {
+      Text(count.formatted())
+        .font(.labelText.weight(.semibold))
+        .monospacedDigit()
+      Text(rowCaption(count))
+        .font(.small)
+    }
+    .foregroundColor(tint)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, Spacing.xxs)
+    .background(tint.opacity(0.15), in: Capsule())
+    .overlay(Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1))
+  }
+
+  private func rowCaption(_ count: Int) -> String {
     let noun = count == 1 ? "row" : "rows"
     if result.wasLimited {
-      return "\(count.formatted()) loaded \(noun) to export"
+      return "loaded \(noun) to export"
     }
-    return "\(count.formatted()) \(noun) to export"
+    return "\(noun) to export"
+  }
+
+  private func rowTint(_ level: ExportRowScale) -> Color {
+    switch level {
+    case .modest: .success
+    case .large: .warning
+    case .huge: .destructive
+    }
   }
 
   private func columnTitle(_ column: ColumnInfo, index: Int) -> String {

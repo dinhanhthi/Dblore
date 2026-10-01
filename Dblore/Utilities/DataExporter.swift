@@ -12,16 +12,18 @@ import UniformTypeIdentifiers
 enum DataExporter {
 
   /// Export result to CSV format
-  static func toCSV(result: CellResult, includeHeader: Bool = true) -> String {
+  static func toCSV(
+    result: CellResult, includeHeader: Bool = true, quote: ExportQuote = .ifNeeded
+  ) -> String {
     var csv = ""
 
     if includeHeader {
-      let headers = result.columns.map { escapeCSV($0.name) }
+      let headers = result.columns.map { escapeCSV($0.name, quote: quote) }
       csv += headers.joined(separator: ",") + "\n"
     }
 
     for row in result.rows {
-      let values = row.map { escapeCSV($0.fullString) }
+      let values = row.map { escapeCSV($0.fullString, quote: quote) }
       csv += values.joined(separator: ",") + "\n"
     }
 
@@ -254,19 +256,24 @@ enum DataExporter {
   }
 
   /// Export result to JSON format
-  static func toJSON(result: CellResult) -> String {
+  static func toJSON(
+    result: CellResult, pretty: Bool = true, includeNull: Bool = true, valuesAsString: Bool = false
+  ) -> String {
     var objects: [[String: Any]] = []
 
     for row in result.rows {
       var obj: [String: Any] = [:]
       for (index, column) in result.columns.enumerated() {
-        obj[column.name] = cellValueToJSON(row[index])
+        let value = row[index]
+        if !includeNull && value.isNull { continue }
+        obj[column.name] = valuesAsString ? value.fullString : cellValueToJSON(value)
       }
       objects.append(obj)
     }
 
+    let writing: JSONSerialization.WritingOptions = pretty ? .prettyPrinted : []
     guard
-      let jsonData = try? JSONSerialization.data(withJSONObject: objects, options: .prettyPrinted),
+      let jsonData = try? JSONSerialization.data(withJSONObject: objects, options: writing),
       let jsonString = String(data: jsonData, encoding: .utf8)
     else {
       return "[]"
@@ -301,11 +308,13 @@ enum DataExporter {
   /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
   /// The table is `table` when that is non-nil, otherwise `result.tableName`.
   static func sqlInsert(
-    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect,
+    includeColumns: Bool = true
   ) -> String {
     let exported = queryResult(from: result, rowIndexes: rows)
     let name = SQLInsertRenderer.tableName(for: exported, fallback: table ?? result.tableName)
-    return SQLInsertRenderer.insertScript(result: exported, table: name, dialect: dialect)
+    return SQLInsertRenderer.insertScript(
+      result: exported, table: name, dialect: dialect, includeColumns: includeColumns)
   }
 
   /// Parenthesized IN list for `values`.
@@ -329,24 +338,40 @@ enum DataExporter {
     let prepared = applying(options, to: result)
     switch options.format {
     case .csv:
-      let csv = toCSV(result: prepared, includeHeader: options.includeHeader)
+      let csv = toCSV(
+        result: prepared, includeHeader: options.includeHeader, quote: options.quote)
       let name = generateFilename(extension: "csv", queryIndex: queryIndex)
-      saveFile(content: csv, defaultFilename: name, allowedFileTypes: ["csv"])
+      saveFile(
+        data: fileData(text: csv, options: options), defaultFilename: name,
+        allowedFileTypes: ["csv"])
     case .excel:
       downloadExcel(result: prepared, queryIndex: queryIndex)
     case .json:
-      downloadJSON(result: prepared, queryIndex: queryIndex)
+      let json = toJSON(
+        result: prepared, pretty: options.jsonPretty, includeNull: options.jsonIncludeNull,
+        valuesAsString: options.jsonValuesAsString)
+      let name = generateFilename(extension: "json", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: json, options: options), defaultFilename: name,
+        allowedFileTypes: ["json"])
     case .markdown:
       let markdown = toMarkdown(result: prepared, includeHeader: options.includeHeader)
       let name = generateFilename(extension: "md", queryIndex: queryIndex)
-      saveFile(content: markdown, defaultFilename: name, allowedFileTypes: ["md", "markdown"])
+      saveFile(
+        data: fileData(text: markdown, options: options), defaultFilename: name,
+        allowedFileTypes: ["md", "markdown"])
     case .pdf:
       downloadPDF(
         result: prepared, queryIndex: queryIndex, query: result.sourceQuery,
         wrapText: options.wrapText)
     case .sqlInsert:
-      downloadSQLInsert(
-        result: prepared, table: result.tableName, dialect: dialect, queryIndex: queryIndex)
+      let sql = sqlInsert(
+        result: prepared, table: result.tableName, dialect: dialect,
+        includeColumns: options.includeHeader)
+      let name = generateFilename(extension: "sql", queryIndex: queryIndex)
+      saveFile(
+        data: fileData(text: sql, options: options), defaultFilename: name,
+        allowedFileTypes: ["sql"])
     }
   }
 
@@ -483,13 +508,20 @@ enum DataExporter {
     }
   }
 
-  private static func escapeCSV(_ value: String) -> String {
-    // If value contains comma, quote, or newline, wrap in quotes and escape quotes
-    if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r") {
-      let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-      return "\"\(escaped)\""
+  private static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
+    switch quote {
+    case .always:
+      return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    case .never:
+      return value
+    case .ifNeeded:
+      if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
+      {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+      }
+      return value
     }
-    return value
   }
 
   private static func escapeMarkdown(_ value: String) -> String {

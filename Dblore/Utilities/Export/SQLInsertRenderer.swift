@@ -7,16 +7,22 @@ import Foundation
 nonisolated enum SQLInsertRenderer {
   /// One `INSERT` statement per batch. No rows, or rows with no columns, is `""`.
   static func insertScript(
-    result: QueryResult, table: String, dialect: SQLDialect, batchSize: Int = 500
+    result: QueryResult, table: String, dialect: SQLDialect, batchSize: Int = 500,
+    includeColumns: Bool = true
   ) -> String {
     guard !result.rows.isEmpty, !result.columns.isEmpty else {
       return ""
     }
     let size = batchSize < 1 ? 1 : batchSize
     let quotedTable = quotedIdentifier(table, dialect: dialect)
-    let columnList = result.columns.map { quotedIdentifier($0.name, dialect: dialect) }
-      .joined(separator: ", ")
-    let header = "INSERT INTO \(quotedTable) (\(columnList)) VALUES"
+    let header: String
+    if includeColumns {
+      let columnList = result.columns.map { quotedIdentifier($0.name, dialect: dialect) }
+        .joined(separator: ", ")
+      header = "INSERT INTO \(quotedTable) (\(columnList)) VALUES"
+    } else {
+      header = "INSERT INTO \(quotedTable) VALUES"
+    }
 
     var statements: [String] = []
     statements.reserveCapacity((result.rows.count + size - 1) / size)
