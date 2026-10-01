@@ -285,7 +285,7 @@ struct AIAssistantPanel: View {
         Button("Explain query") {
           if let sql = currentSQL { assistant.explain(sql: sql) }
         }
-        .buttonStyle(AIChipButtonStyle())
+        .buttonStyle(AIChipButtonStyle(capsule: true))
         .disabled(assistant.isGenerating)
       }
       if canFixError {
@@ -294,7 +294,7 @@ struct AIAssistantPanel: View {
             assistant.fixError(sql: sql, error: error)
           }
         }
-        .buttonStyle(AIChipButtonStyle())
+        .buttonStyle(AIChipButtonStyle(capsule: true))
         .disabled(assistant.isGenerating)
       }
     }
@@ -319,12 +319,12 @@ struct AIAssistantPanel: View {
           assistant.send()
           return .handled
         }
-        .padding(.horizontal, Spacing.sm)
+        .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.xsm)
         .background(Color.inputBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        .clipShape(Capsule())
         .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
+          Capsule()
             .stroke(composerFocused ? Color.borderFocus : Color.borderSubtle, lineWidth: 1)
         )
 
