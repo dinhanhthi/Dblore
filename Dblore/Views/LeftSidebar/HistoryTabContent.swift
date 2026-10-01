@@ -10,6 +10,9 @@ import SwiftUI
 struct HistoryTabContent: View {
   @Bindable var workspaceManager: WorkspaceManager
 
+  /// Shared by the filter field and the scope menu so the two capsules match.
+  private static let filterControlHeight: CGFloat = 26
+
   /// Stays false until the first refresh finishes, so an empty store does not flash the empty state.
   @State private var hasLoaded = false
 
@@ -19,7 +22,12 @@ struct HistoryTabContent: View {
     @Bindable var historyList = workspaceManager.historyList
 
     VStack(spacing: 0) {
-      SidebarFilterField(text: $historyList.query) {
+      SidebarFilterField(
+        text: $historyList.query,
+        controlHeight: Self.filterControlHeight,
+        topPadding: Spacing.sm,
+        bottomPadding: Spacing.sm
+      ) {
         scopeMenu
       }
       Divider()
@@ -50,13 +58,16 @@ struct HistoryTabContent: View {
           .foregroundStyle(Color.foregroundMuted)
       }
       .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
+      .frame(height: Self.filterControlHeight)
       .background(Capsule().fill(Color.inputBackground))
       .overlay(Capsule().stroke(Color.border, lineWidth: 1))
     }
+    .menuStyle(.button)
     .buttonStyle(.plain)
+    .menuIndicator(.hidden)
     .linkPointer()
-    .fixedSize()
+    .fixedSize(horizontal: true, vertical: false)
+    .frame(height: Self.filterControlHeight)
     .help("History scope")
   }
 
@@ -161,7 +172,7 @@ struct HistoryTabContent: View {
           }
         }
       }
-      .padding(.vertical, Spacing.sm)
+      .padding(.bottom, Spacing.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
   }

@@ -9,10 +9,23 @@ import SwiftUI
 
 struct SidebarFilterField<Trailing: View>: View {
   @Binding var text: String
+  /// Fixed capsule height for the field and its trailing control. Nil keeps the field's padding.
+  var controlHeight: CGFloat? = nil
+  var topPadding: CGFloat = Spacing.sm
+  var bottomPadding: CGFloat = Spacing.xs
   private var trailing: Trailing
 
-  init(text: Binding<String>, @ViewBuilder trailing: () -> Trailing) {
+  init(
+    text: Binding<String>,
+    controlHeight: CGFloat? = nil,
+    topPadding: CGFloat = Spacing.sm,
+    bottomPadding: CGFloat = Spacing.xs,
+    @ViewBuilder trailing: () -> Trailing
+  ) {
     self._text = text
+    self.controlHeight = controlHeight
+    self.topPadding = topPadding
+    self.bottomPadding = bottomPadding
     self.trailing = trailing()
   }
 
@@ -26,11 +39,12 @@ struct SidebarFilterField<Trailing: View>: View {
       field
       if showsTrailing {
         trailing
+          .frame(height: controlHeight)
       }
     }
     .padding(.horizontal, Spacing.sm)
-    .padding(.top, Spacing.sm)
-    .padding(.bottom, Spacing.xs)
+    .padding(.top, topPadding)
+    .padding(.bottom, bottomPadding)
   }
 
   private var field: some View {
@@ -57,8 +71,9 @@ struct SidebarFilterField<Trailing: View>: View {
       }
     }
     .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, Spacing.xsm)
+    .padding(.vertical, controlHeight == nil ? Spacing.xsm : 0)
     .frame(maxWidth: .infinity)
+    .frame(height: controlHeight)
     .background(Capsule().fill(Color.inputBackground))
     .overlay(Capsule().strokeBorder(Color.border, lineWidth: 1))
   }

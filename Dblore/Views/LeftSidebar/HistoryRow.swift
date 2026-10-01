@@ -23,12 +23,12 @@ struct HistoryRow: View {
       Circle()
         .fill(statusColor)
         .frame(width: 6, height: 6)
-        .padding(.top, 5)
+        .padding(.top, 3)
         .accessibilityLabel(statusName)
 
       VStack(alignment: .leading, spacing: Spacing.xxs) {
         Text(sqlPreview)
-          .font(.mono)
+          .font(.monoSmall)
           .foregroundColor(.foreground)
           .lineLimit(2)
           .multilineTextAlignment(.leading)
@@ -45,7 +45,7 @@ struct HistoryRow: View {
       }
     }
     .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.xs)
+    .padding(.vertical, Spacing.xsm)
     .contentShape(Rectangle())
     .onTapGesture(count: 2) { onInsert() }
     .background {
