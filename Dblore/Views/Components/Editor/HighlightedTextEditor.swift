@@ -60,6 +60,8 @@ struct HighlightedTextEditor: View {
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var wordWrapEnabled: Bool = true  // Word wrap setting
   var dialect: SQLDialect = .postgresql
+  /// SQL text size. The default reads Settings so a slider move refreshes this editor.
+  var fontSize: CGFloat = AppSettings.shared.editorFontSize
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -75,7 +77,8 @@ struct HighlightedTextEditor: View {
       maxHeight: maxHeight,
       isEditorMode: isEditorMode,
       wordWrapEnabled: wordWrapEnabled,
-      dialect: dialect
+      dialect: dialect,
+      fontSize: fontSize
     )
     .frame(height: maxHeight ?? height)
   }
@@ -95,6 +98,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var isEditorMode: Bool = false
   var wordWrapEnabled: Bool = true
   var dialect: SQLDialect = .postgresql
+  var fontSize: CGFloat = AppSettings.shared.editorFontSize
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
@@ -128,7 +132,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     context.coordinator.viewModelId = viewModelId
     textView.viewModelId = viewModelId
     textView.isRichText = false
-    textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    textView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     textView.textColor = NSColor(Color.foreground)
     textView.backgroundColor = NSColor.clear
     textView.drawsBackground = false
@@ -212,6 +216,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     context.coordinator.configureWordWrapIfNeeded(
       wordWrapEnabled, scrollView: scrollView, textView: textView)
 
+    let fontChanged = textView.font?.pointSize != fontSize
+    if fontChanged {
+      let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+      textView.font = font
+      textView.typingAttributes[.font] = font
+    }
+
     // Only update text from external source if different
     // Note: We allow update even when first responder for external file reload scenarios
     if textView.string != text {
@@ -221,8 +232,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
       DispatchQueue.main.async {
         context.coordinator.updateHeight(textView: textView)
       }
-    } else if dialectChanged {
+    } else if dialectChanged || fontChanged {
       context.coordinator.applyHighlighting(to: textView, text: text)
+      if fontChanged {
+        DispatchQueue.main.async {
+          context.coordinator.updateHeight(textView: textView)
+        }
+      }
     }
   }
 

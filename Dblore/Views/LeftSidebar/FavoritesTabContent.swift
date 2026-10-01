@@ -22,8 +22,11 @@ struct FavoritesTabContent: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      SidebarFilterField(text: $filterText) {
-        HStack(spacing: Spacing.sm) {
+      SidebarFilterField(
+        text: $filterText,
+        trailingSpacing: Spacing.xs
+      ) {
+        HStack(spacing: Spacing.xs) {
           Button {
             workspaceManager.favoriteModal = .folder(nil)
           } label: {
@@ -43,7 +46,6 @@ struct FavoritesTabContent: View {
           .help("New Favorite")
         }
       }
-      Divider()
 
       if favorites.folders.isEmpty && favorites.items.isEmpty {
         emptyState

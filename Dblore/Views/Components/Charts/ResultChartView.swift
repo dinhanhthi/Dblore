@@ -27,7 +27,7 @@ enum ChartQueryResult {
 private let notebookChartHeight: CGFloat = 320
 
 /// Grid or chart for one result. The toggle is shown only when a chart can be suggested,
-/// unless the caller draws it elsewhere (the editor result header).
+/// unless the caller draws it elsewhere (the editor result header, or the notebook query bar).
 struct ChartableResult<Grid: View>: View {
   let result: CellResult
   @Binding var chartSpec: ChartSpec?

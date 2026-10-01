@@ -318,7 +318,7 @@ struct RecentWorkspaceRow: View {
         }
 
         VStack(alignment: .leading, spacing: 2) {
-          // First line: workspace name + tab count badge (right-aligned)
+          // Name. The remove button takes the old tab-count chip slot on hover.
           HStack(spacing: Spacing.xs) {
             Text(workspace.name)
               .font(.callout)
@@ -327,43 +327,17 @@ struct RecentWorkspaceRow: View {
               .lineLimit(1)
               .truncationMode(.tail)
 
-            Spacer(minLength: Spacing.xs)
-
-            // Tab count badge
-            if workspace.tabCount > 0 {
-              Text("\(workspace.tabCount)")
-                .font(.caption2)
-                .foregroundColor(.foregroundMuted)
-                .padding(.horizontal, Spacing.xs)
-                .padding(.vertical, 2)
-                .background(Color.inputBackground)
-                .cornerRadius(CornerRadius.sm)
-                .layoutPriority(1)
-                .help("Number of tabs open in this workspace")
-            }
+            Spacer(minLength: 0)
           }
+          .recentRemoveSlot(
+            isShown: showsRecentRemove,
+            isHoveringRemove: $isHoveringRemove,
+            action: onRemove
+          )
 
-          // Second line: connection string + date (right-aligned)
-          HStack(spacing: Spacing.xs) {
-            if let conn = workspace.connectionDisplayString {
-              Text(conn)
-                .font(.caption)
-                .foregroundColor(.foregroundMuted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            }
-
-            Spacer(minLength: Spacing.xs)
-
-            Text(workspace.formattedLastOpened)
-              .font(.caption)
-              .foregroundColor(.foregroundSubtle)
-              .layoutPriority(1)
-              .help("Last opened date")
-          }
+          workspaceDetailLine
         }
-
-        Spacer(minLength: 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .padding(Spacing.sm)
       .background(
@@ -373,14 +347,58 @@ struct RecentWorkspaceRow: View {
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .overlay(alignment: .trailing) {
-      if (isHovering || isHoveringRemove) && !isLoading {
-        RecentRemoveButton(action: onRemove, isHovering: $isHoveringRemove)
-      }
-    }
     .onHover { hovering in
       isHovering = hovering
     }
+    .animation(.easeOut(duration: 0.12), value: isHovering)
+    .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
+  }
+
+  /// Connection string, then tab count and relative time, separated by dots.
+  /// The string truncates; the count and time stay fully visible.
+  private var workspaceDetailLine: some View {
+    let connection = workspace.connectionDisplayString.flatMap { $0.isEmpty ? nil : $0 }
+    let showsTabCount = workspace.tabCount > 0
+
+    return HStack(spacing: Spacing.xs) {
+      if let connection {
+        Text(connection)
+          .foregroundColor(.foregroundMuted)
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .frame(minWidth: 0, alignment: .leading)
+      }
+
+      if showsTabCount {
+        if connection != nil {
+          RecentMetaDot()
+        }
+        Text("\(workspace.tabCount)")
+          .font(.caption.weight(.bold))
+          .foregroundColor(.foreground)
+          .fixedSize(horizontal: true, vertical: false)
+          .layoutPriority(1)
+          .help("Number of tabs open in this workspace")
+      }
+
+      if connection != nil || showsTabCount {
+        RecentMetaDot()
+      }
+
+      Text(workspace.formattedLastOpened)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
+        .help("Last opened date")
+
+      Spacer(minLength: 0)
+        .layoutPriority(-1)
+    }
+    .font(.caption)
+    .foregroundColor(.foregroundSubtle)
+  }
+
+  private var showsRecentRemove: Bool {
+    (isHovering || isHoveringRemove) && !isLoading
   }
 }
 
@@ -478,7 +496,7 @@ struct RecentConnectionRow: View {
         }
 
         VStack(alignment: .leading, spacing: 2) {
-          // First line: shortDisplayName + date (right-aligned)
+          // Name. The remove button takes the trailing slot on hover, same as workspace rows.
           HStack(spacing: Spacing.xs) {
             Text(connection.shortDisplayName)
               .font(.callout)
@@ -487,22 +505,17 @@ struct RecentConnectionRow: View {
               .lineLimit(1)
               .truncationMode(.tail)
 
-            Spacer(minLength: Spacing.xs)
-
-            Text(connection.formattedLastUsedDate)
-              .font(.caption)
-              .foregroundColor(.foregroundSubtle)
-              .layoutPriority(1)
+            Spacer(minLength: 0)
           }
+          .recentRemoveSlot(
+            isShown: showsRecentRemove,
+            isHoveringRemove: $isHoveringRemove,
+            action: onRemove
+          )
 
-          // Second line: connection string (e.g., "mydb@localhost:5432")
-          Text(connection.config.displayString)
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-            .lineLimit(1)
+          connectionDetailLine
         }
-
-        Spacer(minLength: 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .padding(Spacing.sm)
       .background(
@@ -512,14 +525,39 @@ struct RecentConnectionRow: View {
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .overlay(alignment: .trailing) {
-      if (isHovering || isHoveringRemove) && !isLoading {
-        RecentRemoveButton(action: onRemove, isHovering: $isHoveringRemove)
-      }
-    }
     .onHover { hovering in
       isHovering = hovering
     }
+    .animation(.easeOut(duration: 0.12), value: isHovering)
+    .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
+  }
+
+  /// Connection string, then last-used date, separated by a dot.
+  /// The string truncates; the date stays fully visible.
+  private var connectionDetailLine: some View {
+    HStack(spacing: Spacing.xs) {
+      Text(connection.config.displayString)
+        .foregroundColor(.foregroundMuted)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .frame(minWidth: 0, alignment: .leading)
+
+      RecentMetaDot()
+
+      Text(connection.formattedLastUsedDate)
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
+        .help("Last used date")
+
+      Spacer(minLength: 0)
+        .layoutPriority(-1)
+    }
+    .font(.caption)
+    .foregroundColor(.foregroundSubtle)
+  }
+
+  private var showsRecentRemove: Bool {
+    (isHovering || isHoveringRemove) && !isLoading
   }
 }
 
@@ -534,31 +572,78 @@ private func recentRowShape(isFirst: Bool, isLast: Bool) -> UnevenRoundedRectang
     topTrailingRadius: isFirst ? CornerRadius.md : 0)
 }
 
-/// Hover-only button that removes a card from the recent list, centered on the card's
-/// right edge (half of it sticks out)
+/// Hover-only control that removes a row from the recent list.
+/// The mark is drawn, not an SF Symbol: `xmark`'s alignment rect sits off the circle's center.
 private struct RecentRemoveButton: View {
-  private static let size: CGFloat = 20
+  static let diameter: CGFloat = 16
+  /// Title-line inset so the name and date clear the mark.
+  static let slotWidth: CGFloat = diameter + Spacing.xs
 
   let action: () -> Void
   @Binding var isHovering: Bool
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: "xmark")
-        .resizable()
-        .scaledToFit()
-        .fontWeight(.semibold)
-        .foregroundColor(.foreground)
-        .frame(width: 8, height: 8)
-        .frame(width: Self.size, height: Self.size)
-        .background(Circle().fill(Color.inputBackground))
-        .overlay(Circle().stroke(Color.border, lineWidth: 1))
+      CenteredXMark(color: isHovering ? .foreground : .foregroundMuted)
+        .frame(width: Self.diameter, height: Self.diameter)
+        .background {
+          Circle().fill(isHovering ? Color.foreground.opacity(0.12) : Color.clear)
+        }
+        .contentShape(Circle())
     }
     .buttonStyle(.plain)
     .linkPointer()
     .help("Remove from recent")
+    .accessibilityLabel("Remove from recent")
     .onHover { isHovering = $0 }
-    .offset(x: Self.size / 2)
+  }
+}
+
+/// Two strokes that cross at the center of their frame.
+private struct CenteredXMark: View {
+  var color: Color
+
+  var body: some View {
+    Canvas { context, size in
+      let arm = min(size.width, size.height) * 0.22
+      let midX = size.width / 2
+      let midY = size.height / 2
+      var path = Path()
+      path.move(to: CGPoint(x: midX - arm, y: midY - arm))
+      path.addLine(to: CGPoint(x: midX + arm, y: midY + arm))
+      path.move(to: CGPoint(x: midX + arm, y: midY - arm))
+      path.addLine(to: CGPoint(x: midX - arm, y: midY + arm))
+      context.stroke(
+        path, with: .color(color), style: StrokeStyle(lineWidth: 1.25, lineCap: .round))
+    }
+  }
+}
+
+extension View {
+  /// Puts the remove button on the trailing edge of a title line.
+  fileprivate func recentRemoveSlot(
+    isShown: Bool,
+    isHoveringRemove: Binding<Bool>,
+    action: @escaping () -> Void
+  ) -> some View {
+    padding(.trailing, isShown ? RecentRemoveButton.slotWidth : 0)
+      .overlay(alignment: .trailing) {
+        if isShown {
+          RecentRemoveButton(action: action, isHovering: isHoveringRemove)
+            .transition(.opacity)
+        }
+      }
+      .zIndex(isShown ? 1 : 0)
+  }
+}
+
+/// Separator between connection string, tab count, and relative time.
+private struct RecentMetaDot: View {
+  var body: some View {
+    Circle()
+      .fill(Color.foregroundSubtle)
+      .frame(width: 3, height: 3)
+      .accessibilityHidden(true)
   }
 }
 

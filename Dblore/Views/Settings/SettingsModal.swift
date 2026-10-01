@@ -228,6 +228,18 @@ struct SettingsModalEditorSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      SettingsSlider(
+        title: "Font Size",
+        valueText: "\(Int(appSettings.editorFontSize)) pt",
+        value: Binding(
+          get: { Double(appSettings.editorFontSize) },
+          set: { appSettings.editorFontSize = CGFloat($0) }
+        ),
+        range: AppSettings.fontSizeRange,
+        step: 1,
+        description: "Size of the text in the SQL editor, including notebook cells."
+      )
+
       SettingsToggle(
         title: "Enable Syntax Highlighting",
         description:
@@ -284,6 +296,18 @@ struct SettingsModalResultTableSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      SettingsSlider(
+        title: "Font Size",
+        valueText: "\(Int(appSettings.resultFontSize)) pt",
+        value: Binding(
+          get: { Double(appSettings.resultFontSize) },
+          set: { appSettings.resultFontSize = CGFloat($0) }
+        ),
+        range: AppSettings.fontSizeRange,
+        step: 1,
+        description: "Size of the text in result tables. Column headers stay the same."
+      )
+
       // Hide Column Types toggle
       SettingsToggle(
         title: "Hide Column Types",
@@ -500,7 +524,8 @@ struct SettingsModalKeyboardShortcutsSection: View {
       ShortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
       ShortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
       ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
-      ShortcutRow(action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
+      ShortcutRow(
+        action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
       ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
     }
   }

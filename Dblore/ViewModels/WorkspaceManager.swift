@@ -125,6 +125,8 @@ class WorkspaceManager: Identifiable {
 
   /// Sidebar history. The app database opens on first search; tests set `historyBrowser`.
   let historyList = HistoryListModel()
+  /// Recorded statement shown in the detail modal. Nil hides it.
+  var historyDetail: QueryHistoryEntry?
   /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
   @ObservationIgnored var historyBrowser: QueryHistoryStore?
 
@@ -732,6 +734,10 @@ class WorkspaceManager: Identifiable {
     viewModel.historyWorkspace = { [weak self] in
       guard let self else { return nil }
       return (id: self.workspace.id, name: self.workspace.name)
+    }
+    viewModel.onHistoryRecorded = { [weak self] in
+      guard let self else { return }
+      Task { await self.refreshHistory() }
     }
 
     return viewModel

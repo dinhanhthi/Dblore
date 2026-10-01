@@ -144,6 +144,21 @@ actor QueryHistoryStore {
     return Int(statement.columnInt(0))
   }
 
+  /// Rows matching `text` and `scope`. The filter is the same one `search` uses.
+  func count(text: String, scope: Scope) throws -> Int {
+    let listing = Self.listing(match: Self.matchExpression(for: text), scope: scope)
+    var sql = "SELECT COUNT(*) FROM history\(listing.join)"
+    if !listing.conditions.isEmpty {
+      sql += " WHERE " + listing.conditions.joined(separator: " AND ")
+    }
+    let statement = try database.prepare(sql)
+    for (index, value) in listing.values.enumerated() {
+      try statement.bind(Int32(index + 1), value)
+    }
+    guard try statement.step() else { return 0 }
+    return Int(statement.columnInt(0))
+  }
+
   /// Byte size of the sqlite file. In-memory databases report 0.
   func fileSize() throws -> Int64 {
     if Self.isMemory(fileURL) { return 0 }
@@ -269,31 +284,43 @@ actor QueryHistoryStore {
     try run(statement)
   }
 
-  private func fetch(
-    match: String?, scope: Scope, limit: Int?, offset: Int
-  ) throws
-    -> [QueryHistoryEntry]
-  {
-    var sql = "SELECT \(Self.columns) FROM history"
+  /// JOIN, WHERE, and bound values shared by `search` and `count(text:scope:)`.
+  private struct Listing {
+    var join = ""
     var conditions: [String] = []
     var values: [CellValue] = []
+  }
+
+  private static func listing(match: String?, scope: Scope) -> Listing {
+    var listing = Listing()
     if let match {
-      sql += " JOIN history_fts ON history.id = history_fts.rowid"
-      conditions.append("history_fts MATCH ?")
-      values.append(.string(match))
+      listing.join = " JOIN history_fts ON history.id = history_fts.rowid"
+      listing.conditions.append("history_fts MATCH ?")
+      listing.values.append(.string(match))
     }
     switch scope {
     case .all:
       break
     case .connection(let key):
-      conditions.append("history.connection_key = ?")
-      values.append(.string(key))
+      listing.conditions.append("history.connection_key = ?")
+      listing.values.append(.string(key))
     case .workspace(let id):
-      conditions.append("history.workspace_id = ?")
-      values.append(.string(id.uuidString))
+      listing.conditions.append("history.workspace_id = ?")
+      listing.values.append(.string(id.uuidString))
     }
-    if !conditions.isEmpty {
-      sql += " WHERE " + conditions.joined(separator: " AND ")
+    return listing
+  }
+
+  private func fetch(
+    match: String?, scope: Scope, limit: Int?, offset: Int
+  ) throws
+    -> [QueryHistoryEntry]
+  {
+    let listing = Self.listing(match: match, scope: scope)
+    var sql = "SELECT \(Self.columns) FROM history\(listing.join)"
+    var values = listing.values
+    if !listing.conditions.isEmpty {
+      sql += " WHERE " + listing.conditions.joined(separator: " AND ")
     }
     if match == nil {
       sql += " ORDER BY history.executed_at DESC, history.id DESC"

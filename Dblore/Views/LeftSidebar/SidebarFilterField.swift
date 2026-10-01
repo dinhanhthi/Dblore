@@ -7,25 +7,33 @@
 
 import SwiftUI
 
+/// Shared chrome for every left-sidebar filter row, so switching tabs does not jump.
+enum SidebarFilterMetrics {
+  static let controlHeight: CGFloat = 26
+}
+
 struct SidebarFilterField<Trailing: View>: View {
   @Binding var text: String
   /// Fixed capsule height for the field and its trailing control. Nil keeps the field's padding.
-  var controlHeight: CGFloat? = nil
+  var controlHeight: CGFloat? = SidebarFilterMetrics.controlHeight
   var topPadding: CGFloat = Spacing.sm
-  var bottomPadding: CGFloat = Spacing.xs
+  var bottomPadding: CGFloat = Spacing.sm
+  var trailingSpacing: CGFloat = Spacing.sm
   private var trailing: Trailing
 
   init(
     text: Binding<String>,
-    controlHeight: CGFloat? = nil,
+    controlHeight: CGFloat? = SidebarFilterMetrics.controlHeight,
     topPadding: CGFloat = Spacing.sm,
-    bottomPadding: CGFloat = Spacing.xs,
+    bottomPadding: CGFloat = Spacing.sm,
+    trailingSpacing: CGFloat = Spacing.sm,
     @ViewBuilder trailing: () -> Trailing
   ) {
     self._text = text
     self.controlHeight = controlHeight
     self.topPadding = topPadding
     self.bottomPadding = bottomPadding
+    self.trailingSpacing = trailingSpacing
     self.trailing = trailing()
   }
 
@@ -35,16 +43,20 @@ struct SidebarFilterField<Trailing: View>: View {
   }
 
   var body: some View {
-    HStack(alignment: .center, spacing: showsTrailing ? Spacing.sm : 0) {
-      field
-      if showsTrailing {
-        trailing
-          .frame(height: controlHeight)
+    VStack(spacing: 0) {
+      HStack(alignment: .center, spacing: showsTrailing ? trailingSpacing : 0) {
+        field
+        if showsTrailing {
+          trailing
+            .frame(height: controlHeight)
+        }
       }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.top, topPadding)
+      .padding(.bottom, bottomPadding)
+
+      Divider()
     }
-    .padding(.horizontal, Spacing.sm)
-    .padding(.top, topPadding)
-    .padding(.bottom, bottomPadding)
   }
 
   private var field: some View {

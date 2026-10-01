@@ -23,18 +23,28 @@ enum ExplainResultPlan {
   }
 }
 
+/// Plan / Raw control. Same capsule as Grid / Chart, sized to the Explain menu.
 struct ExplainDisplayPicker: View {
   @Binding var mode: ExplainDisplayMode
 
+  private static let width: CGFloat = 132
+
   var body: some View {
-    Picker("Explain", selection: $mode) {
-      Text("Plan").tag(ExplainDisplayMode.plan)
-      Text("Raw").tag(ExplainDisplayMode.raw)
+    CapsuleTabPicker(
+      selection: $mode,
+      tabs: [ExplainDisplayMode.plan, .raw],
+      height: ResultDisplayPicker.height,
+      inset: 2,
+      verticalInset: 2
+    ) { tab in
+      let isSelected = mode == tab
+      Text(tab == .plan ? "Plan" : "Raw")
+        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+        .foregroundColor(isSelected ? .white : .foreground)
+        .lineLimit(1)
     }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .font(.small)
-    .frame(width: 160)
+    .frame(width: Self.width)
+    .fixedSize()
     .accessibilityLabel("Plan or raw")
   }
 }
@@ -42,22 +52,30 @@ struct ExplainDisplayPicker: View {
 /// Fixed plan height in a notebook cell. The editor panel fills its parent instead.
 private let notebookPlanHeight: CGFloat = 420
 
-/// Plan view when `ExplainPlan.parse` succeeds; otherwise the raw result, with no toggle.
+/// Plan view when `ExplainPlan.parse` succeeds; otherwise the raw result.
+/// The editor header draws the toggle and passes `showsPicker: false`.
 struct ExplainableResult<Raw: View>: View {
   let result: CellResult
   var fillsAvailableHeight = false
+  /// Shared with the editor result header when that header draws Plan / Raw.
+  var mode: Binding<ExplainDisplayMode>? = nil
+  var showsPicker = true
   @ViewBuilder var raw: () -> Raw
 
-  @State private var mode: ExplainDisplayMode = .plan
+  @State private var internalMode: ExplainDisplayMode = .plan
 
   private var plan: ExplainPlan? {
     ExplainResultPlan.parse(result)
   }
 
+  private var modeBinding: Binding<ExplainDisplayMode> {
+    mode ?? $internalMode
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      if plan != nil {
-        ExplainDisplayPicker(mode: $mode)
+      if showsPicker, plan != nil {
+        ExplainDisplayPicker(mode: modeBinding)
       }
       shown
     }
@@ -67,13 +85,13 @@ struct ExplainableResult<Raw: View>: View {
       alignment: .topLeading
     )
     .onChange(of: result.timestamp) { _, _ in
-      mode = .plan
+      modeBinding.wrappedValue = .plan
     }
   }
 
   @ViewBuilder
   private var shown: some View {
-    if let plan, mode == .plan {
+    if let plan, modeBinding.wrappedValue == .plan {
       ExplainPlanView(plan: plan)
         .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
         .frame(height: fillsAvailableHeight ? nil : notebookPlanHeight)

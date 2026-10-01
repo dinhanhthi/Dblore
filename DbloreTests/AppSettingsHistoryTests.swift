@@ -86,6 +86,19 @@ struct AppSettingsHistoryTests {
     }
   }
 
+  @Test("Max entries stepper uses larger steps as the cap grows")
+  func maxEntriesStepper() {
+    #expect(AppSettings.steppedHistoryMaxEntries(1_000, up: false) == 1_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(1_000, up: true) == 2_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(9_000, up: true) == 10_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(10_000, up: false) == 9_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(10_000, up: true) == 15_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(45_000, up: true) == 50_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(50_000, up: false) == 45_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(50_000, up: true) == 60_000)
+    #expect(AppSettings.steppedHistoryMaxEntries(500_000, up: true) == 500_000)
+  }
+
   @Test("History enabled toggles persist across a new AppSettings")
   func enabledTogglesPersist() throws {
     try withIsolatedDefaults { suite in

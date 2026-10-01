@@ -53,7 +53,7 @@ struct DataCategoryRow: View {
       }
 
       if row.category == .queryHistory {
-        HistoryRetentionControls()
+        HistoryRetentionControls(isBusy: isBusy || row.loading, onClear: onClear)
       }
 
       if let error = row.error {
@@ -75,11 +75,13 @@ struct DataCategoryRow: View {
           .controlSize(.small)
           .disabled(isBusy || row.loading)
           .linkPointer()
-        Button("Clear…", action: onClear)
-          .buttonStyle(DangerButtonStyle())
-          .controlSize(.small)
-          .disabled(isBusy || row.loading)
-          .linkPointer()
+        if row.category != .queryHistory {
+          Button("Clear…", action: onClear)
+            .buttonStyle(DangerButtonStyle())
+            .controlSize(.small)
+            .disabled(isBusy || row.loading)
+            .linkPointer()
+        }
       }
     }
   }
@@ -105,6 +107,9 @@ struct DataCategoryRow: View {
 
 /// Retention for recorded statements. Allowed day values are clamped by `AppSettings`.
 private struct HistoryRetentionControls: View {
+  var isBusy: Bool
+  let onClear: () -> Void
+
   @Bindable private var appSettings = AppSettings.shared
 
   private var entryRange: ClosedRange<Int> { AppSettings.historyMaxEntriesRange }
@@ -148,13 +153,31 @@ private struct HistoryRetentionControls: View {
         .inputCapsuleStyle()
         .font(.monoSmall)
         .frame(width: 96)
+        Stepper(
+          "",
+          onIncrement: {
+            appSettings.historyMaxEntries = AppSettings.steppedHistoryMaxEntries(
+              appSettings.historyMaxEntries, up: true)
+          },
+          onDecrement: {
+            appSettings.historyMaxEntries = AppSettings.steppedHistoryMaxEntries(
+              appSettings.historyMaxEntries, up: false)
+          }
+        )
+        .labelsHidden()
       }
 
       Text(
-        "Between \(entryRange.lowerBound.formatted()) and \(entryRange.upperBound.formatted()) statements. Forever keeps history until you clear it, still capped by max entries."
+        "Between \(entryRange.lowerBound.formatted()) and \(entryRange.upperBound.formatted()) statements. Older rows past this limit are deleted. Forever still stops at the limit."
       )
       .font(.small)
       .foregroundColor(.foregroundSubtle)
+
+      Button("Clear history", action: onClear)
+        .buttonStyle(DangerButtonStyle())
+        .controlSize(.small)
+        .disabled(isBusy)
+        .linkPointer()
     }
     .padding(.leading, 16 + Spacing.sm)
   }

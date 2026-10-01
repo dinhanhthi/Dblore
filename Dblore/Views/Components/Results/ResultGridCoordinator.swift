@@ -23,15 +23,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
   /// Faint tint over the cells of the sorted column, read on each cell (the accent can change)
   static var sortedColumnColor: NSColor { NSColor(Color.accent.opacity(0.06)) }
-  /// Same size as `Font.mono` (body, monospaced)
-  static let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+  /// Result cell face. Tracks Settings → Results → Font Size (default: small system size).
+  static var font: NSFont {
+    NSFont.monospacedSystemFont(ofSize: AppSettings.shared.resultFontSize, weight: .regular)
+  }
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
   private static let rowIdentifier = NSUserInterfaceItemIdentifier("ResultGridRow")
   private static let rowNumberCellIdentifier = NSUserInterfaceItemIdentifier("ResultGridRowNumber")
   /// Leading "#" column: the displayed row number, not a result column (no Int identifier)
   static let rowNumberIdentifier = NSUserInterfaceItemIdentifier("rowNumber")
-  static let rowNumberFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+  /// One point under the result face (10pt at the default 11pt), so the gutter stays quieter.
+  static var rowNumberFont: NSFont {
+    NSFont.monospacedDigitSystemFont(
+      ofSize: AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize),
+      weight: .regular)
+  }
+
+  /// Font size last applied to `tableView`. Nil until the grid is configured.
+  private var appliedFontSize: CGFloat?
 
   /// What decides a reload: the result's identity, the sort and the search, not every SwiftUI
   /// update
@@ -145,6 +155,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       isHighlighted: isHighlighted,
       isCurrentMatch: isHighlighted && currentMatch?.matchType == .columnName(column.name),
       searchQuery: searchQuery, caseSensitive: caseSensitive, isFiltered: isFiltered)
+  }
+
+  /// Records `size` and the matching row height. True when the face changed, so the caller
+  /// reloads visible cells when `update` itself did not. Does not rebuild the row model.
+  func noteFontSize(_ size: CGFloat, tableView: NSTableView) -> Bool {
+    // The first call is the grid's initial face: `update` reloads cells with it. Only a later
+    // change needs its own reload.
+    let changed = appliedFontSize != nil && appliedFontSize != size
+    appliedFontSize = size
+    let height = ResultGridView.rowHeight(fontSize: size)
+    if tableView.rowHeight != height {
+      tableView.rowHeight = height
+    }
+    return changed
   }
 
   /// Rebuilds the columns and reloads the table when the result, the sort, the search, the
@@ -625,6 +649,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         tableView.makeView(withIdentifier: Self.rowNumberCellIdentifier, owner: nil)
         as? ResultGridRowNumberCell ?? ResultGridRowNumberCell()
       cell.identifier = Self.rowNumberCellIdentifier
+      cell.textField?.font = Self.rowNumberFont
       cell.textField?.stringValue = String(row + 1)
       return cell
     }
@@ -638,6 +663,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let isNull = value == .null
     let text = model.displayText(row: row, column: column)
     let textColor = isNull ? Self.nullTextColor : Self.textColor
+    cell.textField?.font = Self.font
     if cell.textField?.textColor != textColor { cell.textField?.textColor = textColor }
     let cellID = ObjectIdentifier(cell)
     if let key, !key.searchQuery.isEmpty {

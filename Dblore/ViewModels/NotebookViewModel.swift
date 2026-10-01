@@ -177,6 +177,8 @@ class NotebookViewModel {
   @ObservationIgnored var historySettings = AppSettings.shared
   /// Workspace this tab belongs to, read when a statement is recorded.
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
+  /// Fired after at least one history row is saved, so an open history list can reload.
+  @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
   /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer

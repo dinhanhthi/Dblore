@@ -11,15 +11,19 @@ struct LineNumberGutterView: NSViewRepresentable {
   let text: String
   let textView: NSTextView?
   let gutterWidth: CGFloat
+  /// Editor face. Gutter digits draw one point smaller. Default matches the editor font size.
+  var editorFontSize: CGFloat = AppSettings.defaultEditorFontSize
 
   func makeNSView(context: Context) -> LineNumberGutterNSView {
     let gutterView = LineNumberGutterNSView()
     gutterView.gutterWidth = gutterWidth
+    gutterView.editorFontSize = editorFontSize
     return gutterView
   }
 
   func updateNSView(_ gutterView: LineNumberGutterNSView, context: Context) {
     gutterView.gutterWidth = gutterWidth
+    gutterView.editorFontSize = editorFontSize
     gutterView.updateLineNumbers(text: text, textView: textView)
   }
 
@@ -32,6 +36,25 @@ struct LineNumberGutterView: NSViewRepresentable {
 @MainActor
 class LineNumberGutterNSView: NSView {
   var gutterWidth: CGFloat = 40
+  var editorFontSize: CGFloat = AppSettings.defaultEditorFontSize
+
+  /// Empty-line box measured for a 13pt monospaced face. The editor default is 12pt, so
+  /// that size and every other size scale from this measurement. Non-empty lines use the
+  /// layout manager.
+  private static let measuredEditorFontSize: CGFloat = 13
+  private static let measuredEmptyLineHeight: CGFloat = 17
+
+  /// Height of one empty editor line.
+  private var emptyLineHeight: CGFloat {
+    guard editorFontSize != Self.measuredEditorFontSize else { return Self.measuredEmptyLineHeight }
+    let font = NSFont.monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
+    let measuredFont = NSFont.monospacedSystemFont(
+      ofSize: Self.measuredEditorFontSize, weight: .regular)
+    let measuredLine = measuredFont.ascender - measuredFont.descender + measuredFont.leading
+    let line = font.ascender - font.descender + font.leading
+    guard measuredLine > 0 else { return Self.measuredEmptyLineHeight }
+    return ceil(Self.measuredEmptyLineHeight * line / measuredLine)
+  }
 
   private var lineNumbers: [(number: Int, yPosition: CGFloat, height: CGFloat)] = []
   private var scrollObserver: NSObjectProtocol?
@@ -235,8 +258,7 @@ class LineNumberGutterNSView: NSView {
         // Empty line - use previous line's bottom or default
         let previousBottom =
           newLineNumbers.last.map { $0.yPosition + $0.height } ?? textView.textContainerInset.height
-        let defaultHeight: CGFloat = 17  // Approximate line height
-        newLineNumbers.append((lineNumber, previousBottom, defaultHeight))
+        newLineNumbers.append((lineNumber, previousBottom, emptyLineHeight))
       }
 
       lineNumber += 1
@@ -245,11 +267,11 @@ class LineNumberGutterNSView: NSView {
 
     // Handle empty text or trailing newline
     if text.isEmpty {
-      newLineNumbers = [(1, textView.textContainerInset.height, 17)]
+      newLineNumbers = [(1, textView.textContainerInset.height, emptyLineHeight)]
     } else if text.hasSuffix("\n") {
       let previousBottom =
         newLineNumbers.last.map { $0.yPosition + $0.height } ?? textView.textContainerInset.height
-      newLineNumbers.append((lineNumber, previousBottom, 17))
+      newLineNumbers.append((lineNumber, previousBottom, emptyLineHeight))
     }
 
     lineNumbers = newLineNumbers
@@ -278,8 +300,9 @@ class LineNumberGutterNSView: NSView {
     // Get scroll offset from observed text view
     let scrollOffset = observedClipView?.bounds.origin.y ?? 0
 
-    // Draw line numbers
-    let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    // Draw line numbers one point under the editor face (11pt at the default 12pt)
+    let font = NSFont.monospacedSystemFont(
+      ofSize: AppSettings.editorGutterFontSize(for: editorFontSize), weight: .regular)
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.alignment = .right
 

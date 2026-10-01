@@ -14,6 +14,23 @@ struct ResultAreaView: View {
   let viewModel: NotebookViewModel
   let cellId: UUID
   @State private var isQueryCopied: Bool = false
+  /// Grid / Chart for this cell. A new result (different timestamp) reads as Grid.
+  @State private var resultDisplayMode: ResultDisplayMode = .grid
+  @State private var resultDisplayModeStamp: Date?
+
+  /// Binding shared by the query bar and the grid. A different result timestamp reads as Grid
+  /// until the user picks a mode for that result.
+  private var displayMode: Binding<ResultDisplayMode> {
+    Binding(
+      get: {
+        resultDisplayModeStamp == result.timestamp ? resultDisplayMode : .grid
+      },
+      set: { newValue in
+        resultDisplayModeStamp = result.timestamp
+        resultDisplayMode = newValue
+      }
+    )
+  }
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -27,12 +44,16 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        // Query footer (for both single and multi-statement)
+        // Query footer (for both single and multi-statement). The Grid / Chart slider
+        // sits on this row; the grid draws it only when this bar is hidden.
+        let showsQueryFooter =
+          !AppSettings.shared.hideRunWithQuerySection && result.sourceQuery != nil
         ResultQueryFooterView(
           result: result,
           isQueryCopied: $isQueryCopied,
           viewModel: viewModel,
-          cellId: cellId
+          cellId: cellId,
+          displayMode: displayMode
         )
 
         if let error = result.error {
@@ -55,7 +76,9 @@ struct ResultAreaView: View {
           NotebookResultGridView(
             result: result,
             viewModel: viewModel,
-            cellId: cellId
+            cellId: cellId,
+            displayMode: displayMode,
+            showsDisplayPicker: !showsQueryFooter
           )
         }
       }
@@ -370,6 +393,8 @@ struct ResultQueryFooterView: View {
   @Binding var isQueryCopied: Bool
   var viewModel: NotebookViewModel?
   var cellId: UUID?
+  /// Shared with the result grid. Nil keeps the slider out of this bar.
+  var displayMode: Binding<ResultDisplayMode>? = nil
 
   var body: some View {
     // Don't show if setting is enabled to hide this section (the query is sent as written)
@@ -385,9 +410,11 @@ struct ResultQueryFooterView: View {
           result: result,
           viewModel: viewModel,
           cellId: cellId,
-          queryIndex: nil  // Notebook mode always uses nil
+          queryIndex: nil,  // Notebook mode always uses nil
+          displayMode: displayMode,
+          iconOnlyActions: true
         )
-        .frame(height: 24)
+        .frame(height: ResultDisplayPicker.height)
         .padding(.vertical, Spacing.sm)
 
         // Horizontal divider line (bottom)
@@ -507,6 +534,10 @@ struct NotebookResultGridView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID
+  /// Shared with the query bar. Nil keeps an internal mode inside the chart view.
+  var displayMode: Binding<ResultDisplayMode>? = nil
+  /// False when the query bar already draws the Grid / Chart slider.
+  var showsDisplayPicker = true
   @State private var sortColumn: String?
   @State private var sortAscending = true
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
@@ -537,7 +568,10 @@ struct NotebookResultGridView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       ExplainableResult(result: result) {
-        ChartableResult(result: result, chartSpec: chartSpecBinding) {
+        ChartableResult(
+          result: result, chartSpec: chartSpecBinding, mode: displayMode,
+          showsPicker: showsDisplayPicker
+        ) {
           ResultGridView(
             result: result,
             sortColumn: sortColumn,

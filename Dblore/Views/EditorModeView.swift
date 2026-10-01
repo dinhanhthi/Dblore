@@ -21,13 +21,19 @@ struct EditorModeView: View {
   /// Grid / Chart for the editor result. A new result (different timestamp) reads as Grid.
   @State private var resultDisplayMode: ResultDisplayMode = .grid
   @State private var resultDisplayModeStamp: Date?
+  /// Plan / Raw for an EXPLAIN result. A new result reads as Plan.
+  @State private var explainDisplayMode: ExplainDisplayMode = .plan
+  @State private var explainDisplayModeStamp: Date?
 
-  /// Width of the line number gutter: fits the widest line number (12pt monospaced digits are
-  /// about 7.3pt wide) plus 8pt padding on each side; at least 2 digits wide
+  /// Width of the line number gutter: the widest line number in the gutter face (one point
+  /// under the editor font) plus 8pt padding on each side; at least 2 digits wide
   private var gutterWidth: CGFloat {
     let lineCount = viewModel.editorContent.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
     let digits = max(String(lineCount).count, 2)
-    return ceil(CGFloat(digits) * 7.3) + 16
+    let font = NSFont.monospacedSystemFont(
+      ofSize: AppSettings.editorGutterFontSize(for: appSettings.editorFontSize), weight: .regular)
+    let digitWidth = ceil(("0" as NSString).size(withAttributes: [.font: font]).width)
+    return CGFloat(digits) * digitWidth + 16
   }
 
   // MARK: - State Accessors (for extensions)
@@ -54,6 +60,19 @@ struct EditorModeView: View {
       set: { newValue in
         resultDisplayModeStamp = result.timestamp
         resultDisplayMode = newValue
+      }
+    )
+  }
+
+  /// Binding shared by the result header and the plan view. A different result reads as Plan.
+  func explainDisplayModeBinding(for result: CellResult) -> Binding<ExplainDisplayMode> {
+    Binding(
+      get: {
+        explainDisplayModeStamp == result.timestamp ? explainDisplayMode : .plan
+      },
+      set: { newValue in
+        explainDisplayModeStamp = result.timestamp
+        explainDisplayMode = newValue
       }
     )
   }
@@ -128,7 +147,8 @@ struct EditorModeView: View {
           LineNumberGutterView(
             text: viewModel.editorContent,
             textView: textViewRef,
-            gutterWidth: gutterWidth
+            gutterWidth: gutterWidth,
+            editorFontSize: appSettings.editorFontSize
           )
           .frame(width: gutterWidth, height: editorHeight)
         }
@@ -214,7 +234,8 @@ struct EditorModeView: View {
     result: CellResult, displayMode: Binding<ResultDisplayMode>
   ) -> some View {
     EditorResultGridView(
-      result: result, viewModel: viewModel, displayMode: displayMode, showsDisplayPicker: false
+      result: result, viewModel: viewModel, displayMode: displayMode, showsDisplayPicker: false,
+      explainMode: explainDisplayModeBinding(for: result), showsExplainPicker: false
     )
     .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
     .id(result.timestamp)  // New result: reset sort and search match

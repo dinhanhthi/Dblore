@@ -50,6 +50,9 @@ struct DataSettingsSection: View {
       secrets
     }
     .task { await model.refresh() }
+    .onReceive(NotificationCenter.default.publisher(for: .localDataChanged)) { _ in
+      Task { await model.refresh() }
+    }
     .sheet(item: $exportSheet) { _ in
       DataExportAllSheet(model: model) { selected in
         exportSheet = nil

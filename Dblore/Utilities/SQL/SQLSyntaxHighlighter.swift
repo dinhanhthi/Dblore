@@ -160,7 +160,9 @@ enum SQLSyntaxHighlighter {
     let number = NSColor(Color.syntaxNumber)
     let comment = NSColor(Color.syntaxComment)
     let foreground = NSColor(Color.foreground)
-    let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    /// Editor face. Tracks Settings → Editor → Font Size (default 12pt).
+    let font = NSFont.monospacedSystemFont(
+      ofSize: AppSettings.shared.editorFontSize, weight: .regular)
 
     var defaultAttributes: [NSAttributedString.Key: Any] {
       [.font: font, .foregroundColor: foreground]

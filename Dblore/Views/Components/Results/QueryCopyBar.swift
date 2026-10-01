@@ -45,6 +45,12 @@ struct QueryCopyBar: View {
   /// Dialect of INSERT export and clipboard copy. Notebook call sites keep PostgreSQL.
   var dialect: SQLDialect = .postgresql
 
+  /// When set, the Grid / Chart slider sits on this bar (notebook cells).
+  var displayMode: Binding<ResultDisplayMode>? = nil
+
+  /// Icon-only circle for View Query and Download. Notebook cells pass true.
+  var iconOnlyActions: Bool = false
+
   /// Binding to track copy state (for icon animation)
   @State private var isQueryCopied: Bool = false
   @State private var showCopyFeedback: CopyFeedbackType? = nil
@@ -112,6 +118,10 @@ struct QueryCopyBar: View {
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
         }
 
+        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
+          ResultDisplayPicker(mode: displayMode)
+        }
+
         // View Query button (left of Download button)
         viewQueryButton(query: query, mode: currentMode)
 
@@ -156,6 +166,34 @@ struct QueryCopyBar: View {
 
   // MARK: - View Query Button
 
+  /// Labels stay on the wide and compact editor bar. Notebook cells are icon-only.
+  private func showsActionLabel(_ mode: LayoutMode) -> Bool {
+    !iconOnlyActions && (mode == .full || mode == .compact)
+  }
+
+  @ViewBuilder
+  private func actionChrome<Label: View>(
+    iconOnly: Bool, @ViewBuilder label: () -> Label
+  )
+    -> some View
+  {
+    if iconOnly {
+      label()
+        .foregroundColor(.foreground)
+        .frame(width: ResultDisplayPicker.height, height: ResultDisplayPicker.height)
+        .background(Circle().fill(Color.inputBackground))
+        .overlay(Circle().strokeBorder(Color.border, lineWidth: 1))
+        .contentShape(Circle())
+    } else {
+      label()
+        .foregroundColor(.foreground)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.xs)
+        .background(Capsule().fill(Color.inputBackground))
+        .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    }
+  }
+
   @ViewBuilder
   private func viewQueryButton(query: String, mode: LayoutMode) -> some View {
     Button(action: {
@@ -163,31 +201,23 @@ struct QueryCopyBar: View {
       let queryWithoutComments = SQLSyntaxHighlighter.removeComments(query)
       viewModel?.showSidebar(content: .executedQuery(query: queryWithoutComments, cellId: cellId))
     }) {
-      HStack(spacing: 4) {
-        Image(systemName: "eye")
-          .font(.system(size: 11))
-
-        // Show label in full mode or compact mode, hide in intermediate mode
-        if mode == .full || mode == .compact {
-          Text("View Query")
+      actionChrome(iconOnly: iconOnlyActions) {
+        HStack(spacing: 4) {
+          Image(systemName: "eye")
             .font(.system(size: 11))
+
+          // Show label in full mode or compact mode, hide in intermediate mode
+          if showsActionLabel(mode) {
+            Text("View Query")
+              .font(.system(size: 11))
+          }
         }
       }
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(
-        Capsule()
-          .fill(Color.inputBackground)
-      )
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
     }
     .buttonStyle(.plain)
     .linkPointer()
     .help("View full query in sidebar")
+    .accessibilityLabel("View Query")
     .fixedSize()
   }
 
@@ -294,38 +324,26 @@ struct QueryCopyBar: View {
         }
       }
     } label: {
-      HStack(spacing: 4) {
-        Image(systemName: "arrow.down.circle")
-          .font(.system(size: 11))
-
-        // Show label in full mode or compact mode, hide in intermediate mode
-        if mode == .full || mode == .compact {
-          Text("Download")
+      actionChrome(iconOnly: iconOnlyActions) {
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.down.circle")
             .font(.system(size: 11))
-        }
 
-        // Show chevron only when label is shown
-        if mode == .full || mode == .compact {
-          Image(systemName: "chevron.down")
-            .font(.system(size: 8))
+          // Show label in full mode or compact mode, hide in intermediate mode
+          if showsActionLabel(mode) {
+            Text("Download")
+              .font(.system(size: 11))
+          }
+
+          // Show chevron only when label is shown
+          if showsActionLabel(mode) {
+            Image(systemName: "chevron.down")
+              .font(.system(size: 8))
+          }
         }
       }
-      .foregroundColor(.foreground)
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(
-        Capsule()
-          .fill(Color.inputBackground)
-      )
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
     }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .help("Download or copy result data")
-    .fixedSize()
+    .modifier(QueryBarDownloadMenuChrome(iconOnly: iconOnlyActions))
   }
 
   // MARK: - Download/Copy Actions
@@ -383,6 +401,34 @@ struct QueryCopyBar: View {
     showCopyFeedback = .insert
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
       showCopyFeedback = nil
+    }
+  }
+}
+
+/// Keeps the editor Download menu unchanged. Notebook icon-only menus hide the
+/// system indicator and lock the control to the Grid / Chart slider height.
+private struct QueryBarDownloadMenuChrome: ViewModifier {
+  var iconOnly: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if iconOnly {
+      content
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .linkPointer()
+        .help("Download or copy result data")
+        .accessibilityLabel("Download")
+        .fixedSize()
+        .frame(width: ResultDisplayPicker.height, height: ResultDisplayPicker.height)
+    } else {
+      content
+        .buttonStyle(.plain)
+        .linkPointer()
+        .help("Download or copy result data")
+        .accessibilityLabel("Download")
+        .fixedSize()
     }
   }
 }

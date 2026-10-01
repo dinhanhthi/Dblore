@@ -104,7 +104,6 @@ struct GenericModalHeader<Trailing: View>: View {
         Image(systemName: "xmark")
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .keyboardShortcut(.escape, modifiers: [])
       .help("Close (Esc)")
     }
     .modalBarPadding(vertical: Spacing.sm)
@@ -174,24 +173,33 @@ extension View {
             .ignoresSafeArea()
             .transition(.opacity)
             .onTapGesture {
-              // Use async to properly release focus/responder chain on macOS
-              DispatchQueue.main.async {
-                isPresented.wrappedValue = false
-                // Force window to become key and restore responder chain
-                NSApp.keyWindow?.makeFirstResponder(nil)
-              }
+              dismissPresentedModal(isPresented)
             }
         }
 
         // Modal content with zoom animation
         if isPresented.wrappedValue {
           modal()
+            .background {
+              ModalEscapeCatcher {
+                dismissPresentedModal(isPresented)
+              }
+            }
             .transition(.scale(scale: 0.95).combined(with: .opacity))
         }
       }
       .allowsHitTesting(isPresented.wrappedValue)
       .animation(.easeOut(duration: 0.2), value: isPresented.wrappedValue)
     }
+  }
+}
+
+/// Releases the field editor on the next turn, then closes the modal.
+private func dismissPresentedModal(_ isPresented: Binding<Bool>) {
+  // Async so AppKit drops the current first responder before the modal goes away.
+  DispatchQueue.main.async {
+    isPresented.wrappedValue = false
+    NSApp.keyWindow?.makeFirstResponder(nil)
   }
 }
 

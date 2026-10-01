@@ -72,9 +72,21 @@ struct ResultGridView: NSViewRepresentable {
   var highlight: TableHighlight? = nil
   /// Dialect the highlight is evaluated in (`like` case sensitivity)
   var highlightDialect: DatabaseType = .postgresql
+  /// Result cell text size. The default reads Settings so a slider move refreshes the grid.
+  var fontSize: CGFloat = AppSettings.shared.resultFontSize
 
-  /// Fixed row height of the grid
-  static let rowHeight: CGFloat = 26
+  /// Row height at the default result font size. Larger and smaller faces scale from this
+  /// so an untouched setting keeps the 26pt rows the notebook height math expects.
+  static let defaultRowHeight: CGFloat = 26
+
+  static func rowHeight(fontSize: CGFloat) -> CGFloat {
+    guard fontSize != AppSettings.defaultResultFontSize else { return defaultRowHeight }
+    return (defaultRowHeight * fontSize / AppSettings.defaultResultFontSize)
+      .rounded(.toNearestOrAwayFromZero)
+  }
+
+  /// Row height for the current result font size
+  static var rowHeight: CGFloat { rowHeight(fontSize: AppSettings.shared.resultFontSize) }
   /// Rows shown at once by a grid of `height(rowCount:hideColumnTypes:)`; more rows scroll
   /// inside the grid
   static let maxVisibleRows = 15
@@ -147,6 +159,7 @@ struct ResultGridView: NSViewRepresentable {
   }
 
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
+    let fontChanged = coordinator.noteFontSize(fontSize, tableView: tableView)
     coordinator.isEditable = isEditable
     coordinator.stagesEdits = stagesEdits
     coordinator.onCommitEdit = onCommitEdit
@@ -166,6 +179,13 @@ struct ResultGridView: NSViewRepresentable {
       hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
       searchMatches: searchMatches, changeSet: changeSet)
+    // A font-only change skips `update` (the row model is unchanged). `update` may also
+    // refresh only staged rows, so reload every visible cell onto the new face.
+    if fontChanged {
+      tableView.tableColumn(withIdentifier: ResultGridCoordinator.rowNumberIdentifier)?.width =
+        ResultGridCoordinator.rowNumberWidth(rowCount: result.rows.count)
+      tableView.reloadData()
+    }
   }
 }
 

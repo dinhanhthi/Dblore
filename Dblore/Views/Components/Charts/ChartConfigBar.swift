@@ -15,11 +15,12 @@ enum ResultDisplayMode: Hashable {
 }
 
 /// Grid / Chart control. Same capsule as the sidebar, sized to the Explain menu:
-/// 11pt label plus `Spacing.xs` vertical padding measures 22pt.
+/// 11pt label plus `Spacing.xs` vertical padding measures 22pt. Notebook query-bar
+/// icon buttons use this height so the slider and those buttons match.
 struct ResultDisplayPicker: View {
   @Binding var mode: ResultDisplayMode
 
-  private static let height: CGFloat = 22
+  static let height: CGFloat = 22
   private static let width: CGFloat = 132
 
   var body: some View {

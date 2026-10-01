@@ -70,6 +70,10 @@ extension EditorModeView {
           ResultDisplayPicker(mode: displayMode)
         }
 
+        if ExplainResultPlan.parse(result) != nil {
+          ExplainDisplayPicker(mode: explainDisplayModeBinding(for: result))
+        }
+
         explainToolbarMenu()
 
         Button(action: clearResult) {
@@ -324,13 +328,19 @@ struct EditorResultGridView: View {
   /// and set `showsDisplayPicker` to false so this grid does not draw a second slider.
   var displayMode: Binding<ResultDisplayMode>? = nil
   var showsDisplayPicker = true
+  /// Nil keeps an internal Plan / Raw mode. The editor header passes the shared mode
+  /// and sets `showsExplainPicker` to false so the plan view does not draw a second slider.
+  var explainMode: Binding<ExplainDisplayMode>? = nil
+  var showsExplainPicker = true
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
 
   var body: some View {
-    ExplainableResult(result: result, fillsAvailableHeight: true) {
+    ExplainableResult(
+      result: result, fillsAvailableHeight: true, mode: explainMode, showsPicker: showsExplainPicker
+    ) {
       ChartableResult(
         result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
         showsPicker: showsDisplayPicker

@@ -55,6 +55,11 @@ struct WorkspaceHistoryTests {
       connection: ConnectionConfig(
         host: "localhost", port: 5432, database: "app", username: "ana", name: "Prod"))
 
+    #expect(HistoryScope.all.selectedTitle == "All")
+    #expect(HistoryScope.connection.menuTitle == "This Connection")
+    #expect(HistoryScope.connection.selectedTitle == "This Conn")
+    #expect(HistoryScope.workspace.menuTitle == "This Workspace")
+    #expect(HistoryScope.workspace.selectedTitle == "This Wks")
     #expect(
       HistoryScope.connection.storeScope(connectionKey: nil, workspaceID: workspaceID) == .all)
     #expect(
@@ -80,28 +85,64 @@ struct WorkspaceHistoryTests {
       ])
   }
 
-  @Test("loadMore appends the next page of 100")
-  func pagingAppendsNextPage() async throws {
+  @Test("Each page holds 50 rows, and the next page is a separate load")
+  func pagingLoadsOnePage() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
     let start = Date(timeIntervalSince1970: 1_700_000_000)
-    for index in 0..<101 {
+    for index in 0..<51 {
       try await store.record(
         Self.entry(sql: "SELECT \(index)", at: start.addingTimeInterval(Double(index) * 10)))
     }
     let manager = makeManager(store: store)
 
     await manager.historyList.searchNow()
-    #expect(manager.historyList.results.count == 100)
-    #expect(manager.historyList.results.first?.sql == "SELECT 100")
+    #expect(manager.historyList.results.count == 50)
+    #expect(manager.historyList.totalCount == 51)
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.results.first?.sql == "SELECT 50")
+    #expect(
+      manager.historyList.pageLabel
+        == HistoryListModel.pageLabel(page: 1, pageSize: HistoryListModel.pageSize, total: 51))
 
-    await manager.historyList.loadMore()
-    #expect(manager.historyList.results.count == 101)
-    #expect(manager.historyList.results.last?.sql == "SELECT 0")
+    await manager.historyList.goToPage(2)
+    #expect(manager.historyList.page == 2)
+    #expect(manager.historyList.results.map(\.sql) == ["SELECT 0"])
 
-    await manager.historyList.loadMore()
-    #expect(manager.historyList.results.count == 101)
+    await manager.historyList.goToPage(9)
+    #expect(manager.historyList.page == 2)
+    #expect(manager.historyList.results.map(\.sql) == ["SELECT 0"])
+
+    let oldest = try #require(manager.historyList.results.first)
+    await manager.deleteHistory(ids: [oldest.id])
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.totalCount == 50)
+    #expect(manager.historyList.results.count == 50)
+  }
+
+  @Test("History age is minute resolution and does not name seconds")
+  func historyAgeStopsAtMinutes() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    #expect(HistoryRelativeTime.label(from: now.addingTimeInterval(-5), now: now) == "just now")
+    #expect(HistoryRelativeTime.label(from: now.addingTimeInterval(-59), now: now) == "just now")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-60), now: now) == "1 minute ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-119), now: now) == "1 minute ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-120), now: now) == "2 minutes ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-3_600), now: now) == "1 hour ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-7_200), now: now) == "2 hours ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-86_400), now: now) == "1 day ago")
+    #expect(
+      HistoryRelativeTime.label(from: now.addingTimeInterval(-2 * 86_400), now: now)
+        == "2 days ago")
+    let week = HistoryRelativeTime.label(from: now.addingTimeInterval(-8 * 86_400), now: now)
+    #expect(week.localizedCaseInsensitiveContains("second") == false)
   }
 
   @Test("deleteHistory removes the row from the list and the store")
@@ -138,26 +179,6 @@ struct WorkspaceHistoryTests {
     manager.insertHistory(Self.entry(sql: "SELECT from_history"))
 
     #expect(captured.text == "SELECT from_history")
-  }
-
-  @Test("runHistoryInNewCell adds a SQL cell after the selection and does not execute it")
-  func runHistoryInNewCellDoesNotExecute() throws {
-    let manager = makeManager()
-    manager.newNotebook()
-    let viewModel = try #require(manager.activeViewModel)
-    let original = try #require(viewModel.notebook.cells.first)
-    viewModel.notebook.cells.append(NotebookCell(cellType: .sql, content: "SELECT existing"))
-    viewModel.selectedCellId = original.id
-
-    manager.runHistoryInNewCell(Self.entry(sql: "SELECT history_sql"))
-
-    #expect(
-      viewModel.notebook.cells.map(\.content) == ["", "SELECT history_sql", "SELECT existing"])
-    let inserted = viewModel.notebook.cells[1]
-    #expect(inserted.cellType == .sql)
-    #expect(inserted.isRunning == false)
-    #expect(inserted.executionCount == nil)
-    #expect(inserted.result == nil)
   }
 
   @Test("copyHistory copies the SQL")
@@ -197,6 +218,34 @@ struct WorkspaceHistoryTests {
       list.results.map(\.sql) == ["SELECT all", "SELECT new", "SELECT old"]
     }
     #expect(list.results.map(\.sql) == ["SELECT all", "SELECT new", "SELECT old"])
+  }
+
+  @Test("Recording a statement reloads an open history list")
+  func recordingReloadsOpenHistoryList() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let manager = makeManager(store: store)
+    manager.newNotebook()
+    let viewModel = try #require(manager.activeViewModel)
+    let suiteName = "WorkspaceHistoryTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: suiteName))
+    suite.removePersistentDomain(forName: suiteName)
+    defer { suite.removePersistentDomain(forName: suiteName) }
+    let settings = AppSettings(defaults: suite)
+    settings.historyEnabled = true
+    viewModel.historySettings = settings
+    viewModel.historyRecorder = store
+
+    await viewModel.recordExecution(
+      [
+        QueryHistoryOutcome(
+          sql: "SELECT new", duration: 0.01, rowCount: 1, status: .success, errorMessage: nil)
+      ],
+      source: .cell)
+
+    await waitUntil { manager.historyList.results.map(\.sql) == ["SELECT new"] }
+    #expect(manager.historyList.results.map(\.sql) == ["SELECT new"])
   }
 
   @Test("refreshHistory reloads the first page")

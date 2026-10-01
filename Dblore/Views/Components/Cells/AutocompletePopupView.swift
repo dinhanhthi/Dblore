@@ -54,7 +54,7 @@ struct AutocompleteSuggestionRow: View {
 
       // Suggestion text
       Text(suggestion.text)
-        .font(.system(size: 13, design: .monospaced))
+        .font(.system(size: AppSettings.shared.editorFontSize, design: .monospaced))
         .foregroundColor(.foreground)
 
       Spacer()

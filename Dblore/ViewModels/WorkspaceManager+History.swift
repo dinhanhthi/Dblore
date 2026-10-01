@@ -25,6 +25,24 @@ nonisolated enum HistoryScope: Equatable, Sendable {
   case connection
   case workspace
 
+  /// Full name in the open scope menu.
+  var menuTitle: String {
+    switch self {
+    case .all: "All"
+    case .connection: "This Connection"
+    case .workspace: "This Workspace"
+    }
+  }
+
+  /// Closed-menu label. Shorter than `menuTitle` so the filter row keeps its width.
+  var selectedTitle: String {
+    switch self {
+    case .all: "All"
+    case .connection: "This Conn"
+    case .workspace: "This Wks"
+    }
+  }
+
   func storeScope(connectionKey: String?, workspaceID: UUID?) -> QueryHistoryStore.Scope {
     switch self {
     case .all:
@@ -43,11 +61,13 @@ nonisolated enum HistoryScope: Equatable, Sendable {
 @MainActor
 @Observable
 final class HistoryListModel {
-  static let pageSize = 100
+  /// Rows shown on one sidebar page. Storage is capped separately by `AppSettings.historyMaxEntries`.
+  static let pageSize = 50
 
   var query: String = "" {
     didSet {
       guard query != oldValue else { return }
+      page = 1
       scheduleSearch()
     }
   }
@@ -55,12 +75,37 @@ final class HistoryListModel {
   var scope: HistoryScope = .all {
     didSet {
       guard scope != oldValue else { return }
+      page = 1
       scheduleSearch()
     }
   }
 
   private(set) var results: [QueryHistoryEntry] = []
   private(set) var isLoading = false
+  /// 1-based page currently loaded.
+  private(set) var page = 1
+  /// Rows matching the current query and scope, not only this page.
+  private(set) var totalCount = 0
+
+  var pageCount: Int {
+    guard totalCount > 0 else { return 1 }
+    return (totalCount + Self.pageSize - 1) / Self.pageSize
+  }
+
+  var canGoPrevious: Bool { page > 1 }
+  var canGoNext: Bool { page < pageCount }
+
+  /// "1–50 of 230". An empty match is "0".
+  static func pageLabel(page: Int, pageSize: Int, total: Int) -> String {
+    guard total > 0 else { return "0" }
+    let start = (page - 1) * pageSize + 1
+    let end = min(page * pageSize, total)
+    return "\(start.formatted())–\(end.formatted()) of \(total.formatted())"
+  }
+
+  var pageLabel: String {
+    Self.pageLabel(page: page, pageSize: Self.pageSize, total: totalCount)
+  }
 
   @ObservationIgnored var browser: @MainActor () -> QueryHistoryStore? = { nil }
   @ObservationIgnored var connectionKey: @MainActor () -> String? = { nil }
@@ -72,8 +117,6 @@ final class HistoryListModel {
   /// the store; `searchNow` does not return until this catches up.
   @ObservationIgnored private var appliedEpoch = 0
   @ObservationIgnored private var searchWaiters: [CheckedContinuation<Void, Never>] = []
-  @ObservationIgnored private var nextOffset = 0
-  @ObservationIgnored private var hasMore = false
   @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
 
   init() {
@@ -92,7 +135,8 @@ final class HistoryListModel {
     searchTask = nil
     searchEpoch += 1
     let epoch = searchEpoch
-    await reloadFirstPage(epoch: epoch)
+    page = 1
+    await load(requestedPage: 1, epoch: epoch)
     if appliedEpoch >= epoch { return }
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       if appliedEpoch >= epoch {
@@ -103,32 +147,13 @@ final class HistoryListModel {
     }
   }
 
-  /// Appends the next page. A short page ends the list.
-  func loadMore() async {
-    guard hasMore, !isLoading, let store = browser() else { return }
+  /// Loads `newPage`, clamped to the pages that exist after the count returns.
+  func goToPage(_ newPage: Int) async {
+    searchTask?.cancel()
+    searchTask = nil
+    searchEpoch += 1
     let epoch = searchEpoch
-    let offset = nextOffset
-    isLoading = true
-    defer {
-      if epoch == searchEpoch { isLoading = false }
-    }
-    do {
-      let page = try await store.search(
-        text: query, scope: resolvedScope(), limit: Self.pageSize, offset: offset)
-      guard epoch == searchEpoch else { return }
-      results.append(contentsOf: page)
-      nextOffset += page.count
-      hasMore = page.count == Self.pageSize
-    } catch {
-      await AppLogger.shared.error(
-        "Query history search failed: \(error.localizedDescription)", category: "History")
-    }
-  }
-
-  func remove(ids: [Int64]) {
-    let dropping = Set(ids)
-    guard !dropping.isEmpty else { return }
-    results.removeAll { dropping.contains($0.id) }
+    await load(requestedPage: max(newPage, 1), epoch: epoch)
   }
 
   private func scheduleSearch() {
@@ -143,7 +168,7 @@ final class HistoryListModel {
     }
   }
 
-  private func reloadFirstPage(epoch: Int) async {
+  private func load(requestedPage: Int, epoch: Int) async {
     isLoading = true
     defer {
       if epoch == searchEpoch { isLoading = false }
@@ -151,24 +176,30 @@ final class HistoryListModel {
     guard let store = browser() else {
       guard epoch == searchEpoch else { return }
       results = []
-      nextOffset = 0
-      hasMore = false
+      totalCount = 0
+      page = 1
       publish(epoch)
       return
     }
     do {
-      let page = try await store.search(
-        text: query, scope: resolvedScope(), limit: Self.pageSize, offset: 0)
+      let scope = resolvedScope()
+      let total = try await store.count(text: query, scope: scope)
       guard epoch == searchEpoch else { return }
-      results = page
-      nextOffset = page.count
-      hasMore = page.count == Self.pageSize
+      let pages = total == 0 ? 1 : (total + Self.pageSize - 1) / Self.pageSize
+      let resolved = min(max(requestedPage, 1), pages)
+      let offset = (resolved - 1) * Self.pageSize
+      let rows = try await store.search(
+        text: query, scope: scope, limit: Self.pageSize, offset: offset)
+      guard epoch == searchEpoch else { return }
+      totalCount = total
+      page = resolved
+      results = rows
       publish(epoch)
     } catch {
       guard epoch == searchEpoch else { return }
       results = []
-      nextOffset = 0
-      hasMore = false
+      totalCount = 0
+      page = 1
       publish(epoch)
       await AppLogger.shared.error(
         "Query history search failed: \(error.localizedDescription)", category: "History")
@@ -216,17 +247,6 @@ extension WorkspaceManager {
     activeViewModel?.insertTextIntoSelectedCell(entry.sql)
   }
 
-  /// Adds a SQL cell after the selection (or at the end) and fills it. Does not run it.
-  func runHistoryInNewCell(_ entry: QueryHistoryEntry) {
-    guard let viewModel = activeViewModel, viewModel.viewMode == .notebook else { return }
-    viewModel.addCell(type: .sql, after: viewModel.selectedCellId)
-    guard let id = viewModel.selectedCellId,
-      let index = viewModel.notebook.cells.firstIndex(where: { $0.id == id })
-    else { return }
-    viewModel.notebook.cells[index].content = entry.sql
-    viewModel.onDocumentChanged?()
-  }
-
   /// Copies `entry.sql` to the pasteboard.
   func copyHistory(_ entry: QueryHistoryEntry) {
     let pasteboard = NSPasteboard.general
@@ -234,20 +254,21 @@ extension WorkspaceManager {
     pasteboard.setString(Self.historyClipboardText(entry), forType: .string)
   }
 
-  /// Deletes the rows from the store and drops them from the loaded page.
+  /// Deletes the rows from the store and reloads the page the user is on.
   func deleteHistory(ids: [Int64]) async {
     guard !ids.isEmpty, let store = resolvedHistoryBrowser() else { return }
+    let staying = historyList.page
     do {
       try await store.delete(ids: ids)
-      historyList.remove(ids: ids)
+      await historyList.goToPage(staying)
     } catch {
       await AppLogger.shared.error(
         "Query history delete failed: \(error.localizedDescription)", category: "History")
     }
   }
 
-  /// Reloads the first page. The history sidebar calls this when it opens and after a
-  /// statement is recorded.
+  /// Reloads the first page. The history sidebar calls this when it opens.
+  /// A recorded statement calls it through `NotebookViewModel.onHistoryRecorded`.
   func refreshHistory() async {
     await historyList.searchNow()
   }

@@ -24,6 +24,8 @@ struct SQLEditorView: View {
   var wordWrapEnabled: Bool = true  // Word wrap setting (default: enabled)
   var dialect: SQLDialect = .postgresql
 
+  private var editorFontSize: CGFloat { AppSettings.shared.editorFontSize }
+
   var body: some View {
     editorContent
       .onAppear {
@@ -42,7 +44,7 @@ struct SQLEditorView: View {
       // Placeholder - use isTextEmpty state for immediate reactivity
       if isTextEmpty {
         Text("-- Write your query here...")
-          .font(.system(size: 13, design: .monospaced))
+          .font(.system(size: editorFontSize, design: .monospaced))
           .foregroundColor(.foregroundSubtle)
           .padding(.horizontal, Spacing.sm + 4)
           .padding(.vertical, Spacing.xxs)
@@ -62,7 +64,8 @@ struct SQLEditorView: View {
         maxHeight: maxHeight,
         isEditorMode: isEditorMode,
         wordWrapEnabled: wordWrapEnabled,
-        dialect: dialect
+        dialect: dialect,
+        fontSize: editorFontSize
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)

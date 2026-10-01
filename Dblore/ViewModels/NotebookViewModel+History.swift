@@ -57,6 +57,7 @@ extension NotebookViewModel {
     guard let stored = source.stored, historySettings.historyEnabled else { return }
     let connection = historyConnection()
     let workspace = historyWorkspace()
+    var recorded = false
     for outcome in outcomes {
       guard !SQLStatementClassifier.containsPasswordLiteral(outcome.sql) else { continue }
       let entry = QueryHistoryEntry(
@@ -73,6 +74,10 @@ extension NotebookViewModel {
         workspaceName: workspace?.name,
         source: stored)
       await historyRecorder.record(entry)
+      recorded = true
+    }
+    if recorded {
+      onHistoryRecorded?()
     }
   }
 

@@ -255,6 +255,34 @@ class AppSettings {
     static let historyRetentionDays = "app.settings.historyRetentionDays"
     static let historyMaxEntries = "app.settings.historyMaxEntries"
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
+    static let resultFontSize = "app.settings.resultFontSize"
+    static let editorFontSize = "app.settings.editorFontSize"
+  }
+
+  /// Result cell text. Matches the previous grid face (`NSFont.smallSystemFontSize`, 11pt).
+  static let defaultResultFontSize: CGFloat = NSFont.smallSystemFontSize
+  /// SQL editor text. Default monospaced face.
+  static let defaultEditorFontSize: CGFloat = 12
+  /// Inclusive pt range for both font sliders.
+  static let fontSizeRange: ClosedRange<Double> = 9...24
+
+  /// Whole points inside `fontSizeRange`.
+  static func clampFontSize(_ size: CGFloat) -> CGFloat {
+    let rounded = size.rounded()
+    return CGFloat(min(max(Double(rounded), fontSizeRange.lowerBound), fontSizeRange.upperBound))
+  }
+
+  /// Gutter digits sit one point under the editor face, and never below 9. At the default
+  /// 12pt editor this is 11pt. At 13pt it stays 12pt, which is what the gutter used before
+  /// the setting existed.
+  static func editorGutterFontSize(for editorSize: CGFloat) -> CGFloat {
+    max(9, editorSize - 1)
+  }
+
+  /// Row-number digits sit one point under the result face, and never below 9. At the default
+  /// result size this stays 10pt.
+  static func resultRowNumberFontSize(for resultSize: CGFloat) -> CGFloat {
+    max(9, resultSize - 1)
   }
 
   // MARK: - Settings Properties
@@ -359,6 +387,19 @@ class AppSettings {
     }
   }
 
+  /// Monospaced size of SQL editors (Editor mode and notebook cells), in points.
+  /// Default: 12
+  var editorFontSize: CGFloat = defaultEditorFontSize {
+    didSet {
+      let clamped = Self.clampFontSize(editorFontSize)
+      if clamped != editorFontSize {
+        editorFontSize = clamped
+        return
+      }
+      defaults.set(Double(editorFontSize), forKey: Keys.editorFontSize)
+    }
+  }
+
   /// Hide "Run with query" section in Notebook mode result tables
   /// Default: false (shown)
   var hideRunWithQuerySection: Bool = false {
@@ -407,6 +448,19 @@ class AppSettings {
     }
   }
 
+  /// Monospaced size of result-table cell text, in points.
+  /// Default: `NSFont.smallSystemFontSize` (11pt), the size the grid used before this setting.
+  var resultFontSize: CGFloat = defaultResultFontSize {
+    didSet {
+      let clamped = Self.clampFontSize(resultFontSize)
+      if clamped != resultFontSize {
+        resultFontSize = clamped
+        return
+      }
+      defaults.set(Double(resultFontSize), forKey: Keys.resultFontSize)
+    }
+  }
+
   /// Safe Mode level for query protection
   /// Default: .alertRead (confirm modification queries)
   var safeMode: SafeMode = .alertRead {
@@ -443,6 +497,7 @@ class AppSettings {
         return  // Avoid triggering didSet again
       }
       defaults.set(historyRetentionDays, forKey: Keys.historyRetentionDays)
+      QueryHistoryPrune.schedule()
     }
   }
 
@@ -464,6 +519,7 @@ class AppSettings {
         return  // Avoid triggering didSet again
       }
       defaults.set(historyMaxEntries, forKey: Keys.historyMaxEntries)
+      QueryHistoryPrune.schedule()
     }
   }
 
@@ -593,6 +649,15 @@ class AppSettings {
       wordWrapEnabled = defaults.bool(forKey: Keys.wordWrapEnabled)
     }
 
+    if defaults.object(forKey: Keys.editorFontSize) != nil {
+      let stored = CGFloat(defaults.double(forKey: Keys.editorFontSize))
+      let clamped = Self.clampFontSize(stored)
+      if clamped != stored {
+        defaults.set(Double(clamped), forKey: Keys.editorFontSize)
+      }
+      editorFontSize = clamped
+    }
+
     // Load hide run with query section setting
     if defaults.object(forKey: Keys.hideRunWithQuerySection) != nil {
       hideRunWithQuerySection = defaults.bool(forKey: Keys.hideRunWithQuerySection)
@@ -618,6 +683,15 @@ class AppSettings {
     // Load hide column types setting
     if defaults.object(forKey: Keys.hideColumnTypes) != nil {
       hideColumnTypes = defaults.bool(forKey: Keys.hideColumnTypes)
+    }
+
+    if defaults.object(forKey: Keys.resultFontSize) != nil {
+      let stored = CGFloat(defaults.double(forKey: Keys.resultFontSize))
+      let clamped = Self.clampFontSize(stored)
+      if clamped != stored {
+        defaults.set(Double(clamped), forKey: Keys.resultFontSize)
+      }
+      resultFontSize = clamped
     }
 
     if defaults.object(forKey: Keys.inlineEditAutoCommit) != nil {
@@ -674,12 +748,14 @@ class AppSettings {
     isAutoCompleteEnabled = true
     showLineNumbers = true
     wordWrapEnabled = true
+    editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
     accentColor = .blue
     hideColumnTypes = false
+    resultFontSize = Self.defaultResultFontSize
     safeMode = .alertRead
     inlineEditAutoCommit = false
     historyEnabled = true

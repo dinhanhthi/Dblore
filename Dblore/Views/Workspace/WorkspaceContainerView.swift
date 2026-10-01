@@ -203,6 +203,7 @@ struct WorkspaceContainerView: View {
       openToken: settingsOpenToken
     )
     .favoriteModals(workspaceManager: workspaceManager)
+    .historyDetailModal(workspaceManager: workspaceManager)
     .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
@@ -490,6 +491,12 @@ struct WorkspaceTabContentView: View {
       // Handle ESC key
       let isEscape = event.keyCode == 53
       if isEscape {
+        // A presented modal closes itself. Yielding lets that monitor see Escape;
+        // swallowing it here would blur the editor or close the sidebar instead.
+        if ModalDismissRegistry.shared.hasModal(in: eventWindow) {
+          return event
+        }
+
         // Priority 0: If search panel is open, close it
         if self.viewModel.isSearchPanelVisible {
           Task { @MainActor [viewModel] in
