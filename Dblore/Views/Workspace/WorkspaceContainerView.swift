@@ -894,21 +894,14 @@ struct TabNavigationArrowButton: View {
   let isEnabled: Bool
   let action: () -> Void
 
-  @State private var isHovering = false
-
   var body: some View {
     Button(action: action) {
       Image(systemName: direction == .left ? "chevron.left" : "chevron.right")
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(isEnabled ? .foregroundMuted : .foregroundMuted.opacity(0.3))
-        .frame(width: 18, height: 18)
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .linkPointer()
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
     .disabled(!isEnabled)
     .blockDoubleClickZoom()
-    .onHover { isHovering = $0 }
     .help(direction == .left ? "Previous tab" : "Next tab")
   }
 }

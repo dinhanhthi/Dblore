@@ -511,12 +511,9 @@ private struct PasswordInputField: View {
 
       Button(action: { isVisible.toggle() }) {
         Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 28, height: 28)
-          .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .linkPointer()
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help(isVisible ? "Hide password" : "Show password")
     }
     .inputCapsuleStyle()

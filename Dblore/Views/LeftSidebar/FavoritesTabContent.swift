@@ -65,6 +65,8 @@ struct FavoritesTabContent: View {
       } label: {
         Image(systemName: "folder.badge.plus")
       }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help("New Folder")
 
       Button {
@@ -72,10 +74,10 @@ struct FavoritesTabContent: View {
       } label: {
         Image(systemName: "plus")
       }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help("New Favorite")
     }
-    .buttonStyle(.plain)
-    .foregroundColor(.foregroundMuted)
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
   }

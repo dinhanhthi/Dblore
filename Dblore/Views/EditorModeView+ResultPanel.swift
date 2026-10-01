@@ -72,14 +72,11 @@ extension EditorModeView {
 
         explainToolbarMenu()
 
-        // Clear button
         Button(action: clearResult) {
           Image(systemName: "xmark")
-            .font(.system(size: 10))
-            .foregroundColor(.foregroundSubtle)
         }
-        .buttonStyle(.plain)
-        .linkPointer()
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
         .help("Clear result")
       }
       .padding(.horizontal, Spacing.md)

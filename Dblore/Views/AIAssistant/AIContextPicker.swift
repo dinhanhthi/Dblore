@@ -316,11 +316,9 @@ struct AIContextPicker<Accessory: View>: View {
         selected.remove(table.qualifiedName)
       } label: {
         Image(systemName: "xmark")
-          .font(.smallest)
-          .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help("Remove \(table.qualifiedName)")
     }
   }

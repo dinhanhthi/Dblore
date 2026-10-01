@@ -102,11 +102,8 @@ struct GenericModalHeader<Trailing: View>: View {
 
       Button(action: onClose) {
         Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(.plain)
-      .linkPointer()
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
       .keyboardShortcut(.escape, modifiers: [])
       .help("Close (Esc)")
     }

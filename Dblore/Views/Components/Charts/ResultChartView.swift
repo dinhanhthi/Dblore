@@ -75,12 +75,15 @@ struct ChartableResult<Grid: View>: View {
         ResultDisplayPicker(mode: modeBinding)
       }
       if showChart, let spec = resolved {
-        ChartConfigBar(columns: result.columns, spec: specBinding) {
-          ChartPNGExporter.export(result: result, spec: spec)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          ChartConfigBar(columns: result.columns, spec: specBinding) {
+            ChartPNGExporter.export(result: result, spec: spec)
+          }
+          ResultChartView(result: result, spec: spec)
+            .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
+            .frame(height: fillsAvailableHeight ? nil : notebookChartHeight)
         }
-        ResultChartView(result: result, spec: spec)
-          .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
-          .frame(height: fillsAvailableHeight ? nil : notebookChartHeight)
+        .padding(Spacing.md)
       } else {
         grid()
           .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)

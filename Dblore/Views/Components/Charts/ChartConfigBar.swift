@@ -14,22 +14,29 @@ enum ResultDisplayMode: Hashable {
   case chart
 }
 
-/// Grid / Chart control, matching the sidebar capsule tabs.
+/// Grid / Chart control. Same capsule as the sidebar, sized to the Explain menu:
+/// 11pt label plus `Spacing.xs` vertical padding measures 22pt.
 struct ResultDisplayPicker: View {
   @Binding var mode: ResultDisplayMode
+
+  private static let height: CGFloat = 22
+  private static let width: CGFloat = 132
 
   var body: some View {
     CapsuleTabPicker(
       selection: $mode,
       tabs: [ResultDisplayMode.grid, .chart],
-      height: 28
+      height: Self.height,
+      inset: 2,
+      verticalInset: 2
     ) { tab in
-      CapsuleTabLabel(
-        text: tab == .grid ? "Grid" : "Chart",
-        isSelected: mode == tab
-      )
+      let isSelected = mode == tab
+      Text(tab == .grid ? "Grid" : "Chart")
+        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+        .foregroundColor(isSelected ? .white : .foreground)
+        .lineLimit(1)
     }
-    .frame(width: 160)
+    .frame(width: Self.width)
     .fixedSize()
     .accessibilityLabel("Grid or chart")
   }
@@ -43,72 +50,101 @@ struct ChartConfigBar: View {
 
   private static let maxYColumns = 5
 
-  private enum ColumnChoice: Hashable {
-    case none
-    case column(String)
-  }
-
   var body: some View {
     HStack(spacing: Spacing.sm) {
       labeled("Kind") {
-        Picker("Kind", selection: $spec.kind) {
-          Text("Bar").tag(ChartKind.bar)
-          Text("Line").tag(ChartKind.line)
-          Text("Area").tag(ChartKind.area)
-          Text("Point").tag(ChartKind.point)
-        }
-        .pickerStyle(.menu)
-        .fixedSize()
-      }
-      labeled("X") {
-        Picker("X", selection: xChoice) {
-          Text("Row").tag(ColumnChoice.none)
-          ForEach(xNames, id: \.self) { name in
-            Text(name)
-              .font(.monoSmall)
-              .tag(ColumnChoice.column(name))
+        capsuleMenu(kindTitle(spec.kind)) {
+          ForEach([ChartKind.bar, .line, .area, .point], id: \.rawValue) { kind in
+            menuChoice(kindTitle(kind), selected: spec.kind == kind) {
+              spec.kind = kind
+            }
           }
         }
-        .pickerStyle(.menu)
-        .fixedSize()
+      }
+      labeled("X") {
+        capsuleMenu(spec.xColumn ?? "Row") {
+          menuChoice("Row", selected: spec.xColumn == nil) {
+            spec.xColumn = nil
+          }
+          ForEach(xNames, id: \.self) { name in
+            menuChoice(name, selected: spec.xColumn == name) {
+              spec.xColumn = name
+            }
+          }
+        }
       }
       labeled("Y") {
-        Menu {
+        capsuleMenu(ySummary, help: "Y columns, up to \(Self.maxYColumns)") {
           ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
             yToggle(column.name)
           }
-        } label: {
-          Text(ySummary)
-            .font(.monoSmall)
-            .foregroundStyle(Color.foreground)
-            .lineLimit(1)
         }
-        .fixedSize()
-        .help("Y columns, up to \(Self.maxYColumns)")
       }
       labeled("Series") {
-        Picker("Series", selection: seriesChoice) {
-          Text("None").tag(ColumnChoice.none)
+        capsuleMenu(spec.seriesColumn ?? "None") {
+          menuChoice("None", selected: spec.seriesColumn == nil) {
+            spec.seriesColumn = nil
+          }
           ForEach(seriesNames, id: \.self) { name in
-            Text(name)
-              .font(.monoSmall)
-              .tag(ColumnChoice.column(name))
+            menuChoice(name, selected: spec.seriesColumn == name) {
+              spec.seriesColumn = name
+            }
           }
         }
-        .pickerStyle(.menu)
-        .fixedSize()
       }
       Spacer(minLength: Spacing.sm)
       Button(action: onExport) {
         Image(systemName: "square.and.arrow.up")
-          .font(.small)
-          .foregroundStyle(Color.foreground)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
       .help("Export chart as PNG")
     }
-    .font(.small)
-    .foregroundStyle(Color.foreground)
+  }
+
+  /// Same capsule as the Explain menu, so the menu opens under the button.
+  private func capsuleMenu<Content: View>(
+    _ title: String, help: String? = nil, @ViewBuilder content: () -> Content
+  ) -> some View {
+    Menu {
+      content()
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Text(title)
+          .font(.system(size: 11))
+          .foregroundStyle(Color.foreground)
+          .lineLimit(1)
+        Image(systemName: "chevron.down")
+          .font(.system(size: 9))
+          .foregroundStyle(Color.foregroundMuted)
+      }
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(Capsule().fill(Color.inputBackground))
+      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help(help ?? title)
+  }
+
+  private func menuChoice(
+    _ title: String, selected: Bool, action: @escaping () -> Void
+  )
+    -> some View
+  {
+    Button(action: action) {
+      if selected {
+        Label(title, systemImage: "checkmark")
+      } else {
+        Text(title)
+      }
+    }
+  }
+
+  private func kindTitle(_ kind: ChartKind) -> String {
+    kind.rawValue.prefix(1).uppercased() + kind.rawValue.dropFirst()
   }
 
   private func labeled<Content: View>(
@@ -120,40 +156,6 @@ struct ChartConfigBar: View {
         .foregroundStyle(Color.foreground)
       content()
     }
-  }
-
-  private var xChoice: Binding<ColumnChoice> {
-    Binding(
-      get: {
-        if let name = spec.xColumn { return .column(name) }
-        return .none
-      },
-      set: { choice in
-        switch choice {
-        case .none:
-          spec.xColumn = nil
-        case .column(let name):
-          spec.xColumn = name
-        }
-      }
-    )
-  }
-
-  private var seriesChoice: Binding<ColumnChoice> {
-    Binding(
-      get: {
-        if let name = spec.seriesColumn { return .column(name) }
-        return .none
-      },
-      set: { choice in
-        switch choice {
-        case .none:
-          spec.seriesColumn = nil
-        case .column(let name):
-          spec.seriesColumn = name
-        }
-      }
-    )
   }
 
   private var xNames: [String] {

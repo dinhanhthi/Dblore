@@ -213,13 +213,9 @@ struct DataViewerControls: View {
   ) -> some View {
     Button(action: { Task { await action() } }) {
       Image(systemName: icon)
-        .font(.system(size: 10))
-        .foregroundColor(.foregroundSubtle)
-        .frame(width: 20, height: 20)
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .linkPointer()
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
     .help(help)
     .disabled(!enabled || viewModel.isEditorQueryRunning)
   }

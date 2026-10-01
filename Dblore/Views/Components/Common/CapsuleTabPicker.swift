@@ -30,18 +30,25 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
   /// Height of the picker
   var height: CGFloat = 32
 
-  /// Inset padding for the sliding indicator
-  private let inset: CGFloat = 3
+  /// Left and right inset of the selected chip.
+  var inset: CGFloat = 3
+
+  /// Top and bottom inset of the selected chip.
+  var verticalInset: CGFloat = 3
 
   init(
     selection: Binding<Tab>,
     tabs: [Tab],
     height: CGFloat = 32,
+    inset: CGFloat = 3,
+    verticalInset: CGFloat = 3,
     @ViewBuilder label: @escaping (Tab) -> Label
   ) {
     self._selection = selection
     self.tabs = tabs
     self.height = height
+    self.inset = inset
+    self.verticalInset = verticalInset
     self.label = label
   }
 
@@ -66,7 +73,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
           // Sliding indicator
           Capsule()
             .fill(Color.accent)
-            .frame(width: tabWidth, height: geometry.size.height - (inset * 2))
+            .frame(width: tabWidth, height: geometry.size.height - (verticalInset * 2))
             .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selection)
 

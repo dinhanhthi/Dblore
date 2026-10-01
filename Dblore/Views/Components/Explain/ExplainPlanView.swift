@@ -330,7 +330,7 @@ struct ExplainTreeBranch: View {
   private var disclosure: some View {
     if item.children.isEmpty {
       Color.clear
-        .frame(width: 14, height: 14)
+        .frame(width: 16, height: 16)
     } else {
       Button {
         if isExpanded {
@@ -340,11 +340,10 @@ struct ExplainTreeBranch: View {
         }
       } label: {
         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-          .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(Color.foregroundMuted)
-          .frame(width: 14, height: 14)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.mini)
+      .frame(width: 16, height: 16)
       .accessibilityLabel(isExpanded ? "Collapse" : "Expand")
     }
   }
