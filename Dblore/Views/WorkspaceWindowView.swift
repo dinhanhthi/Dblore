@@ -237,7 +237,7 @@ struct NewWorkspaceWindowView: View {
 @MainActor
 class NewWindowStore {
   static let shared = NewWindowStore()
-  private var windowControllers: [(controller: NSWindowController, workspaceId: UUID)] = []
+  private var windowControllers: [(controller: NSWindowController, workspaceId: UUID?)] = []
 
   private init() {
     // Listen for window close to clean up
@@ -266,5 +266,58 @@ class NewWindowStore {
   /// All managed windows
   var allWindows: [NSWindow] {
     windowControllers.compactMap { $0.controller.window }
+  }
+
+  /// A fresh document window showing the welcome screen, kept alive until it closes.
+  func openWelcomeWindow(frame: NSRect) {
+    if let existing = windowControllers.first(where: { $0.workspaceId == nil })?.controller.window,
+      existing.isVisible || existing.isMiniaturized
+    {
+      existing.makeKeyAndOrderFront(nil)
+      NSApp.activate()
+      return
+    }
+
+    let welcome = AppWindowView()
+      .frame(minWidth: 800, minHeight: 600)
+      .transaction {
+        guard !$0.isSidebarAnimation else { return }
+        $0.disablesAnimations = true
+        $0.animation = nil
+      }
+    let hostingController = NSHostingController(rootView: welcome)
+
+    let window = NSWindow(contentViewController: hostingController)
+    window.title = "Dblore"
+    window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .hidden
+    window.minSize = NSSize(width: 800, height: 600)
+    window.isRestorable = false
+    window.tabbingMode = .disallowed
+
+    if frame.width >= 800, frame.height >= 600 {
+      window.setFrame(frame, display: false)
+    } else {
+      window.setContentSize(NSSize(width: 1200, height: 800))
+      window.center()
+    }
+
+    let windowController = NSWindowController(window: window)
+    windowController.showWindow(nil)
+    windowControllers.append((controller: windowController, workspaceId: nil))
+    NSApp.activate()
+  }
+}
+
+extension NSWindow {
+  /// Workspace and welcome windows. About and panels are smaller and not resizable.
+  var isDbloreDocumentWindow: Bool {
+    level == .normal && canBecomeMain && styleMask.contains(.resizable)
+  }
+
+  /// A document window that is still open. A minimized window counts: it is open, just not on screen.
+  var isOpenDbloreDocumentWindow: Bool {
+    isDbloreDocumentWindow && (isVisible || isMiniaturized)
   }
 }
