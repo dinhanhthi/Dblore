@@ -477,6 +477,7 @@ class WorkspaceManager: Identifiable {
         viewModel.dataViewer = state
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
+        viewModel.dataViewerDisplayMode = .grid
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }

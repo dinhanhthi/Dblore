@@ -148,6 +148,8 @@ class NotebookViewModel {
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
   /// Table/view data viewer tab state (nil for every other tab)
   var dataViewer: DataViewerState?
+  /// Grid / Chart for the data viewer header. The grid reads the same value.
+  var dataViewerDisplayMode: ResultDisplayMode = .grid
   /// How the user resolved a prompt that blocks paging, filter, sort, refresh, or tab close
   /// while row changes are staged.
   enum StagedLeaveChoice: Sendable {

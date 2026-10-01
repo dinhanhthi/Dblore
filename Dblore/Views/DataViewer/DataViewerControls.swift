@@ -2,8 +2,8 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: rows-per-page, column visibility, paging, and
-//  staged-change actions (+ Row, summary, Preview SQL, Discard, Commit).
+//  Data viewer header controls: rows-per-page, column visibility, paging,
+//  + Row, the Grid / Chart slider, and staged-change actions.
 //
 
 import SwiftUI
@@ -57,6 +57,10 @@ struct DataViewerControls: View {
         Divider().frame(height: 14)
 
         addRowButton
+
+        if showsChartPicker {
+          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode)
+        }
 
         if let set = state.changeSet, !set.isEmpty {
           stagedSummary(set.counts)
@@ -222,6 +226,16 @@ struct DataViewerControls: View {
 
   private static func countPhrase(_ count: Int, _ singular: String) -> String {
     "\(count) \(count == 1 ? singular : singular + "s")"
+  }
+
+  /// Same rule as the in-grid picker: a loaded page that can be plotted.
+  private var showsChartPicker: Bool {
+    guard let result = viewModel.editorResult, result.error == nil else { return false }
+    let showingRows =
+      !result.rows.isEmpty
+      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
+    guard showingRows else { return false }
+    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
   }
 
   private var addRowButton: some View {
