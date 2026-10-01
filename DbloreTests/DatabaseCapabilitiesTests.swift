@@ -1,5 +1,5 @@
 // DatabaseCapabilitiesTests.swift
-// DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is defined but unavailable.
+// DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta.
 
 import Foundation
 import Testing
@@ -17,11 +17,11 @@ struct DatabaseCapabilitiesTests {
     #expect(capabilities.usesNetwork)
   }
 
-  @Test("SQLite is defined and unavailable, without network, password, or SSL")
+  @Test("SQLite is available as beta, without network, password, or SSL")
   func sqliteCapabilities() {
     let capabilities = DatabaseType.sqlite.capabilities
     #expect(capabilities == Self.sqlite)
-    #expect(!capabilities.isAvailable)
+    #expect(capabilities.isAvailable)
     #expect(!capabilities.usesNetwork)
     #expect(!capabilities.usesPassword)
     #expect(!capabilities.supportsSSL)
@@ -56,6 +56,6 @@ struct DatabaseCapabilitiesTests {
     cappedReadResetsSession: false,
     supportsExplainJSON: false,
     supportsUpdateOnly: false,
-    isAvailable: false
+    isAvailable: true
   )
 }

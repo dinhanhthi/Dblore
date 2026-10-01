@@ -146,7 +146,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     guard let table, table.oid != 0, !table.primaryKeyColumns.isEmpty, !columns.isEmpty else {
       return []
     }
-    let tableID = TableRef.postgresql(oid: table.oid)
+    let tableID = table.resolvedTableRef
     for column in columns {
       guard let origin = column.origin, origin.tableID == tableID,
         let attnum = Int16(exactly: origin.columnOrdinal),
@@ -193,6 +193,13 @@ nonisolated struct EditTable: Sendable, Equatable {
   var connectionEpoch: UInt64 = 0
   /// Plain table (`relkind = 'r'`): updated with `UPDATE ONLY`; false for a partitioned table
   var updateOnly: Bool = false
+  /// Column-origin identity. Nil uses PostgreSQL `pg:<oid>`.
+  var tableRef: TableRef? = nil
+
+  /// Identity compared with result column origins.
+  var resolvedTableRef: TableRef {
+    tableRef ?? .postgresql(oid: oid)
+  }
 }
 
 /// The validated target of inline edits for one live result: server-resolved qualified name,

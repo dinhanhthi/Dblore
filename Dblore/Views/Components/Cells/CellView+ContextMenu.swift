@@ -36,6 +36,7 @@ extension CellView {
     } label: {
       Label("Explain Analyze (runs the statement)", systemImage: "timer")
     }
+    .disabled(!viewModel.canExplainAnalyze)
 
     Divider()
 

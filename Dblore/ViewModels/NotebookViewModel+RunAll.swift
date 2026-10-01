@@ -47,7 +47,8 @@ extension NotebookViewModel {
       RunAllCell(
         id: cell.id, number: offset + 1, query: cell.content,
         statements: Self.statementsNeedingConfirmation(
-          SQLStatementClassifier.classify(cell.content), safeMode: .alertRead) ?? [])
+          SQLStatementClassifier.classify(cell.content, dialect: sqlDialect), safeMode: .alertRead)
+          ?? [])
     }
 
     // Safe Mode password levels: unlock before anything runs (the bypass does not apply)
@@ -107,7 +108,7 @@ extension NotebookViewModel {
   private func presentRunAllUnlock(_ cells: [RunAllCell], safeMode: SafeMode) {
     let listed = cells.flatMap { cell in
       (Self.statementsNeedingConfirmation(
-        SQLStatementClassifier.classify(cell.query), safeMode: safeMode) ?? [])
+        SQLStatementClassifier.classify(cell.query, dialect: sqlDialect), safeMode: safeMode) ?? [])
         .map { (cell.number, $0) }
     }
     queryConfirmationState.clear()

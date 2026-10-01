@@ -7,6 +7,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 ### Added
 
 - PDF export and SQL INSERT / IN-list copy are available.
+- SQLite files are supported as beta.
 
 ## v0.3.2 (2026-09-29)
 

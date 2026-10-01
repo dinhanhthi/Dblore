@@ -75,7 +75,7 @@ extension NotebookViewModel {
       return await connectionManager.cachedEditTable(id: tableID)
     }
     do {
-      return try await connectionManager.fetchEditTable(tableName: relation)
+      return try await connectionManager.fetchEditTable(tableName: relation, tableID: tableID)
     } catch {
       return nil
     }

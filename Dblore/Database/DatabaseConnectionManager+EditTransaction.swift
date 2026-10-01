@@ -66,7 +66,7 @@ extension DatabaseConnectionManager {
       }
       return rows
     }
-    _ = try await sendTransactionControl("BEGIN")
+    _ = try await sendTransactionControl(appOwnedBeginSQL)
     let rows: Int
     do {
       rows = try await sendEdit(statement)
@@ -135,7 +135,7 @@ extension DatabaseConnectionManager {
     if userTxOpen {
       return try await applyBatch(statements, rolledBack: false)
     }
-    _ = try await sendTransactionControl("BEGIN")
+    _ = try await sendTransactionControl(appOwnedBeginSQL)
     let counts: [Int]
     do {
       counts = try await applyBatch(statements, rolledBack: true)

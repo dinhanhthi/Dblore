@@ -436,6 +436,7 @@ nonisolated enum SQLStatementClassifier {
   private static func explain(
     _ body: ArraySlice<SQLToken>, dialect: SQLDialect
   ) -> Analysis {
+    if dialect == .sqlite { return sqliteExplain(body) }
     var rest = body.dropFirst()
     var isAnalyze = false
     if let open = rest.first, open.isSymbol("("),
@@ -470,6 +471,17 @@ nonisolated enum SQLStatementClassifier {
       affectsAllRows: inner.affectsAllRows, nonTransactional: inner.nonTransactional,
       resetsSessionBrakes: inner.resetsSessionBrakes, changesPrivileges: inner.changesPrivileges,
       createsTable: inner.createsTable)
+  }
+
+  /// SQLite `EXPLAIN` and `EXPLAIN QUERY PLAN` return a grid. They do not run the statement,
+  /// so Analyze stays off (`supportsExplainJSON` is false for this engine).
+  private static func sqliteExplain(_ body: ArraySlice<SQLToken>) -> Analysis {
+    var rest = body.dropFirst()
+    if rest.first?.isWord("QUERY") == true, rest.dropFirst().first?.isWord("PLAN") == true {
+      rest = rest.dropFirst(2)
+    }
+    let inner = analyze(rest, dialect: .sqlite)
+    return Analysis(kind: .explain(inner: inner.kind, analyze: false))
   }
 
   /// Leading verb is CREATE/ALTER ROLE or CREATE/ALTER USER, and not USER MAPPING.

@@ -11,7 +11,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case sqlite = "SQLite"
 
   var displayName: String {
-    rawValue
+    switch self {
+    case .postgresql: rawValue
+    case .sqlite: "SQLite (Beta)"
+    }
   }
 
   /// Asset catalog image name for the database type icon (from simpleicons.org)
@@ -32,7 +35,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  /// Feature set for this engine. SQLite is described and is not a working database.
+  /// Feature set for this engine. SQLite is a beta file database.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -65,14 +68,14 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         cappedReadResetsSession: false,
         supportsExplainJSON: false,
         supportsUpdateOnly: false,
-        isAvailable: false
+        isAvailable: true
       )
     }
   }
 
   /// Engines listed in the connection form. Unavailable engines appear only when
-  /// `showExperimental` is on. The type picker is shown when this list has more than one entry,
-  /// so with the toggle off (only PostgreSQL available) the picker stays hidden.
+  /// `showExperimental` is on. SQLite is available, so the picker lists PostgreSQL and
+  /// SQLite (Beta) without that toggle.
   nonisolated static func connectionPickerTypes(showExperimental: Bool) -> [DatabaseType] {
     allCases.filter { $0.capabilities.isAvailable || showExperimental }
   }

@@ -15,11 +15,13 @@ extension DatabaseConnectionManager {
   /// The connection for one app catalog query.
   /// - Throws: `DatabaseError.notConnected`; `DatabaseError.metadataPausedDuringTransaction`
   ///   while the app transaction is pending (nothing is sent).
-  func catalogConnection() throws -> PostgresConnection {
-    guard let connection = _postgresConnection else { throw DatabaseError.notConnected }
+  /// The pause guard for one app catalog query. PostgreSQL also returns its socket; a file
+  /// session returns nil and the caller reads through `withSession`.
+  func catalogConnection() throws -> PostgresConnection? {
+    guard session != nil else { throw DatabaseError.notConnected }
     guard !isMetadataPaused else { throw DatabaseError.metadataPausedDuringTransaction }
     catalogQueryCount += 1
-    return connection
+    return _postgresConnection
   }
 
   func resetCatalogQueryCount() {

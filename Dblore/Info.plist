@@ -58,6 +58,97 @@
 				<string>public.sql</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite</string>
+				<string>sqlite3</string>
+				<string>db</string>
+				<string>db3</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string></string>
+			<key>CFBundleTypeName</key>
+			<string>SQLite Database</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.sqlite.sqlite3</string>
+				<string>public.database</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite-wal</string>
+				<string>sqlite3-wal</string>
+				<string>db-wal</string>
+				<string>db3-wal</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string></string>
+			<key>CFBundleTypeName</key>
+			<string>SQLite Write-Ahead Log</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ace.thi.dblore.sqlite-wal</string>
+			</array>
+			<key>NSIsRelatedItemType</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite-shm</string>
+				<string>sqlite3-shm</string>
+				<string>db-shm</string>
+				<string>db3-shm</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string></string>
+			<key>CFBundleTypeName</key>
+			<string>SQLite Shared Memory</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ace.thi.dblore.sqlite-shm</string>
+			</array>
+			<key>NSIsRelatedItemType</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite-journal</string>
+				<string>sqlite3-journal</string>
+				<string>db-journal</string>
+				<string>db3-journal</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string></string>
+			<key>CFBundleTypeName</key>
+			<string>SQLite Rollback Journal</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ace.thi.dblore.sqlite-journal</string>
+			</array>
+			<key>NSIsRelatedItemType</key>
+			<true/>
+		</dict>
 	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
@@ -114,6 +205,66 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQLite Write-Ahead Log</string>
+			<key>UTTypeIdentifier</key>
+			<string>ace.thi.dblore.sqlite-wal</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sqlite-wal</string>
+					<string>sqlite3-wal</string>
+					<string>db-wal</string>
+					<string>db3-wal</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQLite Shared Memory</string>
+			<key>UTTypeIdentifier</key>
+			<string>ace.thi.dblore.sqlite-shm</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sqlite-shm</string>
+					<string>sqlite3-shm</string>
+					<string>db-shm</string>
+					<string>db3-shm</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQLite Rollback Journal</string>
+			<key>UTTypeIdentifier</key>
+			<string>ace.thi.dblore.sqlite-journal</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sqlite-journal</string>
+					<string>sqlite3-journal</string>
+					<string>db-journal</string>
+					<string>db3-journal</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
@@ -132,6 +283,27 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>sql</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.database</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQLite Database</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.sqlite.sqlite3</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sqlite</string>
+					<string>sqlite3</string>
+					<string>db</string>
+					<string>db3</string>
 				</array>
 			</dict>
 		</dict>

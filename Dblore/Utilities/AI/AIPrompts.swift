@@ -8,12 +8,14 @@ nonisolated enum AIPrompts {
   private static let maxInputChars = 8_000
   private static let truncationMarker = "-- [truncated]"
 
-  static func system(databaseName: String?, schema: String) -> String {
+  static func system(
+    databaseName: String?, schema: String, dialect: SQLDialect = .postgresql
+  ) -> String {
     let database = databaseName.map { " connected to the database \"\($0)\"" } ?? ""
     return """
       You are a SQL assistant inside a database client\(database).
       Rules:
-      - Use the PostgreSQL dialect.
+      - Use the \(dialect.promptName) dialect.
       - Put SQL in ```sql fenced blocks.
       - You cannot run queries and must never claim or invent results.
       - Prefer read-only queries; warn before suggesting anything that modifies data or schema.

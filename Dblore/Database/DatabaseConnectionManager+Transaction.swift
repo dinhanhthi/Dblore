@@ -259,13 +259,13 @@ extension DatabaseConnectionManager {
     try refuseIfOwnedByAnotherCaller(caller)
     txOwner = caller
     do {
-      _ = try await sendTransactionControl("BEGIN")
+      _ = try await sendTransactionControl(appOwnedBeginSQL)
     } catch {
       if txState.isIdle { txOwner = nil }
       throw error
     }
     do {
-      _ = try await sendTransactionControl(Self.suspendIdleTimeoutSQL)
+      try await suspendIdleTimeoutIfSupported()
     } catch {
       _ = try? await sendTransactionControl("ROLLBACK")
       if txState.isIdle { txOwner = nil }
@@ -321,10 +321,23 @@ extension DatabaseConnectionManager {
     txOwner = caller
     userTxOpen = false
     do {
-      _ = try await sendTransactionControl(Self.suspendIdleTimeoutSQL)
+      try await suspendIdleTimeoutIfSupported()
     } catch {
       throw await transactionFailure(error, openedHere: false)
     }
+  }
+
+  /// App-owned transaction start. SQLite takes the writer lock immediately. A user-typed
+  /// `BEGIN` is never rewritten.
+  var appOwnedBeginSQL: String {
+    config?.databaseType == .sqlite ? "BEGIN IMMEDIATE" : "BEGIN"
+  }
+
+  /// PostgreSQL suspends the idle-in-transaction timeout for the app transaction.
+  /// SQLite has no session brake, so nothing is sent.
+  func suspendIdleTimeoutIfSupported() async throws {
+    guard session?.capabilities.supportsSessionBrakes == true else { return }
+    _ = try await sendTransactionControl(Self.suspendIdleTimeoutSQL)
   }
 
   private var isConnectionLost: Bool {

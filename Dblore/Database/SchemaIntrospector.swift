@@ -36,6 +36,15 @@ nonisolated protocol SchemaIntrospector: Sendable {
   func enrichColumnTypes(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async -> [ColumnInfo]
+
+  /// Exact row count of one table. The actor turns a failure into 0.
+  func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int
+
+  /// Primary key column names in key order. Empty when the table has no declared key.
+  func primaryKeyColumns(
+    of tableName: String, in session: any DatabaseSession
+  ) async throws
+    -> [String]
 }
 
 // Empty catalogs for engines that do not have them. A concrete introspector overrides a

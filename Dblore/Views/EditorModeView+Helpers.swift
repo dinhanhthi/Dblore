@@ -90,6 +90,7 @@ extension EditorModeView {
       Button("Explain Analyze (runs the statement)") {
         Task { await viewModel.explainSelectedStatement(analyze: true) }
       }
+      .disabled(!viewModel.canExplainAnalyze)
     } label: {
       HStack(spacing: Spacing.xs) {
         Text("Explain")

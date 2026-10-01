@@ -292,11 +292,21 @@ class NotebookViewModel {
       override: notebook.connectionConfig?.rowCapOverride, global: globalRowCap())
   }
 
+  /// Dialect of this notebook's connection. Safe Mode prompts use the same rules as the gate.
+  var sqlDialect: SQLDialect {
+    notebook.connectionConfig?.databaseType.dialect ?? .postgresql
+  }
+
+  /// Explain Analyze needs a JSON plan. SQLite shows `EXPLAIN QUERY PLAN` as a grid instead.
+  var canExplainAnalyze: Bool {
+    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainJSON
+  }
+
   /// The gate's error message if the connection's protection level blocks `query`, else nil.
   /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
   func protectionBlockMessage(for query: String) -> String? {
     let decision = DatabaseConnectionManager.evaluate(
-      SQLStatementClassifier.classify(query), policy: protectionPolicy)
+      SQLStatementClassifier.classify(query, dialect: sqlDialect), policy: protectionPolicy)
     guard case .blocked(let index, let kind, let reason) = decision else { return nil }
     return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
       .localizedDescription

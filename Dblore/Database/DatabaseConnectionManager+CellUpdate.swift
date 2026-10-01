@@ -44,6 +44,23 @@ extension DatabaseConnectionManager {
   /// Throws `DatabaseError.metadataPausedDuringTransaction` while the app transaction is
   /// pending (results produced inside it use `cachedEditTable`). A resolved table is cached.
   func fetchEditTable(tableName: String) async throws -> EditTable? {
+    try await fetchEditTable(named: tableName)
+  }
+
+  /// Same lookup as `fetchEditTable(tableName:)`. A SQLite `tableID` supplies the real schema
+  /// and table: unquoted names in the SQL text are folded to uppercase by the tokenizer, and
+  /// SQLite's catalog match is case-sensitive.
+  func fetchEditTable(tableName: String, tableID: TableRef) async throws -> EditTable? {
+    let named: String
+    if let parts = tableID.sqliteComponents {
+      named = "\(parts.schema).\(parts.table)"
+    } else {
+      named = tableName
+    }
+    return try await fetchEditTable(named: named)
+  }
+
+  private func fetchEditTable(named tableName: String) async throws -> EditTable? {
     let epoch = connectionEpoch
     guard
       var table = try await withCatalogSession({ session in
@@ -52,7 +69,7 @@ extension DatabaseConnectionManager {
       epoch == connectionEpoch
     else { return nil }
     table.connectionEpoch = epoch
-    editTableCache[TableRef.postgresql(oid: table.oid)] = table
+    editTableCache[table.resolvedTableRef] = table
     return table
   }
 

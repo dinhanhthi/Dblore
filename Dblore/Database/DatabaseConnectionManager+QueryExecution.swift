@@ -181,7 +181,8 @@ extension DatabaseConnectionManager {
     let startTime = Date()
 
     // Everything but reads is sent unchanged (affected rows from the command tag or RETURNING)
-    let statement = SQLStatementClassifier.classifyStatement(query)
+    let statement = SQLStatementClassifier.classifyStatement(
+      query, dialect: Self.dialect(of: config))
     switch StatementRoute.route(for: statement) {
     case .command:
       return try await executeCommand(query, startTime: startTime)

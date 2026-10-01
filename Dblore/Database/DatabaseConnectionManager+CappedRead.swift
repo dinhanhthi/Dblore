@@ -101,7 +101,8 @@ extension DatabaseConnectionManager {
     await scriptCheckpointHook?(.beforeCapReset)
     // `inFlight == 1`: only this script (its own count); its own send already returned
     guard !Self.mustDrain(statement), txState.isIdle, txOwner == nil, !userTxOpen,
-      commitGuard.inFlight == 1, activeSends == 0, let config
+      commitGuard.inFlight == 1, activeSends == 0, let config,
+      config.databaseType.capabilities.cappedReadResetsSession
     else { return result }
     var reset = result
     reset.sessionReset = true

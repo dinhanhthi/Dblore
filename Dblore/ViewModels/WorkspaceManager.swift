@@ -180,7 +180,8 @@ class WorkspaceManager: Identifiable {
       let name = self.workspace.connectionConfig?.database
       return AISchemaSnapshot(
         tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
-        databaseName: name?.isEmpty == false ? name : nil)
+        databaseName: name?.isEmpty == false ? name : nil,
+        dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
     }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
     historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }

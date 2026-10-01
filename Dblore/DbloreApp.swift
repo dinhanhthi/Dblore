@@ -936,7 +936,7 @@ private struct ExplainCommandButtons: View {
       NotificationCenter.default.post(name: .explainAnalyzeStatement, object: nil)
     }
     .keyboardShortcut("e", modifiers: [.command, .shift])
-    .disabled(isDisabled)
+    .disabled(isDisabled || activeViewModel?.canExplainAnalyze == false)
   }
 }
 

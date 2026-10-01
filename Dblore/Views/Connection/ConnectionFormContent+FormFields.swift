@@ -482,7 +482,7 @@ extension ConnectionFormContent {
 }
 
 /// Open and save panels for a SQLite file. Suggested extensions, plus any other file.
-private enum SQLiteFilePicker {
+enum SQLiteFilePicker {
   static let extensions = ["sqlite", "sqlite3", "db", "db3"]
 
   static var contentTypes: [UTType] {

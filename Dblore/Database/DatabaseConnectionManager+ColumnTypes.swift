@@ -24,7 +24,10 @@ extension DatabaseConnectionManager {
 
     do {
       return try await withSession { session in
-        try await self.introspector.enrichedColumns(columns, query: query, in: session)
+        guard let postgres = self.introspector as? PostgresSchemaIntrospector else {
+          return columns
+        }
+        return try await postgres.enrichedColumns(columns, query: query, in: session)
       }
     } catch {
       // If enrichment fails, return original columns

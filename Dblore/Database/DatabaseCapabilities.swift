@@ -4,7 +4,7 @@
 import Foundation
 
 /// What a database engine supports. PostgreSQL matches today's behaviour.
-/// SQLite is described here and stays unavailable (`isAvailable == false`).
+/// SQLite is a beta file database (`isAvailable == true`).
 nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// How a running statement is stopped.
   nonisolated enum CancelStrategy: Sendable, Equatable {

@@ -16,6 +16,7 @@ struct AISchemaSnapshot: Sendable {
   var tables: [DatabaseTable]
   var foreignKeys: [ForeignKey]
   var databaseName: String?
+  var dialect: SQLDialect = .postgresql
 
   static let empty = AISchemaSnapshot(tables: [], foreignKeys: [], databaseName: nil)
 }
@@ -247,7 +248,8 @@ final class AIAssistantViewModel {
       let schema = AISchemaContext.render(tables: selected, foreignKeys: snapshot.foreignKeys)
       return AIChatRequest(
         model: model,
-        system: AIPrompts.system(databaseName: snapshot.databaseName, schema: schema),
+        system: AIPrompts.system(
+          databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect),
         messages: history)
     }.value
   }

@@ -12,10 +12,15 @@ actor DatabaseConnectionManager {
   /// Published only after `open` and session brakes succeed. The gate and transaction
   /// bookkeeping stay on this actor; the session owns the socket.
   var session: (any DatabaseSession)?
-  /// Production uses `PostgresSessionFactory`. Tests inject another `DatabaseSessionFactory`.
+  /// Production uses `AppDatabaseSessionFactory`. Tests inject another `DatabaseSessionFactory`.
   private let sessionFactory: any DatabaseSessionFactory
-  /// PostgreSQL catalog SQL. Public `fetch*` methods delegate here after the metadata guard.
-  let introspector = PostgresSchemaIntrospector()
+  /// Catalog SQL for the connected engine. PostgreSQL until a SQLite file is connected.
+  var introspector: any SchemaIntrospector {
+    if config?.databaseType == .sqlite {
+      return SQLiteSchemaIntrospector()
+    }
+    return PostgresSchemaIntrospector()
+  }
   private(set) var config: ConnectionConfig?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
@@ -34,6 +39,9 @@ actor DatabaseConnectionManager {
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
   /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
+  /// Nil until a file grant is stored. Must not call back into this actor.
+  var sqliteFileAccessRelease: (@Sendable () -> Void)?
   /// Reads that went through a server-side cursor (`executeCursorRead`); observed by tests
   var cursorReadCount = 0
   /// App catalog queries that passed `catalogConnection()`; observed by performance tests
@@ -61,7 +69,7 @@ actor DatabaseConnectionManager {
   nonisolated let sessionResets: AsyncStream<SessionResetEvent>
   let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
 
-  init(sessionFactory: any DatabaseSessionFactory = PostgresSessionFactory()) {
+  init(sessionFactory: any DatabaseSessionFactory = AppDatabaseSessionFactory()) {
     self.sessionFactory = sessionFactory
     (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
       of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
@@ -70,6 +78,7 @@ actor DatabaseConnectionManager {
   }
 
   deinit {
+    sqliteFileAccessRelease?()
     sessionEventsContinuation.finish()
     sessionResetsContinuation.finish()
   }
@@ -95,21 +104,29 @@ actor DatabaseConnectionManager {
     // epoch) is published until its session brakes are applied.
     await disconnect()
 
-    let opening = sessionFactory.makeSession(config: config)
+    let prepared: PreparedSQLiteOpen
+    do {
+      prepared = try await prepareSQLiteOpen(config)
+    } catch {
+      throw error
+    }
+    let opening = sessionFactory.makeSession(config: prepared.config)
     do {
       try await opening.open()
     } catch {
       await opening.close()
+      prepared.release?()
       throw error
     }
 
     do {
       try await opening.applySessionSettings(
         statementTimeoutSeconds: SessionBrakeLimits.clampStatementTimeout(
-          config.statementTimeoutSeconds),
-        lockTimeoutSeconds: SessionBrakeLimits.clampLockTimeout(config.lockTimeoutSeconds),
+          prepared.config.statementTimeoutSeconds),
+        lockTimeoutSeconds: SessionBrakeLimits.clampLockTimeout(
+          prepared.config.lockTimeoutSeconds),
         idleTimeoutSeconds: SessionBrakeLimits.clampIdleTimeout(
-          config.idleInTransactionTimeoutSeconds))
+          prepared.config.idleInTransactionTimeoutSeconds))
       if let postgres = opening as? PostgresSession {
         await postgres.applyDisconnectCheck()
       }
@@ -117,11 +134,13 @@ actor DatabaseConnectionManager {
       await AppLogger.shared.error(
         "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
       await opening.close()
+      prepared.release?()
       throw error
     }
 
     session = opening
-    self.config = config
+    self.config = prepared.config
+    sqliteFileAccessRelease = prepared.release
     connectionEpoch &+= 1
     lastSessionLoss = nil
     // The UI learns about a session the server closed even when no query is running.
@@ -134,11 +153,66 @@ actor DatabaseConnectionManager {
   /// Test connection without storing it.
   /// Performs a real connection AND executes a test query to verify credentials.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
-    try await PostgresSession(config: config).probe()
+    switch config.databaseType {
+    case .postgresql:
+      return try await PostgresSession(config: config).probe()
+    case .sqlite:
+      return try await probeSQLite(config)
+    }
+  }
+
+  /// Bookmark present: sandbox grant, then the resolved path. No bookmark: the path as given
+  /// (a file the process can already open, including a temporary file in tests).
+  private func prepareSQLiteOpen(_ config: ConnectionConfig) async throws -> PreparedSQLiteOpen {
+    guard config.databaseType == .sqlite else {
+      return PreparedSQLiteOpen(config: config, release: nil)
+    }
+    guard config.fileBookmark != nil else {
+      return PreparedSQLiteOpen(config: config, release: nil)
+    }
+    let grant = try await SQLiteFileAccess.open(config: config)
+    var resolved = config
+    resolved.database = grant.url.path
+    if grant.readOnly { resolved.readOnlyFile = true }
+    if let bookmark = grant.bookmark { resolved.fileBookmark = bookmark }
+    return PreparedSQLiteOpen(config: resolved, release: { grant.release() })
+  }
+
+  /// `SELECT 1` on a SQLite file, then close. The grant is released either way.
+  private func probeSQLite(_ config: ConnectionConfig) async throws -> Bool {
+    let prepared = try await prepareSQLiteOpen(config)
+    let session = SQLiteSession(config: prepared.config)
+    do {
+      try await session.open()
+      let source = try await session.query("SELECT 1", binds: [])
+      var count = 0
+      for try await _ in source.rows {
+        count += 1
+      }
+      await session.close()
+      prepared.release?()
+      guard count == 1 else {
+        throw DatabaseError.connectionFailed("Test query returned unexpected results")
+      }
+      return true
+    } catch {
+      await session.close()
+      prepared.release?()
+      if error is DatabaseError { throw error }
+      throw DatabaseError.connectionFailed(session.formatError(error))
+    }
+  }
+
+  /// Stores the hook `disconnect` calls after the session closes. Passing nil clears it.
+  func setSQLiteFileAccessRelease(_ release: (@Sendable () -> Void)?) {
+    sqliteFileAccessRelease = release
   }
 
   /// Disconnect from database
   func disconnect() async {
+    let releaseFileAccess = sqliteFileAccessRelease
+    sqliteFileAccessRelease = nil
+
     let forgotten = forgetConnection()
     lastSessionLoss = nil
 
@@ -152,6 +226,9 @@ actor DatabaseConnectionManager {
       txState = .idle
       userTxOpen = false
     }
+
+    // After the session is closed, so a SQLite file is not yanked while it is still open.
+    releaseFileAccess?()
   }
 
   /// Forget the current connection before any suspension point: no edit can use its targets,
@@ -234,4 +311,24 @@ nonisolated struct ForgottenSession: Sendable {
   var session: (any DatabaseSession)?
   var connection: PostgresConnection?
   var group: EventLoopGroup?
+}
+
+/// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
+/// and for a SQLite path the process can already open.
+private struct PreparedSQLiteOpen: Sendable {
+  var config: ConnectionConfig
+  var release: (@Sendable () -> Void)?
+}
+
+/// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` after the caller has resolved
+/// sandbox access.
+nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
+  func makeSession(config: ConnectionConfig) -> any DatabaseSession {
+    switch config.databaseType {
+    case .postgresql:
+      PostgresSession(config: config)
+    case .sqlite:
+      SQLiteSession(config: config)
+    }
+  }
 }

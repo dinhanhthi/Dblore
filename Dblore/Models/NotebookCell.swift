@@ -219,6 +219,9 @@ nonisolated struct TableRef: Hashable, Sendable, Codable {
     var container = encoder.singleValueContainer()
     try container.encode(rawValue)
   }
+
+  /// Identity text. An engine parses its own prefix next to the factory that builds it.
+  var identity: String { rawValue }
 }
 
 /// Where a result column came from: a table identity and a column ordinal in that table.

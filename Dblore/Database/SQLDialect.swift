@@ -21,6 +21,14 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   static let postgresql = SQLDialect(engine: .postgresql)
   static let sqlite = SQLDialect(engine: .sqlite)
 
+  /// Name used in prompts ("PostgreSQL", "SQLite").
+  var promptName: String {
+    switch engine {
+    case .postgresql: "PostgreSQL"
+    case .sqlite: "SQLite"
+    }
+  }
+
   /// Schema omitted by `qualified` when the caller passes it explicitly.
   var defaultSchema: String {
     switch engine {

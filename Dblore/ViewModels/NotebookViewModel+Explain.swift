@@ -13,6 +13,7 @@ extension NotebookViewModel {
   /// Explain the statement the Run action would run: the editor selection (or the current
   /// line / file), or the selected notebook cell.
   func explainSelectedStatement(analyze: Bool) async {
+    if analyze, !canExplainAnalyze { return }
     if viewMode == .editor {
       guard dataViewer == nil, let text = getEditorQueryText(), !text.isEmpty else { return }
       await explain(statement: text, analyze: analyze, buffers: analyze)

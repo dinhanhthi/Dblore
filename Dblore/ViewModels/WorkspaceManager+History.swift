@@ -68,6 +68,10 @@ final class HistoryListModel {
 
   @ObservationIgnored private var searchTask: Task<Void, Never>?
   @ObservationIgnored private var searchEpoch = 0
+  /// Epoch whose results are in `results`. A newer reload can start while this one waits on
+  /// the store; `searchNow` does not return until this catches up.
+  @ObservationIgnored private var appliedEpoch = 0
+  @ObservationIgnored private var searchWaiters: [CheckedContinuation<Void, Never>] = []
   @ObservationIgnored private var nextOffset = 0
   @ObservationIgnored private var hasMore = false
   @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
@@ -82,11 +86,21 @@ final class HistoryListModel {
   }
 
   /// Reloads the first page. The debounced query change calls this.
+  /// Returns only after the results match this call or a newer one that superseded it.
   func searchNow() async {
     searchTask?.cancel()
     searchTask = nil
     searchEpoch += 1
-    await reloadFirstPage(epoch: searchEpoch)
+    let epoch = searchEpoch
+    await reloadFirstPage(epoch: epoch)
+    if appliedEpoch >= epoch { return }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      if appliedEpoch >= epoch {
+        continuation.resume()
+      } else {
+        searchWaiters.append(continuation)
+      }
+    }
   }
 
   /// Appends the next page. A short page ends the list.
@@ -135,9 +149,11 @@ final class HistoryListModel {
       if epoch == searchEpoch { isLoading = false }
     }
     guard let store = browser() else {
+      guard epoch == searchEpoch else { return }
       results = []
       nextOffset = 0
       hasMore = false
+      publish(epoch)
       return
     }
     do {
@@ -147,13 +163,26 @@ final class HistoryListModel {
       results = page
       nextOffset = page.count
       hasMore = page.count == Self.pageSize
+      publish(epoch)
     } catch {
       guard epoch == searchEpoch else { return }
       results = []
       nextOffset = 0
       hasMore = false
+      publish(epoch)
       await AppLogger.shared.error(
         "Query history search failed: \(error.localizedDescription)", category: "History")
+    }
+  }
+
+  /// Records that `epoch` is visible and wakes callers waiting on an older reload.
+  private func publish(_ epoch: Int) {
+    appliedEpoch = epoch
+    guard epoch == searchEpoch, !searchWaiters.isEmpty else { return }
+    let waiters = searchWaiters
+    searchWaiters.removeAll()
+    for waiter in waiters {
+      waiter.resume()
     }
   }
 
