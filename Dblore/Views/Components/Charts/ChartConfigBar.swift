@@ -14,19 +14,23 @@ enum ResultDisplayMode: Hashable {
   case chart
 }
 
-/// Segmented Grid / Chart control. Shown only when a result can be charted.
+/// Grid / Chart control, matching the sidebar capsule tabs.
 struct ResultDisplayPicker: View {
   @Binding var mode: ResultDisplayMode
 
   var body: some View {
-    Picker("Result", selection: $mode) {
-      Text("Grid").tag(ResultDisplayMode.grid)
-      Text("Chart").tag(ResultDisplayMode.chart)
+    CapsuleTabPicker(
+      selection: $mode,
+      tabs: [ResultDisplayMode.grid, .chart],
+      height: 28
+    ) { tab in
+      CapsuleTabLabel(
+        text: tab == .grid ? "Grid" : "Chart",
+        isSelected: mode == tab
+      )
     }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .font(.small)
     .frame(width: 160)
+    .fixedSize()
     .accessibilityLabel("Grid or chart")
   }
 }

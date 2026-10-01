@@ -26,14 +26,22 @@ enum ChartQueryResult {
 /// Fixed chart height in a notebook cell. The editor panel fills its parent instead.
 private let notebookChartHeight: CGFloat = 320
 
-/// Grid or chart for one result. The toggle is shown only when a chart can be suggested.
+/// Grid or chart for one result. The toggle is shown only when a chart can be suggested,
+/// unless the caller draws it elsewhere (the editor result header).
 struct ChartableResult<Grid: View>: View {
   let result: CellResult
   @Binding var chartSpec: ChartSpec?
   var fillsAvailableHeight = false
+  /// Shared with the result header when that header draws the Grid / Chart control.
+  var mode: Binding<ResultDisplayMode>? = nil
+  var showsPicker = true
   @ViewBuilder var grid: () -> Grid
 
-  @State private var mode: ResultDisplayMode = .grid
+  @State private var internalMode: ResultDisplayMode = .grid
+
+  private var modeBinding: Binding<ResultDisplayMode> {
+    mode ?? $internalMode
+  }
 
   private var suggested: ChartSpec? {
     ChartSpec.suggested(for: ChartQueryResult.make(result))
@@ -49,7 +57,7 @@ struct ChartableResult<Grid: View>: View {
   }
 
   private var showChart: Bool {
-    mode == .chart && suggested != nil && resolved != nil
+    modeBinding.wrappedValue == .chart && suggested != nil && resolved != nil
   }
 
   private var specBinding: Binding<ChartSpec> {
@@ -63,8 +71,8 @@ struct ChartableResult<Grid: View>: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      if suggested != nil {
-        ResultDisplayPicker(mode: $mode)
+      if showsPicker, suggested != nil {
+        ResultDisplayPicker(mode: modeBinding)
       }
       if showChart, let spec = resolved {
         ChartConfigBar(columns: result.columns, spec: specBinding) {

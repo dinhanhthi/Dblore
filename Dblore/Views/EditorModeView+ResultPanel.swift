@@ -24,6 +24,10 @@ extension EditorModeView {
   /// - Parameter result: The query result containing metadata and optional error
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
+    resultPanelHeader(result: result, displayMode: resultDisplayModeBinding(for: result))
+  }
+
+  func resultPanelHeader(result: CellResult, displayMode: Binding<ResultDisplayMode>) -> some View {
     VStack(spacing: 0) {
       // Warning banner (row cap reached; session reset details when the cap closed it)
       if result.error == nil, let notice = result.capNotice {
@@ -61,6 +65,10 @@ extension EditorModeView {
         resultInfoSection(result: result)
 
         Spacer()
+
+        if ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
+          ResultDisplayPicker(mode: displayMode)
+        }
 
         explainToolbarMenu()
 
@@ -315,6 +323,9 @@ struct EditorResultGridView: View {
   @State private var sortAscending = true
   /// Session chart for this editor result. A new result view starts from the suggestion.
   @State private var chartSpec: ChartSpec?
+  /// Nil keeps an internal mode and draws the picker above the grid (data viewer).
+  var displayMode: Binding<ResultDisplayMode>? = nil
+  var showsDisplayPicker = true
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
@@ -322,7 +333,10 @@ struct EditorResultGridView: View {
 
   var body: some View {
     ExplainableResult(result: result, fillsAvailableHeight: true) {
-      ChartableResult(result: result, chartSpec: $chartSpec, fillsAvailableHeight: true) {
+      ChartableResult(
+        result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
+        showsPicker: showsDisplayPicker
+      ) {
         ResultGridView(
           result: result,
           sortColumn: sortColumn,
