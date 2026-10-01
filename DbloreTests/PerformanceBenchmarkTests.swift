@@ -1,6 +1,8 @@
 // PerformanceBenchmarkTests.swift
-// Baseline benchmarks (Debug): each reports the median of N runs through PerfReport. No
-// budget asserts yet, only sanity checks.
+// Baseline benchmarks (Debug). Each test records a median through PerfReport.
+// Scaling checks compare two measurements from the same run, so a slow CI runner
+// does not fail the suite. Absolute ceilings stay only where the slack is huge
+// (ReDoS under 1 s, a 100 KB autocomplete under 5 ms).
 
 import AppKit
 import Foundation
@@ -24,12 +26,26 @@ struct PerformanceBenchmarkTests {
   @Test("fullHighlight2kLines")
   func fullHighlight2kLines() {
     let sql = PerfFixtures.sql2kLines()
+    let lines = sql.split(separator: "\n", omittingEmptySubsequences: false)
+    let short = lines.prefix(400).joined(separator: "\n")
     withSyntaxHighlightingEnabled {
-      var length = 0
-      let ms = PerfBench.median(of: 5) { length = SQLSyntaxHighlighter.highlight(sql).length }
-      #expect(length == sql.utf16.count)
-      PerfReport.record("fullHighlight2kLines", ms: ms)
-      #expect(ms < 50, "fullHighlight2kLines median \(ms) ms exceeds the 50 ms Debug budget")
+      var shortLength = 0
+      var fullLength = 0
+      let shortMs = PerfBench.median(of: 5) {
+        shortLength = SQLSyntaxHighlighter.highlight(short).length
+      }
+      let fullMs = PerfBench.median(of: 5) {
+        fullLength = SQLSyntaxHighlighter.highlight(sql).length
+      }
+      #expect(shortLength == short.utf16.count)
+      #expect(fullLength == sql.utf16.count)
+      PerfReport.record("fullHighlight400Lines", ms: shortMs)
+      PerfReport.record("fullHighlight2kLines", ms: fullMs)
+      // 5× the lines. Linear stays near 5×. A quadratic highlighter is about 25×.
+      // 15× leaves room for a fixed per-call cost on the shorter sample.
+      #expect(
+        fullMs < shortMs * 15,
+        "full highlight \(fullMs) ms is more than 15× the 400-line highlight \(shortMs) ms")
     }
   }
 
@@ -131,7 +147,14 @@ struct PerformanceBenchmarkTests {
   @Test("keystrokeHighlight2kLines")
   func keystrokeHighlight2kLines() {
     withSyntaxHighlightingEnabled {
-      let host = OffscreenEditorHost(text: PerfFixtures.sql2kLines())
+      let sql = PerfFixtures.sql2kLines()
+      var fullLength = 0
+      let fullMs = PerfBench.median(of: 5) {
+        fullLength = SQLSyntaxHighlighter.highlight(sql).length
+      }
+      #expect(fullLength == sql.utf16.count)
+
+      let host = OffscreenEditorHost(text: sql)
       defer { host.close() }
       let before = host.textView.string
       var samples: [Double] = []
@@ -152,34 +175,52 @@ struct PerformanceBenchmarkTests {
       samples.sort()
       let median = samples[samples.count / 2]
       PerfReport.record("keystrokeHighlight2kLines", ms: median)
-      #expect(median < 16, "keystroke median \(median) ms")
+      // On CI the keystroke median stayed about 1/8 of a full highlight, on a fast
+      // runner and on a slow one. Half still fails when a keystroke re-highlights
+      // the whole document.
+      #expect(
+        median * 2 < fullMs,
+        "keystroke \(median) ms is not under half of full highlight \(fullMs) ms")
     }
   }
 
   // Typical case: 100 KB document, cursor in a short last statement (tiny statement window).
   @Test("autocompleteSuggestions100KB")
   func autocompleteSuggestions100KB() {
-    let provider = SQLAutocompleteProvider()
-    provider.update(
-      tables: ["users", "orders", "order_items", "products", "sessions"].map {
-        DatabaseTable(
-          schema: "public", name: $0,
-          columns: [DatabaseColumn(name: "id", type: "integer")])
-      })
+    let provider = autocompleteProvider()
     let text = PerfFixtures.sql2kLines() + "\nSELECT * FROM us"
-    let cursor = (text as NSString).length  // UTF-16 offset, as NSTextView reports it
-    var count = 0
-    let ms = PerfBench.median(of: 20) {
-      count = provider.getSuggestions(for: text, at: cursor).count
-    }
+    let (count, ms) = suggestionMedian(provider, text: text)
     #expect(count > 0)
     PerfReport.record("autocompleteSuggestions100KB", ms: ms)
     #expect(ms < 5, "autocomplete median \(ms) ms")
   }
 
-  // Worst case: one ~100 KB statement without any ";", aliases present, cursor at the end.
+  // Worst case: one statement without any ";", aliases present, cursor at the end.
+  // The 100 KB / 200 JOIN shape is the old quadratic case (~74 ms in Debug).
   @Test("autocompleteSuggestionsHugeStatement")
   func autocompleteSuggestionsHugeStatement() {
+    let provider = autocompleteProvider()
+    let smallText = hugeStatement(minUTF8Bytes: 10_000, joins: 20)
+    let largeText = hugeStatement(minUTF8Bytes: 100_000, joins: 200)
+    #expect(smallText.utf8.count >= 10_000 && !smallText.contains(";"))
+    #expect(largeText.utf8.count >= 100_000 && !largeText.contains(";"))
+
+    let (smallCount, smallMs) = suggestionMedian(provider, text: smallText)
+    let (largeCount, largeMs) = suggestionMedian(provider, text: largeText)
+    #expect(smallCount > 0)
+    #expect(largeCount > 0)
+    PerfReport.record("autocompleteSuggestions10KB", ms: smallMs)
+    PerfReport.record("autocompleteSuggestionsHugeStatement", ms: largeMs)
+    // Fixed cost dominates: locally 10 KB / 20 JOINs was 6.1 ms and 100 KB /
+    // 200 JOINs was 8.0 ms (~1.3×). getSuggestions only scans the cursor window,
+    // so the old full-text ~74 ms is not 10× this small shape. A quadratic scan
+    // still inside the window is ~40 ms vs ~7 ms. 4× fails that and passes ~1.3×.
+    #expect(
+      largeMs < smallMs * 4,
+      "100 KB autocomplete \(largeMs) ms is more than 4× the 10 KB run \(smallMs) ms")
+  }
+
+  private func autocompleteProvider() -> SQLAutocompleteProvider {
     let provider = SQLAutocompleteProvider()
     provider.update(
       tables: ["users", "orders", "order_items", "products", "sessions"].map {
@@ -187,25 +228,32 @@ struct PerformanceBenchmarkTests {
           schema: "public", name: $0,
           columns: [DatabaseColumn(name: "id", type: "integer")])
       })
+    return provider
+  }
+
+  /// One statement with no ";". The SELECT list grows to `minUTF8Bytes`, then `joins` JOINs.
+  private func hugeStatement(minUTF8Bytes: Int, joins: Int) -> String {
     var text = "SELECT "
     var i = 0
-    while text.utf8.count < 100_000 {
+    while text.utf8.count < minUTF8Bytes {
       text += "u\(i).id, o\(i).total, p\(i).name, "
       i += 1
     }
     text += "x FROM users u0 JOIN orders o0 ON o0.id = u0.id"
-    for j in 0..<200 { text += " JOIN products p\(j) ON p\(j).id = u0.id" }
+    for j in 0..<joins { text += " JOIN products p\(j) ON p\(j).id = u0.id" }
     text += " WHERE us"
-    #expect(text.utf8.count >= 100_000 && !text.contains(";"))
+    return text
+  }
+
+  private func suggestionMedian(
+    _ provider: SQLAutocompleteProvider, text: String
+  ) -> (count: Int, ms: Double) {
     let cursor = (text as NSString).length  // UTF-16 offset, as NSTextView reports it
     var count = 0
     let ms = PerfBench.median(of: 20) {
       count = provider.getSuggestions(for: text, at: cursor).count
     }
-    #expect(count > 0)
-    PerfReport.record("autocompleteSuggestionsHugeStatement", ms: ms)
-    // extractTableReferences is linear now (was ~74 ms in Debug when quadratic in FROM/JOIN count)
-    #expect(ms < 20, "huge-statement autocomplete median \(ms) ms")
+    return (count, ms)
   }
 
   @Test("gridDisplayText1000x30")

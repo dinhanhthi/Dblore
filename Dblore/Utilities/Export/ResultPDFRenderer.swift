@@ -125,7 +125,7 @@ nonisolated enum ResultPDFRenderer {
     let count = counts.count
     let contentWidth = max(a4Landscape.width - margin * 2, 1)
     guard count > 0 else { return [] }
-    var natural = counts.map { chars -> CGFloat in
+    let natural = counts.map { chars -> CGFloat in
       let padded = CGFloat(chars) * estimatedCharWidth + cellPadding * 2
       return min(max(padded, 12), columnCap)
     }

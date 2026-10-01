@@ -1,12 +1,11 @@
 name: Build check
 
-# Compiles the app exactly like release.yml (Release archive, both architectures, pinned Xcode)
-# on every push to main, without signing. /cf-ship tags a commit only after this run is green
-# for that exact SHA, so a toolchain difference with the local Xcode never reaches a tag.
+# Unsigned Release archive, same compile as release.yml (pinned Xcode, both architectures).
+# Ordinary pushes to main do not run it. /cf-ship dispatches this once on the release
+# commit and tags only after the run is green for that exact SHA, so a toolchain
+# difference with the local Xcode never reaches a tag. Run it by hand with workflow_dispatch.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
