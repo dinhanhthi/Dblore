@@ -82,17 +82,22 @@ struct WorkspaceContainerView: View {
           .animation(SidebarAnimation.animation, value: workspaceManager.aiAssistant.isVisible)
           .zIndex(0)
 
-          // Traffic light area background + toggle button + connection button (z-index 1)
-          // This covers sidebar buttons during animation
+          // Traffic light controls stay above the sidebar while it slides (z-index 1).
+          // Solid fill only while the sidebar is closed, matching the tab bar.
+          // While it is open, leave the strip clear so the sidebar chromeGlass
+          // shows through: the same surface as Expand all and Refresh schema.
           HStack(spacing: 0) {
-            // Background for traffic light area + buttons
             Color.clear
               .frame(
                 width: ComponentSize.trafficLightAndToggleWidth
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
-              .background(Color.appBackground)
+              .background {
+                if !workspaceManager.isLeftSidebarVisible {
+                  Color.appBackground
+                }
+              }
               .overlay(alignment: .trailing) {
                 // Buttons positioned at trailing edge of background
                 HStack(spacing: Spacing.xxs) {
