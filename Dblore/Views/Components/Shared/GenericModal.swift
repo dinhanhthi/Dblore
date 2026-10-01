@@ -107,7 +107,7 @@ struct GenericModalHeader: View {
       .keyboardShortcut(.escape, modifiers: [])
       .help("Close (Esc)")
     }
-    .modalBarPadding()
+    .modalBarPadding(vertical: Spacing.sm)
     .background(Color.cardHeaderBackground)
     .overlay(alignment: .bottom) {
       Divider()
@@ -134,11 +134,11 @@ struct GenericModalFooter<Content: View>: View {
 }
 
 extension View {
-  /// Compact vertical padding for a modal title bar or action bar. Horizontal
-  /// inset stays at the body margin; the bar itself stays short.
-  func modalBarPadding() -> some View {
+  /// Horizontal inset stays at the body margin. Title bars and action bars share
+  /// the same vertical room.
+  func modalBarPadding(vertical: CGFloat = Spacing.sm) -> some View {
     padding(.horizontal, Spacing.md)
-      .padding(.vertical, Spacing.xs)
+      .padding(.vertical, vertical)
   }
 }
 

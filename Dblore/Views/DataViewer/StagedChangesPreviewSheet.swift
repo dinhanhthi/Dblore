@@ -31,7 +31,7 @@ struct StagedChangesPreviewSheet: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .help("Close")
       }
-      .modalBarPadding()
+      .modalBarPadding(vertical: Spacing.sm)
 
       Divider()
 

@@ -417,7 +417,7 @@ private struct DataExportAllSheet: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .help("Close")
       }
-      .modalBarPadding()
+      .modalBarPadding(vertical: Spacing.sm)
 
       Divider()
 
@@ -501,7 +501,7 @@ private struct DataClearAllSheet: View {
         .disabled(working)
         .help("Close")
       }
-      .modalBarPadding()
+      .modalBarPadding(vertical: Spacing.sm)
 
       Divider()
 

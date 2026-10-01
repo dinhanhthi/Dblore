@@ -60,7 +60,7 @@ struct DataImportSheet: View {
         .disabled(working)
         .help("Close")
       }
-      .modalBarPadding()
+      .modalBarPadding(vertical: Spacing.sm)
 
       Divider()
 
