@@ -76,14 +76,15 @@ extension GenericModal where Footer == EmptyView {
 
 // MARK: - Modal Header
 
-struct GenericModalHeader: View {
+struct GenericModalHeader<Trailing: View>: View {
   let title: String
   var titleIcon: String?
   var titleIconColor: Color = .foreground
   let onClose: () -> Void
+  @ViewBuilder var trailing: () -> Trailing
 
   var body: some View {
-    HStack {
+    HStack(spacing: Spacing.sm) {
       HStack(spacing: Spacing.xs) {
         if let icon = titleIcon {
           Image(systemName: icon)
@@ -95,7 +96,9 @@ struct GenericModalHeader: View {
           .foregroundColor(.foreground)
       }
 
-      Spacer()
+      Spacer(minLength: Spacing.sm)
+
+      trailing()
 
       Button(action: onClose) {
         Image(systemName: "xmark")
@@ -112,6 +115,21 @@ struct GenericModalHeader: View {
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+}
+
+extension GenericModalHeader where Trailing == EmptyView {
+  init(
+    title: String,
+    titleIcon: String? = nil,
+    titleIconColor: Color = .foreground,
+    onClose: @escaping () -> Void
+  ) {
+    self.title = title
+    self.titleIcon = titleIcon
+    self.titleIconColor = titleIconColor
+    self.onClose = onClose
+    self.trailing = { EmptyView() }
   }
 }
 

@@ -17,190 +17,166 @@ extension ConnectionFormContent {
   func formFields() -> some View {
     let capabilities = connectionConfig.databaseType.capabilities
 
-    // Connection Name (required)
-    FormField(label: "Connection Name") {
-      TextField(
-        "e.g., Production DB, Development Server", text: $connectionConfig.name
-      )
-      .textFieldStyle(.plain)
-      .inputCapsuleStyle()
-    }
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Connection Name") {
+        TextField(
+          "e.g., Production DB, Development Server", text: $connectionConfig.name
+        )
+        .textFieldStyle(.plain)
+        .inputCapsuleStyle()
+      }
 
-    if capabilities.usesNetwork {
-      HStack(spacing: Spacing.md) {
-        FormField(label: "Host") {
-          TextField("localhost", text: $connectionConfig.host)
+      if capabilities.usesNetwork {
+        HStack(spacing: Spacing.md) {
+          FormField(label: "Host") {
+            TextField("localhost", text: $connectionConfig.host)
+              .textFieldStyle(.plain)
+              .inputCapsuleStyle()
+          }
+
+          FormField(label: "Port") {
+            TextField(
+              "5432", value: $connectionConfig.port, format: .number.grouping(.never)
+            )
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
+            .frame(width: 80)
+          }
+        }
+      }
+
+      if connectionConfig.databaseType == .sqlite {
+        sqliteFileSection()
+      } else {
+        FormField(label: "Database") {
+          TextField("database_name", text: $connectionConfig.database)
             .textFieldStyle(.plain)
             .inputCapsuleStyle()
         }
+      }
 
-        FormField(label: "Port") {
-          TextField(
-            "5432", value: $connectionConfig.port, format: .number.grouping(.never)
-          )
+      FormField(label: "Username") {
+        TextField("username", text: $connectionConfig.username)
           .textFieldStyle(.plain)
           .inputCapsuleStyle()
-          .frame(width: 80)
+      }
+
+      if capabilities.usesPassword {
+        FormField(label: "Password") {
+          PasswordInputField(password: $connectionConfig.password)
         }
       }
-    }
 
-    if connectionConfig.databaseType == .sqlite {
-      sqliteFileSection()
-    } else {
-      FormField(label: "Database") {
-        TextField("database_name", text: $connectionConfig.database)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+      if capabilities.supportsSSL {
+        sslModeMenu(selection: $connectionConfig.sslMode) {
+          connectionConfig.sslMode = $0
+        }
       }
-    }
 
-    // Username
-    FormField(label: "Username") {
-      TextField("username", text: $connectionConfig.username)
+      FormField(label: "Timeout (seconds)") {
+        TextField(
+          "30", value: $connectionConfig.timeoutSeconds,
+          format: .number.grouping(.never)
+        )
         .textFieldStyle(.plain)
         .inputCapsuleStyle()
-    }
-
-    if capabilities.usesPassword {
-      FormField(label: "Password") {
-        PasswordInputField(password: $connectionConfig.password)
+        .frame(width: 80)
       }
     }
-
-    if capabilities.supportsSSL {
-      FormField(label: "SSL Mode") {
-        Menu {
-          ForEach(SSLMode.allCases, id: \.self) { mode in
-            Button(mode.displayName) {
-              connectionConfig.sslMode = mode
-            }
-          }
-        } label: {
-          HStack {
-            Text(connectionConfig.sslMode.displayName)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down")
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          }
-          .dropdownCapsuleStyle()
-        }
-        .buttonStyle(.plain)
-        .linkPointer()
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }
-
-    // Timeout
-    FormField(label: "Timeout (seconds)") {
-      TextField(
-        "30", value: $connectionConfig.timeoutSeconds,
-        format: .number.grouping(.never)
-      )
-      .textFieldStyle(.plain)
-      .inputCapsuleStyle()
-      .frame(width: 80)
-    }
-
-    // Common toggles and pickers
-    connectionTogglesAndPickers()
   }
 
   @ViewBuilder
   func connectionStringFields() -> some View {
     let capabilities = connectionConfig.databaseType.capabilities
 
-    // Connection Name (required)
-    FormField(label: "Connection Name") {
-      TextField(
-        "e.g., Production DB, Development Server", text: $connectionConfig.name
-      )
-      .textFieldStyle(.plain)
-      .inputCapsuleStyle()
-    }
-
-    FormField(label: "Connection String") {
-      VStack(alignment: .leading, spacing: Spacing.xs) {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Connection Name") {
         TextField(
-          "postgresql://username:password@localhost:5432/database", text: connectionStringBinding,
-          axis: .vertical
+          "e.g., Production DB, Development Server", text: $connectionConfig.name
         )
         .textFieldStyle(.plain)
-        .font(.system(.body, design: .monospaced))
-        .lineLimit(3...6)
-        .textAreaCapsuleStyle()
-        .onChange(of: connectionStringBinding.wrappedValue) { _, newValue in
-          clearParseErrorAndTestResult()
-          if !newValue.isEmpty {
-            parseConnectionString(newValue)
-          }
-        }
-
-        Text("Example: postgresql://username:password@localhost:5432/database?sslmode=require")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+        .inputCapsuleStyle()
       }
-    }
 
-    if capabilities.supportsSSL {
-      FormField(label: "SSL Mode") {
-        Menu {
-          ForEach(SSLMode.allCases, id: \.self) { mode in
-            Button(mode.displayName) {
-              connectionStringSSLModeBinding.wrappedValue = mode
-              // Update the config when SSL mode changes
-              connectionConfig.sslMode = mode
-              clearTestResult()
+      FormField(label: "Connection String") {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          TextField(
+            "postgresql://username:password@localhost:5432/database", text: connectionStringBinding,
+            axis: .vertical
+          )
+          .textFieldStyle(.plain)
+          .font(.system(.body, design: .monospaced))
+          .lineLimit(3...6)
+          .textAreaCapsuleStyle()
+          .onChange(of: connectionStringBinding.wrappedValue) { _, newValue in
+            clearParseErrorAndTestResult()
+            if !newValue.isEmpty {
+              parseConnectionString(newValue)
             }
           }
-        } label: {
-          HStack {
-            Text(connectionStringSSLModeBinding.wrappedValue.displayName)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down")
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          }
-          .dropdownCapsuleStyle()
+
+          Text("Example: postgresql://username:password@localhost:5432/database?sslmode=require")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
         }
-        .buttonStyle(.plain)
-        .linkPointer()
-        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
+      if capabilities.supportsSSL {
+        sslModeMenu(selection: connectionStringSSLModeBinding) { mode in
+          connectionConfig.sslMode = mode
+          clearTestResult()
+        }
       }
     }
-
-    // Common toggles and pickers
-    connectionTogglesAndPickers()
   }
 
-  /// Database type menu. Hidden unless more than one engine is offered
-  /// (experimental engines join the list only while the developer toggle is on).
-  @ViewBuilder
-  func databaseTypePicker() -> some View {
-    let types = DatabaseType.connectionPickerTypes(
-      showExperimental: AppSettings.shared.showExperimentalEngines)
-    if types.count > 1 {
-      FormField(label: "Database Type") {
-        Menu {
-          ForEach(types, id: \.self) { type in
-            Button(type.displayName) {
-              connectionConfig.databaseType = type
-            }
+  private func sslModeMenu(
+    selection: Binding<SSLMode>, onSelect: ((SSLMode) -> Void)? = nil
+  ) -> some View {
+    FormField(label: "SSL Mode") {
+      Menu {
+        ForEach(SSLMode.allCases, id: \.self) { mode in
+          Button(mode.displayName) {
+            selection.wrappedValue = mode
+            onSelect?(mode)
           }
-        } label: {
-          HStack {
-            Text(connectionConfig.databaseType.displayName)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down")
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          }
-          .dropdownCapsuleStyle()
         }
-        .buttonStyle(.plain)
-        .linkPointer()
-        .frame(maxWidth: .infinity, alignment: .leading)
+      } label: {
+        HStack {
+          Text(selection.wrappedValue.displayName)
+          Spacer()
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+        .dropdownCapsuleStyle()
+      }
+      .buttonStyle(.plain)
+      .linkPointer()
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  /// Name plus Browse. The chosen path is shown under the button.
+  @ViewBuilder
+  func sqliteSimpleFields() -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Name") {
+        TextField("e.g. Notes", text: $connectionConfig.name)
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
+      }
+
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        Button("Browse…", action: chooseSQLiteFile)
+          .buttonStyle(SecondaryButtonStyle())
+        if !connectionConfig.database.isEmpty {
+          Text(connectionConfig.database)
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+            .lineLimit(2)
+            .textSelection(.enabled)
+        }
       }
     }
   }
@@ -208,37 +184,39 @@ extension ConnectionFormContent {
   /// File path (`database`), bookmark, and the open-read-only flag. No file password.
   @ViewBuilder
   func sqliteFileSection() -> some View {
-    FormField(label: "Database file") {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        TextField("/path/to/database.sqlite", text: sqliteFilePath)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Database file") {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          TextField("/path/to/database.sqlite", text: sqliteFilePath)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
 
-        HStack(spacing: Spacing.sm) {
-          Button("Choose…", action: chooseSQLiteFile)
-            .buttonStyle(SecondaryButtonStyle())
-          Button("Create new file…", action: createSQLiteFile)
-            .buttonStyle(SecondaryButtonStyle())
+          HStack(spacing: Spacing.sm) {
+            Button("Choose…", action: chooseSQLiteFile)
+              .buttonStyle(SecondaryButtonStyle())
+            Button("Create new file…", action: createSQLiteFile)
+              .buttonStyle(SecondaryButtonStyle())
+          }
         }
       }
-    }
 
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Read-only")
-          .font(.body)
-        Text("Open this file without writing to it")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+      HStack {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Read-only")
+            .font(.body)
+          Text("Open this file without writing to it")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+
+        Spacer()
+
+        Toggle("", isOn: $connectionConfig.readOnlyFile)
+          .labelsHidden()
+          .toggleStyle(.switch)
+          .tint(.accent)
+          .scaleEffect(0.8)
       }
-
-      Spacer()
-
-      Toggle("", isOn: $connectionConfig.readOnlyFile)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
     }
   }
 
@@ -280,6 +258,9 @@ extension ConnectionFormContent {
     var updated = connectionConfig
     updated.database = path
     updated.fileBookmark = bookmark
+    if updated.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      updated.name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    }
     connectionConfig = updated
   }
 
@@ -307,148 +288,146 @@ extension ConnectionFormContent {
   /// Common toggles and pickers used in both form and connection string modes
   @ViewBuilder
   func connectionTogglesAndPickers() -> some View {
-    // Remember Connection Toggle
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Remember connection")
-          .font(.body)
-        Text("Automatically reconnect when you reopen the app")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Remember connection")
+            .font(.body)
+          Text("Automatically reconnect when you reopen the app")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+
+        Spacer()
+
+        Toggle("", isOn: $connectionConfig.rememberConnection)
+          .labelsHidden()
+          .toggleStyle(.switch)
+          .tint(.accent)
+          .scaleEffect(0.8)
       }
 
-      Spacer()
+      // Protection Level Picker
+      HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Protection level")
+            .font(.body)
+          Text(connectionConfig.protectionLevel.description)
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
 
-      Toggle("", isOn: $connectionConfig.rememberConnection)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
+        Spacer()
 
-    // Protection Level Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Protection level")
-          .font(.body)
-        Text(connectionConfig.protectionLevel.description)
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+        Menu {
+          ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
+            Button {
+              connectionConfig.protectionLevel = level
+            } label: {
+              Label(level.displayName, systemImage: level.iconName)
+            }
+          }
+        } label: {
+          HStack(spacing: Spacing.xs) {
+            Image(systemName: connectionConfig.protectionLevel.iconName)
+              .font(.caption)
+            Text(connectionConfig.protectionLevel.displayName)
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
       }
 
-      Spacer()
-
-      Menu {
-        ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
-          Button {
-            connectionConfig.protectionLevel = level
-          } label: {
-            Label(level.displayName, systemImage: level.iconName)
+      // Security Level (Safe Mode) Picker
+      HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Security level")
+            .font(.body)
+          if let mode = connectionConfig.safeMode {
+            Text(mode.shortDescription)
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          } else {
+            Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
           }
         }
-      } label: {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: connectionConfig.protectionLevel.iconName)
-            .font(.caption)
-          Text(connectionConfig.protectionLevel.displayName)
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-        .dropdownCapsuleStyle()
-      }
-      .buttonStyle(.plain)
-      .linkPointer()
-    }
 
-    // Security Level (Safe Mode) Picker
-    HStack(alignment: .top) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Security level")
-          .font(.body)
-        if let mode = connectionConfig.safeMode {
-          Text(mode.shortDescription)
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        } else {
-          Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-      }
+        Spacer()
 
-      Spacer()
-
-      Menu {
-        Button("Use Global") {
-          connectionConfig.safeMode = nil
-        }
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          Button(mode.displayName) {
-            connectionConfig.safeMode = mode
+        Menu {
+          Button("Use Global") {
+            connectionConfig.safeMode = nil
           }
+          ForEach(SafeMode.allCases, id: \.self) { mode in
+            Button(mode.displayName) {
+              connectionConfig.safeMode = mode
+            }
+          }
+        } label: {
+          HStack(spacing: Spacing.xs) {
+            Text(connectionConfig.safeMode?.displayName ?? "Use Global")
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
         }
-      } label: {
-        HStack(spacing: Spacing.xs) {
-          Text(connectionConfig.safeMode?.displayName ?? "Use Global")
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
-        .dropdownCapsuleStyle()
+        .buttonStyle(.plain)
+        .linkPointer()
       }
-      .buttonStyle(.plain)
-      .linkPointer()
     }
-
-    safetySection()
   }
 
   // MARK: - Safety
 
-  /// Protected mode, server-side session brakes and row cap override
+  /// Protected mode, server-side session brakes and row cap override.
+  /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
-    Divider()
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Protected mode")
+            .font(.body)
+          Text("Review data changes before they are committed")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
 
-    Text("Safety")
-      .font(.headline)
+        Spacer()
 
-    HStack {
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Protected mode")
-          .font(.body)
-        Text("Review data changes before they are committed")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+        Toggle("", isOn: $connectionConfig.protectedMode)
+          .labelsHidden()
+          .toggleStyle(.switch)
+          .tint(.accent)
+          .scaleEffect(0.8)
       }
 
-      Spacer()
+      brakeField(
+        "Statement timeout (seconds)", placeholder: "60",
+        value: $connectionConfig.statementTimeoutSeconds,
+        range: SessionBrakeLimits.statementTimeoutRange,
+        clamp: SessionBrakeLimits.clampStatementTimeout)
 
-      Toggle("", isOn: $connectionConfig.protectedMode)
-        .labelsHidden()
-        .toggleStyle(.switch)
-        .tint(.accent)
-        .scaleEffect(0.8)
-    }
+      brakeField(
+        "Lock timeout (seconds)", placeholder: "5", value: $connectionConfig.lockTimeoutSeconds,
+        range: SessionBrakeLimits.lockTimeoutRange, clamp: SessionBrakeLimits.clampLockTimeout)
 
-    brakeField(
-      "Statement timeout (seconds)", placeholder: "60",
-      value: $connectionConfig.statementTimeoutSeconds,
-      range: SessionBrakeLimits.statementTimeoutRange,
-      clamp: SessionBrakeLimits.clampStatementTimeout)
+      brakeField(
+        "Idle in transaction timeout (seconds)", placeholder: "600",
+        value: $connectionConfig.idleInTransactionTimeoutSeconds,
+        range: SessionBrakeLimits.idleTimeoutRange, clamp: SessionBrakeLimits.clampIdleTimeout)
 
-    brakeField(
-      "Lock timeout (seconds)", placeholder: "5", value: $connectionConfig.lockTimeoutSeconds,
-      range: SessionBrakeLimits.lockTimeoutRange, clamp: SessionBrakeLimits.clampLockTimeout)
-
-    brakeField(
-      "Idle in transaction timeout (seconds)", placeholder: "600",
-      value: $connectionConfig.idleInTransactionTimeoutSeconds,
-      range: SessionBrakeLimits.idleTimeoutRange, clamp: SessionBrakeLimits.clampIdleTimeout)
-
-    FormField(label: "Row cap override (empty = global setting)") {
-      TextField("Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never))
+      FormField(label: "Row cap override (empty = global setting)") {
+        TextField(
+          "Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never)
+        )
         .textFieldStyle(.plain)
         .inputCapsuleStyle()
         .frame(width: 120)
@@ -456,6 +435,7 @@ extension ConnectionFormContent {
           let clamped = SessionBrakeLimits.clampRowCap(newValue)
           if clamped != newValue { connectionConfig.rowCapOverride = clamped }
         }
+      }
     }
   }
 

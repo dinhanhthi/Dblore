@@ -162,13 +162,13 @@ struct DataModelConnectionConfigTests {
     #expect(decoded == config)
   }
 
-  @Test("Validation does not require a host for SQLite")
+  @Test("Validation does not require a host or username for SQLite")
   func sqliteValidationDoesNotRequireHost() {
     let missingHost = ConnectionConfig(
       databaseType: .sqlite,
       host: "",
       database: "/tmp/notes.sqlite",
-      username: "file"
+      username: ""
     )
     #expect(ConnectionFormContent.isFormInputValid(missingHost))
 

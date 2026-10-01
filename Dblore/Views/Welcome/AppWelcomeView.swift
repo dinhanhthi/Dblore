@@ -28,9 +28,6 @@ struct AppWelcomeView: View {
             // Header
             WelcomeHeader()
 
-            Button("Open SQLite file…", action: openSQLiteFile)
-              .buttonStyle(SecondaryButtonStyle())
-
             // Two columns for recent items
             if recentManager.hasRecentItems {
               HStack(alignment: .top, spacing: Spacing.xl) {
@@ -154,27 +151,6 @@ struct AppWelcomeView: View {
         try await manager.connect(config: entry.config)
       } catch {
         await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
-      }
-    }
-  }
-
-  private func openSQLiteFile() {
-    guard !SessionManager.isRunningAsTestHost else { return }
-    let panel = SQLiteFilePicker.openPanel()
-    panel.begin { response in
-      guard response == .OK, let url = panel.url else { return }
-      Task { @MainActor in
-        let bookmark = try? SecurityScopedAccess.makeBookmark(for: url)
-        let config = ConnectionConfig(
-          databaseType: .sqlite,
-          host: "",
-          port: 0,
-          database: url.path,
-          username: "",
-          name: url.deletingPathExtension().lastPathComponent,
-          fileBookmark: bookmark
-        )
-        createWorkspaceWithConnection(config)
       }
     }
   }

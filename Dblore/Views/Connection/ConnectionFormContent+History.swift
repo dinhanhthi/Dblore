@@ -15,10 +15,6 @@ extension ConnectionFormContent {
   @ViewBuilder
   func connectionHistorySection() -> some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
-      Text("Recent Connections")
-        .font(.caption)
-        .foregroundColor(.foregroundMuted)
-
       Menu {
         ForEach(getConnectionHistory()) { entry in
           Button(action: {
