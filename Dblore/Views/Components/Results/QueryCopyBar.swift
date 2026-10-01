@@ -48,6 +48,7 @@ struct QueryCopyBar: View {
   /// Binding to track copy state (for icon animation)
   @State private var isQueryCopied: Bool = false
   @State private var showCopyFeedback: CopyFeedbackType? = nil
+  @State private var exportRequest: ExportRequest? = nil
 
   /// Query with comments removed for display purposes
   private var displayQuery: String {
@@ -118,6 +119,22 @@ struct QueryCopyBar: View {
         downloadButton(result: result, mode: currentMode)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .sheet(item: $exportRequest) { request in
+        ResultExportSheet(
+          result: result,
+          format: request.format,
+          onExport: { options in
+            let exported = result
+            let index = queryIndex
+            let exportDialect = dialect
+            exportRequest = nil
+            DispatchQueue.main.async {
+              DataExporter.download(
+                result: exported, options: options, queryIndex: index, dialect: exportDialect)
+            }
+          },
+          onCancel: { exportRequest = nil })
+      }
     }
   }
 
@@ -181,42 +198,42 @@ struct QueryCopyBar: View {
     Menu {
       // Download section
       Section("Download result data") {
-        Button(action: { handleDownloadCSV(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .csv) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as CSV")
           }
         }
 
-        Button(action: { handleDownloadExcel(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .excel) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Excel")
           }
         }
 
-        Button(action: { handleDownloadJSON(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .json) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as JSON")
           }
         }
 
-        Button(action: { handleDownloadMarkdown(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .markdown) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Markdown")
           }
         }
 
-        Button(action: { handleDownloadPDF(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .pdf) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("PDF")
           }
         }
 
-        Button(action: { handleDownloadSQLInsert(result: result) }) {
+        Button(action: { exportRequest = ExportRequest(format: .sqlInsert) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("SQL INSERT")
@@ -313,6 +330,11 @@ struct QueryCopyBar: View {
 
   // MARK: - Download/Copy Actions
 
+  private struct ExportRequest: Identifiable {
+    let id = UUID()
+    let format: ExportFormat
+  }
+
   enum CopyFeedbackType {
     case tsv
     case json
@@ -330,32 +352,6 @@ struct QueryCopyBar: View {
       case .inList: "IN list"
       }
     }
-  }
-
-  private func handleDownloadCSV(result: CellResult) {
-    DataExporter.downloadCSV(result: result, queryIndex: queryIndex)
-  }
-
-  private func handleDownloadExcel(result: CellResult) {
-    DataExporter.downloadExcel(result: result, queryIndex: queryIndex)
-  }
-
-  private func handleDownloadJSON(result: CellResult) {
-    DataExporter.downloadJSON(result: result, queryIndex: queryIndex)
-  }
-
-  private func handleDownloadMarkdown(result: CellResult) {
-    DataExporter.downloadMarkdown(result: result, queryIndex: queryIndex)
-  }
-
-  private func handleDownloadPDF(result: CellResult) {
-    DataExporter.downloadPDF(
-      result: result, queryIndex: queryIndex, query: result.sourceQuery)
-  }
-
-  private func handleDownloadSQLInsert(result: CellResult) {
-    DataExporter.downloadSQLInsert(
-      result: result, table: result.tableName, dialect: dialect, queryIndex: queryIndex)
   }
 
   private func handleCopyTSV(result: CellResult) {

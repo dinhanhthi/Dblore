@@ -22,10 +22,16 @@ nonisolated enum ResultPDFRenderer {
   private static let ellipsis = "…"
 
   /// One PDF page stream. `query` nil or empty skips the monospaced block on the first page.
+  /// `wrapText` keeps every character of a cell, breaking lines inside the column. A wrapped
+  /// row continues on the next page when it is taller than the body. Off cuts the cell with "…".
   nonisolated static func render(
     result: QueryResult, title: String, query: String?,
+    wrapText: Bool = false,
     pageSize: CGSize = ResultPDFRenderer.a4Landscape
   ) -> Data {
+    if wrapText {
+      return renderWrapped(result: result, title: title, query: query, pageSize: pageSize)
+    }
     let contentWidth = max(pageSize.width - margin * 2, 1)
     let headerFont = font(named: "Helvetica-Bold", size: 9)
     let cellFont = font(named: "Helvetica", size: 9)
@@ -100,6 +106,69 @@ nonisolated enum ResultPDFRenderer {
       scaled[count - 1] = 0
     }
     return scaled
+  }
+
+  /// Average Helvetica 9-point advance. Size checks use it. Drawing measures real glyphs.
+  static let estimatedCharWidth: CGFloat = 5
+
+  /// How many pages `visualLineCount` table lines need. One empty page when there are no lines.
+  static func pageCount(visualLineCount: Int, query: String?) -> Int {
+    pageRanges(
+      rowCount: max(visualLineCount, 0),
+      queryLineCount: cappedQueryLineCount(query),
+      pageSize: a4Landscape
+    ).count
+  }
+
+  /// Column widths from character counts, capped and scaled like `columnWidths(result:...)`.
+  static func columnWidths(forCharCounts counts: [Int]) -> [CGFloat] {
+    let count = counts.count
+    let contentWidth = max(a4Landscape.width - margin * 2, 1)
+    guard count > 0 else { return [] }
+    var natural = counts.map { chars -> CGFloat in
+      let padded = CGFloat(chars) * estimatedCharWidth + cellPadding * 2
+      return min(max(padded, 12), columnCap)
+    }
+    let sum = natural.reduce(0, +)
+    guard sum > 0 else {
+      return Array(repeating: contentWidth / CGFloat(count), count: count)
+    }
+    let scale = contentWidth / sum
+    var scaled = natural.map { $0 * scale }
+    scaled[count - 1] += contentWidth - scaled.reduce(0, +)
+    if scaled[count - 1] < 0 {
+      scaled[count - 1] = 0
+    }
+    return scaled
+  }
+
+  static func charsPerLine(columnWidth: CGFloat) -> Int {
+    let usable = columnWidth - cellPadding * 2
+    return max(Int((usable / estimatedCharWidth).rounded(.down)), 1)
+  }
+
+  /// Lines a wrapped cell would occupy. Spaces and glyph widths are ignored.
+  static func estimatedWrappedLines(_ text: String, charsPerLine: Int) -> Int {
+    let per = max(charsPerLine, 1)
+    if text.isEmpty {
+      return 1
+    }
+    let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+    var lines = 0
+    for paragraph in normalized.components(separatedBy: "\n") {
+      if paragraph.isEmpty {
+        lines += 1
+      } else {
+        lines += (paragraph.count + per - 1) / per
+      }
+    }
+    return max(lines, 1)
+  }
+
+  private static func cappedQueryLineCount(_ query: String?) -> Int {
+    guard let query, !query.isEmpty else { return 0 }
+    return min(query.components(separatedBy: "\n").count, maxQueryLines)
   }
 
   private static func pageRanges(
@@ -399,5 +468,306 @@ nonisolated enum ResultPDFRenderer {
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.dateFormat = "yyyy-MM-dd"
     return formatter.string(from: date)
+  }
+
+  // MARK: - Wrapped rows
+
+  /// Lines of `text` that fit in `width`. Exposed for tests. A space at a break is not kept.
+  static func wrappedLines(_ text: String, width: CGFloat) -> [String] {
+    wrapLines(text, font: font(named: "Helvetica", size: 9), width: width)
+  }
+
+  private struct VisualLine {
+    var row: Int
+    var line: Int
+    var closesRow: Bool
+  }
+
+  private static func renderWrapped(
+    result: QueryResult, title: String, query: String?, pageSize: CGSize
+  ) -> Data {
+    let contentWidth = max(pageSize.width - margin * 2, 1)
+    let headerFont = font(named: "Helvetica-Bold", size: 9)
+    let cellFont = font(named: "Helvetica", size: 9)
+    let footerFont = font(named: "Helvetica", size: 8)
+    let queryFont = font(named: "Courier", size: 8)
+    let widths = columnWidths(
+      result: result, contentWidth: contentWidth, headerFont: headerFont, cellFont: cellFont)
+    let queryBlock = queryLines(
+      query, width: max(contentWidth - cellPadding * 2, 1), font: queryFont)
+    let matrix = wrappedMatrix(result: result, widths: widths, font: cellFont)
+    let visual = visualLines(matrix)
+    let ranges = pageRanges(
+      rowCount: visual.count, queryLineCount: queryBlock.count, pageSize: pageSize)
+    let exportedAt = exportStamp(Date())
+
+    let storage = NSMutableData()
+    var mediaBox = CGRect(origin: .zero, size: pageSize)
+    guard let consumer = CGDataConsumer(data: storage as CFMutableData),
+      let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)
+    else {
+      return Data()
+    }
+
+    for (index, range) in ranges.enumerated() {
+      context.beginPDFPage(nil)
+      drawWrappedPage(
+        context: context,
+        result: result,
+        title: title,
+        queryLines: index == 0 ? queryBlock : [],
+        matrix: matrix,
+        visual: Array(visual[range]),
+        pageNumber: index + 1,
+        pageCount: ranges.count,
+        exportedAt: exportedAt,
+        widths: widths,
+        pageSize: pageSize,
+        headerFont: headerFont,
+        cellFont: cellFont,
+        footerFont: footerFont,
+        queryFont: queryFont)
+      context.endPDFPage()
+    }
+    context.closePDF()
+    return storage as Data
+  }
+
+  private static func wrappedMatrix(
+    result: QueryResult, widths: [CGFloat], font: CTFont
+  ) -> [[[String]]] {
+    result.rows.map { row in
+      widths.indices.map { index in
+        let raw = index < row.count ? cellText(row[index]) : ""
+        let width = max(widths[index] - cellPadding * 2, 0)
+        return wrapLines(raw, font: font, width: width)
+      }
+    }
+  }
+
+  private static func visualLines(_ matrix: [[[String]]]) -> [VisualLine] {
+    var lines: [VisualLine] = []
+    for (row, cells) in matrix.enumerated() {
+      let count = max(cells.map(\.count).max() ?? 1, 1)
+      for line in 0..<count {
+        lines.append(VisualLine(row: row, line: line, closesRow: line == count - 1))
+      }
+    }
+    return lines
+  }
+
+  private static func drawWrappedPage(
+    context: CGContext,
+    result: QueryResult,
+    title: String,
+    queryLines: [String],
+    matrix: [[[String]]],
+    visual: [VisualLine],
+    pageNumber: Int,
+    pageCount: Int,
+    exportedAt: String,
+    widths: [CGFloat],
+    pageSize: CGSize,
+    headerFont: CTFont,
+    cellFont: CTFont,
+    footerFont: CTFont,
+    queryFont: CTFont
+  ) {
+    let contentWidth = max(pageSize.width - margin * 2, 1)
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(origin: .zero, size: pageSize))
+
+    var top = pageSize.height - margin
+    if !queryLines.isEmpty {
+      top -= drawQuery(
+        queryLines, top: top, width: contentWidth, font: queryFont, context: context)
+    }
+    if !widths.isEmpty {
+      drawWrappedTable(
+        context: context, result: result, matrix: matrix, visual: visual, widths: widths,
+        top: top, headerFont: headerFont, cellFont: cellFont)
+    }
+    drawFooter(
+      title: title, pageNumber: pageNumber, pageCount: pageCount, exportedAt: exportedAt,
+      width: contentWidth, font: footerFont, context: context)
+  }
+
+  private static func drawWrappedTable(
+    context: CGContext,
+    result: QueryResult,
+    matrix: [[[String]]],
+    visual: [VisualLine],
+    widths: [CGFloat],
+    top: CGFloat,
+    headerFont: CTFont,
+    cellFont: CTFont
+  ) {
+    let tableWidth = widths.reduce(0, +)
+    let left = margin
+    let headerRect = CGRect(x: left, y: top - headerHeight, width: tableWidth, height: headerHeight)
+    context.setFillColor(CGColor(gray: 0.93, alpha: 1))
+    context.fill(headerRect)
+
+    var x = left
+    for (index, width) in widths.enumerated() {
+      let rect = CGRect(x: x, y: headerRect.minY, width: width, height: headerHeight)
+      let name = index < result.columns.count ? result.columns[index].name : ""
+      draw(
+        fitting(name, font: headerFont, width: max(width - cellPadding * 2, 0)),
+        in: rect, font: headerFont, color: CGColor(gray: 0, alpha: 1), context: context)
+      x += width
+    }
+
+    var rowTop = headerRect.minY
+    var rules = [top, headerRect.minY]
+    let textColor = CGColor(gray: 0.05, alpha: 1)
+    for (offset, item) in visual.enumerated() {
+      let rectY = rowTop - rowHeight
+      x = left
+      let cells = item.row < matrix.count ? matrix[item.row] : []
+      for (index, width) in widths.enumerated() {
+        let rect = CGRect(x: x, y: rectY, width: width, height: rowHeight)
+        let text: String
+        if index < cells.count, item.line < cells[index].count {
+          text = cells[index][item.line]
+        } else {
+          text = ""
+        }
+        draw(text, in: rect, font: cellFont, color: textColor, context: context)
+        x += width
+      }
+      rowTop = rectY
+      if item.closesRow || offset == visual.count - 1, rules.last != rowTop {
+        rules.append(rowTop)
+      }
+    }
+    strokeWrappedGrid(context: context, left: left, rules: rules, widths: widths)
+  }
+
+  private static func strokeWrappedGrid(
+    context: CGContext, left: CGFloat, rules: [CGFloat], widths: [CGFloat]
+  ) {
+    guard let bottom = rules.min(), let top = rules.max() else { return }
+    context.setStrokeColor(CGColor(gray: 0.72, alpha: 1))
+    context.setLineWidth(0.4)
+    let tableWidth = widths.reduce(0, +)
+    let right = left + tableWidth
+    for y in rules {
+      context.move(to: CGPoint(x: left, y: y))
+      context.addLine(to: CGPoint(x: right, y: y))
+    }
+    var x = left
+    context.move(to: CGPoint(x: x, y: bottom))
+    context.addLine(to: CGPoint(x: x, y: top))
+    for column in widths {
+      x += column
+      context.move(to: CGPoint(x: x, y: bottom))
+      context.addLine(to: CGPoint(x: x, y: top))
+    }
+    context.strokePath()
+  }
+
+  private static func wrapLines(_ text: String, font: CTFont, width: CGFloat) -> [String] {
+    if width <= 0 {
+      return [text]
+    }
+    let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n")
+    var lines: [String] = []
+    for paragraph in normalized.components(separatedBy: "\n") {
+      if paragraph.isEmpty {
+        lines.append("")
+        continue
+      }
+      lines.append(contentsOf: wrapParagraph(paragraph, font: font, width: width))
+    }
+    return lines.isEmpty ? [""] : lines
+  }
+
+  private static func wrapParagraph(_ text: String, font: CTFont, width: CGFloat) -> [String] {
+    var lines: [String] = []
+    var current = ""
+    for token in tokensOf(text) {
+      for piece in hardBreak(token, font: font, width: width) {
+        if current.isEmpty {
+          let start = piece.trimmingCharacters(in: .whitespaces)
+          if !start.isEmpty {
+            current = start
+          }
+          continue
+        }
+        if textWidth(current + piece, font: font) <= width {
+          current += piece
+        } else {
+          lines.append(trimTrailingSpaces(current))
+          current = piece.trimmingCharacters(in: .whitespaces)
+        }
+      }
+    }
+    if !current.isEmpty {
+      lines.append(trimTrailingSpaces(current))
+    }
+    return lines.isEmpty ? [""] : lines
+  }
+
+  /// Words with the space that followed them. A space is the wrap opportunity.
+  private static func tokensOf(_ text: String) -> [String] {
+    var tokens: [String] = []
+    var current = ""
+    for character in text {
+      current.append(character)
+      if character.isWhitespace {
+        tokens.append(current)
+        current = ""
+      }
+    }
+    if !current.isEmpty {
+      tokens.append(current)
+    }
+    return tokens
+  }
+
+  /// Splits a token that is wider than the column so no character is dropped.
+  private static func hardBreak(_ token: String, font: CTFont, width: CGFloat) -> [String] {
+    if token.isEmpty {
+      return []
+    }
+    if textWidth(token, font: font) <= width {
+      return [token]
+    }
+    let chars = Array(token)
+    var parts: [String] = []
+    var index = 0
+    while index < chars.count {
+      var low = 1
+      var high = chars.count - index
+      while low < high {
+        let mid = (low + high + 1) / 2
+        let slice = String(chars[index..<(index + mid)])
+        if textWidth(slice, font: font) <= width {
+          low = mid
+        } else {
+          high = mid - 1
+        }
+      }
+      if low < 1 {
+        low = 1
+      }
+      parts.append(String(chars[index..<(index + low)]))
+      index += low
+    }
+    return parts
+  }
+
+  private static func trimTrailingSpaces(_ text: String) -> String {
+    var end = text.endIndex
+    while end > text.startIndex {
+      let previous = text.index(before: end)
+      if !text[previous].isWhitespace {
+        break
+      }
+      end = previous
+    }
+    return String(text[..<end])
   }
 }

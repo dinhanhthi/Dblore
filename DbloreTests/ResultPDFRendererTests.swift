@@ -84,6 +84,32 @@ struct ResultPDFRendererTests {
     }
   }
 
+  @Test("Wrapping keeps a long word and a later word instead of an ellipsis")
+  func wrappedTextKeepsTail() {
+    let tail = "TAILMARKER_XYZ"
+    let packed = String(repeating: "a", count: 400) + tail
+    let packedLines = ResultPDFRenderer.wrappedLines(packed, width: 40)
+    #expect(packedLines.count > 1)
+    #expect(packedLines.joined() == packed)
+
+    let prose = String(repeating: "word ", count: 200) + tail
+    let pageSize = CGSize(width: 420, height: 140)
+    let document = PDFDocument(
+      data: ResultPDFRenderer.render(
+        result: result(
+          columns: [ColumnInfo(name: "h_alpha", type: "text")],
+          rows: [[.string(prose)]]),
+        title: "Wrap",
+        query: nil,
+        wrapText: true,
+        pageSize: pageSize))
+    #expect((document?.pageCount ?? 0) > 1)
+    let combined = (0..<(document?.pageCount ?? 0)).map { text(document?.page(at: $0)) }.joined(
+      separator: "\n")
+    #expect(combined.contains(tail))
+    #expect(!combined.contains("…"))
+  }
+
   @Test("A non-empty query is on the first page and stops after twelve lines")
   func queryBlockIsCapped() {
     let lines = (0..<20).map { "QLINE\($0)" }

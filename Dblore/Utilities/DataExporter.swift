@@ -12,14 +12,14 @@ import UniformTypeIdentifiers
 enum DataExporter {
 
   /// Export result to CSV format
-  static func toCSV(result: CellResult) -> String {
+  static func toCSV(result: CellResult, includeHeader: Bool = true) -> String {
     var csv = ""
 
-    // Header row
-    let headers = result.columns.map { escapeCSV($0.name) }
-    csv += headers.joined(separator: ",") + "\n"
+    if includeHeader {
+      let headers = result.columns.map { escapeCSV($0.name) }
+      csv += headers.joined(separator: ",") + "\n"
+    }
 
-    // Data rows
     for row in result.rows {
       let values = row.map { escapeCSV($0.fullString) }
       csv += values.joined(separator: ",") + "\n"
@@ -276,22 +276,20 @@ enum DataExporter {
   }
 
   /// Export result to Markdown table format
-  static func toMarkdown(result: CellResult) -> String {
+  static func toMarkdown(result: CellResult, includeHeader: Bool = true) -> String {
     guard !result.columns.isEmpty else {
       return "No data"
     }
 
     var markdown = ""
 
-    // Header row
-    let headers = result.columns.map { "| \($0.name) " }
-    markdown += headers.joined() + "|\n"
+    if includeHeader {
+      let headers = result.columns.map { "| \($0.name) " }
+      markdown += headers.joined() + "|\n"
+      let separators = result.columns.map { _ in "| --- " }
+      markdown += separators.joined() + "|\n"
+    }
 
-    // Separator row
-    let separators = result.columns.map { _ in "| --- " }
-    markdown += separators.joined() + "|\n"
-
-    // Data rows
     for row in result.rows {
       let values = row.map { "| \(escapeMarkdown($0.fullString)) " }
       markdown += values.joined() + "|\n"
@@ -316,8 +314,40 @@ enum DataExporter {
   }
 
   /// PDF of the cell result. `query` is drawn only when the caller passes it.
-  static func pdfData(result: CellResult, title: String, query: String?) -> Data {
-    ResultPDFRenderer.render(result: queryResult(from: result), title: title, query: query)
+  static func pdfData(
+    result: CellResult, title: String, query: String?, wrapText: Bool = false
+  ) -> Data {
+    ResultPDFRenderer.render(
+      result: queryResult(from: result), title: title, query: query, wrapText: wrapText)
+  }
+
+  /// Save the result using the sheet's format and options. Copy actions do not call this.
+  static func download(
+    result: CellResult, options: ExportOptions, queryIndex: Int? = nil,
+    dialect: SQLDialect = .postgresql
+  ) {
+    let prepared = applying(options, to: result)
+    switch options.format {
+    case .csv:
+      let csv = toCSV(result: prepared, includeHeader: options.includeHeader)
+      let name = generateFilename(extension: "csv", queryIndex: queryIndex)
+      saveFile(content: csv, defaultFilename: name, allowedFileTypes: ["csv"])
+    case .excel:
+      downloadExcel(result: prepared, queryIndex: queryIndex)
+    case .json:
+      downloadJSON(result: prepared, queryIndex: queryIndex)
+    case .markdown:
+      let markdown = toMarkdown(result: prepared, includeHeader: options.includeHeader)
+      let name = generateFilename(extension: "md", queryIndex: queryIndex)
+      saveFile(content: markdown, defaultFilename: name, allowedFileTypes: ["md", "markdown"])
+    case .pdf:
+      downloadPDF(
+        result: prepared, queryIndex: queryIndex, query: result.sourceQuery,
+        wrapText: options.wrapText)
+    case .sqlInsert:
+      downloadSQLInsert(
+        result: prepared, table: result.tableName, dialect: dialect, queryIndex: queryIndex)
+    }
   }
 
   // MARK: - Download Functions
@@ -362,10 +392,12 @@ enum DataExporter {
 
   /// Download the result as a PDF. The title is the filename without its extension.
   static func downloadPDF(
-    result: CellResult, filename: String? = nil, queryIndex: Int? = nil, query: String? = nil
+    result: CellResult, filename: String? = nil, queryIndex: Int? = nil, query: String? = nil,
+    wrapText: Bool = false
   ) {
     let defaultName = filename ?? generateFilename(extension: "pdf", queryIndex: queryIndex)
-    let data = pdfData(result: result, title: pdfTitle(defaultName), query: query)
+    let data = pdfData(
+      result: result, title: pdfTitle(defaultName), query: query, wrapText: wrapText)
     saveFile(data: data, defaultFilename: defaultName, allowedFileTypes: ["pdf"])
   }
 
@@ -577,16 +609,8 @@ enum DataExporter {
 
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
-
-      do {
+      completeSave(url) {
         try content.write(to: url, atomically: true, encoding: .utf8)
-      } catch {
-        // Show error alert
-        let alert = NSAlert()
-        alert.messageText = "Export Failed"
-        alert.informativeText = "Could not save file: \(error.localizedDescription)"
-        alert.alertStyle = .critical
-        alert.runModal()
       }
     }
   }
@@ -599,17 +623,49 @@ enum DataExporter {
 
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
-
-      do {
+      completeSave(url) {
         try data.write(to: url)
-      } catch {
-        // Show error alert
-        let alert = NSAlert()
-        alert.messageText = "Export Failed"
-        alert.informativeText = "Could not save file: \(error.localizedDescription)"
-        alert.alertStyle = .critical
-        alert.runModal()
       }
+    }
+  }
+
+  /// Writes the file, then asks whether to open it or reveal it. Cancel leaves the saved file as is.
+  private static func completeSave(_ url: URL, write: () throws -> Void) {
+    do {
+      try write()
+    } catch {
+      let alert = NSAlert()
+      alert.messageText = "Export Failed"
+      alert.informativeText = "Could not save file: \(error.localizedDescription)"
+      alert.alertStyle = .critical
+      alert.runModal()
+      return
+    }
+
+    // The save panel is still dismissing. Presenting now stacks the two modals.
+    DispatchQueue.main.async {
+      presentSavedFile(url)
+    }
+  }
+
+  private static func presentSavedFile(_ url: URL) {
+    let alert = NSAlert()
+    alert.messageText = "Export Complete"
+    alert.informativeText = "Saved \(url.lastPathComponent)."
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Open File")
+    alert.addButton(withTitle: "Open Location")
+    alert.addButton(withTitle: "Cancel")
+    if alert.buttons.count > 2 {
+      alert.buttons[2].keyEquivalent = "\u{1b}"
+    }
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      NSWorkspace.shared.open(url)
+    case .alertSecondButtonReturn:
+      NSWorkspace.shared.activateFileViewerSelecting([url])
+    default:
+      break
     }
   }
 }
