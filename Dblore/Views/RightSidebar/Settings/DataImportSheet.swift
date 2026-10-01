@@ -60,7 +60,7 @@ struct DataImportSheet: View {
         .disabled(working)
         .help("Close")
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
 
       Divider()
 
@@ -107,7 +107,7 @@ struct DataImportSheet: View {
             .disabled(working || !versionOK || orderedSelection.isEmpty)
         }
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
     }
     .frame(width: 480, height: 460)
     .background(Color.appBackground)

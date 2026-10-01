@@ -417,7 +417,7 @@ private struct DataExportAllSheet: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .help("Close")
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
 
       Divider()
 
@@ -451,7 +451,7 @@ private struct DataExportAllSheet: View {
           .buttonStyle(PrimaryButtonStyle())
           .disabled(selected.isEmpty)
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
     }
     .frame(width: 480, height: 460)
     .background(Color.appBackground)
@@ -501,7 +501,7 @@ private struct DataClearAllSheet: View {
         .disabled(working)
         .help("Close")
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
 
       Divider()
 
@@ -538,7 +538,7 @@ private struct DataClearAllSheet: View {
           .buttonStyle(DangerButtonStyle())
           .disabled(working)
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
     }
     .frame(width: 440, height: 420)
     .background(Color.appBackground)

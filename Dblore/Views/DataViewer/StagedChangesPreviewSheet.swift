@@ -31,7 +31,7 @@ struct StagedChangesPreviewSheet: View {
         .buttonStyle(GhostButtonStyle(iconOnly: true))
         .help("Close")
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
 
       Divider()
 
@@ -58,7 +58,7 @@ struct StagedChangesPreviewSheet: View {
         Button("Done") { dismiss() }
           .buttonStyle(PrimaryButtonStyle())
       }
-      .padding(Spacing.md)
+      .modalBarPadding()
     }
     .frame(width: 560, height: 360)
     .background(Color.appBackground)
