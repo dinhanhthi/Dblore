@@ -9,6 +9,8 @@ import SwiftUI
 
 struct HistoryRow: View {
   let entry: QueryHistoryEntry
+  /// Odd rows, matching the result grid.
+  var isAlternate = false
   let onInsert: () -> Void
   let onRunInNewCell: () -> Void
   let onCopy: () -> Void
@@ -46,10 +48,16 @@ struct HistoryRow: View {
     .padding(.vertical, Spacing.xs)
     .contentShape(Rectangle())
     .onTapGesture(count: 2) { onInsert() }
-    .background(
-      RoundedRectangle(cornerRadius: CornerRadius.sm)
-        .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
-    )
+    .background {
+      if isAlternate {
+        Color.tableRowAlternate
+      } else {
+        Color.cellBackground
+      }
+      if isHovering {
+        Color.cellBackgroundHover.opacity(0.5)
+      }
+    }
     .onHover { isHovering = $0 }
     .help(entry.connectionLabel)
     .contextMenu {

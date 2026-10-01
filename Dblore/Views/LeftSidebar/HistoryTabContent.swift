@@ -140,10 +140,11 @@ struct HistoryTabContent: View {
   private var list: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 0) {
-        ForEach(historyList.results, id: \.id) { entry in
+        ForEach(Array(historyList.results.enumerated()), id: \.element.id) { index, entry in
           VStack(spacing: 0) {
             HistoryRow(
               entry: entry,
+              isAlternate: index % 2 == 1,
               onInsert: { workspaceManager.insertHistory(entry) },
               onRunInNewCell: { workspaceManager.runHistoryInNewCell(entry) },
               onCopy: { workspaceManager.copyHistory(entry) },
