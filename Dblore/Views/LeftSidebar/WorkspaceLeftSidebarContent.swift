@@ -59,23 +59,21 @@ struct WorkspaceLeftSidebarContent: View {
     .padding(Spacing.sm)
   }
 
-  /// History is a clock icon. The schema and favorite tabs keep their titles.
+  /// "History" keeps the four titles on one row. The tooltip still says History.
   @ViewBuilder
   private func tabLabel(_ tab: SidebarTab) -> some View {
     let isSelected = selectedTab == tab
+    let label = Text(tab == .history ? "History" : tab.rawValue)
+      .font(.body)
+      .fontWeight(isSelected ? .semibold : .regular)
+      .foregroundColor(isSelected ? .white : .foreground)
+      .lineLimit(1)
+      .minimumScaleFactor(0.7)
+      .accessibilityLabel(tab.rawValue)
     if tab == .history {
-      Image(systemName: "clock")
-        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-        .foregroundColor(isSelected ? .white : .foreground)
-        .accessibilityLabel("History")
-        .help("History")
+      label.help("History")
     } else {
-      Text(tab.rawValue)
-        .font(.body)
-        .fontWeight(isSelected ? .semibold : .regular)
-        .foregroundColor(isSelected ? .white : .foreground)
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
+      label
     }
   }
 

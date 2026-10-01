@@ -19,8 +19,9 @@ struct HistoryTabContent: View {
     @Bindable var historyList = workspaceManager.historyList
 
     VStack(spacing: 0) {
-      SidebarFilterField(text: $historyList.query)
-      scopeMenu
+      SidebarFilterField(text: $historyList.query) {
+        scopeMenu
+      }
       Divider()
       content
     }
@@ -32,30 +33,31 @@ struct HistoryTabContent: View {
     }
   }
 
+  /// Same capsule as the Chart and Explain menus, so the menu opens under the button.
   private var scopeMenu: some View {
-    HStack(spacing: Spacing.xs) {
-      Menu {
-        scopeButton(.all, title: "All")
-        scopeButton(.connection, title: "This Connection")
-        scopeButton(.workspace, title: "This Workspace")
-      } label: {
-        HStack(spacing: Spacing.xxs) {
-          Text(scopeTitle(historyList.scope))
-            .font(.small)
-            .foregroundColor(.foreground)
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.system(size: 9))
-            .foregroundColor(.foregroundMuted)
-        }
+    Menu {
+      scopeButton(.all, title: "All")
+      scopeButton(.connection, title: "This Connection")
+      scopeButton(.workspace, title: "This Workspace")
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Text(scopeTitle(historyList.scope))
+          .font(.system(size: 11))
+          .foregroundStyle(Color.foreground)
+          .lineLimit(1)
+        Image(systemName: "chevron.down")
+          .font(.system(size: 9))
+          .foregroundStyle(Color.foregroundMuted)
       }
-      .buttonStyle(.plain)
-      .fixedSize()
-      .help("History scope")
-
-      Spacer(minLength: 0)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .background(Capsule().fill(Color.inputBackground))
+      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.bottom, Spacing.sm)
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("History scope")
   }
 
   private func scopeButton(_ scope: HistoryScope, title: String) -> some View {
@@ -139,13 +141,19 @@ struct HistoryTabContent: View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 0) {
         ForEach(historyList.results, id: \.id) { entry in
-          HistoryRow(
-            entry: entry,
-            onInsert: { workspaceManager.insertHistory(entry) },
-            onRunInNewCell: { workspaceManager.runHistoryInNewCell(entry) },
-            onCopy: { workspaceManager.copyHistory(entry) },
-            onDelete: { Task { await workspaceManager.deleteHistory(ids: [entry.id]) } }
-          )
+          VStack(spacing: 0) {
+            HistoryRow(
+              entry: entry,
+              onInsert: { workspaceManager.insertHistory(entry) },
+              onRunInNewCell: { workspaceManager.runHistoryInNewCell(entry) },
+              onCopy: { workspaceManager.copyHistory(entry) },
+              onDelete: { Task { await workspaceManager.deleteHistory(ids: [entry.id]) } }
+            )
+            if entry.id != historyList.results.last?.id {
+              Color.border.frame(height: 1)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
           .onAppear {
             guard entry.id == historyList.results.last?.id else { return }
             Task { await historyList.loadMore() }
