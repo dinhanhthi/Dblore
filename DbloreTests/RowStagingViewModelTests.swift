@@ -23,6 +23,89 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet == nil)
   }
 
+  @Test("+ Row assigns the next integer when the database cannot be asked")
+  func addRowAssignsTheNextInteger() async {
+    let viewModel = makeViewModel(primaryKey: ["id"])
+
+    #expect(await viewModel.addStagedRow() == nil)
+    #expect(await viewModel.addStagedRow() == nil)
+
+    let preview = viewModel.previewStagedSQL()
+    #expect(preview.contains(#""id""#))
+    #expect(preview.contains("2"))
+    #expect(preview.contains("3"))
+    #expect(viewModel.stageEdit(row: 0, column: "id", value: .int(9))?.contains("SQL") == true)
+  }
+
+  @Test("+ Row leaves the key empty when the loaded page is not the whole table")
+  func addRowSkipsAPartialPage() async {
+    let scenarios: [(DataViewerState) -> DataViewerState] = [
+      {
+        var state = $0
+        state.pageSize = 1
+        state.totalRows = 5
+        return state
+      },
+      {
+        var state = $0
+        state.page = 2
+        return state
+      },
+      {
+        var state = $0
+        state.filter = TableFilter(
+          conditions: [FilterCondition(column: "nickname", value: "old")])
+        return state
+      },
+    ]
+    for scenario in scenarios {
+      let viewModel = makeViewModel(primaryKey: ["id"])
+      viewModel.dataViewer = viewModel.dataViewer.map(scenario)
+
+      #expect(await viewModel.addStagedRow() == nil)
+
+      #expect(!viewModel.previewStagedSQL().contains(#""id""#))
+    }
+  }
+
+  @Test("Commit fills an integer key that + Row did not set")
+  func commitFillsAMissingIntegerKey() async {
+    let viewModel = makeViewModel(primaryKey: ["id"])
+    #expect(viewModel.stageInsert() == nil)
+    WorkspaceWindowManager.shared.dismissToast()
+
+    await viewModel.commitStaged()
+
+    let preview = viewModel.previewStagedSQL()
+    #expect(preview.contains(#"INSERT INTO public.users ("id")"#))
+    #expect(preview.contains("2"))
+    #expect(
+      WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("Not connected")
+        == true)
+  }
+
+  @Test("A text primary key is not given a number")
+  func textPrimaryKeyIsNotNumbered() async {
+    let viewModel = makeViewModel(primaryKey: ["nickname"])
+    #expect(await viewModel.addStagedRow() == nil)
+    #expect(viewModel.previewStagedSQL().contains("DEFAULT VALUES"))
+  }
+
+  @Test("A staged insert can set its primary key; an existing row cannot")
+  func stagedInsertCanSetPrimaryKey() {
+    let viewModel = makeViewModel(primaryKey: ["id"])
+    #expect(viewModel.stageInsert() == nil)
+
+    #expect(viewModel.stageEdit(row: 1, column: "id", value: .int(3)) == nil)
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("chi")) == nil)
+    let preview = viewModel.previewStagedSQL()
+    #expect(preview.contains(#""id""#))
+    #expect(preview.contains("3"))
+    #expect(preview.contains("chi"))
+
+    #expect(viewModel.stageEdit(row: 0, column: "id", value: .int(9))?.contains("SQL") == true)
+  }
+
   @Test("A staged edit's preview names the column")
   func stagedEditPreviewNamesTheColumn() {
     let viewModel = makeViewModel(primaryKey: ["id"])

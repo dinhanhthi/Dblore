@@ -69,12 +69,12 @@ struct DataCategoryRow: View {
             .buttonStyle(FilledSecondaryButtonStyle())
             .linkPointer()
         }
-        Button("Export…", action: onExport)
+        Button("Export", action: onExport)
           .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(isBusy || row.loading)
           .linkPointer()
         if row.category != .queryHistory {
-          Button("Clear…", action: onClear)
+          Button("Clear", action: onClear)
             .buttonStyle(DangerButtonStyle())
             .disabled(isBusy || row.loading)
             .linkPointer()
@@ -124,16 +124,14 @@ private struct HistoryRetentionControls: View {
           .font(.bodyText)
           .foregroundColor(.foreground)
         Spacer(minLength: Spacing.sm)
-        Picker("Keep for", selection: $appSettings.historyRetentionDays) {
-          Text("7 days").tag(7)
-          Text("30 days").tag(30)
-          Text("90 days").tag(90)
-          Text("365 days").tag(365)
-          Text("Forever").tag(0)
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
+        CapsuleDropdown(
+          title: retentionTitle(appSettings.historyRetentionDays),
+          accessibilityLabel: "Keep for",
+          options: Self.retentionOptions,
+          optionTitle: retentionTitle,
+          isSelected: { $0 == appSettings.historyRetentionDays },
+          onSelect: { appSettings.historyRetentionDays = $0 }
+        )
       }
 
       HStack(spacing: Spacing.sm) {
@@ -147,8 +145,7 @@ private struct HistoryRetentionControls: View {
           format: .number.grouping(.never)
         )
         .textFieldStyle(.plain)
-        .inputCapsuleStyle()
-        .font(.monoSmall)
+        .numberInputCapsuleStyle()
         .frame(width: 96)
         Stepper(
           "",
@@ -175,6 +172,21 @@ private struct HistoryRetentionControls: View {
         .disabled(isBusy)
         .linkPointer()
     }
-    .padding(.leading, 16 + Spacing.sm)
+    .padding(Spacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.appBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
+  }
+
+  private static let retentionOptions = [7, 30, 90, 365, 0]
+
+  private func retentionTitle(_ days: Int) -> String {
+    switch days {
+    case 7: "7 days"
+    case 30: "30 days"
+    case 90: "90 days"
+    case 365: "365 days"
+    case 0: "Forever"
+    default: "\(days) days"
+    }
   }
 }

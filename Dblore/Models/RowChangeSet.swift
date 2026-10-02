@@ -233,11 +233,26 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     return tempID
   }
 
-  /// Sets one column on a staged insert. A primary-key column is refused.
-  mutating func updateInsert(tempID: UUID, column: String, value: CellValue) throws {
-    if primaryKeyColumns.contains(column) {
-      throw RowChangeError.primaryKeyColumn(column)
+  /// Writes `column` on inserts that have no value there, from `start` upward.
+  /// Null and absent values are filled. A value already chosen is left as it is.
+  mutating func assignMissingIntegerKey(_ column: String, startingAt start: Int) {
+    var next = start
+    for index in inserts.indices {
+      if let current = inserts[index].values[column], !Self.isNull(current) { continue }
+      inserts[index].values[column] = .int(next)
+      guard let advanced = StagedIntegerKey.increment(next) else { return }
+      next = advanced
     }
+  }
+
+  private static func isNull(_ value: CellValue) -> Bool {
+    if case .null = value { return true }
+    return false
+  }
+
+  /// Sets one column on a staged insert, including a primary-key column.
+  /// The row is not on the server yet, so this supplies the key rather than changing one.
+  mutating func updateInsert(tempID: UUID, column: String, value: CellValue) {
     guard let index = inserts.firstIndex(where: { $0.tempID == tempID }) else { return }
     inserts[index].values[column] = value
   }

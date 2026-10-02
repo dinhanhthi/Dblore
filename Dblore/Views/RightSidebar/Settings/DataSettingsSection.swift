@@ -31,23 +31,15 @@ struct DataSettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      header
-      if let notice {
-        Text(notice.text)
-          .font(.bodyText)
-          .foregroundColor(notice.isError ? .destructive : .success)
-          .textSelection(.enabled)
+      DataSettingsCard(title: "On this Mac") {
+        header
       }
-      ForEach(model.rows) { row in
-        DataCategoryRow(
-          row: row,
-          isBusy: busy,
-          onExport: { export(row.category) },
-          onClear: { pendingClear = row.category }
-        )
-        Divider()
+      ForEach(DataSettingsGroup.allCases, id: \.self) { group in
+        groupCard(group)
       }
-      secrets
+      DataSettingsCard(title: "Saved passwords and keys") {
+        secrets
+      }
     }
     .task { await model.refresh() }
     .onReceive(NotificationCenter.default.publisher(for: .localDataChanged)) { _ in
@@ -121,6 +113,32 @@ struct DataSettingsSection: View {
     }
   }
 
+  @ViewBuilder
+  private func groupCard(_ group: DataSettingsGroup) -> some View {
+    let rows = group.categories.compactMap(row(for:))
+    if !rows.isEmpty {
+      DataSettingsCard(title: group.title) {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            if index > 0 {
+              Divider()
+            }
+            DataCategoryRow(
+              row: row,
+              isBusy: busy,
+              onExport: { export(row.category) },
+              onClear: { pendingClear = row.category }
+            )
+          }
+        }
+      }
+    }
+  }
+
+  private func row(for category: LocalDataCategory) -> DataSettingsRow? {
+    model.rows.first { $0.category == category }
+  }
+
   private var header: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
@@ -140,27 +158,30 @@ struct DataSettingsSection: View {
         Spacer(minLength: Spacing.sm)
       }
       HStack(spacing: Spacing.sm) {
-        Button("Export All…") { exportSheet = SheetToken() }
+        Button("Export All") { exportSheet = SheetToken() }
           .buttonStyle(PrimaryButtonStyle())
           .disabled(busy)
           .linkPointer()
-        Button("Import…", action: openImport)
+        Button("Import", action: openImport)
           .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(busy)
           .linkPointer()
-        Button("Clear All…") { clearSheet = SheetToken() }
+        Button("Clear All") { clearSheet = SheetToken() }
           .buttonStyle(DangerButtonStyle())
           .disabled(busy)
           .linkPointer()
+      }
+      if let notice {
+        Text(notice.text)
+          .font(.bodyText)
+          .foregroundColor(notice.isError ? .destructive : .success)
+          .textSelection(.enabled)
       }
     }
   }
 
   private var secrets: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text("Saved passwords and keys")
-        .font(.subheading)
-        .foregroundColor(.foreground)
       Text("Names only. Values stay in the Keychain until you delete them.")
         .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
@@ -344,6 +365,59 @@ enum DataSettingsProduction {
   }
 }
 
+/// Visual groups for Settings → Data. Every `LocalDataCategory` belongs to one group.
+private enum DataSettingsGroup: CaseIterable {
+  case history
+  case workspace
+  case assistant
+  case app
+
+  var title: String {
+    switch self {
+    case .history: "History"
+    case .workspace: "Workspace"
+    case .assistant: "Assistant"
+    case .app: "App"
+    }
+  }
+
+  var categories: [LocalDataCategory] {
+    LocalDataCategory.allCases.filter { Self.group(of: $0) == self }
+  }
+
+  /// Exhaustive, so a new `LocalDataCategory` fails the build until it has a group.
+  private static func group(of category: LocalDataCategory) -> DataSettingsGroup {
+    switch category {
+    case .queryHistory, .connectionHistory, .recentItems: .history
+    case .openTabs, .savedFilters, .schemaLayout: .workspace
+    case .aiChats, .aiSettings, .localModels: .assistant
+    case .logs, .appSettings: .app
+    }
+  }
+}
+
+private struct DataSettingsCard<Content: View>: View {
+  let title: String
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text(title)
+        .font(.bodyText)
+        .fontWeight(.medium)
+        .foregroundColor(.foreground)
+      content()
+    }
+    .padding(Spacing.md)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.cardHeaderBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
+        .stroke(Color.border, lineWidth: 1)
+    )
+  }
+}
+
 private struct SheetToken: Identifiable {
   let id = UUID()
 }
@@ -512,11 +586,18 @@ private struct DataClearAllSheet: View {
           Text("This removes:")
             .font(.small)
             .foregroundColor(.foregroundMuted)
-          ForEach(model.rows) { row in
-            Text(row.category.title)
+          VStack(alignment: .leading, spacing: Spacing.sm) {
+            ForEach(model.rows) { row in
+              HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+                Text("•")
+                  .foregroundColor(.foregroundMuted)
+                Text(row.category.title)
+                  .foregroundColor(.foreground)
+              }
               .font(.bodyText)
-              .foregroundColor(.foreground)
+            }
           }
+          .padding(.leading, Spacing.md)
           Toggle("Also delete saved passwords and keys", isOn: $alsoDeleteSecrets)
             .toggleStyle(.checkbox)
             .font(.bodyText)

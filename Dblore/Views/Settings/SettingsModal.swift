@@ -12,12 +12,12 @@ import UniformTypeIdentifiers
 enum SettingsPage: String {
   case ai
   case data
+  case security
   case results
 
   static let userInfoKey = "settingsSection"
 }
 
-// MARK: - Settings Modal
 /// A single option another screen can ask Settings to highlight briefly.
 enum SettingsOption: String {
   case inlineEditAutoCommit
@@ -25,36 +25,40 @@ enum SettingsOption: String {
   static let userInfoKey = "settingsHighlight"
 }
 
+// MARK: - Settings Modal
 
 /// Main settings modal for workspace level
 /// Shows settings in a tabbed modal, one section per tab
 struct SettingsModal: View {
   @Binding var isPresented: Bool
   let viewMode: ViewMode?
+  var viewModel: NotebookViewModel?
   let section: SettingsPage?
+  let highlight: SettingsOption?
   let openToken: UUID
 
-  let highlight: SettingsOption?
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
   @State private var selectedTab: SettingsTab
+  @State private var highlightedOption: SettingsOption?
 
   init(
-  @State private var highlightedOption: SettingsOption?
     isPresented: Binding<Bool>,
     viewMode: ViewMode?,
+    viewModel: NotebookViewModel? = nil,
     section: SettingsPage? = nil,
+    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) {
     _isPresented = isPresented
-    highlight: SettingsOption? = nil,
     self.viewMode = viewMode
+    self.viewModel = viewModel
     self.section = section
+    self.highlight = highlight
     self.openToken = openToken
     _selectedTab = State(initialValue: SettingsTab.tab(for: section))
   }
 
-    self.highlight = highlight
   /// Tabs shown in the settings tab row (rawValue = label)
   private enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
@@ -63,6 +67,7 @@ struct SettingsModal: View {
     case results = "Results"
     case save = "Save"
     case data = "Data"
+    case security = "Security"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
     case updates = "Updates"
@@ -76,6 +81,7 @@ struct SettingsModal: View {
       case .results: return "tablecells"
       case .save: return "square.and.arrow.down"
       case .data: return "externaldrive"
+      case .security: return "lock.shield"
       case .updates: return "arrow.triangle.2.circlepath"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
@@ -86,13 +92,14 @@ struct SettingsModal: View {
       switch section {
       case .ai: .ai
       case .data: .data
+      case .security: .security
+      case .results: .results
       case nil: .appearance
       }
     }
   }
 
   /// Effective view mode - defaults to notebook if no active tab
-      case .results: .results
   private var effectiveViewMode: ViewMode {
     viewMode ?? .notebook
   }
@@ -151,13 +158,6 @@ struct SettingsModal: View {
       guard let section else { return }
       selectedTab = SettingsTab.tab(for: section)
     }
-  }
-
-  /// Section view for the selected tab
-  @ViewBuilder
-  private var selectedSection: some View {
-    switch selectedTab {
-    case .appearance:
     // Highlight the requested option for a moment, then fade it out
     .task(id: openToken) {
       withAnimation(.easeIn(duration: 0.2)) { highlightedOption = highlight }
@@ -165,6 +165,13 @@ struct SettingsModal: View {
       try? await Task.sleep(for: .seconds(2.5))
       withAnimation(.easeOut(duration: 0.6)) { highlightedOption = nil }
     }
+  }
+
+  /// Section view for the selected tab
+  @ViewBuilder
+  private var selectedSection: some View {
+    switch selectedTab {
+    case .appearance:
       AppearanceSettingsSection(appSettings: appSettings)
     case .editor:
       SettingsModalEditorSection(
@@ -176,13 +183,22 @@ struct SettingsModal: View {
     case .results:
       SettingsModalResultTableSection(
         appSettings: appSettings,
-        viewMode: effectiveViewMode
+        viewMode: effectiveViewMode,
+        highlightedOption: highlightedOption
       )
     case .save:
       // Save Options (Notebook Mode Only)
       SettingsModalSaveOptionsSection(appSettings: appSettings)
     case .data:
       DataSettingsSection()
+    case .security:
+      if let viewModel {
+        SecuritySettingsSection(appSettings: appSettings, viewModel: viewModel)
+      } else {
+        Text("Open a tab to change protection and security for this connection.")
+          .font(.bodyText)
+          .foregroundColor(.foregroundSubtle)
+      }
     case .updates:
       SettingsModalUpdatesSection()
     case .developer:
@@ -314,6 +330,7 @@ struct SettingsModalEditorSection: View {
 struct SettingsModalResultTableSection: View {
   @Bindable var appSettings: AppSettings
   let viewMode: ViewMode
+  var highlightedOption: SettingsOption?
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -330,7 +347,6 @@ struct SettingsModalResultTableSection: View {
       )
 
       // Hide Column Types toggle
-  var highlightedOption: SettingsOption?
       SettingsToggle(
         title: "Hide Column Types",
         description:
@@ -352,6 +368,12 @@ struct SettingsModalResultTableSection: View {
           "When enabled, a cell edited in the result table is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
         isOn: $appSettings.inlineEditAutoCommit
       )
+      .padding(Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: 8)
+          .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
+      )
+      .padding(-Spacing.sm)
 
       // Max Height (Notebook only)
       SettingsSlider(
@@ -368,12 +390,6 @@ struct SettingsModalResultTableSection: View {
       )
 
       // One row cap for Notebook and Editor
-      .padding(Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
-      )
-      .padding(-Spacing.sm)
       ResultRowCapSetting(appSettings: appSettings)
     }
   }
@@ -510,6 +526,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
       Divider().padding(.vertical, Spacing.xs)
 
       groupTitle("View")
+      ShortcutRow(action: "Settings", shortcut: "Cmd+,")
       ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
       ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
@@ -548,6 +565,11 @@ struct SettingsModalKeyboardShortcutsSection: View {
       ShortcutRow(
         action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
       ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
+
+      Divider().padding(.vertical, Spacing.xs)
+
+      groupTitle("View")
+      ShortcutRow(action: "Settings", shortcut: "Cmd+,")
     }
   }
 }
@@ -559,14 +581,18 @@ extension View {
   func settingsModal(
     isPresented: Binding<Bool>,
     viewMode: ViewMode?,
+    viewModel: NotebookViewModel? = nil,
     section: SettingsPage? = nil,
+    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
       SettingsModal(
         isPresented: isPresented,
         viewMode: viewMode,
+        viewModel: viewModel,
         section: section,
+        highlight: highlight,
         openToken: openToken
       )
     }
@@ -577,20 +603,21 @@ extension View {
 
 extension View {
   /// Shows a settings modal bound to a WorkspaceManager
-    highlight: SettingsOption? = nil,
   func settingsModal(
     workspaceManager: WorkspaceManager,
     section: SettingsPage? = nil,
+    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) -> some View {
     self.settingsModal(
       isPresented: Binding(
         get: { workspaceManager.isSettingsModalVisible },
-        highlight: highlight,
         set: { workspaceManager.isSettingsModalVisible = $0 }
       ),
       viewMode: workspaceManager.activeViewModel?.viewMode,
+      viewModel: workspaceManager.activeViewModel,
       section: section,
+      highlight: highlight,
       openToken: openToken
     )
   }
@@ -600,7 +627,6 @@ extension View {
 
 #Preview("Settings Modal") {
   @Previewable @State var isPresented = true
-    highlight: SettingsOption? = nil,
 
   Color.appBackground
     .frame(width: 800, height: 700)
@@ -611,7 +637,6 @@ extension View {
   @Previewable @State var isPresented = true
 
   Color.appBackground
-      highlight: highlight,
     .frame(width: 800, height: 700)
     .settingsModal(isPresented: $isPresented, viewMode: .editor)
 }

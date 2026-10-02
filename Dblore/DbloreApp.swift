@@ -20,7 +20,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       forName: NSWindow.willCloseNotification, object: nil, queue: .main
     ) { [weak self] note in
       guard let window = note.object as? NSWindow else { return }
-      Task { @MainActor in self?.reopenWelcomeIfLastWindowClosed(window) }
+      // Read now, on this main-queue callback: the content view is still attached
+      // while the window closes. A later hop would miss the marker.
+      let wasWelcome = MainActor.assumeIsolated { WelcomeWindowMarker.isWelcome(window) }
+      Task { @MainActor in self?.reopenWelcomeIfLastWindowClosed(window, wasWelcome: wasWelcome) }
     }
     // Disable automatic window tabbing - each workspace gets its own window
     NSWindow.allowsAutomaticWindowTabbing = false
@@ -75,11 +78,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   /// Closing the last workspace/welcome window opens a new window on the welcome screen.
+  /// Closing the welcome window itself never reopens it.
   /// Another document window (including a minimized one) just lets this window close.
   /// About and other small windows are not resizable, so they never trigger this.
   @MainActor
-  private func reopenWelcomeIfLastWindowClosed(_ closed: NSWindow) {
-    guard !isTerminating, !SessionManager.isRunningAsTestHost, closed.isDbloreDocumentWindow
+  private func reopenWelcomeIfLastWindowClosed(_ closed: NSWindow, wasWelcome: Bool) {
+    guard !wasWelcome, !isTerminating, !SessionManager.isRunningAsTestHost,
+      closed.isDbloreDocumentWindow
     else { return }
     let frame = closed.frame
     // Let a quit in progress (which closes the windows too) win over the reopen
@@ -355,19 +360,17 @@ struct SharedCommands: Commands {
       }
     }
 
-    // Settings command - replace default settings with empty to remove Cmd+,
-    // Then add our own Settings button without keyboard shortcut
+    // Owns the system Settings slot, so Cmd+, opens this modal in notebook, SQL,
+    // and data viewer instead of a second SwiftUI Settings window.
     CommandGroup(replacing: .appSettings) {
-      EmptyView()
-    }
-
-    // Add Settings after About in appInfo group (no keyboard shortcut)
-    CommandGroup(after: .appInfo) {
-      CheckForUpdatesButton()
-
-      Button("Settings...") {
+      Button("Settings") {
         NotificationCenter.default.post(name: .openSettings, object: nil)
       }
+      .keyboardShortcut(",", modifiers: .command)
+    }
+
+    CommandGroup(after: .appInfo) {
+      CheckForUpdatesButton()
     }
   }
 
@@ -384,12 +387,12 @@ struct SharedCommands: Commands {
   }
 }
 
-/// "Check for Updates…" menu item; observes the updater so the disabled state stays current.
+/// "Check for Updates" menu item; observes the updater so the disabled state stays current.
 private struct CheckForUpdatesButton: View {
   @ObservedObject private var updater = UpdaterController.shared
 
   var body: some View {
-    Button("Check for Updates…") {
+    Button("Check for Updates") {
       updater.checkForUpdates()
     }
     .disabled(!updater.canCheckForUpdates)
@@ -421,7 +424,7 @@ struct TabCommands: Commands {
           }
         }
       } label: {
-        Label("Open Workspace...", systemImage: "folder")
+        Label("Open Workspace", systemImage: "folder")
       }
       .keyboardShortcut("o", modifiers: [.command, .option])
 
@@ -472,7 +475,7 @@ struct TabCommands: Commands {
       Button {
         openFile()
       } label: {
-        Label("Open...", systemImage: "folder")
+        Label("Open", systemImage: "folder")
       }
       .keyboardShortcut("o", modifiers: .command)
     }
@@ -499,7 +502,7 @@ struct TabCommands: Commands {
           saveActiveWorkspaceAs()
         }
       } label: {
-        Text("Save As...")
+        Text("Save As")
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
 
@@ -512,7 +515,7 @@ struct TabCommands: Commands {
       }
       .keyboardShortcut("s", modifiers: [.command, .option])
 
-      Button("Save Workspace As...") {
+      Button("Save Workspace As") {
         saveActiveWorkspaceAs()
       }
       .keyboardShortcut("s", modifiers: [.command, .option, .shift])

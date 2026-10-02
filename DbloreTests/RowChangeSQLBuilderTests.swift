@@ -115,6 +115,24 @@ struct RowChangeSQLBuilderTests {
     #expect(sqlite.allSatisfy { !$0.sql.contains("ONLY") })
   }
 
+  @Test("An insert can include a primary key supplied after the row was staged")
+  func insertIncludesPrimaryKey() {
+    let editTarget = target()
+    var set = RowChangeSet(target: editTarget)
+    let tempID = set.stageInsert(values: ["name": .string("chi")])
+    set.updateInsert(tempID: tempID, column: "id", value: .int(3))
+
+    let statements = RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+    #expect(statements.count == 1)
+    #expect(statements[0].sql == #"INSERT INTO "t" ("id", "name") VALUES ($1, $2)"#)
+    #expect(statements[0].values == ["3", "chi"])
+
+    let preview = RowChangeSQLBuilder.previewText(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+    #expect(preview == #"INSERT INTO "t" ("id", "name") VALUES (3, 'chi');"#)
+  }
+
   @Test("An insert with no values is DEFAULT VALUES and binds nothing")
   func emptyInsertIsDefaultValues() {
     let editTarget = target()

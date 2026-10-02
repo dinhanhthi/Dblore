@@ -193,7 +193,7 @@ struct SafeModeUnlockSheet: View {
         .font(.small)
         .foregroundColor(.foregroundSubtle)
       HStack(spacing: Spacing.md) {
-        Button("Set password...") {
+        Button("Set password") {
           showsSafeModeSettings = true
         }
         Button("Enable Touch ID") {

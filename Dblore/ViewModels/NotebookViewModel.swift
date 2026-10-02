@@ -151,7 +151,11 @@ class NotebookViewModel {
   /// Cells with an inline edit sent since the last Commit / Rollback; re-run after a Rollback
   /// so their result shows the original values again.
   @ObservationIgnored var cellsEditedInTransaction: Set<UUID> = []
-  /// Grid / Chart for the data viewer header. The grid reads the same value.
+  /// Whether an integer primary key is filled by the database. Keyed by schema, table, and
+  /// column. Set when a lookup succeeds, and read while a transaction is open so a catalog
+  /// query is not sent into that transaction.
+  @ObservationIgnored var integerPrimaryKeyHasDefault: [String: Bool] = [:]
+  /// Grid / Chart for the data viewer. The paging bar draws it; the grid reads it.
   var dataViewerDisplayMode: ResultDisplayMode = .grid
   /// How the user resolved a prompt that blocks paging, filter, sort, refresh, or tab close
   /// while row changes are staged.

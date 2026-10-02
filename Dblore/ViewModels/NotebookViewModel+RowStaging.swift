@@ -37,21 +37,38 @@ extension NotebookViewModel {
     dataViewer?.changeSet?.isEmpty == false
   }
 
-  /// Stages a new row. `values` may include primary-key columns; later cell edits may not.
-  /// An empty map is `INSERT ... DEFAULT VALUES`.
+  /// Stages a new row. `values` and later cell edits may include primary-key columns.
+  /// An empty map is `INSERT ... DEFAULT VALUES`. An existing row's primary key stays read-only.
   @discardableResult
   func stageInsert(values: [String: CellValue] = [:]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     return changeSet { $0.stageInsert(values: values) }
   }
 
-  /// Stages a copy of each row, without primary-key columns (those cannot be edited here).
+  /// + Row. A single integer primary key with no database default is set to the next number.
+  /// A key the database fills (identity, serial, or any other default) is left unset.
+  func addStagedRow() async -> String? {
+    if let reason = rowStagingUnavailableReason { return reason }
+    return stageInsert(values: await automaticIntegerKeyValues())
+  }
+
+  /// Stages a copy of each row. Primary-key columns are left unset so the copy does not reuse
+  /// the source key, then filled with the next integer when this table's key is not automatic.
   @discardableResult
-  func stageDuplicate(rows: [Int]) -> String? {
+  func stageDuplicate(rows: [Int]) async -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
-    let copies = rows.compactMap { duplicatedValues(row: $0, target: target) }
+    var copies = rows.compactMap { duplicatedValues(row: $0, target: target) }
     if copies.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
+    if let column = integerPrimaryKeyColumn(),
+      var next = await nextIntegerPrimaryKeyValue(column: column)
+    {
+      for index in copies.indices where copies[index][column] == nil {
+        copies[index][column] = .int(next)
+        guard let advanced = StagedIntegerKey.increment(next) else { break }
+        next = advanced
+      }
+    }
     return changeSet { set in
       for values in copies { set.stageInsert(values: values) }
     }
@@ -82,7 +99,7 @@ extension NotebookViewModel {
     do {
       return try changeSet { set in
         if let tempID = key.tempID {
-          try set.updateInsert(tempID: tempID, column: column, value: value)
+          set.updateInsert(tempID: tempID, column: column, value: value)
         } else {
           try set.stageEdit(row: key, column: column, value: value, original: original)
         }
@@ -161,6 +178,7 @@ extension NotebookViewModel {
       showToast(reason, type: .warning)
       return
     }
+    await fillMissingIntegerKeys()
     guard let batch = stagedBatch() else { return }
     if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
       pendingExplainSQL = nil
@@ -203,6 +221,121 @@ extension NotebookViewModel {
   // MARK: - Private
 
   static let rowNotOnPage = "That row is not on this page."
+
+  /// What to do with an integer primary key on a new row.
+  private enum IntegerKeyPlan {
+    /// The database fills the column, or the lookup failed and guessing could write a bad key.
+    case skip
+    /// No database default. `serverMax` is nil when the table is empty or the server was not asked.
+    case assign(serverMax: Int?)
+  }
+
+  /// Values for one new row: the next integer key, or empty when the database fills that column.
+  private func automaticIntegerKeyValues() async -> [String: CellValue] {
+    guard let column = integerPrimaryKeyColumn(),
+      let value = await nextIntegerPrimaryKeyValue(column: column)
+    else { return [:] }
+    return [column: .int(value)]
+  }
+
+  /// Fills integer keys that + Row could not, just before the batch is sent.
+  private func fillMissingIntegerKeys() async {
+    guard let column = integerPrimaryKeyColumn(), missingIntegerKey(column) else { return }
+    guard let start = await nextIntegerPrimaryKeyValue(column: column) else { return }
+    _ = changeSet { $0.assignMissingIntegerKey(column, startingAt: start) }
+  }
+
+  private func nextIntegerPrimaryKeyValue(column: String) async -> Int? {
+    let plan = await lookupIntegerPrimaryKey(column)
+    guard case .assign(let serverMax) = plan else { return nil }
+    var known: [Int] = stagedIntegerKeys(column)
+    if let serverMax {
+      known.append(serverMax)
+    } else if !loadedPageIsWholeTable() {
+      return nil
+    }
+    if let loaded = loadedIntegerKeyMax(column) { known.append(loaded) }
+    return StagedIntegerKey.nextValue(known: known)
+  }
+
+  private func integerPrimaryKeyColumn() -> String? {
+    guard let target = stagedEditTarget, let columns = editorResult?.columns else { return nil }
+    return StagedIntegerKey.integerColumn(
+      primaryKey: target.primaryKeyColumns, columns: columns)
+  }
+
+  private func missingIntegerKey(_ column: String) -> Bool {
+    guard let inserts = dataViewer?.changeSet?.inserts else { return false }
+    return inserts.contains { insert in
+      guard let value = insert.values[column] else { return true }
+      if case .null = value { return true }
+      return false
+    }
+  }
+
+  private func stagedIntegerKeys(_ column: String) -> [Int] {
+    guard let inserts = dataViewer?.changeSet?.inserts else { return [] }
+    return inserts.compactMap { insert in
+      insert.values[column].flatMap(StagedIntegerKey.integer(from:))
+    }
+  }
+
+  /// Without a server MAX, the loaded page max is the table max only for an unfiltered first page
+  /// that holds every row.
+  private func loadedPageIsWholeTable() -> Bool {
+    guard let state = dataViewer, let rows = editorResult?.rows, state.page == 1,
+      state.filter.whereClause(dialect: state.databaseType.dialect) == nil
+    else { return false }
+    return rows.count < state.pageSize || state.totalRows == rows.count
+  }
+
+  private func loadedIntegerKeyMax(_ column: String) -> Int? {
+    guard let result = editorResult,
+      let index = result.columns.firstIndex(where: { $0.name == column })
+    else { return nil }
+    var maxValue: Int?
+    for row in result.rows {
+      guard row.indices.contains(index), let number = StagedIntegerKey.integer(from: row[index])
+      else { continue }
+      maxValue = max(maxValue ?? number, number)
+    }
+    return maxValue
+  }
+
+  private func integerKeyCacheKey(_ column: String) -> String {
+    let schema = dataViewer?.schema ?? ""
+    let table = dataViewer?.name ?? ""
+    return "\(schema)\u{0}\(table)\u{0}\(column)"
+  }
+
+  /// Looks up the column default and `MAX` when no transaction is open.
+  /// Not connected: assign from the loaded page. A failed lookup does not guess.
+  private func lookupIntegerPrimaryKey(_ column: String) async -> IntegerKeyPlan {
+    let key = integerKeyCacheKey(column)
+    guard let manager = connectionManager else { return .assign(serverMax: nil) }
+    if await manager.isMetadataPaused {
+      if let cached = integerPrimaryKeyHasDefault[key] {
+        return cached ? .skip : .assign(serverMax: nil)
+      }
+      return .skip
+    }
+    guard let state = dataViewer,
+      let sql = StagedIntegerKey.lookupSQL(
+        schema: state.schema, table: state.name, column: column,
+        dialect: state.databaseType.dialect)
+    else { return .skip }
+    do {
+      let result = try await manager.executeInternal(sql, maxRows: 1)
+      guard let remote = StagedIntegerKey.parseLookup(result.rows.first) else { return .skip }
+      integerPrimaryKeyHasDefault[key] = remote.hasDefault
+      return remote.hasDefault ? .skip : .assign(serverMax: remote.serverMax)
+    } catch let error as DatabaseError {
+      if case .notConnected = error { return .assign(serverMax: nil) }
+      return .skip
+    } catch {
+      return .skip
+    }
+  }
 
   /// Live data-viewer target with a primary key, when every column origin names that table.
   /// Notebook results are not a staging target.

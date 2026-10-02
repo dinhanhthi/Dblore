@@ -234,4 +234,40 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.idleInTransactionTimeoutSeconds == 600)
     #expect(decoded.rowCapOverride == -4)
   }
+
+  @Test("Recent connections stay on the selected engine")
+  func recentConnectionsFilterByEngine() {
+    let postgres = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .postgresql, database: "postgres", name: "Ideta Rag Local"))
+    let sqlite = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .sqlite, database: "/tmp/notes.sqlite", name: "Notes"))
+
+    let history = [postgres, sqlite]
+    #expect(
+      ConnectionFormContent.history(matching: .sqlite, in: history).map(\.config.name) == ["Notes"]
+    )
+    #expect(
+      ConnectionFormContent.history(matching: .postgresql, in: history).map(\.config.name)
+        == ["Ideta Rag Local"])
+  }
+
+  @Test("Switching to SQLite drops a PostgreSQL database name")
+  func switchingEngineClearsOtherEngineFields() throws {
+    let replacement = ConnectionFormContent.formAfterEngineChange(
+      fieldsEngine: .postgresql, newType: .sqlite)
+
+    let config = try #require(replacement)
+    #expect(config.databaseType == .sqlite)
+    #expect(config.database.isEmpty)
+    #expect(config.name.isEmpty)
+  }
+
+  @Test("Loading a history row of the new engine keeps that row")
+  func switchingEngineKeepsMatchingHistoryEntry() {
+    let replacement = ConnectionFormContent.formAfterEngineChange(
+      fieldsEngine: .sqlite, newType: .sqlite)
+    #expect(replacement == nil)
+  }
 }

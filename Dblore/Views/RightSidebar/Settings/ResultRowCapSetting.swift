@@ -28,7 +28,7 @@ struct ResultRowCapSetting: View {
             format: .number.grouping(.never)
           )
           .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+          .numberInputCapsuleStyle()
           .frame(width: 80)
           Stepper(
             "",

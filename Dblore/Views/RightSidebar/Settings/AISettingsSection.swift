@@ -106,15 +106,16 @@ struct AISettingsSection: View {
   private var providerRow: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       label("Provider")
-      HStack(spacing: Spacing.md) {
-        Picker("", selection: $kind) {
-          ForEach(AIProviderKind.allCases, id: \.self) { kind in
-            Text(kind.displayName).tag(kind)
-          }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(width: 240)
+      HStack(alignment: .top, spacing: Spacing.md) {
+        CapsuleDropdown(
+          title: kind.displayName,
+          width: 300,
+          accessibilityLabel: "Provider",
+          options: Array(AIProviderKind.allCases),
+          optionTitle: \.displayName,
+          isSelected: { $0 == kind },
+          onSelect: { kind = $0 }
+        )
 
         if isActive {
           HStack(spacing: Spacing.xs) {
@@ -234,7 +235,7 @@ struct AISettingsSection: View {
   private var modelRow: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       label("Model")
-      HStack(spacing: Spacing.sm) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
         TextField("Model name", text: $model)
           .textFieldStyle(.plain)
           .font(.bodyText)
@@ -242,13 +243,13 @@ struct AISettingsSection: View {
           .inputStyle()
 
         if !availableModels.isEmpty {
-          Menu("Models") {
-            ForEach(availableModels, id: \.self) { name in
-              Button(name) { model = name }
-            }
-          }
-          .menuStyle(.button)
-          .fixedSize()
+          CapsuleDropdown(
+            title: "Models",
+            options: availableModels,
+            optionTitle: { $0 },
+            isSelected: { $0 == model },
+            onSelect: { model = $0 }
+          )
         }
 
         Button("Refresh") { run(reportSuccess: false) }

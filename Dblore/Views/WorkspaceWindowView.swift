@@ -313,10 +313,34 @@ class NewWindowStore {
   }
 }
 
+/// Tags the window hosting the welcome screen, so closing it does not open another one.
+struct WelcomeWindowMarker: NSViewRepresentable {
+  private static let windows = NSHashTable<NSWindow>.weakObjects()
+
+  static func isWelcome(_ window: NSWindow) -> Bool {
+    windows.contains(window)
+  }
+
+  func makeNSView(context: Context) -> MarkerView { MarkerView() }
+  func updateNSView(_ nsView: MarkerView, context: Context) {}
+
+  final class MarkerView: NSView {
+    private weak var markedWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      if let markedWindow { WelcomeWindowMarker.windows.remove(markedWindow) }
+      markedWindow = window
+      if let window { WelcomeWindowMarker.windows.add(window) }
+    }
+  }
+}
+
 extension NSWindow {
   /// Workspace and welcome windows. About and panels are smaller and not resizable.
   var isDbloreDocumentWindow: Bool {
-    level == .normal && canBecomeMain && styleMask.contains(.resizable)
+    // No canBecomeMain: it is already false once the window is closing
+    level == .normal && styleMask.contains([.titled, .resizable])
   }
 
   /// A document window that is still open. A minimized window counts: it is open, just not on screen.

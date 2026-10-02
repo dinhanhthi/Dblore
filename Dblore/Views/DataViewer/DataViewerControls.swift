@@ -2,9 +2,9 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: table title, + Row, the Grid / Chart slider,
-//  and staged-change actions. Rows-per-page, column visibility, and paging
-//  sit in DataViewerPagingBar under the result table.
+//  Data viewer header controls: table title, + Row, and staged-change actions.
+//  Rows-per-page, column visibility, paging, and the Grid / Chart slider sit
+//  in DataViewerPagingBar under the result table. The slider is trailing.
 //
 
 import SwiftUI
@@ -41,10 +41,6 @@ struct DataViewerControls: View {
         Divider().frame(height: 14)
 
         addRowButton
-
-        if showsChartPicker {
-          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode)
-        }
 
         if let set = state.changeSet, !set.isEmpty {
           stagedSummary(set.counts)
@@ -109,16 +105,6 @@ struct DataViewerControls: View {
     "\(count) \(count == 1 ? singular : singular + "s")"
   }
 
-  /// Same rule as the in-grid picker: a loaded page that can be plotted.
-  private var showsChartPicker: Bool {
-    guard let result = viewModel.editorResult, result.error == nil else { return false }
-    let showingRows =
-      !result.rows.isEmpty
-      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
-    guard showingRows else { return false }
-    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
-  }
-
   private var addRowButton: some View {
     Button(action: stageNewRow) {
       dataViewerCapsuleLabel {
@@ -136,8 +122,10 @@ struct DataViewerControls: View {
   }
 
   private func stageNewRow() {
-    if let message = viewModel.stageInsert() {
-      viewModel.showToast(message, type: .error)
+    Task {
+      if let message = await viewModel.addStagedRow() {
+        viewModel.showToast(message, type: .error)
+      }
     }
   }
 
@@ -202,12 +190,19 @@ struct DataViewerControls: View {
     }
   }
 
+  /// Same capsule metrics as Preview SQL and Discard. Accent fill keeps it the primary action.
   private var commitButtonBase: some View {
     Button(action: { Task { await viewModel.commitStaged() } }) {
-      Text("Commit")
+      dataViewerCapsuleLabel(fill: .accent, bordered: false) {
+        Text("Commit")
+          .font(.system(size: 11))
+          .foregroundColor(.foreground)
+      }
     }
-    .buttonStyle(PrimaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
-    .controlSize(.small)
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .opacity(viewModel.stagingEnabled ? 1 : 0.5)
     .disabled(!viewModel.stagingEnabled)
     .help(viewModel.rowStagingUnavailableReason ?? "Commit staged changes")
     .overlay { disabledStagingHelp }
@@ -225,7 +220,8 @@ struct DataViewerControls: View {
 
 }
 
-/// Rows per page, column visibility, and paging. Sits under the result table.
+/// Rows per page, column visibility, paging, and the Grid / Chart slider.
+/// Sits under the result table. The slider is on the trailing edge.
 struct DataViewerPagingBar: View {
   @Bindable var viewModel: NotebookViewModel
   @State private var showColumns = false
@@ -252,7 +248,11 @@ struct DataViewerPagingBar: View {
           }
         }
 
-        Spacer(minLength: 0)
+        Spacer(minLength: Spacing.sm)
+
+        if showsChartPicker {
+          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode)
+        }
       }
       .padding(.horizontal, Spacing.md)
       .padding(.vertical, Spacing.sm)
@@ -264,6 +264,16 @@ struct DataViewerPagingBar: View {
           .frame(height: 1)
       }
     }
+  }
+
+  /// Same rule as the in-grid picker: a loaded page that can be plotted.
+  private var showsChartPicker: Bool {
+    guard let result = viewModel.editorResult, result.error == nil else { return false }
+    let showingRows =
+      !result.rows.isEmpty
+      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
+    guard showingRows else { return false }
+    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
   }
 
   private func pageSizeMenu(state: DataViewerState) -> some View {
@@ -371,14 +381,22 @@ struct DataViewerPagingBar: View {
 }
 
 /// Capsule control look of the result panel's statement Menu.
+/// Preview SQL, Discard, Commit, and the paging controls share this padding so their heights match.
 @ViewBuilder
-private func dataViewerCapsuleLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View
-{
+private func dataViewerCapsuleLabel<Content: View>(
+  fill: Color = .inputBackground,
+  bordered: Bool = true,
+  @ViewBuilder content: () -> Content
+) -> some View {
   HStack(spacing: Spacing.xs) {
     content()
   }
   .padding(.horizontal, Spacing.sm)
   .padding(.vertical, Spacing.xs)
-  .background(Capsule().fill(Color.inputBackground))
-  .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+  .background(Capsule().fill(fill))
+  .overlay {
+    if bordered {
+      Capsule().stroke(Color.border, lineWidth: 1)
+    }
+  }
 }

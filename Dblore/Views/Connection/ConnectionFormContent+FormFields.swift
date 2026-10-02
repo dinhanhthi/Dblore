@@ -39,7 +39,7 @@ extension ConnectionFormContent {
               "5432", value: $connectionConfig.port, format: .number.grouping(.never)
             )
             .textFieldStyle(.plain)
-            .inputCapsuleStyle()
+            .numberInputCapsuleStyle()
             .frame(width: 80)
           }
         }
@@ -79,7 +79,7 @@ extension ConnectionFormContent {
           format: .number.grouping(.never)
         )
         .textFieldStyle(.plain)
-        .inputCapsuleStyle()
+        .numberInputCapsuleStyle()
         .frame(width: 80)
       }
     }
@@ -168,7 +168,7 @@ extension ConnectionFormContent {
       }
 
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        Button("Browse…", action: chooseSQLiteFile)
+        Button("Browse", action: chooseSQLiteFile)
           .buttonStyle(SecondaryButtonStyle())
         if !connectionConfig.database.isEmpty {
           Text(connectionConfig.database)
@@ -192,9 +192,9 @@ extension ConnectionFormContent {
             .inputCapsuleStyle()
 
           HStack(spacing: Spacing.sm) {
-            Button("Choose…", action: chooseSQLiteFile)
+            Button("Choose", action: chooseSQLiteFile)
               .buttonStyle(SecondaryButtonStyle())
-            Button("Create new file…", action: createSQLiteFile)
+            Button("Create new file", action: createSQLiteFile)
               .buttonStyle(SecondaryButtonStyle())
           }
         }
@@ -429,7 +429,7 @@ extension ConnectionFormContent {
           "Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never)
         )
         .textFieldStyle(.plain)
-        .inputCapsuleStyle()
+        .numberInputCapsuleStyle()
         .frame(width: 120)
         .onChange(of: connectionConfig.rowCapOverride) { _, newValue in
           let clamped = SessionBrakeLimits.clampRowCap(newValue)
@@ -448,7 +448,7 @@ extension ConnectionFormContent {
       HStack(spacing: Spacing.sm) {
         TextField(placeholder, value: value, format: .number.grouping(.never))
           .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+          .numberInputCapsuleStyle()
           .frame(width: 80)
         Stepper("", value: value, in: range)
           .compactStepperStyle()

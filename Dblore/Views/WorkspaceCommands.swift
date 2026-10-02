@@ -31,7 +31,7 @@ struct WorkspaceCommands: Commands {
         } label: {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
-        .keyboardShortcut(",", modifiers: [.command])
+        .keyboardShortcut("b", modifiers: [.command, .shift])
       }
     }
 

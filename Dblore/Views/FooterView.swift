@@ -36,19 +36,8 @@ struct FooterView: View {
   var viewModel: NotebookViewModel?
   var connectionState: ConnectionState
   var connectionConfig: ConnectionConfig?
-  var onSafeModeTap: () -> Void = {}
-  @State private var showDisableReadOnlyConfirmation = false
-
   var body: some View {
-    if let viewModel {
-      bar(viewModel: viewModel)
-        .protectionLevelDialog(
-          isPresented: $showDisableReadOnlyConfirmation,
-          viewModel: viewModel
-        )
-    } else {
-      bar(viewModel: nil)
-    }
+    bar(viewModel: viewModel)
   }
 
   private func bar(viewModel: NotebookViewModel?) -> some View {
@@ -69,22 +58,8 @@ struct FooterView: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
 
-        if viewModel != nil {
-          // Protection level badge (clickable)
-          if let protectionLevel = connectionConfig?.protectionLevel,
-            protectionLevel != .none
-          {
-            protectionBadge(for: protectionLevel)
-              .onTapGesture {
-                showDisableReadOnlyConfirmation = true
-              }
-          }
-
-          // Safe Mode indicator (clickable to open Safe Mode modal)
-          SafeModeIndicator(
-            connectionConfig: connectionState.isConnected ? connectionConfig : nil,
-            onTap: onSafeModeTap
-          )
+        if let viewModel, connectionState.isConnected {
+          ConnectionSafetyMenus(viewModel: viewModel)
         }
 
         // Window dimensions (for debugging)
@@ -204,33 +179,6 @@ struct FooterView: View {
 
   private var appVersion: String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-  }
-
-  // MARK: - Protection Badge
-
-  private func protectionBadge(for level: ConnectionProtectionLevel) -> some View {
-    HStack(spacing: 4) {
-      Image(systemName: level.iconName)
-        .font(.system(size: 9))
-      Text(level.displayName)
-        .font(.small)
-    }
-    .foregroundColor(level == .readOnly ? .warning : .secondary)
-    .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, 2)
-    .tintedCapsuleGlass(level == .readOnly ? .warning : .secondary)
-    .help(
-      level == .readOnly
-        ? "Click to change protection level"
-        : "Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked"
-    )
-    .onHover { hovering in
-      if hovering {
-        NSCursor.pointingHand.push()
-      } else {
-        NSCursor.pop()
-      }
-    }
   }
 
   // MARK: - File Size Helpers

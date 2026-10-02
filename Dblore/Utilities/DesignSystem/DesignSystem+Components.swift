@@ -57,6 +57,16 @@ enum ButtonStyleVariant {
   }
 }
 
+/// Regular text-button chrome. Capsule dropdowns and number fields share it
+/// so those controls line up with `PrimaryButtonStyle` and `SecondaryButtonStyle`.
+enum ButtonMetrics {
+  static let regularFont: Font = .system(.callout, weight: .medium)
+  static let regularHorizontalPadding: CGFloat = (Spacing.md + Spacing.lg) / 2
+  static let regularVerticalPadding: CGFloat = (Spacing.xs + Spacing.sm) / 2
+  /// Callout line (16) plus the regular vertical padding on both sides.
+  static let regularHeight: CGFloat = 16 + regularVerticalPadding * 2
+}
+
 // MARK: - Button Styles
 struct PrimaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
@@ -145,7 +155,7 @@ private struct BaseButtonStyleView: View {
     case .large, .extraLarge:
       return .system(.body, weight: .medium)
     default:  // .regular
-      return .system(.callout, weight: .medium)
+      return ButtonMetrics.regularFont
     }
   }
 
@@ -177,7 +187,7 @@ private struct BaseButtonStyleView: View {
     case .large, .extraLarge:
       return Spacing.xl
     default:  // .regular
-      return (Spacing.md + Spacing.lg) / 2
+      return ButtonMetrics.regularHorizontalPadding
     }
   }
 
@@ -191,7 +201,7 @@ private struct BaseButtonStyleView: View {
     case .large, .extraLarge:
       return Spacing.md
     default:  // .regular
-      return iconOnly ? Spacing.sm : (Spacing.xs + Spacing.sm) / 2
+      return iconOnly ? Spacing.sm : ButtonMetrics.regularVerticalPadding
     }
   }
 
@@ -379,6 +389,22 @@ extension View {
   func inputCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.md)
+      .background(Color.inputBackground)
+      .clipShape(Capsule())
+      .overlay(
+        Capsule()
+          .stroke(Color.border, lineWidth: 1)
+      )
+  }
+
+  /// Numeric field. `inputCapsuleStyle` adds `Spacing.sm` on top of the text
+  /// control, which makes number boxes taller than a regular button.
+  func numberInputCapsuleStyle() -> some View {
+    self
+      .font(.monoMedium)
+      .controlSize(.small)
+      .padding(.horizontal, Spacing.sm)
+      .frame(height: ButtonMetrics.regularHeight)
       .background(Color.inputBackground)
       .clipShape(Capsule())
       .overlay(

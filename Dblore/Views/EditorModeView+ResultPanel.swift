@@ -324,8 +324,9 @@ struct EditorResultGridView: View {
   @State private var sortAscending = true
   /// Session chart for this editor result. A new result view starts from the suggestion.
   @State private var chartSpec: ChartSpec?
-  /// Nil keeps an internal mode. The editor and data viewer headers pass the shared mode
-  /// and set `showsDisplayPicker` to false so this grid does not draw a second slider.
+  /// Nil keeps an internal mode. The editor header and the data viewer paging bar pass
+  /// the shared mode and set `showsDisplayPicker` to false so this grid does not draw
+  /// a second slider.
   var displayMode: Binding<ResultDisplayMode>? = nil
   var showsDisplayPicker = true
   /// Nil keeps an internal Plan / Raw mode. The editor header passes the shared mode
@@ -362,11 +363,17 @@ struct EditorResultGridView: View {
               row: row, column: column, newValue: newValue, result: result)
           },
           onStageInsert: {
-            if let message = viewModel.stageInsert() { viewModel.showToast(message, type: .error) }
+            Task {
+              if let message = await viewModel.addStagedRow() {
+                viewModel.showToast(message, type: .error)
+              }
+            }
           },
           onStageDuplicate: { rows in
-            if let message = viewModel.stageDuplicate(rows: rows) {
-              viewModel.showToast(message, type: .error)
+            Task {
+              if let message = await viewModel.stageDuplicate(rows: rows) {
+                viewModel.showToast(message, type: .error)
+              }
             }
           },
           onStageDelete: { rows in

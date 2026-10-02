@@ -273,7 +273,7 @@ struct ResultExportSheet: View {
       Spacer()
       Button("Cancel", action: onCancel)
         .buttonStyle(GhostButtonStyle())
-      Button("Export…", action: export)
+      Button("Export", action: export)
         .buttonStyle(PrimaryButtonStyle())
     }
     .modalBarPadding()

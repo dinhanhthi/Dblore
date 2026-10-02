@@ -176,6 +176,61 @@ extension SettingsSlider where DescriptionContent == Text {
   }
 }
 
+// MARK: - Capsule Dropdown
+
+/// Capsule pull-down. A menu-style `Picker` draws over the control; this `Menu`
+/// opens under the button and keeps it visible. Padding matches a regular button.
+struct CapsuleDropdown<Option: Hashable>: View {
+  let title: String
+  var width: CGFloat? = nil
+  var accessibilityLabel: String? = nil
+  let options: [Option]
+  let optionTitle: (Option) -> String
+  let isSelected: (Option) -> Bool
+  let onSelect: (Option) -> Void
+
+  var body: some View {
+    Menu {
+      ForEach(options, id: \.self) { option in
+        Button {
+          onSelect(option)
+        } label: {
+          if isSelected(option) {
+            Label(optionTitle(option), systemImage: "checkmark")
+          } else {
+            Text(optionTitle(option))
+          }
+        }
+      }
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Text(title)
+          .lineLimit(1)
+        if width != nil {
+          Spacer(minLength: Spacing.xs)
+        }
+        Image(systemName: "chevron.down")
+          .font(.system(size: 9, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+      }
+      .font(ButtonMetrics.regularFont)
+      .foregroundColor(.foreground)
+      .padding(.horizontal, ButtonMetrics.regularHorizontalPadding)
+      .padding(.vertical, ButtonMetrics.regularVerticalPadding)
+      .frame(maxWidth: width == nil ? nil : .infinity, alignment: .leading)
+      .background(Capsule().fill(Color.inputBackground))
+      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .menuIndicator(.hidden)
+    .linkPointer()
+    .fixedSize(horizontal: width == nil, vertical: true)
+    .frame(width: width, alignment: .leading)
+    .accessibilityLabel(accessibilityLabel ?? title)
+  }
+}
+
 // MARK: - Keyboard Shortcut Row
 
 /// A row displaying an action and its keyboard shortcut

@@ -63,6 +63,31 @@ struct RowChangeSetTests {
     #expect(set.isEmpty)
   }
 
+  @Test("A staged insert can set its primary key")
+  func insertCanSetPrimaryKey() {
+    var set = RowChangeSet(target: sampleTarget())
+    let tempID = set.stageInsert(values: ["name": .string("new")])
+    set.updateInsert(tempID: tempID, column: "id", value: .int(3))
+    let values = set.inserts.first?.values
+    #expect(values?["name"] != nil)
+    #expect(values?["id"] != nil)
+    #expect(set.edits.isEmpty)
+  }
+
+  @Test("Filling integer keys keeps a chosen value and stops at Int.max")
+  func assignMissingIntegerKeyStopsAtIntMax() {
+    var set = RowChangeSet(target: sampleTarget())
+    set.stageInsert(values: ["id": .int(5)])
+    set.stageInsert(values: ["name": .string("a")])
+    set.stageInsert(values: ["name": .string("b")])
+
+    set.assignMissingIntegerKey("id", startingAt: Int.max)
+
+    #expect(set.inserts[0].values["id"] == .int(5))
+    #expect(set.inserts[1].values["id"] == .int(Int.max))
+    #expect(set.inserts[2].values["id"] == nil)
+  }
+
   @Test("A primary key edit is rejected and the message mentions SQL")
   func primaryKeyEditIsRejected() {
     var set = RowChangeSet(target: sampleTarget())

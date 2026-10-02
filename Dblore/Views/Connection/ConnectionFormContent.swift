@@ -33,6 +33,9 @@ struct ConnectionFormContent: View {
   // Connection history
   @State private var connectionHistory: [ConnectionHistoryEntry] = []
   @State private var selectedHistoryId: UUID?
+  /// Engine the current field values belong to. The header picker changes
+  /// `databaseType` without clearing those fields; loading a history row sets both.
+  @State private var fieldsEngine: DatabaseType?
   @State private var showDeleteConfirmation = false
   @State private var entryToDelete: UUID?
 
@@ -69,7 +72,7 @@ struct ConnectionFormContent: View {
     VStack(spacing: 0) {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          if !connectionHistory.isEmpty {
+          if !historyForSelectedType().isEmpty {
             sectionCard {
               sectionTitle("Recent connections")
               connectionHistorySection()
@@ -124,6 +127,9 @@ struct ConnectionFormContent: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.appBackground)
       .onAppear {
+        if fieldsEngine == nil {
+          fieldsEngine = connectionConfig.databaseType
+        }
         loadConnectionHistory()
         refreshSQLiteFileBookmark()
       }
@@ -132,6 +138,15 @@ struct ConnectionFormContent: View {
         if !newType.capabilities.usesNetwork {
           inputMode = .form
         }
+        // Loading a history row sets `fieldsEngine` before `databaseType`, so this
+        // only runs for the header picker. A PostgreSQL database name would otherwise
+        // stay in `database` and show up under Browse.
+        guard
+          let replacement = Self.formAfterEngineChange(fieldsEngine: fieldsEngine, newType: newType)
+        else { return }
+        fieldsEngine = newType
+        selectedHistoryId = nil
+        connectionConfig = replacement
       }
 
       footerView()
@@ -173,6 +188,31 @@ struct ConnectionFormContent: View {
 
   func getConnectionHistory() -> [ConnectionHistoryEntry] {
     connectionHistory
+  }
+
+  /// Recent rows for the engine selected in the header.
+  func historyForSelectedType() -> [ConnectionHistoryEntry] {
+    Self.history(matching: connectionConfig.databaseType, in: connectionHistory)
+  }
+
+  /// History rows for one engine.
+  static func history(
+    matching type: DatabaseType, in history: [ConnectionHistoryEntry]
+  ) -> [ConnectionHistoryEntry] {
+    history.filter { $0.config.databaseType == type }
+  }
+
+  /// Nil when the field values already belong to `newType` (a history row just loaded).
+  /// Otherwise a blank config, so the previous engine's database name is dropped.
+  static func formAfterEngineChange(
+    fieldsEngine: DatabaseType?, newType: DatabaseType
+  ) -> ConnectionConfig? {
+    guard fieldsEngine != newType else { return nil }
+    return ConnectionConfig(databaseType: newType)
+  }
+
+  func setFieldsEngine(_ type: DatabaseType) {
+    fieldsEngine = type
   }
 
   func setConnectionHistory(_ history: [ConnectionHistoryEntry]) {

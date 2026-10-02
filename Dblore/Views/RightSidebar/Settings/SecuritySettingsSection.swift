@@ -10,65 +10,22 @@ import SwiftUI
 struct SecuritySettingsSection: View {
   @Bindable var appSettings: AppSettings
   @Bindable var viewModel: NotebookViewModel
-  @Binding var showDisableReadOnlyConfirmation: Bool
-
-  private var currentProtectionLevel: ConnectionProtectionLevel {
-    viewModel.notebook.connectionConfig?.protectionLevel ?? .none
-  }
 
   var body: some View {
-    SettingsSection(title: "Security", icon: "lock.shield.fill") {
-      VStack(alignment: .leading, spacing: Spacing.lg) {
-        // Protection Level Warning (at top for visibility)
-        if currentProtectionLevel != .none {
-          protectionWarning
-        }
-
-        // Combined Safe Mode Section
-        SafeModeSection(appSettings: appSettings, viewModel: viewModel)
-          .id("safeModeSection")
+    VStack(alignment: .leading, spacing: Spacing.lg) {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Text("Protection")
+          .font(.bodyText)
+          .fontWeight(.medium)
+          .foregroundColor(.foreground)
+        ConnectionSafetyMenus(viewModel: viewModel, showsSecurity: false, prominent: true)
       }
-    }
-    // Lowering goes through the Safe Mode unlock (see ProtectionLevelDialogModifier)
-    .protectionLevelDialog(isPresented: $showDisableReadOnlyConfirmation, viewModel: viewModel)
-  }
 
-  private var protectionWarning: some View {
-    let level = currentProtectionLevel
-    return HStack(alignment: .top, spacing: Spacing.sm) {
-      Image(systemName: level.iconName)
-        .foregroundColor(level == .readOnly ? .warning : .secondary)
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        Text(level == .readOnly ? "Read-Only Mode Active" : "Schema Protection Active")
-          .font(.subheading)
-          .foregroundColor(level == .readOnly ? .warning : .secondary)
-        Text(
-          level == .readOnly
-            ? "Modification queries are blocked regardless of Safe Mode level."
-            : "Schema changes (CREATE/DROP/ALTER/TRUNCATE) are blocked."
-        )
-        .font(.small)
-        .foregroundColor(.foregroundSubtle)
-        Button(action: {
-          showDisableReadOnlyConfirmation = true
-        }) {
-          Text("Change Protection")
-            .font(.small)
-            .foregroundColor(.white)
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xs)
-            .background(level == .readOnly ? Color.warning : Color.secondary)
-            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-        }
-        .buttonStyle(.plain)
-        .linkPointer()
-      }
-      Spacer()
+      Divider()
+
+      SafeModeSection(appSettings: appSettings, viewModel: viewModel)
+        .id("safeModeSection")
     }
-    .padding(Spacing.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background((level == .readOnly ? Color.warning : Color.secondary).opacity(0.1))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 }
 
@@ -137,25 +94,34 @@ struct SafeModeSection: View {
     HStack(alignment: .center) {
       // Label
       VStack(alignment: .leading, spacing: 2) {
-        Text("Current connection")
+        Text("Security level")
           .font(.bodyText)
           .foregroundColor(.foreground)
-        if let config = viewModel.notebook.connectionConfig {
-          Text(config.name.isEmpty ? config.displayString : config.name)
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-        }
+        Text(securityCaption)
+          .font(.bodyText)
+          .foregroundColor(.foregroundSubtle)
       }
 
       Spacer()
 
       SafetyOptionMenu(arrowEdge: .top, rows: connectionSecurityRows) {
         settingsChoiceLabel(
-          title: selectedConnectionMode?.displayName ?? "Use Global",
-          systemImage: selectedConnectionMode.map(SafetyOptionStyle.iconName(for:)) ?? "shield",
-          color: SafetyOptionStyle.color(for: selectedConnectionMode))
+          title: connectionSafeMode?.displayName ?? "Use Global",
+          systemImage: connectionSafeMode.map(SafetyOptionStyle.iconName(for:)) ?? "shield",
+          color: SafetyOptionStyle.color(for: connectionSafeMode))
       }
     }
+  }
+
+  private var connectionSafeMode: SafeMode? {
+    viewModel.notebook.connectionConfig?.safeMode
+  }
+
+  private var securityCaption: String {
+    if let mode = connectionSafeMode {
+      return mode.shortDescription
+    }
+    return "Use global setting (\(appSettings.safeMode.displayName))"
   }
 
   private var connectionSecurityRows: [SafetyOptionRow] {
@@ -165,7 +131,7 @@ struct SafeModeSection: View {
         title: "Use Global",
         systemImage: "shield",
         color: SafetyOptionStyle.color(for: nil),
-        selected: selectedConnectionMode == nil
+        selected: connectionSafeMode == nil
       ) {
         handleConnectionSafeModeChange(to: nil)
       }
@@ -176,7 +142,7 @@ struct SafeModeSection: View {
         title: mode.displayName,
         systemImage: SafetyOptionStyle.iconName(for: mode),
         color: SafetyOptionStyle.color(for: mode),
-        selected: selectedConnectionMode == mode
+        selected: connectionSafeMode == mode
       ) {
         handleConnectionSafeModeChange(to: mode)
       }

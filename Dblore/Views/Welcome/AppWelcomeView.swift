@@ -21,6 +21,7 @@ struct AppWelcomeView: View {
 
   var body: some View {
     ZStack {
+      WelcomeWindowMarker().frame(width: 0, height: 0)
       // Main content
       GeometryReader { geometry in
         ScrollView {

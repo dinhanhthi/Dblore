@@ -9,9 +9,8 @@ import SwiftUI
 /// Main container view for a workspace with tabs, sidebars, and content
 struct WorkspaceContainerView: View {
   @Bindable var workspaceManager: WorkspaceManager
-  @State private var showSafeModeModal = false
-  @State private var settingsHighlight: SettingsOption?
   @State private var settingsSection: SettingsPage?
+  @State private var settingsHighlight: SettingsOption?
   @State private var settingsOpenToken = UUID()
 
   /// Get the active view model (if any tab is active)
@@ -143,8 +142,7 @@ struct WorkspaceContainerView: View {
         FooterView(
           viewModel: workspaceManager.isSchemaVisualizerActive ? nil : activeViewModel,
           connectionState: workspaceManager.connectionState,
-          connectionConfig: workspaceManager.workspace.connectionConfig,
-          onSafeModeTap: { showSafeModeModal = true }
+          connectionConfig: workspaceManager.workspace.connectionConfig
         )
       }
     }
@@ -199,26 +197,25 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
     .settingsModal(
-      highlight: settingsHighlight,
       workspaceManager: workspaceManager,
       section: settingsSection,
+      highlight: settingsHighlight,
       openToken: settingsOpenToken
     )
     .favoriteModals(workspaceManager: workspaceManager)
     .historyDetailModal(workspaceManager: workspaceManager)
-    .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
-        settingsHighlight = (notification.userInfo?[SettingsOption.userInfoKey] as? String)
-          .flatMap(SettingsOption.init(rawValue:))
         let section = SettingsPage(rawValue: raw)
       {
         settingsSection = section
+        settingsHighlight = (notification.userInfo?[SettingsOption.userInfoKey] as? String)
+          .flatMap(SettingsOption.init(rawValue:))
         settingsOpenToken = UUID()
-        settingsHighlight = nil
         workspaceManager.isSettingsModalVisible = true
       } else {
         settingsSection = nil
+        settingsHighlight = nil
         workspaceManager.isSettingsModalVisible.toggle()
       }
     }
@@ -807,13 +804,13 @@ struct WorkspaceTitleBarTabsView: View {
           Button {
             openNotebookWithPanel()
           } label: {
-            Label("Open Notebook...", systemImage: "folder")
+            Label("Open Notebook", systemImage: "folder")
           }
 
           Button {
             openSQLFileWithPanel()
           } label: {
-            Label("Open SQL File...", systemImage: "folder")
+            Label("Open SQL File", systemImage: "folder")
           }
         } label: {
           Image(systemName: "plus")

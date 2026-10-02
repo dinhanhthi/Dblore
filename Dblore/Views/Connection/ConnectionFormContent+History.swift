@@ -16,7 +16,7 @@ extension ConnectionFormContent {
   func connectionHistorySection() -> some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       Menu {
-        ForEach(getConnectionHistory()) { entry in
+        ForEach(historyForSelectedType()) { entry in
           Button(action: {
             loadConnection(entry)
           }) {
@@ -92,7 +92,7 @@ extension ConnectionFormContent {
   }
 
   var selectedHistoryEntry: ConnectionHistoryEntry? {
-    getConnectionHistory().first { $0.id == getSelectedHistoryId() }
+    historyForSelectedType().first { $0.id == getSelectedHistoryId() }
   }
 
   func loadConnectionHistory() {
@@ -105,6 +105,7 @@ extension ConnectionFormContent {
 
   func loadConnection(_ entry: ConnectionHistoryEntry) {
     setSelectedHistoryId(entry.id)
+    setFieldsEngine(entry.config.databaseType)
     connectionConfig = entry.config
 
     if getInputMode() == .connectionString {

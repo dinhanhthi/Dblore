@@ -8,7 +8,8 @@
 import SwiftUI
 
 /// Grid of the loaded page (inline edit, cell details and search come from
-/// EditorResultGridView). Page size, column visibility, and paging sit under the grid.
+/// EditorResultGridView). Page size, column visibility, paging, and the
+/// Grid / Chart slider sit under the grid. The slider is trailing.
 struct DataViewerView: View {
   @Bindable var viewModel: NotebookViewModel
 
