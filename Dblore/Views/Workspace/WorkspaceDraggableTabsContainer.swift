@@ -58,9 +58,11 @@ struct WorkspaceDraggableTabsContainer: View {
           canClose: workspaceManager.canClose(tabId: tab.id),
           hasTabsToRight: !workspaceManager.tabsToCloseRight(of: tab.id).isEmpty,
           canRevealFile: workspaceManager.canRevealFile(tabId: tab.id),
+          canMoveToNewWindow: workspaceManager.canMoveToNewWindow(tabId: tab.id),
           onClose: { workspaceManager.requestCloseTab(id: tab.id) },
           onTogglePin: { workspaceManager.setPinned(!tab.isPinned, id: tab.id) },
           onCloseToRight: { workspaceManager.closeTabsToTheRight(of: tab.id) },
+          onMoveToNewWindow: { Task { await workspaceManager.moveTabToNewWindow(id: tab.id) } },
           onRevealFile: { workspaceManager.revealFile(tabId: tab.id) }
         )
         .id(tab.id)
@@ -265,9 +267,11 @@ struct WorkspaceDraggableTabItem: View {
   let canClose: Bool
   let hasTabsToRight: Bool
   let canRevealFile: Bool
+  let canMoveToNewWindow: Bool
   let onClose: () -> Void
   let onTogglePin: () -> Void
   let onCloseToRight: () -> Void
+  let onMoveToNewWindow: () -> Void
   let onRevealFile: () -> Void
 
   @State private var isHovering = false
@@ -325,6 +329,10 @@ struct WorkspaceDraggableTabItem: View {
         Label("Close to the Right", systemImage: "xmark.square")
       }
       .disabled(!hasTabsToRight)
+      Button(action: onMoveToNewWindow) {
+        Label("Open in New Window", systemImage: "macwindow.badge.plus")
+      }
+      .disabled(!canMoveToNewWindow)
       if canRevealFile {
         Divider()
         Button(action: onRevealFile) {

@@ -78,6 +78,77 @@ extension WorkspaceManager {
     revealInFinder(url)
   }
 
+  /// Pinned tabs stay (the close guard would leave them in both windows), the transaction-origin
+  /// tab must resolve its transaction here, and unsaved work cannot travel through a file.
+  func canMoveToNewWindow(tabId: UUID) -> Bool {
+    guard let tab = tabs.first(where: { $0.id == tabId }),
+      !tab.isPinned, tabId != transactionOriginTabId, !isResolvingPendingTransaction
+    else { return false }
+    switch tab.documentType {
+    case .notebook, .sqlFile:
+      return tab.fileURL != nil && !tab.isDirty
+    case .dataViewer:
+      return viewModels[tabId]?.hasPendingStagedChanges != true
+    }
+  }
+
+  /// Open the tab's file in `newManager` (through the tab's bookmark), then close it here.
+  /// A failed open leaves the source tab untouched.
+  func transfer(tabId: UUID, into newManager: WorkspaceManager) async throws {
+    guard canMoveToNewWindow(tabId: tabId), let tab = tabs.first(where: { $0.id == tabId })
+    else { return }
+    if tab.documentType == .dataViewer {
+      // Not pinned (pinned tabs cannot move), so only the relation carries over
+      guard let state = viewModels[tabId]?.dataViewer else {
+        throw CocoaError(.fileReadUnknown)
+      }
+      let ref = WorkspaceTabReference.DataViewerReference(
+        schema: state.schema, name: state.name, orderColumns: state.orderColumns)
+      let newRef = WorkspaceTabReference(
+        documentType: .dataViewer, title: tab.title, dataViewer: ref)
+      newManager.restoreDataViewer(tabRef: newRef, ref: ref)
+      newManager.selectTab(id: newRef.id)
+      requestCloseTab(id: tabId)
+      return
+    }
+    guard let url = tab.fileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+    if let bookmark = tabBookmarks[tabId] {
+      newManager.recents.rememberDocumentBookmark(bookmark, for: url)
+    }
+    let existing = Set(newManager.tabs.map(\.id))
+    try await newManager.openFile(url: url)
+    // The open can suspend (permission prompt): the tab may have changed meanwhile
+    guard canMoveToNewWindow(tabId: tabId) else {
+      for added in newManager.tabs.map(\.id) where !existing.contains(added) {
+        newManager.requestCloseTab(id: added)
+      }
+      throw CocoaError(.userCancelled)
+    }
+    requestCloseTab(id: tabId)
+  }
+
+  /// Move a tab to a new window of the same connection, connecting it when this one is connected
+  func moveTabToNewWindow(id: UUID) async {
+    guard canMoveToNewWindow(tabId: id) else { return }
+    let config = workspace.connectionConfig
+    let previousActive = WorkspaceWindowManager.shared.activeWorkspaceId
+    let newManager = makeWindowManager(config)
+    do {
+      try await transfer(tabId: id, into: newManager)
+    } catch {
+      discardWindowManager(newManager, previousActive)
+      await AppLogger.shared.error("Failed to move tab: \(error)", category: "Tabs")
+      return
+    }
+    WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
+    guard connectionState == .connected, let config else { return }
+    do {
+      try await newManager.connect(config: config)
+    } catch {
+      await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+    }
+  }
+
   private func closesAsynchronously(tabId: UUID) -> Bool {
     if viewModels[tabId]?.hasPendingStagedChanges == true { return true }
     return isResolvingPendingTransaction

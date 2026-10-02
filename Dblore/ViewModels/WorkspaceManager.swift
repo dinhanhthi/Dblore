@@ -103,6 +103,18 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var tabAccess: [UUID: SecurityScopedAccessToken] = [:]
   @ObservationIgnored var accessHooks = SecurityScopedAccessHooks.live
   @ObservationIgnored var recents = RecentManager.shared
+  /// Creates the manager of the window a tab moves to (injectable for tests)
+  @ObservationIgnored var makeWindowManager: (ConnectionConfig?) -> WorkspaceManager = {
+    WorkspaceWindowManager.shared.newWorkspace(connection: $0)
+  }
+  /// Unregisters a window manager whose window never opened, and restores the active workspace
+  @ObservationIgnored var discardWindowManager: (WorkspaceManager, UUID?) -> Void = {
+    manager, previousActive in
+    let windows = WorkspaceWindowManager.shared
+    windows.workspaces.removeValue(forKey: manager.id)
+    manager.releaseFileAccess()
+    if windows.activeWorkspaceId == manager.id { windows.activeWorkspaceId = previousActive }
+  }
 
   // MARK: - UI State
 
@@ -560,7 +572,7 @@ class WorkspaceManager: Identifiable {
   }
 
   /// Restore a pinned data viewer tab with its original ID; its page loads once connected
-  private func restoreDataViewer(
+  func restoreDataViewer(
     tabRef: WorkspaceTabReference, ref: WorkspaceTabReference.DataViewerReference
   ) {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
