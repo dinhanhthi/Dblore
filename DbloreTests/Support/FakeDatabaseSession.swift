@@ -47,7 +47,8 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   }
 }
 
-/// One scripted connection. `query` / `command` record the text they were given.
+/// One scripted connection. `query`, `command`, and `openCursor` record the text and binds
+/// they were given. FETCH and CLOSE record no binds.
 final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let closeEvents: AsyncStream<SessionCloseReason>
@@ -58,6 +59,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
+  private var recordedBinds: [[SQLBindValue]] = []
   private var queriesRecorded: [String] = []
   private var didEmitClose = false
   private var slowContinuation: CheckedContinuation<Void, Error>?
@@ -89,6 +91,13 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     return recorded
   }
 
+  /// Binds accepted with each entry in `statements`, in the same order.
+  var statementBinds: [[SQLBindValue]] {
+    lock.lock()
+    defer { lock.unlock() }
+    return recordedBinds
+  }
+
   var queries: [String] {
     lock.lock()
     defer { lock.unlock() }
@@ -118,18 +127,18 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   }
 
   func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
-    record(sql, query: true)
+    record(sql, binds: binds, query: true)
     if slowQueries { try await waitUntilInterrupted() }
     return rowSource()
   }
 
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
-    record(sql, query: false)
+    record(sql, binds: binds, query: false)
     return Self.commandResult(sql)
   }
 
   func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {
-    record(sql, query: false)
+    record(sql, binds: binds, query: false)
     noteOpenCursor()
     return SessionCursor(name: "fake_cap")
   }
@@ -233,9 +242,10 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     return pending
   }
 
-  private func record(_ sql: String, query: Bool) {
+  private func record(_ sql: String, binds: [SQLBindValue] = [], query: Bool) {
     lock.lock()
     recorded.append(sql)
+    recordedBinds.append(binds)
     if query { queriesRecorded.append(sql) }
     lock.unlock()
   }

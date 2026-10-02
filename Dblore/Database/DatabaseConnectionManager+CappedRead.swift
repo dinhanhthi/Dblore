@@ -130,12 +130,12 @@ extension DatabaseConnectionManager {
   /// CLOSE. The server stops at the cap instead of draining. Errors point at the text sent
   /// (the server position is relative to it).
   func executeCursorRead(
-    _ query: String, maxRows: Int, startTime: Date
+    _ query: String, maxRows: Int, startTime: Date, binds: [SQLBindValue] = []
   ) async throws -> QueryResult {
     let cursor: SessionCursor
     do {
       cursor = try await withSession { session in
-        try await session.openCursor(query, binds: [])
+        try await session.openCursor(query, binds: binds)
       }
     } catch {
       throw unwrapFailure(error, fallbackSQL: query, startTime: startTime)

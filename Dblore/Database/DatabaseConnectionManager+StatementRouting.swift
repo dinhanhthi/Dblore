@@ -66,10 +66,12 @@ nonisolated enum StatementRoute: Sendable, Equatable {
 
 extension DatabaseConnectionManager {
   /// Send `query` unchanged and read the command tag (rows, if any, are discarded).
-  func executeCommand(_ query: String, startTime: Date) async throws -> QueryResult {
+  func executeCommand(
+    _ query: String, startTime: Date, binds: [SQLBindValue] = []
+  ) async throws -> QueryResult {
     do {
       let result = try await withSession { session in
-        try await session.command(query, binds: [])
+        try await session.command(query, binds: binds)
       }
       return QueryResult(
         columns: [], rows: [], rowCount: 0, executionTime: Date().timeIntervalSince(startTime),
@@ -83,11 +85,11 @@ extension DatabaseConnectionManager {
   /// write: the session is never closed mid-stream). With `countRows`, every row returned is
   /// an affected row (DML with RETURNING).
   func executeUnwrapped(
-    _ query: String, countRows: Bool, maxRows: Int, startTime: Date
+    _ query: String, countRows: Bool, maxRows: Int, startTime: Date, binds: [SQLBindValue] = []
   ) async throws -> QueryResult {
     do {
       let collected = try await withSession { session in
-        let source = try await session.query(query, binds: [])
+        let source = try await session.query(query, binds: binds)
         return try await self.readCapped(source, maxRows: maxRows, readToEnd: true)
       }
       var result = QueryResult(

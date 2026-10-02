@@ -6,6 +6,13 @@ import Foundation
 import Logging
 import PostgresNIO
 
+/// One user statement after `:name` replacement, with the names that statement binds.
+private nonisolated struct RewrittenUserStatement: Sendable {
+  let statement: ClassifiedStatement
+  let names: [String]
+  let original: String
+}
+
 /// Outcome of checking a classified script against a `ProtectionPolicy`.
 nonisolated enum GateDecision: Sendable, Equatable {
   case allowed
@@ -22,13 +29,14 @@ extension DatabaseConnectionManager {
   /// pending, a `caller` (tab token) other than the one that opened it is refused
   /// (`DatabaseError.transactionPendingInAnotherTab`). With `expectedEpoch`, nothing is sent
   /// unless the connection is still that one (`DatabaseError.sessionChanged`).
+  /// `parameters` nil sends `userSQL` unchanged. A dictionary rewrites each statement's
+  /// `:name` placeholders and binds those values.
   func execute(
-    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
-    caller: UUID? = nil, expectedEpoch: UInt64? = nil
+    userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
+    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil
   ) async throws -> QueryResult {
-    let (statements, protectedMode) = try authorize(userSQL, policy: policy)
-    let run = try await runUserStatements(
-      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
+    let run = try await runUserSQL(
+      userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
       expectedEpoch: expectedEpoch)
     return Self.combined(run.results.map(\.result), totalTime: run.totalTime)
   }
@@ -36,15 +44,106 @@ extension DatabaseConnectionManager {
   /// Execute user SQL and return one result per statement.
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
   /// violates `policy`. Under Protected mode, writes run in the app transaction (same `caller`
-  /// rule as `execute`, same `expectedEpoch` check).
+  /// rule as `execute`, same `expectedEpoch` check). `parameters` nil sends `userSQL`
+  /// unchanged; a dictionary rewrites `:name` the same way `execute` does.
   func executeDetailed(
-    userSQL: String, policy: ProtectionPolicy, maxRows: Int = defaultMaxFetchRows,
-    caller: UUID? = nil, expectedEpoch: UInt64? = nil
+    userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
+    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
-    let (statements, protectedMode) = try authorize(userSQL, policy: policy)
-    return try await runUserStatements(
-      statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
+    try await runUserSQL(
+      userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
       expectedEpoch: expectedEpoch)
+  }
+
+  /// `parameters` nil keeps the authorize path. A dictionary rewrites first, then uses the
+  /// same effective policy; missing names are refused only after that policy allows the script.
+  private func runUserSQL(
+    _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
+    maxRows: Int, caller: UUID?, expectedEpoch: UInt64?
+  ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
+    guard let parameters else {
+      let (statements, protectedMode) = try authorize(userSQL, policy: policy)
+      return try await runUserStatements(
+        statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
+        expectedEpoch: expectedEpoch)
+    }
+    let plan = try planNamedParameters(userSQL, parameters: parameters, policy: policy)
+    return try await runUserStatements(
+      plan.statements, protectedMode: plan.protectedMode, maxRows: maxRows, caller: caller,
+      expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts)
+  }
+
+  private func planNamedParameters(
+    _ sql: String, parameters: [String: SQLBindValue], policy: ProtectionPolicy
+  ) throws -> (
+    statements: [ClassifiedStatement], protectedMode: Bool, binds: [[SQLBindValue]],
+    originalTexts: [String]
+  ) {
+    let dialect = Self.dialect(of: config)
+    let original = Self.classifyUserSQL(sql, config: config)
+    if Self.hasMixedPlaceholders(original, dialect: dialect) {
+      throw DatabaseError.mixedPlaceholders
+    }
+    let rewritten = Self.rewriteNamedParameters(original, dialect: dialect)
+    let effective = effectivePolicy(for: policy)
+    let statements = rewritten.map(\.statement)
+    if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
+    {
+      throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
+    }
+    let missing = Self.missingParameterNames(in: rewritten, parameters: parameters)
+    guard missing.isEmpty else { throw DatabaseError.missingParameters(missing) }
+    return (
+      statements, effective.protectedMode, Self.bindValues(for: rewritten, parameters: parameters),
+      rewritten.map(\.original)
+    )
+  }
+
+  /// True when any statement both names a `:name` and contains a positional placeholder.
+  /// The whole script is scanned before a caller may classify the rewritten text for policy.
+  private nonisolated static func hasMixedPlaceholders(
+    _ statements: [ClassifiedStatement], dialect: SQLDialect
+  ) -> Bool {
+    statements.contains { statement in
+      let names = SQLParameterRewriter.parameterNames(in: statement.text, dialect: dialect)
+      return !names.isEmpty
+        && SQLParameterRewriter.containsPositionalPlaceholder(
+          in: statement.text, dialect: dialect)
+    }
+  }
+
+  /// Replace `:name` per statement. A statement the classifier drops (empty / comment-only)
+  /// is omitted, so binds stay aligned with what will be sent.
+  private nonisolated static func rewriteNamedParameters(
+    _ statements: [ClassifiedStatement], dialect: SQLDialect
+  ) -> [RewrittenUserStatement] {
+    statements.compactMap { statement in
+      let (text, names) = SQLParameterRewriter.rewrite(statement: statement.text, dialect: dialect)
+      guard let classified = SQLStatementClassifier.classifyStatement(text, dialect: dialect) else {
+        return nil
+      }
+      return RewrittenUserStatement(statement: classified, names: names, original: statement.text)
+    }
+  }
+
+  /// Distinct names in first-occurrence order across `rewritten` that `parameters` does not have.
+  private nonisolated static func missingParameterNames(
+    in rewritten: [RewrittenUserStatement], parameters: [String: SQLBindValue]
+  ) -> [String] {
+    var ordered: [String] = []
+    var seen: Set<String> = []
+    for piece in rewritten {
+      for name in piece.names where seen.insert(name).inserted {
+        ordered.append(name)
+      }
+    }
+    return ordered.filter { parameters[$0] == nil }
+  }
+
+  private nonisolated static func bindValues(
+    for rewritten: [RewrittenUserStatement], parameters: [String: SQLBindValue]
+  ) -> [[SQLBindValue]] {
+    rewritten.map { piece in piece.names.compactMap { parameters[$0] } }
   }
 
   /// Send an inline grid edit (app-built UPDATE, values as bind parameters); it must update

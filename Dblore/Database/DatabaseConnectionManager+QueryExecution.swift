@@ -161,8 +161,9 @@ extension DatabaseConnectionManager {
   ///   - query: Single SQL statement
   ///   - maxRows: Maximum number of rows to fetch
   ///   - inTransaction: A transaction is open (app or user): a plain read goes through a cursor
+  ///   - binds: Values for the statement's placeholders. Never interpolated into `query`.
   func executeSingleStatement(
-    _ query: String, maxRows: Int, inTransaction: Bool = false
+    _ query: String, maxRows: Int, inTransaction: Bool = false, binds: [SQLBindValue] = []
   ) async throws -> QueryResult {
     guard session != nil else {
       throw DatabaseError.notConnected
@@ -185,18 +186,19 @@ extension DatabaseConnectionManager {
       query, dialect: Self.dialect(of: config))
     switch StatementRoute.route(for: statement) {
     case .command:
-      return try await executeCommand(query, startTime: startTime)
+      return try await executeCommand(query, startTime: startTime, binds: binds)
     case .returningRows:
       return try await executeUnwrapped(
-        query, countRows: true, maxRows: maxRows, startTime: startTime)
+        query, countRows: true, maxRows: maxRows, startTime: startTime, binds: binds)
     case .unwrappedRows:
       return try await executeUnwrapped(
-        query, countRows: false, maxRows: maxRows, startTime: startTime)
+        query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds)
     case .read:
       if inTransaction, let statement, Self.usesCursor(statement),
         session?.capabilities.supportsServerCursor == true
       {
-        return try await executeCursorRead(query, maxRows: maxRows, startTime: startTime)
+        return try await executeCursorRead(
+          query, maxRows: maxRows, startTime: startTime, binds: binds)
       }
     }
 
@@ -205,7 +207,7 @@ extension DatabaseConnectionManager {
     // (`resetSessionIfCapped`) or drained.
     do {
       let collected = try await withSession { current in
-        let source = try await current.query(query, binds: [])
+        let source = try await current.query(query, binds: binds)
         return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
       }
       let executionTime = Date().timeIntervalSince(startTime)
