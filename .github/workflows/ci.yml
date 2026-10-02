@@ -1,7 +1,8 @@
 name: CI
 
-# Unit tests on pull requests and on pushes to main. Integration suites stay off
-# (SKIP_INTEGRATION_TESTS); they need the local PostgreSQL container.
+# Unit tests on pull requests and by hand. Ordinary pushes to main do not run it; /cf-ship
+# dispatches it on the release commit. Integration suites stay off (SKIP_INTEGRATION_TESTS);
+# they need the local PostgreSQL container.
 
 on:
   pull_request:
@@ -11,13 +12,7 @@ on:
       - 'DbloreTests/**'
       - 'Dblore.xcodeproj/**'
       - '.github/workflows/ci.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'Dblore/**'
-      - 'DbloreTests/**'
-      - 'Dblore.xcodeproj/**'
-      - '.github/workflows/ci.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,7 +25,7 @@ concurrency:
 jobs:
   test:
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

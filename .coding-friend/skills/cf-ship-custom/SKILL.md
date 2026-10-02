@@ -197,6 +197,8 @@ gh run watch "$id" --exit-status --interval 30 && echo "build check green for $s
 
 The `before` list ignores an older run of the same SHA, so repeating this step starts a new one.
 
+`ci.yml` (unit tests) does not run on pushes to `main` either. Dispatch it the same way (`gh workflow run ci.yml --ref main`, find the new run with `--workflow=ci.yml`, `gh run watch --exit-status`) and do not tag until it is green too.
+
 - Tag only after `build check green`. If it fails, **do not tag**: report `gh run view "$id" --log-failed | grep -E "error:"`, fix in a new commit, push, and repeat this step.
 - If the release commit was not the last push (another commit landed on `origin`), pull, push and rerun this step for the new `HEAD`: the tag must point at the SHA that was checked.
 - Optional, before pushing: `scripts/ci-build-check.sh` runs the same archive locally with the pinned Xcode, when it is installed side by side.
