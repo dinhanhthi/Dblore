@@ -162,6 +162,7 @@ extension WorkspaceManager {
       await refreshPendingTransaction()
       showTransactionToast(
         "Committed \(Self.statements(summary.statementCount))", type: .success)
+      for viewModel in viewModels.values { viewModel.cellsEditedInTransaction = [] }
       return true
     } catch {
       await refreshPendingTransaction()
@@ -188,6 +189,9 @@ extension WorkspaceManager {
       try await connectionManager.rollbackAppTransaction()
       await refreshPendingTransaction()
       showTransactionToast("Rolled back \(Self.statements(before.pending.count))", type: .info)
+      // A page loaded while the transaction was open still shows those rows
+      await reloadDataViewersAfterRollback()
+      await rerunEditedCellsAfterRollback()
       return true
     } catch {
       await refreshPendingTransaction()
@@ -366,6 +370,26 @@ extension WorkspaceManager {
     }
     let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     return resolutions.indices.contains(index) ? resolutions[index] : .cancel
+  }
+
+  /// Reload every data-viewer page. A page read inside the transaction still shows those rows.
+  /// Same reload as header Refresh (`totalRows` forgotten, then the page and the count), without
+  /// its Commit / Discard prompt: a staged edit stays on top of the reloaded page.
+  private func reloadDataViewersAfterRollback() async {
+    for viewModel in viewModels.values where viewModel.dataViewer != nil {
+      viewModel.dataViewer?.totalRows = nil
+      await viewModel.loadDataViewerPage()
+    }
+  }
+
+  /// Re-run every cell edited inline in the rolled-back transaction: its result still shows
+  /// the edited values.
+  private func rerunEditedCellsAfterRollback() async {
+    for viewModel in viewModels.values {
+      let cellIds = viewModel.cellsEditedInTransaction
+      viewModel.cellsEditedInTransaction = []
+      for cellId in cellIds { await viewModel.runCell(id: cellId) }
+    }
   }
 
   private static func statements(_ count: Int) -> String {

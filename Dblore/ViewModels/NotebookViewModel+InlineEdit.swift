@@ -240,6 +240,7 @@ extension NotebookViewModel {
             sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
             rowCount: rowsAffected, status: .success, errorMessage: nil)
         ], source: .dataViewerEdit)
+      if let cellId = edit.cellId { cellsEditedInTransaction.insert(cellId) }
       // Success needs no toast: the refreshed cell (and the pending banner) shows it
       if rowsAffected != 1 {
         showToast(

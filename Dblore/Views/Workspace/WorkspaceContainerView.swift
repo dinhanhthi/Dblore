@@ -10,6 +10,7 @@ import SwiftUI
 struct WorkspaceContainerView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @State private var showSafeModeModal = false
+  @State private var settingsHighlight: SettingsOption?
   @State private var settingsSection: SettingsPage?
   @State private var settingsOpenToken = UUID()
 
@@ -198,6 +199,7 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .connectionInfoModal(workspaceManager: workspaceManager)
     .settingsModal(
+      highlight: settingsHighlight,
       workspaceManager: workspaceManager,
       section: settingsSection,
       openToken: settingsOpenToken
@@ -207,10 +209,13 @@ struct WorkspaceContainerView: View {
     .safeModeModal(isPresented: $showSafeModeModal)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
+        settingsHighlight = (notification.userInfo?[SettingsOption.userInfoKey] as? String)
+          .flatMap(SettingsOption.init(rawValue:))
         let section = SettingsPage(rawValue: raw)
       {
         settingsSection = section
         settingsOpenToken = UUID()
+        settingsHighlight = nil
         workspaceManager.isSettingsModalVisible = true
       } else {
         settingsSection = nil

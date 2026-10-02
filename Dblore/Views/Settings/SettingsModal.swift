@@ -12,11 +12,19 @@ import UniformTypeIdentifiers
 enum SettingsPage: String {
   case ai
   case data
+  case results
 
   static let userInfoKey = "settingsSection"
 }
 
 // MARK: - Settings Modal
+/// A single option another screen can ask Settings to highlight briefly.
+enum SettingsOption: String {
+  case inlineEditAutoCommit
+
+  static let userInfoKey = "settingsHighlight"
+}
+
 
 /// Main settings modal for workspace level
 /// Shows settings in a tabbed modal, one section per tab
@@ -26,23 +34,27 @@ struct SettingsModal: View {
   let section: SettingsPage?
   let openToken: UUID
 
+  let highlight: SettingsOption?
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
   @State private var selectedTab: SettingsTab
 
   init(
+  @State private var highlightedOption: SettingsOption?
     isPresented: Binding<Bool>,
     viewMode: ViewMode?,
     section: SettingsPage? = nil,
     openToken: UUID = UUID()
   ) {
     _isPresented = isPresented
+    highlight: SettingsOption? = nil,
     self.viewMode = viewMode
     self.section = section
     self.openToken = openToken
     _selectedTab = State(initialValue: SettingsTab.tab(for: section))
   }
 
+    self.highlight = highlight
   /// Tabs shown in the settings tab row (rawValue = label)
   private enum SettingsTab: String, CaseIterable {
     case appearance = "Appearance"
@@ -80,6 +92,7 @@ struct SettingsModal: View {
   }
 
   /// Effective view mode - defaults to notebook if no active tab
+      case .results: .results
   private var effectiveViewMode: ViewMode {
     viewMode ?? .notebook
   }
@@ -145,6 +158,13 @@ struct SettingsModal: View {
   private var selectedSection: some View {
     switch selectedTab {
     case .appearance:
+    // Highlight the requested option for a moment, then fade it out
+    .task(id: openToken) {
+      withAnimation(.easeIn(duration: 0.2)) { highlightedOption = highlight }
+      guard highlight != nil else { return }
+      try? await Task.sleep(for: .seconds(2.5))
+      withAnimation(.easeOut(duration: 0.6)) { highlightedOption = nil }
+    }
       AppearanceSettingsSection(appSettings: appSettings)
     case .editor:
       SettingsModalEditorSection(
@@ -310,6 +330,7 @@ struct SettingsModalResultTableSection: View {
       )
 
       // Hide Column Types toggle
+  var highlightedOption: SettingsOption?
       SettingsToggle(
         title: "Hide Column Types",
         description:
@@ -347,6 +368,12 @@ struct SettingsModalResultTableSection: View {
       )
 
       // One row cap for Notebook and Editor
+      .padding(Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: 8)
+          .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
+      )
+      .padding(-Spacing.sm)
       ResultRowCapSetting(appSettings: appSettings)
     }
   }
@@ -550,6 +577,7 @@ extension View {
 
 extension View {
   /// Shows a settings modal bound to a WorkspaceManager
+    highlight: SettingsOption? = nil,
   func settingsModal(
     workspaceManager: WorkspaceManager,
     section: SettingsPage? = nil,
@@ -558,6 +586,7 @@ extension View {
     self.settingsModal(
       isPresented: Binding(
         get: { workspaceManager.isSettingsModalVisible },
+        highlight: highlight,
         set: { workspaceManager.isSettingsModalVisible = $0 }
       ),
       viewMode: workspaceManager.activeViewModel?.viewMode,
@@ -571,6 +600,7 @@ extension View {
 
 #Preview("Settings Modal") {
   @Previewable @State var isPresented = true
+    highlight: SettingsOption? = nil,
 
   Color.appBackground
     .frame(width: 800, height: 700)
@@ -581,6 +611,7 @@ extension View {
   @Previewable @State var isPresented = true
 
   Color.appBackground
+      highlight: highlight,
     .frame(width: 800, height: 700)
     .settingsModal(isPresented: $isPresented, viewMode: .editor)
 }

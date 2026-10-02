@@ -474,6 +474,15 @@ struct WorkspaceTransactionIntegrationTests {
     ).rows.first?.first
   }
 
+  /// First loaded row's `name` column, or nil when the page has not loaded it
+  private func columnValue(_ viewModel: NotebookViewModel, _ name: String) -> CellValue? {
+    guard let result = viewModel.editorResult,
+      let index = result.columns.firstIndex(where: { $0.name == name }),
+      let row = result.rows.first, row.indices.contains(index)
+    else { return nil }
+    return row[index]
+  }
+
   @Test("UPDATE in a tab: the workspace mirror shows 1 pending statement with its rows")
   func updateShowsPending() async throws {
     let fixture = try await setUp("p3_ws_pending")
@@ -497,6 +506,66 @@ struct WorkspaceTransactionIntegrationTests {
     #expect(fixture.workspace.pendingTransaction.isIdle)
     #expect(fixture.workspace.transactionOpenedAt == nil)
     #expect(fixture.workspace.transactionOriginTabId == nil)
+    #expect(try await committedValue(fixture) == .int(10))
+    await tearDown(fixture)
+  }
+
+  @Test(
+    "Rollback reloads a data viewer page that was read inside the transaction",
+    .timeLimit(.minutes(1)))
+  func rollbackReloadsDataViewerPage() async throws {
+    let fixture = try await setUp("p3_ws_rollback_viewer")
+    fixture.viewModel.dataViewer = DataViewerState(
+      schema: "public", name: fixture.table, orderColumns: ["id"])
+    await fixture.viewModel.loadDataViewerPage()
+    #expect(columnValue(fixture.viewModel, "v") == .int(10))
+
+    let result = try #require(fixture.viewModel.editorResult)
+    let idColumn = try #require(result.columns.firstIndex { $0.name == "id" })
+    let row = try #require(result.rows.firstIndex { $0[idColumn] == .int(1) })
+    #expect(fixture.viewModel.stageEdit(row: row, column: "v", value: .int(30)) == nil)
+    await fixture.viewModel.commitStaged()
+
+    // The page reload ran inside the open transaction, so the grid shows the edit
+    #expect(fixture.viewModel.dataViewer?.changeSet == nil)
+    #expect(!fixture.workspace.pendingTransaction.isIdle)
+    #expect(columnValue(fixture.viewModel, "v") == .int(30))
+
+    #expect(await fixture.workspace.rollback())
+    #expect(fixture.workspace.pendingTransaction.isIdle)
+    #expect(columnValue(fixture.viewModel, "v") == .int(10))
+    #expect(try await committedValue(fixture) == .int(10))
+    await tearDown(fixture)
+  }
+
+  @Test(
+    "Rollback reloads the page under a staged edit and keeps that edit",
+    .timeLimit(.minutes(1)))
+  func rollbackReloadsPageUnderStagedEdit() async throws {
+    let fixture = try await setUp("p3_ws_rollback_staged")
+    _ = try await fixture.observer.executeInternal(
+      "ALTER TABLE \(fixture.table) ADD COLUMN note text")
+    _ = try await fixture.observer.executeInternal(
+      "UPDATE \(fixture.table) SET note = 'old' WHERE id = 1")
+    fixture.viewModel.dataViewer = DataViewerState(
+      schema: "public", name: fixture.table, orderColumns: ["id"])
+    await fixture.viewModel.loadDataViewerPage()
+
+    let result = try #require(fixture.viewModel.editorResult)
+    let idColumn = try #require(result.columns.firstIndex { $0.name == "id" })
+    let row = try #require(result.rows.firstIndex { $0[idColumn] == .int(1) })
+    #expect(fixture.viewModel.stageEdit(row: row, column: "v", value: .int(30)) == nil)
+    await fixture.viewModel.commitStaged()
+    #expect(columnValue(fixture.viewModel, "v") == .int(30))
+    #expect(!fixture.workspace.pendingTransaction.isIdle)
+
+    #expect(fixture.viewModel.stageEdit(row: row, column: "note", value: .string("staged")) == nil)
+    #expect(await fixture.workspace.rollback())
+
+    #expect(columnValue(fixture.viewModel, "v") == .int(10))
+    #expect(columnValue(fixture.viewModel, "note") == .string("old"))
+    #expect(
+      fixture.viewModel.dataViewer?.changeSet?.edits.values.first?["note"] == .string("staged"))
     #expect(try await committedValue(fixture) == .int(10))
     await tearDown(fixture)
   }

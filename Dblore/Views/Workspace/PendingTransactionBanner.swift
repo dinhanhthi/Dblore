@@ -78,8 +78,28 @@ struct PendingTransactionBanner: View {
 
       slowEndingDisconnect
 
-      Button("Roll Back") {
+      Button {
+        NotificationCenter.default.post(
+          name: .openSettings, object: nil,
+          userInfo: [
+            SettingsPage.userInfoKey: SettingsPage.results.rawValue,
+            SettingsOption.userInfoKey: SettingsOption.inlineEditAutoCommit.rawValue,
+          ])
+      } label: {
+        Image(systemName: "gearshape")
+          .foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .linkPointer()
+      .controlSize(.small)
+      .help("Settings: Commit Inline Edits Immediately")
+      .accessibilityLabel("Open settings for committing inline edits")
+
+      Button {
         run { await workspaceManager.rollback() }
+      } label: {
+        Text("Roll Back")
+          .transactionActionLabel()
       }
       .glassButtonStyle()
       .linkPointer()
@@ -87,8 +107,11 @@ struct PendingTransactionBanner: View {
       .disabled(isWorking || isBusy)
       .accessibilityLabel("Roll back \(summary.statementCount) pending statements")
 
-      Button("Commit") {
+      Button {
         workspaceManager.requestCommit()
+      } label: {
+        Text("Commit")
+          .transactionActionLabel()
       }
       .glassButtonStyle(prominent: true)
       .linkPointer()
@@ -123,8 +146,11 @@ struct PendingTransactionBanner: View {
         if let title = PendingTransactionSummary.slowEndingPrompt(
           summary.ending, elapsed: context.date.timeIntervalSince(since))
         {
-          Button(title) {
+          Button {
             Task { await workspaceManager.disconnect() }
+          } label: {
+            Text(title)
+              .transactionActionLabel()
           }
           .glassButtonStyle(prominent: true)
           .linkPointer()
@@ -172,6 +198,22 @@ struct PendingTransactionBanner: View {
       _ = await action()
       isWorking = false
     }
+  }
+}
+
+/// Roll Back and Commit match the settings button's hover circle.
+private enum TransactionActionMetrics {
+  /// `GhostButtonStyle` icon-only at `.small`: an 11pt symbol lays out at 14pt,
+  /// and vertical padding is `Spacing.sm - 2` on each side.
+  static let iconButtonHeight: CGFloat = 14 + (Spacing.sm - 2) * 2
+  /// A `.small` glass or bordered button draws 6pt taller than its label.
+  static let labelChrome: CGFloat = 6
+  static var labelHeight: CGFloat { iconButtonHeight - labelChrome }
+}
+
+extension View {
+  fileprivate func transactionActionLabel() -> some View {
+    frame(height: TransactionActionMetrics.labelHeight)
   }
 }
 
