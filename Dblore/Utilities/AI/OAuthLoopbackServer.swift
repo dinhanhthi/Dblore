@@ -51,7 +51,7 @@ nonisolated final class OAuthLoopbackServer: @unchecked Sendable {
           self.continuation = continuation
           let pending = self.deferredRequests
           self.deferredRequests = []
-          pending.forEach { $0() }
+          for request in pending { request() }
           self.queue.asyncAfter(deadline: .now() + timeout) {
             self.finish(.failure(ChatGPTOAuthError.denied("timeout")))
           }

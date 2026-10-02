@@ -164,7 +164,8 @@ struct ColumnValueFilterTests {
     }
     let listed = ColumnValueFilter.listedCategories(categories)
     #expect(listed.count == ColumnValueFilter.listedCategoryLimit)
-    #expect(listed.map(\.key) == categories.prefix(ColumnValueFilter.listedCategoryLimit).map(\.key))
+    #expect(
+      listed.map(\.key) == categories.prefix(ColumnValueFilter.listedCategoryLimit).map(\.key))
   }
 
   @Test("A hidden search match moves to the next row the grid can show")

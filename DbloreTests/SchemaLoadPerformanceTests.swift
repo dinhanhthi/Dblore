@@ -10,7 +10,8 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Schema Load Performance - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
+@Suite(
+  "Schema Load Performance - Integration (Requires PostgreSQL)", .requiresPostgres, .serialized)
 @MainActor
 struct SchemaLoadPerformanceTests {
   private static let testSchema = "perf_schema_load_test"

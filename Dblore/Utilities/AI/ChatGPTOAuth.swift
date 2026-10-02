@@ -199,10 +199,17 @@ nonisolated enum ChatGPTOAuth: Sendable {
   // MARK: - Tokens
 
   private struct TokenResponse: Decodable {
-    let access_token: String
-    let refresh_token: String?
-    let id_token: String?
-    let expires_in: Double?
+    let accessToken: String
+    let refreshToken: String?
+    let idToken: String?
+    let expiresIn: Double?
+
+    enum CodingKeys: String, CodingKey {
+      case accessToken = "access_token"
+      case refreshToken = "refresh_token"
+      case idToken = "id_token"
+      case expiresIn = "expires_in"
+    }
   }
 
   /// Parses a token or refresh response. A refresh response may omit `refresh_token` / `id_token`;
@@ -211,18 +218,18 @@ nonisolated enum ChatGPTOAuth: Sendable {
     _ data: Data, now: Date = Date(), previous: ChatGPTTokens? = nil
   ) throws(ChatGPTOAuthError) -> ChatGPTTokens {
     guard let response = try? JSONDecoder().decode(TokenResponse.self, from: data),
-      let refreshToken = response.refresh_token ?? previous?.refreshToken,
-      let idToken = response.id_token ?? previous?.idToken
+      let refreshToken = response.refreshToken ?? previous?.refreshToken,
+      let idToken = response.idToken ?? previous?.idToken
     else { throw .invalidTokenResponse }
 
     let claims = decodeJWT(idToken)
     let expiresAt =
-      response.expires_in.map { now.addingTimeInterval($0) }
-      ?? decodeJWT(response.access_token)?.exp ?? claims?.exp
+      response.expiresIn.map { now.addingTimeInterval($0) }
+      ?? decodeJWT(response.accessToken)?.exp ?? claims?.exp
     guard let expiresAt else { throw .invalidTokenResponse }
 
     return ChatGPTTokens(
-      accessToken: response.access_token,
+      accessToken: response.accessToken,
       refreshToken: refreshToken,
       idToken: idToken,
       expiresAt: expiresAt,

@@ -11,7 +11,7 @@ nonisolated struct SQLiteError: Error, Equatable {
 }
 
 /// Copies the bound bytes before `sqlite3_bind_*` returns. The module does not export this macro.
-private nonisolated(unsafe) let SQLITE_TRANSIENT = unsafeBitCast(
+private nonisolated(unsafe) let sqliteTransient = unsafeBitCast(
   -1, to: sqlite3_destructor_type.self)
 
 /// One SQLite connection. Not `Sendable`: a later actor owns the instance and its statements.
@@ -202,7 +202,7 @@ nonisolated final class SQLiteHandle {
 
     func bind(text: String, index: Int32) throws {
       let code = text.withCString { pointer in
-        sqlite3_bind_text(statement, index, pointer, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(statement, index, pointer, -1, sqliteTransient)
       }
       try check(code)
     }
@@ -253,12 +253,12 @@ nonisolated final class SQLiteHandle {
       if data.isEmpty {
         // A NULL pointer binds SQL NULL. A length of 0 with a live address is an empty blob.
         var placeholder: UInt8 = 0
-        try check(sqlite3_bind_blob(statement, index, &placeholder, 0, SQLITE_TRANSIENT))
+        try check(sqlite3_bind_blob(statement, index, &placeholder, 0, sqliteTransient))
         return
       }
       let code = data.withUnsafeBytes { buffer in
         sqlite3_bind_blob(
-          statement, index, buffer.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
+          statement, index, buffer.baseAddress, Int32(data.count), sqliteTransient)
       }
       try check(code)
     }

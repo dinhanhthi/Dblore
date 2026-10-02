@@ -36,10 +36,10 @@ nonisolated private final class FakeAIChatClient: AIChatClient, @unchecked Senda
       let task = Task {
         switch script {
         case .events(let texts):
-          texts.forEach { continuation.yield(.text($0)) }
+          for text in texts { continuation.yield(.text(text)) }
           continuation.finish()
         case .eventsThenFail(let texts, let error):
-          texts.forEach { continuation.yield(.text($0)) }
+          for text in texts { continuation.yield(.text(text)) }
           continuation.finish(throwing: error)
         case .loadingThenHang:
           continuation.yield(.loadingModel)
@@ -50,7 +50,7 @@ nonisolated private final class FakeAIChatClient: AIChatClient, @unchecked Senda
           continuation.yield(.text(text))
           continuation.finish()
         case .eventsThenHang(let texts):
-          texts.forEach { continuation.yield(.text($0)) }
+          for text in texts { continuation.yield(.text(text)) }
           try? await Task.sleep(for: .seconds(60))
           continuation.finish()
         }

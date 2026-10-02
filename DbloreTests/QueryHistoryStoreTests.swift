@@ -22,21 +22,23 @@ struct QueryHistoryStoreTests {
       Self.entry(sql: "SELECT name FROM customers", at: start.addingTimeInterval(20)))
 
     let prefix = try await store.search(text: "cust", scope: .all, limit: 10, offset: 0)
-    #expect(prefix.map(\.sql).sorted() == [
-      "DELETE FROM customers",
-      "SELECT * FROM customers WHERE city = 'Paris'",
-      "SELECT name FROM customers",
-    ])
+    #expect(
+      prefix.map(\.sql).sorted() == [
+        "DELETE FROM customers",
+        "SELECT * FROM customers WHERE city = 'Paris'",
+        "SELECT name FROM customers",
+      ])
 
     let terms = try await store.search(text: "select name", scope: .all, limit: 10, offset: 0)
     #expect(terms.map(\.sql) == ["SELECT name FROM customers"])
 
     let recent = try await store.search(text: "   ", scope: .all, limit: 10, offset: 0)
-    #expect(recent.map(\.sql) == [
-      "SELECT name FROM customers",
-      "DELETE FROM customers",
-      "SELECT * FROM customers WHERE city = 'Paris'",
-    ])
+    #expect(
+      recent.map(\.sql) == [
+        "SELECT name FROM customers",
+        "DELETE FROM customers",
+        "SELECT * FROM customers WHERE city = 'Paris'",
+      ])
 
     let page = try await store.search(text: "", scope: .all, limit: 1, offset: 1)
     #expect(page.map(\.sql) == ["DELETE FROM customers"])
