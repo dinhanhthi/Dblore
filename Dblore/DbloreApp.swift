@@ -542,7 +542,11 @@ struct TabCommands: Commands {
         }
       }
       .keyboardShortcut("w", modifiers: .command)
-      .disabled(activeTabId == nil)
+      .disabled(
+        activeTabId == nil
+          || WorkspaceWindowManager.shared.activeWorkspaceManager?.canClose(tabId: activeTabId!)
+            == false
+      )
 
       Button("Reopen Closed Tab") {
         Task {

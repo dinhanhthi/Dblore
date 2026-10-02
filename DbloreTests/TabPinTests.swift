@@ -50,6 +50,17 @@ struct TabPinTests {
     #expect(Self.titles(manager) == ["t1", "t0", "t3", "t2"])
   }
 
+  @Test("clampedMoveTarget keeps the visual drag target inside its zone")
+  func clampedTargetStaysInZone() {
+    let manager = Self.manager(tabCount: 4)
+    manager.setPinned(true, id: manager.tabs[0].id)
+    manager.setPinned(true, id: manager.tabs[1].id)
+    #expect(manager.clampedMoveTarget(from: 0, to: 3) == 1)
+    #expect(manager.clampedMoveTarget(from: 3, to: 0) == 2)
+    #expect(manager.clampedMoveTarget(from: 2, to: 3) == 3)
+    #expect(manager.clampedMoveTarget(from: 1, to: 0) == 0)
+  }
+
   @Test("requestCloseTab is a no-op for a pinned tab")
   func pinnedCannotClose() {
     let manager = Self.manager(tabCount: 2)
