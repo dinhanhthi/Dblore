@@ -72,11 +72,14 @@ struct PrimaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
+  /// Label color on the accent fill. Nil keeps the standard foreground.
+  /// The editor Run button passes white so it matches the selected sidebar tab.
+  var labelColor: Color? = nil
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(
       variant: .primary, iconOnly: iconOnly, hPadding: hPadding,
-      vPadding: vPadding, configuration: configuration
+      vPadding: vPadding, labelColor: labelColor, configuration: configuration
     )
   }
 }
@@ -141,6 +144,7 @@ private struct BaseButtonStyleView: View {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
+  var labelColor: Color? = nil
   let configuration: ButtonStyleConfiguration
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.controlSize) private var controlSize
@@ -209,8 +213,9 @@ private struct BaseButtonStyleView: View {
     configuration.label
       .font(iconFontSize.map { Font.system(size: $0) } ?? font)
       .foregroundColor(
-        variant.foregroundColor(
-          isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
+        labelColor
+          ?? variant.foregroundColor(
+            isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, verticalPadding)

@@ -31,6 +31,7 @@ struct HeaderView: View {
             }
           }) {
             Label("New", systemImage: "plus")
+              .notebookToolbarLabelPadding()
           }
           .glassButtonStyle()
           .linkPointer()
@@ -42,6 +43,7 @@ struct HeaderView: View {
             showRunAllConfirmation = true
           }) {
             Label("Run All", systemImage: "play.fill")
+              .notebookToolbarLabelPadding()
           }
           .glassButtonStyle()
           .linkPointer()
@@ -88,6 +90,7 @@ struct HeaderView: View {
             showClearAllOutputsConfirmation = true
           }) {
             Label("Clear All Outputs", systemImage: "trash")
+              .notebookToolbarLabelPadding()
           }
           .glassButtonStyle()
           .linkPointer()
@@ -117,6 +120,9 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .glassButtonStyle()
+          // A Menu bezel ignores label padding and stays 24pt. `.large` is the same
+          // 24 → 28 step the padded buttons take, and it keeps the 13pt label.
+          .controlSize(.large)
           .linkPointer()
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
@@ -141,9 +147,12 @@ struct HeaderView: View {
               }
             }
           }
-          .glassButtonStyle(prominent: true)
+          // Flat accent fill and white label, same paint as the selected sidebar tab.
+          // glassProminent tints the glass material, so the fill reads lighter than Color.accent.
+          // Spacing.xs is 2pt shorter per side than a regular primary button. editorHeaderHeight
+          // drops by the same amount so the gap around Run stays put.
+          .buttonStyle(PrimaryButtonStyle(vPadding: Spacing.xs, labelColor: .white))
           .linkPointer()
-          .tint(Color.accent)
           .disabled(
             viewModel.isEditorQueryRunning
               ? !canStopEditorQuery
@@ -291,14 +300,24 @@ struct HeaderView: View {
       }
     }
     .padding(.horizontal, Spacing.sm)
-    .frame(
-      height: viewModel.dataViewer != nil
-        ? ComponentSize.compactHeaderHeight : ComponentSize.headerHeight
-    )
+    .frame(height: headerBarHeight)
     .background(Color.appBackground)
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+
+  /// Notebook and data-viewer bars stay fixed. The SQL editor bar follows the shorter Run button.
+  private var headerBarHeight: CGFloat {
+    if viewModel.dataViewer != nil { return ComponentSize.compactHeaderHeight }
+    if viewModel.viewMode == .editor { return Self.editorHeaderHeight }
+    return ComponentSize.headerHeight
+  }
+
+  /// Run uses `Spacing.xs` vertical padding, 2pt less per side than a regular primary button.
+  private static var editorHeaderHeight: CGFloat {
+    let shrink = (ButtonMetrics.regularVerticalPadding - Spacing.xs) * 2
+    return ComponentSize.headerHeight - shrink
   }
 
   // MARK: - Safety Badge
@@ -363,6 +382,14 @@ struct HeaderView: View {
       • Allow: Execute all cells
       • Don't Allow: Skip the cells listed above and run the rest
       """
+  }
+}
+
+extension View {
+  /// Extra vertical padding inside notebook toolbar labels. The glass bezel grows with the
+  /// label, so the capsules get a little taller. The header stays `ComponentSize.headerHeight`.
+  fileprivate func notebookToolbarLabelPadding() -> some View {
+    padding(.vertical, Spacing.xxs)
   }
 }
 
