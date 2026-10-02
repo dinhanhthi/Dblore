@@ -2,6 +2,23 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.4.1 (2026-10-03)
+
+### Added
+
+- **Pinned tabs and tab context menu.** Right-click a tab to pin it, close the tabs to its right or open it in a new window; pinned tabs survive `Cmd+W`. [#d8cb3ce](https://github.com/dinhanhthi/Dblore/commit/d8cb3ce) [#0819c04](https://github.com/dinhanhthi/Dblore/commit/0819c04) [#ed7529a](https://github.com/dinhanhthi/Dblore/commit/ed7529a) [#170572e](https://github.com/dinhanhthi/Dblore/commit/170572e)
+- **Workspace and connection details.** The info button opens one modal with both the workspace and the connection details. [#7113227](https://github.com/dinhanhthi/Dblore/commit/7113227)
+- **Editable recent cards.** Edit a recent workspace from the welcome screen. [#33beece](https://github.com/dinhanhthi/Dblore/commit/33beece)
+- **AI assistant.** A settings button in the assistant header; replies are SQL only unless you ask for an explanation; headings and lists render in replies. [#3b34ba3](https://github.com/dinhanhthi/Dblore/commit/3b34ba3) [#e90370f](https://github.com/dinhanhthi/Dblore/commit/e90370f) [#efc5d21](https://github.com/dinhanhthi/Dblore/commit/efc5d21)
+
+### Improved
+
+- **Interface polish.** Notebook toolbar buttons match the Results buttons, Run uses the accent color, and every settings tab is a card like Data. [#1a3b225](https://github.com/dinhanhthi/Dblore/commit/1a3b225) [#4ee7d32](https://github.com/dinhanhthi/Dblore/commit/4ee7d32) [#661f10b](https://github.com/dinhanhthi/Dblore/commit/661f10b) [#f4bf124](https://github.com/dinhanhthi/Dblore/commit/f4bf124)
+
+### Fixed
+
+- **AI composer.** The message box scrolls and adapts its corner radius as it grows. [#3f0ee00](https://github.com/dinhanhthi/Dblore/commit/3f0ee00)
+
 ## v0.4.0 (2026-10-02)
 
 ### Added
