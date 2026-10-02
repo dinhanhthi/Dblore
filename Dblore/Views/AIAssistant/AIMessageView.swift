@@ -2,7 +2,7 @@
 //  AIMessageView.swift
 //  Dblore
 //
-//  One chat entry: inline markdown text, fenced code blocks with Copy / Insert, safety badge
+//  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge
 //
 
 import AppKit
@@ -67,8 +67,21 @@ struct AIMessageView: View {
   }
 }
 
-/// Inline-only markdown; falls back to plain text. Links are stripped (link text stays as
+/// One block of assistant text after fenced code has been split out.
+nonisolated enum AIMarkdownBlock: Equatable, Sendable {
+  case heading(level: Int, text: String)
+  case paragraph(String)
+  case list(items: [AIMarkdownListItem])
+}
+
+nonisolated struct AIMarkdownListItem: Equatable, Sendable {
+  var marker: String
+  var text: String
+}
+
+/// Inline markdown plus ATX headings and lists. Links are stripped (link text stays as
 /// plain text) so model output can never present a clickable or URL-hiding link.
+/// Headings use body size, one step above the bubble's `labelText`.
 struct AIMarkdownText: View {
   let text: String
 
@@ -82,20 +95,149 @@ struct AIMarkdownText: View {
     return parsed
   }
 
-  private var attributed: AttributedString? { Self.sanitized(text) }
+  nonisolated static func blocks(_ markdown: String) -> [AIMarkdownBlock] {
+    var blocks: [AIMarkdownBlock] = []
+    var paragraph: [String] = []
+    var list: [AIMarkdownListItem] = []
+    var listOrdered: Bool?
+
+    func flushParagraph() {
+      let text = paragraph.joined(separator: "\n")
+      if !text.isEmpty { blocks.append(.paragraph(text)) }
+      paragraph = []
+    }
+
+    func flushList() {
+      if !list.isEmpty { blocks.append(.list(items: list)) }
+      list = []
+      listOrdered = nil
+    }
+
+    for raw in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
+      let line = String(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+      if line.isEmpty {
+        flushParagraph()
+        flushList()
+        continue
+      }
+      if let heading = heading(from: line) {
+        flushParagraph()
+        flushList()
+        blocks.append(.heading(level: heading.level, text: heading.text))
+        continue
+      }
+      if let item = listItem(from: line) {
+        flushParagraph()
+        if let listOrdered, listOrdered != item.ordered { flushList() }
+        listOrdered = item.ordered
+        list.append(item.item)
+        continue
+      }
+      flushList()
+      paragraph.append(line)
+    }
+    flushParagraph()
+    flushList()
+    return blocks
+  }
 
   var body: some View {
-    Group {
-      if let attributed {
-        Text(attributed)
-      } else {
-        Text(text)
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      ForEach(Array(Self.blocks(text).enumerated()), id: \.offset) { _, block in
+        switch block {
+        case .heading(_, let text):
+          markdownLine(text, font: .bodyText.weight(.semibold))
+        case .paragraph(let text):
+          markdownLine(text, font: .labelText)
+        case .list(let items):
+          VStack(alignment: .leading, spacing: Spacing.xxs) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+              markdownLine(item.marker + " " + item.text, font: .labelText)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
       }
     }
-    .font(.labelText)
-    .foregroundColor(.foreground)
-    .textSelection(.enabled)
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func markdownLine(_ markdown: String, font: Font) -> some View {
+    Text(Self.sanitized(markdown))
+      .font(font)
+      .foregroundColor(.foreground)
+      .textSelection(.enabled)
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// CommonMark ATX heading. Requires whitespace after the hashes; a closing `#` run is dropped.
+  nonisolated private static func heading(from line: String) -> (level: Int, text: String)? {
+    var index = line.startIndex
+    var level = 0
+    while index < line.endIndex, line[index] == "#", level < 7 {
+      level += 1
+      index = line.index(after: index)
+    }
+    guard (1...6).contains(level), index < line.endIndex else { return nil }
+    let separator = line[index]
+    guard separator == " " || separator == "\t" else { return nil }
+    let text = stripClosingHashes(String(line[index...]))
+    guard !text.isEmpty else { return nil }
+    return (level, text)
+  }
+
+  nonisolated private static func stripClosingHashes(_ raw: String) -> String {
+    let content = raw.trimmingCharacters(in: .whitespaces)
+    guard content.hasSuffix("#") else { return content }
+    var index = content.endIndex
+    while index > content.startIndex {
+      let previous = content.index(before: index)
+      if content[previous] != "#" { break }
+      index = previous
+    }
+    guard index > content.startIndex else { return "" }
+    let before = content.index(before: index)
+    guard content[before] == " " || content[before] == "\t" else { return content }
+    return content[..<before].trimmingCharacters(in: .whitespaces)
+  }
+
+  nonisolated private static func listItem(
+    from line: String
+  ) -> (ordered: Bool, item: AIMarkdownListItem)? {
+    if let text = bulletText(from: line) {
+      return (false, AIMarkdownListItem(marker: "•", text: text))
+    }
+    if let numbered = numberedText(from: line) {
+      return (true, AIMarkdownListItem(marker: "\(numbered.number).", text: numbered.text))
+    }
+    return nil
+  }
+
+  nonisolated private static func bulletText(from line: String) -> String? {
+    guard let first = line.first, first == "-" || first == "*" || first == "+" else { return nil }
+    let rest = line.dropFirst()
+    guard let space = rest.first, space == " " || space == "\t" else { return nil }
+    let text = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+    return text.isEmpty ? nil : text
+  }
+
+  nonisolated private static func numberedText(from line: String) -> (number: Int, text: String)? {
+    var index = line.startIndex
+    var value = 0
+    var digits = 0
+    while index < line.endIndex, let digit = line[index].wholeNumberValue {
+      digits += 1
+      if digits > 9 { return nil }
+      value = value * 10 + digit
+      index = line.index(after: index)
+    }
+    guard digits > 0, index < line.endIndex, line[index] == "." || line[index] == ")" else {
+      return nil
+    }
+    index = line.index(after: index)
+    guard index < line.endIndex, line[index] == " " || line[index] == "\t" else { return nil }
+    let text = line[line.index(after: index)...].trimmingCharacters(in: .whitespaces)
+    return text.isEmpty ? nil : (value, text)
   }
 }
 
@@ -210,7 +352,7 @@ private struct AICodeActionButton: View {
       entry: AIChatEntry(
         id: UUID(), role: .assistant,
         text:
-          "This removes **all** inactive rows:\n```sql\nDELETE FROM customers WHERE active = false;\n```\nReview before running.",
+          "### Inactive customers\nThis removes **all** inactive rows:\n- active = false\n```sql\nDELETE FROM customers WHERE active = false;\n```\nReview before running.",
         isError: false),
       onInsert: { _ in })
     AIMessageView(
