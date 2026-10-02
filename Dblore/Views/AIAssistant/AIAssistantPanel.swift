@@ -92,6 +92,18 @@ struct AIAssistantPanel: View {
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.xs)
       Button {
+        NotificationCenter.default.post(
+          name: .openSettings,
+          object: nil,
+          userInfo: [SettingsPage.userInfoKey: SettingsPage.ai.rawValue]
+        )
+      } label: {
+        Image(systemName: "gearshape").foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .help("AI settings")
+      Button {
         showHistory.toggle()
       } label: {
         Image(systemName: "clock.arrow.circlepath").foregroundColor(.foregroundMuted)
