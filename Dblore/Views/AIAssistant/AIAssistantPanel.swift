@@ -14,6 +14,8 @@ struct AIAssistantPanel: View {
   let tables: [DatabaseTable]
 
   @FocusState private var composerFocused: Bool
+  @State private var composerIsMultiline = false
+  @State private var composerTextHeight: CGFloat = 0
   @State private var showHistory = false
 
   private static let examples = [
@@ -312,33 +314,61 @@ struct AIAssistantPanel: View {
     }
   }
 
+  /// Full capsule for one line, a modest radius once the text wraps or grows
+  private var composerShape: RoundedRectangle {
+    RoundedRectangle(
+      cornerRadius: composerIsMultiline ? CornerRadius.xl : 100, style: .continuous)
+  }
+
+  private static let composerSingleLineMaxHeight: CGFloat = 36
+  /// About 6 lines of body text; beyond this the composer scrolls
+  private static let composerMaxTextHeight: CGFloat = 110
+
   private var inputRow: some View {
     HStack(alignment: .bottom, spacing: Spacing.sm) {
-      TextField("Ask about your database", text: $assistant.draft, axis: .vertical)
-        .textFieldStyle(.plain)
-        .font(.bodyText)
-        .foregroundColor(.foreground)
-        .lineLimit(1...6)
-        .focused($composerFocused)
-        .disabled(assistant.needsSetup)
-        .onKeyPress(.return, phases: .down) { press in
-          // Never send or insert while an IME composition is in progress
-          guard !Self.isComposing else { return .ignored }
-          if press.modifiers.contains(.shift) {
-            insertComposerNewline()
+      ScrollView(.vertical) {
+        TextField("Ask about your database", text: $assistant.draft, axis: .vertical)
+          .textFieldStyle(.plain)
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          // Horizontal padding lives inside the scroll view so the scroller hugs the border
+          .padding(.horizontal, Spacing.md)
+          .focused($composerFocused)
+          .disabled(assistant.needsSetup)
+          .onKeyPress(.return, phases: .down) { press in
+            // Never send or insert while an IME composition is in progress
+            guard !Self.isComposing else { return .ignored }
+            if press.modifiers.contains(.shift) {
+              insertComposerNewline()
+              return .handled
+            }
+            assistant.send()
             return .handled
           }
-          assistant.send()
-          return .handled
+          .background(
+            GeometryReader { proxy in
+              Color.clear.onChange(of: proxy.size.height, initial: true) { _, height in
+                composerTextHeight = height
+              }
+            }
+          )
+      }
+      .scrollIndicators(.hidden)
+      .frame(height: min(composerTextHeight, Self.composerMaxTextHeight))
+      .padding(.vertical, Spacing.xsm)
+      .background(
+        GeometryReader { proxy in
+          Color.clear.onChange(of: proxy.size.height, initial: true) { _, height in
+            composerIsMultiline = height > Self.composerSingleLineMaxHeight
+          }
         }
-        .padding(.horizontal, Spacing.md)
-        .padding(.vertical, Spacing.xsm)
-        .background(Color.inputBackground)
-        .clipShape(Capsule())
-        .overlay(
-          Capsule()
-            .stroke(composerFocused ? Color.borderFocus : Color.borderSubtle, lineWidth: 1)
-        )
+      )
+      .background(Color.inputBackground)
+      .clipShape(composerShape)
+      .overlay(
+        composerShape
+          .stroke(composerFocused ? Color.borderFocus : Color.borderSubtle, lineWidth: 1)
+      )
 
       if assistant.isGenerating {
         Button {
