@@ -23,20 +23,8 @@ struct AILocalModelsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
-      Text("Local models")
-        .font(.bodyText)
-        .fontWeight(.medium)
-        .foregroundColor(.foreground)
-
       ForEach(LocalModelCatalog.all) { model in
         row(for: model)
-      }
-
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        helpText("Runs fully on this Mac (Apple Silicon). Nothing leaves your computer.")
-        helpText(
-          "Model downloads come from Hugging Face over HTTPS (the only network use) and are stored in the app's sandbox container."
-        )
       }
     }
     .confirmationDialog(
@@ -66,39 +54,44 @@ struct AILocalModelsSection: View {
     let state = manager.state[model.id] ?? .idle
     let isSelected = selectedID == model.id
 
-    return VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.sm) {
-        Text(model.displayName)
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-        if model.id == recommendedID {
-          Text("Recommended for this Mac")
-            .font(.small)
-            .foregroundColor(.success)
-        }
-        Spacer(minLength: 0)
-        if isSelected && installed && isActive {
-          HStack(spacing: Spacing.xs) {
-            Image(systemName: "checkmark.circle.fill")
-            Text("In use")
+    return AIModelCard(isCurrent: isSelected) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          Text(model.displayName)
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+          if model.id == recommendedID {
+            Text("Recommended for this Mac")
+              .font(.small)
+              .foregroundColor(.success)
           }
-          .font(.small)
-          .foregroundColor(.success)
+          if isSelected && installed && isActive {
+            AIInUseBadge()
+          }
+          Text("\(Self.sizeText(model)) · needs \(Self.ramText(model)) RAM · \(model.note)")
+            .font(.bodyText)
+            .foregroundColor(.foregroundSubtle)
+
+          controls(for: model, installed: installed, state: state, isSelected: isSelected)
+
+          if case .failed(let message) = state {
+            Text(message)
+              .font(.bodyText)
+              .foregroundColor(.destructive)
+              .textSelection(.enabled)
+          }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        AITierBadge(text: tierLabel(model))
       }
+    }
+  }
 
-      Text("\(Self.sizeText(model)) · needs \(Self.ramText(model)) RAM · \(model.note)")
-        .font(.bodyText)
-        .foregroundColor(.foregroundSubtle)
-
-      controls(for: model, installed: installed, state: state, isSelected: isSelected)
-
-      if case .failed(let message) = state {
-        Text(message)
-          .font(.bodyText)
-          .foregroundColor(.destructive)
-          .textSelection(.enabled)
-      }
+  private func tierLabel(_ model: LocalModel) -> String {
+    switch model.tier {
+    case .tiny: "Fast"
+    case .balanced: "Balanced"
+    case .best: "Best"
     }
   }
 
@@ -114,6 +107,7 @@ struct AILocalModelsSection: View {
           .foregroundColor(.foregroundMuted)
         Button("Cancel") { manager.cancel() }
           .buttonStyle(SecondaryButtonStyle())
+          .controlSize(.small)
           .linkPointer()
       }
     } else if state == .finalizing || state == .deleting {
@@ -127,25 +121,22 @@ struct AILocalModelsSection: View {
       HStack(spacing: Spacing.md) {
         Button("Use") { use(model) }
           .buttonStyle(PrimaryButtonStyle())
+          .controlSize(.small)
           .disabled(isSelected && isActive)
           .linkPointer()
         Button("Delete") { pendingDelete = model }
           .buttonStyle(SecondaryButtonStyle())
+          .controlSize(.small)
           .disabled(manager.isBusy)
           .linkPointer()
       }
     } else {
       Button("Download") { manager.download(model) }
         .buttonStyle(PrimaryButtonStyle())
+        .controlSize(.small)
         .disabled(manager.isBusy)
         .linkPointer()
     }
-  }
-
-  private func helpText(_ text: String) -> some View {
-    Text(verbatim: text)
-      .font(.bodyText)
-      .foregroundColor(.foregroundSubtle)
   }
 
   // MARK: - Actions

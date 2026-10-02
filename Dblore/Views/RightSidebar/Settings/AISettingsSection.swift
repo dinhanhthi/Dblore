@@ -51,39 +51,21 @@ struct AISettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      providerRow
-      if kind == .chatGPT {
-        chatGPTRow
-      } else if kind != .localMLX {
-        baseURLRow
-      }
-      if kind.requiresAPIKey { apiKeyRow }
-      if kind == .localMLX {
-        // No network probe: models are chosen from the catalog below
-        AILocalModelsSection()
-      } else {
-        modelRow
-        testRow
-      }
-      if ollamaDetected && kind == .ollama && !isActive {
-        helpText("Ollama detected on this Mac. Click Set as active to use it.")
+      SettingsGroupCard(title: "Provider") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          providerControls
+          if ollamaDetected && kind == .ollama && !isActive {
+            helpText("Ollama detected on this Mac. Click Set as active to use it.")
+          }
+        }
       }
 
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        helpText(
-          "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
-        )
-        if kind == .chatGPT {
-          helpText(
-            "Experimental: uses the unofficial Codex endpoint with your ChatGPT plan's limits. OpenAI may change or block it at any time."
-          )
-        }
-        if kind == .anthropic {
-          helpText(
-            "Claude Pro/Max subscriptions can't be used here — Anthropic's terms don't allow third-party apps to reuse them. Use an Anthropic API key."
-          )
-        }
+      if kind != .localMLX {
+        connectionCard
       }
+
+      modelsCard
+      privacyCard
     }
     .onAppear(perform: loadInitial)
     .task { await detectOllamaIfNeeded() }
@@ -101,39 +83,104 @@ struct AISettingsSection: View {
     .onChange(of: model) { _, _ in commit() }
   }
 
-  // MARK: - Rows
+  // MARK: - Cards
 
-  private var providerRow: some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      label("Provider")
-      HStack(alignment: .top, spacing: Spacing.md) {
-        CapsuleDropdown(
-          title: kind.displayName,
-          width: 300,
-          accessibilityLabel: "Provider",
-          options: Array(AIProviderKind.allCases),
-          optionTitle: \.displayName,
-          isSelected: { $0 == kind },
-          onSelect: { kind = $0 }
-        )
+  private var providerControls: some View {
+    HStack(alignment: .center, spacing: Spacing.md) {
+      CapsuleDropdown(
+        title: kind.displayName,
+        width: 300,
+        accessibilityLabel: "Provider",
+        options: Array(AIProviderKind.allCases),
+        optionTitle: \.displayName,
+        isSelected: { $0 == kind },
+        onSelect: { kind = $0 }
+      )
 
-        if isActive {
-          HStack(spacing: Spacing.xs) {
-            Image(systemName: "checkmark.circle.fill")
-            Text("Active")
-          }
-          .font(.small)
-          .foregroundColor(.success)
+      if isActive {
+        HStack(spacing: Spacing.xs) {
+          Image(systemName: "checkmark.circle.fill")
+          Text("Active")
+        }
+        .font(.small)
+        .foregroundColor(.success)
+      } else {
+        Button("Set as active") {
+          settings.configuration.activeProvider = kind
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .linkPointer()
+      }
+    }
+  }
+
+  private var connectionCard: some View {
+    SettingsGroupCard(title: kind == .chatGPT ? "Account" : "Connection") {
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        if kind == .chatGPT {
+          chatGPTBody
         } else {
-          Button("Set as active") {
-            settings.configuration.activeProvider = kind
+          baseURLRow
+          if kind.requiresAPIKey {
+            apiKeyRow
           }
-          .buttonStyle(SecondaryButtonStyle())
-          .linkPointer()
+        }
+        if let serviceNote {
+          Divider()
+          helpText(serviceNote)
         }
       }
     }
   }
+
+  private var modelsCard: some View {
+    SettingsGroupCard(title: kind == .localMLX ? "Local models" : "Models") {
+      if kind == .localMLX {
+        // No network probe: models are chosen from the catalog below.
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          AILocalModelsSection()
+          Divider()
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            helpText("Runs fully on this Mac (Apple Silicon). Nothing leaves your computer.")
+            helpText(
+              "Model downloads come from Hugging Face over HTTPS (the only network use) and are stored in the app's sandbox container."
+            )
+          }
+        }
+      } else {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          modelEditor
+          if !availableModels.isEmpty {
+            modelCards
+          }
+          testRow
+        }
+      }
+    }
+  }
+
+  private var privacyCard: some View {
+    SettingsGroupCard(title: "Privacy") {
+      helpText(
+        "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
+      )
+    }
+  }
+
+  private var serviceNote: String? {
+    switch kind {
+    case .chatGPT:
+      return
+        "Experimental: uses the unofficial Codex endpoint with your ChatGPT plan's limits. OpenAI may change or block it at any time."
+    case .anthropic:
+      return
+        "Claude Pro/Max subscriptions can't be used here — Anthropic's terms don't allow third-party apps to reuse them. Use an Anthropic API key."
+    case .openAI, .openRouter, .ollama, .lmStudio, .mlxServer, .custom, .localMLX:
+      return nil
+    }
+  }
+
+  // MARK: - Fields
 
   private var baseURLRow: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -160,9 +207,8 @@ struct AISettingsSection: View {
     }
   }
 
-  private var chatGPTRow: some View {
+  private var chatGPTBody: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
-      label("Account")
       if isSignedIn {
         HStack(spacing: Spacing.md) {
           Text(signedInEmail.map { "Signed in as \($0)" } ?? "Signed in")
@@ -232,30 +278,71 @@ struct AISettingsSection: View {
     }
   }
 
-  private var modelRow: some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      label("Model")
-      HStack(alignment: .top, spacing: Spacing.sm) {
-        TextField("Model name", text: $model)
-          .textFieldStyle(.plain)
-          .font(.bodyText)
-          .autocorrectionDisabled()
-          .inputStyle()
+  private var modelEditor: some View {
+    HStack(alignment: .center, spacing: Spacing.sm) {
+      TextField("Model name", text: $model)
+        .textFieldStyle(.plain)
+        .font(.bodyText)
+        .autocorrectionDisabled()
+        .inputStyle()
 
-        if !availableModels.isEmpty {
-          CapsuleDropdown(
-            title: "Models",
-            options: availableModels,
-            optionTitle: { $0 },
-            isSelected: { $0 == model },
-            onSelect: { model = $0 }
-          )
-        }
+      if availableModels.count > Self.modelCardLimit {
+        modelMenu
+      }
 
-        Button("Refresh") { run(reportSuccess: false) }
-          .buttonStyle(SecondaryButtonStyle())
-          .disabled(isRunning || !canRun)
-          .linkPointer()
+      Button("Refresh") { run(reportSuccess: false) }
+        .buttonStyle(SecondaryButtonStyle())
+        .disabled(isRunning || !canRun)
+        .linkPointer()
+    }
+  }
+
+  private static let modelCardLimit = 12
+
+  private var modelMenu: some View {
+    CapsuleDropdown(
+      title: "Models",
+      options: availableModels,
+      optionTitle: { $0 },
+      isSelected: { $0 == model },
+      onSelect: { model = $0 }
+    )
+  }
+
+  @ViewBuilder
+  private var modelCards: some View {
+    if availableModels.count > Self.modelCardLimit {
+      currentModelCard
+    } else {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        modelCardRows(availableModels)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var currentModelCard: some View {
+    let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !name.isEmpty {
+      AIRemoteModelButton(
+        name: name,
+        isCurrent: true,
+        showsInUse: isActive
+      ) {
+        model = name
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func modelCardRows(_ names: [String]) -> some View {
+    ForEach(names, id: \.self) { name in
+      AIRemoteModelButton(
+        name: name,
+        isCurrent: model == name,
+        showsInUse: isActive && model == name
+      ) {
+        model = name
       }
     }
   }

@@ -13,18 +13,13 @@ struct SecuritySettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        Text("Protection")
-          .font(.bodyText)
-          .fontWeight(.medium)
-          .foregroundColor(.foreground)
+      SettingsGroupCard(title: "Protection") {
         ConnectionSafetyMenus(viewModel: viewModel, showsSecurity: false, prominent: true)
       }
-
-      Divider()
-
-      SafeModeSection(appSettings: appSettings, viewModel: viewModel)
-        .id("safeModeSection")
+      SettingsGroupCard(title: "Safe Mode") {
+        SafeModeSection(appSettings: appSettings, viewModel: viewModel)
+          .id("safeModeSection")
+      }
     }
   }
 }
@@ -57,12 +52,6 @@ struct SafeModeSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
-      // Section Header
-      Text("Safe Mode")
-        .font(.bodyText)
-        .fontWeight(.medium)
-        .foregroundColor(.foreground)
-
       // Current Connection Row (only when connected)
       if viewModel.connectionState.isConnected {
         currentConnectionRow

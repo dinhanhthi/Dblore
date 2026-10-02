@@ -265,62 +265,65 @@ struct SettingsModalEditorSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      SettingsSlider(
-        title: "Font Size",
-        valueText: "\(Int(appSettings.editorFontSize)) pt",
-        value: Binding(
-          get: { Double(appSettings.editorFontSize) },
-          set: { appSettings.editorFontSize = CGFloat($0) }
-        ),
-        range: AppSettings.fontSizeRange,
-        step: 1,
-        description: "Size of the text in the SQL editor, including notebook cells."
-      )
+      SettingsGroupCard(title: "Text") {
+        SettingsSlider(
+          title: "Font Size",
+          valueText: "\(Int(appSettings.editorFontSize)) pt",
+          value: Binding(
+            get: { Double(appSettings.editorFontSize) },
+            set: { appSettings.editorFontSize = CGFloat($0) }
+          ),
+          range: AppSettings.fontSizeRange,
+          step: 1,
+          description: "Size of the text in the SQL editor, including notebook cells."
+        )
+      }
 
-      SettingsToggle(
-        title: "Enable Syntax Highlighting",
-        description:
-          "Colorize SQL keywords, functions, strings, and comments. Disable to improve performance with large files.",
-        isOn: $appSettings.syntaxHighlightingEnabled
-      )
-
-      SettingsToggle(
-        title: "Enable Autocomplete",
-        description:
-          "When enabled, SQL keywords, table names, and column names will be suggested as you type.",
-        isOn: $appSettings.isAutoCompleteEnabled
-      )
-
-      // Show Line Numbers toggle (Editor mode only)
-      SettingsToggle(
-        title: "Show Line Numbers",
-        description:
-          "Display line numbers in the gutter. Helps with navigation and debugging queries. (Editor only)",
-        isOn: $appSettings.showLineNumbers
-      )
-
-      // Word Wrap toggle (both modes)
-      SettingsToggle(
-        title: "Word Wrap",
-        description:
-          "Wrap long lines to fit the editor width. Use Option+Z to toggle quickly.",
-        isOn: $appSettings.wordWrapEnabled
-      )
-
-      SettingsToggle(
-        title: "Side-by-Side Layout",
-        description:
-          "Open new .sql files with the editor on the left and results on the right instead of stacked. Toggle per file with the layout button in the header. (Editor only)",
-        isOn: $appSettings.editorSideBySideDefault
-      )
-
-      // Simple Mode toggle (Editor mode only)
-      SettingsToggle(
-        title: "Simple Mode",
-        description:
-          "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file. (Editor only)",
-        isOn: $appSettings.editorSimpleMode
-      )
+      SettingsGroupCard(title: "Editing") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          SettingsToggle(
+            title: "Enable Syntax Highlighting",
+            description:
+              "Colorize SQL keywords, functions, strings, and comments. Disable to improve performance with large files.",
+            isOn: $appSettings.syntaxHighlightingEnabled
+          )
+          Divider()
+          SettingsToggle(
+            title: "Enable Autocomplete",
+            description:
+              "When enabled, SQL keywords, table names, and column names will be suggested as you type.",
+            isOn: $appSettings.isAutoCompleteEnabled
+          )
+          Divider()
+          SettingsToggle(
+            title: "Show Line Numbers",
+            description:
+              "Display line numbers in the gutter. Helps with navigation and debugging queries. (Editor only)",
+            isOn: $appSettings.showLineNumbers
+          )
+          Divider()
+          SettingsToggle(
+            title: "Word Wrap",
+            description:
+              "Wrap long lines to fit the editor width. Use Option+Z to toggle quickly.",
+            isOn: $appSettings.wordWrapEnabled
+          )
+          Divider()
+          SettingsToggle(
+            title: "Side-by-Side Layout",
+            description:
+              "Open new .sql files with the editor on the left and results on the right instead of stacked. Toggle per file with the layout button in the header. (Editor only)",
+            isOn: $appSettings.editorSideBySideDefault
+          )
+          Divider()
+          SettingsToggle(
+            title: "Simple Mode",
+            description:
+              "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file. (Editor only)",
+            isOn: $appSettings.editorSimpleMode
+          )
+        }
+      }
     }
   }
 }
@@ -334,63 +337,67 @@ struct SettingsModalResultTableSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      SettingsSlider(
-        title: "Font Size",
-        valueText: "\(Int(appSettings.resultFontSize)) pt",
-        value: Binding(
-          get: { Double(appSettings.resultFontSize) },
-          set: { appSettings.resultFontSize = CGFloat($0) }
-        ),
-        range: AppSettings.fontSizeRange,
-        step: 1,
-        description: "Size of the text in result tables. Column headers stay the same."
-      )
+      SettingsGroupCard(title: "Text") {
+        SettingsSlider(
+          title: "Font Size",
+          valueText: "\(Int(appSettings.resultFontSize)) pt",
+          value: Binding(
+            get: { Double(appSettings.resultFontSize) },
+            set: { appSettings.resultFontSize = CGFloat($0) }
+          ),
+          range: AppSettings.fontSizeRange,
+          step: 1,
+          description: "Size of the text in result tables. Column headers stay the same."
+        )
+      }
 
-      // Hide Column Types toggle
-      SettingsToggle(
-        title: "Hide Column Types",
-        description:
-          "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names.",
-        isOn: $appSettings.hideColumnTypes
-      )
+      SettingsGroupCard(title: "Table") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          SettingsToggle(
+            title: "Hide Column Types",
+            description:
+              "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names.",
+            isOn: $appSettings.hideColumnTypes
+          )
+          Divider()
+          SettingsToggle(
+            title: "Hide Run with Query Section",
+            description:
+              "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables.",
+            isOn: $appSettings.hideRunWithQuerySection
+          )
+          Divider()
+          SettingsSlider(
+            title: "Max Height",
+            valueText: "\(Int(appSettings.maxResultHeight)) pt",
+            value: Binding(
+              get: { Double(appSettings.maxResultHeight) },
+              set: { appSettings.maxResultHeight = CGFloat($0) }
+            ),
+            range: 200...1000,
+            step: 50,
+            description:
+              "Adjust the maximum height of result tables. Values between 200-1000 points. (Notebook only)"
+          )
+          Divider()
+          ResultRowCapSetting(appSettings: appSettings)
+        }
+      }
 
-      // Hide Run with Query Section toggle
-      SettingsToggle(
-        title: "Hide Run with Query Section",
-        description:
-          "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables.",
-        isOn: $appSettings.hideRunWithQuerySection
-      )
-
-      SettingsToggle(
-        title: "Commit Inline Edits Immediately",
-        description:
-          "When enabled, a cell edited in the result table is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
-        isOn: $appSettings.inlineEditAutoCommit
-      )
-      .padding(Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
-      )
-      .padding(-Spacing.sm)
-
-      // Max Height (Notebook only)
-      SettingsSlider(
-        title: "Max Height",
-        valueText: "\(Int(appSettings.maxResultHeight)) pt",
-        value: Binding(
-          get: { Double(appSettings.maxResultHeight) },
-          set: { appSettings.maxResultHeight = CGFloat($0) }
-        ),
-        range: 200...1000,
-        step: 50,
-        description:
-          "Adjust the maximum height of result tables. Values between 200-1000 points. (Notebook only)"
-      )
-
-      // One row cap for Notebook and Editor
-      ResultRowCapSetting(appSettings: appSettings)
+      SettingsGroupCard(title: "Editing") {
+        SettingsToggle(
+          title: "Commit Inline Edits Immediately",
+          description:
+            "When enabled, a cell edited in the result table is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
+          isOn: $appSettings.inlineEditAutoCommit
+        )
+        .padding(Spacing.sm)
+        .background(
+          RoundedRectangle(cornerRadius: CornerRadius.lg)
+            .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
+        )
+        .padding(-Spacing.sm)
+      }
     }
   }
 }
@@ -401,12 +408,14 @@ struct SettingsModalSaveOptionsSection: View {
   @Bindable var appSettings: AppSettings
 
   var body: some View {
-    SettingsToggle(
-      title: "Include Results When Saving",
-      description:
-        "When enabled, query results are saved with the notebook. Disable to reduce file size. (Notebook only)",
-      isOn: $appSettings.includeResultsOnSave
-    )
+    SettingsGroupCard(title: "Notebook") {
+      SettingsToggle(
+        title: "Include Results When Saving",
+        description:
+          "When enabled, query results are saved with the notebook. Disable to reduce file size. (Notebook only)",
+        isOn: $appSettings.includeResultsOnSave
+      )
+    }
   }
 }
 
@@ -416,12 +425,14 @@ struct SettingsModalUpdatesSection: View {
   @ObservedObject private var updater = UpdaterController.shared
 
   var body: some View {
-    SettingsToggle(
-      title: "Automatically Check for Updates",
-      description:
-        "Check for new versions of Dblore in the background and offer to install them. You can always check now from the Dblore menu.",
-      isOn: $updater.automaticallyChecksForUpdates
-    )
+    SettingsGroupCard(title: "Automatic updates") {
+      SettingsToggle(
+        title: "Automatically Check for Updates",
+        description:
+          "Check for new versions of Dblore in the background and offer to install them. You can always check now from the Dblore menu.",
+        isOn: $updater.automaticallyChecksForUpdates
+      )
+    }
   }
 }
 
@@ -432,30 +443,36 @@ struct SettingsModalDeveloperSection: View {
   @Bindable private var appSettings = AppSettings.shared
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      SettingsToggle(
-        title: "Show experimental engines",
-        description:
-          "Include database engines that are not ready for general use in the connection form.",
-        isOn: $appSettings.showExperimentalEngines
-      )
+    VStack(alignment: .leading, spacing: Spacing.lg) {
+      SettingsGroupCard(title: "Connection form") {
+        SettingsToggle(
+          title: "Show experimental engines",
+          description:
+            "Include database engines that are not ready for general use in the connection form.",
+          isOn: $appSettings.showExperimentalEngines
+        )
+      }
 
-      Button(action: {
-        isExportingLogs = true
-      }) {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: "square.and.arrow.up")
-          Text("Export Application Logs")
+      SettingsGroupCard(title: "Logs") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          Button(action: {
+            isExportingLogs = true
+          }) {
+            HStack(spacing: Spacing.xs) {
+              Image(systemName: "square.and.arrow.up")
+              Text("Export Application Logs")
+            }
+          }
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .linkPointer()
+
+          Text(
+            "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
+          )
+          .font(.bodyText)
+          .foregroundColor(.foregroundSubtle)
         }
       }
-      .buttonStyle(FilledSecondaryButtonStyle())
-      .linkPointer()
-
-      Text(
-        "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
-      )
-      .font(.bodyText)
-      .foregroundColor(.foregroundSubtle)
     }
   }
 }
@@ -472,7 +489,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
   @State private var selectedTab: ShortcutsTab = .app
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
+    VStack(alignment: .leading, spacing: Spacing.lg) {
       CapsuleTabPicker(selection: $selectedTab, tabs: ShortcutsTab.allCases, height: 28)
         .frame(width: 200)
 
@@ -489,87 +506,107 @@ struct SettingsModalKeyboardShortcutsSection: View {
     }
   }
 
-  private func groupTitle(_ title: String) -> some View {
-    Text(title)
-      .font(.bodyText)
-      .fontWeight(.medium)
-      .foregroundColor(.foreground)
+  private func shortcutCard(
+    _ title: String, _ rows: [(action: String, shortcut: String)]
+  )
+    -> some View
+  {
+    SettingsGroupCard(title: title) {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+          ShortcutRow(action: row.action, shortcut: row.shortcut)
+        }
+      }
+    }
   }
 
   private var appShortcuts: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      groupTitle("Files")
-      ShortcutRow(action: "New Notebook", shortcut: "Cmd+Shift+N")
-      ShortcutRow(action: "New SQL File", shortcut: "Cmd+Shift+J")
-      ShortcutRow(action: "Open", shortcut: "Cmd+O")
-      ShortcutRow(action: "Save", shortcut: "Cmd+S")
-      ShortcutRow(action: "Save As", shortcut: "Cmd+Shift+S")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("Workspace")
-      ShortcutRow(action: "New Workspace", shortcut: "Cmd+Ctrl+N")
-      ShortcutRow(action: "Open Workspace", shortcut: "Cmd+Option+O")
-      ShortcutRow(action: "Save Workspace", shortcut: "Cmd+Option+S")
-      ShortcutRow(action: "Save Workspace As", shortcut: "Cmd+Option+Shift+S")
-      ShortcutRow(action: "Close Workspace", shortcut: "Cmd+Option+W")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("Tabs")
-      ShortcutRow(action: "Close Tab", shortcut: "Cmd+W")
-      ShortcutRow(action: "Reopen Closed Tab", shortcut: "Cmd+Shift+T")
-      ShortcutRow(action: "Next Tab", shortcut: "Cmd+Shift+]")
-      ShortcutRow(action: "Previous Tab", shortcut: "Cmd+Shift+[")
-      ShortcutRow(action: "Go to Tab 1-9", shortcut: "Cmd+1 ... Cmd+9")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("View")
-      ShortcutRow(action: "Settings", shortcut: "Cmd+,")
-      ShortcutRow(action: "Toggle Left Sidebar", shortcut: "Cmd+B")
-      ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
-      ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("AI")
-      ShortcutRow(action: "Send Message", shortcut: "Return")
-      ShortcutRow(action: "New Line in Message", shortcut: "Shift+Return")
+    VStack(alignment: .leading, spacing: Spacing.lg) {
+      shortcutCard(
+        "Files",
+        [
+          ("New Notebook", "Cmd+Shift+N"),
+          ("New SQL File", "Cmd+Shift+J"),
+          ("Open", "Cmd+O"),
+          ("Save", "Cmd+S"),
+          ("Save As", "Cmd+Shift+S"),
+        ]
+      )
+      shortcutCard(
+        "Workspace",
+        [
+          ("New Workspace", "Cmd+Ctrl+N"),
+          ("Open Workspace", "Cmd+Option+O"),
+          ("Save Workspace", "Cmd+Option+S"),
+          ("Save Workspace As", "Cmd+Option+Shift+S"),
+          ("Close Workspace", "Cmd+Option+W"),
+        ]
+      )
+      shortcutCard(
+        "Tabs",
+        [
+          ("Close Tab", "Cmd+W"),
+          ("Reopen Closed Tab", "Cmd+Shift+T"),
+          ("Next Tab", "Cmd+Shift+]"),
+          ("Previous Tab", "Cmd+Shift+["),
+          ("Go to Tab 1-9", "Cmd+1 ... Cmd+9"),
+        ]
+      )
+      shortcutCard(
+        "View",
+        [
+          ("Settings", "Cmd+,"),
+          ("Toggle Left Sidebar", "Cmd+B"),
+          ("Toggle Right Sidebar", "Cmd+Shift+B"),
+          ("Toggle AI Assistant", "Cmd+L"),
+        ]
+      )
+      shortcutCard(
+        "AI",
+        [
+          ("Send Message", "Return"),
+          ("New Line in Message", "Shift+Return"),
+        ]
+      )
     }
   }
 
   private var editorShortcuts: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      groupTitle("Editor")
-      ShortcutRow(action: "Run Query", shortcut: "Cmd+R / Cmd+Enter")
-      ShortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
-      ShortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
-      ShortcutRow(action: "Find", shortcut: "Cmd+F")
-      ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
-      ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
-      ShortcutRow(action: "Close Search", shortcut: "Esc")
-      ShortcutRow(action: "Accept Autocomplete", shortcut: "Tab / Enter")
-      ShortcutRow(action: "Dismiss Autocomplete", shortcut: "Esc")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("Notebook Cells")
-      ShortcutRow(action: "Add New Cell", shortcut: "Cmd+Option+N")
-      ShortcutRow(action: "Run Cell", shortcut: "Ctrl+Enter")
-      ShortcutRow(action: "Run Cell and Select Next", shortcut: "Shift+Enter")
-      ShortcutRow(action: "Run Cell and Insert Below", shortcut: "Option+Enter")
-      ShortcutRow(action: "Run All Cells", shortcut: "Cmd+Shift+Enter")
-      ShortcutRow(action: "Delete Cell", shortcut: "Cmd+Delete")
-      ShortcutRow(action: "Duplicate Cell", shortcut: "Cmd+D")
-      ShortcutRow(
-        action: "Undo / Redo Cell Change", shortcut: "Cmd+Z / Cmd+Shift+Z outside the editor")
-      ShortcutRow(action: "Previous / Next Cell", shortcut: "Up / Down at first / last line")
-
-      Divider().padding(.vertical, Spacing.xs)
-
-      groupTitle("View")
-      ShortcutRow(action: "Settings", shortcut: "Cmd+,")
+    VStack(alignment: .leading, spacing: Spacing.lg) {
+      shortcutCard(
+        "Editor",
+        [
+          ("Run Query", "Cmd+R / Cmd+Enter"),
+          ("Toggle Comment", "Cmd+/"),
+          ("Toggle Word Wrap", "Option+Z"),
+          ("Find", "Cmd+F"),
+          ("Find Next", "Cmd+G"),
+          ("Find Previous", "Cmd+Shift+G"),
+          ("Close Search", "Esc"),
+          ("Accept Autocomplete", "Tab / Enter"),
+          ("Dismiss Autocomplete", "Esc"),
+        ]
+      )
+      shortcutCard(
+        "Notebook Cells",
+        [
+          ("Add New Cell", "Cmd+Option+N"),
+          ("Run Cell", "Ctrl+Enter"),
+          ("Run Cell and Select Next", "Shift+Enter"),
+          ("Run Cell and Insert Below", "Option+Enter"),
+          ("Run All Cells", "Cmd+Shift+Enter"),
+          ("Delete Cell", "Cmd+Delete"),
+          ("Duplicate Cell", "Cmd+D"),
+          ("Undo / Redo Cell Change", "Cmd+Z / Cmd+Shift+Z outside the editor"),
+          ("Previous / Next Cell", "Up / Down at first / last line"),
+        ]
+      )
+      shortcutCard(
+        "View",
+        [
+          ("Settings", "Cmd+,")
+        ]
+      )
     }
   }
 }

@@ -31,13 +31,13 @@ struct DataSettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      DataSettingsCard(title: "On this Mac") {
+      SettingsGroupCard(title: "On this Mac") {
         header
       }
       ForEach(DataSettingsGroup.allCases, id: \.self) { group in
         groupCard(group)
       }
-      DataSettingsCard(title: "Saved passwords and keys") {
+      SettingsGroupCard(title: "Saved passwords and keys") {
         secrets
       }
     }
@@ -117,7 +117,7 @@ struct DataSettingsSection: View {
   private func groupCard(_ group: DataSettingsGroup) -> some View {
     let rows = group.categories.compactMap(row(for:))
     if !rows.isEmpty {
-      DataSettingsCard(title: group.title) {
+      SettingsGroupCard(title: group.title) {
         VStack(alignment: .leading, spacing: Spacing.md) {
           ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
             if index > 0 {
@@ -393,28 +393,6 @@ private enum DataSettingsGroup: CaseIterable {
     case .aiChats, .aiSettings, .localModels: .assistant
     case .logs, .appSettings: .app
     }
-  }
-}
-
-private struct DataSettingsCard<Content: View>: View {
-  let title: String
-  @ViewBuilder var content: () -> Content
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text(title)
-        .font(.bodyText)
-        .fontWeight(.medium)
-        .foregroundColor(.foreground)
-      content()
-    }
-    .padding(Spacing.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.cardHeaderBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.lg)
-        .stroke(Color.border, lineWidth: 1)
-    )
   }
 }
 

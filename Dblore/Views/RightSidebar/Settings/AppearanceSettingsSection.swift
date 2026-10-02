@@ -11,15 +11,13 @@ struct AppearanceSettingsSection: View {
   @Bindable var appSettings: AppSettings
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Theme Picker
-      themePicker
-
-      Divider()
-        .padding(.vertical, Spacing.xs)
-
-      // Accent Color Picker
-      accentColorPicker
+    VStack(alignment: .leading, spacing: Spacing.lg) {
+      SettingsGroupCard(title: "Theme") {
+        themePicker
+      }
+      SettingsGroupCard(title: "Accent color") {
+        accentColorPicker
+      }
     }
   }
 

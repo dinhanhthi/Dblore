@@ -8,6 +8,31 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Settings group card
+
+/// The settings-page card. Every Settings tab uses this, matching the Data tab.
+struct SettingsGroupCard<Content: View>: View {
+  let title: String
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text(title)
+        .font(.bodyText)
+        .fontWeight(.medium)
+        .foregroundColor(.foreground)
+      content()
+    }
+    .padding(Spacing.md)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.cardHeaderBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
+        .stroke(Color.border, lineWidth: 1)
+    )
+  }
+}
+
 // MARK: - Settings Section Container
 
 /// A reusable section container for settings with title and icon
