@@ -32,7 +32,7 @@ struct HeaderView: View {
           }) {
             Label("New", systemImage: "plus")
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(SecondaryButtonStyle(vPadding: Self.notebookToolbarVerticalPadding))
           .linkPointer()
           .disabled(viewModel.isFileSizeLarge)
           .help("New Cell (⌘⌥N)")
@@ -42,7 +42,7 @@ struct HeaderView: View {
           }) {
             Label("Run All", systemImage: "play.fill")
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(SecondaryButtonStyle(vPadding: Self.notebookToolbarVerticalPadding))
           .linkPointer()
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
@@ -88,7 +88,7 @@ struct HeaderView: View {
           }) {
             Label("Clear All Outputs", systemImage: "trash")
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(SecondaryButtonStyle(vPadding: Self.notebookToolbarVerticalPadding))
           .linkPointer()
           .help("Clear All Outputs")
           .confirmationDialog(
@@ -315,6 +315,12 @@ struct HeaderView: View {
     let shrink = (ButtonMetrics.regularVerticalPadding - Spacing.xs) * 2
     return ComponentSize.headerHeight - shrink
   }
+
+  /// New, Run All, and Clear All Outputs match the Results menu's outer edge.
+  /// A `.large` glass menu is 28pt. Regular secondary lays out at 29pt, and its
+  /// 1pt border sits outside the capsule, so each side loses 1pt.
+  private static let notebookToolbarVerticalPadding: CGFloat =
+    ButtonMetrics.regularVerticalPadding - 1
 
   // MARK: - Safety Badge
 
