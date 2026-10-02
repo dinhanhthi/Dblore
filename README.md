@@ -8,7 +8,7 @@ A native macOS app for working with databases: write and run queries in **notebo
 (like Jupyter, for your databases) or in a classic **SQL editor**. Supports PostgreSQL
 today, and SQLite files as beta; more engines (such as MongoDB) are planned.
 
-**[Download for macOS](https://github.com/dinhanhthi/Dblore/releases/latest)**
+[Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
 
 </div>
