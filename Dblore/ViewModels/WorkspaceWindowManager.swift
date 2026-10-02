@@ -39,6 +39,11 @@ class WorkspaceWindowManager {
 
   /// Dismiss current toast
   func dismissToast() {
+    toastDismissTask?.cancel()
+    toastDismissTask = nil
+    // The close button removes the view while the pointer is still over it,
+    // so onHover(false) may never run. Clear hover or the next toast stays up.
+    toastState.setHovered(false)
     toastState.dismiss()
   }
 

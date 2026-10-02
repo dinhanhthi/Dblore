@@ -37,6 +37,16 @@ struct ToastView: View {
         .font(.body)
         .foregroundColor(.foreground)
         .lineLimit(2)
+
+      Button {
+        windowManager.dismissToast()
+      } label: {
+        Image(systemName: "xmark")
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .help("Close")
+      .accessibilityLabel("Close")
     }
     .padding(.horizontal, Spacing.lg)
     .padding(.vertical, Spacing.md)
