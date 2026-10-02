@@ -8,7 +8,7 @@
 import SwiftUI
 
 /// Grid of the loaded page (inline edit, cell details and search come from
-/// EditorResultGridView). Paging and column controls are in DataViewerControls (header).
+/// EditorResultGridView). Page size, column visibility, and paging sit under the grid.
 struct DataViewerView: View {
   @Bindable var viewModel: NotebookViewModel
 
@@ -16,6 +16,7 @@ struct DataViewerView: View {
     VStack(spacing: 0) {
       content
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+      DataViewerPagingBar(viewModel: viewModel)
     }
     .background(Color.appBackground)
   }

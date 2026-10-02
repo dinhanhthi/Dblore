@@ -43,7 +43,7 @@ struct DataCategoryRow: View {
             .font(.bodyText)
             .foregroundColor(.foreground)
           Text(row.category.description)
-            .font(.small)
+            .font(.bodyText)
             .foregroundColor(.foregroundSubtle)
         }
 
@@ -58,7 +58,7 @@ struct DataCategoryRow: View {
 
       if let error = row.error {
         Text(error)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
       }
@@ -66,19 +66,16 @@ struct DataCategoryRow: View {
       HStack(spacing: Spacing.sm) {
         if row.summary?.location != nil {
           Button("Reveal in Finder", action: reveal)
-            .buttonStyle(GhostButtonStyle())
-            .controlSize(.small)
+            .buttonStyle(FilledSecondaryButtonStyle())
             .linkPointer()
         }
         Button("Export…", action: onExport)
-          .buttonStyle(GhostButtonStyle())
-          .controlSize(.small)
+          .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(isBusy || row.loading)
           .linkPointer()
         if row.category != .queryHistory {
           Button("Clear…", action: onClear)
             .buttonStyle(DangerButtonStyle())
-            .controlSize(.small)
             .disabled(isBusy || row.loading)
             .linkPointer()
         }
@@ -93,7 +90,7 @@ struct DataCategoryRow: View {
         .controlSize(.small)
     } else if let summary = row.summary {
       Text(DataByteCount.summary(summary))
-        .font(.monoSmall)
+        .font(.mono)
         .foregroundColor(.foregroundMuted)
         .monospacedDigit()
     }
@@ -164,18 +161,17 @@ private struct HistoryRetentionControls: View {
               appSettings.historyMaxEntries, up: false)
           }
         )
-        .labelsHidden()
+        .compactStepperStyle()
       }
 
       Text(
         "Between \(entryRange.lowerBound.formatted()) and \(entryRange.upperBound.formatted()) statements. Older rows past this limit are deleted. Forever still stops at the limit."
       )
-      .font(.small)
+      .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
 
       Button("Clear history", action: onClear)
         .buttonStyle(DangerButtonStyle())
-        .controlSize(.small)
         .disabled(isBusy)
         .linkPointer()
     }

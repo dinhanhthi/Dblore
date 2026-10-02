@@ -148,12 +148,12 @@ struct AISettingsSection: View {
       case .success(let url):
         if !baseURL.isEmpty {
           Text("Resolved: \(url.absoluteString)")
-            .font(.small)
+            .font(.bodyText)
             .foregroundColor(.foregroundSubtle)
         }
       case .failure(let error):
         Text(error.localizedDescription)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
       }
     }
@@ -181,7 +181,7 @@ struct AISettingsSection: View {
             ProgressView()
               .controlSize(.small)
             Text("Waiting for the browser...")
-              .font(.small)
+              .font(.bodyText)
               .foregroundColor(.foregroundMuted)
             Button("Cancel") { cancelSignIn() }
               .buttonStyle(SecondaryButtonStyle())
@@ -191,7 +191,7 @@ struct AISettingsSection: View {
       }
       if let signInError {
         Text(signInError)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
       }
@@ -225,7 +225,7 @@ struct AISettingsSection: View {
       }
       if let keyError {
         Text(keyError)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
       }
     }
@@ -274,15 +274,15 @@ struct AISettingsSection: View {
           .controlSize(.small)
       case .success(let message):
         Text(message)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.success)
       case .warning(let message):
         Text(verbatim: message)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.foregroundMuted)
       case .failure(let message):
         Text(message)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
       }
@@ -291,13 +291,14 @@ struct AISettingsSection: View {
 
   private func label(_ text: String) -> some View {
     Text(text)
-      .font(.subheading)
+      .font(.bodyText)
+      .fontWeight(.medium)
       .foregroundColor(.foreground)
   }
 
   private func helpText(_ text: String) -> some View {
     Text(verbatim: text)
-      .font(.small)
+      .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
   }
 

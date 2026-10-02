@@ -90,14 +90,9 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
         in: NSRect(x: cellFrame.minX, y: bounds.minY, width: cellFrame.width, height: bounds.height)
       )
     }
-    var textFrame = cellFrame.insetBy(dx: Spacing.xsm, dy: 0)
     let indicator = sortIndicatorRect(forBounds: cellFrame)
     let filterButton = filterButtonRect(columnRect: cellFrame, headerBounds: controlView.bounds)
-    if !content.isRowNumber {
-      // The filter icon always occupies the sort-indicator column (on the type line)
-      let reserved = min(indicator.minX, filterButton?.minX ?? indicator.minX)
-      textFrame.size.width = max(0, reserved - Spacing.xs - textFrame.minX)
-    }
+    let span = textSpan(columnRect: cellFrame, headerBounds: controlView.bounds)
     let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
     let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
     // Lines centered over the full header height (cellFrame is a one-line strip)
@@ -111,7 +106,7 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     if let filterButton {
       drawFilterIcon(in: filterButton, active: content.isFiltered)
     }
-    var titleX = textFrame.minX
+    var titleX = span.minX
     if content.isPrimaryKey, let key = Self.keyImage() {
       let size = key.size
       key.draw(
@@ -123,36 +118,66 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     }
     draw(
       title(),
-      in: NSRect(x: titleX, y: top, width: textFrame.maxX - titleX, height: titleHeight))
+      in: NSRect(x: titleX, y: top, width: max(0, span.maxX - titleX), height: titleHeight))
     if let type = content.type {
       draw(
         NSAttributedString(
           string: type, attributes: [.font: Self.typeFont, .foregroundColor: Self.typeColor]),
         in: NSRect(
-          x: textFrame.minX, y: top + titleHeight + Spacing.xxs, width: textFrame.width,
-          height: typeHeight))
+          x: span.minX, y: top + titleHeight + Spacing.xxs,
+          width: max(0, span.maxX - span.minX), height: typeHeight))
     }
   }
 
+  /// Width of the name and type text inside a header of `columnWidth`, before the key icon
+  func lineSpanWidth(columnWidth: CGFloat) -> CGFloat {
+    let rect = NSRect(x: 0, y: 0, width: columnWidth, height: 44)
+    let span = textSpan(columnRect: rect, headerBounds: rect)
+    return max(0, span.maxX - span.minX)
+  }
+
+  /// Width of the name line inside a header of `columnWidth`, after the key icon
+  func nameLineWidth(columnWidth: CGFloat) -> CGFloat {
+    var width = lineSpanWidth(columnWidth: columnWidth)
+    if content.isPrimaryKey, let key = Self.keyImage() {
+      width = max(0, width - key.size.width - Spacing.xs)
+    }
+    return width
+  }
+
   /// Width that shows the name (with the key icon) and the type untruncated, with room for the
-  /// sort indicator so sorting the column doesn't truncate it
+  /// sort indicator and the filter icon so neither truncates the name
   func fittingWidth() -> CGFloat {
-    var titleLine = (content.title as NSString).size(withAttributes: [.font: Self.titleFont])
+    // The reserved trailing column does not depend on the header width, so measure it once
+    // on a wide sample and add the text.
+    let sampleWidth: CGFloat = 200
+    let sample = NSRect(x: 0, y: 0, width: sampleWidth, height: 44)
+    let sampleSpan = textSpan(columnRect: sample, headerBounds: sample)
+    let chrome = sampleWidth - max(0, sampleSpan.maxX - sampleSpan.minX)
+    var nameWidth = (content.title as NSString).size(withAttributes: [.font: Self.titleFont])
       .width
-    if content.isPrimaryKey, let key = Self.keyImage() { titleLine += key.size.width + Spacing.xs }
-    // Leading padding, name, gap, then the indicator (filter icon, and the sort arrow when sorted)
-    let bounds = NSRect(x: 0, y: 0, width: 100, height: 20)
-    let indicator = sortIndicatorRect(forBounds: bounds)
-    let sortTrailing = bounds.maxX - indicator.minX
-    let filterExtra: CGFloat =
-      content.type == nil && !content.isRowNumber ? Self.filterButtonSide + Spacing.xs : 0
-    let titleWidth = Spacing.xsm + titleLine + Spacing.xs + sortTrailing + filterExtra
+    if content.isPrimaryKey, let key = Self.keyImage() {
+      nameWidth += key.size.width + Spacing.xs
+    }
     let typeWidth =
       content.type.map {
-        ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width + Spacing.xsm
-          + Spacing.xs + sortTrailing
+        ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width
       } ?? 0
-    return ceil(max(titleWidth, typeWidth))
+    // One extra point: a line that measures equal to its rect still tail-truncates
+    return ceil(chrome + max(nameWidth, typeWidth)) + 1
+  }
+
+  /// Horizontal limits of the name and type text. The filter icon sits on the type line,
+  /// centered on the sort indicator, so it extends past that indicator and the name line
+  /// stops at the icon, not at the indicator.
+  private func textSpan(columnRect: NSRect, headerBounds: NSRect) -> (minX: CGFloat, maxX: CGFloat)
+  {
+    let minX = columnRect.minX + Spacing.xsm
+    guard !content.isRowNumber else { return (minX, columnRect.maxX - Spacing.xsm) }
+    let indicator = sortIndicatorRect(forBounds: columnRect)
+    let filterMinX = filterButtonRect(columnRect: columnRect, headerBounds: headerBounds)?.minX
+    let reserved = min(indicator.minX, filterMinX ?? indicator.minX)
+    return (minX, max(minX, reserved - Spacing.xs))
   }
 
   /// Hit target of the filter icon, in the header view's coordinates. On the type line, under

@@ -14,9 +14,6 @@ import SwiftUI
 struct SafeModeModal: View {
   @Binding var isPresented: Bool
   @Bindable var appSettings = AppSettings.shared
-  /// Opened from the unlock sheet: show the password panel even when the global mode is not a
-  /// password mode (the unlock may be for a per-connection Safe Mode)
-  var showsUnlockSetup: Bool = false
 
   // Password management states
   @State private var showPasswordSetup: Bool = false
@@ -60,11 +57,6 @@ struct SafeModeModal: View {
                 .padding(.bottom, Spacing.xs)
             }
           }
-        }
-
-        if showsUnlockSetup && !appSettings.safeMode.requiresPassword {
-          passwordPanel
-            .padding(.top, Spacing.sm)
         }
       }
       .padding(Spacing.lg)
@@ -139,7 +131,7 @@ struct SafeModeModal: View {
               Text(mode.displayName)
                 .font(.bodyText)
                 .fontWeight(.medium)
-                .foregroundColor(isSelected || isHovering ? .foreground : .foregroundMuted)
+                .foregroundColor(modeColor(for: mode))
 
               if mode.requiresPassword {
                 Image(systemName: "lock.fill")
@@ -174,25 +166,11 @@ struct SafeModeModal: View {
     }
 
     private func modeIcon(for mode: SafeMode) -> String {
-      switch mode {
-      case .silent:
-        return "bolt.fill"
-      case .alertRead, .alertAll:
-        return "exclamationmark.triangle.fill"
-      case .safeRead, .safeAll:
-        return "lock.shield.fill"
-      }
+      SafetyOptionStyle.iconName(for: mode)
     }
 
     private func modeColor(for mode: SafeMode) -> Color {
-      switch mode {
-      case .silent:
-        return .foregroundMuted
-      case .alertRead, .alertAll:
-        return .warning
-      case .safeRead, .safeAll:
-        return .accent
-      }
+      SafetyOptionStyle.color(for: mode)
     }
   }
 

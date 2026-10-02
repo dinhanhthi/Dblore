@@ -182,9 +182,63 @@ struct ResultGridStagingTests {
     #expect(!hasStrikethrough(field))
   }
 
+  @Test("A deleted row strikes through text without moving it")
+  func deletedRowKeepsAlignment() {
+    let row = ResultGridRowView()
+    let number = addCell("2", alignment: .right, to: row)
+    let name = addCell("bình", alignment: .left, to: row)
+
+    row.stagingState = .deleted
+
+    #expect(hasStrikethrough(number))
+    #expect(hasStrikethrough(name))
+    #expect(number.alignment == .right)
+    #expect(name.alignment == .left)
+    #expect(paragraphAlignment(number) == .right)
+    #expect(paragraphAlignment(name) == .left)
+    #expect(paragraphLineBreakMode(number) == .byTruncatingTail)
+
+    row.stagingState = .normal
+
+    #expect(number.stringValue == "2")
+    #expect(name.stringValue == "bình")
+    #expect(!hasStrikethrough(number))
+    #expect(!hasStrikethrough(name))
+    #expect(number.alignment == .right)
+    #expect(name.alignment == .left)
+    #expect(number.lineBreakMode == .byTruncatingTail)
+  }
+
+  private func addCell(
+    _ text: String, alignment: NSTextAlignment, to row: ResultGridRowView
+  ) -> NSTextField {
+    let field = NSTextField(labelWithString: text)
+    field.alignment = alignment
+    field.lineBreakMode = .byTruncatingTail
+    let cell = NSTableCellView()
+    cell.textField = field
+    cell.addSubview(field)
+    row.addSubview(cell)
+    return field
+  }
+
   private func hasStrikethrough(_ field: NSTextField) -> Bool {
     let text = field.attributedStringValue
     guard text.length > 0 else { return false }
     return text.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) != nil
+  }
+
+  private func paragraphAlignment(_ field: NSTextField) -> NSTextAlignment? {
+    paragraphStyle(field)?.alignment
+  }
+
+  private func paragraphLineBreakMode(_ field: NSTextField) -> NSLineBreakMode? {
+    paragraphStyle(field)?.lineBreakMode
+  }
+
+  private func paragraphStyle(_ field: NSTextField) -> NSParagraphStyle? {
+    let text = field.attributedStringValue
+    guard text.length > 0 else { return nil }
+    return text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
   }
 }

@@ -451,7 +451,7 @@ extension ConnectionFormContent {
           .inputCapsuleStyle()
           .frame(width: 80)
         Stepper("", value: value, in: range)
-          .labelsHidden()
+          .compactStepperStyle()
       }
       .onChange(of: value.wrappedValue) { _, newValue in
         let clamped = clamp(newValue)

@@ -60,6 +60,8 @@ struct AppWindowView: View {
         )
       }
     }
+    // System bordered and glass buttons match the capsule design-system buttons.
+    .buttonBorderShape(.capsule)
     // Observe pendingWorkspaceId changes from menu commands
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
       guard let newId else { return }
@@ -221,6 +223,7 @@ struct NewWorkspaceWindowView: View {
       }
     }
     .frame(minWidth: 800, minHeight: 600)
+    .buttonBorderShape(.capsule)
     // Observe pendingWorkspaceId to focus this window if its workspace is re-opened
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
       guard let newId, newId == workspaceId else { return }

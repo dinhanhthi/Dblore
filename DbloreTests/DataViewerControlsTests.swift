@@ -1,5 +1,5 @@
 // DataViewerFooterTests.swift
-// The data viewer header shows where the loaded page sits in the relation: row range and total
+// The data viewer paging bar shows where the loaded page sits in the relation: row range and total
 // once COUNT(*) returned, just the row range while it is unknown.
 
 import Foundation

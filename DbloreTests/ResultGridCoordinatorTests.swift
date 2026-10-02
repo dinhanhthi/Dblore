@@ -248,6 +248,46 @@ struct ResultGridCoordinatorTests {
     #expect(fitWidth([], headerWidth: 10) == 40)
   }
 
+  @Test("Short values do not shrink a column below its name or type")
+  func shortValuesKeepColumnName() throws {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "INTEGER(32)"),
+        ColumnInfo(name: "name", type: "TEXT"),
+        ColumnInfo(name: "note", type: "TEXT"),
+      ],
+      rows: [[.int(1), .string("an"), .string("hello")]],
+      rowCount: 1, primaryKeyColumns: ["id"],
+      editTarget: EditTarget(
+        qualifiedName: "public.t", tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"]))
+    let coordinator = ResultGridCoordinator()
+    let tableView = NSTableView()
+    coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
+    for column in tableView.tableColumns.dropFirst() {
+      let cell = try #require(column.headerCell as? ResultGridHeaderCell)
+      let nameWidth = (cell.content.title as NSString).size(
+        withAttributes: [.font: ResultGridHeaderCell.titleFont]).width
+      #expect(cell.nameLineWidth(columnWidth: column.width) >= nameWidth)
+      if let type = cell.content.type {
+        let typeWidth = (type as NSString).size(
+          withAttributes: [.font: ResultGridHeaderCell.typeFont]).width
+        #expect(cell.lineSpanWidth(columnWidth: column.width) >= typeWidth)
+      }
+      #expect(column.width <= ResultGridCoordinator.maxFitWidth)
+    }
+  }
+
+  @Test("A column name longer than the max fit width stays at that max")
+  func longColumnNameStaysWithinMaxFitWidth() {
+    let name = String(repeating: "n", count: 80)
+    let result = CellResult(
+      columns: [ColumnInfo(name: name, type: "TEXT")], rows: [[.string("x")]], rowCount: 1)
+    let coordinator = ResultGridCoordinator()
+    let tableView = NSTableView()
+    coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
+    #expect(tableView.tableColumns[1].width == ResultGridCoordinator.maxFitWidth)
+  }
+
   @Test("Only the first fitRowLimit rows are measured")
   func fitWidthRowLimit() {
     let values =

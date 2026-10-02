@@ -26,7 +26,7 @@ struct DeveloperSettingsSection: View {
           .frame(maxWidth: .infinity)
           .padding(.vertical, Spacing.sm)
           .background(Color.accent.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+          .clipShape(Capsule())
         }
         .buttonStyle(.plain)
         .linkPointer()

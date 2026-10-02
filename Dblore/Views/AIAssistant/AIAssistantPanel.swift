@@ -285,7 +285,7 @@ struct AIAssistantPanel: View {
         Button("Explain query") {
           if let sql = currentSQL { assistant.explain(sql: sql) }
         }
-        .buttonStyle(AIChipButtonStyle(capsule: true))
+        .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
       }
       if canFixError {
@@ -294,7 +294,7 @@ struct AIAssistantPanel: View {
             assistant.fixError(sql: sql, error: error)
           }
         }
-        .buttonStyle(AIChipButtonStyle(capsule: true))
+        .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
       }
     }

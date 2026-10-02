@@ -63,10 +63,15 @@ extension View {
 // MARK: - Glass Button Styles
 
 extension View {
-  /// Glass button style (prominent for the primary action). Below macOS 26 it falls back to
-  /// the bordered styles.
-  @ViewBuilder
+  /// Glass button style (prominent for the primary action). The border is a capsule, same as
+  /// `PrimaryButtonStyle`. Below macOS 26 it falls back to the bordered styles.
   func glassButtonStyle(prominent: Bool = false) -> some View {
+    glassChrome(prominent: prominent)
+      .buttonBorderShape(.capsule)
+  }
+
+  @ViewBuilder
+  private func glassChrome(prominent: Bool) -> some View {
     if #available(macOS 26, *) {
       if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
     } else {

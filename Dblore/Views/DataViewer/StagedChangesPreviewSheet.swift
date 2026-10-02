@@ -17,6 +17,12 @@ struct StagedChangesPreviewSheet: View {
   /// Display SQL from `previewStagedSQL()`. Not executed.
   var sql: String { viewModel.previewStagedSQL() }
 
+  private var dialect: SQLDialect {
+    viewModel.dataViewer?.databaseType.dialect
+      ?? viewModel.notebook.connectionConfig?.databaseType.dialect
+      ?? .postgresql
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
@@ -35,15 +41,13 @@ struct StagedChangesPreviewSheet: View {
 
       Divider()
 
-      ScrollView {
-        Text(sql.isEmpty ? "No staged changes" : sql)
-          .font(.system(size: 12, design: .monospaced))
-          .foregroundColor(sql.isEmpty ? .foregroundMuted : .foreground)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(Spacing.md)
-      }
-      .background(Color.inputBackground)
+      SQLCodeWell(
+        sql: sql,
+        placeholder: "No staged changes",
+        dialect: dialect
+      )
+      .padding(Spacing.md)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       Divider()
 

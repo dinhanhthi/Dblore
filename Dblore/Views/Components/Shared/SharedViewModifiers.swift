@@ -189,17 +189,13 @@ private struct QueryConfirmationModifier: ViewModifier {
           useDatabasePassword = false
           viewModel.cancelPendingQuery()
         }
-        .buttonStyle(.plain)
-        .linkPointer()
-        .foregroundColor(.foregroundMuted)
+        .buttonStyle(SecondaryButtonStyle())
 
         Button(viewModel.queryConfirmationState.runAllAwaitingUnlock ? "Run All" : "Execute Query")
         {
           verifyAndExecute()
         }
-        .buttonStyle(.borderedProminent)
-        .linkPointer()
-        .tint(.destructive)
+        .buttonStyle(DangerButtonStyle())
         // Enable button if a Safe Mode password is set OR using database password mode
         .disabled(!AppSettings.shared.hasCustomPasswordSet && !useDatabasePassword)
       }
@@ -280,7 +276,7 @@ private struct QueryConfirmationModifier: ViewModifier {
       .frame(maxWidth: .infinity)
       .padding(.vertical, Spacing.md)
       .background(Color.accent.opacity(0.1))
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .clipShape(Capsule())
     }
     .buttonStyle(.plain)
     .linkPointer()

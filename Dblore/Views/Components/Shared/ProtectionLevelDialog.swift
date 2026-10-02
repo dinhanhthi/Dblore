@@ -181,7 +181,7 @@ struct SafeModeUnlockSheet: View {
     .frame(width: 350)
     .background(Color.appBackground)
     .sheet(isPresented: $showsSafeModeSettings) {
-      SafeModeModal(isPresented: $showsSafeModeSettings, showsUnlockSetup: true)
+      SafeModeModal(isPresented: $showsSafeModeSettings)
     }
   }
 

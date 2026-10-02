@@ -719,6 +719,7 @@ struct ActionCard: View {
           .frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent)
+      .buttonBorderShape(.capsule)
       .linkPointer()
       .tint(accentColor)
       .controlSize(.regular)

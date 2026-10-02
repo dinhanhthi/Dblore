@@ -170,6 +170,9 @@ struct DbloreApp: App {
 
   init() {
     PerfSignpost.event("launch.init")
+    // Show .help() tooltips after 300ms instead of the slow system default (read when AppKit
+    // creates its tooltip manager, so it must be registered this early)
+    UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 300])
     // Migrate from single session to connection history (one-time operation)
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()

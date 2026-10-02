@@ -24,7 +24,8 @@ struct AILocalModelsSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
       Text("Local models")
-        .font(.subheading)
+        .font(.bodyText)
+        .fontWeight(.medium)
         .foregroundColor(.foreground)
 
       ForEach(LocalModelCatalog.all) { model in
@@ -87,14 +88,14 @@ struct AILocalModelsSection: View {
       }
 
       Text("\(Self.sizeText(model)) · needs \(Self.ramText(model)) RAM · \(model.note)")
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
       controls(for: model, installed: installed, state: state, isSelected: isSelected)
 
       if case .failed(let message) = state {
         Text(message)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
       }
@@ -143,7 +144,7 @@ struct AILocalModelsSection: View {
 
   private func helpText(_ text: String) -> some View {
     Text(verbatim: text)
-      .font(.small)
+      .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
   }
 

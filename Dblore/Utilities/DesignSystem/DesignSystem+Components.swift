@@ -387,6 +387,14 @@ extension View {
       )
   }
 
+  /// Beside a number capsule. A default `Stepper` stays at AppKit `.regular`,
+  /// so the up/down chevrons draw larger than the field.
+  func compactStepperStyle() -> some View {
+    self
+      .labelsHidden()
+      .controlSize(.mini)
+  }
+
   /// Capsule style for dropdown menus and pickers
   func dropdownCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)

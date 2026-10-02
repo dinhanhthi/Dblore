@@ -2,8 +2,9 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: rows-per-page, column visibility, paging,
-//  + Row, the Grid / Chart slider, and staged-change actions.
+//  Data viewer header controls: table title, + Row, the Grid / Chart slider,
+//  and staged-change actions. Rows-per-page, column visibility, and paging
+//  sit in DataViewerPagingBar under the result table.
 //
 
 import SwiftUI
@@ -11,7 +12,6 @@ import SwiftUI
 /// Left side of the header in data viewer mode
 struct DataViewerControls: View {
   @Bindable var viewModel: NotebookViewModel
-  @State private var showColumns = false
   @State private var showPreview = false
   @State private var confirmDiscard = false
 
@@ -37,22 +37,6 @@ struct DataViewerControls: View {
           .lineLimit(1)
           .truncationMode(.middle)
           .help(state.title)
-
-        pageSizeMenu(state: state)
-        columnsButton(state: state)
-
-        Text(Self.pageLabel(state: state, loadedRows: viewModel.editorResult?.rows.count ?? 0))
-          .font(.monoSmall)
-          .foregroundColor(.foregroundSubtle)
-
-        HStack(spacing: 0) {
-          pageButton("chevron.left", help: "Previous page", enabled: state.canGoPrevious) {
-            await viewModel.goToPage(state.page - 1)
-          }
-          pageButton("chevron.right", help: "Next page", enabled: state.canGoNext) {
-            await viewModel.goToPage(state.page + 1)
-          }
-        }
 
         Divider().frame(height: 14)
 
@@ -121,6 +105,167 @@ struct DataViewerControls: View {
     return "\(span) of \(total)"
   }
 
+  private static func countPhrase(_ count: Int, _ singular: String) -> String {
+    "\(count) \(count == 1 ? singular : singular + "s")"
+  }
+
+  /// Same rule as the in-grid picker: a loaded page that can be plotted.
+  private var showsChartPicker: Bool {
+    guard let result = viewModel.editorResult, result.error == nil else { return false }
+    let showingRows =
+      !result.rows.isEmpty
+      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
+    guard showingRows else { return false }
+    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
+  }
+
+  private var addRowButton: some View {
+    Button(action: stageNewRow) {
+      dataViewerCapsuleLabel {
+        Text("+ Row")
+          .font(.system(size: 11))
+          .foregroundColor(viewModel.stagingEnabled ? .foreground : .foregroundMuted)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .disabled(!viewModel.stagingEnabled)
+    .help(viewModel.rowStagingUnavailableReason ?? "Stage a new row")
+    .overlay { disabledStagingHelp }
+  }
+
+  private func stageNewRow() {
+    if let message = viewModel.stageInsert() {
+      viewModel.showToast(message, type: .error)
+    }
+  }
+
+  private func stagedSummary(_ counts: RowChangeSet.Counts) -> some View {
+    let total = counts.inserts + counts.edits + counts.deletes
+    let changes = total == 1 ? "change" : "changes"
+    return
+      (Text("\(total) \(changes)")
+      .foregroundColor(.foreground)
+      + Text(" · ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.inserts, "insert"))
+      .foregroundColor(.success)
+      + Text(", ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.edits, "edit"))
+      .foregroundColor(.warning)
+      + Text(", ")
+      .foregroundColor(.foregroundSubtle)
+      + Text(Self.countPhrase(counts.deletes, "delete"))
+      .foregroundColor(.destructive))
+      .font(.monoSmall)
+      .lineLimit(1)
+      .help(Self.stagedChangesSummary(counts))
+      .accessibilityLabel(Self.stagedChangesSummary(counts))
+  }
+
+  private var previewButton: some View {
+    Button(action: { showPreview = true }) {
+      dataViewerCapsuleLabel {
+        Text("Preview SQL")
+          .font(.system(size: 11))
+          .foregroundColor(.foreground)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Show the staged SQL. Nothing is sent to the database.")
+  }
+
+  private var discardButton: some View {
+    Button(action: { confirmDiscard = true }) {
+      dataViewerCapsuleLabel {
+        Text("Discard")
+          .font(.system(size: 11))
+          .foregroundColor(.destructive)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Discard staged changes")
+  }
+
+  @ViewBuilder
+  private var commitButton: some View {
+    if let key = Self.commitKeyEquivalent {
+      commitButtonBase.keyboardShortcut(key)
+    } else {
+      commitButtonBase
+    }
+  }
+
+  private var commitButtonBase: some View {
+    Button(action: { Task { await viewModel.commitStaged() } }) {
+      Text("Commit")
+    }
+    .buttonStyle(PrimaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
+    .controlSize(.small)
+    .disabled(!viewModel.stagingEnabled)
+    .help(viewModel.rowStagingUnavailableReason ?? "Commit staged changes")
+    .overlay { disabledStagingHelp }
+  }
+
+  /// Disabled controls do not show help on their own; this overlay does.
+  @ViewBuilder
+  private var disabledStagingHelp: some View {
+    if !viewModel.stagingEnabled, let reason = viewModel.rowStagingUnavailableReason {
+      Color.clear
+        .contentShape(Rectangle())
+        .help(reason)
+    }
+  }
+
+}
+
+/// Rows per page, column visibility, and paging. Sits under the result table.
+struct DataViewerPagingBar: View {
+  @Bindable var viewModel: NotebookViewModel
+  @State private var showColumns = false
+
+  var body: some View {
+    if let state = viewModel.dataViewer {
+      HStack(spacing: Spacing.sm) {
+        pageSizeMenu(state: state)
+        columnsButton(state: state)
+
+        Text(
+          DataViewerControls.pageLabel(
+            state: state, loadedRows: viewModel.editorResult?.rows.count ?? 0)
+        )
+        .font(.monoSmall)
+        .foregroundColor(.foregroundSubtle)
+
+        HStack(spacing: 0) {
+          pageButton("chevron.left", help: "Previous page", enabled: state.canGoPrevious) {
+            await viewModel.goToPage(state.page - 1)
+          }
+          pageButton("chevron.right", help: "Next page", enabled: state.canGoNext) {
+            await viewModel.goToPage(state.page + 1)
+          }
+        }
+
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.appBackground)
+      .overlay(alignment: .top) {
+        Rectangle()
+          .fill(Color.foregroundMuted.opacity(0.1))
+          .frame(height: 1)
+      }
+    }
+  }
+
   private func pageSizeMenu(state: DataViewerState) -> some View {
     Menu {
       ForEach(DataViewerState.pageSizes, id: \.self) { size in
@@ -134,7 +279,7 @@ struct DataViewerControls: View {
         }
       }
     } label: {
-      capsuleLabel {
+      dataViewerCapsuleLabel {
         Text("\(state.pageSize) rows")
           .font(.system(size: 11))
           .foregroundColor(.foreground)
@@ -151,7 +296,7 @@ struct DataViewerControls: View {
 
   private func columnsButton(state: DataViewerState) -> some View {
     Button(action: { showColumns.toggle() }) {
-      capsuleLabel {
+      dataViewerCapsuleLabel {
         Image(systemName: "eye")
           .font(.system(size: 10))
           .foregroundColor(.foregroundMuted)
@@ -165,7 +310,7 @@ struct DataViewerControls: View {
     .help("Show or hide columns")
     .fixedSize()
     .disabled(viewModel.editorResult?.columns.isEmpty ?? true)
-    .popover(isPresented: $showColumns, arrowEdge: .top) {
+    .popover(isPresented: $showColumns, arrowEdge: .bottom) {
       columnsPopover(state: state)
     }
   }
@@ -223,139 +368,17 @@ struct DataViewerControls: View {
     .help(help)
     .disabled(!enabled || viewModel.isEditorQueryRunning)
   }
+}
 
-  private static func countPhrase(_ count: Int, _ singular: String) -> String {
-    "\(count) \(count == 1 ? singular : singular + "s")"
+/// Capsule control look of the result panel's statement Menu.
+@ViewBuilder
+private func dataViewerCapsuleLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View
+{
+  HStack(spacing: Spacing.xs) {
+    content()
   }
-
-  /// Same rule as the in-grid picker: a loaded page that can be plotted.
-  private var showsChartPicker: Bool {
-    guard let result = viewModel.editorResult, result.error == nil else { return false }
-    let showingRows =
-      !result.rows.isEmpty
-      || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
-    guard showingRows else { return false }
-    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
-  }
-
-  private var addRowButton: some View {
-    Button(action: stageNewRow) {
-      capsuleLabel {
-        Text("+ Row")
-          .font(.system(size: 11))
-          .foregroundColor(viewModel.stagingEnabled ? .foreground : .foregroundMuted)
-      }
-    }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .fixedSize()
-    .disabled(!viewModel.stagingEnabled)
-    .help(viewModel.rowStagingUnavailableReason ?? "Stage a new row")
-    .overlay { disabledStagingHelp }
-  }
-
-  private func stageNewRow() {
-    if let message = viewModel.stageInsert() {
-      viewModel.showToast(message, type: .error)
-    }
-  }
-
-  private func stagedSummary(_ counts: RowChangeSet.Counts) -> some View {
-    let total = counts.inserts + counts.edits + counts.deletes
-    let changes = total == 1 ? "change" : "changes"
-    return
-      (Text("\(total) \(changes)")
-      .foregroundColor(.foreground)
-      + Text(" · ")
-      .foregroundColor(.foregroundSubtle)
-      + Text(Self.countPhrase(counts.inserts, "insert"))
-      .foregroundColor(.success)
-      + Text(", ")
-      .foregroundColor(.foregroundSubtle)
-      + Text(Self.countPhrase(counts.edits, "edit"))
-      .foregroundColor(.warning)
-      + Text(", ")
-      .foregroundColor(.foregroundSubtle)
-      + Text(Self.countPhrase(counts.deletes, "delete"))
-      .foregroundColor(.destructive))
-      .font(.monoSmall)
-      .lineLimit(1)
-      .help(Self.stagedChangesSummary(counts))
-      .accessibilityLabel(Self.stagedChangesSummary(counts))
-  }
-
-  private var previewButton: some View {
-    Button(action: { showPreview = true }) {
-      capsuleLabel {
-        Text("Preview SQL")
-          .font(.system(size: 11))
-          .foregroundColor(.foreground)
-      }
-    }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .fixedSize()
-    .help("Show the staged SQL. Nothing is sent to the database.")
-  }
-
-  private var discardButton: some View {
-    Button(action: { confirmDiscard = true }) {
-      capsuleLabel {
-        Text("Discard")
-          .font(.system(size: 11))
-          .foregroundColor(.destructive)
-      }
-    }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .fixedSize()
-    .help("Discard staged changes")
-  }
-
-  @ViewBuilder
-  private var commitButton: some View {
-    if let key = Self.commitKeyEquivalent {
-      commitButtonBase.keyboardShortcut(key)
-    } else {
-      commitButtonBase
-    }
-  }
-
-  private var commitButtonBase: some View {
-    Button(action: { Task { await viewModel.commitStaged() } }) {
-      Text("Commit")
-    }
-    .buttonStyle(PrimaryButtonStyle(hPadding: Spacing.sm, vPadding: Spacing.xxs))
-    .controlSize(.small)
-    .disabled(!viewModel.stagingEnabled)
-    .help(viewModel.rowStagingUnavailableReason ?? "Commit staged changes")
-    .overlay { disabledStagingHelp }
-  }
-
-  /// Disabled controls do not show help on their own; this overlay does.
-  @ViewBuilder
-  private var disabledStagingHelp: some View {
-    if !viewModel.stagingEnabled, let reason = viewModel.rowStagingUnavailableReason {
-      Color.clear
-        .contentShape(Rectangle())
-        .help(reason)
-    }
-  }
-
-  /// Capsule control look of the result panel's statement Menu
-  private func capsuleLabel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    HStack(spacing: Spacing.xs) {
-      content()
-    }
-    .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, Spacing.xs)
-    .background(
-      Capsule()
-        .fill(Color.inputBackground)
-    )
-    .overlay(
-      Capsule()
-        .stroke(Color.border, lineWidth: 1)
-    )
-  }
+  .padding(.horizontal, Spacing.sm)
+  .padding(.vertical, Spacing.xs)
+  .background(Capsule().fill(Color.inputBackground))
+  .overlay(Capsule().stroke(Color.border, lineWidth: 1))
 }

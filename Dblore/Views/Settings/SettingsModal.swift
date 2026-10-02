@@ -181,7 +181,7 @@ struct SettingsModal: View {
 
 // MARK: - Settings Navigation Row
 
-/// One row of the settings sidebar: icon + label, pill fill when selected or hovered
+/// One row of the settings sidebar: icon + label, capsule fill when selected or hovered
 private struct SettingsNavRow: View {
   let title: String
   let icon: String
@@ -205,14 +205,15 @@ private struct SettingsNavRow: View {
       .foregroundColor(isSelected ? .foreground : .foregroundMuted)
       .padding(.horizontal, Spacing.sm)
       .frame(height: 28)
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
+      .background {
+        Capsule()
           .fill(
             isSelected
               ? Color.accent.opacity(0.15)
-              : (isHovered ? Color.cellBackgroundHover : Color.clear))
-      )
-      .contentShape(Rectangle())
+              // cellBackgroundHover matches cardHeaderBackground, so the capsule disappears.
+              : (isHovered ? Color.foreground.opacity(0.12) : Color.clear))
+      }
+      .contentShape(Capsule())
     }
     .buttonStyle(.plain)
     .linkPointer()
@@ -396,28 +397,21 @@ struct SettingsModalDeveloperSection: View {
         isOn: $appSettings.showExperimentalEngines
       )
 
-      // Export logs button
       Button(action: {
         isExportingLogs = true
       }) {
-        HStack {
+        HStack(spacing: Spacing.xs) {
           Image(systemName: "square.and.arrow.up")
           Text("Export Application Logs")
         }
-        .font(.bodyText)
-        .foregroundColor(.accent)
-        .padding(.vertical, Spacing.sm)
-        .padding(.horizontal, Spacing.lg)
-        .background(Color.accent.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(FilledSecondaryButtonStyle())
       .linkPointer()
 
       Text(
         "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
       )
-      .font(.small)
+      .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
     }
   }
@@ -440,7 +434,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
         .frame(width: 200)
 
       Text("Custom keyboard shortcuts will be available in a future update.")
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
       switch selectedTab {
@@ -454,9 +448,9 @@ struct SettingsModalKeyboardShortcutsSection: View {
 
   private func groupTitle(_ title: String) -> some View {
     Text(title)
-      .font(.small)
+      .font(.bodyText)
       .fontWeight(.medium)
-      .foregroundColor(.foregroundMuted)
+      .foregroundColor(.foreground)
   }
 
   private var appShortcuts: some View {

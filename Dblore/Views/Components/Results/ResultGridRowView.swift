@@ -138,18 +138,28 @@ final class ResultGridRowView: NSTableRowView {
   }
 
   /// Strikes through every cell when the row is staged for deletion, and clears that when it is not.
+  /// An attributed string with no paragraph style draws left-aligned, so the strikethrough
+  /// keeps the field's alignment and line break. A right-aligned row number or number stays put.
   private func syncStrikethrough() {
     let deleted = stagingState == .deleted
     for case let cell as NSTableCellView in subviews {
       guard let field = cell.textField else { continue }
       let struck = Self.hasStrikethrough(field)
       if deleted {
-        if !struck, !field.stringValue.isEmpty {
-          field.attributedStringValue = Self.struckThrough(
-            field.stringValue, font: field.font, color: field.textColor)
-        }
+        guard !struck, !field.stringValue.isEmpty else { continue }
+        let alignment = field.alignment
+        let lineBreakMode = field.lineBreakMode
+        field.attributedStringValue = Self.struckThrough(
+          field.stringValue, font: field.font, color: field.textColor,
+          alignment: alignment, lineBreakMode: lineBreakMode)
+        if field.alignment != alignment { field.alignment = alignment }
+        if field.lineBreakMode != lineBreakMode { field.lineBreakMode = lineBreakMode }
       } else if struck {
+        let alignment = Self.displayedAlignment(field)
+        let lineBreakMode = Self.displayedLineBreakMode(field)
         field.stringValue = field.stringValue
+        if field.alignment != alignment { field.alignment = alignment }
+        if field.lineBreakMode != lineBreakMode { field.lineBreakMode = lineBreakMode }
       }
     }
   }
@@ -161,13 +171,33 @@ final class ResultGridRowView: NSTableRowView {
   }
 
   private static func struckThrough(
-    _ text: String, font: NSFont?, color: NSColor?
+    _ text: String, font: NSFont?, color: NSColor?, alignment: NSTextAlignment,
+    lineBreakMode: NSLineBreakMode
   ) -> NSAttributedString {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = alignment
+    paragraph.lineBreakMode = lineBreakMode
     var attributes: [NSAttributedString.Key: Any] = [
-      .strikethroughStyle: NSUnderlineStyle.single.rawValue
+      .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+      .paragraphStyle: paragraph,
     ]
     if let font { attributes[.font] = font }
     if let color { attributes[.foregroundColor] = color }
     return NSAttributedString(string: text, attributes: attributes)
+  }
+
+  /// Alignment the field is drawn with. The paragraph style wins once the text is attributed.
+  private static func displayedAlignment(_ field: NSTextField) -> NSTextAlignment {
+    paragraphStyle(field)?.alignment ?? field.alignment
+  }
+
+  private static func displayedLineBreakMode(_ field: NSTextField) -> NSLineBreakMode {
+    paragraphStyle(field)?.lineBreakMode ?? field.lineBreakMode
+  }
+
+  private static func paragraphStyle(_ field: NSTextField) -> NSParagraphStyle? {
+    let text = field.attributedStringValue
+    guard text.length > 0 else { return nil }
+    return text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
   }
 }

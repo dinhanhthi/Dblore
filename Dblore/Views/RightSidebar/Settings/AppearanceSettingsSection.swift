@@ -51,7 +51,7 @@ struct AppearanceSettingsSection: View {
       }
 
       Text("Choose between Light, Dark, or System theme. System follows macOS appearance.")
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
     }
   }
@@ -84,7 +84,7 @@ struct AppearanceSettingsSection: View {
       }
 
       Text("Choose the main color for buttons, links, and syntax highlighting.")
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
     }
   }

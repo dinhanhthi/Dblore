@@ -252,7 +252,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       updateHeader(
         tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
         caseSensitive: caseSensitive, currentMatch: gridMatch)
-      // New columns fit like a divider double-click; a re-run keeps dragged widths
+      // New columns fit the column name and the cell text, like a divider double-click.
+      // A re-run keeps a width the user dragged.
       if newKey.columnNames != oldKey?.columnNames {
         for (index, tableColumn) in tableView.tableColumns.enumerated() {
           tableColumn.width = self.tableView(tableView, sizeToFitWidthOfColumn: index)

@@ -4,8 +4,6 @@
 
 # Dblore
 
-[![CI](https://github.com/dinhanhthi/Dblore/actions/workflows/ci.yml/badge.svg)](https://github.com/dinhanhthi/Dblore/actions/workflows/ci.yml)
-
 A native macOS app for working with databases: write and run queries in **notebooks**
 (like Jupyter, for your databases) or in a classic **SQL editor**. Supports PostgreSQL
 today, and SQLite files as beta; more engines (such as MongoDB) are planned.

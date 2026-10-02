@@ -7,32 +7,21 @@
 
 import SwiftUI
 
-/// Chip button with hover, pressed and disabled states.
-/// Footer actions use a capsule; empty-state examples keep a small corner radius.
+/// Chip button with hover, pressed and disabled states. Always a capsule.
 struct AIChipButtonStyle: ButtonStyle {
   var isActive = false
-  var capsule = false
 
   func makeBody(configuration: Configuration) -> some View {
-    ChipBody(configuration: configuration, isActive: isActive, capsule: capsule)
+    ChipBody(configuration: configuration, isActive: isActive)
   }
 
   private struct ChipBody: View {
     let configuration: Configuration
     let isActive: Bool
-    let capsule: Bool
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
     var body: some View {
-      if capsule {
-        chrome(Capsule())
-      } else {
-        chrome(RoundedRectangle(cornerRadius: CornerRadius.sm))
-      }
-    }
-
-    private func chrome<S: InsettableShape>(_ shape: S) -> some View {
       configuration.label
         .font(.small)
         .foregroundColor(isActive ? .accent : .foreground)
@@ -41,9 +30,9 @@ struct AIChipButtonStyle: ButtonStyle {
         .background(
           configuration.isPressed || isHovering ? Color.cellBackgroundHover : Color.inputBackground
         )
-        .clipShape(shape)
-        .overlay(shape.stroke(isActive ? Color.accent : Color.border, lineWidth: 1))
-        .contentShape(shape)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(isActive ? Color.accent : Color.border, lineWidth: 1))
+        .contentShape(Capsule())
         .opacity(isEnabled ? 1 : 0.5)
         .onHover { isHovering = $0 }
         .linkPointer()
@@ -170,7 +159,7 @@ struct AIContextPicker<Accessory: View>: View {
         AIFlowLayout {
           ForEach(table.columns) { column in
             Button(column.name) { onColumn("\(table.qualifiedName).\(column.name)") }
-              .buttonStyle(AIChipButtonStyle(capsule: true))
+              .buttonStyle(AIChipButtonStyle())
               .help("Add \(table.qualifiedName).\(column.name) to the message")
           }
         }
@@ -315,7 +304,7 @@ struct AIContextPicker<Accessory: View>: View {
       } label: {
         Text(table.qualifiedName)
       }
-      .buttonStyle(AIChipButtonStyle(isActive: isExpanded, capsule: true))
+      .buttonStyle(AIChipButtonStyle(isActive: isExpanded))
       .help("Show columns")
 
       Button {

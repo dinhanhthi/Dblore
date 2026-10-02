@@ -17,7 +17,7 @@ struct ResultRowCapSetting: View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack {
         Text("Result row cap")
-          .font(.subheading)
+          .font(.bodyText)
           .foregroundColor(.foreground)
 
         Spacer()
@@ -41,7 +41,7 @@ struct ResultRowCapSetting: View {
                 appSettings.resultRowCap, up: false)
             }
           )
-          .labelsHidden()
+          .compactStepperStyle()
         }
       }
 
@@ -49,7 +49,7 @@ struct ResultRowCapSetting: View {
         "Rows shown per statement; queries are not rewritten — reading stops after this many rows. "
           + "Between \(range.lowerBound) and \(range.upperBound); a connection's row cap override wins."
       )
-      .font(.small)
+      .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
     }
   }

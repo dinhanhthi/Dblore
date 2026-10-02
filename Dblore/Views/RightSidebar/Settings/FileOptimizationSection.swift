@@ -67,7 +67,7 @@ struct FileOptimizationSection: View {
           .frame(maxWidth: .infinity)
           .padding(.vertical, Spacing.sm)
           .background(Color.destructive.opacity(0.3))
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+          .clipShape(Capsule())
         }
         .buttonStyle(.plain)
         .linkPointer()

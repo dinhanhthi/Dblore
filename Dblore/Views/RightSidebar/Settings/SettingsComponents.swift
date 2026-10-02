@@ -72,7 +72,7 @@ extension SettingsToggle where DescriptionContent == Text {
     self.isDisabled = isDisabled
     self.descriptionContent = {
       Text(description)
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
     }
   }
@@ -104,16 +104,16 @@ struct SettingsToggleDescription: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       Text(description)
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
       if let warning = warning {
         HStack(alignment: .top, spacing: Spacing.xs) {
           Image(systemName: "exclamationmark.triangle.fill")
-            .font(.small)
+            .font(.bodyText)
           Text(warning)
         }
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.warning)
       }
     }
@@ -135,13 +135,13 @@ struct SettingsSlider<DescriptionContent: View>: View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack {
         Text(title)
-          .font(.subheading)
+          .font(.bodyText)
           .foregroundColor(.foreground)
 
         Spacer()
 
         Text(valueText)
-          .font(.monoSmall)
+          .font(.mono)
           .foregroundColor(.foregroundMuted)
       }
 
@@ -170,7 +170,7 @@ extension SettingsSlider where DescriptionContent == Text {
     self.step = step
     self.descriptionContent = {
       Text(description)
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
     }
   }

@@ -34,7 +34,7 @@ struct DataSettingsSection: View {
       header
       if let notice {
         Text(notice.text)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(notice.isError ? .destructive : .success)
           .textSelection(.enabled)
       }
@@ -126,8 +126,8 @@ struct DataSettingsSection: View {
       HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
         VStack(alignment: .leading, spacing: Spacing.xxs) {
           Text("Total size")
-            .font(.small)
-            .foregroundColor(.foregroundMuted)
+            .font(.bodyText)
+            .foregroundColor(.foreground)
           Text(DataByteCount.text(model.totalBytes))
             .font(.mono)
             .foregroundColor(.foreground)
@@ -145,7 +145,7 @@ struct DataSettingsSection: View {
           .disabled(busy)
           .linkPointer()
         Button("Import…", action: openImport)
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(busy)
           .linkPointer()
         Button("Clear All…") { clearSheet = SheetToken() }
@@ -162,19 +162,19 @@ struct DataSettingsSection: View {
         .font(.subheading)
         .foregroundColor(.foreground)
       Text("Names only. Values stay in the Keychain until you delete them.")
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
       if let error = model.error {
         Text(error)
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
       }
 
       if model.secrets.isEmpty {
         Text("No saved passwords or keys.")
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.foregroundMuted)
       } else {
         ForEach(model.secrets) { item in
@@ -184,13 +184,12 @@ struct DataSettingsSection: View {
                 .font(.bodyText)
                 .foregroundColor(.foreground)
               Text(dataSecretKindTitle(item.kind))
-                .font(.small)
-                .foregroundColor(.foregroundMuted)
+                .font(.bodyText)
+                .foregroundColor(.foregroundSubtle)
             }
             Spacer(minLength: Spacing.sm)
             Button("Delete") { pendingSecret = item }
               .buttonStyle(DangerButtonStyle())
-              .controlSize(.small)
               .disabled(busy)
               .linkPointer()
           }

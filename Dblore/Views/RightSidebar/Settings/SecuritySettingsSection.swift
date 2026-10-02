@@ -102,7 +102,8 @@ struct SafeModeSection: View {
     VStack(alignment: .leading, spacing: Spacing.md) {
       // Section Header
       Text("Safe Mode")
-        .font(.subheading)
+        .font(.bodyText)
+        .fontWeight(.medium)
         .foregroundColor(.foreground)
 
       // Current Connection Row (only when connected)
@@ -148,27 +149,71 @@ struct SafeModeSection: View {
 
       Spacer()
 
-      // Dropdown
-      Picker("", selection: $selectedConnectionMode) {
-        Text("Use Global").tag(SafeMode?.none)
-        ForEach(SafeMode.allCases, id: \.self) { mode in
-          safeModeLabel(mode)
-            .tag(Optional(mode))
-        }
-      }
-      .pickerStyle(.menu)
-      .frame(width: 140)
-      .onChange(of: selectedConnectionMode) { _, newValue in
-        handleConnectionSafeModeChange(to: newValue)
+      SafetyOptionMenu(arrowEdge: .top, rows: connectionSecurityRows) {
+        settingsChoiceLabel(
+          title: selectedConnectionMode?.displayName ?? "Use Global",
+          systemImage: selectedConnectionMode.map(SafetyOptionStyle.iconName(for:)) ?? "shield",
+          color: SafetyOptionStyle.color(for: selectedConnectionMode))
       }
     }
   }
 
-  /// Picker label: mode name, plus a lock icon when the mode requires a password.
-  private func safeModeLabel(_ mode: SafeMode) -> Text {
-    mode.requiresPassword
-      ? Text("\(mode.displayName) \(Image(systemName: "lock.fill"))")
-      : Text(mode.displayName)
+  private var connectionSecurityRows: [SafetyOptionRow] {
+    var rows = [
+      SafetyOptionRow(
+        id: "global",
+        title: "Use Global",
+        systemImage: "shield",
+        color: SafetyOptionStyle.color(for: nil),
+        selected: selectedConnectionMode == nil
+      ) {
+        handleConnectionSafeModeChange(to: nil)
+      }
+    ]
+    rows += SafeMode.allCases.map { mode in
+      SafetyOptionRow(
+        id: "mode-\(mode.rawValue)",
+        title: mode.displayName,
+        systemImage: SafetyOptionStyle.iconName(for: mode),
+        color: SafetyOptionStyle.color(for: mode),
+        selected: selectedConnectionMode == mode
+      ) {
+        handleConnectionSafeModeChange(to: mode)
+      }
+    }
+    return rows
+  }
+
+  private var globalSecurityRows: [SafetyOptionRow] {
+    SafeMode.allCases.map { mode in
+      SafetyOptionRow(
+        id: "global-mode-\(mode.rawValue)",
+        title: mode.displayName,
+        systemImage: SafetyOptionStyle.iconName(for: mode),
+        color: SafetyOptionStyle.color(for: mode),
+        selected: appSettings.safeMode == mode
+      ) {
+        handleSafeModeChange(to: mode)
+      }
+    }
+  }
+
+  private func settingsChoiceLabel(title: String, systemImage: String, color: Color) -> some View {
+    HStack(spacing: Spacing.xs) {
+      Image(systemName: systemImage)
+        .symbolRenderingMode(.monochrome)
+        .foregroundStyle(color)
+      Text(title)
+        .foregroundStyle(color)
+        .lineLimit(1)
+      Spacer(minLength: Spacing.xs)
+      Image(systemName: "chevron.up.chevron.down")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(Color.foregroundMuted)
+    }
+    .font(.body)
+    .frame(width: 140, alignment: .leading)
+    .dropdownCapsuleStyle()
   }
 
   // MARK: - Global Row
@@ -183,28 +228,17 @@ struct SafeModeSection: View {
 
         Spacer()
 
-        // Dropdown
-        Picker(
-          "",
-          selection: Binding(
-            get: { appSettings.safeMode },
-            set: { newMode in
-              handleSafeModeChange(to: newMode)
-            }
-          )
-        ) {
-          ForEach(SafeMode.allCases, id: \.self) { mode in
-            safeModeLabel(mode)
-              .tag(mode)
-          }
+        SafetyOptionMenu(arrowEdge: .top, rows: globalSecurityRows) {
+          settingsChoiceLabel(
+            title: appSettings.safeMode.displayName,
+            systemImage: SafetyOptionStyle.iconName(for: appSettings.safeMode),
+            color: SafetyOptionStyle.color(for: appSettings.safeMode))
         }
-        .pickerStyle(.menu)
-        .frame(width: 140)
       }
 
       // Description of selected global mode
       Text(appSettings.safeMode.shortDescription)
-        .font(.small)
+        .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
       // Password panel - shown when Safe mode (requires password) is selected
@@ -257,14 +291,14 @@ struct SafeModeSection: View {
           .font(.system(size: 12))
           .foregroundColor(appSettings.isSafeModePasswordSet ? .accent : .warning)
         Text(appSettings.isSafeModePasswordSet ? "Password Protected" : "No Password Set")
-          .font(.small)
+          .font(.bodyText)
           .fontWeight(.medium)
           .foregroundColor(appSettings.isSafeModePasswordSet ? .foreground : .warning)
       }
 
       if !appSettings.isSafeModePasswordSet {
         Text("Set a password to enable protection (then Touch ID if you like).")
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
       }
 
@@ -288,7 +322,7 @@ struct SafeModeSection: View {
               .font(.system(size: 10))
             Text(appSettings.hasCustomPasswordSet ? "Change" : "Set Password")
           }
-          .font(.small)
+          .font(.bodyText)
           .foregroundColor(.accent)
         }
         .buttonStyle(.plain)
@@ -309,7 +343,7 @@ struct SafeModeSection: View {
                 .font(.system(size: 10))
               Text("Use Touch ID")
             }
-            .font(.small)
+            .font(.bodyText)
             .foregroundColor(.accent)
           }
           .buttonStyle(.plain)
@@ -327,7 +361,7 @@ struct SafeModeSection: View {
             showAuthSheet = true
           }) {
             Text("Remove")
-              .font(.small)
+              .font(.bodyText)
               .foregroundColor(.destructive)
           }
           .buttonStyle(.plain)
