@@ -189,6 +189,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
   var bookmark: Data?
   /// Relation shown by a data viewer tab (nil for file tabs)
   var dataViewer: DataViewerReference?
+  /// Pinned tab (nil in workspaces saved before pinning, meaning unpinned)
+  var isPinned: Bool?
 
   /// Table/view of a pinned data viewer tab
   struct DataViewerReference: Codable, Equatable, Sendable {
@@ -203,7 +205,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
     documentType: TabDocumentType,
     title: String,
     bookmark: Data? = nil,
-    dataViewer: DataViewerReference? = nil
+    dataViewer: DataViewerReference? = nil,
+    isPinned: Bool? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -211,12 +214,14 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
     self.title = title
     self.bookmark = bookmark
     self.dataViewer = dataViewer
+    self.isPinned = isPinned
   }
 
   /// Bookmark bytes differ between creations of the same file, so equality ignores them
   static func == (lhs: WorkspaceTabReference, rhs: WorkspaceTabReference) -> Bool {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.documentType == rhs.documentType
       && lhs.title == rhs.title && lhs.dataViewer == rhs.dataViewer
+      && (lhs.isPinned ?? false) == (rhs.isPinned ?? false)
   }
 
   /// Create from a TabItem
@@ -229,7 +234,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
       documentType: tab.documentType,
       title: tab.title,
       bookmark: bookmark,
-      dataViewer: dataViewer
+      dataViewer: dataViewer,
+      isPinned: tab.isPinned ? true : nil
     )
   }
 
@@ -241,7 +247,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
       documentType: documentType,
       title: title,
       isDirty: isDirty,
-      lastAccessed: Date()
+      lastAccessed: Date(),
+      isPinned: isPinned ?? false
     )
   }
 }
