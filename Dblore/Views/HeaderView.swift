@@ -31,21 +31,18 @@ struct HeaderView: View {
             }
           }) {
             Label("New", systemImage: "plus")
-              .notebookToolbarLabelPadding()
           }
-          .glassButtonStyle()
+          .buttonStyle(SecondaryButtonStyle())
           .linkPointer()
           .disabled(viewModel.isFileSizeLarge)
-          .opacity(viewModel.isFileSizeLarge ? 0.5 : 1.0)
           .help("New Cell (⌘⌥N)")
 
           Button(action: {
             showRunAllConfirmation = true
           }) {
             Label("Run All", systemImage: "play.fill")
-              .notebookToolbarLabelPadding()
           }
-          .glassButtonStyle()
+          .buttonStyle(SecondaryButtonStyle())
           .linkPointer()
           .disabled(!viewModel.connectionState.isConnected)
           .help("Run All Cells")
@@ -90,9 +87,8 @@ struct HeaderView: View {
             showClearAllOutputsConfirmation = true
           }) {
             Label("Clear All Outputs", systemImage: "trash")
-              .notebookToolbarLabelPadding()
           }
-          .glassButtonStyle()
+          .buttonStyle(SecondaryButtonStyle())
           .linkPointer()
           .help("Clear All Outputs")
           .confirmationDialog(
@@ -120,8 +116,8 @@ struct HeaderView: View {
             Label("Results", systemImage: "eye")
           }
           .glassButtonStyle()
-          // A Menu bezel ignores label padding and stays 24pt. `.large` is the same
-          // 24 → 28 step the padded buttons take, and it keeps the 13pt label.
+          // A Menu bezel ignores label padding and stays 24pt. `.large` is 28pt,
+          // in line with the secondary buttons beside it, and it keeps the 13pt label.
           .controlSize(.large)
           .linkPointer()
           .help("Show/Hide Results")
@@ -382,14 +378,6 @@ struct HeaderView: View {
       • Allow: Execute all cells
       • Don't Allow: Skip the cells listed above and run the rest
       """
-  }
-}
-
-extension View {
-  /// Extra vertical padding inside notebook toolbar labels. The glass bezel grows with the
-  /// label, so the capsules get a little taller. The header stays `ComponentSize.headerHeight`.
-  fileprivate func notebookToolbarLabelPadding() -> some View {
-    padding(.vertical, Spacing.xxs)
   }
 }
 
