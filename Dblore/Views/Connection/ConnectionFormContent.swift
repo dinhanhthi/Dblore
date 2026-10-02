@@ -22,6 +22,12 @@ struct ConnectionFormContent: View {
   /// Callback when connection is successful (optional, for closing sidebar etc.)
   var onConnectionSuccess: (() -> Void)?
 
+  /// Primary footer button. "Connect" opens a workspace. "Save" updates a recent card.
+  var submitTitle: String = "Connect"
+
+  /// Recent-connections picker. Hidden while editing one card so Save stays on that card.
+  var showsRecentHistory: Bool = true
+
   @State private var isTesting = false
   @State private var testResult: TestResult?
   @State private var isConnecting = false
@@ -58,12 +64,16 @@ struct ConnectionFormContent: View {
     connectionConfig: Binding<ConnectionConfig>,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
-    onConnectionSuccess: (() -> Void)? = nil
+    onConnectionSuccess: (() -> Void)? = nil,
+    submitTitle: String = "Connect",
+    showsRecentHistory: Bool = true
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
     self.onConnect = onConnect
     self.onConnectionSuccess = onConnectionSuccess
+    self.submitTitle = submitTitle
+    self.showsRecentHistory = showsRecentHistory
   }
 
   // MARK: - Body
@@ -72,7 +82,7 @@ struct ConnectionFormContent: View {
     VStack(spacing: 0) {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          if !historyForSelectedType().isEmpty {
+          if showsRecentHistory && !historyForSelectedType().isEmpty {
             sectionCard {
               sectionTitle("Recent connections")
               connectionHistorySection()
@@ -379,7 +389,7 @@ struct ConnectionFormContent: View {
                 .tint(.accent)
                 .frame(width: 14, height: 14)
             }
-            Text("Connect")
+            Text(submitTitle)
           }
         }
         .buttonStyle(PrimaryButtonStyle())

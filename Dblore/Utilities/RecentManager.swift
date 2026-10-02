@@ -128,6 +128,35 @@ class RecentManager {
     addWorkspace(entry)
   }
 
+  /// Replace one recent workspace in place. A different row that already uses the new path is dropped.
+  func replaceWorkspace(id: UUID, with entry: WorkspaceHistoryEntry) {
+    guard recentWorkspaces.contains(where: { $0.id == id }) else {
+      addWorkspace(entry)
+      return
+    }
+
+    var entry = entry
+    if let existing = recentWorkspaces.first(where: { $0.id == id }),
+      existing.fileURL.standardizedFileURL == entry.fileURL.standardizedFileURL
+    {
+      entry.bookmark = entry.bookmark ?? existing.bookmark
+      entry.folderBookmark = entry.folderBookmark ?? existing.folderBookmark
+    } else if entry.folderBookmark == nil {
+      entry.folderBookmark = recentWorkspaces.first { $0.id == id }?.folderBookmark
+    }
+
+    let destination = entry.fileURL.standardizedFileURL
+    recentWorkspaces.removeAll {
+      $0.id != id && $0.fileURL.standardizedFileURL == destination
+    }
+    guard let index = recentWorkspaces.firstIndex(where: { $0.id == id }) else {
+      addWorkspace(entry)
+      return
+    }
+    recentWorkspaces[index] = entry
+    saveWorkspaces()
+  }
+
   /// Remove a workspace from recent list
   func removeWorkspace(id: UUID) {
     recentWorkspaces.removeAll { $0.id == id }
@@ -193,6 +222,12 @@ class RecentManager {
   /// Add a connection to recent list
   func addConnection(_ config: ConnectionConfig) {
     SessionManager.saveConnection(config)
+  }
+
+  /// Replace one recent connection in place.
+  func replaceConnection(id: UUID, with config: ConnectionConfig) {
+    SessionManager.replaceConnection(id: id, with: config)
+    connectionsRevision += 1
   }
 
   /// Remove a connection from recent list

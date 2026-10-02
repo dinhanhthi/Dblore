@@ -149,6 +149,55 @@ class SessionManager {
     saveHistory(history, defaults: defaults)
   }
 
+  /// Replace one history row in place. The id, position, and last-used date stay.
+  /// A changed host, port, database, or username takes the password with it.
+  /// An empty password deletes the stored one. Remember off removes the row.
+  static func replaceConnection(
+    id: UUID,
+    with config: ConnectionConfig,
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
+    var history = loadHistory(defaults: defaults, passwords: passwords)
+    guard let index = history.firstIndex(where: { $0.id == id }) else {
+      saveConnection(config, defaults: defaults, passwords: passwords)
+      return
+    }
+
+    let previous = history[index]
+    if !config.rememberConnection {
+      if !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey }) {
+        deleteStoredPassword(for: previous, passwords: passwords)
+      }
+      history.remove(at: index)
+      saveHistory(history, defaults: defaults)
+      return
+    }
+
+    var updated = previous
+    updated.config = config
+    let newKey = updated.keychainKey
+    if previous.keychainKey != newKey,
+      !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
+    {
+      deleteStoredPassword(for: previous, passwords: passwords)
+    }
+    history.removeAll { $0.id != id && $0.keychainKey == newKey }
+    guard let kept = history.firstIndex(where: { $0.id == id }) else {
+      saveConnection(config, defaults: defaults, passwords: passwords)
+      return
+    }
+    history[kept] = updated
+    if config.databaseType.capabilities.usesPassword {
+      if config.password.isEmpty {
+        passwords.deletePassword(forKey: newKey)
+      } else {
+        passwords.savePassword(config.password, forKey: newKey)
+      }
+    }
+    saveHistory(history, defaults: defaults)
+  }
+
   /// Get most recent connection
   static func loadMostRecentConnection() -> ConnectionConfig? {
     return loadHistory().first?.config

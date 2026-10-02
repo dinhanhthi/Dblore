@@ -57,6 +57,21 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     name
   }
 
+  /// Same recent row with a new display name and file location.
+  func edited(name: String, fileURL: URL, bookmark: Data?) -> WorkspaceHistoryEntry {
+    var edited = WorkspaceHistoryEntry(
+      id: id,
+      fileURL: fileURL,
+      name: name,
+      connectionDisplayString: connectionDisplayString,
+      lastOpenedAt: lastOpenedAt,
+      tabCount: tabCount,
+      bookmark: bookmark
+    )
+    edited.folderBookmark = folderBookmark
+    return edited
+  }
+
   /// Formatted last opened date
   var formattedLastOpened: String {
     let formatter = RelativeDateTimeFormatter()

@@ -18,6 +18,10 @@ struct AppWelcomeView: View {
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
   @State private var editingConnectionConfig = ConnectionConfig()
+  /// Set while the connection form is editing one recent card. Nil creates a workspace.
+  @State private var editingConnectionId: UUID?
+  /// Recent workspace whose name and file path are being edited.
+  @State private var editingWorkspace: WorkspaceHistoryEntry?
 
   var body: some View {
     ZStack {
@@ -37,6 +41,7 @@ struct AppWelcomeView: View {
                   RecentWorkspacesColumn(
                     workspaces: recentManager.recentWorkspaces,
                     onSelect: openWorkspace,
+                    onConfigure: editWorkspace,
                     onRemove: { recentManager.removeWorkspace(id: $0.id) },
                     onNew: createNewWorkspace,
                     columnWidth: columnWidth(
@@ -51,6 +56,7 @@ struct AppWelcomeView: View {
                   RecentConnectionsColumn(
                     connections: recentManager.recentConnections,
                     onSelect: openConnectionAsWorkspace,
+                    onConfigure: editConnection,
                     onRemove: { recentManager.removeConnection(id: $0.id) },
                     onNew: showConnectionForm,
                     columnWidth: columnWidth(
@@ -82,9 +88,22 @@ struct AppWelcomeView: View {
     .connectionFormModal(
       isPresented: $isShowingConnectionSidebar,
       connectionConfig: $editingConnectionConfig,
+      title: editingConnectionId == nil ? "Connect to Database" : "Edit Connection",
+      submitTitle: editingConnectionId == nil ? "Connect" : "Save",
+      showsRecentHistory: editingConnectionId == nil,
       onTestConnection: testConnectionForWelcome,
-      onConnect: connectAndCreateWorkspaceForWelcome
+      onConnect: submitConnectionForm
     )
+    .modalOverlay(isPresented: workspaceEditPresented) {
+      if let entry = editingWorkspace {
+        RecentWorkspaceEditModal(
+          entry: entry,
+          isPresented: workspaceEditPresented,
+          onSave: saveWorkspaceEdit
+        )
+        .id(entry.id)
+      }
+    }
     .ignoresSafeArea(.all, edges: .top)
     .background(
       TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
@@ -156,10 +175,49 @@ struct AppWelcomeView: View {
     }
   }
 
+  private var workspaceEditPresented: Binding<Bool> {
+    Binding(
+      get: { editingWorkspace != nil },
+      set: { if !$0 { editingWorkspace = nil } }
+    )
+  }
+
+  private func editWorkspace(_ entry: WorkspaceHistoryEntry) {
+    editingWorkspace = entry
+  }
+
+  private func saveWorkspaceEdit(
+    _ entry: WorkspaceHistoryEntry, _ name: String, _ destination: URL
+  ) async throws {
+    try RecentWorkspaceEditor.apply(
+      entry: entry,
+      name: name,
+      destination: destination,
+      recents: recentManager,
+      openWorkspaces: Array(windowManager.workspaces.values)
+    )
+  }
+
   private func showConnectionForm() {
     // Reset config and show sidebar
+    editingConnectionId = nil
     editingConnectionConfig = ConnectionConfig()
     isShowingConnectionSidebar = true
+  }
+
+  private func editConnection(_ entry: ConnectionHistoryEntry) {
+    editingConnectionId = entry.id
+    editingConnectionConfig = entry.config
+    isShowingConnectionSidebar = true
+  }
+
+  /// Connect creates a workspace. Save updates the recent card that was opened.
+  private func submitConnectionForm(_ config: ConnectionConfig) async throws {
+    if let id = editingConnectionId {
+      recentManager.replaceConnection(id: id, with: config)
+      return
+    }
+    try await connectAndCreateWorkspaceForWelcome(config)
   }
 
   private func createWorkspaceWithConnection(_ config: ConnectionConfig) {
@@ -232,6 +290,7 @@ struct WelcomeHeader: View {
 struct RecentWorkspacesColumn: View {
   let workspaces: [WorkspaceHistoryEntry]
   let onSelect: (WorkspaceHistoryEntry) -> Void
+  let onConfigure: (WorkspaceHistoryEntry) -> Void
   let onRemove: (WorkspaceHistoryEntry) -> Void
   let onNew: () -> Void
   let columnWidth: CGFloat
@@ -271,6 +330,7 @@ struct RecentWorkspacesColumn: View {
               loadingWorkspaceId = entry.id
               onSelect(entry)
             },
+            onConfigure: { onConfigure(workspace) },
             onRemove: { onRemove(workspace) }
           )
           .disabled(loadingWorkspaceId != nil)
@@ -296,9 +356,11 @@ struct RecentWorkspaceRow: View {
   let isLast: Bool
   let isLoading: Bool
   let onSelect: (WorkspaceHistoryEntry) -> Void
+  let onConfigure: () -> Void
   let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringConfigure = false
   @State private var isHoveringRemove = false
 
   var body: some View {
@@ -319,7 +381,7 @@ struct RecentWorkspaceRow: View {
         }
 
         VStack(alignment: .leading, spacing: 2) {
-          // Name. The remove button takes the old tab-count chip slot on hover.
+          // Name. Config and remove take the old tab-count chip slot on hover.
           HStack(spacing: Spacing.xs) {
             Text(workspace.name)
               .font(.callout)
@@ -330,10 +392,13 @@ struct RecentWorkspaceRow: View {
 
             Spacer(minLength: 0)
           }
-          .recentRemoveSlot(
-            isShown: showsRecentRemove,
+          .recentActionSlot(
+            isShown: showsRecentActions,
+            isHoveringConfigure: $isHoveringConfigure,
             isHoveringRemove: $isHoveringRemove,
-            action: onRemove
+            configureHelp: "Edit workspace",
+            onConfigure: onConfigure,
+            onRemove: onRemove
           )
 
           workspaceDetailLine
@@ -352,6 +417,7 @@ struct RecentWorkspaceRow: View {
       isHovering = hovering
     }
     .animation(.easeOut(duration: 0.12), value: isHovering)
+    .animation(.easeOut(duration: 0.12), value: isHoveringConfigure)
     .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
   }
 
@@ -398,8 +464,8 @@ struct RecentWorkspaceRow: View {
     .foregroundColor(.foregroundSubtle)
   }
 
-  private var showsRecentRemove: Bool {
-    (isHovering || isHoveringRemove) && !isLoading
+  private var showsRecentActions: Bool {
+    (isHovering || isHoveringConfigure || isHoveringRemove) && !isLoading
   }
 }
 
@@ -408,6 +474,7 @@ struct RecentWorkspaceRow: View {
 struct RecentConnectionsColumn: View {
   let connections: [ConnectionHistoryEntry]
   let onSelect: (ConnectionHistoryEntry) -> Void
+  let onConfigure: (ConnectionHistoryEntry) -> Void
   let onRemove: (ConnectionHistoryEntry) -> Void
   let onNew: () -> Void
   let columnWidth: CGFloat
@@ -447,6 +514,7 @@ struct RecentConnectionsColumn: View {
               loadingConnectionId = entry.id
               onSelect(entry)
             },
+            onConfigure: { onConfigure(connection) },
             onRemove: { onRemove(connection) }
           )
           .disabled(loadingConnectionId != nil)
@@ -472,9 +540,11 @@ struct RecentConnectionRow: View {
   let isLast: Bool
   let isLoading: Bool
   let onSelect: (ConnectionHistoryEntry) -> Void
+  let onConfigure: () -> Void
   let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringConfigure = false
   @State private var isHoveringRemove = false
 
   var body: some View {
@@ -497,7 +567,7 @@ struct RecentConnectionRow: View {
         }
 
         VStack(alignment: .leading, spacing: 2) {
-          // Name. The remove button takes the trailing slot on hover, same as workspace rows.
+          // Name. Config and remove take the trailing slot on hover, same as workspace rows.
           HStack(spacing: Spacing.xs) {
             Text(connection.shortDisplayName)
               .font(.callout)
@@ -508,10 +578,13 @@ struct RecentConnectionRow: View {
 
             Spacer(minLength: 0)
           }
-          .recentRemoveSlot(
-            isShown: showsRecentRemove,
+          .recentActionSlot(
+            isShown: showsRecentActions,
+            isHoveringConfigure: $isHoveringConfigure,
             isHoveringRemove: $isHoveringRemove,
-            action: onRemove
+            configureHelp: "Edit connection",
+            onConfigure: onConfigure,
+            onRemove: onRemove
           )
 
           connectionDetailLine
@@ -530,6 +603,7 @@ struct RecentConnectionRow: View {
       isHovering = hovering
     }
     .animation(.easeOut(duration: 0.12), value: isHovering)
+    .animation(.easeOut(duration: 0.12), value: isHoveringConfigure)
     .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
   }
 
@@ -557,12 +631,12 @@ struct RecentConnectionRow: View {
     .foregroundColor(.foregroundSubtle)
   }
 
-  private var showsRecentRemove: Bool {
-    (isHovering || isHoveringRemove) && !isLoading
+  private var showsRecentActions: Bool {
+    (isHovering || isHoveringConfigure || isHoveringRemove) && !isLoading
   }
 }
 
-// MARK: - Recent Remove Button
+// MARK: - Recent Hover Buttons
 
 /// Hover highlight of a row: rounded only at the corners it shares with the card
 private func recentRowShape(isFirst: Bool, isLast: Bool) -> UnevenRoundedRectangle {
@@ -573,20 +647,33 @@ private func recentRowShape(isFirst: Bool, isLast: Bool) -> UnevenRoundedRectang
     topTrailingRadius: isFirst ? CornerRadius.md : 0)
 }
 
-/// Hover-only control that removes a row from the recent list.
-/// The mark is drawn, not an SF Symbol: `xmark`'s alignment rect sits off the circle's center.
-private struct RecentRemoveButton: View {
+private enum RecentHoverMetrics {
   static let diameter: CGFloat = 16
-  /// Title-line inset so the name and date clear the mark.
-  static let slotWidth: CGFloat = diameter + Spacing.xs
+  /// Title-line inset so the name clears the gear and the remove mark.
+  static let pairWidth: CGFloat = diameter * 2 + Spacing.xs
+}
 
+/// Hover-only control on a recent row. The remove mark is drawn, not an SF Symbol:
+/// `xmark`'s alignment rect sits off the circle's center.
+private struct RecentHoverButton: View {
+  enum Mark {
+    case configure
+    case remove
+  }
+
+  let mark: Mark
+  let help: String
   let action: () -> Void
   @Binding var isHovering: Bool
 
+  private var color: Color {
+    isHovering ? .foreground : .foregroundMuted
+  }
+
   var body: some View {
     Button(action: action) {
-      CenteredXMark(color: isHovering ? .foreground : .foregroundMuted)
-        .frame(width: Self.diameter, height: Self.diameter)
+      markView
+        .frame(width: RecentHoverMetrics.diameter, height: RecentHoverMetrics.diameter)
         .background {
           Circle().fill(isHovering ? Color.foreground.opacity(0.12) : Color.clear)
         }
@@ -594,9 +681,21 @@ private struct RecentRemoveButton: View {
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .help("Remove from recent")
-    .accessibilityLabel("Remove from recent")
+    .help(help)
+    .accessibilityLabel(help)
     .onHover { isHovering = $0 }
+  }
+
+  @ViewBuilder
+  private var markView: some View {
+    switch mark {
+    case .configure:
+      Image(systemName: "gearshape")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundColor(color)
+    case .remove:
+      CenteredXMark(color: color)
+    }
   }
 }
 
@@ -621,17 +720,33 @@ private struct CenteredXMark: View {
 }
 
 extension View {
-  /// Puts the remove button on the trailing edge of a title line.
-  fileprivate func recentRemoveSlot(
+  /// Puts config and remove on the trailing edge of a title line.
+  fileprivate func recentActionSlot(
     isShown: Bool,
+    isHoveringConfigure: Binding<Bool>,
     isHoveringRemove: Binding<Bool>,
-    action: @escaping () -> Void
+    configureHelp: String,
+    onConfigure: @escaping () -> Void,
+    onRemove: @escaping () -> Void
   ) -> some View {
-    padding(.trailing, isShown ? RecentRemoveButton.slotWidth : 0)
+    padding(.trailing, isShown ? RecentHoverMetrics.pairWidth : 0)
       .overlay(alignment: .trailing) {
         if isShown {
-          RecentRemoveButton(action: action, isHovering: isHoveringRemove)
-            .transition(.opacity)
+          HStack(spacing: Spacing.xs) {
+            RecentHoverButton(
+              mark: .configure,
+              help: configureHelp,
+              action: onConfigure,
+              isHovering: isHoveringConfigure
+            )
+            RecentHoverButton(
+              mark: .remove,
+              help: "Remove from recent",
+              action: onRemove,
+              isHovering: isHoveringRemove
+            )
+          }
+          .transition(.opacity)
         }
       }
       .zIndex(isShown ? 1 : 0)
@@ -856,6 +971,7 @@ private struct PreviewAppWelcomeView: View {
                   RecentWorkspacesColumn(
                     workspaces: previewManager.recentWorkspaces,
                     onSelect: { _ in },
+                    onConfigure: { _ in },
                     onRemove: { _ in },
                     onNew: {},
                     columnWidth: columnWidth(
@@ -869,6 +985,7 @@ private struct PreviewAppWelcomeView: View {
                   RecentConnectionsColumn(
                     connections: previewManager.recentConnections,
                     onSelect: { _ in },
+                    onConfigure: { _ in },
                     onRemove: { _ in },
                     onNew: {},
                     columnWidth: columnWidth(

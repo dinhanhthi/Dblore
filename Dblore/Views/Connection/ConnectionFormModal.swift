@@ -11,19 +11,24 @@ struct ConnectionFormModal: View {
   @Binding var isPresented: Bool
   @Binding var connectionConfig: ConnectionConfig
 
+  var title: String = "Connect to Database"
+  var submitTitle: String = "Connect"
+  var showsRecentHistory: Bool = true
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
   var onConnect: ((ConnectionConfig) async throws -> Void)?
 
   var body: some View {
     VStack(spacing: 0) {
-      GenericModalHeader(title: "Connect to Database", onClose: { isPresented = false }) {
+      GenericModalHeader(title: title, onClose: { isPresented = false }) {
         databaseTypeMenu
       }
       ConnectionFormContent(
         connectionConfig: $connectionConfig,
         onTestConnection: onTestConnection,
         onConnect: onConnect,
-        onConnectionSuccess: { isPresented = false }
+        onConnectionSuccess: { isPresented = false },
+        submitTitle: submitTitle,
+        showsRecentHistory: showsRecentHistory
       )
     }
     .frame(width: 440, height: connectionConfig.databaseType == .sqlite ? 420 : 640)
@@ -59,6 +64,9 @@ extension View {
   func connectionFormModal(
     isPresented: Binding<Bool>,
     connectionConfig: Binding<ConnectionConfig>,
+    title: String = "Connect to Database",
+    submitTitle: String = "Connect",
+    showsRecentHistory: Bool = true,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil
   ) -> some View {
@@ -66,6 +74,9 @@ extension View {
       ConnectionFormModal(
         isPresented: isPresented,
         connectionConfig: connectionConfig,
+        title: title,
+        submitTitle: submitTitle,
+        showsRecentHistory: showsRecentHistory,
         onTestConnection: onTestConnection,
         onConnect: onConnect
       )
