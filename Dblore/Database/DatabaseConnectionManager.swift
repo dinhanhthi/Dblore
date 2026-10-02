@@ -59,6 +59,9 @@ actor DatabaseConnectionManager {
   var editTableCache: [TableRef: EditTable] = [:]
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
+  /// Why a SQLite file was opened read-only by the app (a sidecar could not be written); nil
+  /// otherwise. Set on connect, cleared when the connection is forgotten.
+  private(set) var sqliteReadOnlyReason: String?
   /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
   /// `DatabaseError.queryCancelled`
   var lastCancel: QueryCancelRecord?
@@ -141,6 +144,7 @@ actor DatabaseConnectionManager {
     session = opening
     self.config = prepared.config
     sqliteFileAccessRelease = prepared.release
+    sqliteReadOnlyReason = prepared.readOnlyReason
     connectionEpoch &+= 1
     lastSessionLoss = nil
     // The UI learns about a session the server closed even when no query is running.
@@ -175,7 +179,8 @@ actor DatabaseConnectionManager {
     resolved.database = grant.url.path
     if grant.readOnly { resolved.readOnlyFile = true }
     if let bookmark = grant.bookmark { resolved.fileBookmark = bookmark }
-    return PreparedSQLiteOpen(config: resolved, release: { grant.release() })
+    return PreparedSQLiteOpen(
+      config: resolved, release: { grant.release() }, readOnlyReason: grant.bannerReason)
   }
 
   /// `SELECT 1` on a SQLite file, then close. The grant is released either way.
@@ -242,6 +247,7 @@ actor DatabaseConnectionManager {
     let resources = (forgotten as? PostgresSession)?.detach() ?? (nil, nil)
     session = nil
     config = nil
+    sqliteReadOnlyReason = nil
     txState = .idle
     userTxOpen = false
     editTableCache.removeAll()
@@ -318,6 +324,8 @@ nonisolated struct ForgottenSession: Sendable {
 private struct PreparedSQLiteOpen: Sendable {
   var config: ConnectionConfig
   var release: (@Sendable () -> Void)?
+  /// `SQLiteFileAccess.AccessGrant.bannerReason`: set when the app itself opened the file read-only
+  var readOnlyReason: String?
 }
 
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` after the caller has resolved

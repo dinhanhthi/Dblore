@@ -52,6 +52,13 @@ struct WorkspaceContainerView: View {
                 ConnectionLostBanner(workspaceManager: workspaceManager)
               }
 
+              // A SQLite file opened read-only because its sidecar files cannot be written
+              if workspaceManager.connectionState.isConnected,
+                workspaceManager.readOnlyFileNotice != nil
+              {
+                ReadOnlyFileBanner(workspaceManager: workspaceManager)
+              }
+
               // Content area
               if workspaceManager.isSchemaVisualizerActive {
                 // Schema visualizer at workspace level (overlays everything)

@@ -10,17 +10,6 @@ import Foundation
 import NIOCore
 import PostgresNIO
 
-nonisolated extension CellUpdateStatement {
-  /// Bind parameters: untyped text (the server infers each parameter's type from the column,
-  /// like libpq's `PQexecParams` without `paramTypes`), NULL for `.null`.
-  var bindings: PostgresBindings { untypedTextBindings(binds) }
-}
-
-nonisolated extension BoundStatement {
-  /// Bind parameters: untyped text, NULL for `.null`. Same encoding as `CellUpdateStatement`.
-  var bindings: PostgresBindings { untypedTextBindings(binds) }
-}
-
 /// Untyped text binds (OID 0). `.null` is SQL NULL. The only conversion from `SQLBindValue`.
 nonisolated func untypedTextBindings(_ binds: [SQLBindValue]) -> PostgresBindings {
   var bindings = PostgresBindings(capacity: binds.count)

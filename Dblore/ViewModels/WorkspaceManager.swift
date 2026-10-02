@@ -43,6 +43,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningConnect: ConnectionConfig?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
+  /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
+  var readOnlyFileNotice: String?
 
   // MARK: - Protected Transaction (see WorkspaceManager+Transaction.swift)
 
@@ -323,6 +325,7 @@ class WorkspaceManager: Identifiable {
       editingConnectionConfig = config
       connectionState = .connected
       connectionLostMessage = nil
+      readOnlyFileNotice = await connectionManager.sqliteReadOnlyReason
       await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
 
@@ -373,16 +376,18 @@ class WorkspaceManager: Identifiable {
   func autoConnectIfNeeded() async {
     guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
 
-    // Try to get password from Keychain
-    guard let keychainKey = workspace.keychainKey,
-      let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
-    else {
-      // No stored password: never leave the UI on "connecting"
-      if !Task.isCancelled { connectionState = .disconnected }
-      return
-    }
     var configWithPassword = config
-    configWithPassword.password = password
+    // A SQLite file has no password; PostgreSQL gets it from the Keychain
+    if config.databaseType == .postgresql {
+      guard let keychainKey = workspace.keychainKey,
+        let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
+      else {
+        // No stored password: never leave the UI on "connecting"
+        if !Task.isCancelled { connectionState = .disconnected }
+        return
+      }
+      configWithPassword.password = password
+    }
     editingConnectionConfig = configWithPassword
 
     do {

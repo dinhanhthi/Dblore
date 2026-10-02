@@ -5,8 +5,6 @@
 // A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement.
 
 import Foundation
-import Logging
-import PostgresNIO
 
 extension DatabaseConnectionManager {
   /// App-owned savepoint around one inline edit (user-typed SAVEPOINT stays blocked)
@@ -209,32 +207,21 @@ extension DatabaseConnectionManager {
 
   /// Send the app-built UPDATE (values as bind parameters) and return the command tag row count.
   private func sendEdit(_ statement: CellUpdateStatement) async throws -> Int {
-    try await affectedRows(sql: statement.sql, binds: statement.bindings, logLabel: "dblore.update")
+    try await affectedRows(sql: statement.sql, binds: statement.binds)
   }
 
   private func sendBound(_ statement: BoundStatement) async throws -> Int {
-    try await affectedRows(sql: statement.sql, binds: statement.bindings, logLabel: "dblore.batch")
+    try await affectedRows(sql: statement.sql, binds: statement.binds)
   }
 
-  private func affectedRows(
-    sql: String, binds: PostgresBindings, logLabel: String
-  ) async throws -> Int {
-    guard let connection = _postgresConnection else { throw DatabaseError.notConnected }
+  private func affectedRows(sql: String, binds: [SQLBindValue]) async throws -> Int {
     let startTime = Date()
     do {
-      let query = PostgresQuery(unsafeSQL: sql, binds: binds)
-      let metadata = try await send(on: connection) {
-        try await $0.query(query, logger: Logger(label: logLabel)).get().metadata
-      }
-      return metadata.rows ?? 0
+      return try await withSession { try await $0.command(sql, binds: binds) }.affectedRows
     } catch let error as DatabaseError {
       throw error
-    } catch let error as PSQLError {
-      throw DatabaseError.queryFailed(
-        formatPostgresError(error, query: sql), Date().timeIntervalSince(startTime))
     } catch {
-      throw DatabaseError.queryFailed(
-        error.localizedDescription, Date().timeIntervalSince(startTime))
+      throw queryFailure(error, query: sql, startTime: startTime)
     }
   }
 
