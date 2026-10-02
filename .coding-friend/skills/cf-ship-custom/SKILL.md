@@ -158,7 +158,7 @@ p="$(gh api repos/dinhanhthi/Dblore/pages --jq .build_type 2>/dev/null)" || p=""
 
 - `private` visibility is a **STOP**: Sparkle and users cannot download release assets from a private repo.
 - A missing `SPARKLE_PRIVATE_KEY` is a **STOP**: `release.yml` fails at "Generate appcast" after the release is already published.
-- Pages not `workflow` (or a 404: Pages not enabled) is a **STOP**: `deploy-appcast.yml` cannot publish the feed.
+- Pages not `workflow` (or a 404: Pages not enabled) is a **STOP**: `pages.yml` cannot publish the feed.
 
 On any `STOP`, report it with a pointer to `docs/release-setup.md` and do not commit, tag or release.
 
@@ -262,10 +262,10 @@ hdiutil detach "/Volumes/Dblore"
 
 Use the mount point `hdiutil attach` actually prints if it differs. Always detach, even when a check fails.
 
-Then verify the appcast. After the release, `release.yml` commits `chore(release): appcast v<tag version>` to `main` and dispatches `deploy-appcast.yml`; the dispatched run can take a moment to appear:
+Then verify the appcast. After the release, `release.yml` commits `chore(release): appcast v<tag version>` to `main` and dispatches `pages.yml` (publishes the website and `appcast.xml` together); the dispatched run can take a moment to appear:
 
 ```bash
-gh run list --workflow=deploy-appcast.yml --limit 3
+gh run list --workflow=pages.yml --limit 3
 gh run watch <deploy-run-id> --exit-status --interval 30
 ```
 
@@ -315,14 +315,14 @@ Take the URL from `gh`, do not hardcode it.
 - **CI owns `appcast.xml`.** Never hand-edit it and never stage it in the release commit; the only exception is the local fallback below.
 - **Never tag a commit before `build-check.yml` is green for that exact SHA** (Step B6b).
 - **Never claim a release shipped until Step B8 passed.** A pushed tag is not a release; a green run is not a verified artifact.
-- **If CI fails**, report the failing step and point to the fallback in `docs/release-setup.md` ("Fallback: release from a local machine"): run the repo's `build-release.sh` (in the repo `scripts` folder) with `--expect-version <tag version>` locally, extract the changelog section with the same awk, then `gh release create <tag>` with the DMG and its `.sha256`. The tag already exists, so `gh release create` attaches to it. Do not retag and do not delete the tag. The fallback also publishes the appcast: put the current `appcast.xml` and the DMG in a temp dir, run Sparkle's `generate_appcast` on it with the keychain key (`--account sqlnotebook`) and the same `--download-url-prefix` / `--full-release-notes-url` as `release.yml`, copy the result to the root `appcast.xml`, commit it as `chore(release): appcast v<tag version>` and push: your own push triggers `deploy-appcast.yml` (run `gh workflow run deploy-appcast.yml --ref main` only if no run appears).
+- **If CI fails**, report the failing step and point to the fallback in `docs/release-setup.md` ("Fallback: release from a local machine"): run the repo's `build-release.sh` (in the repo `scripts` folder) with `--expect-version <tag version>` locally, extract the changelog section with the same awk, then `gh release create <tag>` with the DMG and its `.sha256`. The tag already exists, so `gh release create` attaches to it. Do not retag and do not delete the tag. The fallback also publishes the appcast: put the current `appcast.xml` and the DMG in a temp dir, run Sparkle's `generate_appcast` on it with the keychain key (`--account sqlnotebook`) and the same `--download-url-prefix` / `--full-release-notes-url` as `release.yml`, copy the result to the root `appcast.xml`, commit it as `chore(release): appcast v<tag version>` and push: your own push triggers `pages.yml` (run `gh workflow run pages.yml --ref main` only if no run appears).
 - `docs/` is gitignored, so plan docs are local-only. `.coding-friend/skills/` is re-included by `.gitignore`, so this guide and its scripts are version-controlled.
 
 ## After
 
 **NO CONFIRMATIONS:** do not ask for confirmation at any step: not for the level, the changelog, the commit, the push or the tag. Analyse, decide, execute.
 
-The only exceptions are the stop conditions: `BROKEN-tag-ahead-of-file`, `HAS APP CHANGES: no`, `TEST MODE` in real output, a tag that already exists, a failing build/test/lint check, a failing build-number check, a failing release pre-flight (repo not `public`, `SPARKLE_PRIVATE_KEY` missing, Pages source not GitHub Actions), a failing CI run, a failing artifact check, or a failing `deploy-appcast.yml` run / appcast not live. Report those to the user; do not work around them.
+The only exceptions are the stop conditions: `BROKEN-tag-ahead-of-file`, `HAS APP CHANGES: no`, `TEST MODE` in real output, a tag that already exists, a failing build/test/lint check, a failing build-number check, a failing release pre-flight (repo not `public`, `SPARKLE_PRIVATE_KEY` missing, Pages source not GitHub Actions), a failing CI run, a failing artifact check, or a failing `pages.yml` run / appcast not live. Report those to the user; do not work around them.
 
 When done, report:
 

@@ -59,8 +59,8 @@ Pushing a `vX.Y.Z` tag starts `.github/workflows/release.yml` on a `macos-26` ru
    The feed keeps the latest 3 versions (the `generate_appcast` default).
 8. Commits the new `appcast.xml` to `main` as `github-actions[bot]`
    (`chore(release): appcast v<tag version>`; never counts toward a bump).
-9. Dispatches `deploy-appcast.yml`, which publishes only `appcast.xml` to
-   <https://dinhanhthi.github.io/Dblore/appcast.xml> (GitHub Pages).
+9. Dispatches `pages.yml`, which publishes `website/` and `appcast.xml` together to
+   GitHub Pages (the feed stays at <https://dinhanhthi.github.io/Dblore/appcast.xml>).
 10. Deletes the keychain, key files and the appcast work folder.
 
 ## Prerequisites
@@ -118,7 +118,7 @@ a nested binary without hardened runtime or secure timestamp, or wrong
 `NOTARY_*` secrets. Fix, then rebuild with the fallback; do not retag.
 
 **Appcast not updated** (the feed lacks the new version). Check the
-`deploy-appcast.yml` run (`gh run list --workflow=deploy-appcast.yml --limit 3`,
+`pages.yml` run (`gh run list --workflow=pages.yml --limit 3`,
 then `gh run view <id> --log-failed`) and that the Pages source is GitHub
 Actions. If `release.yml` failed before "Commit appcast to main" (for example
 `SPARKLE_PRIVATE_KEY` not set), the release exists but the feed does not: use
@@ -167,6 +167,6 @@ BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts
 | `scripts/bump.sh`               | Writes the version and build number into the Xcode project and verifies them.        |
 | `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Used by CI and locally.            |
 | `.github/workflows/release.yml` | Tag-triggered release: build, notarize, publish on GitHub Releases, update appcast.  |
-| `.github/workflows/deploy-appcast.yml` | Publishes only `appcast.xml` to GitHub Pages.                                 |
+| `.github/workflows/pages.yml`   | Publishes `website/` and `appcast.xml` to GitHub Pages. The site header reads the version from the published `appcast.xml`. |
 | `appcast.xml`                   | (repo root) Sparkle feed. Owned by CI; never edit by hand.                           |
 | `docs/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |

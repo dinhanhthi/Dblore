@@ -154,11 +154,11 @@ jobs:
             git push "$repo_url" HEAD:main
           fi
 
-      - name: Deploy appcast to Pages
+      - name: Deploy website and appcast to Pages
         env:
           GH_TOKEN: ${{ github.token }}
         # Pushes made with GITHUB_TOKEN do not trigger other workflows, but workflow_dispatch does.
-        run: gh workflow run deploy-appcast.yml --ref main -R "$GITHUB_REPOSITORY"
+        run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"
 
       - name: Clean up signing material
         if: always()

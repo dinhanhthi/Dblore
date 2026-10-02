@@ -47,6 +47,25 @@ Thanks for your interest — contributions are welcome!
      `swift-format lint --strict <files>`.
   3. Keep pull requests focused, and describe what changed and why.
 
+## Website
+
+The landing page and docs live in `website/` (plain HTML and CSS, no build step). Preview
+locally with `python3 -m http.server -d website`. Pushes to `main` that touch `website/`
+deploy it through `.github/workflows/pages.yml`, which also publishes `appcast.xml` (the
+Sparkle update feed), so keep that file at the repo root.
+
+- **One-time setup (manual):** Settings > Pages > Source = "GitHub Actions" (keep it set,
+  otherwise the Sparkle feed breaks). For the custom domain `dblore.dinhanhthi.com`, add a
+  DNS CNAME record `dblore` -> `dinhanhthi.github.io`, then set the custom domain in
+  Settings > Pages and enable Enforce HTTPS.
+- **Feed check:** before and after enabling the custom domain, run
+  `curl -IL https://dinhanhthi.github.io/Dblore/appcast.xml`; it must end at HTTP 200.
+  `SUFeedURL` in `Info.plist` is unchanged and relies on that URL still resolving (the
+  redirect to the custom domain is assumed, so verify it).
+- **Rollback:** remove the custom domain in Settings > Pages so github.io serves directly
+  again. If the workflow itself is the problem, `git revert` the commit that merged
+  `pages.yml` (restores `deploy-appcast.yml`).
+
 ## License
 
 Dblore is open source under the **GNU Affero General Public License v3.0**. By

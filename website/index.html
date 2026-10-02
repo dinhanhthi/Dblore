@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dblore: notebooks and a SQL editor for your databases</title>
+    <meta
+      name="description"
+      content="Dblore is a clean, native macOS client for your databases: notebooks and a SQL editor in one tidy workspace, with keyboard shortcuts for running queries. PostgreSQL and SQLite (beta). Free and open source."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Dblore: notebooks and a SQL editor for your databases" />
+    <meta
+      property="og:description"
+      content="A clean, native macOS client with notebooks, a SQL editor, a schema browser and an AI assistant. Free and open source."
+    />
+    <meta property="og:image" content="https://dblore.dinhanhthi.com/poster.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="logo.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script>
+      try {
+        const stored = localStorage.getItem("dblore.theme");
+        if (stored) document.documentElement.dataset.theme = stored;
+      } catch {
+        // Private mode: follow the system theme.
+      }
+    </script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div class="brand-group">
+          <a class="brand" href="./">
+            <img src="logo.png" alt="" width="32" height="32" />
+            <span>Dblore</span>
+          </a>
+          <a
+            class="version-badge"
+            id="version-badge"
+            href="https://github.com/dinhanhthi/Dblore/releases/tag/v0.4.0"
+            target="_blank"
+            rel="noopener noreferrer"
+            >v0.4.0</a
+          >
+        </div>
+        <nav aria-label="Primary navigation">
+          <a class="nav-link" href="docs.html">Docs</a>
+          <button type="button" class="nav-link" id="theme-toggle" aria-label="Switch theme" title="Switch theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+            </svg>
+          </button>
+          <a
+            class="nav-link"
+            href="https://github.com/dinhanhthi/Dblore"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Dblore on GitHub"
+            title="Dblore on GitHub"
+          >
+            <svg class="fill" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 .5a12 12 0 0 0-3.79 23.4c.6.11.82-.26.82-.58v-2.2c-3.34.73-4.04-1.43-4.04-1.43-.55-1.4-1.34-1.77-1.34-1.77-1.09-.75.08-.73.08-.73 1.21.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.21.7.83.58A12 12 0 0 0 12 .5Z" />
+            </svg>
+          </a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero">
+          <h1>Dblore</h1>
+          <p>A clean, native macOS client for your databases. Notebooks and a SQL editor in one tidy workspace, with shortcuts for everything you run.</p>
+          <div class="actions">
+            <a
+              class="button button--primary"
+              href="https://github.com/dinhanhthi/Dblore/releases/latest"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Download</a
+            >
+            <a
+              class="button button--secondary"
+              href="https://github.com/dinhanhthi/Dblore"
+              target="_blank"
+              rel="noopener noreferrer"
+              >GitHub</a
+            >
+          </div>
+          <p class="note">macOS 14+ · Apple Silicon · Free &amp; open source (AGPLv3)</p>
+        </section>
+
+        <button class="poster-button" type="button" data-zoom aria-label="View screenshot full screen">
+          <img
+            class="poster"
+            src="poster.jpg"
+            alt="Dblore showing a notebook with inline results, a SQL editor and a table data viewer in one tabbed workspace"
+            width="1600"
+            height="900"
+            loading="eager"
+          />
+        </button>
+
+        <section id="features">
+          <h2>Features</h2>
+          <ul class="list">
+            <li><strong>Notebooks and SQL editor</strong>: .dblore notebooks with inline results, or plain .sql tabs, in one tidy workspace.</li>
+            <li><strong>Schema browser</strong>: tables, columns and types, a quick filter and a canvas with foreign-key lines.</li>
+            <li><strong>Results grid</strong>: sort, search, filter, edit values inline and inspect cells as JSON.</li>
+            <li><strong>Charts</strong>: switch any result between grid and chart.</li>
+            <li><strong>Export</strong>: Excel, CSV, JSON, Markdown, PDF, TSV and SQL INSERT.</li>
+            <li><strong>Safe Mode</strong>: confirmation before destructive statements, Commit / Rollback for pending transactions, Touch ID to unlock.</li>
+            <li><strong>AI assistant</strong>: write, explain and fix SQL with your own key or a local model. Generated SQL never runs automatically.</li>
+            <li><strong>Keyboard-first</strong>: run cells and queries without leaving the keys.</li>
+          </ul>
+        </section>
+
+        <section id="databases">
+          <h2>Databases</h2>
+          <ul class="list">
+            <li><strong>PostgreSQL</strong>: saved connections, passwords in the Keychain, SSL, read-only mode.</li>
+            <li><strong>SQLite</strong> (beta): open a file and work with it like a server connection.</li>
+          </ul>
+        </section>
+
+        <section id="get-started">
+          <h2>Get started</h2>
+          <ol class="steps">
+            <li>Download the signed and notarized DMG from the <a href="https://github.com/dinhanhthi/Dblore/releases/latest" target="_blank" rel="noopener noreferrer">releases page</a> and drag Dblore to Applications.</li>
+            <li>Connect to a PostgreSQL server or open a SQLite file.</li>
+            <li>Create a notebook (<code>Cmd+Shift+N</code>) and run a cell (<code>Ctrl+Enter</code>).</li>
+          </ol>
+          <p class="note">More in the <a href="docs.html">docs</a>. Dblore updates itself.</p>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        AGPLv3 · by
+        <a href="https://dinhanhthi.com" target="_blank" rel="noopener noreferrer">Thi</a>
+        ·
+        <a href="https://github.com/dinhanhthi/Dblore/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
+        ·
+        <a href="privacy.html">Privacy</a>
+      </footer>
+    </div>
+    <script src="site.js"></script>
+  </body>
+</html>

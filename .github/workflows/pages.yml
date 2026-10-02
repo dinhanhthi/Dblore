@@ -1,7 +1,10 @@
-name: Deploy appcast
+name: Deploy website
 
-# Publishes ONLY appcast.xml to GitHub Pages (https://dinhanhthi.github.io/Dblore/appcast.xml).
-# Nothing else in the repo is published: the job copies just that one file into the Pages artifact.
+# Publishes the landing site (website/) AND appcast.xml to GitHub Pages
+# (https://dinhanhthi.github.io/Dblore/, appcast at /appcast.xml).
+# Both are staged together because each Pages deploy replaces the whole site: deploying only one
+# would delete the other (the app's SUFeedURL points at /appcast.xml).
+# Nothing else in the repo is published.
 # Requires Settings > Pages > Source = "GitHub Actions".
 # release.yml dispatches this workflow after committing appcast.xml, because pushes made with
 # GITHUB_TOKEN don't trigger `push` workflows.
@@ -9,7 +12,10 @@ name: Deploy appcast
 on:
   push:
     branches: [main]
-    paths: ['appcast.xml']
+    paths:
+      - 'website/**'
+      - 'appcast.xml'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -32,10 +38,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Stage ONLY appcast.xml
+      - name: Stage site
         run: |
           mkdir -p _site
+          cp -R website/. _site/
           cp appcast.xml _site/appcast.xml
+          for f in _site/index.html _site/appcast.xml; do
+            [ -f "$f" ] || { echo "::error::$f is missing"; exit 1; }
+          done
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

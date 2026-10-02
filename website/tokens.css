@@ -1,0 +1,92 @@
+/* Design tokens, adapted from PopGuy. Accent blue matches the app logo. */
+:root {
+  color-scheme: light;
+  --color-paper: oklch(99% 0.003 264);
+  --color-paper-2: oklch(97% 0.004 264);
+  --color-paper-3: oklch(94.5% 0.006 264);
+  --color-ink: oklch(20% 0.012 264);
+  --color-ink-2: oklch(32% 0.01 264);
+  --color-body: oklch(36% 0.012 264);
+  --color-strong: var(--color-ink);
+  --color-primary: #18181b;
+  --color-primary-ink: #fafafa;
+  --color-muted: oklch(48% 0.012 264);
+  --color-rule: oklch(90% 0.008 264);
+  --color-rule-strong: oklch(84% 0.01 264);
+  --color-accent: oklch(52% 0.17 258);
+  --color-accent-ink: oklch(99% 0.003 264);
+  --color-focus: oklch(52% 0.17 258);
+  --color-hover: oklch(96% 0.005 264);
+
+  --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-outlier: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+
+  --radius-sm: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+
+  --rule: 1px solid var(--color-rule);
+}
+
+/* Dark: explicit choice, or system preference unless light was chosen. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: oklch(15% 0.005 264);
+  --color-paper-2: oklch(19% 0.006 264);
+  --color-paper-3: oklch(24% 0.008 264);
+  --color-ink: oklch(96% 0.004 264);
+  --color-ink-2: oklch(88% 0.006 264);
+  --color-body: oklch(0.85 0 0);
+  --color-strong: oklch(0.99 0 0);
+  --color-primary: #fafafa;
+  --color-primary-ink: #18181b;
+  --color-muted: oklch(70% 0.01 264);
+  --color-rule: oklch(28% 0.008 264);
+  --color-rule-strong: oklch(36% 0.01 264);
+  --color-accent: oklch(68% 0.15 255);
+  --color-accent-ink: oklch(15% 0.005 264);
+  --color-focus: oklch(72% 0.14 255);
+  --color-hover: oklch(21% 0.006 264);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-paper: oklch(15% 0.005 264);
+    --color-paper-2: oklch(19% 0.006 264);
+    --color-paper-3: oklch(24% 0.008 264);
+    --color-ink: oklch(96% 0.004 264);
+    --color-ink-2: oklch(88% 0.006 264);
+    --color-body: oklch(0.85 0 0);
+    --color-strong: oklch(0.99 0 0);
+    --color-primary: #fafafa;
+    --color-primary-ink: #18181b;
+    --color-muted: oklch(70% 0.01 264);
+    --color-rule: oklch(28% 0.008 264);
+    --color-rule-strong: oklch(36% 0.01 264);
+    --color-accent: oklch(68% 0.15 255);
+    --color-accent-ink: oklch(15% 0.005 264);
+    --color-focus: oklch(72% 0.14 255);
+    --color-hover: oklch(21% 0.006 264);
+  }
+}
