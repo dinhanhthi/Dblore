@@ -8,6 +8,12 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Tabs in the details modal: workspace summary, or the connection (name, fields, disconnect).
+enum WorkspaceInfoTab: String, CaseIterable, Hashable {
+  case workspace = "Workspace"
+  case connection = "Connection"
+}
+
 /// Manages a single workspace with shared database connection.
 /// Replaces TabStateManager for workspace-scoped management.
 @MainActor
@@ -112,7 +118,9 @@ class WorkspaceManager: Identifiable {
   // MARK: - Connection Modals
 
   var isConnectionFormModalVisible: Bool = false
-  var isConnectionInfoModalVisible: Bool = false
+  var isWorkspaceInfoModalVisible: Bool = false
+  /// Tab shown when the details modal opens. The info button starts on Workspace.
+  var workspaceInfoTab: WorkspaceInfoTab = .workspace
 
   // MARK: - Settings Modal
 

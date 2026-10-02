@@ -382,8 +382,7 @@ enum ConnectionState: Equatable, Sendable {
     return false
   }
 
-  /// Width for connection buttons area (bolt + schema visualizer when connected)
-  var connectionButtonsWidth: CGFloat {
-    isConnected ? 78 : 47
-  }
+  /// Extra title-bar width for two small icon buttons: the info button, plus either
+  /// the connect bolt or the schema visualizer. Each button adds 31pt.
+  var connectionButtonsWidth: CGFloat { 78 }
 }

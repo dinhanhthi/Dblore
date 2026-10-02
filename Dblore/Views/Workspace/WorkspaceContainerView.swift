@@ -112,9 +112,7 @@ struct WorkspaceContainerView: View {
                     workspaceManager.toggleLeftSidebar()
                   }
 
-                  DatabaseConnectionButton(workspaceManager: workspaceManager)
-
-                  // Schema Visualizer button (only show when connected)
+                  // Connect stays available until a connection exists. Details live on the info button.
                   if case .connected = workspaceManager.connectionState {
                     Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
                       Image(systemName: "point.3.connected.trianglepath.dotted")
@@ -131,7 +129,11 @@ struct WorkspaceContainerView: View {
                     .help(
                       workspaceManager.isSchemaVisualizerActive
                         ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+                  } else {
+                    DatabaseConnectionButton(workspaceManager: workspaceManager)
                   }
+
+                  WorkspaceInfoButton(workspaceManager: workspaceManager)
                 }
                 .padding(.trailing, Spacing.md)
               }
@@ -202,7 +204,7 @@ struct WorkspaceContainerView: View {
     }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
-    .connectionInfoModal(workspaceManager: workspaceManager)
+    .workspaceInfoModal(workspaceManager: workspaceManager)
     .settingsModal(
       workspaceManager: workspaceManager,
       section: settingsSection,
@@ -922,37 +924,41 @@ struct TabNavigationArrowButton: View {
   }
 }
 
-/// Database connection button with bolt icon
-struct DatabaseConnectionButton: View {
+/// Info button that opens the details modal on the Workspace tab
+struct WorkspaceInfoButton: View {
   @Bindable var workspaceManager: WorkspaceManager
-
-  private var isConnected: Bool {
-    if case .connected = workspaceManager.connectionState {
-      return true
-    }
-    return false
-  }
 
   var body: some View {
     Button {
-      if isConnected {
-        // Show connection info modal instead of disconnecting immediately
-        workspaceManager.isConnectionInfoModalVisible = true
-      } else {
-        workspaceManager.showConnectionForm()
-      }
+      workspaceManager.workspaceInfoTab = .workspace
+      workspaceManager.isWorkspaceInfoModalVisible = true
     } label: {
-      Image(systemName: isConnected ? "bolt.fill" : "bolt.slash")
+      Image(systemName: "info.circle")
         .font(.system(size: 12))
-        .foregroundColor(isConnected ? .green : nil)
     }
     .buttonStyle(
-      GhostButtonStyle(
-        iconOnly: true
-      )
+      GhostButtonStyle(isActive: workspaceManager.isWorkspaceInfoModalVisible, iconOnly: true)
     )
     .controlSize(.small)
     .blockDoubleClickZoom()
-    .help(isConnected ? "Connection Details" : "Connect to database")
+    .help("Details")
+  }
+}
+
+/// Bolt button that opens the connection form. Hidden once connected; details are on the info button.
+struct DatabaseConnectionButton: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    Button {
+      workspaceManager.showConnectionForm()
+    } label: {
+      Image(systemName: "bolt.slash")
+        .font(.system(size: 12))
+    }
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
+    .blockDoubleClickZoom()
+    .help("Connect to database")
   }
 }
