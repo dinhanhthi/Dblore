@@ -26,13 +26,8 @@ extension NotebookViewModel {
       return
     }
 
-    // IMPORTANT: Force blur to ensure text content is saved before execution
-    // This is needed because text binding only updates on blur (to prevent undo/redo issues)
+    // Resign first responder. textDidChange already wrote the binding, so the cell content is current.
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
-
-    // Give a tiny delay to allow the blur callback to update the binding
-    // This ensures cell.content is up-to-date before we execute the query
-    try? await Task.sleep(for: .milliseconds(50))
 
     // Enqueue the cell execution
     executionQueue.enqueue(cellId: id, query: query)

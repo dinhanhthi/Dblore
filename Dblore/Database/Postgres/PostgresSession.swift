@@ -97,7 +97,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   }
 
   /// Test connection without storing it on the actor. Same probe as before: real connect,
-  /// `SELECT 1 as test`, then close.
+  /// `SELECT 1 as test`, then close. Connect and the test query share one timeout.
   func probe() async throws -> Bool {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
@@ -111,22 +111,14 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
     let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
     do {
-      let conn = try await attemptConnection(
-        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
-      let testQuery = PostgresQuery(unsafeSQL: "SELECT 1 as test")
-      let stream = try await conn.query(testQuery, logger: Logger(label: "dblore.testquery"))
-      var rowCount = 0
-      for try await _ in stream {
-        rowCount += 1
+      try await withTimeout(of: .seconds(config.timeoutSeconds)) {
+        try await self.probeConnectAndQuery(group: group, postgresConfig: postgresConfig)
       }
-      guard rowCount == 1 else {
-        try await conn.close()
-        try await group.shutdownGracefully()
-        throw DatabaseError.connectionFailed("Test query returned unexpected results")
-      }
-      try await conn.close()
-      try await group.shutdownGracefully()
       return true
+    } catch is TimeoutError {
+      try? await group.shutdownGracefully()
+      throw DatabaseError.connectionFailed(
+        "Connection timeout after \(config.timeoutSeconds) seconds")
     } catch let error as PSQLError {
       try? await group.shutdownGracefully()
       throw DatabaseError.connectionFailed(formatPostgresError(error))
@@ -134,6 +126,57 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       try? await group.shutdownGracefully()
       throw DatabaseError.connectionFailed(error.localizedDescription)
     }
+  }
+
+  /// Connect, run `SELECT 1 as test`, and close. `withTimeout` waits until this task finishes.
+  /// PostgresNIO writes the query with `promise: nil`, so a closed channel never completes that
+  /// future and cancelling the wait does not either. Resume on cancel and leave the query running.
+  private func probeConnectAndQuery(
+    group: MultiThreadedEventLoopGroup,
+    postgresConfig: PostgresConnection.Configuration
+  ) async throws {
+    let gate = ProbeCancelGate<Void>()
+    let work = Task {
+      try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+    }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        gate.start(continuation)
+        Task {
+          let result = await work.result
+          gate.resume(with: result)
+        }
+      }
+    } onCancel: {
+      work.cancel()
+      gate.cancel()
+    }
+  }
+
+  private func runProbeQuery(
+    group: MultiThreadedEventLoopGroup,
+    postgresConfig: PostgresConnection.Configuration
+  ) async throws {
+    let conn = try await attemptConnection(
+      group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
+    do {
+      let testQuery = PostgresQuery(unsafeSQL: "SELECT 1 as test")
+      let stream = try await conn.query(testQuery, logger: Logger(label: "dblore.testquery"))
+      var rowCount = 0
+      for try await _ in stream {
+        rowCount += 1
+      }
+      guard rowCount == 1 else {
+        throw DatabaseError.connectionFailed("Test query returned unexpected results")
+      }
+    } catch {
+      // The query promise fails before the channel is inactive. Deinit asserts if this
+      // connection is released while the socket is still open.
+      try? await conn.close()
+      throw error
+    }
+    try await conn.close()
+    try await group.shutdownGracefully()
   }
 
   /// Close the socket and the event-loop group. Yields `.closedByApp` when this session had
@@ -459,6 +502,63 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     connectionStorage = connection
     watchStorage = watch
     lock.unlock()
+  }
+
+  /// One resume of a probe continuation. A result that wins the race with cancel is kept
+  /// until `start`, so neither side resumes twice.
+  private final class ProbeCancelGate<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var pending: Result<T, Error>?
+    private var finished = false
+
+    func start(_ continuation: CheckedContinuation<T, Error>) {
+      lock.lock()
+      if let pending {
+        self.pending = nil
+        finished = true
+        lock.unlock()
+        continuation.resume(with: pending)
+        return
+      }
+      if finished {
+        lock.unlock()
+        continuation.resume(throwing: CancellationError())
+        return
+      }
+      self.continuation = continuation
+      lock.unlock()
+    }
+
+    func resume(with result: Result<T, Error>) {
+      lock.lock()
+      if finished {
+        lock.unlock()
+        return
+      }
+      guard let continuation else {
+        pending = result
+        lock.unlock()
+        return
+      }
+      finished = true
+      self.continuation = nil
+      lock.unlock()
+      continuation.resume(with: result)
+    }
+
+    func cancel() {
+      lock.lock()
+      if finished || pending != nil {
+        lock.unlock()
+        return
+      }
+      finished = true
+      let continuation = self.continuation
+      self.continuation = nil
+      lock.unlock()
+      continuation?.resume(throwing: CancellationError())
+    }
   }
 
   /// Pulls one Postgres row per consumer request, on the consumer's task, so a capped read

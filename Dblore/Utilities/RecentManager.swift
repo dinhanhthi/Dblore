@@ -262,6 +262,15 @@ class RecentManager {
     }
   }
 
+  /// `NSCocoaErrorDomain` 4 or 260: the file is not there. Bookmark resolution throws 4;
+  /// `Data(contentsOf:)` throws 260 for a missing workspace.
+  nonisolated static func isFileNotFound(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    return nsError.domain == NSCocoaErrorDomain
+      && (nsError.code == CocoaError.fileNoSuchFile.rawValue
+        || nsError.code == CocoaError.fileReadNoSuchFile.rawValue)
+  }
+
   /// The entry's bookmark resolves to a file that no longer exists, or reports that it does
   /// not exist. Entries without a bookmark, or whose bookmark fails for another reason (for
   /// example Cocoa 259, seen for a deleted file but also possible for an unusable bookmark),
@@ -277,10 +286,7 @@ class RecentManager {
       defer { token.release() }
       return !FileManager.default.fileExists(atPath: resolved.url.path)
     } catch {
-      let code = (error as NSError).code
-      return (error as NSError).domain == NSCocoaErrorDomain
-        && (code == CocoaError.fileNoSuchFile.rawValue
-          || code == CocoaError.fileReadNoSuchFile.rawValue)
+      return Self.isFileNotFound(error)
     }
   }
 

@@ -210,7 +210,20 @@ struct RightSidebarView: View {
         // Editable only for a single table with a primary key, on a writable connection
         isReadOnly: !viewModel.canEdit(
           tableName: tableName, primaryKeyColumns: primaryKeyColumns,
-          columnNames: Set(rowData.map { Array($0.keys) } ?? []))
+          columnNames: Set(rowData.map { Array($0.keys) } ?? [])),
+        onSetNull: { [workspaceManager] in
+          viewModel.handleCellValueEdit(
+            columnName: columnName,
+            columnType: columnType,
+            newValue: nil,
+            originalValue: value,
+            tableName: tableName,
+            rowData: rowData,
+            primaryKeyColumns: primaryKeyColumns,
+            cellId: cellId,
+            connectionManager: workspaceManager?.connectionManager
+          )
+        }
       )
       .environment(viewModel)
     case .executedQuery(let query, let cellId):

@@ -108,7 +108,11 @@ class NotebookViewModel {
   var lastSaved: Date?
 
   // MARK: - Toast (delegated to WorkspaceWindowManager)
-  // Toast is now managed at app level via WorkspaceWindowManager.shared
+
+  /// App-level toast. Tests inject a recorder instead of the shared window manager.
+  @ObservationIgnored var toastPresenter: @MainActor (String, ToastMessage.ToastType) -> Void = {
+    WorkspaceWindowManager.shared.showToast($0, type: $1)
+  }
 
   // MARK: - File Size State (10.3.2 optimization)
   var fileSizeState: FileSizeState = FileSizeState()
@@ -221,7 +225,7 @@ class NotebookViewModel {
 
   /// Show toast via app-level toast system
   func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
-    WorkspaceWindowManager.shared.showToast(message, type: type)
+    toastPresenter(message, type)
   }
 
   // MARK: - Statistics

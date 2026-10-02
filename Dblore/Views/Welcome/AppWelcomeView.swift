@@ -135,7 +135,7 @@ struct AppWelcomeView: View {
         await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
         // Show user-friendly toast message
         await MainActor.run {
-          if error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError {
+          if RecentManager.isFileNotFound(error) {
             windowManager.showToast(
               "Workspace file not found: \(entry.name)",
               type: .error

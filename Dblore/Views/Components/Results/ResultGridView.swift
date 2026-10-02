@@ -261,27 +261,51 @@ final class ResultGridScrollView: NSScrollView {
   /// Whether a vertical scroll of `deltaY` (> 0 toward the top) at `offsetY` (0 = top) goes to
   /// the parent: the content fits, or the grid is already at the edge it scrolls toward
   /// (within 1 pt, for fractional offsets)
-  static func shouldForward(deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat) -> Bool {
+  nonisolated static func shouldForward(
+    deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat
+  ) -> Bool {
     maxOffsetY < 1 || (deltaY > 0 && offsetY < 1) || (deltaY < 0 && offsetY > maxOffsetY - 1)
   }
 
-  override func scrollWheel(with event: NSEvent) {
+  /// One scroll event's hand-off. `locksForward` is nil when the event must not choose
+  /// (no delta, or Shift+wheel). The view locks that choice for the rest of the gesture.
+  nonisolated static func scrollHandOff(
+    deltaX: CGFloat,
+    deltaY: CGFloat,
+    phase: NSEvent.Phase,
+    momentumPhase: NSEvent.Phase,
+    modifiers: NSEvent.ModifierFlags,
+    offsetY: CGFloat,
+    maxOffsetY: CGFloat,
+    forwardsToParent: Bool
+  ) -> (startsGesture: Bool, locksForward: Bool?) {
     let startsGesture =
-      event.phase == .mayBegin || event.phase == .began
-      || (event.phase.isEmpty && event.momentumPhase.isEmpty)
-    if startsGesture { forwardsGesture = nil }
-    let deltaX = event.scrollingDeltaX
-    let deltaY = event.scrollingDeltaY
-    // Shift+wheel is a horizontal scroll (mouse), handled by the grid
-    if forwardsGesture == nil, deltaX != 0 || deltaY != 0, !event.modifierFlags.contains(.shift) {
-      let insets = contentView.contentInsets
-      let bounds = contentView.bounds
-      let maxOffsetY =
-        (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
-      forwardsGesture =
-        forwardsToParent && abs(deltaY) > abs(deltaX)
-        && Self.shouldForward(
-          deltaY: deltaY, offsetY: bounds.origin.y + insets.top, maxOffsetY: maxOffsetY)
+      phase == .mayBegin || phase == .began || (phase.isEmpty && momentumPhase.isEmpty)
+    let locksForward: Bool? =
+      (deltaX != 0 || deltaY != 0) && !modifiers.contains(.shift)
+      ? forwardsToParent && abs(deltaY) > abs(deltaX)
+        && shouldForward(deltaY: deltaY, offsetY: offsetY, maxOffsetY: maxOffsetY)
+      : nil
+    return (startsGesture, locksForward)
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    let insets = contentView.contentInsets
+    let bounds = contentView.bounds
+    let maxOffsetY =
+      (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
+    let handOff = Self.scrollHandOff(
+      deltaX: event.scrollingDeltaX,
+      deltaY: event.scrollingDeltaY,
+      phase: event.phase,
+      momentumPhase: event.momentumPhase,
+      modifiers: event.modifierFlags,
+      offsetY: bounds.origin.y + insets.top,
+      maxOffsetY: maxOffsetY,
+      forwardsToParent: forwardsToParent)
+    if handOff.startsGesture { forwardsGesture = nil }
+    if forwardsGesture == nil, let locksForward = handOff.locksForward {
+      forwardsGesture = locksForward
     }
     if forwardsGesture == true {
       nextResponder?.scrollWheel(with: event)
