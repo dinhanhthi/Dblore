@@ -109,11 +109,27 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var tabAccess: [UUID: SecurityScopedAccessToken] = [:]
   @ObservationIgnored var accessHooks = SecurityScopedAccessHooks.live
   @ObservationIgnored var recents = RecentManager.shared
+  /// Creates the manager of the window a tab moves to (injectable for tests)
+  @ObservationIgnored var makeWindowManager: (ConnectionConfig?) -> WorkspaceManager = {
+    WorkspaceWindowManager.shared.newWorkspace(connection: $0)
+  }
+  /// Unregisters a window manager whose window never opened, and restores the active workspace
+  @ObservationIgnored var discardWindowManager: (WorkspaceManager, UUID?) -> Void = {
+    manager, previousActive in
+    let windows = WorkspaceWindowManager.shared
+    windows.workspaces.removeValue(forKey: manager.id)
+    manager.releaseFileAccess()
+    if windows.activeWorkspaceId == manager.id { windows.activeWorkspaceId = previousActive }
+  }
 
   // MARK: - UI State
 
   var showingCloseConfirmation = false
   var tabToClose: UUID?
+  /// Tabs still to close after the current confirmation ("Close to the Right")
+  var pendingCloseQueue: [UUID] = []
+  /// Reveals a file in Finder; replaced in tests
+  var revealInFinder: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 
   // MARK: - Connection Modals
 
@@ -529,7 +545,9 @@ class WorkspaceManager: Identifiable {
     var bookmarksChanged = false
     var askedForFolder = folderAccess != nil
     var deniedFiles: [String] = []
-    for tabRef in tabRefs {
+    // Pinned tabs lead, whatever the file order (stable partition)
+    let ordered = tabRefs.filter { $0.isPinned == true } + tabRefs.filter { $0.isPinned != true }
+    for tabRef in ordered {
       if let ref = tabRef.dataViewer {
         restoreDataViewer(tabRef: tabRef, ref: ref)
         continue
@@ -562,7 +580,7 @@ class WorkspaceManager: Identifiable {
   }
 
   /// Restore a pinned data viewer tab with its original ID; its page loads once connected
-  private func restoreDataViewer(
+  func restoreDataViewer(
     tabRef: WorkspaceTabReference, ref: WorkspaceTabReference.DataViewerReference
   ) {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
@@ -773,13 +791,15 @@ class WorkspaceManager: Identifiable {
       to >= 0, to < tabs.count
     else { return }
 
+    let to = clampedMoveTarget(from: from, to: to)
+    guard from != to else { return }
     let tab = tabs.remove(at: from)
     tabs.insert(tab, at: to)
     markDirtyAndScheduleAutoSave()
   }
 
   func requestCloseTab(id: UUID) {
-    guard let tab = tabs.first(where: { $0.id == id }) else { return }
+    guard let tab = tabs.first(where: { $0.id == id }), canClose(tabId: id) else { return }
     // The tab that opened a pending Protected transaction resolves it first
     guard !deferCloseTabForPendingTransaction(id: id) else { return }
     // Staged data-viewer rows: Commit / Discard / Cancel before the tab goes away
@@ -798,6 +818,7 @@ class WorkspaceManager: Identifiable {
     closeTabImmediately(id: id)
     tabToClose = nil
     showingCloseConfirmation = false
+    scheduleDrainCloseQueue()
   }
 
   func saveAndCloseTab() async {
@@ -807,12 +828,15 @@ class WorkspaceManager: Identifiable {
       closeTabImmediately(id: id)
     } catch {
       await AppLogger.shared.error("Failed to save tab: \(error)", category: "Workspace")
+      pendingCloseQueue.removeAll()  // a failed or cancelled save acts like Cancel
     }
     tabToClose = nil
     showingCloseConfirmation = false
+    scheduleDrainCloseQueue()
   }
 
   func cancelClose() {
+    pendingCloseQueue.removeAll()
     tabToClose = nil
     showingCloseConfirmation = false
   }

@@ -55,7 +55,15 @@ struct WorkspaceDraggableTabsContainer: View {
           isActive: isActive,
           isDragging: isDragging,
           capsuleNamespace: tabCapsuleNamespace,
-          onClose: { workspaceManager.requestCloseTab(id: tab.id) }
+          canClose: workspaceManager.canClose(tabId: tab.id),
+          hasTabsToRight: !workspaceManager.tabsToCloseRight(of: tab.id).isEmpty,
+          canRevealFile: workspaceManager.canRevealFile(tabId: tab.id),
+          canMoveToNewWindow: workspaceManager.canMoveToNewWindow(tabId: tab.id),
+          onClose: { workspaceManager.requestCloseTab(id: tab.id) },
+          onTogglePin: { workspaceManager.setPinned(!tab.isPinned, id: tab.id) },
+          onCloseToRight: { workspaceManager.closeTabsToTheRight(of: tab.id) },
+          onMoveToNewWindow: { Task { await workspaceManager.moveTabToNewWindow(id: tab.id) } },
+          onRevealFile: { workspaceManager.revealFile(tabId: tab.id) }
         )
         .id(tab.id)
         .background(
@@ -206,7 +214,8 @@ struct WorkspaceDraggableTabsContainer: View {
       }
     }
 
-    return max(0, min(newIndex, tabs.count - 1))
+    return workspaceManager.clampedMoveTarget(
+      from: originalIndex, to: max(0, min(newIndex, tabs.count - 1)))
   }
 
   /// Handle drag gesture end
@@ -255,7 +264,15 @@ struct WorkspaceDraggableTabItem: View {
   let isActive: Bool
   let isDragging: Bool
   let capsuleNamespace: Namespace.ID
+  let canClose: Bool
+  let hasTabsToRight: Bool
+  let canRevealFile: Bool
+  let canMoveToNewWindow: Bool
   let onClose: () -> Void
+  let onTogglePin: () -> Void
+  let onCloseToRight: () -> Void
+  let onMoveToNewWindow: () -> Void
+  let onRevealFile: () -> Void
 
   @State private var isHovering = false
   @State private var isHoveringClose = false
@@ -297,8 +314,32 @@ struct WorkspaceDraggableTabItem: View {
     .opacity(isDragging ? 0.9 : 1.0)
     .scaleEffect(isDragging ? 1.02 : 1.0)
     .shadow(color: isDragging ? Color.black.opacity(0.2) : Color.clear, radius: 4, y: 2)
-    .onMiddleClick { onClose() }
+    .onMiddleClick { if !tab.isPinned { onClose() } }
     .blockDoubleClickZoom()
+    .contextMenu {
+      Button(action: onTogglePin) {
+        Label(
+          tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: tab.isPinned ? "pin.slash" : "pin")
+      }
+      Button(action: onClose) {
+        Label("Close Tab", systemImage: "xmark")
+      }
+      .disabled(!canClose)
+      Button(action: onCloseToRight) {
+        Label("Close to the Right", systemImage: "xmark.square")
+      }
+      .disabled(!hasTabsToRight)
+      Button(action: onMoveToNewWindow) {
+        Label("Open in New Window", systemImage: "macwindow.badge.plus")
+      }
+      .disabled(!canMoveToNewWindow)
+      if canRevealFile {
+        Divider()
+        Button(action: onRevealFile) {
+          Label("Open File Location", systemImage: "folder")
+        }
+      }
+    }
     .onHover {
       isHovering = $0
       if !$0 { isHoveringClose = false }
@@ -309,7 +350,38 @@ struct WorkspaceDraggableTabItem: View {
 
   @ViewBuilder
   private var closeButton: some View {
-    if (isHovering || isActive) && !(tab.isDirty && !isHoveringClose) {
+    if tab.isPinned {
+      // Pinned tabs have no X: the slot shows the pin (or the dirty dot), hover swaps in unpin
+      if isHoveringClose {
+        Button {
+          onTogglePin()
+        } label: {
+          Image(systemName: "pin.slash")
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(isActive ? .foreground.opacity(0.7) : .foregroundMuted)
+            .frame(width: 14, height: 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
+        .help("Unpin tab")
+        .onHover { isHoveringClose = $0 }
+      } else if tab.isDirty {
+        Circle()
+          .fill(Color.foregroundMuted)
+          .frame(width: 8, height: 8)
+          .frame(width: 14, height: 14)
+          .contentShape(Rectangle())
+          .onHover { isHoveringClose = $0 }
+      } else {
+        Image(systemName: "pin.fill")
+          .font(.system(size: 8, weight: .medium))
+          .foregroundColor(isActive ? .foreground.opacity(0.7) : .foregroundMuted)
+          .frame(width: 14, height: 14)
+          .contentShape(Rectangle())
+          .onHover { isHoveringClose = $0 }
+      }
+    } else if (isHovering || isActive) && !(tab.isDirty && !isHoveringClose) {
       Button {
         onClose()
       } label: {

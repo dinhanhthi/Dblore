@@ -16,6 +16,8 @@ struct TabItem: Identifiable, Equatable {
   var lastAccessed: Date
   /// Session-only preview state (italic title, replaced by the next preview); never persisted
   var isPreview: Bool
+  /// Pinned tabs form the leading zone of the tab bar and persist in the workspace
+  var isPinned: Bool
 
   init(
     id: UUID = UUID(),
@@ -24,7 +26,8 @@ struct TabItem: Identifiable, Equatable {
     title: String,
     isDirty: Bool = false,
     lastAccessed: Date = Date(),
-    isPreview: Bool = false
+    isPreview: Bool = false,
+    isPinned: Bool = false
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -33,6 +36,7 @@ struct TabItem: Identifiable, Equatable {
     self.isDirty = isDirty
     self.lastAccessed = lastAccessed
     self.isPreview = isPreview
+    self.isPinned = isPinned
   }
 
   /// Creates a new untitled notebook tab
@@ -102,5 +106,6 @@ extension TabItem: Codable {
     isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
     lastAccessed = try container.decodeIfPresent(Date.self, forKey: .lastAccessed) ?? Date()
     isPreview = false
+    isPinned = false
   }
 }
