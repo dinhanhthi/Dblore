@@ -2,12 +2,37 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.4.0 (2026-10-02)
 
 ### Added
 
-- PDF export and SQL INSERT / IN-list copy are available.
-- SQLite files are supported as beta.
+- **SQLite files (beta).** Open a SQLite file from the connect modal and work with it like a server connection: SQL parsing, staged edits through the session, auto-connect and a read-only banner. Features the engine cannot support are hidden. [#c845590](https://github.com/dinhanhthi/Dblore/commit/c845590) [#602173c](https://github.com/dinhanhthi/Dblore/commit/602173c) [#644f16a](https://github.com/dinhanhthi/Dblore/commit/644f16a) [#87084cd](https://github.com/dinhanhthi/Dblore/commit/87084cd) [#c15ba6a](https://github.com/dinhanhthi/Dblore/commit/c15ba6a)
+- **AI assistant.** A chat sidebar (toggle with `Cmd+L`) with cloud providers, ChatGPT sign-in and local MLX models, chats saved per workspace with a history, `Shift+Return` for a new line, and the table open in the data viewer attached as context. [#58b81f6](https://github.com/dinhanhthi/Dblore/commit/58b81f6) [#28eca04](https://github.com/dinhanhthi/Dblore/commit/28eca04) [#f4dfd6c](https://github.com/dinhanhthi/Dblore/commit/f4dfd6c) [#f4d36e2](https://github.com/dinhanhthi/Dblore/commit/f4d36e2) [#539f8d8](https://github.com/dinhanhthi/Dblore/commit/539f8d8) [#a4f28a6](https://github.com/dinhanhthi/Dblore/commit/a4f28a6) [#54c84f8](https://github.com/dinhanhthi/Dblore/commit/54c84f8) [#7a5d9e6](https://github.com/dinhanhthi/Dblore/commit/7a5d9e6) [#cb74895](https://github.com/dinhanhthi/Dblore/commit/cb74895)
+- **Query history.** Every query is recorded locally and browsable from a history sidebar tab with detail and paging. [#5d0634b](https://github.com/dinhanhthi/Dblore/commit/5d0634b) [#67d49b9](https://github.com/dinhanhthi/Dblore/commit/67d49b9) [#932e789](https://github.com/dinhanhthi/Dblore/commit/932e789)
+- **Result charts** with a grid/chart switch beside the results actions. [#67d49b9](https://github.com/dinhanhthi/Dblore/commit/67d49b9) [#25d9fe1](https://github.com/dinhanhthi/Dblore/commit/25d9fe1)
+- **EXPLAIN plans** with a gate on `ANALYZE`. [#f5c422f](https://github.com/dinhanhthi/Dblore/commit/f5c422f)
+- **Staged row edits.** Edit rows in the data viewer, review them as staged changes and commit them as one batch from the toolbar. [#292caa6](https://github.com/dinhanhthi/Dblore/commit/292caa6) [#82a0d11](https://github.com/dinhanhthi/Dblore/commit/82a0d11)
+- **Export.** A download sheet with PDF and SQL `INSERT` formats, per-format options with reset, redaction, wrapping and a size check; SQL `INSERT` / `IN` list copy. [#4ea21a3](https://github.com/dinhanhthi/Dblore/commit/4ea21a3) [#a0b1633](https://github.com/dinhanhthi/Dblore/commit/a0b1633) [#7bf1e88](https://github.com/dinhanhthi/Dblore/commit/7bf1e88)
+- **Local data backup.** A Data tab in settings to export, import and clear local data without secrets. [#9e820b4](https://github.com/dinhanhthi/Dblore/commit/9e820b4) [#d720571](https://github.com/dinhanhthi/Dblore/commit/d720571)
+- **Column value filter** from the results grid header. [#168f036](https://github.com/dinhanhthi/Dblore/commit/168f036)
+- **Sidebar name filter** with loose fuzzy match in each left tab. [#25baf2d](https://github.com/dinhanhthi/Dblore/commit/25baf2d)
+- **Data viewer header** shows the open table and highlights it in the sidebar. [#a5e05f4](https://github.com/dinhanhthi/Dblore/commit/a5e05f4)
+- **Welcome screen.** A save button for unsaved workspaces, inline rename of the workspace title and icon, and a hover remove button on recent cards. [#88bb137](https://github.com/dinhanhthi/Dblore/commit/88bb137) [#926d3fe](https://github.com/dinhanhthi/Dblore/commit/926d3fe) [#4cc2c2f](https://github.com/dinhanhthi/Dblore/commit/4cc2c2f)
+- **Toasts** have a close button. [#301c9cb](https://github.com/dinhanhthi/Dblore/commit/301c9cb)
+
+### Improved
+
+- **Interface polish.** Dark backgrounds are lifted toward VS Code Dark, modals close with `Escape`, editor font sizes are configurable, and settings, history, tabs, buttons and tooltips got consistent spacing and hover states. [#c3d356c](https://github.com/dinhanhthi/Dblore/commit/c3d356c) [#932e789](https://github.com/dinhanhthi/Dblore/commit/932e789) [#65abd9d](https://github.com/dinhanhthi/Dblore/commit/65abd9d) [#58f8658](https://github.com/dinhanhthi/Dblore/commit/58f8658)
+- **Faster tab switching.** Tabs switch on mouse-down. [#ecd44ec](https://github.com/dinhanhthi/Dblore/commit/ecd44ec)
+- **Transactions.** The grid reloads after a rollback, and the transaction banner has a settings gear. [#95ebed9](https://github.com/dinhanhthi/Dblore/commit/95ebed9)
+
+### Fixed
+
+- Local model downloads finish despite a `swift-huggingface` cache error. [#3470d62](https://github.com/dinhanhthi/Dblore/commit/3470d62)
+- Filtered search no longer matches hidden rows or re-enters highlights across cells. [#947ada7](https://github.com/dinhanhthi/Dblore/commit/947ada7) [#0171fb1](https://github.com/dinhanhthi/Dblore/commit/0171fb1)
+- Right sidebars slide out the same way they slide in, and the traffic light background matches the open sidebar. [#6d46d08](https://github.com/dinhanhthi/Dblore/commit/6d46d08) [#0b06a06](https://github.com/dinhanhthi/Dblore/commit/0b06a06)
+- A new welcome window opens when the last document window closes, and `.sqlws` files claimed by the legacy UTI can be selected in the open panel. [#d79b8e7](https://github.com/dinhanhthi/Dblore/commit/d79b8e7) [#9ac0b91](https://github.com/dinhanhthi/Dblore/commit/9ac0b91)
+- The password eye toggle is clickable, and the SQLite name refills while a stale recent connection is cleared. [#d9b94cc](https://github.com/dinhanhthi/Dblore/commit/d9b94cc) [#e1e0f3f](https://github.com/dinhanhthi/Dblore/commit/e1e0f3f)
 
 ## v0.3.2 (2026-09-29)
 
