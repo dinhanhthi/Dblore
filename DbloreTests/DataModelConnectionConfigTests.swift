@@ -270,4 +270,117 @@ struct DataModelConnectionConfigTests {
       fieldsEngine: .sqlite, newType: .sqlite)
     #expect(replacement == nil)
   }
+
+  @Test("Browsing a different SQLite file replaces the loaded recent connection")
+  func browsingDifferentSQLiteFileReplacesLoadedConnection() {
+    let bookmark = Data([0x01])
+    let loaded = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .sqlite,
+        host: "",
+        database: "/tmp/notes.sqlite",
+        name: "Notes",
+        fileBookmark: bookmark
+      ))
+    var config = loaded.config
+    config.password = ""
+
+    let applied = ConnectionFormContent.applyingSQLiteFile(
+      path: "/tmp/reports.sqlite",
+      bookmark: Data([0x02]),
+      to: config,
+      selected: loaded
+    )
+
+    #expect(applied.config.database == "/tmp/reports.sqlite")
+    #expect(applied.config.name == "reports")
+    #expect(applied.selectedHistoryId == nil)
+  }
+
+  @Test("Browsing a SQLite file keeps a name the user already typed")
+  func browsingSQLiteFileKeepsCustomName() {
+    let loaded = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .sqlite,
+        host: "",
+        database: "/tmp/notes.sqlite",
+        name: "Notes"
+      ))
+    var config = loaded.config
+    config.name = "Work"
+
+    let applied = ConnectionFormContent.applyingSQLiteFile(
+      path: "/tmp/reports.sqlite",
+      bookmark: nil,
+      to: config,
+      selected: loaded
+    )
+
+    #expect(applied.config.name == "Work")
+    #expect(applied.selectedHistoryId == nil)
+  }
+
+  @Test("Browsing the same SQLite file keeps the recent connection")
+  func browsingSameSQLiteFileKeepsRecentConnection() {
+    let loaded = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .sqlite,
+        host: "",
+        database: "/tmp/notes.sqlite",
+        name: "Notes"
+      ))
+
+    let applied = ConnectionFormContent.applyingSQLiteFile(
+      path: "/tmp/notes.sqlite",
+      bookmark: Data([0x03]),
+      to: loaded.config,
+      selected: loaded
+    )
+
+    #expect(applied.config.name == "Notes")
+    #expect(applied.selectedHistoryId == loaded.id)
+  }
+
+  @Test("A blank SQLite name is filled from the chosen file")
+  func blankSQLiteNameFillsFromFile() {
+    let applied = ConnectionFormContent.applyingSQLiteFile(
+      path: "/tmp/archive.db",
+      bookmark: nil,
+      to: ConnectionConfig(databaseType: .sqlite, host: "", database: ""),
+      selected: nil
+    )
+
+    #expect(applied.config.name == "archive")
+    #expect(applied.selectedHistoryId == nil)
+  }
+
+  @Test("Editing a PostgreSQL target drops the loaded recent connection")
+  func editingPostgresTargetDropsRecentConnection() {
+    let loaded = ConnectionHistoryEntry(
+      config: ConnectionConfig(
+        databaseType: .postgresql,
+        host: "localhost",
+        database: "postgres",
+        username: "thi",
+        name: "Local"
+      ))
+    var edited = loaded.config
+    edited.database = "other"
+
+    #expect(
+      ConnectionFormContent.retainedHistoryId(
+        selectedId: loaded.id,
+        history: [loaded],
+        config: edited
+      ) == nil)
+
+    edited.database = "postgres"
+    edited.name = "Renamed"
+    #expect(
+      ConnectionFormContent.retainedHistoryId(
+        selectedId: loaded.id,
+        history: [loaded],
+        config: edited
+      ) == loaded.id)
+  }
 }

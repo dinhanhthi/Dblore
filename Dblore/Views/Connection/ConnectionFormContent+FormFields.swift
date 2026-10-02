@@ -255,13 +255,14 @@ extension ConnectionFormContent {
   }
 
   private func storeSQLiteFile(path: String, bookmark: Data?) {
-    var updated = connectionConfig
-    updated.database = path
-    updated.fileBookmark = bookmark
-    if updated.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      updated.name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-    }
-    connectionConfig = updated
+    let applied = Self.applyingSQLiteFile(
+      path: path,
+      bookmark: bookmark,
+      to: connectionConfig,
+      selected: selectedHistoryEntry
+    )
+    connectionConfig = applied.config
+    setSelectedHistoryId(applied.selectedHistoryId)
   }
 
   /// Refresh the stored path from the security-scoped bookmark, and replace a stale bookmark.

@@ -148,6 +148,20 @@ struct ConnectionFormContent: View {
         selectedHistoryId = nil
         connectionConfig = replacement
       }
+      .onChange(of: Self.connectionTargetKey(connectionConfig)) { _, _ in
+        // SQLite Browse clears the row itself. Resolving a bookmark can change the
+        // path string without the user picking a different connection.
+        guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
+        // A loaded recent row stays selected only while host, port, database, and user match.
+        let retained = Self.retainedHistoryId(
+          selectedId: selectedHistoryId,
+          history: connectionHistory,
+          config: connectionConfig
+        )
+        if selectedHistoryId != retained {
+          selectedHistoryId = retained
+        }
+      }
 
       footerView()
     }
@@ -209,6 +223,63 @@ struct ConnectionFormContent: View {
   ) -> ConnectionConfig? {
     guard fieldsEngine != newType else { return nil }
     return ConnectionConfig(databaseType: newType)
+  }
+
+  /// Host, port, database, and username. Recent connections compares this, not the display name.
+  static func connectionTargetKey(_ config: ConnectionConfig) -> String {
+    [
+      config.databaseType.rawValue,
+      config.host,
+      String(config.port),
+      config.database,
+      config.username,
+    ].joined(separator: "\u{1e}")
+  }
+
+  /// Keeps the Recent connections row only while host, port, database, and username match.
+  static func retainedHistoryId(
+    selectedId: UUID?,
+    history: [ConnectionHistoryEntry],
+    config: ConnectionConfig
+  ) -> UUID? {
+    guard let selectedId,
+      let entry = history.first(where: { $0.id == selectedId }),
+      entry.config.databaseType == config.databaseType
+    else { return nil }
+
+    let sameTarget =
+      entry.config.host == config.host && entry.config.port == config.port
+      && entry.config.database == config.database && entry.config.username == config.username
+    return sameTarget ? selectedId : nil
+  }
+
+  /// Choosing a SQLite file. A different path drops the loaded recent row.
+  /// Name becomes the file name when it is blank or still that row's name.
+  static func applyingSQLiteFile(
+    path: String,
+    bookmark: Data?,
+    to config: ConnectionConfig,
+    selected: ConnectionHistoryEntry?
+  ) -> (config: ConnectionConfig, selectedHistoryId: UUID?) {
+    var updated = config
+    updated.database = path
+    updated.fileBookmark = bookmark
+
+    let sameFile = selected?.config.database == path
+    let loadedName = sameFile ? nil : selected?.config.name
+    updated.name = sqliteDisplayName(current: updated.name, path: path, loadedName: loadedName)
+    return (updated, sameFile ? selected?.id : nil)
+  }
+
+  /// File name without its extension. A name the user typed is left as they typed it.
+  static func sqliteDisplayName(current: String, path: String, loadedName: String?) -> String {
+    let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+    let derived = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    if trimmed.isEmpty { return derived }
+    if let loadedName, trimmed == loadedName.trimmingCharacters(in: .whitespacesAndNewlines) {
+      return derived
+    }
+    return current
   }
 
   func setFieldsEngine(_ type: DatabaseType) {
