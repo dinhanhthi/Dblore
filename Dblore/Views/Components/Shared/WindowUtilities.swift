@@ -89,6 +89,7 @@ class TrafficLightAdjusterView: NSView {
   let tabBarHeight: CGFloat
   var isTabBarVisible = false
   private var layoutObserver: NSObjectProtocol?
+  private var buttonObservers: [NSObjectProtocol] = []
   private var wasTabBarVisible = false
 
   init(tabBarHeight: CGFloat) {
@@ -107,6 +108,15 @@ class TrafficLightAdjusterView: NSView {
     if let window = window {
       adjustTrafficLights()
 
+      // The titlebar is laid out after the window is attached and AppKit then puts the buttons
+      // back at their default origin, so re-apply once that layout has settled
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.window != nil, !self.isTabBarVisible else { return }
+        self.window?.standardWindowButton(.closeButton)?.superview?.layoutSubtreeIfNeeded()
+        self.adjustTrafficLights()
+      }
+      observeButtonFrames(in: window)
+
       // Observe window layout changes to re-adjust buttons
       if layoutObserver == nil {
         layoutObserver = NotificationCenter.default.addObserver(
@@ -120,11 +130,33 @@ class TrafficLightAdjusterView: NSView {
         }
       }
     } else {
-      // Remove observer when removed from window
+      // Remove observers when removed from window
       if let observer = layoutObserver {
         NotificationCenter.default.removeObserver(observer)
         layoutObserver = nil
       }
+      buttonObservers.forEach(NotificationCenter.default.removeObserver)
+      buttonObservers.removeAll()
+    }
+  }
+
+  /// Re-adjusts whenever AppKit moves the buttons or resizes their container behind our back
+  private func observeButtonFrames(in window: NSWindow) {
+    buttonObservers.forEach(NotificationCenter.default.removeObserver)
+    buttonObservers.removeAll()
+
+    let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+    var watched: [NSView] = types.compactMap { window.standardWindowButton($0) }
+    if let container = watched.first?.superview { watched.append(container) }
+
+    for view in watched {
+      view.postsFrameChangedNotifications = true
+      buttonObservers.append(
+        NotificationCenter.default.addObserver(
+          forName: NSView.frameDidChangeNotification, object: view, queue: .main
+        ) { [weak self] _ in
+          Task { @MainActor in self?.adjustTrafficLights() }
+        })
     }
   }
 
@@ -184,6 +216,11 @@ class TrafficLightAdjusterView: NSView {
       // Adjust X position: add left padding, buttons are 12pt wide with 8pt spacing
       frame.origin.x = horizontalPadding + CGFloat(index) * (frame.width + 8)
 
+      // Only move when AppKit put it elsewhere, so the frame observers cannot loop
+      guard
+        abs(button.frame.origin.x - frame.origin.x) > 0.01
+          || abs(button.frame.origin.y - frame.origin.y) > 0.01
+      else { continue }
       button.setFrameOrigin(frame.origin)
     }
   }
@@ -196,14 +233,31 @@ extension EnvironmentValues {
   @Entry var isNativeTabBarVisible = false
 }
 
-/// Joins the window to the shared native tab group and reports whether the native tab bar is visible
+/// Window and tab labels for a workspace, VSCode style: "Name (Workspace)" on the native tab and
+/// "file.ext - Name (Workspace)" in the titlebar row.
+enum WorkspaceWindowTitle {
+  static func tab(workspaceName: String) -> String {
+    "\(workspaceName) (Workspace)"
+  }
+
+  static func window(fileName: String?, workspaceName: String) -> String {
+    let workspace = tab(workspaceName: workspaceName)
+    guard let fileName, !fileName.isEmpty else { return workspace }
+    return "\(fileName) - \(workspace)"
+  }
+}
+
+/// Joins the window to the shared native tab group and reports whether the native tab bar is visible.
+/// While the tab bar is shown the titlebar row shows `windowTitle`, otherwise the title stays hidden.
 struct DocumentWindowConfigurator: NSViewRepresentable {
   let tabTitle: String
+  var windowTitle: String? = nil
   @Binding var isTabBarVisible: Bool
 
   func makeNSView(context: Context) -> NSView {
     let view = DocumentWindowConfiguratorView()
     view.tabTitle = tabTitle
+    view.windowTitle = windowTitle ?? tabTitle
     view.onTabBarVisibilityChange = { isVisible in
       if isTabBarVisible != isVisible { isTabBarVisible = isVisible }
     }
@@ -213,7 +267,9 @@ struct DocumentWindowConfigurator: NSViewRepresentable {
   func updateNSView(_ nsView: NSView, context: Context) {
     guard let view = nsView as? DocumentWindowConfiguratorView else { return }
     view.tabTitle = tabTitle
+    view.windowTitle = windowTitle ?? tabTitle
     view.window?.tab.title = tabTitle
+    view.window?.title = view.windowTitle
     view.onTabBarVisibilityChange = { isVisible in
       if isTabBarVisible != isVisible { isTabBarVisible = isVisible }
     }
@@ -223,6 +279,7 @@ struct DocumentWindowConfigurator: NSViewRepresentable {
 @MainActor
 class DocumentWindowConfiguratorView: NSView {
   var tabTitle = ""
+  var windowTitle = ""
   var onTabBarVisibilityChange: ((Bool) -> Void)?
   private var lastReported: Bool?
   private var observations: [NSKeyValueObservation] = []
@@ -237,6 +294,7 @@ class DocumentWindowConfiguratorView: NSView {
     window.tabbingIdentifier = .dbloreDocument
     window.tabbingMode = .automatic
     window.tab.title = tabTitle
+    window.title = windowTitle
 
     observations = [
       window.observe(\.contentLayoutRect, options: [.new]) { [weak self] _, _ in
@@ -273,6 +331,7 @@ class DocumentWindowConfiguratorView: NSView {
     let isVisible = window?.tabGroup?.isTabBarVisible ?? false
     guard lastReported != isVisible else { return }
     lastReported = isVisible
+    window?.titleVisibility = isVisible ? .visible : .hidden
     onTabBarVisibilityChange?(isVisible)
   }
 

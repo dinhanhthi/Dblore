@@ -50,6 +50,9 @@ enum ComponentSize {
   /// Width for traffic light buttons (close, minimize, zoom) + left padding:
   /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23
   static let trafficLightWidth: CGFloat = 88
+  /// Width actually covered by the traffic light buttons (13 + 3x12 + 2x8). The native tab bar
+  /// moves them out of the content row, so this is the part to give back, not the trailing gap.
+  static let trafficLightButtonsWidth: CGFloat = 65
   /// Width for traffic light buttons + sidebar toggle button
-  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + 17
+  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + 11
 }

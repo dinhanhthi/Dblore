@@ -18,12 +18,11 @@ struct SidebarToggleButton: View {
       action()
     } label: {
       Image(systemName: "sidebar.left")
-        .font(.system(size: 16, weight: .medium))
+        .font(.system(size: 14))
         .foregroundColor(isSidebarVisible ? Color.accent : Color.foregroundMuted)
-        .frame(width: 16, height: 16)
     }
     .buttonStyle(GhostButtonStyle(iconOnly: true))
-    .padding(.trailing, Spacing.sm)
+    .controlSize(.small)
     .blockDoubleClickZoom()
     .help(isSidebarVisible ? "Hide sidebar" : "Show sidebar")
   }

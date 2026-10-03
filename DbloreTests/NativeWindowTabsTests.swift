@@ -58,3 +58,27 @@ struct NativeWindowTabsTests {
   // Miniaturized and background-tab windows count as open too, but both need the window server:
   // addTabbedWindow stalls the main actor for ~25s in the test host, so they are not tested here.
 }
+
+@Suite("Workspace window titles")
+@MainActor
+struct WorkspaceWindowTitleTests {
+  @Test("The native tab reads Name (Workspace)")
+  func tabTitle() {
+    #expect(WorkspaceWindowTitle.tab(workspaceName: "Test") == "Test (Workspace)")
+  }
+
+  @Test("The titlebar row prefixes the open file")
+  func windowTitleWithFile() {
+    #expect(
+      WorkspaceWindowTitle.window(fileName: "query.sql", workspaceName: "Test")
+        == "query.sql - Test (Workspace)")
+  }
+
+  @Test("Without an open file the titlebar row is the workspace alone")
+  func windowTitleWithoutFile() {
+    #expect(
+      WorkspaceWindowTitle.window(fileName: nil, workspaceName: "Test") == "Test (Workspace)")
+    #expect(
+      WorkspaceWindowTitle.window(fileName: "", workspaceName: "Test") == "Test (Workspace)")
+  }
+}

@@ -20,7 +20,7 @@ struct WorkspaceSidebarTopArea: View {
       Color.clear
         .frame(
           width: ComponentSize.trafficLightAndToggleWidth
-            - (isNativeTabBarVisible ? ComponentSize.trafficLightWidth : 0))
+            - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0))
 
       Spacer()
 

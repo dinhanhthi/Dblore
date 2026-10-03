@@ -114,7 +114,7 @@ struct SettingsModal: View {
     ) {
       HStack(spacing: 0) {
         // Navigation sidebar (fixed, does not scroll)
-        VStack(alignment: .leading, spacing: Spacing.xxs) {
+        VStack(alignment: .leading, spacing: Spacing.xsm) {
           ForEach(SettingsTab.allCases, id: \.self) { tab in
             SettingsNavRow(
               title: tab.rawValue,

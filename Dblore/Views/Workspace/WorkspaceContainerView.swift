@@ -100,7 +100,7 @@ struct WorkspaceContainerView: View {
             Color.clear
               .frame(
                 width: ComponentSize.trafficLightAndToggleWidth
-                  - (isNativeTabBarVisible ? ComponentSize.trafficLightWidth : 0)
+                  - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
@@ -165,7 +165,11 @@ struct WorkspaceContainerView: View {
     .environment(\.isNativeTabBarVisible, isNativeTabBarVisible)
     .background(
       DocumentWindowConfigurator(
-        tabTitle: workspaceManager.workspace.name, isTabBarVisible: $isNativeTabBarVisible)
+        tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
+        windowTitle: WorkspaceWindowTitle.window(
+          fileName: workspaceManager.activeTab?.title,
+          workspaceName: workspaceManager.workspace.name),
+        isTabBarVisible: $isNativeTabBarVisible)
     )
     .background(
       TrafficLightPositioner(
@@ -594,9 +598,12 @@ extension WorkspaceManager {
   }
 }
 
+/// Shared default for `hostWindowReference`: allocated once so the `@Entry` default is stable
+private let defaultHostWindowReference = HostWindowReference()
+
 extension EnvironmentValues {
   /// The window hosting the enclosing workspace container
-  @Entry fileprivate var hostWindowReference = HostWindowReference()
+  @Entry fileprivate var hostWindowReference = defaultHostWindowReference
 }
 
 /// Handles notifications for notebook mode in workspace context
@@ -773,7 +780,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: ComponentSize.trafficLightAndToggleWidth
-              - (isNativeTabBarVisible ? ComponentSize.trafficLightWidth : 0)
+              - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
               + workspaceManager.connectionState.connectionButtonsWidth + 10)
       } else {
         Color.clear.frame(width: 10)

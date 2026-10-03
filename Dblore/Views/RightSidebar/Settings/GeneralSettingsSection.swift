@@ -41,7 +41,7 @@ struct GeneralSettingsSection: View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       Text("Default file for new tab (Cmd+T)")
         .font(.bodyText)
-        .foregroundColor(.foreground)
+        .foregroundColor(.foregroundMuted)
 
       CapsuleDropdown(
         title: appSettings.defaultNewTabType.title,
