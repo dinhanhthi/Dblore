@@ -82,7 +82,8 @@ struct FileOptimizationSection: View {
           Button("Cancel", role: .cancel) {}
         } message: {
           Text(
-            "This will permanently remove all query results from the notebook. You'll need to re-run queries to see results again. This action cannot be undone."
+            "This will remove all query results from the notebook. "
+              + "You'll need to re-run queries to see results again. This action can be undone."
           )
         }
 

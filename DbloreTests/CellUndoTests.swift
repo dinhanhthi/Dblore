@@ -66,4 +66,21 @@ struct CellUndoTests {
 
     #expect(changes == 2)
   }
+
+  @Test("The undo manager keeps at most 100 levels")
+  func undoLevelsAreCapped() {
+    let viewModel = makeViewModel()
+    #expect(viewModel.undoManager.levelsOfUndo == 100)
+    let originalCount = viewModel.notebook.cells.count
+
+    for _ in 0..<101 {
+      grouped(viewModel) { viewModel.addCell(type: .sql) }
+    }
+    for _ in 0..<100 {
+      viewModel.undoCellChange()
+    }
+
+    #expect(!viewModel.undoManager.canUndo)
+    #expect(viewModel.notebook.cells.count == originalCount + 1)
+  }
 }

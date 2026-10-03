@@ -100,8 +100,12 @@ class NotebookViewModel {
   // Execution queue for managing cell executions
   private(set) var executionQueue: ExecutionQueue!
 
-  // Undo/Redo manager
-  let undoManager = UndoManager()
+  // Undo/Redo for notebook cells and staged data-viewer edits. Cap matches the grid undo decision.
+  let undoManager: UndoManager = {
+    let manager = UndoManager()
+    manager.levelsOfUndo = 100
+    return manager
+  }()
 
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
@@ -151,8 +155,11 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
-  /// Table/view data viewer tab state (nil for every other tab)
-  var dataViewer: DataViewerState?
+  /// Table/view data viewer tab state (nil for every other tab).
+  /// Changing page, page size, filter, or relation drops staged undo for the previous page.
+  var dataViewer: DataViewerState? {
+    didSet { clearStagedUndoIfViewerPageChanged(from: oldValue) }
+  }
   /// Cells with an inline edit sent since the last Commit / Rollback; re-run after a Rollback
   /// so their result shows the original values again.
   @ObservationIgnored var cellsEditedInTransaction: Set<UUID> = []
@@ -284,6 +291,12 @@ class NotebookViewModel {
     isApplyingWorkspaceConfig = true
     notebook.connectionConfig = config
     isApplyingWorkspaceConfig = false
+  }
+
+  /// Staged undo names rows on the page that was showing. Leaving that page drops the stack.
+  private func clearStagedUndoIfViewerPageChanged(from previous: DataViewerState?) {
+    guard let previous, dataViewer?.loadKey != previous.loadKey else { return }
+    undoManager.removeAllActions()
   }
 
   private func connectionConfigDidChange() {

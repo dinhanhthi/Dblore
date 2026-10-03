@@ -531,13 +531,17 @@ struct WorkspaceTabContentView: View {
         }
       }
 
-      // Cmd+Z / Cmd+Shift+Z outside any text input -> undo/redo cell operations
-      // (text views, including field editors, keep their own undo)
+      // Cmd+Z / Cmd+Shift+Z outside any text input -> undo/redo cell operations.
+      // Text views, including field editors, keep their own undo. Data viewer tabs
+      // use this path too; a SQL editor tab does not.
       let flags = event.modifierFlags.intersection([.command, .shift, .control, .option])
+      let routeCellUndo = CellUndoRouting.routesCellUndo(
+        firstResponderIsText: eventWindow.firstResponder is NSTextView,
+        viewMode: self.viewModel.viewMode,
+        hasDataViewer: self.viewModel.dataViewer != nil)
       if event.charactersIgnoringModifiers?.lowercased() == "z",
         flags == .command || flags == [.command, .shift],
-        !(eventWindow.firstResponder is NSTextView),
-        self.viewModel.viewMode == .notebook
+        routeCellUndo
       {
         let isRedo = flags.contains(.shift)
         Task { @MainActor [viewModel] in
