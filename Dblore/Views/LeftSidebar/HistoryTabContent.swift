@@ -21,7 +21,11 @@ struct HistoryTabContent: View {
 
     VStack(spacing: 0) {
       SidebarFilterField(text: $historyList.query) {
-        scopeMenu
+        HStack(spacing: Spacing.sm) {
+          writesFilter
+          scopeMenu
+        }
+        .fixedSize(horizontal: true, vertical: false)
       }
       content
     }
@@ -31,6 +35,30 @@ struct HistoryTabContent: View {
         hasLoaded = true
       }
     }
+  }
+
+  /// Same capsule and height as the scope menu. On keeps `kind == write`.
+  private var writesFilter: some View {
+    let isOn = historyList.writesOnly
+    return Button {
+      historyList.writesOnly.toggle()
+    } label: {
+      Text("Writes")
+        .font(.system(size: 11))
+        .foregroundStyle(isOn ? Color.white : Color.foreground)
+        .lineLimit(1)
+        .padding(.horizontal, Spacing.sm)
+        .frame(height: SidebarFilterMetrics.controlHeight)
+        .background(Capsule().fill(isOn ? Color.accent : Color.inputBackground))
+        .overlay(Capsule().stroke(isOn ? Color.accent : Color.border, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize(horizontal: true, vertical: false)
+    .frame(height: SidebarFilterMetrics.controlHeight)
+    .help("Show only writes")
+    .accessibilityLabel("Writes")
+    .accessibilityValue(isOn ? "On" : "Off")
   }
 
   /// Same capsule as the Chart and Explain menus, so the menu opens under the button.
@@ -81,7 +109,7 @@ struct HistoryTabContent: View {
     if historyList.results.isEmpty && (historyList.isLoading || !hasLoaded) {
       loadingState
     } else if historyList.results.isEmpty {
-      if queryIsBlank && historyList.scope == .all {
+      if queryIsBlank && historyList.scope == .all && !historyList.writesOnly {
         emptyState
       } else {
         noMatchesState

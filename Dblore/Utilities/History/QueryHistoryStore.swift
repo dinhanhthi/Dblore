@@ -20,7 +20,7 @@ actor QueryHistoryStore {
   private static let columns = """
     history.id, history.sql, history.executed_at, history.duration_ms, history.row_count, \
     history.status, history.error_message, history.connection_key, history.connection_label, \
-    history.workspace_id, history.workspace_name, history.source
+    history.workspace_id, history.workspace_name, history.source, history.kind
     """
 
   /// History file under the app container. Creating this opens the database; tests must not.
@@ -43,9 +43,30 @@ actor QueryHistoryStore {
 
   init(url: URL) throws {
     let database = try SQLiteHandle(url: url)
-    try Self.migrate(database)
     self.database = database
     self.fileURL = url
+    // Version 1 already has rows. Migrating it here would run on the main actor, because
+    // `shared` is first touched while a tab or launch prune is created. `prepare()` does that
+    // work on this actor instead. An empty file has nothing to backfill, so it finishes now.
+    if database.userVersion < 1 {
+      try Self.migrate(database)
+    }
+  }
+
+  /// Finishes the version-2 migration on this actor. A failure is logged and rethrown; the
+  /// file stays on version 1 and the process keeps running.
+  private func prepare() throws {
+    guard database.userVersion < 2 else { return }
+    do {
+      try Self.migrate(database)
+    } catch {
+      let message = error.localizedDescription
+      Task {
+        await AppLogger.shared.error(
+          "Query history migration failed: \(message)", category: "History")
+      }
+      throw error
+    }
   }
 
   /// Inserts the entry, or updates the newest row when it is the same SQL on the same
@@ -77,6 +98,7 @@ actor QueryHistoryStore {
   }
 
   private func insertRecord(_ entry: QueryHistoryEntry) throws -> Bool {
+    try prepare()
     let sql = Self.truncate(entry.sql)
     if let newest = try newestRow(),
       newest.sql == sql,
@@ -99,11 +121,18 @@ actor QueryHistoryStore {
 
   /// Empty or whitespace `text` returns the newest rows and does not query FTS.
   /// Other text is escaped into quoted prefix tokens (`"token"*`) and ranked with `bm25()`.
-  func search(text: String, scope: Scope, limit: Int, offset: Int) throws -> [QueryHistoryEntry] {
-    try fetch(match: Self.matchExpression(for: text), scope: scope, limit: limit, offset: offset)
+  /// `writesOnly` keeps rows whose `kind` is `write`. NULL is not a write.
+  func search(
+    text: String, scope: Scope, limit: Int, offset: Int, writesOnly: Bool = false
+  ) throws -> [QueryHistoryEntry] {
+    try prepare()
+    return try fetch(
+      match: Self.matchExpression(for: text), scope: scope, limit: limit, offset: offset,
+      writesOnly: writesOnly)
   }
 
   func delete(ids: [Int64]) throws {
+    try prepare()
     guard !ids.isEmpty else { return }
     let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
     let statement = try database.prepare("DELETE FROM history WHERE id IN (\(placeholders))")
@@ -114,11 +143,13 @@ actor QueryHistoryStore {
   }
 
   func clear() throws {
+    try prepare()
     try database.execute("DELETE FROM history")
   }
 
   /// Deletes rows older than `olderThan`, then deletes the oldest extras past `maxEntries`.
   func prune(olderThan: Date?, maxEntries: Int?) throws {
+    try prepare()
     if let olderThan {
       let statement = try database.prepare("DELETE FROM history WHERE executed_at < ?")
       try statement.bind(1, .double(olderThan.timeIntervalSince1970))
@@ -139,14 +170,18 @@ actor QueryHistoryStore {
   }
 
   func count() throws -> Int {
+    try prepare()
     let statement = try database.prepare("SELECT COUNT(*) FROM history")
     guard try statement.step() else { return 0 }
     return Int(statement.columnInt(0))
   }
 
-  /// Rows matching `text` and `scope`. The filter is the same one `search` uses.
-  func count(text: String, scope: Scope) throws -> Int {
-    let listing = Self.listing(match: Self.matchExpression(for: text), scope: scope)
+  /// Rows matching `text`, `scope`, and `writesOnly`. The filter is the same one `search` uses.
+  /// `writesOnly` keeps `kind = write` and drops NULL.
+  func count(text: String, scope: Scope, writesOnly: Bool = false) throws -> Int {
+    try prepare()
+    let listing = Self.listing(
+      match: Self.matchExpression(for: text), scope: scope, writesOnly: writesOnly)
     var sql = "SELECT COUNT(*) FROM history\(listing.join)"
     if !listing.conditions.isEmpty {
       sql += " WHERE " + listing.conditions.joined(separator: " AND ")
@@ -167,6 +202,7 @@ actor QueryHistoryStore {
   }
 
   func exportJSON(to url: URL) throws {
+    try prepare()
     let entries = try allEntries()
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .secondsSince1970
@@ -176,6 +212,7 @@ actor QueryHistoryStore {
 
   /// `replace` deletes existing rows before inserting the file. Entries have no secrets.
   func importJSON(from url: URL, replace: Bool) throws {
+    try prepare()
     let data = try Data(contentsOf: url)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .secondsSince1970
@@ -190,8 +227,18 @@ actor QueryHistoryStore {
     }
   }
 
+  /// Version 1 creates the original table. Version 2 adds `kind` and backfills it in one
+  /// transaction. If that fails, the file stays on version 1 with no second table.
   private static func migrate(_ database: SQLiteHandle) throws {
-    guard database.userVersion < 1 else { return }
+    if database.userVersion < 1 {
+      try createVersion1(database)
+    }
+    if database.userVersion < 2 {
+      try migrateToVersion2(database)
+    }
+  }
+
+  private static func createVersion1(_ database: SQLiteHandle) throws {
     try database.transaction {
       try database.execute(createTable)
       try database.execute(createFTS)
@@ -201,6 +248,88 @@ actor QueryHistoryStore {
       try database.execute("CREATE INDEX history_executed_at ON history(executed_at)")
       try database.execute("CREATE INDEX history_connection_key ON history(connection_key)")
       try database.execute("PRAGMA user_version = 1")
+    }
+  }
+
+  /// `kind` has no default. Rows the classifier cannot place stay NULL.
+  /// `history_au` rewrites FTS on every update, and `kind` is not an FTS column, so the
+  /// trigger is dropped for the backfill and created again before the version bump.
+  private static func migrateToVersion2(_ database: SQLiteHandle) throws {
+    try database.transaction {
+      try database.execute("ALTER TABLE history ADD COLUMN kind TEXT")
+      try database.execute("DROP TRIGGER IF EXISTS history_au")
+      try backfillKinds(database)
+      try database.execute(updateTrigger)
+      try database.execute("PRAGMA user_version = 2")
+    }
+  }
+
+  private static func backfillKinds(_ database: SQLiteHandle) throws {
+    let classified = try classifiedRows(database)
+    guard !classified.isEmpty else { return }
+    let update = try database.prepare(
+      "UPDATE history SET kind = ? WHERE id = ? AND kind IS NULL")
+    for (id, kind) in classified {
+      try update.bind(1, .string(kind))
+      try update.bind(2, .int(Int(id)))
+      while try update.step() {}
+      try update.reset()
+    }
+  }
+
+  /// The select is finished before any update, so its statement is not left open.
+  private static func classifiedRows(_ database: SQLiteHandle) throws -> [(Int64, String)] {
+    let rows = try database.prepare("SELECT id, sql, connection_key FROM history")
+    var classified: [(Int64, String)] = []
+    while try rows.step() {
+      guard let sql = rows.columnText(1),
+        let kind = classifiedKind(sql: sql, connectionKey: rows.columnText(2) ?? "")
+      else { continue }
+      classified.append((rows.columnInt(0), kind.rawValue))
+    }
+    return classified
+  }
+
+  /// `databaseType|host|port|database|username`. Only a SQLite prefix changes the classifier.
+  private static func dialect(for connectionKey: String) -> SQLDialect {
+    guard connectionKey.split(separator: "|", maxSplits: 1).first == "SQLite" else {
+      return .postgresql
+    }
+    return .sqlite
+  }
+
+  /// No statement (blank or comment-only) stays nil. Several statements keep a write over
+  /// schema, then transaction, other, and read, so a trailing write is not stored as a read.
+  private static func classifiedKind(
+    sql: String, connectionKey: String
+  ) -> QueryHistoryEntry.Kind? {
+    SQLStatementClassifier.classify(sql, dialect: dialect(for: connectionKey))
+      .map { historyKind($0.kind) }
+      .max { rank($0) < rank($1) }
+  }
+
+  private static func historyKind(_ kind: StatementKind) -> QueryHistoryEntry.Kind {
+    switch SQLStatementClassifier.effectiveKind(kind) {
+    case .read:
+      .read
+    case .dml:
+      .write
+    case .ddl:
+      .schema
+    case .tcl:
+      .transaction
+    case .sessionSet, .utility, .unknown, .explain:
+      .other
+    }
+  }
+
+  private static func rank(_ kind: QueryHistoryEntry.Kind) -> Int {
+    switch kind {
+    case .read: 0
+    case .other: 1
+    case .transaction: 2
+    case .schema: 3
+    case .write: 4
     }
   }
 
@@ -253,8 +382,8 @@ actor QueryHistoryStore {
         """
         INSERT INTO history (
           id, sql, executed_at, duration_ms, row_count, status, error_message,
-          connection_key, connection_label, workspace_id, workspace_name, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          connection_key, connection_label, workspace_id, workspace_name, source, kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
       )
       try statement.bind(1, .int(Int(entry.id)))
@@ -264,8 +393,8 @@ actor QueryHistoryStore {
         """
         INSERT INTO history (
           sql, executed_at, duration_ms, row_count, status, error_message,
-          connection_key, connection_label, workspace_id, workspace_name, source
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          connection_key, connection_label, workspace_id, workspace_name, source, kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
       )
       firstValue = 1
@@ -281,6 +410,7 @@ actor QueryHistoryStore {
     try bind(statement, firstValue + 8, text: entry.workspaceID?.uuidString)
     try bind(statement, firstValue + 9, text: entry.workspaceName)
     try statement.bind(firstValue + 10, .string(entry.source.rawValue))
+    try bind(statement, firstValue + 11, text: entry.kind?.rawValue)
     try run(statement)
   }
 
@@ -291,7 +421,7 @@ actor QueryHistoryStore {
     var values: [CellValue] = []
   }
 
-  private static func listing(match: String?, scope: Scope) -> Listing {
+  private static func listing(match: String?, scope: Scope, writesOnly: Bool) -> Listing {
     var listing = Listing()
     if let match {
       listing.join = " JOIN history_fts ON history.id = history_fts.rowid"
@@ -308,15 +438,19 @@ actor QueryHistoryStore {
       listing.conditions.append("history.workspace_id = ?")
       listing.values.append(.string(id.uuidString))
     }
+    if writesOnly {
+      listing.conditions.append("history.kind = ?")
+      listing.values.append(.string(QueryHistoryEntry.Kind.write.rawValue))
+    }
     return listing
   }
 
   private func fetch(
-    match: String?, scope: Scope, limit: Int?, offset: Int
+    match: String?, scope: Scope, limit: Int?, offset: Int, writesOnly: Bool = false
   ) throws
     -> [QueryHistoryEntry]
   {
-    let listing = Self.listing(match: match, scope: scope)
+    let listing = Self.listing(match: match, scope: scope, writesOnly: writesOnly)
     var sql = "SELECT \(Self.columns) FROM history\(listing.join)"
     var values = listing.values
     if !listing.conditions.isEmpty {
@@ -362,12 +496,14 @@ actor QueryHistoryStore {
       let status = QueryHistoryEntry.Status(rawValue: statusText),
       let connectionKey = row.columnText(7),
       let connectionLabel = row.columnText(8),
-      let sourceText = row.columnText(11),
-      let source = QueryHistoryEntry.Source(rawValue: sourceText)
+      let sourceText = row.columnText(11)
     else {
       throw SQLiteError(code: SQLITE_CORRUPT, message: "history row \(id) is incomplete")
     }
     let workspaceID = row.columnText(9).flatMap(UUID.init(uuidString:))
+    // An unknown source (a newer app wrote it) is still a history row. `.editor` is the fallback.
+    let source = QueryHistoryEntry.Source(rawValue: sourceText) ?? .editor
+    let kind = row.columnText(12).flatMap(QueryHistoryEntry.Kind.init(rawValue:))
     return QueryHistoryEntry(
       id: id,
       sql: sql,
@@ -380,7 +516,8 @@ actor QueryHistoryStore {
       connectionLabel: connectionLabel,
       workspaceID: workspaceID,
       workspaceName: row.columnText(10),
-      source: source
+      source: source,
+      kind: kind
     )
   }
 

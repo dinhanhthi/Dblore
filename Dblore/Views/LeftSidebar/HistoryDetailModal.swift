@@ -10,21 +10,25 @@ import SwiftUI
 
 struct HistoryDetailModal: View {
   let sql: String
+  /// False for a transaction summary. The label is not SQL and must not reach the pasteboard.
+  var canCopy = true
   @Binding var isPresented: Bool
-  let onCopy: () -> Void
+  let onCopy: () -> Bool
 
   @State private var copied = false
 
   var body: some View {
     VStack(spacing: 0) {
-      SQLCodeWell(sql: sql)
+      SQLCodeWell(sql: sql, allowsTextSelection: canCopy)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Spacing.md)
 
       GenericModalFooter {
         Spacer()
-        Button(copied ? "Copied" : "Copy", action: copy)
-          .buttonStyle(PrimaryButtonStyle())
+        if canCopy {
+          Button(copied ? "Copied" : "Copy", action: copy)
+            .buttonStyle(PrimaryButtonStyle())
+        }
         Button("Cancel") { isPresented = false }
           .buttonStyle(SecondaryButtonStyle())
           .keyboardShortcut(.cancelAction)
@@ -42,7 +46,7 @@ struct HistoryDetailModal: View {
   }
 
   private func copy() {
-    onCopy()
+    guard onCopy() else { return }
     copied = true
     Task {
       try? await Task.sleep(for: .seconds(1.5))
@@ -62,6 +66,7 @@ extension View {
       if let entry = workspaceManager.historyDetail {
         HistoryDetailModal(
           sql: entry.sql,
+          canCopy: !QueryHistoryEntry.isTransactionSummary(entry.sql),
           isPresented: isPresented,
           onCopy: { workspaceManager.copyHistory(entry) }
         )

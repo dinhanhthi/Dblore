@@ -17,6 +17,15 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
     case dataViewerEdit
   }
 
+  /// Classified effect of the SQL. Nil when the row has not been classified.
+  nonisolated enum Kind: String, Sendable, Codable, Equatable {
+    case read
+    case write
+    case schema
+    case transaction
+    case other
+  }
+
   var id: Int64
   var sql: String
   var executedAt: Date
@@ -29,4 +38,19 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
   var workspaceID: UUID?
   var workspaceName: String?
   var source: Source
+  /// Missing JSON decodes as nil. NULL in the database is not a write.
+  var kind: Kind? = nil
+
+  /// `COMMIT (n statements)` / `ROLLBACK (n statements)` is an audit label, not SQL that was sent.
+  nonisolated static func isTransactionSummary(_ sql: String) -> Bool {
+    for verb in ["COMMIT ", "ROLLBACK "] {
+      guard sql.hasPrefix(verb), sql.hasSuffix(" statements)") else { continue }
+      let inside = sql.dropFirst(verb.count).dropLast(" statements)".count)
+      guard inside.first == "(", inside.dropFirst().allSatisfy(\.isNumber),
+        !inside.dropFirst().isEmpty
+      else { continue }
+      return true
+    }
+    return false
+  }
 }

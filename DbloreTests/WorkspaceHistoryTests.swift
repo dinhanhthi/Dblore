@@ -121,6 +121,68 @@ struct WorkspaceHistoryTests {
     #expect(manager.historyList.results.count == 50)
   }
 
+  @Test("writesOnly from page 2 resets, then reloads with and without the filter")
+  func writesOnlyResetsPageAndFilters() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    let older: [(sql: String, kind: QueryHistoryEntry.Kind?)] = [
+      ("UPDATE older", .write),
+      ("UPDATE newer", .write),
+      ("CREATE TABLE t", .schema),
+      ("SELECT unlabeled", nil),
+    ]
+    let rows = older + (0..<50).map { ("SELECT \($0)", QueryHistoryEntry.Kind.read) }
+    for (index, row) in rows.enumerated() {
+      try await store.record(
+        Self.entry(
+          sql: row.sql, at: start.addingTimeInterval(Double(index) * 10), kind: row.kind))
+    }
+    let manager = makeManager(store: store)
+    let pageTwo = ["SELECT unlabeled", "CREATE TABLE t", "UPDATE newer", "UPDATE older"]
+
+    await manager.historyList.goToPage(2)
+    #expect(manager.historyList.page == 2)
+    #expect(manager.historyList.results.map(\.sql) == pageTwo)
+    #expect(manager.historyList.totalCount == 54)
+
+    manager.historyList.writesOnly = true
+    #expect(manager.historyList.page == 1)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.results.map(\.sql) == pageTwo)
+
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.totalCount == 2)
+    #expect(manager.historyList.results.map(\.sql) == ["UPDATE newer", "UPDATE older"])
+
+    manager.historyList.writesOnly = false
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.results.map(\.sql) == ["UPDATE newer", "UPDATE older"])
+
+    try await Task.sleep(for: .milliseconds(400))
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.totalCount == 54)
+    #expect(manager.historyList.results.count == 50)
+    #expect(manager.historyList.results.first?.sql == "SELECT 49")
+  }
+
+  @Test("History badges name kind and source, and nil kind has no kind label")
+  func historyBadgeLabels() {
+    #expect(HistoryRowLabels.kindLabel(.read) == "Read")
+    #expect(HistoryRowLabels.kindLabel(.write) == "Write")
+    #expect(HistoryRowLabels.kindLabel(.schema) == "Schema")
+    #expect(HistoryRowLabels.kindLabel(.transaction) == "Transaction")
+    #expect(HistoryRowLabels.kindLabel(.other) == "Other")
+    #expect(HistoryRowLabels.kindLabel(nil) == nil)
+    #expect(HistoryRowLabels.sourceLabel(.cell) == "Cell")
+    #expect(HistoryRowLabels.sourceLabel(.editor) == "Editor")
+    #expect(HistoryRowLabels.sourceLabel(.dataViewerEdit) == "Data Viewer Edit")
+  }
+
   @Test("History age is minute resolution and does not name seconds")
   func historyAgeStopsAtMinutes() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -181,10 +243,49 @@ struct WorkspaceHistoryTests {
     #expect(captured.text == "SELECT from_history")
   }
 
+  @Test("insertHistory does not insert a transaction summary label")
+  func insertHistorySkipsTransactionSummary() {
+    let manager = makeManager()
+    manager.newNotebook()
+    let captured = CapturedInsertion()
+    let token = NotificationCenter.default.addObserver(
+      forName: .insertTextIntoCell, object: nil, queue: nil
+    ) { note in
+      captured.text = note.userInfo?["text"] as? String
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+
+    #expect(QueryHistoryEntry.isTransactionSummary("COMMIT (2 statements)"))
+    #expect(QueryHistoryEntry.isTransactionSummary("ROLLBACK (1 statements)"))
+    #expect(!QueryHistoryEntry.isTransactionSummary("COMMIT"))
+    #expect(!QueryHistoryEntry.isTransactionSummary("ROLLBACK TO SAVEPOINT s"))
+    #expect(!QueryHistoryEntry.isTransactionSummary("SELECT 1"))
+
+    manager.insertHistory(Self.entry(sql: "COMMIT (2 statements)", kind: .transaction))
+    manager.insertHistory(Self.entry(sql: "ROLLBACK (1 statements)", kind: .transaction))
+    #expect(captured.text == nil)
+
+    manager.insertHistory(Self.entry(sql: "COMMIT"))
+    #expect(captured.text == "COMMIT")
+  }
+
   @Test("copyHistory copies the SQL")
   func copyHistoryCopiesSQL() {
     let manager = makeManager()
     manager.copyHistory(Self.entry(sql: "SELECT copy_me"))
+    #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
+  }
+
+  @Test("copyHistory does not copy a transaction summary label")
+  func copyHistorySkipsTransactionSummary() {
+    let manager = makeManager()
+    #expect(manager.copyHistory(Self.entry(sql: "SELECT copy_me")))
+    #expect(!manager.copyHistory(Self.entry(sql: "COMMIT (2 statements)", kind: .transaction)))
+    #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
+    #expect(
+      WorkspaceManager.historyClipboardText(Self.entry(sql: "ROLLBACK (1 statements)")) == nil)
+
+    #expect(!manager.copyHistory(Self.entry(sql: "ROLLBACK (1 statements)", kind: .transaction)))
     #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
   }
 
@@ -273,7 +374,8 @@ struct WorkspaceHistoryTests {
     sql: String,
     at executedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
     connectionKey: String = connectionKey,
-    workspaceID: UUID? = nil
+    workspaceID: UUID? = nil,
+    kind: QueryHistoryEntry.Kind? = nil
   ) -> QueryHistoryEntry {
     QueryHistoryEntry(
       id: 0,
@@ -287,7 +389,8 @@ struct WorkspaceHistoryTests {
       connectionLabel: "Prod",
       workspaceID: workspaceID,
       workspaceName: nil,
-      source: .cell
+      source: .cell,
+      kind: kind
     )
   }
 
