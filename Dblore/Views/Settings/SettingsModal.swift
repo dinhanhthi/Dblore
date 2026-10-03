@@ -61,6 +61,7 @@ struct SettingsModal: View {
 
   /// Tabs shown in the settings tab row (rawValue = label)
   private enum SettingsTab: String, CaseIterable {
+    case general = "General"
     case appearance = "Appearance"
     case editor = "Editor"
     case ai = "AI"
@@ -70,11 +71,11 @@ struct SettingsModal: View {
     case security = "Security"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
-    case updates = "Updates"
 
     /// SF Symbol shown next to the label in the navigation sidebar
     var icon: String {
       switch self {
+      case .general: return "gearshape"
       case .appearance: return "paintbrush"
       case .editor: return "text.cursor"
       case .ai: return "sparkles"
@@ -82,7 +83,6 @@ struct SettingsModal: View {
       case .save: return "square.and.arrow.down"
       case .data: return "externaldrive"
       case .security: return "lock.shield"
-      case .updates: return "arrow.triangle.2.circlepath"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
       }
@@ -94,7 +94,7 @@ struct SettingsModal: View {
       case .data: .data
       case .security: .security
       case .results: .results
-      case nil: .appearance
+      case nil: .general
       }
     }
   }
@@ -167,6 +167,8 @@ struct SettingsModal: View {
   @ViewBuilder
   private var selectedSection: some View {
     switch selectedTab {
+    case .general:
+      GeneralSettingsSection(appSettings: appSettings)
     case .appearance:
       AppearanceSettingsSection(appSettings: appSettings)
     case .editor:
@@ -195,8 +197,6 @@ struct SettingsModal: View {
           .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
       }
-    case .updates:
-      SettingsModalUpdatesSection()
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
@@ -415,23 +415,6 @@ struct SettingsModalSaveOptionsSection: View {
   }
 }
 
-// MARK: - Updates Section
-
-struct SettingsModalUpdatesSection: View {
-  @ObservedObject private var updater = UpdaterController.shared
-
-  var body: some View {
-    SettingsGroupCard(title: "Automatic updates") {
-      SettingsToggle(
-        title: "Automatically Check for Updates",
-        description:
-          "Check for new versions of Dblore in the background and offer to install them. You can always check now from the Dblore menu.",
-        isOn: $updater.automaticallyChecksForUpdates
-      )
-    }
-  }
-}
-
 // MARK: - Developer Settings Section
 
 struct SettingsModalDeveloperSection: View {
@@ -521,7 +504,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
       shortcutCard(
         "Files",
         [
-          ("New Notebook", "Cmd+Shift+N"),
+          ("New Tab (Notebook or SQL File, see General)", "Cmd+T"),
           ("New SQL File", "Cmd+Shift+J"),
           ("Open", "Cmd+O"),
           ("Save", "Cmd+S"),

@@ -24,6 +24,19 @@ enum ThemePreference: String, CaseIterable {
   }
 }
 
+/// Type of tab created by default by the new tab action
+enum NewTabType: String, CaseIterable {
+  case notebook
+  case sqlFile
+
+  var title: String {
+    switch self {
+    case .notebook: return "Notebook"
+    case .sqlFile: return "SQL File"
+    }
+  }
+}
+
 /// Safe Mode levels for query protection (similar to TablePlus)
 /// Higher levels provide more protection against accidental data modification
 enum SafeMode: Int, Codable, CaseIterable, Sendable {
@@ -243,6 +256,8 @@ class AppSettings {
     static let isAutoCompleteEnabled = "app.settings.isAutoCompleteEnabled"
     static let showLineNumbers = "app.settings.showLineNumbers"
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
+    static let openWindowsAsTabs = "app.settings.openWindowsAsTabs"
+    static let defaultNewTabType = "app.settings.defaultNewTabType"
     static let editorSideBySideDefault = "app.settings.editorSideBySideDefault"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
@@ -384,6 +399,22 @@ class AppSettings {
   var wordWrapEnabled: Bool = true {
     didSet {
       defaults.set(wordWrapEnabled, forKey: Keys.wordWrapEnabled)
+    }
+  }
+
+  /// Open new windows as tabs of the current window (native macOS window tabs)
+  /// Default: false
+  var openWindowsAsTabs: Bool = false {
+    didSet {
+      defaults.set(openWindowsAsTabs, forKey: Keys.openWindowsAsTabs)
+    }
+  }
+
+  /// Type of tab created by the new tab action
+  /// Default: notebook
+  var defaultNewTabType: NewTabType = .notebook {
+    didSet {
+      defaults.set(defaultNewTabType.rawValue, forKey: Keys.defaultNewTabType)
     }
   }
 
@@ -649,6 +680,16 @@ class AppSettings {
       wordWrapEnabled = defaults.bool(forKey: Keys.wordWrapEnabled)
     }
 
+    if defaults.object(forKey: Keys.openWindowsAsTabs) != nil {
+      openWindowsAsTabs = defaults.bool(forKey: Keys.openWindowsAsTabs)
+    }
+
+    if let raw = defaults.string(forKey: Keys.defaultNewTabType),
+      let type = NewTabType(rawValue: raw)
+    {
+      defaultNewTabType = type
+    }
+
     if defaults.object(forKey: Keys.editorFontSize) != nil {
       let stored = CGFloat(defaults.double(forKey: Keys.editorFontSize))
       let clamped = Self.clampFontSize(stored)
@@ -748,6 +789,8 @@ class AppSettings {
     isAutoCompleteEnabled = true
     showLineNumbers = true
     wordWrapEnabled = true
+    openWindowsAsTabs = false
+    defaultNewTabType = .notebook
     editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false

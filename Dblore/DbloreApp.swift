@@ -456,11 +456,21 @@ struct TabCommands: Commands {
       // Document commands - create workspace if needed
       Button {
         let manager = activeWorkspaceOrNew
+        switch AppSettings.shared.defaultNewTabType {
+        case .notebook: manager.newNotebook()
+        case .sqlFile: manager.newSQLFile()
+        }
+      } label: {
+        Label("New Tab", systemImage: "plus.square")
+      }
+      .keyboardShortcut("t", modifiers: .command)
+
+      Button {
+        let manager = activeWorkspaceOrNew
         manager.newNotebook()
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
-      .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button {
         let manager = activeWorkspaceOrNew
