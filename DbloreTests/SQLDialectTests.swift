@@ -213,6 +213,18 @@ struct SQLDialectTests {
     #expect(dialect.likeIsCaseInsensitive == insensitive)
   }
 
+  @Test("A PostgreSQL backslash is an escape string; quotes stay doubled; SQLite stays plain")
+  func backslashAndQuoteLiterals() {
+    let attack = #"\' ; DELETE FROM secrets; --"#
+    #expect(
+      SQLDialect.postgresql.literal(.string(attack)) == #"E'\\'' ; DELETE FROM secrets; --'"#)
+    #expect(SQLDialect.sqlite.literal(.string(attack)) == #"'\'' ; DELETE FROM secrets; --'"#)
+    #expect(SQLDialect.postgresql.literal(.string("o'brien")) == "'o''brien'")
+    #expect(SQLDialect.sqlite.literal(.string("o'brien")) == "'o''brien'")
+    #expect(SQLDialect.sqlite.literal(.string(#"a\b"#)) == #"'a\b'"#)
+    #expect(SQLDialect.postgresql.literal(.string(#"\n\t\x"#)) == #"E'\\n\\t\\x'"#)
+  }
+
   @Test("DatabaseType.dialect selects the matching dialect")
   func databaseTypeDialect() {
     #expect(DatabaseType.postgresql.dialect == SQLDialect.postgresql)

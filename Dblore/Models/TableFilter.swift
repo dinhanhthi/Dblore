@@ -45,10 +45,41 @@ struct FilterCondition: Codable, Hashable, Identifiable {
   var op: FilterOperator = .equals
   var value: String = ""
   var connector: FilterConnector = .and
+  /// An empty string is a real value (a foreign-key jump), not a blank form row.
+  var emptyStringIsValue = false
 
-  /// Has a column and, when the operator takes one, a value
+  /// Has a column and, when the operator takes one, a value.
+  /// A blank value still counts when `emptyStringIsValue` is set. An empty column does not.
   var isComplete: Bool {
-    !column.isEmpty && (!op.needsValue || !value.isEmpty)
+    !column.isEmpty && (!op.needsValue || !value.isEmpty || emptyStringIsValue)
+  }
+}
+
+extension FilterCondition {
+  enum CodingKeys: String, CodingKey {
+    case id, column, op, value, connector, emptyStringIsValue
+  }
+
+  /// `emptyStringIsValue` is absent on filters saved before that flag existed.
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    column = try container.decode(String.self, forKey: .column)
+    op = try container.decode(FilterOperator.self, forKey: .op)
+    value = try container.decode(String.self, forKey: .value)
+    connector = try container.decode(FilterConnector.self, forKey: .connector)
+    emptyStringIsValue =
+      try container.decodeIfPresent(Bool.self, forKey: .emptyStringIsValue) ?? false
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(column, forKey: .column)
+    try container.encode(op, forKey: .op)
+    try container.encode(value, forKey: .value)
+    try container.encode(connector, forKey: .connector)
+    try container.encode(emptyStringIsValue, forKey: .emptyStringIsValue)
   }
 }
 

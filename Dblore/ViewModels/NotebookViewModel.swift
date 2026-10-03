@@ -198,6 +198,14 @@ class NotebookViewModel {
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
+  /// Opens a table in the data viewer. `WorkspaceManager` sets this.
+  /// Arguments are schema, name, order columns, and an optional filter.
+  @ObservationIgnored var onOpenDataViewer:
+    (
+      @MainActor (
+        _ schema: String, _ name: String, _ orderColumns: [String], _ filter: TableFilter?
+      ) -> Void
+    )?
   /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer

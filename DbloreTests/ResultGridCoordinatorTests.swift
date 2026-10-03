@@ -74,6 +74,63 @@ struct ResultGridCoordinatorTests {
     #expect(titles.contains("Copy Value"))
     #expect(titles.contains("Copy as INSERT"))
     #expect(titles.contains("Copy as IN list"))
+    #expect(!titles.contains("Referenced Row..."))
+  }
+
+  @Test("Referenced Row... appears only when that column has a reference")
+  func referencedRowMenuFollowsTheColumn() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    coordinator.relationSchema = "public"
+    coordinator.relationTable = "orders"
+    coordinator.foreignKeys = [
+      ForeignKey(
+        constraintName: "orders_user", sourceSchema: "public", sourceTable: "orders",
+        sourceColumns: ["id"], targetSchema: "public", targetTable: "users", targetColumns: ["id"]
+      )
+    ]
+
+    let idMenu = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    let nameMenu = coordinator.contextMenu(row: 0, column: 1)?.items.map(\.title) ?? []
+    #expect(idMenu.contains("Referenced Row..."))
+    #expect(!nameMenu.contains("Referenced Row..."))
+    #expect(coordinator.referencedRowRequest(row: 0, column: 0)?.followsReference == true)
+
+    coordinator.foreignKeys = [
+      ForeignKey(
+        constraintName: "orders_pair", sourceSchema: "public", sourceTable: "orders",
+        sourceColumns: ["id", "tenant"], targetSchema: "public", targetTable: "tenants",
+        targetColumns: ["id", "tenant"])
+    ]
+    let partial = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(!partial.contains("Referenced Row..."))
+
+    coordinator.relationSchema = nil
+    coordinator.foreignKeys = [
+      ForeignKey(
+        constraintName: "orders_user", sourceSchema: "public", sourceTable: "orders",
+        sourceColumns: ["id"], targetSchema: "public", targetTable: "users", targetColumns: ["id"]
+      )
+    ]
+    let join = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(!join.contains("Referenced Row..."))
+  }
+
+  @Test("A NULL component stays on the menu and is not a lookup")
+  func nullComponentIsNotALookup() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    coordinator.relationSchema = "public"
+    coordinator.relationTable = "orders"
+    coordinator.foreignKeys = [
+      ForeignKey(
+        constraintName: "orders_name", sourceSchema: "public", sourceTable: "orders",
+        sourceColumns: ["name"], targetSchema: "public", targetTable: "names",
+        targetColumns: ["name"])
+    ]
+
+    let menu = coordinator.contextMenu(row: 2, column: 1)?.items.map(\.title) ?? []
+    #expect(menu.contains("Referenced Row..."))
+    #expect(coordinator.referencedRowRequest(row: 2, column: 1)?.followsReference == false)
+    #expect(coordinator.referencedRowRequest(row: 0, column: 1)?.followsReference == true)
   }
 
   @Test("Copy as IN list is enabled for one column and disabled across more than one")

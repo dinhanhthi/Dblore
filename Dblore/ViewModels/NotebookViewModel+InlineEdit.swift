@@ -55,7 +55,8 @@ extension NotebookViewModel {
     guard !primaryKey.isEmpty else { return nil }
     return EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
-      connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly)
+      connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
+      name: table.name)
   }
 
   /// The one table identity shared by every column, or nil when any column came from elsewhere.

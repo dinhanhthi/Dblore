@@ -240,6 +240,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
+    // Column lists are text, not name[]. Binary name[] decodes as bytes, so the names
+    // would not match a result column and the referenced-row menu would never appear.
     let query = """
       SELECT
         c.conname AS constraint_name,
@@ -250,13 +252,13 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         c.confupdtype AS on_update,
         c.confdeltype AS on_delete,
         (
-          SELECT array_agg(a.attname ORDER BY x.n)
+          SELECT array_agg(a.attname::text ORDER BY x.n)::text
           FROM pg_attribute a
           CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS x(attnum, n)
           WHERE a.attrelid = c.conrelid AND a.attnum = x.attnum
         ) AS source_columns,
         (
-          SELECT array_agg(a.attname ORDER BY x.n)
+          SELECT array_agg(a.attname::text ORDER BY x.n)::text
           FROM pg_attribute a
           CROSS JOIN LATERAL unnest(c.confkey) WITH ORDINALITY AS x(attnum, n)
           WHERE a.attrelid = c.confrelid AND a.attnum = x.attnum
@@ -302,7 +304,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       SELECT c.oid::int8, a.attnum::int4, a.attname::text,
              COALESCE((SELECT k.ord FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(att, ord)
                        WHERE k.att = a.attnum), 0)::int4,
-             format('%I.%I', n.nspname, c.relname), c.relkind::text, c.relhassubclass
+             format('%I.%I', n.nspname, c.relname), c.relkind::text, c.relhassubclass,
+             n.nspname::text, c.relname::text
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -315,15 +318,19 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     var keyPositions: [(position: Int, name: String)] = []
     var relationKind = ""
     var hasSubclass = true
+    var catalogSchema: String?
+    var catalogName: String?
     for row in try await rows(in: session, sql: query, binds: [.text(name)]) {
-      guard row.count >= 7 else { throw CatalogRowError() }
+      guard row.count >= 9 else { throw CatalogRowError() }
       guard let tableOID = CatalogValue.int(row[0]),
         let attnum = CatalogValue.int(row[1]),
         let columnName = CatalogValue.string(row[2]),
         let keyPosition = CatalogValue.int(row[3]),
         let qualified = CatalogValue.string(row[4]),
         let kind = CatalogValue.string(row[5]),
-        let subclass = CatalogValue.bool(row[6])
+        let subclass = CatalogValue.bool(row[6]),
+        let schemaName = CatalogValue.string(row[7]),
+        let relationName = CatalogValue.string(row[8])
       else { throw CatalogRowError() }
       guard let number = Int16(exactly: attnum), let tableID = UInt32(exactly: tableOID) else {
         continue
@@ -332,6 +339,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       qualifiedName = qualified
       relationKind = kind
       hasSubclass = subclass
+      catalogSchema = schemaName
+      catalogName = relationName
       names[number] = columnName
       if keyPosition > 0 { keyPositions.append((keyPosition, columnName)) }
     }
@@ -341,7 +350,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     let primaryKey = keyPositions.sorted { $0.position < $1.position }.map(\.name)
     return EditTable(
       oid: oid, attributeNames: names, primaryKeyColumns: primaryKey, qualifiedName: qualifiedName,
-      updateOnly: relationKind == "r")
+      updateOnly: relationKind == "r", schema: catalogSchema, name: catalogName)
   }
 
   func enrichColumnTypes(

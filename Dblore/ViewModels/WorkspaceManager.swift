@@ -496,23 +496,43 @@ class WorkspaceManager: Identifiable {
 
   /// Show a table/view in a data viewer tab: select the tab already showing it, else reuse the
   /// preview tab, else open a new preview tab. The preview tab that opened a pending Protected
-  /// transaction is pinned instead of replaced.
-  func openDataViewer(schema: String, name: String, orderColumns: [String]) {
+  /// transaction, or that still has staged edits, is pinned instead of replaced.
+  /// `filter` nil leaves an existing viewer's filter unchanged. An existing tab applies `filter`
+  /// after the staged-leave prompt. A new tab opens with `filter` already applied.
+  func openDataViewer(
+    schema: String, name: String, orderColumns: [String], filter: TableFilter? = nil
+  ) {
     if let id = tabs.first(where: {
       let state = viewModels[$0.id]?.dataViewer
       return state?.schema == schema && state?.name == name
     })?.id {
       selectTab(id: id)
+      if let filter, let viewModel = viewModels[id] {
+        Task {
+          viewModel.filterDraft = filter
+          await viewModel.applyFilter()
+        }
+      }
       return
     }
 
     var state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
+    if let filter {
+      state.filter = filter
+    }
     if let index = tabs.firstIndex(where: \.isPreview) {
-      if tabs[index].id == transactionOriginTabId {
-        pinTab(id: tabs[index].id)
-      } else if let viewModel = viewModels[tabs[index].id] {
+      let previewId = tabs[index].id
+      let keepPreview =
+        previewId == transactionOriginTabId
+        || viewModels[previewId]?.hasPendingStagedChanges == true
+      if keepPreview {
+        pinTab(id: previewId)
+      } else if let viewModel = viewModels[previewId] {
         viewModel.dataViewer = state
+        if let filter {
+          viewModel.filterDraft = filter
+        }
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
@@ -526,6 +546,9 @@ class WorkspaceManager: Identifiable {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
+    if let filter {
+      viewModel.filterDraft = filter
+    }
 
     let tab = TabItem(
       documentType: .dataViewer, title: state.title, isDirty: false, isPreview: true)
@@ -776,6 +799,10 @@ class WorkspaceManager: Identifiable {
     viewModel.onHistoryRecorded = { [weak self] in
       guard let self else { return }
       Task { await self.refreshHistory() }
+    }
+    viewModel.onOpenDataViewer = { [weak self] schema, name, orderColumns, filter in
+      self?.openDataViewer(
+        schema: schema, name: name, orderColumns: orderColumns, filter: filter)
     }
 
     return viewModel
