@@ -202,6 +202,9 @@ struct WorkspaceContainerView: View {
     .focusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
       withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
     }
+    .focusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
+      workspaceManager.openCommandPalette()
+    }
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
@@ -213,6 +216,7 @@ struct WorkspaceContainerView: View {
     )
     .favoriteModals(workspaceManager: workspaceManager)
     .historyDetailModal(workspaceManager: workspaceManager)
+    .commandPaletteModal(workspaceManager: workspaceManager)
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
         let section = SettingsPage(rawValue: raw)

@@ -13,6 +13,7 @@ struct WorkspaceCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
+  @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
 
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open
@@ -43,6 +44,16 @@ struct WorkspaceCommands: Commands {
       }
       .keyboardShortcut("l", modifiers: .command)
       .disabled(toggleAIAssistantAction == nil)
+
+      Divider()
+
+      Button {
+        openCommandPaletteAction?()
+      } label: {
+        Label("Command Palette", systemImage: "magnifyingglass")
+      }
+      .keyboardShortcut("k", modifiers: .command)
+      .disabled(openCommandPaletteAction == nil)
     }
   }
 }
@@ -57,10 +68,19 @@ struct ToggleAIAssistantActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+struct OpenCommandPaletteActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
     set { self[ToggleAIAssistantActionKey.self] = newValue }
+  }
+
+  var openCommandPaletteAction: (() -> Void)? {
+    get { self[OpenCommandPaletteActionKey.self] }
+    set { self[OpenCommandPaletteActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

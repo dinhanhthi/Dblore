@@ -156,6 +156,13 @@ class WorkspaceManager: Identifiable {
   /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
   @ObservationIgnored var historyBrowser: QueryHistoryStore?
 
+  // MARK: - Command Palette
+
+  /// Open palette. Nil hides it.
+  var commandPalette: CommandPaletteModel?
+  /// True while the palette text field is focused. Cmd+K must not dismiss that field.
+  var commandPaletteFieldFocused = false
+
   // MARK: - Settings
 
   let settingsResolver: SettingsResolver

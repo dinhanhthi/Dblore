@@ -2,7 +2,7 @@
 //  SidebarEntityFilter.swift
 //  Dblore
 //
-//  Loose fuzzy matching for the left sidebar filter field.
+//  Loose fuzzy matching and ranked scores for the left sidebar filter field.
 //
 
 import Foundation
@@ -13,7 +13,17 @@ struct SidebarColumnMatch {
   let expandForMatch: Bool
 }
 
-enum SidebarEntityFilter {
+nonisolated enum SidebarEntityFilter {
+  /// Higher is a stronger hit. Callers compare scores; the gaps are not a contract.
+  private enum Rank: Int {
+    case nearMiss = 1
+    case subsequence = 2
+    case contains = 3
+    case wordBoundary = 4
+    case prefix = 5
+    case exact = 6
+  }
+
   /// Whitespace-separated terms. Empty query matches everything.
   static func keywords(in query: String) -> [String] {
     query.split(whereSeparator: \.isWhitespace).map { String($0).lowercased() }
@@ -50,25 +60,59 @@ enum SidebarEntityFilter {
     return SidebarColumnMatch(columns: visible, expandForMatch: true)
   }
 
-  /// Case-insensitive and loose: a contiguous hit, an in-order abbreviation, or one typo.
-  private static func fuzzy(_ keyword: String, in text: String) -> Bool {
+  /// Rank of one keyword in `text`. Nil when that keyword would fail `fuzzy`.
+  /// Higher is better: exact, prefix, word boundary, contains, subsequence, near miss.
+  /// An empty keyword matches, same as `fuzzy`.
+  static func score(_ keyword: String, in text: String) -> Int? {
     let needle = keyword.lowercased()
-    guard !needle.isEmpty else { return true }
     let haystack = text.lowercased()
-    if haystack.contains(needle) { return true }
+    if needle.isEmpty { return Rank.exact.rawValue }
+    if let contiguous = contiguousRank(of: needle, in: haystack) { return contiguous }
 
     let collapsed = haystack.replacingOccurrences(of: "_", with: "")
     // Two-letter terms stay contiguous (`id` still means id). Longer terms may skip letters.
     let maxSpan = needle.count <= 2 ? needle.count : needle.count * 3
-    if hasSubsequence(in: haystack, needle: needle, maxSpan: maxSpan) { return true }
+    if hasSubsequence(in: haystack, needle: needle, maxSpan: maxSpan) {
+      return Rank.subsequence.rawValue
+    }
     if collapsed != haystack, hasSubsequence(in: collapsed, needle: needle, maxSpan: maxSpan) {
-      return true
+      return Rank.subsequence.rawValue
     }
 
     // One insertion, deletion, substitution, or adjacent swap. Short terms stay subsequence-only
     // so two letters do not match every nearby identifier.
-    guard needle.count >= 4 else { return false }
-    return hasNearMiss(in: haystack, collapsed: collapsed, needle: needle)
+    guard needle.count >= 4 else { return nil }
+    guard hasNearMiss(in: haystack, collapsed: collapsed, needle: needle) else { return nil }
+    return Rank.nearMiss.rawValue
+  }
+
+  /// Case-insensitive and loose: a contiguous hit, an in-order abbreviation, or one typo.
+  private static func fuzzy(_ keyword: String, in text: String) -> Bool {
+    score(keyword, in: text) != nil
+  }
+
+  /// Best contiguous hit. The whole text is exact; a hit at index 0 is a prefix.
+  /// A later hit is a word boundary only when the previous character is not a letter
+  /// (`_`, `.`, space, digit). Anything else is a plain contains.
+  private static func contiguousRank(of needle: String, in haystack: String) -> Int? {
+    if haystack == needle { return Rank.exact.rawValue }
+    var best: Int?
+    var start = haystack.startIndex
+    while start < haystack.endIndex,
+      let range = haystack.range(of: needle, range: start..<haystack.endIndex)
+    {
+      let rank: Int
+      if range.lowerBound == haystack.startIndex {
+        rank = Rank.prefix.rawValue
+      } else {
+        let previous = haystack[haystack.index(before: range.lowerBound)]
+        rank = previous.isLetter ? Rank.contains.rawValue : Rank.wordBoundary.rawValue
+      }
+      best = max(best ?? rank, rank)
+      if rank >= Rank.wordBoundary.rawValue { break }
+      start = haystack.index(after: range.lowerBound)
+    }
+    return best
   }
 
   /// Characters of `needle` appear in order inside a bounded span, so abbreviations match
