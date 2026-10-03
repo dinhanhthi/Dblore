@@ -1,6 +1,7 @@
 // WorkspaceManager+TabActions.swift
 // Pinned-tab rules: pinned tabs form a leading zone of `tabs`.
 
+import AppKit
 import Foundation
 
 extension WorkspaceManager {
@@ -128,7 +129,7 @@ extension WorkspaceManager {
   }
 
   /// Move a tab to a new window of the same connection, connecting it when this one is connected
-  func moveTabToNewWindow(id: UUID) async {
+  func moveTabToNewWindow(id: UUID, dropPoint: NSPoint? = nil) async {
     guard canMoveToNewWindow(tabId: id) else { return }
     let config = workspace.connectionConfig
     let previousActive = WorkspaceWindowManager.shared.activeWorkspaceId
@@ -140,6 +141,8 @@ extension WorkspaceManager {
       await AppLogger.shared.error("Failed to move tab: \(error)", category: "Tabs")
       return
     }
+    // Set only after the transfer succeeded, so a failed move never leaks it into a later open
+    NewWindowStore.shared.setPendingDetach(workspaceId: newManager.id, point: dropPoint)
     WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
     guard connectionState == .connected, let config else { return }
     do {

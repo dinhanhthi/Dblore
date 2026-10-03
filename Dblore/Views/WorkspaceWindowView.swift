@@ -108,10 +108,12 @@ struct AppWindowView: View {
       // This window is showing welcome - open workspace here
       guard isPendingWorkspaceHandler else { return }
       windowManager.pendingWorkspaceId = nil
+      NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
       workspaceId = newWorkspaceId
     } else if workspaceId == newWorkspaceId {
       // This workspace is already showing in THIS window - just focus it
       windowManager.pendingWorkspaceId = nil
+      NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
       hostWindow.window?.makeKeyAndOrderFront(nil)
     } else {
       // This window has a different workspace
@@ -121,6 +123,7 @@ struct AppWindowView: View {
 
       // Check if this workspace is already open in another window - focus that window
       if let existingWindow = NewWindowStore.shared.findWindow(for: newWorkspaceId) {
+        NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
         existingWindow.makeKeyAndOrderFront(nil)
       } else {
         openNewWindow(for: newWorkspaceId)
@@ -184,6 +187,7 @@ struct AppWindowView: View {
   }
 
   private func openNewWindow(for newWorkspaceId: UUID) {
+    let detachDropPoint = NewWindowStore.shared.takePendingDetach(workspaceId: newWorkspaceId)
     // Create a new NSWindow programmatically with SwiftUI content
     let newWindowView = NewWorkspaceWindowView(workspaceId: newWorkspaceId)
       // Disable all SwiftUI animations, same as the main WindowGroup
@@ -203,7 +207,20 @@ struct AppWindowView: View {
     newWindow.tabbingIdentifier = .dbloreDocument
     newWindow.tabbingMode = .automatic
 
-    if let parent = NewWindowStore.tabParent(
+    if let dropPoint = detachDropPoint {
+      // Dragged out of its window: always a separate window, even when new windows open as tabs
+      let size = NSApp.keyWindow?.frame.size ?? NSSize(width: 1200, height: 800)
+      newWindow.setContentSize(size)
+      let screen =
+        NSScreen.screens.first { NSMouseInRect(dropPoint, $0.frame, false) } ?? NSScreen.main
+      let origin = TabDragOut.detachedWindowOrigin(
+        dropPoint: dropPoint, windowSize: newWindow.frame.size)
+      newWindow.setFrameOrigin(
+        screen.map {
+          TabDragOut.clampedOrigin(
+            origin, windowSize: newWindow.frame.size, visibleFrame: $0.visibleFrame)
+        } ?? origin)
+    } else if let parent = NewWindowStore.tabParent(
       openAsTab: AppSettings.shared.openWindowsAsTabs, keyWindow: NSApp.keyWindow)
     {
       parent.addTabbedWindow(newWindow, ordered: .above)
@@ -276,6 +293,22 @@ struct NewWorkspaceWindowView: View {
 @MainActor
 class NewWindowStore {
   static let shared = NewWindowStore()
+  /// Screen points where tabs were dropped outside their window, keyed by the new workspace id
+  private var pendingDetachDropPoints: [UUID: NSPoint] = [:]
+
+  func setPendingDetach(workspaceId: UUID, point: NSPoint?) {
+    pendingDetachDropPoints[workspaceId] = point
+  }
+
+  /// Returns and consumes the drop point of this workspace only
+  func takePendingDetach(workspaceId: UUID) -> NSPoint? {
+    pendingDetachDropPoints.removeValue(forKey: workspaceId)
+  }
+
+  func clearPendingDetach(workspaceId: UUID) {
+    pendingDetachDropPoints[workspaceId] = nil
+  }
+
   private var windowControllers: [(controller: NSWindowController, workspaceId: UUID?)] = []
 
   private init() {
