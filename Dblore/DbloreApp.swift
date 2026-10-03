@@ -25,8 +25,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       let wasWelcome = MainActor.assumeIsolated { WelcomeWindowMarker.isWelcome(window) }
       Task { @MainActor in self?.reopenWelcomeIfLastWindowClosed(window, wasWelcome: wasWelcome) }
     }
-    // Disable automatic window tabbing - each workspace gets its own window
-    NSWindow.allowsAutomaticWindowTabbing = false
     // Start Sparkle (no-op under tests)
     UpdaterController.shared.start()
   }
@@ -73,6 +71,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// The "+" button in a window's tab bar sends this down the responder chain.
+  @MainActor @objc func newWindowForTab(_ sender: Any?) {
+    NewWindowStore.shared.openWelcomeWindowTab()
+  }
+
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     return false  // Keep app running even when all windows are closed
   }
@@ -90,9 +93,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Let a quit in progress (which closes the windows too) win over the reopen
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
       guard let self, !self.isTerminating else { return }
-      let hasOtherDocumentWindow = NSApp.windows.contains {
-        $0 !== closed && $0.isOpenDbloreDocumentWindow
-      }
+      let hasOtherDocumentWindow = NSWindow.hasOtherOpenDocumentWindow(
+        in: NSApp.windows, excluding: closed)
       guard !hasOtherDocumentWindow else { return }
       NewWindowStore.shared.openWelcomeWindow(frame: frame)
     }
@@ -456,11 +458,21 @@ struct TabCommands: Commands {
       // Document commands - create workspace if needed
       Button {
         let manager = activeWorkspaceOrNew
+        switch AppSettings.shared.defaultNewTabType {
+        case .notebook: manager.newNotebook()
+        case .sqlFile: manager.newSQLFile()
+        }
+      } label: {
+        Label("New Tab", systemImage: "plus.square")
+      }
+      .keyboardShortcut("t", modifiers: .command)
+
+      Button {
+        let manager = activeWorkspaceOrNew
         manager.newNotebook()
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
-      .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button {
         let manager = activeWorkspaceOrNew
@@ -534,6 +546,11 @@ struct TabCommands: Commands {
     // Window menu - Tab navigation
     CommandGroup(after: .windowArrangement) {
       Divider()
+
+      Button("New Window Tab") {
+        NewWindowStore.shared.openWelcomeWindowTab()
+      }
+      .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button("Close Tab") {
         if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager,

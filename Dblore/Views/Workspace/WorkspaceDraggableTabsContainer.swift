@@ -7,6 +7,32 @@
 
 import SwiftUI
 
+/// Pure helpers for dragging a tab out of its window into a new one
+enum TabDragOut {
+  /// True when the tab can move and the mouse (screen coordinates) is outside the window frame; edges count as inside
+  static func shouldDetach(mouseLocation: NSPoint, windowFrame: NSRect, canMove: Bool) -> Bool {
+    guard canMove else { return false }
+    let isInside =
+      mouseLocation.x >= windowFrame.minX && mouseLocation.x <= windowFrame.maxX
+      && mouseLocation.y >= windowFrame.minY && mouseLocation.y <= windowFrame.maxY
+    return !isInside
+  }
+
+  /// Origin for the new window so the drop point sits over its tab-bar area
+  static func detachedWindowOrigin(dropPoint: NSPoint, windowSize: NSSize) -> NSPoint {
+    NSPoint(
+      x: dropPoint.x - ComponentSize.trafficLightAndToggleWidth,
+      y: dropPoint.y + ComponentSize.tabBarHeight / 2 - windowSize.height)
+  }
+
+  /// Shift the origin so the window stays inside the visible frame; a larger window pins to its top-left
+  static func clampedOrigin(_ origin: NSPoint, windowSize: NSSize, visibleFrame: NSRect) -> NSPoint {
+    let x = max(visibleFrame.minX, min(origin.x, visibleFrame.maxX - windowSize.width))
+    let y = min(visibleFrame.maxY - windowSize.height, max(origin.y, visibleFrame.minY))
+    return NSPoint(x: x, y: y)
+  }
+}
+
 /// Container that handles Chrome-like tab dragging with real-time reorder animation for workspaces
 struct WorkspaceDraggableTabsContainer: View {
   @Bindable var workspaceManager: WorkspaceManager
@@ -28,6 +54,9 @@ struct WorkspaceDraggableTabsContainer: View {
 
   /// Original index of the dragging tab
   @State private var originalIndex: Int?
+
+  /// True while the pointer is outside the window and releasing would open the tab in a new window
+  @State private var isDetaching = false
 
   /// Tab under the current mouse press, so selection fires once per press
   @State private var pressedTabId: UUID?
@@ -81,6 +110,7 @@ struct WorkspaceDraggableTabsContainer: View {
               )
           }
         )
+        .opacity(isDragging && isDetaching ? 0.5 : 1)
         .offset(x: calculateOffset(for: tab, at: index))
         .animation(draggingTabId != nil ? .easeInOut(duration: 0.2) : nil, value: targetIndex)
         .zIndex(isDragging ? 100 : (isActive ? 50 : 0))
@@ -96,11 +126,19 @@ struct WorkspaceDraggableTabsContainer: View {
               }
               guard draggingTabId != nil || abs(value.translation.width) >= dragThreshold
               else { return }
+              isDetaching = shouldDetach(tab: tab)
               handleDragChanged(tab: tab, index: index, translation: value.translation.width)
             }
             .onEnded { _ in
               pressedTabId = nil
-              if draggingTabId != nil { handleDragEnded() }
+              if draggingTabId != nil {
+                if isDetaching {
+                  handleDetachEnded(tab: tab)
+                } else {
+                  handleDragEnded()
+                }
+              }
+              isDetaching = false
             }
         )
       }
@@ -108,6 +146,9 @@ struct WorkspaceDraggableTabsContainer: View {
     .coordinateSpace(name: "workspaceTabContainer")
     .onPreferenceChange(WorkspaceTabPositionPreferenceKey.self) { positions in
       tabPositions = positions
+    }
+    .onChange(of: draggingTabId) { _, newValue in
+      if newValue == nil { isDetaching = false }
     }
   }
 
@@ -157,10 +198,14 @@ struct WorkspaceDraggableTabsContainer: View {
     dragOffset = translation
 
     // Calculate target index based on current position
-    let newTargetIndex = calculateTargetIndex(
-      originalIndex: index,
-      dragOffset: translation
-    )
+    // While detaching, freeze reordering so the other tabs return to place
+    let newTargetIndex =
+      isDetaching
+      ? index
+      : calculateTargetIndex(
+        originalIndex: index,
+        dragOffset: translation
+      )
 
     if newTargetIndex != targetIndex {
       withAnimation(.easeInOut(duration: 0.2)) {
@@ -216,6 +261,26 @@ struct WorkspaceDraggableTabsContainer: View {
 
     return workspaceManager.clampedMoveTarget(
       from: originalIndex, to: max(0, min(newIndex, tabs.count - 1)))
+  }
+
+  /// Whether the pointer is outside the window that received the drag and the tab can move
+  private func shouldDetach(tab: TabItem) -> Bool {
+    guard let window = NSApp.currentEvent?.window ?? NSApp.keyWindow else { return false }
+    return TabDragOut.shouldDetach(
+      mouseLocation: NSEvent.mouseLocation,
+      windowFrame: window.frame,
+      canMove: workspaceManager.canMoveToNewWindow(tabId: tab.id))
+  }
+
+  /// Handle drag end outside the window: reset without animation, then open the tab in a new window
+  private func handleDetachEnded(tab: TabItem) {
+    draggingTabId = nil
+    dragOffset = 0
+    targetIndex = nil
+    originalIndex = nil
+
+    let dropPoint = NSEvent.mouseLocation
+    Task { await workspaceManager.moveTabToNewWindow(id: tab.id, dropPoint: dropPoint) }
   }
 
   /// Handle drag gesture end

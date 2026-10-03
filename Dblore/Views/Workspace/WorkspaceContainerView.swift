@@ -12,6 +12,9 @@ struct WorkspaceContainerView: View {
   @State private var settingsSection: SettingsPage?
   @State private var settingsHighlight: SettingsOption?
   @State private var settingsOpenToken = UUID()
+  @State private var isNativeTabBarVisible = false
+  @State private var hostWindow = HostWindowReference()
+  @Environment(\.controlActiveState) private var controlActiveState
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -97,6 +100,7 @@ struct WorkspaceContainerView: View {
             Color.clear
               .frame(
                 width: ComponentSize.trafficLightAndToggleWidth
+                  - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
@@ -157,9 +161,19 @@ struct WorkspaceContainerView: View {
     }
     .frame(minWidth: 800, minHeight: 600)
     .background(Color.appBackground)
-    .ignoresSafeArea(.all, edges: .top)
+    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
+    .environment(\.isNativeTabBarVisible, isNativeTabBarVisible)
     .background(
-      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
+      DocumentWindowConfigurator(
+        tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
+        windowTitle: WorkspaceWindowTitle.window(
+          fileName: workspaceManager.activeTab?.title,
+          workspaceName: workspaceManager.workspace.name),
+        isTabBarVisible: $isNativeTabBarVisible)
+    )
+    .background(
+      TrafficLightPositioner(
+        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
     .pendingTransactionDialogs(workspaceManager: workspaceManager)
@@ -213,7 +227,13 @@ struct WorkspaceContainerView: View {
     )
     .favoriteModals(workspaceManager: workspaceManager)
     .historyDetailModal(workspaceManager: workspaceManager)
+    .background(HostWindowReader(reference: hostWindow))
+    .environment(\.hostWindowReference, hostWindow)
+    .onChange(of: controlActiveState, initial: true) { _, newState in
+      if newState == .key { WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id) }
+    }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
+      guard workspaceManager.isActiveWorkspace(in: hostWindow) else { return }
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
         let section = SettingsPage(rawValue: raw)
       {
@@ -560,8 +580,33 @@ struct WorkspaceTabContentView: View {
 
 // MARK: - Workspace Notification Handlers
 
+extension WorkspaceManager {
+  /// Menu commands are broadcast to every window, including background native tabs: only the
+  /// active workspace's active tab may act on them.
+  fileprivate func isActiveTab(_ tabId: UUID, in hostWindow: HostWindowReference?) -> Bool {
+    isActiveWorkspace(in: hostWindow) && activeTabId == tabId
+  }
+
+  /// The cached active workspace id can lag behind AppKit (a Welcome tab became key, a tab
+  /// closed), so the workspace's own window must also be the key window (or own the key sheet).
+  fileprivate func isActiveWorkspace(in hostWindow: HostWindowReference?) -> Bool {
+    guard WorkspaceWindowManager.shared.activeWorkspaceId == id,
+      let window = hostWindow?.window,
+      let keyWindow = NSApp.keyWindow
+    else { return false }
+    return keyWindow === window || keyWindow.sheetParent === window
+  }
+}
+
+extension EnvironmentValues {
+  /// The window hosting the enclosing workspace container. Optional so the `@Entry` default is
+  /// nil instead of a class instance; the container always injects the real reference.
+  @Entry fileprivate var hostWindowReference: HostWindowReference? = nil
+}
+
 /// Handles notifications for notebook mode in workspace context
 struct WorkspaceNotebookNotificationHandler: ViewModifier {
+  @Environment(\.hostWindowReference) private var hostWindow
   let tabId: UUID
   let workspaceManager: WorkspaceManager
   let viewModel: NotebookViewModel
@@ -572,19 +617,19 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
   func body(content: Content) -> some View {
     content
       .onReceive(NotificationCenter.default.publisher(for: .addCodeCell)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         viewModel.addCell(type: .sql)
         syncDocument()
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCell)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.confirmAndRunCell(id: id)
           syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndSelectNext)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.confirmAndRunCell(id: id)
           viewModel.selectNextCell(createIfNeeded: true)
@@ -592,7 +637,7 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runCellAndInsertBelow)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.confirmAndRunCell(id: id)
           viewModel.insertCellBelow(type: .sql)
@@ -600,37 +645,38 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .runAllCells)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         showRunAllConfirmation = true
       }
       .onReceive(NotificationCenter.default.publisher(for: .clearCellOutput)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.clearCellOutput(id: id)
           syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .clearAllOutputs)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         viewModel.clearAllOutputs()
         syncDocument()
       }
       .onReceive(NotificationCenter.default.publisher(for: .deleteCell)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.deleteCell(id: id)
           syncDocument()
         }
       }
       .onReceive(NotificationCenter.default.publisher(for: .duplicateCell)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         if let id = viewModel.selectedCellId {
           viewModel.duplicateCell(id: id)
           syncDocument()
         }
       }
       .onExplainCommands(
-        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
+        tabId: tabId, workspaceManager: workspaceManager, hostWindow: hostWindow,
+        viewModel: viewModel,
         syncDocument: syncDocument
       )
       .confirmationDialog(
@@ -653,6 +699,7 @@ struct WorkspaceNotebookNotificationHandler: ViewModifier {
 
 /// Handles notifications for editor mode in workspace context
 struct WorkspaceEditorNotificationHandler: ViewModifier {
+  @Environment(\.hostWindowReference) private var hostWindow
   let tabId: UUID
   let workspaceManager: WorkspaceManager
   let viewModel: NotebookViewModel
@@ -661,15 +708,15 @@ struct WorkspaceEditorNotificationHandler: ViewModifier {
   func body(content: Content) -> some View {
     content
       .onReceive(NotificationCenter.default.publisher(for: .runEditorQuery)) { _ in
-        guard workspaceManager.activeTabId == tabId else { return }
+        guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
         Task {
           await viewModel.runEditorQuery()
           syncDocument()
         }
       }
       .onExplainCommands(
-        tabId: tabId, workspaceManager: workspaceManager, viewModel: viewModel,
-        syncDocument: syncDocument)
+        tabId: tabId, workspaceManager: workspaceManager, hostWindow: hostWindow,
+        viewModel: viewModel, syncDocument: syncDocument)
   }
 }
 
@@ -678,18 +725,19 @@ extension View {
   fileprivate func onExplainCommands(
     tabId: UUID,
     workspaceManager: WorkspaceManager,
+    hostWindow: HostWindowReference?,
     viewModel: NotebookViewModel,
     syncDocument: @escaping () -> Void
   ) -> some View {
     onReceive(NotificationCenter.default.publisher(for: .explainStatement)) { _ in
-      guard workspaceManager.activeTabId == tabId else { return }
+      guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
       Task {
         await viewModel.explainSelectedStatement(analyze: false)
         syncDocument()
       }
     }
     .onReceive(NotificationCenter.default.publisher(for: .explainAnalyzeStatement)) { _ in
-      guard workspaceManager.activeTabId == tabId else { return }
+      guard workspaceManager.isActiveTab(tabId, in: hostWindow) else { return }
       Task {
         await viewModel.explainSelectedStatement(analyze: true)
         syncDocument()
@@ -704,6 +752,7 @@ extension View {
 struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
+  @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
 
   @State private var isHoveringNewTabButton = false
 
@@ -729,6 +778,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: ComponentSize.trafficLightAndToggleWidth
+              - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
               + workspaceManager.connectionState.connectionButtonsWidth + 10)
       } else {
         Color.clear.frame(width: 10)
@@ -846,6 +896,12 @@ struct WorkspaceTitleBarTabsView: View {
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.appBackground)
     .background(WindowDragArea())
+    // With the native tab bar above, match the sidebar's top edge
+    .overlay(alignment: .top) {
+      if isNativeTabBarVisible {
+        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      }
+    }
   }
 
   private func goToPreviousTab() {

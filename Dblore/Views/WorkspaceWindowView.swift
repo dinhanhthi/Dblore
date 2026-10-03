@@ -7,6 +7,37 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Host Window Reader
+
+/// Weak reference to the NSWindow hosting a SwiftUI view.
+final class HostWindowReference {
+  weak var window: NSWindow?
+}
+
+/// Fills a `HostWindowReference` with the window the view lives in.
+struct HostWindowReader: NSViewRepresentable {
+  let reference: HostWindowReference
+
+  func makeNSView(context: Context) -> NSView { ReaderView(reference: reference) }
+  func updateNSView(_ nsView: NSView, context: Context) {}
+
+  private final class ReaderView: NSView {
+    let reference: HostWindowReference
+
+    init(reference: HostWindowReference) {
+      self.reference = reference
+      super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      reference.window = window
+    }
+  }
+}
+
 // MARK: - App Window View
 
 /// Main view for each app window
@@ -19,6 +50,7 @@ struct AppWindowView: View {
   @State private var shouldCloseWindow = false
   @Bindable private var windowManager = WorkspaceWindowManager.shared
   @Bindable private var pendingFileOpen = PendingFileOpen.shared
+  @State private var hostWindow = HostWindowReference()
 
   var body: some View {
     Group {
@@ -62,6 +94,7 @@ struct AppWindowView: View {
     }
     // System bordered and glass buttons match the capsule design-system buttons.
     .buttonBorderShape(.capsule)
+    .background(HostWindowReader(reference: hostWindow))
     // Observe pendingWorkspaceId changes from menu commands
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
       guard let newId else { return }
@@ -73,26 +106,24 @@ struct AppWindowView: View {
   private func handlePendingWorkspace(_ newWorkspaceId: UUID) {
     if workspaceId == nil {
       // This window is showing welcome - open workspace here
+      guard isPendingWorkspaceHandler else { return }
       windowManager.pendingWorkspaceId = nil
+      NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
       workspaceId = newWorkspaceId
     } else if workspaceId == newWorkspaceId {
       // This workspace is already showing in THIS window - just focus it
       windowManager.pendingWorkspaceId = nil
-      // Find and focus the main WindowGroup window (not a NewWindowStore window)
-      let storeWindows = Set(NewWindowStore.shared.allWindows)
-      if let mainWindow = NSApp.windows.first(where: {
-        $0.isVisible && !storeWindows.contains($0)
-      }) {
-        mainWindow.makeKeyAndOrderFront(nil)
-      }
+      NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
+      hostWindow.window?.makeKeyAndOrderFront(nil)
     } else {
       // This window has a different workspace
       // Only the key window should handle this to avoid duplicates
-      guard isKeyWindow else { return }
+      guard isPendingWorkspaceHandler else { return }
       windowManager.pendingWorkspaceId = nil
 
       // Check if this workspace is already open in another window - focus that window
       if let existingWindow = NewWindowStore.shared.findWindow(for: newWorkspaceId) {
+        NewWindowStore.shared.clearPendingDetach(workspaceId: newWorkspaceId)
         existingWindow.makeKeyAndOrderFront(nil)
       } else {
         openNewWindow(for: newWorkspaceId)
@@ -100,13 +131,15 @@ struct AppWindowView: View {
     }
   }
 
-  /// Check if the current NSWindow is the key window
-  private var isKeyWindow: Bool {
-    guard let keyWindow = NSApp.keyWindow else {
-      // No key window (e.g., during menu interaction) - let the first window handle it
-      return true
+  /// Exactly one window's view handles a pending workspace: the key window, else (Finder open
+  /// while inactive, async tab moves) the main window, else the first visible document window.
+  private var isPendingWorkspaceHandler: Bool {
+    guard let window = hostWindow.window else { return false }
+    if let keyWindow = NSApp.keyWindow, keyWindow.isDbloreDocumentWindow {
+      return keyWindow === window
     }
-    return keyWindow.isKeyWindow
+    if let mainWindow = NSApp.mainWindow { return mainWindow === window }
+    return NSApp.orderedWindows.first { $0.isVisible && $0.isDbloreDocumentWindow } === window
   }
 
   /// Open pending files in the selected workspace
@@ -154,6 +187,7 @@ struct AppWindowView: View {
   }
 
   private func openNewWindow(for newWorkspaceId: UUID) {
+    let detachDropPoint = NewWindowStore.shared.takePendingDetach(workspaceId: newWorkspaceId)
     // Create a new NSWindow programmatically with SwiftUI content
     let newWindowView = NewWorkspaceWindowView(workspaceId: newWorkspaceId)
       // Disable all SwiftUI animations, same as the main WindowGroup
@@ -170,9 +204,28 @@ struct AppWindowView: View {
     newWindow.titlebarAppearsTransparent = true
     newWindow.titleVisibility = .hidden
     newWindow.minSize = NSSize(width: 800, height: 600)
+    newWindow.tabbingIdentifier = .dbloreDocument
+    newWindow.tabbingMode = .automatic
 
-    // Use the current key window's size and cascade position
-    if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
+    if let dropPoint = detachDropPoint {
+      // Dragged out of its window: always a separate window, even when new windows open as tabs
+      let size = NSApp.keyWindow?.frame.size ?? NSSize(width: 1200, height: 800)
+      newWindow.setContentSize(size)
+      let screen =
+        NSScreen.screens.first { NSMouseInRect(dropPoint, $0.frame, false) } ?? NSScreen.main
+      let origin = TabDragOut.detachedWindowOrigin(
+        dropPoint: dropPoint, windowSize: newWindow.frame.size)
+      newWindow.setFrameOrigin(
+        screen.map {
+          TabDragOut.clampedOrigin(
+            origin, windowSize: newWindow.frame.size, visibleFrame: $0.visibleFrame)
+        } ?? origin)
+    } else if let parent = NewWindowStore.tabParent(
+      openAsTab: AppSettings.shared.openWindowsAsTabs, keyWindow: NSApp.keyWindow)
+    {
+      parent.addTabbedWindow(newWindow, ordered: .above)
+    } else if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
+      // Use the current key window's size and cascade position
       newWindow.setContentSize(currentWindow.frame.size)
       // Offset down-right from the current window (standard macOS cascade)
       let offset: CGFloat = 22
@@ -240,6 +293,22 @@ struct NewWorkspaceWindowView: View {
 @MainActor
 class NewWindowStore {
   static let shared = NewWindowStore()
+  /// Screen points where tabs were dropped outside their window, keyed by the new workspace id
+  private var pendingDetachDropPoints: [UUID: NSPoint] = [:]
+
+  func setPendingDetach(workspaceId: UUID, point: NSPoint?) {
+    pendingDetachDropPoints[workspaceId] = point
+  }
+
+  /// Returns and consumes the drop point of this workspace only
+  func takePendingDetach(workspaceId: UUID) -> NSPoint? {
+    pendingDetachDropPoints.removeValue(forKey: workspaceId)
+  }
+
+  func clearPendingDetach(workspaceId: UUID) {
+    pendingDetachDropPoints[workspaceId] = nil
+  }
+
   private var windowControllers: [(controller: NSWindowController, workspaceId: UUID?)] = []
 
   private init() {
@@ -266,14 +335,29 @@ class NewWindowStore {
     windowControllers.first { $0.workspaceId == workspaceId }?.controller.window
   }
 
+  /// The window a new window should join as a tab, or nil to open it standalone.
+  static func tabParent(openAsTab: Bool, keyWindow: NSWindow?) -> NSWindow? {
+    guard openAsTab, keyWindow?.isDbloreDocumentWindow == true else { return nil }
+    return keyWindow
+  }
+
   /// All managed windows
   var allWindows: [NSWindow] {
     windowControllers.compactMap { $0.controller.window }
   }
 
+  /// New window tab: joins the key document window's tab group, or opens standalone.
+  func openWelcomeWindowTab() {
+    let key = NSApp.keyWindow
+    openWelcomeWindow(
+      frame: key?.frame ?? .zero, asTabOf: key?.isDbloreDocumentWindow == true ? key : nil)
+  }
+
   /// A fresh document window showing the welcome screen, kept alive until it closes.
-  func openWelcomeWindow(frame: NSRect) {
-    if let existing = windowControllers.first(where: { $0.workspaceId == nil })?.controller.window,
+  /// With `parent`, it joins that window's tab group instead of reusing a Welcome window.
+  func openWelcomeWindow(frame: NSRect, asTabOf parent: NSWindow? = nil) {
+    if parent == nil,
+      let existing = windowControllers.first(where: { $0.workspaceId == nil })?.controller.window,
       existing.isVisible || existing.isMiniaturized
     {
       existing.makeKeyAndOrderFront(nil)
@@ -297,9 +381,12 @@ class NewWindowStore {
     window.titleVisibility = .hidden
     window.minSize = NSSize(width: 800, height: 600)
     window.isRestorable = false
-    window.tabbingMode = .disallowed
+    window.tabbingIdentifier = .dbloreDocument
+    window.tabbingMode = .automatic
 
-    if frame.width >= 800, frame.height >= 600 {
+    if let parent {
+      parent.addTabbedWindow(window, ordered: .above)
+    } else if frame.width >= 800, frame.height >= 600 {
       window.setFrame(frame, display: false)
     } else {
       window.setContentSize(NSSize(width: 1200, height: 800))
@@ -336,6 +423,10 @@ struct WelcomeWindowMarker: NSViewRepresentable {
   }
 }
 
+extension NSWindow.TabbingIdentifier {
+  static let dbloreDocument = NSWindow.TabbingIdentifier("app.dblore.document")
+}
+
 extension NSWindow {
   /// Workspace and welcome windows. About and panels are smaller and not resizable.
   var isDbloreDocumentWindow: Bool {
@@ -344,7 +435,18 @@ extension NSWindow {
   }
 
   /// A document window that is still open. A minimized window counts: it is open, just not on screen.
+  /// A background tab counts too: it reports `isVisible == false` but is part of a tab group.
   var isOpenDbloreDocumentWindow: Bool {
-    isDbloreDocumentWindow && (isVisible || isMiniaturized)
+    isDbloreDocumentWindow
+      && (isVisible || isMiniaturized || (tabbedWindows?.count ?? 0) > 1)
+  }
+
+  /// Whether a document window other than `closed` is still open (decides the Welcome reopen).
+  static func hasOtherOpenDocumentWindow(
+    in windows: [NSWindow], excluding closed: NSWindow
+  )
+    -> Bool
+  {
+    windows.contains { $0 !== closed && $0.isOpenDbloreDocumentWindow }
   }
 }

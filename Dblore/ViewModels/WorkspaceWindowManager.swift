@@ -197,7 +197,7 @@ class WorkspaceWindowManager {
     manager.releaseFileAccess()
 
     if activeWorkspaceId == id {
-      activeWorkspaceId = workspaces.keys.first
+      activeWorkspaceId = nil
     }
 
     return true
@@ -213,6 +213,11 @@ class WorkspaceWindowManager {
   func setActiveWorkspace(_ id: UUID) {
     guard workspaces[id] != nil else { return }
     activeWorkspaceId = id
+  }
+
+  /// Clear the active workspace (a Welcome or chooser window became key)
+  func clearActiveWorkspace() {
+    activeWorkspaceId = nil
   }
 
   /// Get workspace by ID

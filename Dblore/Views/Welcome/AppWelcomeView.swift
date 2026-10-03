@@ -22,6 +22,8 @@ struct AppWelcomeView: View {
   @State private var editingConnectionId: UUID?
   /// Recent workspace whose name and file path are being edited.
   @State private var editingWorkspace: WorkspaceHistoryEntry?
+  @State private var isNativeTabBarVisible = false
+  @Environment(\.controlActiveState) private var controlActiveState
 
   var body: some View {
     ZStack {
@@ -104,10 +106,17 @@ struct AppWelcomeView: View {
         .id(entry.id)
       }
     }
-    .ignoresSafeArea(.all, edges: .top)
+    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
     .background(
-      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
+      DocumentWindowConfigurator(tabTitle: "Welcome", isTabBarVisible: $isNativeTabBarVisible)
     )
+    .background(
+      TrafficLightPositioner(
+        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
+    )
+    .onChange(of: controlActiveState) { _, newState in
+      if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
+    }
   }
 
   // MARK: - Layout Helpers

@@ -19,6 +19,12 @@ today, and SQLite files as beta; more engines (such as MongoDB) are planned.
 
 - **Notebooks and editor tabs**: `.dblore` notebooks with inline results per cell, and
   standalone `.sql` files, in a multi-tab, multi-window workspace
+- **Native window tabs** (optional): Settings > General > "Open new windows as tabs" groups
+  windows into the macOS tab bar. `Cmd+Shift+N` or "+" opens a new window tab, `Ctrl+Tab`
+  switches, `Cmd+T` opens a new tab. Drag a window tab out (or Window > Move Tab to New
+  Window) to split it into its own window
+- **Drag a tab out**: drag a workspace tab outside the window to open it in a new window
+  (same as "Open in New Window"; pinned and unsaved tabs stay)
 - **Query execution**: run a cell, the query at the cursor, or all cells; cancel running
   queries; row count and execution time per result
 - **Editor**: syntax highlighting, line numbers, table- and column-aware autocompletion,
