@@ -106,7 +106,7 @@ struct SettingsModal: View {
 
   var body: some View {
     GenericModal(
-      title: "Settings",
+      title: "Settings - \(selectedTab.rawValue)",
       titleIcon: "gear",
       width: 720,
       height: 600,
@@ -134,10 +134,6 @@ struct SettingsModal: View {
 
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.lg) {
-            Text(selectedTab.rawValue)
-              .font(.heading)
-              .foregroundColor(.foreground)
-
             selectedSection
           }
           .frame(maxWidth: .infinity, alignment: .leading)
