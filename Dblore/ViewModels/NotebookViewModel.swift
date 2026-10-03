@@ -28,6 +28,7 @@ enum SidebarContent: Equatable {
   case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
   case tableFilter  // Filter form of the data viewer tab
   case tableHighlight  // Highlight form of the data viewer tab
+  case parameters  // Named SQL parameters for this notebook
 }
 
 /// Persists one history row. A failure stays inside the recorder and never fails the query.
@@ -221,6 +222,12 @@ class NotebookViewModel {
     recalculateFileSize()
   }
 
+  deinit {
+    // Synchronous: this id can be reused as soon as deinit returns, and deinit is not on the
+    // main actor. A hop would clear the next tab's snapshot, or clear nothing.
+    ConfirmedParameterSnapshot.reset(ObjectIdentifier(self))
+  }
+
   // MARK: - Toast Notifications (delegated to WorkspaceWindowManager)
 
   /// Show toast via app-level toast system
@@ -321,7 +328,7 @@ class NotebookViewModel {
   /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
   func protectionBlockMessage(for query: String) -> String? {
     let decision = DatabaseConnectionManager.evaluate(
-      SQLStatementClassifier.classify(query, dialect: sqlDialect), policy: protectionPolicy)
+      classifiedStatements(for: query), policy: protectionPolicy)
     guard case .blocked(let index, let kind, let reason) = decision else { return nil }
     return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
       .localizedDescription
@@ -337,6 +344,7 @@ class NotebookViewModel {
       showToast(message, type: .error)
       return
     }
+    if refuseMissingParameters(query, cellId: id) != nil { return }
 
     // Safe Mode: confirm based on every statement of the cell (see statementsNeedingConfirmation)
     if presentConfirmationIfNeeded(for: query, cellId: id) { return }
@@ -387,6 +395,16 @@ class NotebookViewModel {
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }
+    // The explain stash is armed while the dialog is up. A cell already queued keeps the binds
+    // captured when that cell was confirmed; every other snapshot for this tab is dropped.
+    let queued = Set(
+      executionQueue.tasks.compactMap { task -> UUID? in
+        switch task.state {
+        case .pending, .executing: return task.cellId
+        case .completed, .cancelled, .failed: return nil
+        }
+      })
+    ConfirmedParameterSnapshot.release(ObjectIdentifier(self), keeping: queued)
     queryConfirmationState.clear()
   }
 }

@@ -19,6 +19,7 @@ struct DbloreNotebook: Codable, Identifiable, Sendable {
   var connectionConfig: ConnectionConfig?
   var settings: NotebookSettings
   var documentType: DocumentType  // Track document type for save format
+  var parameters: [QueryParameter]  // Named binds; a file with no parameters key is empty
 
   nonisolated init(
     id: UUID = UUID(),
@@ -26,7 +27,8 @@ struct DbloreNotebook: Codable, Identifiable, Sendable {
     metadata: NotebookMetadata = NotebookMetadata(),
     connectionConfig: ConnectionConfig? = nil,
     settings: NotebookSettings = NotebookSettings(),
-    documentType: DocumentType = .notebook
+    documentType: DocumentType = .notebook,
+    parameters: [QueryParameter] = []
   ) {
     self.id = id
     self.cells = cells
@@ -34,6 +36,36 @@ struct DbloreNotebook: Codable, Identifiable, Sendable {
     self.connectionConfig = connectionConfig
     self.settings = settings
     self.documentType = documentType
+    self.parameters = parameters
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, cells, metadata, connectionConfig, settings, documentType, parameters
+  }
+
+  /// A file written before named parameters has no `parameters` key. That is an empty list.
+  /// Every other stored property still round-trips.
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    cells = try container.decode([NotebookCell].self, forKey: .cells)
+    metadata = try container.decode(NotebookMetadata.self, forKey: .metadata)
+    connectionConfig = try container.decodeIfPresent(
+      ConnectionConfig.self, forKey: .connectionConfig)
+    settings = try container.decode(NotebookSettings.self, forKey: .settings)
+    documentType = try container.decode(DocumentType.self, forKey: .documentType)
+    parameters = try container.decodeIfPresent([QueryParameter].self, forKey: .parameters) ?? []
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(cells, forKey: .cells)
+    try container.encode(metadata, forKey: .metadata)
+    try container.encodeIfPresent(connectionConfig, forKey: .connectionConfig)
+    try container.encode(settings, forKey: .settings)
+    try container.encode(documentType, forKey: .documentType)
+    try container.encode(parameters, forKey: .parameters)
   }
 
   /// Creates a new notebook with a default empty SQL cell

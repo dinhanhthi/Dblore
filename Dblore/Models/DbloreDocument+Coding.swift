@@ -114,9 +114,12 @@ enum DocumentCoder {
     let documentTypeRaw = json["documentType"] as? String
     let documentType = documentTypeRaw.flatMap { DocumentType(rawValue: $0) } ?? .notebook
 
+    // Named parameters. A missing key, or an old file, is an empty list.
+    let parameters = Self.queryParameters(from: json["parameters"])
+
     return DbloreNotebook(
       id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig,
-      settings: settings, documentType: documentType)
+      settings: settings, documentType: documentType, parameters: parameters)
   }
 
   nonisolated static func encode(
@@ -192,6 +195,7 @@ enum DocumentCoder {
       cellsArray.append(cellDict)
     }
     json["cells"] = cellsArray
+    json["parameters"] = notebook.parameters.map(Self.parameterObject)
 
     // Use compact format for better performance (10.1.10 optimization)
     // Removed .prettyPrinted to improve save speed by 50%
@@ -212,6 +216,32 @@ enum DocumentCoder {
       object["seriesColumn"] = seriesColumn
     }
     return object
+  }
+
+  /// Writes `value` as text, or null when the parameter is SQL NULL.
+  private nonisolated static func parameterObject(_ parameter: QueryParameter) -> [String: Any] {
+    var object: [String: Any] = ["name": parameter.name]
+    if let value = parameter.value {
+      object["value"] = value
+    } else {
+      object["value"] = NSNull()
+    }
+    return object
+  }
+
+  /// Missing, or not an array of objects, decodes to an empty list. Unknown keys are ignored.
+  /// JSON null is SQL NULL. A missing value, or a value that is not text, drops that parameter
+  /// so the name stays missing instead of binding NULL.
+  private nonisolated static func queryParameters(from value: Any?) -> [QueryParameter] {
+    guard let array = value as? [[String: Any]] else { return [] }
+    return array.compactMap { object in
+      guard let name = object["name"] as? String else { return nil }
+      if object["value"] is NSNull {
+        return QueryParameter(name: name, value: nil)
+      }
+      guard let text = object["value"] as? String else { return nil }
+      return QueryParameter(name: name, value: text)
+    }
   }
 
   /// Nil when the object is missing fields, so a bad chart spec does not reject the file.

@@ -58,12 +58,31 @@ struct FileSizeState: Equatable, Sendable {
 
 /// One statement of a cell that the Safe Mode confirmation dialog lists
 nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
+  /// Match-all LIKE bind. Separate from a missing WHERE.
+  static let likePatternAllRowsReason = "LIKE pattern is % — affects all rows"
+
   let index: Int  // 0-based position in the cell (shown as index + 1)
   let preview: String  // First line of the statement, truncated
   let kindLabel: String
   let affectsAllRows: Bool  // UPDATE/DELETE without WHERE
   let touchesBrake: Bool  // Can change session brakes (timeouts, read-only)
   let changesPrivileges: Bool  // SET ROLE / SESSION AUTHORIZATION / DISCARD ALL
+  let parameterNote: String?  // "name = value" for this statement, nil when it has no :name
+  let likePatternAffectsAllRows: Bool  // LIKE/ILIKE/~~ operand trims to % only
+
+  nonisolated init(
+    index: Int, preview: String, kindLabel: String, affectsAllRows: Bool, touchesBrake: Bool,
+    changesPrivileges: Bool, parameterNote: String? = nil, likePatternAffectsAllRows: Bool = false
+  ) {
+    self.index = index
+    self.preview = preview
+    self.kindLabel = kindLabel
+    self.affectsAllRows = affectsAllRows
+    self.touchesBrake = touchesBrake
+    self.changesPrivileges = changesPrivileges
+    self.parameterNote = parameterNote
+    self.likePatternAffectsAllRows = likePatternAffectsAllRows
+  }
 
   var id: Int { index }
 
@@ -71,6 +90,7 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
   var reasons: [String] {
     var reasons: [String] = []
     if affectsAllRows { reasons.append("No WHERE — affects all rows") }
+    if likePatternAffectsAllRows { reasons.append(Self.likePatternAllRowsReason) }
     if touchesBrake { reasons.append("Changes session safety settings") }
     if changesPrivileges { reasons.append("Changes role/privileges") }
     return reasons
@@ -83,6 +103,19 @@ nonisolated struct RunAllCell: Equatable, Sendable {
   let number: Int  // 1-based position in the notebook
   let query: String
   let statements: [StatementConfirmation]
+  /// Binds from when this cell was queued. Confirmed Run All sends these, not later edits.
+  let parameterValues: [String: SQLBindValue]
+
+  nonisolated init(
+    id: UUID, number: Int, query: String, statements: [StatementConfirmation],
+    parameterValues: [String: SQLBindValue] = [:]
+  ) {
+    self.id = id
+    self.number = number
+    self.query = query
+    self.statements = statements
+    self.parameterValues = parameterValues
+  }
 
   /// True if Run All's "Don't Allow" skips this cell
   var needsConfirmation: Bool { !statements.isEmpty }
@@ -96,9 +129,12 @@ struct QueryConfirmationState: Equatable, Sendable {
   var showDialog: Bool = false
   var pendingCellId: UUID?
   var pendingQuery: String = ""
-  var affectsAllRows: Bool = false  // True if DELETE/UPDATE without WHERE clause
+  var affectsAllRows: Bool = false  // DELETE/UPDATE without WHERE
+  var likePatternAffectsAllRows: Bool = false  // LIKE/ILIKE/~~ operand trims to % only
   var requiresPassword: Bool = false  // True for Safe Mode levels 3-4
   var statements: [StatementConfirmation] = []  // Statements that need confirmation
+  /// Binds captured when the dialog was created. Empty when the script has no `:name`.
+  var parameterValues: [String: SQLBindValue] = [:]
 
   // Run All Cells confirmation (destructive or safety-critical cells)
   var showRunAllConfirmation: Bool = false
@@ -114,8 +150,10 @@ struct QueryConfirmationState: Equatable, Sendable {
     pendingCellId = nil
     pendingQuery = ""
     affectsAllRows = false
+    likePatternAffectsAllRows = false
     requiresPassword = false
     statements = []
+    parameterValues = [:]
     runAllAwaitingUnlock = false
   }
 

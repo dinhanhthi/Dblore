@@ -35,20 +35,26 @@ extension NotebookViewModel {
     guard !candidates.isEmpty else { return }
     guard !refuseWhileTransactionPendingElsewhere() else { return }
 
-    // Protection level: fail fast, nothing runs if any cell is blocked
+    // Protection, then missing parameters: nothing runs if any cell is refused
     for (offset, cell) in candidates {
       if let message = protectionBlockMessage(for: cell.content) {
+        showToast("Run All stopped (cell \(offset + 1)): \(message)", type: .error)
+        return
+      }
+      if let message = refuseMissingParameters(cell.content, cellId: cell.id) {
         showToast("Run All stopped (cell \(offset + 1)): \(message)", type: .error)
         return
       }
     }
 
     let allCells = candidates.map { offset, cell in
-      RunAllCell(
+      let parameters = boundParameterValues(for: cell.content) ?? [:]
+      return RunAllCell(
         id: cell.id, number: offset + 1, query: cell.content,
         statements: Self.statementsNeedingConfirmation(
-          SQLStatementClassifier.classify(cell.content, dialect: sqlDialect), safeMode: .alertRead)
-          ?? [])
+          classifiedStatements(for: cell.content), safeMode: .alertRead,
+          parameters: parameters, dialect: sqlDialect) ?? [],
+        parameterValues: parameters)
     }
 
     // Safe Mode password levels: unlock before anything runs (the bypass does not apply)
@@ -63,7 +69,9 @@ extension NotebookViewModel {
     // With the bypass on, only safety-critical cells still need confirmation
     let pendingCells = allCells.map { cell in
       guard bypass, !cell.isSafetyCritical else { return cell }
-      return RunAllCell(id: cell.id, number: cell.number, query: cell.query, statements: [])
+      return RunAllCell(
+        id: cell.id, number: cell.number, query: cell.query, statements: [],
+        parameterValues: cell.parameterValues)
     }
 
     if pendingCells.contains(where: \.needsConfirmation) {
@@ -80,7 +88,8 @@ extension NotebookViewModel {
     let pendingCells = queryConfirmationState.runAllPendingCells
     queryConfirmationState.clearRunAll()
 
-    executeRunAllCells(pendingCells: pendingCells, skipConfirmable: false)
+    executeRunAllCells(
+      pendingCells: pendingCells, skipConfirmable: false, confirmedParameters: true)
   }
 
   /// Execute Run All Cells skipping the cells that needed confirmation
@@ -89,7 +98,8 @@ extension NotebookViewModel {
     let skippedCount = queryConfirmationState.runAllConfirmCells.count
     queryConfirmationState.clearRunAll()
 
-    executeRunAllCells(pendingCells: pendingCells, skipConfirmable: true)
+    executeRunAllCells(
+      pendingCells: pendingCells, skipConfirmable: true, confirmedParameters: true)
 
     // Show toast about skipped cells
     if skippedCount > 0 {
@@ -108,7 +118,8 @@ extension NotebookViewModel {
   private func presentRunAllUnlock(_ cells: [RunAllCell], safeMode: SafeMode) {
     let listed = cells.flatMap { cell in
       (Self.statementsNeedingConfirmation(
-        SQLStatementClassifier.classify(cell.query, dialect: sqlDialect), safeMode: safeMode) ?? [])
+        classifiedStatements(for: cell.query), safeMode: safeMode,
+        parameters: cell.parameterValues, dialect: sqlDialect) ?? [])
         .map { (cell.number, $0) }
     }
     queryConfirmationState.clear()
@@ -117,9 +128,16 @@ extension NotebookViewModel {
       return StatementConfirmation(
         index: offset, preview: "Cell \(number): \(statement.preview)",
         kindLabel: statement.kindLabel, affectsAllRows: statement.affectsAllRows,
-        touchesBrake: statement.touchesBrake, changesPrivileges: statement.changesPrivileges)
+        touchesBrake: statement.touchesBrake, changesPrivileges: statement.changesPrivileges,
+        parameterNote: statement.parameterNote,
+        likePatternAffectsAllRows: statement.likePatternAffectsAllRows)
     }
     queryConfirmationState.affectsAllRows = listed.contains { $0.1.affectsAllRows }
+    queryConfirmationState.likePatternAffectsAllRows = cells.contains { cell in
+      Self.scriptMatchesAllRowsByLike(
+        classifiedStatements(for: cell.query), parameters: cell.parameterValues,
+        dialect: sqlDialect)
+    }
     queryConfirmationState.requiresPassword = true
     queryConfirmationState.runAllPendingCells = cells
     queryConfirmationState.runAllAwaitingUnlock = true
@@ -131,11 +149,16 @@ extension NotebookViewModel {
     let pendingCells = queryConfirmationState.runAllPendingCells
     queryConfirmationState.clear()
     queryConfirmationState.clearRunAll()
-    executeRunAllCells(pendingCells: pendingCells, skipConfirmable: false)
+    executeRunAllCells(
+      pendingCells: pendingCells, skipConfirmable: false, confirmedParameters: true)
   }
 
-  /// Internal helper to execute Run All Cells
-  private func executeRunAllCells(pendingCells: [RunAllCell], skipConfirmable: Bool) {
+  /// Internal helper to execute Run All Cells.
+  /// `confirmedParameters` sends each cell's snapshotted binds. A run that never showed a
+  /// dialog leaves it false and reads the live values at send time.
+  private func executeRunAllCells(
+    pendingCells: [RunAllCell], skipConfirmable: Bool, confirmedParameters: Bool = false
+  ) {
     // Reset execution counter to start counting from 1 again
     executionCounter = 0
 
@@ -145,6 +168,12 @@ extension NotebookViewModel {
     for cell in pendingCells {
       if skipConfirmable && cell.needsConfirmation {
         continue
+      }
+      if confirmedParameters {
+        ConfirmedParameterSnapshot.stashCell(
+          self, cellId: cell.id, query: cell.query, values: cell.parameterValues)
+      } else {
+        ConfirmedParameterSnapshot.dropCell(self, cellId: cell.id)
       }
       executionQueue.enqueue(cellId: cell.id, query: cell.query, batchId: batchId)
     }

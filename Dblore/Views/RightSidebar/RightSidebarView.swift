@@ -45,6 +45,10 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if content == .parameters {
+          // QueryParametersContent handles its own ScrollView
+          contentView(for: content)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -174,6 +178,8 @@ struct RightSidebarView: View {
       return "Filter"
     case .tableHighlight:
       return "Highlight"
+    case .parameters:
+      return "Parameters"
     }
   }
 
@@ -232,6 +238,8 @@ struct RightSidebarView: View {
       TableFilterContent(viewModel: viewModel)
     case .tableHighlight:
       TableHighlightContent(viewModel: viewModel)
+    case .parameters:
+      QueryParametersContent(viewModel: viewModel)
     }
   }
 
