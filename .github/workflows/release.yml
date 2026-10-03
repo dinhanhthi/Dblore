@@ -1,9 +1,16 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Commit SHA to release
+        required: true
+        type: string
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,15 +19,27 @@ permissions:
 jobs:
   release:
     runs-on: xcode-27
+    env:
+      TAG: ${{ inputs.tag }}
     steps:
-      - name: Require a version tag
+      - name: Validate release request
         env:
           REF: ${{ github.ref }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
-          if ! [[ "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release must run from a vX.Y.Z tag, got $REF"
+          if [[ "$REF" != refs/heads/main ]]; then
+            echo "::error::Release must run from main, got $REF"
             exit 1
           fi
+          if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "${EXPECTED_SHA,,}" != "$GITHUB_SHA" ]]; then
+            echo "::error::expected_sha must match the dispatched commit $GITHUB_SHA"
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must be vX.Y.Z"
+            exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -28,27 +47,52 @@ jobs:
 
       - uses: ./.github/actions/select-xcode
 
-      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
-      - name: Download Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-
-      - name: Extract release notes
+      - name: Preflight release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::error::SPARKLE_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          existing=$(git ls-remote "$repo_url" "refs/tags/$TAG")
+          if [[ -n "$existing" ]]; then
+            echo "::error::Tag $TAG already exists"
+            exit 1
+          fi
+          successful_ci=$(gh run list --workflow=ci.yml --commit="$GITHUB_SHA" \
+            --status=success --limit=1 --json headSha --jq '.[0].headSha // ""')
+          if [[ "$successful_ci" != "$GITHUB_SHA" ]]; then
+            echo "::error::No successful ci.yml run found for $GITHUB_SHA"
+            exit 1
+          fi
+          project_version=$(xcodebuild -project Dblore.xcodeproj -scheme Dblore -configuration Release \
+            -showBuildSettings 2>/dev/null | awk -F' = ' '/^ *MARKETING_VERSION = / { print $2; exit }')
+          if [[ "$project_version" != "$VERSION" ]]; then
+            echo "::error::MARKETING_VERSION is ${project_version:-missing}, expected $VERSION"
+            exit 1
+          fi
+
           notes="$RUNNER_TEMP/release-notes.md"
           if [[ ! -f CHANGELOG.md ]]; then
             echo "::error::CHANGELOG.md not found"
             exit 1
           fi
-          awk -v heading="## v$version" '
+          awk -v heading="## $TAG" '
             found && /^## / { exit }
             found { print }
             $0 == heading || index($0, heading " ") == 1 { found = 1 }
           ' CHANGELOG.md > "$notes"
           if ! grep -q '[^[:space:]]' "$notes"; then
-            echo "::error::CHANGELOG.md has no non-empty '## v$version' section"
+            echo "::error::CHANGELOG.md has no non-empty '## $TAG' section"
             exit 1
           fi
+
+      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Import Developer ID certificate
         env:
@@ -78,17 +122,7 @@ jobs:
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
-        run: NOTARY_KEY_PATH="$RUNNER_TEMP/notary_key.p8" scripts/build-release.sh --expect-version "${GITHUB_REF_NAME#v}"
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          dmg="dist/Dblore-$version.dmg"
-          gh release create "$GITHUB_REF_NAME" "$dmg" "$dmg.sha256" \
-            --title "Dblore $version" \
-            --notes-file "$RUNNER_TEMP/release-notes.md"
+        run: NOTARY_KEY_PATH="$RUNNER_TEMP/notary_key.p8" scripts/build-release.sh --expect-version "$VERSION"
 
       # Use the tools from the Sparkle SPM artifact the build already resolved (checksum-verified
       # by SPM, same version as the app) rather than an unverified download: this binary gets the
@@ -112,21 +146,20 @@ jobs:
             echo "::error::SPARKLE_PRIVATE_KEY secret is not set"
             exit 1
           fi
-          version="${GITHUB_REF_NAME#v}"
           archives="$RUNNER_TEMP/appcast"
           mkdir -p "$archives"
           # Start from the feed on main so previous items are kept.
           git fetch --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
           git show FETCH_HEAD:appcast.xml > "$archives/appcast.xml"
           # DMG only, no release-notes .md: keeps the in-app update dialog compact.
-          cp "dist/Dblore-$version.dmg" "$archives/"
+          cp "dist/Dblore-$VERSION.dmg" "$archives/"
           # Key via stdin: the default keychain path blocks on a prompt on a headless runner.
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" "$archives" \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/$GITHUB_REF_NAME/" \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/" \
             --full-release-notes-url "https://github.com/${GITHUB_REPOSITORY}/releases"
-          if ! grep -q "<sparkle:shortVersionString>$version</sparkle:shortVersionString>" "$archives/appcast.xml"; then
-            echo "::error::appcast.xml has no item for $version"
+          if ! grep -q "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" "$archives/appcast.xml"; then
+            echo "::error::appcast.xml has no item for $VERSION"
             exit 1
           fi
           if ! grep -q 'sparkle:edSignature=' "$archives/appcast.xml"; then
@@ -134,13 +167,33 @@ jobs:
             exit 1
           fi
 
+      - name: Create release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          remote_main=$(git ls-remote "$repo_url" refs/heads/main | awk '{ print $1 }')
+          if [[ "$remote_main" != "$GITHUB_SHA" ]]; then
+            echo "::error::main moved during the build; refusing to tag $GITHUB_SHA"
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" --silent
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="dist/Dblore-$VERSION.dmg"
+          gh release create "$TAG" "$dmg" "$dmg.sha256" \
+            --title "Dblore $VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+
       - name: Commit appcast to main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          # The run is checked out at the tag and main may have moved: work on a fresh main.
+          # Main may have moved since dispatch: work on a fresh main.
           git fetch --no-tags "$repo_url" main
           git checkout --force --detach FETCH_HEAD
           cp "$RUNNER_TEMP/appcast/appcast.xml" appcast.xml
@@ -150,7 +203,7 @@ jobs:
             echo "appcast unchanged"
           else
             git add appcast.xml
-            git commit -m "chore(release): appcast v$version"
+            git commit -m "chore(release): appcast v$VERSION"
             git push "$repo_url" HEAD:main
           fi
 
