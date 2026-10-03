@@ -2,6 +2,22 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.4.2 (2026-10-03)
+
+### Added
+
+- **Native window tabs.** Group workspace windows with macOS tabs, open a new window tab with `Cmd+Shift+N`, and drag a document tab into a new window. General settings control whether new windows join a tab group and whether `Cmd+T` creates a notebook or SQL file. [#640939a](https://github.com/dinhanhthi/Dblore/commit/640939a) [#a4d0e39](https://github.com/dinhanhthi/Dblore/commit/a4d0e39) [#628c0d2](https://github.com/dinhanhthi/Dblore/commit/628c0d2) [#68cb839](https://github.com/dinhanhthi/Dblore/commit/68cb839) [#38460d1](https://github.com/dinhanhthi/Dblore/commit/38460d1)
+- **Query history status filter.** Show only succeeded, failed or cancelled queries alongside the existing scope and search filters. [#d34632e](https://github.com/dinhanhthi/Dblore/commit/d34632e)
+
+### Improved
+
+- **Save an unsaved workspace.** The workspace info dialog offers Save with its edited name; Save Workspace As is available after the workspace has been saved. [#4e65b63](https://github.com/dinhanhthi/Dblore/commit/4e65b63)
+- **Settings navigation.** The modal title shows the selected settings tab. [#7c1237d](https://github.com/dinhanhthi/Dblore/commit/7c1237d)
+
+### Fixed
+
+- **Stable history rows.** Row actions appear without shifting the history list. [#e7c0f96](https://github.com/dinhanhthi/Dblore/commit/e7c0f96)
+
 ## v0.4.1 (2026-10-03)
 
 ### Added
