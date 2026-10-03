@@ -24,7 +24,7 @@ Thanks for your interest — contributions are welcome!
        because the mlx-swift `CudaBuild` plugin otherwise blocks the build; the macro flag
        skips the macro trust prompt of the Swift package dependencies.
      - **Release and CI builds** (`scripts/build-release.sh`, `scripts/ci-build-check.sh`,
-       `build-check.yml`) also pass `-disableAutomaticPackageResolution
+       `ci.yml`) also pass `-disableAutomaticPackageResolution
        -onlyUsePackageVersionsFromResolvedFile`. The skip flags disable trust checks for the
        whole build, so these options limit it to the reviewed, committed `Package.resolved`
        pins. Change dependency versions only by committing an updated `Package.resolved`.

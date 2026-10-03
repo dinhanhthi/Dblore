@@ -171,10 +171,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          repo_url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          remote_main=$(git ls-remote "$repo_url" refs/heads/main | awk '{ print $1 }')
-          if [[ "$remote_main" != "$GITHUB_SHA" ]]; then
-            echo "::error::main moved during the build; refusing to tag $GITHUB_SHA"
+          # main may have moved during the build; the built SHA only has to still be on it.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" --jq .status)
+          if [[ "$status" != ahead && "$status" != identical ]]; then
+            echo "::error::$GITHUB_SHA is no longer on main ($status); refusing to tag"
             exit 1
           fi
           gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" --silent
