@@ -80,11 +80,19 @@ final class HistoryListModel {
     }
   }
 
+  var status: QueryHistoryEntry.Status? {
+    didSet {
+      guard status != oldValue else { return }
+      page = 1
+      scheduleSearch()
+    }
+  }
+
   private(set) var results: [QueryHistoryEntry] = []
   private(set) var isLoading = false
   /// 1-based page currently loaded.
   private(set) var page = 1
-  /// Rows matching the current query and scope, not only this page.
+  /// Rows matching the current filters, not only this page.
   private(set) var totalCount = 0
 
   var pageCount: Int {
@@ -183,13 +191,13 @@ final class HistoryListModel {
     }
     do {
       let scope = resolvedScope()
-      let total = try await store.count(text: query, scope: scope)
+      let total = try await store.count(text: query, scope: scope, status: status)
       guard epoch == searchEpoch else { return }
       let pages = total == 0 ? 1 : (total + Self.pageSize - 1) / Self.pageSize
       let resolved = min(max(requestedPage, 1), pages)
       let offset = (resolved - 1) * Self.pageSize
       let rows = try await store.search(
-        text: query, scope: scope, limit: Self.pageSize, offset: offset)
+        text: query, scope: scope, status: status, limit: Self.pageSize, offset: offset)
       guard epoch == searchEpoch else { return }
       totalCount = total
       page = resolved

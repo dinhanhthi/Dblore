@@ -99,8 +99,12 @@ actor QueryHistoryStore {
 
   /// Empty or whitespace `text` returns the newest rows and does not query FTS.
   /// Other text is escaped into quoted prefix tokens (`"token"*`) and ranked with `bm25()`.
-  func search(text: String, scope: Scope, limit: Int, offset: Int) throws -> [QueryHistoryEntry] {
-    try fetch(match: Self.matchExpression(for: text), scope: scope, limit: limit, offset: offset)
+  func search(
+    text: String, scope: Scope, status: QueryHistoryEntry.Status? = nil, limit: Int, offset: Int
+  ) throws -> [QueryHistoryEntry] {
+    try fetch(
+      match: Self.matchExpression(for: text), scope: scope, status: status, limit: limit,
+      offset: offset)
   }
 
   func delete(ids: [Int64]) throws {
@@ -144,9 +148,9 @@ actor QueryHistoryStore {
     return Int(statement.columnInt(0))
   }
 
-  /// Rows matching `text` and `scope`. The filter is the same one `search` uses.
-  func count(text: String, scope: Scope) throws -> Int {
-    let listing = Self.listing(match: Self.matchExpression(for: text), scope: scope)
+  /// Rows matching the filters. The filter is the same one `search` uses.
+  func count(text: String, scope: Scope, status: QueryHistoryEntry.Status? = nil) throws -> Int {
+    let listing = Self.listing(match: Self.matchExpression(for: text), scope: scope, status: status)
     var sql = "SELECT COUNT(*) FROM history\(listing.join)"
     if !listing.conditions.isEmpty {
       sql += " WHERE " + listing.conditions.joined(separator: " AND ")
@@ -291,7 +295,9 @@ actor QueryHistoryStore {
     var values: [CellValue] = []
   }
 
-  private static func listing(match: String?, scope: Scope) -> Listing {
+  private static func listing(
+    match: String?, scope: Scope, status: QueryHistoryEntry.Status? = nil
+  ) -> Listing {
     var listing = Listing()
     if let match {
       listing.join = " JOIN history_fts ON history.id = history_fts.rowid"
@@ -308,15 +314,19 @@ actor QueryHistoryStore {
       listing.conditions.append("history.workspace_id = ?")
       listing.values.append(.string(id.uuidString))
     }
+    if let status {
+      listing.conditions.append("history.status = ?")
+      listing.values.append(.string(status.rawValue))
+    }
     return listing
   }
 
   private func fetch(
-    match: String?, scope: Scope, limit: Int?, offset: Int
+    match: String?, scope: Scope, status: QueryHistoryEntry.Status? = nil, limit: Int?, offset: Int
   ) throws
     -> [QueryHistoryEntry]
   {
-    let listing = Self.listing(match: match, scope: scope)
+    let listing = Self.listing(match: match, scope: scope, status: status)
     var sql = "SELECT \(Self.columns) FROM history\(listing.join)"
     var values = listing.values
     if !listing.conditions.isEmpty {

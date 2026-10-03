@@ -21,7 +21,7 @@ struct HistoryTabContent: View {
 
     VStack(spacing: 0) {
       SidebarFilterField(text: $historyList.query) {
-        scopeMenu
+        filterMenu
       }
       content
     }
@@ -34,14 +34,22 @@ struct HistoryTabContent: View {
   }
 
   /// Same capsule as the Chart and Explain menus, so the menu opens under the button.
-  private var scopeMenu: some View {
+  private var filterMenu: some View {
     Menu {
-      scopeButton(.all, title: HistoryScope.all.menuTitle)
-      scopeButton(.connection, title: HistoryScope.connection.menuTitle)
-      scopeButton(.workspace, title: HistoryScope.workspace.menuTitle)
+      Section("Scope") {
+        scopeButton(.all, title: HistoryScope.all.menuTitle)
+        scopeButton(.connection, title: HistoryScope.connection.menuTitle)
+        scopeButton(.workspace, title: HistoryScope.workspace.menuTitle)
+      }
+      Section("Status") {
+        statusButton(nil, title: "All Statuses")
+        statusButton(.success, title: "Succeeded")
+        statusButton(.error, title: "Failed")
+        statusButton(.cancelled, title: "Cancelled")
+      }
     } label: {
       HStack(spacing: Spacing.xs) {
-        Text(historyList.scope.selectedTitle)
+        Text(filterTitle)
           .font(.system(size: 11))
           .foregroundStyle(Color.foreground)
           .lineLimit(1)
@@ -58,10 +66,22 @@ struct HistoryTabContent: View {
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .linkPointer()
-    .fixedSize(horizontal: true, vertical: false)
+    .fixedSize(horizontal: historyList.status == nil, vertical: false)
+    .frame(maxWidth: historyList.status == nil ? nil : 116)
     .frame(height: SidebarFilterMetrics.controlHeight)
-    .help("History scope")
-    .accessibilityLabel(historyList.scope.menuTitle)
+    .help(filterTitle)
+    .accessibilityLabel(filterTitle)
+  }
+
+  private var filterTitle: String {
+    guard let status = historyList.status else { return historyList.scope.selectedTitle }
+    let statusTitle: String
+    switch status {
+    case .success: statusTitle = "Succeeded"
+    case .error: statusTitle = "Failed"
+    case .cancelled: statusTitle = "Cancelled"
+    }
+    return "\(historyList.scope.selectedTitle) · \(statusTitle)"
   }
 
   private func scopeButton(_ scope: HistoryScope, title: String) -> some View {
@@ -76,12 +96,24 @@ struct HistoryTabContent: View {
     }
   }
 
+  private func statusButton(_ status: QueryHistoryEntry.Status?, title: String) -> some View {
+    Button {
+      historyList.status = status
+    } label: {
+      if historyList.status == status {
+        Label(title, systemImage: "checkmark")
+      } else {
+        Text(title)
+      }
+    }
+  }
+
   @ViewBuilder
   private var content: some View {
     if historyList.results.isEmpty && (historyList.isLoading || !hasLoaded) {
       loadingState
     } else if historyList.results.isEmpty {
-      if queryIsBlank && historyList.scope == .all {
+      if queryIsBlank && historyList.scope == .all && historyList.status == nil {
         emptyState
       } else {
         noMatchesState

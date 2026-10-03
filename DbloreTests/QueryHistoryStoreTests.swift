@@ -101,6 +101,35 @@ struct QueryHistoryStoreTests {
     #expect(filtered.map(\.sql) == ["SELECT b"])
   }
 
+  @Test("Status combines with search and scope before paging and counting")
+  func statusFilters() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(Self.entry(sql: "SELECT ok", at: start, connectionKey: "c1"))
+    try await store.record(Self.entry(
+      sql: "SELECT failed", at: start.addingTimeInterval(10), status: .error,
+      connectionKey: "c1"))
+    try await store.record(Self.entry(
+      sql: "SELECT cancelled", at: start.addingTimeInterval(20), status: .cancelled,
+      connectionKey: "c1"))
+    try await store.record(Self.entry(
+      sql: "SELECT other", at: start.addingTimeInterval(30), status: .error,
+      connectionKey: "c2"))
+
+    #expect(try await store.count(text: "select", scope: .connection("c1"), status: .error) == 1)
+    let failed = try await store.search(
+      text: "select", scope: .connection("c1"), status: .error, limit: 1, offset: 0)
+    #expect(failed.map(\.sql) == ["SELECT failed"])
+    let next = try await store.search(
+      text: "select", scope: .connection("c1"), status: .error, limit: 1, offset: 1)
+    #expect(next.isEmpty)
+    let cancelled = try await store.search(
+      text: "", scope: .all, status: .cancelled, limit: 10, offset: 0)
+    #expect(cancelled.map(\.sql) == ["SELECT cancelled"])
+  }
+
   @Test("Prune drops rows older than a date, then trims to a maximum count")
   func pruneByAgeAndCount() async throws {
     let url = temporaryDatabaseURL()

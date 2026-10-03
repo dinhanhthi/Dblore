@@ -121,6 +121,29 @@ struct WorkspaceHistoryTests {
     #expect(manager.historyList.results.count == 50)
   }
 
+  @Test("Changing status resets paging and updates matching rows")
+  func statusResetsPaging() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    for index in 0..<51 {
+      try await store.record(Self.entry(
+        sql: "SELECT \(index)", at: start.addingTimeInterval(Double(index) * 10),
+        status: index == 0 ? .error : .success))
+    }
+    let manager = makeManager(store: store)
+    await manager.historyList.searchNow()
+    await manager.historyList.goToPage(2)
+    #expect(manager.historyList.page == 2)
+
+    manager.historyList.status = .error
+    await manager.historyList.searchNow()
+    #expect(manager.historyList.page == 1)
+    #expect(manager.historyList.totalCount == 1)
+    #expect(manager.historyList.results.map(\.sql) == ["SELECT 0"])
+  }
+
   @Test("History age is minute resolution and does not name seconds")
   func historyAgeStopsAtMinutes() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -273,7 +296,8 @@ struct WorkspaceHistoryTests {
     sql: String,
     at executedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
     connectionKey: String = connectionKey,
-    workspaceID: UUID? = nil
+    workspaceID: UUID? = nil,
+    status: QueryHistoryEntry.Status = .success
   ) -> QueryHistoryEntry {
     QueryHistoryEntry(
       id: 0,
@@ -281,7 +305,7 @@ struct WorkspaceHistoryTests {
       executedAt: executedAt,
       durationMs: 1,
       rowCount: 1,
-      status: .success,
+      status: status,
       errorMessage: nil,
       connectionKey: connectionKey,
       connectionLabel: "Prod",
