@@ -34,7 +34,6 @@ struct HistoryRow: View {
 
       VStack(alignment: .leading, spacing: Spacing.xxs) {
         sqlPreview
-          .padding(.trailing, showsActions ? HistoryHoverButton.contentReserve : 0)
 
         HStack(spacing: Spacing.xs) {
           Text(durationLabel)
@@ -49,37 +48,27 @@ struct HistoryRow: View {
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.xsm)
-    .frame(
-      maxWidth: .infinity, minHeight: showsActions ? Self.hoveredMinHeight : 0, alignment: .top
-    )
+    .frame(maxWidth: .infinity, alignment: .top)
     .contentShape(Rectangle())
     .onTapGesture(count: 2) { onInsert() }
-    .background {
-      if isAlternate {
-        Color.tableRowAlternate
-      } else {
-        Color.cellBackground
-      }
-      if showsActions {
-        Color.cellBackgroundHover.opacity(0.5)
-      }
-    }
+    .background { rowBackground }
     .overlay(alignment: .topTrailing) {
       if showsActions {
-        VStack(spacing: Spacing.xxs) {
-          HistoryHoverButton(
-            systemName: "text.badge.plus",
-            help: "Insert into the current editor",
-            action: onInsert,
-            isHovering: $isHoveringInsert
-          )
+        HStack(spacing: Spacing.xxs) {
           HistoryHoverButton(
             systemName: "magnifyingglass",
             help: "View detail",
             action: onViewDetail,
             isHovering: $isHoveringDetail
           )
+          HistoryHoverButton(
+            systemName: "text.badge.plus",
+            help: "Insert into the current editor",
+            action: onInsert,
+            isHovering: $isHoveringInsert
+          )
         }
+        .background { rowBackground }
         .padding(.top, Spacing.xsm)
         .padding(.trailing, Spacing.md)
         .transition(.opacity)
@@ -133,8 +122,14 @@ struct HistoryRow: View {
     CellResultViews.formatExecutionTime(Double(entry.durationMs) / 1_000)
   }
 
-  /// Fits the insert button and the detail button under it.
-  private static let hoveredMinHeight: CGFloat = 56
+  private var rowBackground: some View {
+    ZStack {
+      isAlternate ? Color.tableRowAlternate : Color.cellBackground
+      if showsActions {
+        Color.cellBackgroundHover.opacity(0.5)
+      }
+    }
+  }
 }
 
 /// Minute-resolution age. Under a minute stays "just now", so the row does not tick each second.
@@ -185,9 +180,6 @@ nonisolated enum HistorySQLPreview {
 
 /// Icon button shown on the trailing edge of a hovered history row.
 private struct HistoryHoverButton: View {
-  /// Clears the SQL while the buttons sit on the first line.
-  static let contentReserve: CGFloat = 26
-
   let systemName: String
   let help: String
   let action: () -> Void
