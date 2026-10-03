@@ -583,27 +583,25 @@ struct WorkspaceTabContentView: View {
 extension WorkspaceManager {
   /// Menu commands are broadcast to every window, including background native tabs: only the
   /// active workspace's active tab may act on them.
-  fileprivate func isActiveTab(_ tabId: UUID, in hostWindow: HostWindowReference) -> Bool {
+  fileprivate func isActiveTab(_ tabId: UUID, in hostWindow: HostWindowReference?) -> Bool {
     isActiveWorkspace(in: hostWindow) && activeTabId == tabId
   }
 
   /// The cached active workspace id can lag behind AppKit (a Welcome tab became key, a tab
   /// closed), so the workspace's own window must also be the key window (or own the key sheet).
-  fileprivate func isActiveWorkspace(in hostWindow: HostWindowReference) -> Bool {
+  fileprivate func isActiveWorkspace(in hostWindow: HostWindowReference?) -> Bool {
     guard WorkspaceWindowManager.shared.activeWorkspaceId == id,
-      let window = hostWindow.window,
+      let window = hostWindow?.window,
       let keyWindow = NSApp.keyWindow
     else { return false }
     return keyWindow === window || keyWindow.sheetParent === window
   }
 }
 
-/// Shared default for `hostWindowReference`: allocated once so the `@Entry` default is stable
-private let defaultHostWindowReference = HostWindowReference()
-
 extension EnvironmentValues {
-  /// The window hosting the enclosing workspace container
-  @Entry fileprivate var hostWindowReference = defaultHostWindowReference
+  /// The window hosting the enclosing workspace container. Optional so the `@Entry` default is
+  /// nil instead of a class instance; the container always injects the real reference.
+  @Entry fileprivate var hostWindowReference: HostWindowReference? = nil
 }
 
 /// Handles notifications for notebook mode in workspace context
@@ -727,7 +725,7 @@ extension View {
   fileprivate func onExplainCommands(
     tabId: UUID,
     workspaceManager: WorkspaceManager,
-    hostWindow: HostWindowReference,
+    hostWindow: HostWindowReference?,
     viewModel: NotebookViewModel,
     syncDocument: @escaping () -> Void
   ) -> some View {
@@ -898,6 +896,12 @@ struct WorkspaceTitleBarTabsView: View {
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.appBackground)
     .background(WindowDragArea())
+    // With the native tab bar above, match the sidebar's top edge
+    .overlay(alignment: .top) {
+      if isNativeTabBarVisible {
+        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      }
+    }
   }
 
   private func goToPreviousTab() {
