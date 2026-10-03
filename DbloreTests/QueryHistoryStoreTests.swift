@@ -108,15 +108,18 @@ struct QueryHistoryStoreTests {
     let store = try QueryHistoryStore(url: url)
     let start = Date(timeIntervalSince1970: 1_700_000_000)
     try await store.record(Self.entry(sql: "SELECT ok", at: start, connectionKey: "c1"))
-    try await store.record(Self.entry(
-      sql: "SELECT failed", at: start.addingTimeInterval(10), status: .error,
-      connectionKey: "c1"))
-    try await store.record(Self.entry(
-      sql: "SELECT cancelled", at: start.addingTimeInterval(20), status: .cancelled,
-      connectionKey: "c1"))
-    try await store.record(Self.entry(
-      sql: "SELECT other", at: start.addingTimeInterval(30), status: .error,
-      connectionKey: "c2"))
+    try await store.record(
+      Self.entry(
+        sql: "SELECT failed", at: start.addingTimeInterval(10), status: .error,
+        connectionKey: "c1"))
+    try await store.record(
+      Self.entry(
+        sql: "SELECT cancelled", at: start.addingTimeInterval(20), status: .cancelled,
+        connectionKey: "c1"))
+    try await store.record(
+      Self.entry(
+        sql: "SELECT other", at: start.addingTimeInterval(30), status: .error,
+        connectionKey: "c2"))
 
     #expect(try await store.count(text: "select", scope: .connection("c1"), status: .error) == 1)
     let failed = try await store.search(

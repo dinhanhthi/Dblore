@@ -19,13 +19,18 @@ struct WorkspaceHistoryTests {
     try await store.record(Self.entry(sql: "SELECT apples", at: start))
     try await store.record(Self.entry(sql: "SELECT bananas", at: start.addingTimeInterval(10)))
     let manager = makeManager(store: store)
+    let clock = ContinuousClock()
+    let started = clock.now
+    var searchedAt: ContinuousClock.Instant?
+    manager.historyList.browser = {
+      searchedAt = clock.now
+      return store
+    }
 
     manager.historyList.query = "apples"
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(manager.historyList.results.isEmpty)
-
-    try await Task.sleep(for: .milliseconds(400))
+    await waitUntil { manager.historyList.results.map(\.sql) == ["SELECT apples"] }
     #expect(manager.historyList.results.map(\.sql) == ["SELECT apples"])
+    #expect(try #require(searchedAt) >= started.advanced(by: .milliseconds(250)))
   }
 
   @Test("Scope uses the active connection and workspace, and a missing key searches all")
@@ -128,9 +133,10 @@ struct WorkspaceHistoryTests {
     let store = try QueryHistoryStore(url: url)
     let start = Date(timeIntervalSince1970: 1_700_000_000)
     for index in 0..<51 {
-      try await store.record(Self.entry(
-        sql: "SELECT \(index)", at: start.addingTimeInterval(Double(index) * 10),
-        status: index == 0 ? .error : .success))
+      try await store.record(
+        Self.entry(
+          sql: "SELECT \(index)", at: start.addingTimeInterval(Double(index) * 10),
+          status: index == 0 ? .error : .success))
     }
     let manager = makeManager(store: store)
     await manager.historyList.searchNow()

@@ -25,8 +25,10 @@ enum TabDragOut {
       y: dropPoint.y + ComponentSize.tabBarHeight / 2 - windowSize.height)
   }
 
-  /// Shift the origin so the window stays inside the visible frame; a larger window pins to its top-left
-  static func clampedOrigin(_ origin: NSPoint, windowSize: NSSize, visibleFrame: NSRect) -> NSPoint {
+  /// Keep the window inside the visible frame, pinning larger windows to the top-left.
+  static func clampedOrigin(
+    _ origin: NSPoint, windowSize: NSSize, visibleFrame: NSRect
+  ) -> NSPoint {
     let x = max(visibleFrame.minX, min(origin.x, visibleFrame.maxX - windowSize.width))
     let y = min(visibleFrame.maxY - windowSize.height, max(origin.y, visibleFrame.minY))
     return NSPoint(x: x, y: y)
