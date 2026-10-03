@@ -85,7 +85,7 @@ extension DatabaseConnectionManager {
   }
 
   /// Staged batch. Protected mode: adopt or begin the app transaction, run every statement
-  /// inside `SAVEPOINT dblore_batch`, require exactly one affected row each, then `RELEASE` and
+  /// inside `SAVEPOINT dblore_batch`, check each statement's expected rows, then `RELEASE` and
   /// record one pending summary per statement. A failure or any other row count rolls back to
   /// the savepoint (nothing from the batch is recorded) and names the statement. A transaction
   /// this batch opened, with nothing else pending, is rolled back the way `undoEdit` does.
@@ -149,8 +149,8 @@ extension DatabaseConnectionManager {
     return counts
   }
 
-  /// Send each statement and require exactly one affected row. Does not begin, commit, or roll
-  /// back; the caller owns the transaction. `rolledBack` is only the flag on the thrown error.
+  /// Send each statement and check its expected affected rows when set. The caller owns the
+  /// transaction. `rolledBack` is only the flag on the thrown error.
   private func applyBatch(_ statements: [BoundStatement], rolledBack: Bool) async throws -> [Int] {
     var counts: [Int] = []
     counts.reserveCapacity(statements.count)
@@ -162,12 +162,15 @@ extension DatabaseConnectionManager {
         throw Self.batchStatementFailed(
           index, sql: statement.sql, underlying: error, rolledBack: rolledBack)
       }
-      guard rows == 1 else {
+      if let expected = statement.expectedRows, rows != expected {
+        let reason =
+          "expected to affect \(expected) row\(expected == 1 ? "" : "s"), affected \(rows)"
         throw Self.batchStatementFailed(
-          index, sql: statement.sql, reason: "expected to affect 1 row, affected \(rows)",
-          rolledBack: rolledBack)
+          index, sql: statement.sql, reason: reason, rolledBack: rolledBack)
       }
-      counts.append(rows)
+      // SQLite's sqlite3_changes64 can retain the previous DML count after CREATE TABLE.
+      let isDDL = SQLStatementClassifier.classify(statement.sql).first?.kind == .ddl
+      counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
     }
     return counts
   }

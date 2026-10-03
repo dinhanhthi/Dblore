@@ -8,6 +8,7 @@ import Foundation
 nonisolated struct BoundStatement: Equatable, Sendable {
   var sql: String
   var values: [String?]
+  var expectedRows: Int? = 1
 
   /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
   var binds: [SQLBindValue] {
