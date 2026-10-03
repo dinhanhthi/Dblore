@@ -519,6 +519,7 @@ struct TabCommands: Commands {
         saveActiveWorkspaceAs()
       }
       .keyboardShortcut("s", modifiers: [.command, .option, .shift])
+      .disabled(WorkspaceWindowManager.shared.activeWorkspace?.workspace.isSaved != true)
 
       Divider()
 

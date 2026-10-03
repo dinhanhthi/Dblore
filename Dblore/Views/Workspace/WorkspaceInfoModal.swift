@@ -35,6 +35,11 @@ struct WorkspaceInfoModal: View {
     }
   }
 
+  /// An unsaved workspace has no file yet, so the Workspace tab offers Save instead of Apply
+  private var showsSave: Bool {
+    workspaceManager.workspaceInfoTab == .workspace && !workspace.isSaved
+  }
+
   private var showsFooter: Bool {
     workspaceManager.workspaceInfoTab == .workspace || workspace.connectionConfig != nil
   }
@@ -74,9 +79,14 @@ struct WorkspaceInfoModal: View {
     } footer: {
       if showsFooter {
         GenericModalFooter {
-          Button("Apply") { applyName() }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!canApply)
+          if showsSave {
+            Button("Save") { saveWorkspace() }
+              .buttonStyle(PrimaryButtonStyle())
+          } else {
+            Button("Apply") { applyName() }
+              .buttonStyle(PrimaryButtonStyle())
+              .disabled(!canApply)
+          }
           Spacer()
           if showsDisconnect {
             Button {
@@ -220,6 +230,15 @@ struct WorkspaceInfoModal: View {
   private func resetDrafts() {
     draftWorkspaceName = displayName
     draftConnectionName = workspace.connectionConfig?.name ?? ""
+  }
+
+  /// Keeps the typed name, then saves; the save panel is pre-filled with that name
+  private func saveWorkspace() {
+    workspaceManager.renameWorkspace(to: draftWorkspaceName)
+    Task {
+      try? await workspaceManager.saveWorkspace()
+      draftWorkspaceName = displayName
+    }
   }
 
   private func applyName() {
