@@ -13,11 +13,14 @@ import SwiftUI
 struct WorkspaceSidebarTopArea: View {
   @Bindable var workspaceManager: WorkspaceManager
   let height: CGFloat
+  @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
 
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
       Color.clear
-        .frame(width: ComponentSize.trafficLightAndToggleWidth)
+        .frame(
+          width: ComponentSize.trafficLightAndToggleWidth
+            - (isNativeTabBarVisible ? ComponentSize.trafficLightWidth : 0))
 
       Spacer()
 

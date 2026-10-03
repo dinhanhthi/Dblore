@@ -55,6 +55,8 @@ struct FileOpenChooserView: View {
 
   @Bindable private var windowManager = WorkspaceWindowManager.shared
   @Bindable private var pendingFileOpen = PendingFileOpen.shared
+  @State private var isNativeTabBarVisible = false
+  @Environment(\.controlActiveState) private var controlActiveState
 
   var body: some View {
     GeometryReader { geometry in
@@ -86,10 +88,17 @@ struct FileOpenChooserView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.appBackground)
-    .ignoresSafeArea(.all, edges: .top)
+    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
     .background(
-      TrafficLightPositioner(tabBarHeight: ComponentSize.tabBarHeight)
+      DocumentWindowConfigurator(tabTitle: "Open Files", isTabBarVisible: $isNativeTabBarVisible)
     )
+    .background(
+      TrafficLightPositioner(
+        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
+    )
+    .onChange(of: controlActiveState) { _, newState in
+      if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
+    }
     .background(WindowResizer(size: NSSize(width: 700, height: 500)))
   }
 

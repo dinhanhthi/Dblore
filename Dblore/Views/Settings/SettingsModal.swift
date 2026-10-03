@@ -529,6 +529,8 @@ struct SettingsModalKeyboardShortcutsSection: View {
           ("Next Tab", "Cmd+Shift+]"),
           ("Previous Tab", "Cmd+Shift+["),
           ("Go to Tab 1-9", "Cmd+1 ... Cmd+9"),
+          ("New Window Tab", "Cmd+Shift+N"),
+          ("Next / Previous Window Tab", "Ctrl+Tab / Ctrl+Shift+Tab"),
         ]
       )
       shortcutCard(

@@ -47,8 +47,9 @@ enum ComponentSize {
 
   // Tab bar and title bar
   static let tabBarHeight: CGFloat = 38
-  /// Width for traffic light buttons (close, minimize, zoom) + left padding
+  /// Width for traffic light buttons (close, minimize, zoom) + left padding:
+  /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23
   static let trafficLightWidth: CGFloat = 88
   /// Width for traffic light buttons + sidebar toggle button
-  static let trafficLightAndToggleWidth: CGFloat = 105
+  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + 17
 }
