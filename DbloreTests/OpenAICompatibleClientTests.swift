@@ -55,6 +55,29 @@ struct OpenAICompatibleClientTests {
       ])
   }
 
+  @Test("api.openai.com requests omit the token cap")
+  func openAINoTokenCap() throws {
+    let openAIBase = URL(string: "https://api.openai.com/v1")!
+    let urlRequest = OpenAICompatibleClient.makeRequest(request(), baseURL: openAIBase, apiKey: "sk-x")
+    let body = try #require(urlRequest.httpBody)
+    let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    #expect(json["max_tokens"] == nil)
+    #expect(json["max_completion_tokens"] == nil)
+    #expect(json["stream"] as? Bool == true)
+  }
+
+  @Test("non-OpenAI hosts keep max_tokens")
+  func otherHostKeepsMaxTokens() throws {
+    for host in ["https://openrouter.ai/api/v1", "https://api.openai.com.evil.com/v1"] {
+      let urlRequest = OpenAICompatibleClient.makeRequest(
+        request(), baseURL: URL(string: host)!, apiKey: "")
+      let body = try #require(urlRequest.httpBody)
+      let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+      #expect(json["max_tokens"] as? Int == 100)
+      #expect(json["max_completion_tokens"] == nil)
+    }
+  }
+
   @Test("stream yields text and stops at [DONE]")
   func streamsText() async throws {
     AIStubURLProtocol.handler = { _ in

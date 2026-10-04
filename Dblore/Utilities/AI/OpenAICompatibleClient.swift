@@ -19,14 +19,23 @@ nonisolated struct OpenAICompatibleClient: AIChatClient {
     var messages: [[String: String]] = []
     if !request.system.isEmpty { messages.append(["role": "system", "content": request.system]) }
     messages += request.messages.map { ["role": $0.role.rawValue, "content": $0.text] }
-    let body: [String: Any] = [
+    var body: [String: Any] = [
       "model": request.model,
       "messages": messages,
       "stream": true,
-      "max_tokens": request.maxTokens,
     ]
+    // api.openai.com rejects `max_tokens` on o-series / GPT-5+ models; its replacement
+    // `max_completion_tokens` also counts hidden reasoning tokens, so a small cap like the
+    // 2048 default could be spent entirely on reasoning and return empty output. No cap is
+    // sent there (the API default). Other OpenAI-compatible servers still get `max_tokens`.
+    if !isOpenAI(baseURL) { body["max_tokens"] = request.maxTokens }
     urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: body)
     return urlRequest
+  }
+
+  /// True when the request goes to the hosted OpenAI API
+  static func isOpenAI(_ baseURL: URL) -> Bool {
+    baseURL.host?.lowercased() == "api.openai.com"
   }
 
   func stream(_ request: AIChatRequest) -> AsyncThrowingStream<AIStreamEvent, Error> {
