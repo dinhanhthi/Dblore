@@ -75,6 +75,8 @@ enum DatabaseError: LocalizedError {
   /// `index` is 0-based. When `rolledBack` is true the whole batch was undone; when false the
   /// statement stays in the user's own open transaction.
   case batchStatementFailed(index: Int, sqlPrefix: String, reason: String, rolledBack: Bool)
+  /// Cancel arrived between batch statements; the batch transaction is being rolled back.
+  case batchCancelled
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -140,6 +142,8 @@ enum DatabaseError: LocalizedError {
         ? "The batch was rolled back."
         : "It is still in your open transaction; roll it back (ROLLBACK) to undo it."
       return "Batch statement \(index + 1) (\(sqlPrefix)) failed: \(reason). \(outcome)"
+    case .batchCancelled:
+      return "Batch cancelled before the next statement."
     case .queryCancelled(let pendingCount, let userTxRolledBack):
       return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
     case .sessionChanged(let count):

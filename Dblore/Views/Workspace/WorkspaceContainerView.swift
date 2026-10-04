@@ -12,6 +12,10 @@ struct WorkspaceContainerView: View {
   @State private var settingsSection: SettingsPage?
   @State private var settingsHighlight: SettingsOption?
   @State private var settingsOpenToken = UUID()
+  @State private var isImportPresented = false
+  @State private var isImportBusy = false
+  @State private var importTabID: UUID?
+  @State private var importDestination: TableImportDestination?
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -31,7 +35,8 @@ struct WorkspaceContainerView: View {
             WorkspaceLeftSidebar(
               workspaceManager: workspaceManager,
               tabBarHeight: ComponentSize.tabBarHeight,
-              maxWidth: geometry.size.width * 0.35
+              maxWidth: geometry.size.width * 0.35,
+              onImportTable: { requestImport(for: $0) }
             )
 
             // Main content area (tabs + content)
@@ -205,6 +210,7 @@ struct WorkspaceContainerView: View {
     .focusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
       workspaceManager.openCommandPalette()
     }
+    .focusedSceneValue(\.openTableImportAction, importAction)
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
@@ -217,6 +223,18 @@ struct WorkspaceContainerView: View {
     .favoriteModals(workspaceManager: workspaceManager)
     .historyDetailModal(workspaceManager: workspaceManager)
     .commandPaletteModal(workspaceManager: workspaceManager)
+    .modalOverlay(
+      isPresented: Binding(
+        get: { isImportPresented },
+        set: { if $0 || !isImportBusy { isImportPresented = $0 } }
+      )
+    ) {
+      if let importTabID, let viewModel = workspaceManager.viewModel(for: importTabID) {
+        TableImportSheet(
+          viewModel: viewModel, isPresented: $isImportPresented, isBusy: $isImportBusy,
+          initialDestination: importDestination)
+      }
+    }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
         let section = SettingsPage(rawValue: raw)
@@ -233,6 +251,19 @@ struct WorkspaceContainerView: View {
       }
     }
   }
+
+  private var importAction: (() -> Void)? {
+    guard workspaceManager.connectionState.isConnected else { return nil }
+    return { requestImport() }
+  }
+
+  private func requestImport(for table: DatabaseTable? = nil) {
+    guard workspaceManager.connectionState.isConnected else { return }
+    let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+    importTabID = tabID
+    importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
+    isImportPresented = true
+  }
 }
 
 // MARK: - Left Sidebar for Workspace
@@ -243,6 +274,7 @@ struct WorkspaceLeftSidebar: View {
   @Bindable var workspaceManager: WorkspaceManager
   let tabBarHeight: CGFloat
   let maxWidth: CGFloat
+  let onImportTable: (DatabaseTable) -> Void
 
   /// Effective sidebar width from workspace settings or app settings
   private var effectiveSidebarWidth: CGFloat {
@@ -259,7 +291,8 @@ struct WorkspaceLeftSidebar: View {
         WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
 
         // Main sidebar content - always use workspace schema
-        WorkspaceLeftSidebarContent(workspaceManager: workspaceManager)
+        WorkspaceLeftSidebarContent(
+          workspaceManager: workspaceManager, onImportTable: onImportTable)
       }
       .frame(width: constrainedWidth)
       .chromeGlass()

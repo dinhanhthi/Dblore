@@ -19,6 +19,7 @@ struct TableRowView: View {
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
+  let onImport: () -> Void
 
   @State private var isHoveringTable = false
 
@@ -94,6 +95,9 @@ struct TableRowView: View {
         } else {
           NSCursor.pop()
         }
+      }
+      .contextMenu {
+        Button("Import Data...", action: onImport)
       }
 
       // Columns (when expanded)

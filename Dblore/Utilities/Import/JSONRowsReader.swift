@@ -4,18 +4,40 @@
 
 import Foundation
 
-nonisolated enum JSONRowsError: Error, Equatable, Sendable {
+nonisolated enum JSONRowsError: Error, LocalizedError, Equatable, Sendable {
   case invalidJSON
   case expectedObject
+  case cellLimitExceeded
+  case rowLimitExceeded
+  case fieldLimitExceeded
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidJSON: "Invalid JSON"
+    case .expectedObject: "Expected a JSON object"
+    case .cellLimitExceeded: "Import exceeds the 1,000,000-cell safety limit"
+    case .rowLimitExceeded: "Import exceeds the 100,000-row safety limit"
+    case .fieldLimitExceeded: "Import contains too many fields in one object"
+    }
+  }
 }
 
 /// Nil is JSON null or a key this row does not have.
 nonisolated enum JSONRowsReader {
   nonisolated struct Options: Sendable, Equatable {
     var rowLimit: Int?
+    var maxCells: Int
+    var maxRows: Int
+    var maxFieldsPerObject: Int
 
-    init(rowLimit: Int? = nil) {
+    init(
+      rowLimit: Int? = nil, maxCells: Int = 1_000_000,
+      maxRows: Int = 100_000, maxFieldsPerObject: Int = 10_000
+    ) {
       self.rowLimit = rowLimit
+      self.maxCells = max(maxCells, 0)
+      self.maxRows = max(maxRows, 0)
+      self.maxFieldsPerObject = max(maxFieldsPerObject, 0)
     }
   }
 
@@ -32,6 +54,7 @@ nonisolated enum JSONRowsReader {
 
   private static func parse(_ data: Data, options: Options) throws -> Table {
     let text = decodedText(data)
+    try Task.checkCancellation()
     let scalars = text.unicodeScalars
     var index = scalars.startIndex
     while index < scalars.endIndex {
@@ -44,31 +67,35 @@ nonisolated enum JSONRowsReader {
     }
     if index >= scalars.endIndex { return Table(columns: [], rows: []) }
     if scalars[index] == "[" {
-      var scanner = Scanner(text)
-      return try scanner.parseArray(rowLimit: options.rowLimit)
+      var scanner = Scanner(text, maxFieldsPerObject: options.maxFieldsPerObject)
+      return try scanner.parseArray(options: options)
     }
-    return try parseLines(text, rowLimit: options.rowLimit)
+    return try parseLines(text, options: options)
   }
 
-  private static func parseLines(_ text: String, rowLimit: Int?) throws -> Table {
+  private static func parseLines(_ text: String, options: Options) throws -> Table {
+    let rowLimit = options.rowLimit
     if let rowLimit, rowLimit <= 0 { return Table(columns: [], rows: []) }
-    var builder = RowBuilder()
+    var builder = RowBuilder(maxCells: options.maxCells, maxRows: options.maxRows)
     let scalars = text.unicodeScalars
     var lineStart = scalars.startIndex
     var index = scalars.startIndex
+    var scalarCount = 0
 
     func takeLine(upTo end: String.Index) throws {
       let line = String(scalars[lineStart..<end]).trimmingCharacters(in: .whitespaces)
       guard !line.isEmpty else { return }
-      var scanner = Scanner(line)
-      scanner.skipWhitespace()
+      var scanner = Scanner(line, maxFieldsPerObject: options.maxFieldsPerObject)
+      try scanner.skipWhitespace()
       guard scanner.peek() == "{" else { throw JSONRowsError.expectedObject }
-      builder.append(try scanner.parseObject())
-      scanner.skipWhitespace()
+      try builder.append(scanner.parseObject())
+      try scanner.skipWhitespace()
       guard scanner.isAtEnd else { throw JSONRowsError.invalidJSON }
     }
 
     while index < scalars.endIndex {
+      scalarCount += 1
+      if scalarCount.isMultiple(of: 4_096) { try Task.checkCancellation() }
       let scalar = scalars[index]
       if scalar == "\n" || scalar == "\r" {
         try takeLine(upTo: index)
@@ -103,11 +130,21 @@ nonisolated enum JSONRowsReader {
   }
 
   private nonisolated struct RowBuilder {
+    let maxCells: Int
+    let maxRows: Int
     var columns: [String] = []
     private var indexByKey: [String: Int] = [:]
     var rows: [[String?]] = []
 
-    mutating func append(_ fields: [Field]) {
+    mutating func append(_ fields: [Field]) throws {
+      guard rows.count < maxRows else { throw JSONRowsError.rowLimitExceeded }
+      var newKeys: Set<String> = []
+      for field in fields where indexByKey[field.key] == nil {
+        newKeys.insert(field.key)
+      }
+      guard columns.count + newKeys.count <= maxCells / (rows.count + 1) else {
+        throw JSONRowsError.cellLimitExceeded
+      }
       for field in fields where indexByKey[field.key] == nil {
         indexByKey[field.key] = columns.count
         columns.append(field.key)
@@ -115,6 +152,7 @@ nonisolated enum JSONRowsReader {
       if let last = rows.last, last.count < columns.count {
         let extra = columns.count - last.count
         for index in rows.indices {
+          if index.isMultiple(of: 256) { try Task.checkCancellation() }
           rows[index].append(contentsOf: repeatElement(nil, count: extra))
         }
       }
@@ -132,10 +170,12 @@ nonisolated enum JSONRowsReader {
 
   private nonisolated struct Scanner {
     private static let maxNesting = 128
+    let maxFieldsPerObject: Int
     let scalars: String.UnicodeScalarView
     var index: String.UnicodeScalarView.Index
 
-    init(_ text: String) {
+    init(_ text: String, maxFieldsPerObject: Int) {
+      self.maxFieldsPerObject = maxFieldsPerObject
       scalars = text.unicodeScalars
       index = scalars.startIndex
     }
@@ -154,10 +194,13 @@ nonisolated enum JSONRowsReader {
       return value
     }
 
-    mutating func skipWhitespace() {
+    mutating func skipWhitespace() throws {
+      var skipped = 0
       while let scalar = peek(),
         scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "\r"
       {
+        skipped += 1
+        if skipped.isMultiple(of: 4_096) { try Task.checkCancellation() }
         _ = advance()
       }
     }
@@ -168,24 +211,26 @@ nonisolated enum JSONRowsReader {
       }
     }
 
-    mutating func parseArray(rowLimit: Int?) throws -> Table {
+    mutating func parseArray(options: Options) throws -> Table {
+      let rowLimit = options.rowLimit
       if let rowLimit, rowLimit <= 0 { return Table(columns: [], rows: []) }
-      skipWhitespace()
+      try skipWhitespace()
       guard advance() == "[" else { throw JSONRowsError.invalidJSON }
-      skipWhitespace()
-      var builder = RowBuilder()
+      try skipWhitespace()
+      var builder = RowBuilder(maxCells: options.maxCells, maxRows: options.maxRows)
       if peek() == "]" {
         _ = advance()
         try endOfValue()
         return builder.table()
       }
       while true {
-        skipWhitespace()
+        try Task.checkCancellation()
+        try skipWhitespace()
         if peek() == "]" || peek() == nil { throw JSONRowsError.invalidJSON }
         guard peek() == "{" else { throw JSONRowsError.expectedObject }
-        builder.append(try parseObject())
+        try builder.append(parseObject())
         if let rowLimit, builder.rows.count >= rowLimit { return builder.table() }
-        skipWhitespace()
+        try skipWhitespace()
         if peek() == "," {
           _ = advance()
           continue
@@ -198,20 +243,24 @@ nonisolated enum JSONRowsReader {
 
     mutating func parseObject() throws -> [Field] {
       guard advance() == "{" else { throw JSONRowsError.invalidJSON }
-      skipWhitespace()
+      try skipWhitespace()
       if peek() == "}" {
         _ = advance()
         return []
       }
       var fields: [Field] = []
       while true {
-        skipWhitespace()
+        try Task.checkCancellation()
+        guard fields.count < maxFieldsPerObject else {
+          throw JSONRowsError.fieldLimitExceeded
+        }
+        try skipWhitespace()
         guard peek() == "\"" else { throw JSONRowsError.invalidJSON }
         let key = try parseString()
-        skipWhitespace()
+        try skipWhitespace()
         guard advance() == ":" else { throw JSONRowsError.invalidJSON }
         fields.append(Field(key: key, value: try parseCell()))
-        skipWhitespace()
+        try skipWhitespace()
         if peek() == "," {
           _ = advance()
           continue
@@ -222,12 +271,12 @@ nonisolated enum JSONRowsReader {
     }
 
     mutating func endOfValue() throws {
-      skipWhitespace()
+      try skipWhitespace()
       guard isAtEnd else { throw JSONRowsError.invalidJSON }
     }
 
     mutating func parseCell() throws -> String? {
-      skipWhitespace()
+      try skipWhitespace()
       guard let scalar = peek() else { throw JSONRowsError.invalidJSON }
       if scalar == "{" || scalar == "[" { return try rawContainer() }
       if scalar == "\"" { return try parseString() }
@@ -254,7 +303,7 @@ nonisolated enum JSONRowsReader {
     }
 
     mutating func skipValue(depth: Int = 0) throws {
-      skipWhitespace()
+      try skipWhitespace()
       guard let scalar = peek() else { throw JSONRowsError.invalidJSON }
       if scalar == "{" {
         guard depth < Self.maxNesting else { throw JSONRowsError.invalidJSON }
@@ -279,19 +328,20 @@ nonisolated enum JSONRowsReader {
 
     mutating func skipObject(depth: Int) throws {
       guard advance() == "{" else { throw JSONRowsError.invalidJSON }
-      skipWhitespace()
+      try skipWhitespace()
       if peek() == "}" {
         _ = advance()
         return
       }
       while true {
-        skipWhitespace()
+        try Task.checkCancellation()
+        try skipWhitespace()
         guard peek() == "\"" else { throw JSONRowsError.invalidJSON }
         _ = try parseString()
-        skipWhitespace()
+        try skipWhitespace()
         guard advance() == ":" else { throw JSONRowsError.invalidJSON }
         try skipValue(depth: depth)
-        skipWhitespace()
+        try skipWhitespace()
         if peek() == "," {
           _ = advance()
           continue
@@ -303,14 +353,15 @@ nonisolated enum JSONRowsReader {
 
     mutating func skipArray(depth: Int) throws {
       guard advance() == "[" else { throw JSONRowsError.invalidJSON }
-      skipWhitespace()
+      try skipWhitespace()
       if peek() == "]" {
         _ = advance()
         return
       }
       while true {
+        try Task.checkCancellation()
         try skipValue(depth: depth)
-        skipWhitespace()
+        try skipWhitespace()
         if peek() == "," {
           _ = advance()
           continue
@@ -323,7 +374,10 @@ nonisolated enum JSONRowsReader {
     mutating func parseString() throws -> String {
       guard advance() == "\"" else { throw JSONRowsError.invalidJSON }
       var result = ""
+      var scalarCount = 0
       while let scalar = advance() {
+        scalarCount += 1
+        if scalarCount.isMultiple(of: 4_096) { try Task.checkCancellation() }
         if scalar == "\"" { return result }
         if scalar == "\\" {
           guard let escaped = advance() else { throw JSONRowsError.invalidJSON }
@@ -385,20 +439,30 @@ nonisolated enum JSONRowsReader {
       if first == "0" {
         _ = advance()
       } else {
-        while let scalar = peek(), isDigit(scalar) { _ = advance() }
+        try scanDigits()
       }
       if peek() == "." {
         _ = advance()
         guard let scalar = peek(), isDigit(scalar) else { throw JSONRowsError.invalidJSON }
-        while let next = peek(), isDigit(next) { _ = advance() }
+        try scanDigits()
       }
       if peek() == "e" || peek() == "E" {
         _ = advance()
         if peek() == "+" || peek() == "-" { _ = advance() }
         guard let scalar = peek(), isDigit(scalar) else { throw JSONRowsError.invalidJSON }
-        while let next = peek(), isDigit(next) { _ = advance() }
+        try scanDigits()
       }
+      try Task.checkCancellation()
       return String(scalars[start..<index])
+    }
+
+    mutating func scanDigits() throws {
+      var count = 0
+      while let scalar = peek(), isDigit(scalar) {
+        count += 1
+        if count.isMultiple(of: 4_096) { try Task.checkCancellation() }
+        _ = advance()
+      }
     }
 
     func isDigit(_ scalar: Unicode.Scalar) -> Bool {

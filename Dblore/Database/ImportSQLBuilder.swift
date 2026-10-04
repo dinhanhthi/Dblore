@@ -45,21 +45,25 @@ nonisolated enum ImportSQLBuilder {
     dialect: SQLDialect, bindLimit: Int? = nil
   ) throws -> [BoundStatement] {
     guard !columns.isEmpty else { throw Error.invalidColumns }
-    guard rows.allSatisfy({ $0.count == columns.count }) else { throw Error.invalidRowWidth }
     let maximumBinds = bindLimit ?? (dialect == .postgresql ? 65_535 : 999)
     let chunkSize = min(1_000, maximumBinds / columns.count)
     guard chunkSize > 0 else { throw Error.bindLimitExceeded }
     let relation = try dialect.qualified(schema: schema, name: table)
     let names = try columns.map { try dialect.quoteIdentifier($0.name) }.joined(separator: ", ")
     let prefix = "INSERT INTO \(relation) (\(names)) VALUES "
-    let preparedRows = try rows.map { row in
-      try zip(row, columns).map { value, column in
-        try bindValue(value, kind: column.kind, dialect: dialect)
-      }
-    }
     var statements: [BoundStatement] = []
-    for start in stride(from: 0, to: preparedRows.count, by: chunkSize) {
-      let chunk = preparedRows[start..<min(start + chunkSize, preparedRows.count)]
+    for start in stride(from: 0, to: rows.count, by: chunkSize) {
+      try Task.checkCancellation()
+      let chunk = rows[start..<min(start + chunkSize, rows.count)]
+      var values: [String?] = []
+      values.reserveCapacity(chunk.count * columns.count)
+      for (offset, row) in chunk.enumerated() {
+        if offset.isMultiple(of: 256) { try Task.checkCancellation() }
+        guard row.count == columns.count else { throw Error.invalidRowWidth }
+        for (value, column) in zip(row, columns) {
+          values.append(try bindValue(value, kind: column.kind, dialect: dialect))
+        }
+      }
       var placeholder = 1
       let tuples = chunk.map { row in
         let markers = columns.map { column in
@@ -73,7 +77,7 @@ nonisolated enum ImportSQLBuilder {
       statements.append(
         BoundStatement(
           sql: prefix + tuples.joined(separator: ", "),
-          values: chunk.flatMap { $0 }, expectedRows: chunk.count))
+          values: values, expectedRows: chunk.count))
     }
     return statements
   }

@@ -213,6 +213,7 @@ nonisolated enum HistoryRowLabels: Sendable {
     case .cell: "Cell"
     case .editor: "Editor"
     case .dataViewerEdit: "Data Viewer Edit"
+    case .dataImport: "Data Import"
     }
   }
 }

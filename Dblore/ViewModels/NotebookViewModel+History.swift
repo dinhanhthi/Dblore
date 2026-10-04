@@ -12,6 +12,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
   case cell
   case editor
   case dataViewerEdit
+  case dataImport
   case `internal`
 
   var stored: QueryHistoryEntry.Source? {
@@ -19,6 +20,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
     case .cell: .cell
     case .editor: .editor
     case .dataViewerEdit: .dataViewerEdit
+    case .dataImport: .dataImport
     case .internal: nil
     }
   }
@@ -69,7 +71,9 @@ extension NotebookViewModel {
         durationMs: Int((outcome.duration * 1_000).rounded()),
         rowCount: outcome.rowCount,
         status: outcome.status,
-        errorMessage: outcome.errorMessage,
+        errorMessage: source == .dataImport && outcome.errorMessage != nil
+          ? (outcome.status == .cancelled ? "Import cancelled" : "Import failed")
+          : outcome.errorMessage,
         connectionKey: connection.key,
         connectionLabel: connection.label,
         workspaceID: workspace?.id,
@@ -107,13 +111,14 @@ extension NotebookViewModel {
   }
 
   func recordFailure(
-    _ error: Error, sql: String, duration: TimeInterval, source: QueryHistoryRecordSource
+    _ error: Error, sql: String, duration: TimeInterval, source: QueryHistoryRecordSource,
+    errorMessage: String? = nil
   ) {
     scheduleHistory(
       [
         QueryHistoryOutcome(
           sql: sql, duration: duration, rowCount: nil, status: Self.historyStatus(for: error),
-          errorMessage: error.localizedDescription)
+          errorMessage: errorMessage ?? error.localizedDescription)
       ],
       source: source)
   }
@@ -163,8 +168,11 @@ extension NotebookViewModel {
   }
 
   private static func historyStatus(for error: Error) -> QueryHistoryEntry.Status {
-    if let error = error as? DatabaseError, case .queryCancelled = error {
-      return .cancelled
+    if let error = error as? DatabaseError {
+      switch error {
+      case .queryCancelled, .batchCancelled: return .cancelled
+      default: break
+      }
     }
     return .error
   }

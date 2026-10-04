@@ -75,6 +75,51 @@ struct StagedBatchRulesTests {
     }
   }
 
+  @Test("SQLite cancel between chunks rolls back the completed chunk", .timeLimit(.minutes(1)))
+  @MainActor
+  func cancelBetweenChunks() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-batch-cancel-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let manager = DatabaseConnectionManager()
+    let config = ConnectionConfig(
+      databaseType: .sqlite, host: "", port: 0, database: url.path,
+      username: "", rememberConnection: false, safeMode: .silent, protectedMode: false)
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("CREATE TABLE t (v TEXT)")
+    let pause = BatchPause()
+    await manager.setBatchCheckpointHook { index in
+      if index == 0 { await pause.checkpoint() }
+    }
+    let policy = ProtectionPolicy(protectionLevel: .none, protectedMode: false)
+    let epoch = await manager.connectionEpoch
+    let batch = Task {
+      try await manager.executeGatedBatch(
+        [
+          BoundStatement(sql: "INSERT INTO t (v) VALUES (?1)", values: ["first"]),
+          BoundStatement(sql: "INSERT INTO t (v) VALUES (?1)", values: ["second"]),
+        ], policy: policy, connectionEpoch: epoch)
+    }
+    await pause.waitUntilArrived()
+    let status = await manager.runningStatementStatus()
+    #expect(status.inFlight)
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    await pause.resume()
+    do {
+      _ = try await batch.value
+      Issue.record("Expected the cancelled batch to stop")
+    } catch DatabaseError.batchCancelled {
+      // The first chunk must be rolled back below.
+    }
+    let read = try await manager.executeInternal("SELECT v FROM t")
+    #expect(read.rows.isEmpty)
+    await manager.setBatchCheckpointHook(nil)
+  }
+
   @Test("A later DELETE blocks the whole batch under read-only and names that statement")
   func readOnlyBlocksLaterDelete() {
     let decision = batchDecision(
@@ -187,5 +232,28 @@ struct StagedBatchRulesTests {
     } catch {
       Issue.record("Unexpected error: \(error)")
     }
+  }
+}
+
+private actor BatchPause {
+  private var arrived = false
+  private var arrivalWaiter: CheckedContinuation<Void, Never>?
+  private var resumeWaiter: CheckedContinuation<Void, Never>?
+
+  func checkpoint() async {
+    arrived = true
+    arrivalWaiter?.resume()
+    arrivalWaiter = nil
+    await withCheckedContinuation { resumeWaiter = $0 }
+  }
+
+  func waitUntilArrived() async {
+    if arrived { return }
+    await withCheckedContinuation { arrivalWaiter = $0 }
+  }
+
+  func resume() {
+    resumeWaiter?.resume()
+    resumeWaiter = nil
   }
 }

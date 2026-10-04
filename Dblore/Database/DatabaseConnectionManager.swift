@@ -39,6 +39,10 @@ actor DatabaseConnectionManager {
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
   /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Test hook after a batch statement returns, before the next one is sent.
+  var batchCheckpointHook: (@Sendable (Int) async -> Void)?
+  /// Advances when Cancel is requested, even if SQLite's interrupt misses between statements.
+  var batchCancellationGeneration: UInt64 = 0
   /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
   /// Nil until a file grant is stored. Must not call back into this actor.
   var sqliteFileAccessRelease: (@Sendable () -> Void)?

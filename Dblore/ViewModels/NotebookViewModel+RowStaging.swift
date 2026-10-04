@@ -15,6 +15,8 @@ struct PendingStagedBatch: Sendable {
   var statements: [BoundStatement]
   var preview: String
   var connectionEpoch: UInt64
+  var historySource: QueryHistoryRecordSource = .dataViewerEdit
+  var rowRanges: [ClosedRange<Int>?] = []
 }
 
 extension NotebookViewModel {
@@ -192,33 +194,69 @@ extension NotebookViewModel {
   }
 
   /// Sends a batch the user already confirmed, or one that Safe Mode did not need to confirm.
-  func runConfirmedStagedBatch(_ batch: PendingStagedBatch) async {
-    guard !refuseWhileTransactionPendingElsewhere() else { return }
+  @discardableResult
+  func runConfirmedStagedBatch(_ batch: PendingStagedBatch) async -> String? {
+    guard !refuseWhileTransactionPendingElsewhere() else {
+      return "A transaction is pending in another tab"
+    }
     guard let connectionManager else {
       showToast("No database connection available", type: .error)
-      return
+      return "No database connection available"
     }
     let started = Date()
+    var failure: String?
     do {
       let counts = try await connectionManager.executeGatedBatch(
         batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
         caller: id)
-      dataViewer?.changeSet = nil
-      undoManager.removeAllActions()
+      if batch.historySource == .dataViewerEdit {
+        dataViewer?.changeSet = nil
+        undoManager.removeAllActions()
+      }
       await recordExecution(
         [
           QueryHistoryOutcome(
             sql: batch.preview, duration: Date().timeIntervalSince(started),
             rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
-        ], source: .dataViewerEdit)
-      await loadDataViewerPage()
+        ], source: batch.historySource)
+      if dataViewer != nil { await loadDataViewerPage() }
     } catch {
+      let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: .dataViewerEdit)
-      showToast(error.localizedDescription, type: .error)
+        source: batch.historySource, errorMessage: message)
+      showToast(message, type: .error)
+      failure = message
     }
     await onStatementsExecuted?()
+    return failure
+  }
+
+  /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
+  func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
+    guard !hasPendingStagedChanges else {
+      return "Commit or discard staged changes before importing"
+    }
+    if case .blocked(_, _, let reason) = DatabaseConnectionManager.evaluateBatch(
+      batch.statements, policy: protectionPolicy, dialect: sqlDialect)
+    {
+      return reason
+    }
+    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+      pendingExplainSQL = nil
+      pendingStagedBatch = batch
+      return nil
+    }
+    return await runConfirmedStagedBatch(batch)
+  }
+
+  private static func batchFailureMessage(
+    _ error: Error, ranges: [ClosedRange<Int>?]
+  ) -> String {
+    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
+      ranges.indices.contains(index), let range = ranges[index]
+    else { return error.localizedDescription }
+    return "Rows \(range.lowerBound)–\(range.upperBound): \(error.localizedDescription)"
   }
 
   // MARK: - Private

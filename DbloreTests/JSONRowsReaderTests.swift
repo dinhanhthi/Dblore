@@ -84,4 +84,41 @@ struct JSONRowsReaderTests {
       try JSONRowsReader.read(data, options: .init(rowLimit: 1))
     }
   }
+
+  @Test("Unique keys stop before dense rows exceed the cell budget")
+  func uniqueKeyCellBudget() {
+    let json = (0...1000).map { "{\"key_\($0)\":\($0)}" }.joined(separator: "\n")
+    #expect(throws: JSONRowsError.cellLimitExceeded) {
+      try JSONRowsReader.read(Data(json.utf8))
+    }
+  }
+
+  @Test("Empty rows and duplicate object fields have independent budgets")
+  func rawJSONBudgets() throws {
+    #expect(throws: JSONRowsError.rowLimitExceeded) {
+      try JSONRowsReader.read(Data("[{}, {}, {}]".utf8), options: .init(maxRows: 2))
+    }
+    #expect(throws: JSONRowsError.fieldLimitExceeded) {
+      try JSONRowsReader.read(
+        Data("[{\"x\":1,\"x\":2,\"x\":3}]".utf8),
+        options: .init(maxFieldsPerObject: 2))
+    }
+    let preview = try JSONRowsReader.read(
+      Data("[{}, {}]".utf8), options: .init(rowLimit: 1, maxRows: 1))
+    #expect(preview.rows == [[]])
+  }
+
+  @Test("Cancelling a long number token stops the parser", .timeLimit(.minutes(1)))
+  func longNumberCancellation() async throws {
+    let data = Data(("[{\"n\":1" + String(repeating: "2", count: 16 * 1_024 * 1_024) + "}]").utf8)
+    let parse = Task.detached { try JSONRowsReader.read(data) }
+    try await Task.sleep(for: .milliseconds(30))
+    parse.cancel()
+    do {
+      _ = try await parse.value
+      Issue.record("Expected cancellation while parsing the number")
+    } catch is CancellationError {
+      // The parser polled cancellation within the token.
+    }
+  }
 }

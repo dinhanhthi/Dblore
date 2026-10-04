@@ -66,6 +66,35 @@ struct DelimitedTextReaderTests {
     #expect(table.rows == [["1", "", ""], ["2", "3", "4"]])
   }
 
+  @Test("Ragged rows stop before padding exceeds the cell budget")
+  func raggedCellBudget() {
+    let narrowRows = Array(repeating: "x", count: 1000).joined(separator: "\n")
+    let wideRow = Array(repeating: "x", count: 1001).joined(separator: ",")
+    let csv = "value\n" + narrowRows + "\n" + wideRow + "\n"
+    #expect(throws: DelimitedTextError.cellLimitExceeded) {
+      try DelimitedTextReader.read(Data(csv.utf8), options: .init(delimiter: ","))
+    }
+  }
+
+  @Test("Raw CSV row and field budgets stop parsing before rows accumulate")
+  func rawRecordBudgets() throws {
+    #expect(throws: DelimitedTextError.rowLimitExceeded) {
+      try DelimitedTextReader.read(
+        Data("h\na\nb\nc\n".utf8), options: .init(maxRows: 2))
+    }
+    #expect(throws: DelimitedTextError.cellLimitExceeded) {
+      try DelimitedTextReader.read(
+        Data("a,b,c,d,e\n".utf8), options: .init(delimiter: ",", maxCells: 4))
+    }
+    #expect(throws: DelimitedTextError.fieldLimitExceeded) {
+      try DelimitedTextReader.read(
+        Data("abcdef\n".utf8), options: .init(maxFieldCharacters: 4))
+    }
+    let preview = try DelimitedTextReader.read(
+      Data("h\na\nb\n".utf8), options: .init(rowLimit: 1, maxRows: 1))
+    #expect(preview.rows == [["a"]])
+  }
+
   @Test("UTF-8 is kept, a leading BOM is ignored, and invalid UTF-8 falls back to Latin-1")
   func encodings() throws {
     let utf8 = try DelimitedTextReader.read(Data("caf\u{00e9},x\n1,2\n".utf8))

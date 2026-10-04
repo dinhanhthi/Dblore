@@ -15,6 +15,7 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
     case cell
     case editor
     case dataViewerEdit
+    case dataImport
   }
 
   /// Classified effect of the SQL. Nil when the row has not been classified.

@@ -14,8 +14,14 @@ struct WorkspaceCommands: Commands {
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
   @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
+  @FocusedValue(\.openTableImportAction) private var openTableImportAction
 
   var body: some Commands {
+    CommandGroup(after: .newItem) {
+      Button("Import Data...") { openTableImportAction?() }
+        .disabled(openTableImportAction == nil)
+    }
+
     // Sidebar toggle commands - only show when no document is open
     // (NotebookCommands and EditorCommands handle their own modes)
     if documentMode == nil {
@@ -72,6 +78,10 @@ struct OpenCommandPaletteActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+struct OpenTableImportActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -81,6 +91,11 @@ extension FocusedValues {
   var openCommandPaletteAction: (() -> Void)? {
     get { self[OpenCommandPaletteActionKey.self] }
     set { self[OpenCommandPaletteActionKey.self] = newValue }
+  }
+
+  var openTableImportAction: (() -> Void)? {
+    get { self[OpenTableImportActionKey.self] }
+    set { self[OpenTableImportActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

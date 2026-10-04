@@ -74,6 +74,7 @@ extension DatabaseConnectionManager {
       epoch: connectionEpoch, pendingCount: stateBefore.pending.count,
       userTxRolledBack: userTxOpen)
     lastCancel = record
+    batchCancellationGeneration &+= 1
     await AppLogger.shared.info("Cancelling the running statement", category: "Database")
     if session?.capabilities.cancelStrategy == .interrupt {
       await session?.interrupt()

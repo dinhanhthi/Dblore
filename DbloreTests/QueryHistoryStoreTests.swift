@@ -362,7 +362,7 @@ struct QueryHistoryStoreTests {
       INSERT INTO history (
         sql, executed_at, duration_ms, row_count, status,
         connection_key, connection_label, source, kind
-      ) VALUES ('SELECT kept', 1700000000, 1, 1, 'success', 'k', 'label', 'dataImport', 'read')
+      ) VALUES ('SELECT kept', 1700000000, 1, 1, 'success', 'k', 'label', 'futureSource', 'read')
       """
     )
     while try statement.step() {}

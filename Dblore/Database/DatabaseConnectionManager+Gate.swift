@@ -211,8 +211,10 @@ extension DatabaseConnectionManager {
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
+    let cancellationGeneration = batchCancellationGeneration
     return try await runStagedBatch(
-      statements, caller: caller, protectedMode: effective.protectedMode)
+      statements, caller: caller, protectedMode: effective.protectedMode,
+      cancellationGeneration: cancellationGeneration)
   }
 
   /// One result for a whole script: a single statement's result as is; otherwise the last
