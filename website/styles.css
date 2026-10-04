@@ -325,13 +325,44 @@ section p {
   cursor: zoom-in;
 }
 
+.shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.shot {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: var(--rule);
+  border-radius: var(--radius-card);
+  transition:
+    transform var(--dur-short) var(--ease-out),
+    box-shadow var(--dur-short) var(--ease-out);
+}
+
+.shot:hover img {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px oklch(0% 0 0 / 0.14);
+}
+
 .lightbox {
   width: 100vw;
   height: 100vh;
   max-width: none;
   max-height: none;
   margin: 0;
-  padding: var(--space-md);
+  padding: clamp(1rem, 5vw, 4rem);
   border: 0;
   background: transparent;
   cursor: zoom-out;
@@ -356,6 +387,58 @@ section p {
   max-height: 100%;
   object-fit: contain;
   border-radius: var(--radius-card);
+}
+
+.lightbox-arrow {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid oklch(100% 0 0 / 0.2);
+  border-radius: var(--radius-pill);
+  background: oklch(100% 0 0 / 0.1);
+  color: oklch(98% 0 0);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background var(--dur-micro) var(--ease-out);
+}
+
+.lightbox-arrow:hover {
+  background: oklch(100% 0 0 / 0.22);
+}
+
+.lightbox-arrow svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lightbox-arrow--prev {
+  left: var(--space-md);
+}
+
+.lightbox-arrow--next {
+  right: var(--space-md);
+}
+
+.lightbox-counter {
+  position: absolute;
+  bottom: var(--space-md);
+  left: 50%;
+  color: oklch(100% 0 0 / 0.7);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transform: translateX(-50%);
 }
 
 .lightbox[open]::backdrop {

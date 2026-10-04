@@ -16,7 +16,7 @@ Open http://localhost:8080.
 - `tokens.css`: design tokens (OKLCH colors, Geist fonts, spacing). `styles.css`: layout and components.
 - `site.js`: theme toggle (the saved theme is applied by an inline script in each `<head>`).
 - The app version in each page header (`.version-badge`) is read at runtime from the same-origin `appcast.xml` (highest build number) by `site.js`; the static `v0.4.0` in each page is only a fallback for no-JS, local preview or fetch failure, so no hand edit is needed on release.
-- `logo.png`, `poster.jpg`: images. `CNAME`: custom domain. `.nojekyll`: disables Jekyll.
+- `logo.png`, `poster.jpg`, `screenshots/`: images (screenshots are copied from `assets/screenshots/`). `CNAME`: custom domain. `.nojekyll`: disables Jekyll.
 
 ## Deploy
 

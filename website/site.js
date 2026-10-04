@@ -66,20 +66,55 @@
   }
 })();
 
-// Screenshot lightbox: click the poster to view it full screen; click anywhere or press Esc to close.
+// Screenshot lightbox: click the poster or a thumbnail to open a full-screen carousel. Left/Right
+// buttons or arrow keys navigate (looping); click anywhere or press Esc to close.
 (() => {
-  const trigger = document.querySelector("[data-zoom]");
-  const source = trigger?.querySelector("img");
-  if (!trigger || !source || typeof HTMLDialogElement === "undefined") return;
+  const triggers = [...document.querySelectorAll("[data-zoom]")];
+  const slides = triggers
+    .map((trigger) => trigger.querySelector("img"))
+    .filter(Boolean)
+    .map((img) => ({ src: img.src, alt: img.alt }));
+  if (!slides.length || typeof HTMLDialogElement === "undefined") return;
+
   const dialog = document.createElement("dialog");
   dialog.className = "lightbox";
-  dialog.setAttribute("aria-label", "Screenshot");
-  const image = document.createElement("img");
-  image.src = source.currentSrc || source.src;
-  image.alt = source.alt;
-  dialog.append(image);
+  dialog.setAttribute("aria-label", "Screenshot viewer");
+  dialog.innerHTML = `
+    <img alt="" />
+    <button class="lightbox-arrow lightbox-arrow--prev" type="button" aria-label="Previous screenshot">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6" /></svg>
+    </button>
+    <button class="lightbox-arrow lightbox-arrow--next" type="button" aria-label="Next screenshot">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+    </button>
+    <span class="lightbox-counter" aria-live="polite"></span>`;
+  if (slides.length < 2) {
+    dialog.querySelectorAll(".lightbox-arrow, .lightbox-counter").forEach((el) => el.remove());
+  }
   document.body.append(dialog);
+
+  const image = dialog.querySelector("img");
+  const counter = dialog.querySelector(".lightbox-counter");
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  let index = 0;
+  let preloaded = false;
+
+  const show = (next, dir = 0) => {
+    index = ((next % slides.length) + slides.length) % slides.length;
+    image.src = slides[index].src;
+    image.alt = slides[index].alt;
+    if (counter) counter.textContent = `${index + 1} / ${slides.length}`;
+    if (dir && !reduceMotion.matches) {
+      image.animate(
+        [
+          { opacity: 0, transform: `translateX(${dir * 1.75}rem)` },
+          { opacity: 1, transform: "translateX(0)" },
+        ],
+        { duration: 220, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
+      );
+    }
+  };
+
   // Play the closing animation, then close; fall back to an immediate close if it never ends.
   const close = () => {
     if (!dialog.open || dialog.hasAttribute("data-closing")) return;
@@ -94,7 +129,36 @@
     const timer = setTimeout(finish, 400);
     image.addEventListener("animationend", finish);
   };
-  trigger.addEventListener("click", () => dialog.showModal());
+
+  triggers.forEach((trigger, i) =>
+    trigger.addEventListener("click", () => {
+      show(i);
+      if (!preloaded) {
+        preloaded = true;
+        slides.forEach((slide) => (new Image().src = slide.src));
+      }
+      dialog.showModal();
+    })
+  );
+
+  for (const [selector, step] of [[".lightbox-arrow--prev", -1], [".lightbox-arrow--next", 1]]) {
+    dialog.querySelector(selector)?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      show(index + step, step);
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (!dialog.open || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      show(index + 1, 1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      show(index - 1, -1);
+    }
+  });
+
   dialog.addEventListener("click", close);
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
