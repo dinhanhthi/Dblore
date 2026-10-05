@@ -561,8 +561,10 @@ private enum BlockingRank {
     { items, query in
       if query == "block" {
         await gate.markStarted()
+        // Blocks until cancelled. A short sleep can end on its own while a loaded suite holds
+        // the test on the main actor, and then the cancel never reaches it.
         do {
-          try await Task.sleep(for: .seconds(5))
+          try await Task.sleep(for: .seconds(600))
         } catch {
           await gate.markCancelled()
         }

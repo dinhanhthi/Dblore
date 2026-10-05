@@ -450,7 +450,7 @@ struct WorkspaceHistoryTests {
   }
 
   private func waitUntil(
-    _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(2)
+    _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(30)
   ) async {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
