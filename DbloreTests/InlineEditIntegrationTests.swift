@@ -120,6 +120,28 @@ struct InlineEditIntegrationTests {
     _ = try await manager.executeInternal(#"DROP TABLE "s6_we""ird""#)
   }
 
+  @Test("A timestamptz primary key with microseconds matches its decoded row")
+  func microsecondTimestampPrimaryKey() async throws {
+    let manager = try await connect()
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("DROP TABLE IF EXISTS s6_edit_ts")
+    _ = try await manager.executeInternal(
+      "CREATE TABLE s6_edit_ts (at timestamptz PRIMARY KEY, note text)")
+    _ = try await manager.executeInternal(
+      "INSERT INTO s6_edit_ts VALUES ('2024-01-02 03:04:05.123456+00', 'x')")
+
+    let decoded = try #require(try await scalar(manager, "SELECT at FROM s6_edit_ts"))
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.s6_edit_ts", columnName: "note", newValue: "y",
+      primaryKeyColumns: ["at"], rowData: ["at": decoded])
+    #expect(statement.values.last == "2024-01-02T03:04:05.123456Z")
+    #expect(
+      try await manager.executeGatedUpdate(
+        statement, policy: open, connectionEpoch: await manager.connectionEpoch) == 1)
+    #expect(try await scalar(manager, "SELECT note FROM s6_edit_ts") == .string("y"))
+    _ = try await manager.executeInternal("DROP TABLE s6_edit_ts")
+  }
+
   @Test("Table without PK: not editable and the edit is refused before sending")
   func noPrimaryKeyRefused() async throws {
     let manager = try await connect()

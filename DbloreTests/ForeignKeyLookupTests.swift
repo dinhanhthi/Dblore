@@ -200,7 +200,7 @@ struct ForeignKeyLookupTests {
   @Test("Non-null cell values become untyped text")
   func cellValuesBecomeText() {
     let date = Date(timeIntervalSince1970: 1_700_000_000)
-    let dateText = "2023-11-14T22:13:20.000Z"
+    let dateText = "2023-11-14T22:13:20.000000Z"
     let orders = key(source: ["v"], target: ["v"])
     let cases: [(CellValue, String)] = [
       (.int(42), "42"),
@@ -217,19 +217,28 @@ struct ForeignKeyLookupTests {
     }
   }
 
-  @Test("A date keeps its milliseconds")
-  func dateKeepsFractionalSeconds() {
-    let date = Date(timeIntervalSince1970: 1_700_000_000.1234)
-    let query = ForeignKeyLookup.lookupSQL(
-      for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)
-    #expect(query?.parameters["fk1"] == .text("2023-11-14T22:13:20.123Z"))
+  @Test("A date keeps its microseconds")
+  func dateKeepsMicroseconds() {
+    #expect(
+      lookupText(Date(timeIntervalSince1970: 1_700_000_000.123456))
+        == .text("2023-11-14T22:13:20.123456Z"))
   }
 
-  @Test("A date just below a millisecond boundary rounds up")
-  func dateRoundsToNearestMillisecond() {
-    let date = Date(timeIntervalSince1970: 1_700_000_000.1229995)
-    let query = ForeignKeyLookup.lookupSQL(
-      for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)
-    #expect(query?.parameters["fk1"] == .text("2023-11-14T22:13:20.123Z"))
+  @Test("A date just below a microsecond boundary rounds up")
+  func dateRoundsToNearestMicrosecond() {
+    #expect(
+      lookupText(Date(timeIntervalSince1970: 1_700_000_000.1234998))
+        == .text("2023-11-14T22:13:20.123500Z"))
+  }
+
+  @Test("A pre-1970 date floors to the previous second")
+  func preEpochDateFloorsTheSecond() {
+    #expect(lookupText(Date(timeIntervalSince1970: -0.5)) == .text("1969-12-31T23:59:59.500000Z"))
+  }
+
+  private func lookupText(_ date: Date) -> SQLBindValue? {
+    ForeignKeyLookup.lookupSQL(
+      for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)?
+      .parameters["fk1"]
   }
 }

@@ -45,20 +45,31 @@ struct CellUpdateStatementTests {
     #expect(!statement.sql.contains("a1"))
   }
 
-  @Test("A date primary key binds with its milliseconds")
-  func datePrimaryKeyKeepsFractionalSeconds() throws {
-    let statement = try CellUpdateStatement.make(
-      qualifiedName: "public.t", columnName: "note", newValue: "x", primaryKeyColumns: ["at"],
-      rowData: ["at": .date(Date(timeIntervalSince1970: 1_700_000_000.1234))])
-    #expect(statement.values == ["x", "2023-11-14T22:13:20.123Z"])
+  @Test("A date primary key binds with its microseconds")
+  func datePrimaryKeyKeepsMicroseconds() throws {
+    #expect(try keyText(1_700_000_000.123456) == "2023-11-14T22:13:20.123456Z")
   }
 
-  @Test("A date primary key just below a millisecond boundary rounds up")
-  func datePrimaryKeyRoundsToNearestMillisecond() throws {
+  @Test("A date primary key just below a microsecond boundary rounds up")
+  func datePrimaryKeyRoundsToNearestMicrosecond() throws {
+    #expect(try keyText(1_700_000_000.1234998) == "2023-11-14T22:13:20.123500Z")
+  }
+
+  @Test("A whole-second date primary key binds six zero digits")
+  func datePrimaryKeyWholeSecond() throws {
+    #expect(try keyText(1_700_000_000) == "2023-11-14T22:13:20.000000Z")
+  }
+
+  @Test("A pre-1970 date primary key floors to the previous second")
+  func datePrimaryKeyBeforeEpoch() throws {
+    #expect(try keyText(-0.5) == "1969-12-31T23:59:59.500000Z")
+  }
+
+  private func keyText(_ secondsSince1970: TimeInterval) throws -> String? {
     let statement = try CellUpdateStatement.make(
       qualifiedName: "public.t", columnName: "note", newValue: "x", primaryKeyColumns: ["at"],
-      rowData: ["at": .date(Date(timeIntervalSince1970: 1_700_000_000.1229995))])
-    #expect(statement.values == ["x", "2023-11-14T22:13:20.123Z"])
+      rowData: ["at": .date(Date(timeIntervalSince1970: secondsSince1970))])
+    return statement.values.last ?? nil
   }
 
   @Test("No primary key is refused (no all-columns fallback)")

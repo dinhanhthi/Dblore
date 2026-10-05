@@ -85,6 +85,41 @@ struct ForeignKeyLookupIntegrationTests {
     await dropPair(parent: parent, child: child, on: manager)
   }
 
+  @Test("A timestamptz target key with microseconds finds its row", .timeLimit(.minutes(2)))
+  func microsecondTimestampTargetMatches() async throws {
+    let table = "fk_ts_\(String(UUID().uuidString.prefix(8)).lowercased())"
+    let config = ConnectionConfig(
+      host: TestDatabase.host, port: TestDatabase.port, database: TestDatabase.database,
+      username: TestDatabase.username, password: TestDatabase.password, sslMode: .disable,
+      timeoutSeconds: 30, protectionLevel: .readOnly, safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    do {
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(table) (at timestamptz PRIMARY KEY, name text)")
+      _ = try await manager.executeInternal(
+        "INSERT INTO \(table) VALUES ('2024-01-02 03:04:05.123456+00', 'micro')")
+      let decoded = try #require(
+        try await manager.executeInternal("SELECT at FROM \(table)").rows.first?.first)
+      let key = ForeignKey(
+        constraintName: "ts", sourceSchema: "public", sourceTable: "src",
+        sourceColumns: ["at"], targetSchema: "public", targetTable: table,
+        targetColumns: ["at"])
+      let query = try #require(
+        ForeignKeyLookup.lookupSQL(for: key, values: ["at": decoded], dialect: .postgresql))
+      let result = try await manager.execute(
+        userSQL: query.sql, parameters: query.parameters,
+        policy: ProtectionPolicy(protectionLevel: .readOnly))
+      #expect(result.rows.count == 1)
+      #expect(result.rows.first?.contains(.string("micro")) == true)
+    } catch {
+      _ = try? await manager.executeInternal("DROP TABLE IF EXISTS \(table)")
+      throw error
+    }
+    _ = try? await manager.executeInternal("DROP TABLE IF EXISTS \(table)")
+  }
+
   private func withPair(
     _ body: (
       NotebookViewModel, LookupHistoryRecorder, String, String

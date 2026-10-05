@@ -175,19 +175,9 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     case .double(let number): String(number)
     case .bool(let flag): flag ? "true" : "false"
     case .string(let text), .json(let text): text
-    case .date(let date): dateText(date)
+    case .date(let date): DateBindText.string(from: date)
     case .data(let data): "\\x" + data.map { String(format: "%02x", $0) }.joined()
     }
-  }
-
-  /// ISO 8601 rounded to the nearest millisecond, so a millisecond-precision timestamp matches
-  /// its row. PostgreSQL microsecond values can still miss.
-  private static func dateText(_ date: Date) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let rounded = Date(
-      timeIntervalSinceReferenceDate: (date.timeIntervalSinceReferenceDate * 1000).rounded() / 1000)
-    return formatter.string(from: rounded)
   }
 }
 
