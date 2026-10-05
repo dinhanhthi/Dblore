@@ -173,6 +173,16 @@ struct SQLSyntaxHighlighterCharacterizationTests {
     #expect(isColored(" after", Token.comment.color, in: a))
   }
 
+  @Test("comment markers inside a string stay string-colored and do not bleed past the quote")
+  func commentMarkerInsideStringIsString() {
+    let line = highlight("SELECT '-- not a comment' FROM t")
+    #expect(isColored("'-- not a comment'", Token.string.color, in: line))
+    #expect(isColored("FROM", Token.keyword.color, in: line))
+    let block = highlight("SELECT '/* not a comment' FROM t")
+    #expect(isColored("'/* not a comment'", Token.string.color, in: block))
+    #expect(isColored("FROM", Token.keyword.color, in: block))
+  }
+
   @Test("word in keyword and function sets: function wins before a parenthesis, keyword otherwise")
   func keywordFunctionPrecedence() {
     let a = highlight("SELECT LEFT(x, 1) FROM a LEFT JOIN b")
