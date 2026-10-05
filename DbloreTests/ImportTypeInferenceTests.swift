@@ -37,6 +37,8 @@ struct ImportTypeInferenceTests {
   func leadingZerosAreText() {
     let rows: [[String?]] = [["00501", "0"], ["02134", "-12"], ["007", "34"]]
     #expect(ImportTypeInference.infer(rows: rows, columnCount: 2) == [.text, .integer])
+    // A leading plus stays text on purpose; negative zero is still an integer
+    #expect(ImportTypeInference.infer(rows: [["+5", "-0"]], columnCount: 2) == [.text, .integer])
   }
 
   @Test("Database types match the inferred kind")

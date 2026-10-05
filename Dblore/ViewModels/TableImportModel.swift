@@ -84,6 +84,7 @@ final class TableImportModel {
   var hasHeader = true
   var destination: TableImportDestination = .new(schema: nil, table: "")
   var mappings: [TableImportColumnMapping] = []
+  var tables: [DatabaseTable] = []
   var previewRows: [[String?]] = []
   var progress = 0.0
   var isLoading = false
@@ -202,9 +203,10 @@ final class TableImportModel {
     progress = 0.6
     let mappings = self.mappings
     let destination = self.destination
+    let tables = self.tables
     let build = Task.detached(priority: .userInitiated) {
       try Self.buildBatch(
-        parsed: parsed, mappings: mappings, destination: destination,
+        parsed: parsed, mappings: mappings, destination: destination, tables: tables,
         dialect: dialect, connectionEpoch: connectionEpoch)
     }
     batchTask = build
@@ -294,6 +296,8 @@ final class TableImportModel {
         return try parse(data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit)
       }
       data.append(chunk)
+      // Without a new line end the delimited candidate is unchanged, so its parse would be too
+      if format != .json, !chunk.contains(where: { $0 == 10 || $0 == 13 }) { continue }
       let candidate: Data
       if format == .json {
         // A read may stop inside a UTF-8 codepoint. Parse a valid prefix so the reader
@@ -343,15 +347,43 @@ final class TableImportModel {
     }
   }
 
+  /// SQLite TEXT affinity: the declared type contains CHAR, CLOB or TEXT
+  nonisolated static func hasTextAffinity(_ declaredType: String) -> Bool {
+    let type = declaredType.uppercased()
+    return type.contains("CHAR") || type.contains("CLOB") || type.contains("TEXT")
+  }
+
+  /// Lowercased column name to declared type for an existing destination. Empty when unknown.
+  private nonisolated static func declaredTypes(
+    destination: TableImportDestination, tables: [DatabaseTable]
+  ) -> [String: String] {
+    guard !destination.createsTable else { return [:] }
+    let name = destination.table.lowercased()
+    let table = tables.first { table in
+      table.name.lowercased() == name && (destination.schema.map { $0 == table.schema } ?? true)
+    }
+    return Dictionary(
+      (table?.columns ?? []).map { ($0.name.lowercased(), $0.type) },
+      uniquingKeysWith: { first, _ in first })
+  }
+
   private nonisolated static func buildBatch(
     parsed: ParsedImportFile, mappings: [TableImportColumnMapping],
-    destination: TableImportDestination, dialect: SQLDialect, connectionEpoch: UInt64
+    destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect,
+    connectionEpoch: UInt64
   ) throws -> PendingStagedBatch {
     try Task.checkCancellation()
     let selected = mappings.enumerated().filter { $0.element.included }
     guard !selected.isEmpty else { throw TableImportError.noColumns }
+    // SQLite booleans become 1/0 unless an existing column has TEXT affinity, which may
+    // hold "true"/"false" text and so gets the file value unchanged.
+    let types = dialect == .sqlite ? declaredTypes(destination: destination, tables: tables) : [:]
     let columns = selected.map {
-      ImportSQLBuilder.Column(name: $0.element.targetName, kind: $0.element.kind)
+      let keepsText =
+        $0.element.kind == .boolean
+        && types[$0.element.targetName.lowercased()].map(hasTextAffinity) == true
+      return ImportSQLBuilder.Column(
+        name: $0.element.targetName, kind: keepsText ? .text : $0.element.kind)
     }
     var rows: [[String?]] = []
     rows.reserveCapacity(parsed.rows.count)

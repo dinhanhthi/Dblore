@@ -209,10 +209,9 @@ extension NotebookViewModel {
       let counts = try await connectionManager.executeGatedBatch(
         batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
         caller: id)
-      if batch.historySource == .dataViewerEdit {
-        dataViewer?.changeSet = nil
-        undoManager.removeAllActions()
-      }
+      if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
+      // The page reloads with the same key, so a redo would target rows this batch changed
+      if dataViewer != nil { undoManager.removeAllActions() }
       await recordExecution(
         [
           QueryHistoryOutcome(
@@ -225,7 +224,7 @@ extension NotebookViewModel {
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
         source: batch.historySource, errorMessage: message)
-      showToast(message, type: .error)
+      showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
     await onStatementsExecuted?()
@@ -251,12 +250,23 @@ extension NotebookViewModel {
   }
 
   private static func batchFailureMessage(
-    _ error: Error, ranges: [ClosedRange<Int>?]
+    _ error: Error, ranges: [ClosedRange<Int>?], detail: String? = nil
   ) -> String {
+    let detail = detail ?? error.localizedDescription
     guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
       ranges.indices.contains(index), let range = ranges[index]
-    else { return error.localizedDescription }
-    return "Rows \(range.lowerBound)–\(range.upperBound): \(error.localizedDescription)"
+    else { return detail }
+    return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+  }
+
+  /// Import errors can quote file values. The toast stays generic; the sheet shows the detail.
+  private static func batchToastMessage(
+    _ error: Error, batch: PendingStagedBatch, fullMessage: String
+  ) -> String {
+    guard batch.historySource == .dataImport else { return fullMessage }
+    if case DatabaseError.batchCancelled = error { return "Import cancelled" }
+    return batchFailureMessage(
+      error, ranges: batch.rowRanges, detail: "Import failed. See the import sheet for details.")
   }
 
   // MARK: - Private

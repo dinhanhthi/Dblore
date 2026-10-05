@@ -246,7 +246,7 @@ struct WorkspaceContainerView: View {
       if let importTabID, let viewModel = workspaceManager.viewModel(for: importTabID) {
         TableImportSheet(
           viewModel: viewModel, isPresented: $isImportPresented, isBusy: $isImportBusy,
-          initialDestination: importDestination)
+          initialDestination: importDestination, tables: workspaceManager.databaseTables)
       }
     }
     .background(HostWindowReader(reference: hostWindow))

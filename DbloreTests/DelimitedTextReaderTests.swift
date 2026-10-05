@@ -111,6 +111,12 @@ struct DelimitedTextReaderTests {
     let latin = try DelimitedTextReader.read(latin1)
     #expect(latin.columns == ["café", "x"])
     #expect(latin.rows == [["1", "2"]])
+
+    // A Latin-1 preview pins the full parse to Latin-1 even when the bytes are valid UTF-8
+    let pinned = try DelimitedTextReader.read(
+      Data("caf\u{00e9},x\n1,2\n".utf8), options: .init(encoding: .isoLatin1))
+    #expect(pinned.columns == ["caf\u{00c3}\u{00a9}", "x"])
+    #expect(pinned.encoding == .isoLatin1)
   }
 
   @Test("The row limit caps data rows and still reads the header")

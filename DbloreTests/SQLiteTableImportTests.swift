@@ -85,6 +85,62 @@ struct SQLiteTableImportTests {
     }
   }
 
+  @Test("Booleans into an existing TEXT column keep the file text", .timeLimit(.minutes(1)))
+  func existingTableBooleanText() async throws {
+    try await withDatabase { manager, viewModel in
+      _ = try await manager.executeInternal("CREATE TABLE people (name TEXT, active TEXT)")
+      let model = try await Self.model("name,active\nAda,true\nBob,false\n", extension: "csv")
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(model.mappings.map(\.kind) == [.text, .boolean])
+      model.destination = .existing(schema: nil, table: "people")
+      model.tables = try await Self.tables(manager)
+      #expect(await model.submit(to: viewModel))
+      let result = try await manager.executeInternal(
+        "SELECT name, active, typeof(active) FROM people ORDER BY name")
+      #expect(
+        result.rows == [
+          [.string("Ada"), .string("true"), .string("text")],
+          [.string("Bob"), .string("false"), .string("text")],
+        ])
+    }
+  }
+
+  @Test("Booleans into existing INTEGER and BOOLEAN columns store 1/0", .timeLimit(.minutes(1)))
+  func existingTableBooleanInteger() async throws {
+    try await withDatabase { manager, viewModel in
+      _ = try await manager.executeInternal(
+        "CREATE TABLE people (name TEXT, active INTEGER, admin BOOLEAN)")
+      let model = try await Self.model(
+        "name,active,admin\nAda,true,false\nBob,false,true\n", extension: "csv")
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(model.mappings.map(\.kind) == [.text, .boolean, .boolean])
+      model.destination = .existing(schema: nil, table: "people")
+      model.tables = try await Self.tables(manager)
+      #expect(await model.submit(to: viewModel))
+      let result = try await manager.executeInternal(
+        "SELECT name, active, typeof(active), admin, typeof(admin) FROM people ORDER BY name")
+      #expect(
+        result.rows == [
+          [.string("Ada"), .int(1), .string("integer"), .int(0), .string("integer")],
+          [.string("Bob"), .int(0), .string("integer"), .int(1), .string("integer")],
+        ])
+    }
+  }
+
+  /// Tables with columns, joined like `WorkspaceManager.loadDatabaseSchema`
+  private static func tables(
+    _ manager: DatabaseConnectionManager
+  ) async throws
+    -> [DatabaseTable]
+  {
+    var tables = try await manager.fetchTables()
+    let columns = try await manager.fetchAllColumns()
+    for index in tables.indices {
+      tables[index].columns = columns[tables[index].qualifiedName] ?? []
+    }
+    return tables
+  }
+
   @Test("Protected mode leaves imported rows pending", .timeLimit(.minutes(1)))
   func protectedImport() async throws {
     try await withDatabase(protectedMode: true) { manager, viewModel in

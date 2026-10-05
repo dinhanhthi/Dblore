@@ -263,6 +263,37 @@ struct RowStagingUndoTests {
     #expect(!viewModel.undoManager.canRedo)
   }
 
+  @Test("A successful import clears staged redo so it cannot target imported rows")
+  func importSuccessClearsTheStack() async throws {
+    let viewModel = makeViewModel()
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract())
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: ConnectionConfig(
+        host: "fake", port: 1, database: "db", username: "u", password: "p", sslMode: .disable,
+        protectionLevel: .none, safeMode: .silent, protectedMode: false))
+    let epoch = await manager.connectionEpoch
+    viewModel.connectionManager = manager
+    grouped(viewModel) {
+      _ = viewModel.stageEdit(row: 0, column: "nickname", value: .string("neo"))
+    }
+    viewModel.undoCellChange()
+    #expect(viewModel.undoManager.canRedo)
+
+    let reason = await viewModel.beginImportBatch(
+      PendingStagedBatch(
+        statements: [
+          BoundStatement(
+            sql: "INSERT INTO public.users (nickname) VALUES ($1)", values: ["a"])
+        ],
+        preview: "INSERT INTO public.users (nickname) -- 1 rows from file",
+        connectionEpoch: epoch, historySource: .dataImport, rowRanges: [1...1]))
+
+    #expect(reason == nil)
+    #expect(!viewModel.undoManager.canUndo)
+    #expect(!viewModel.undoManager.canRedo)
+  }
+
   private static let usersID = TableRef.postgresql(oid: 1)
 
   private func makeViewModel() -> NotebookViewModel {

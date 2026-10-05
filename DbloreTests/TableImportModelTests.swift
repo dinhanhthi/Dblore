@@ -257,6 +257,8 @@ struct TableImportModelTests {
     notebook.connectionConfig = config
     let viewModel = NotebookViewModel(notebook: notebook)
     viewModel.connectionManager = manager
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
     let batch = PendingStagedBatch(
       statements: [
         BoundStatement(
@@ -269,6 +271,36 @@ struct TableImportModelTests {
       rowRanges: [nil, 1...2])
     let reason = await viewModel.beginImportBatch(batch)
     #expect(reason?.contains("Rows 1–2") == true)
+    #expect(reason?.contains("UNIQUE") == true)
+    // The toast never shows server detail, which can quote file values
+    #expect(toasts.count == 1)
+    #expect(toasts.first?.contains("Rows 1–2") == true)
+    #expect(toasts.first?.contains("UNIQUE") == false)
+  }
+
+  @Test("Preview of very long records returns the same rows")
+  func longRecordPreview() async throws {
+    let rows = (0..<100).map { "\($0),\(String(repeating: "x", count: 70_000))" }
+    let url = temporaryFile("id,blob\n" + rows.joined(separator: "\n") + "\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    #expect(model.errorMessage == nil)
+    #expect(model.mappings.map(\.sourceName) == ["id", "blob"])
+    #expect(model.previewRows.count == 100)
+    #expect(model.previewRows.first?.first == "0")
+    #expect(model.previewRows.last?.first == "99")
+    #expect(model.previewRows.last?.last??.count == 70_000)
+  }
+
+  @Test("SQLite TEXT affinity follows the declared type")
+  func textAffinity() {
+    for type in ["TEXT", "varchar(10)", "CLOB", "NATIVE CHARACTER(70)"] {
+      #expect(TableImportModel.hasTextAffinity(type), "\(type)")
+    }
+    for type in ["INTEGER", "BOOLEAN", "NUMERIC", "REAL", ""] {
+      #expect(!TableImportModel.hasTextAffinity(type), "\(type)")
+    }
   }
 
   private func temporaryFile(_ contents: String, extension fileExtension: String) -> URL {

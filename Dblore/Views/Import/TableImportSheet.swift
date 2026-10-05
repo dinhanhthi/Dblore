@@ -8,6 +8,8 @@ struct TableImportSheet: View {
   @Binding var isBusy: Bool
   var initialURL: URL? = nil
   var initialDestination: TableImportDestination? = nil
+  /// Loaded schema tables. Existing-table column types decide SQLite boolean casts.
+  var tables: [DatabaseTable] = []
 
   @State private var model = TableImportModel()
   @State private var createsNewTable = true
@@ -19,6 +21,8 @@ struct TableImportSheet: View {
   private let kinds: [ImportTypeInference.Kind] = [
     .integer, .decimal, .boolean, .date, .timestamp, .text,
   ]
+  /// Row and cell caps. JSONRowsReader uses the same defaults.
+  private let limits = DelimitedTextReader.Options()
 
   var body: some View {
     GenericModal(
@@ -107,6 +111,12 @@ struct TableImportSheet: View {
         Text("Maximum import file size: 256 MB. Split larger files before importing.")
           .font(.small)
           .foregroundColor(.foregroundMuted)
+        Text(
+          "Up to \(limits.maxRows.formatted()) rows and \(limits.maxCells.formatted()) cells. "
+            + "Column types are inferred from the first 100 rows."
+        )
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
       }
     }
   }
@@ -360,6 +370,7 @@ struct TableImportSheet: View {
 
   private func importFile() {
     isBusy = true
+    model.tables = tables
     importTask = Task {
       if await model.submit(to: viewModel) {
         didSubmit = true
