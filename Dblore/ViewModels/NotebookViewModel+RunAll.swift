@@ -48,7 +48,7 @@ extension NotebookViewModel {
     }
 
     let allCells = candidates.map { offset, cell in
-      let parameters = boundParameterValues(for: cell.content) ?? [:]
+      let parameters = boundParameterValues(for: cell.content, cellId: cell.id) ?? [:]
       return RunAllCell(
         id: cell.id, number: offset + 1, query: cell.content,
         statements: Self.statementsNeedingConfirmation(

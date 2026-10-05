@@ -37,17 +37,14 @@ struct QueryParametersContent: View {
     let detected = viewModel.detectedParameterNames()
     var seen = Set(detected)
     var rows = detected.map { ParameterFormRow(name: $0, isUnused: false) }
-    for parameter in viewModel.notebook.parameters where seen.insert(parameter.name).inserted {
+    for parameter in viewModel.editorParameters where seen.insert(parameter.name).inserted {
       rows.append(ParameterFormRow(name: parameter.name, isUnused: true))
     }
     return rows
   }
 
   private var persistenceNote: String {
-    if viewModel.viewMode == .editor {
-      return "Values stay until this tab closes."
-    }
-    return "Values are saved in the notebook file."
+    "Values stay until this tab closes."
   }
 
   private func parameterRow(_ row: ParameterFormRow) -> some View {
@@ -86,7 +83,7 @@ struct QueryParametersContent: View {
   }
 
   private func storedParameter(named name: String) -> QueryParameter? {
-    viewModel.notebook.parameters.first { $0.name == name }
+    viewModel.editorParameters.first { $0.name == name }
   }
 
   private func isStoredNull(_ name: String) -> Bool {

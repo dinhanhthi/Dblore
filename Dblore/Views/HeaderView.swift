@@ -285,29 +285,31 @@ struct HeaderView: View {
               ? "Stack editor above result" : "Place editor beside result")
         }
 
-        // Parameters: named :name values, including while a data viewer is open
-        let isParametersShown =
-          viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .parameters
-        let hasMissingParameters =
-          !viewModel.notebook.parameters.bindValues(for: viewModel.detectedParameterNames())
-          .missing.isEmpty
-        Button(action: {
-          if isParametersShown {
-            viewModel.closeSidebar()
-          } else {
-            viewModel.showSidebar(content: .parameters)
+        // Parameters: named :name values in a .sql editor tab
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+          let isParametersShown =
+            viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .parameters
+          let hasMissingParameters =
+            !viewModel.editorParameters.bindValues(for: viewModel.detectedParameterNames())
+            .missing.isEmpty
+          Button(action: {
+            if isParametersShown {
+              viewModel.closeSidebar()
+            } else {
+              viewModel.showSidebar(content: .parameters)
+            }
+          }) {
+            Image(systemName: "curlybraces")
           }
-        }) {
-          Image(systemName: "curlybraces")
-        }
-        .buttonStyle(GhostButtonStyle(isActive: isParametersShown, iconOnly: true))
-        .overlay(alignment: .bottomTrailing) {
-          if hasMissingParameters {
-            Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
-              .allowsHitTesting(false)
+          .buttonStyle(GhostButtonStyle(isActive: isParametersShown, iconOnly: true))
+          .overlay(alignment: .bottomTrailing) {
+            if hasMissingParameters {
+              Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
+                .allowsHitTesting(false)
+            }
           }
+          .help("Parameters")
         }
-        .help("Parameters")
 
         // Search button (same square style as the schema visualizer's search button)
         Button(action: {

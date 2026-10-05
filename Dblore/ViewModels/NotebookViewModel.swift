@@ -28,7 +28,7 @@ enum SidebarContent: Equatable {
   case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
   case tableFilter  // Filter form of the data viewer tab
   case tableHighlight  // Highlight form of the data viewer tab
-  case parameters  // Named SQL parameters for this notebook
+  case parameters  // Named SQL parameters of the editor tab
 }
 
 /// Persists one history row. A failure stays inside the recorder and never fails the query.
@@ -48,6 +48,8 @@ class NotebookViewModel {
   }
   var connectionState: ConnectionState = .disconnected
   var selectedCellId: UUID?
+  /// Cells with an open inline parameter form. Session only; several can be open.
+  var openParameterFormCellIds: Set<UUID> = []
   var rightSidebarContent: SidebarContent?
   var isRightSidebarVisible: Bool = false
   var executionCounter: Int = 0
@@ -149,6 +151,8 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
+  /// Editor tab parameter values. Session only, never encoded, and edits are not dirty.
+  var editorParameters: [QueryParameter] = []
   /// Editor and result side by side (left/right) in this tab; starts from the user default
   var isEditorSideBySide: Bool = AppSettings.shared.editorSideBySideDefault
   var editorResult: CellResult?  // Result for editor mode (single statement or legacy)

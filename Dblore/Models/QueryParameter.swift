@@ -5,8 +5,9 @@
 
 import Foundation
 
-/// A named SQL parameter stored on a notebook.
-/// Nil `value` is SQL NULL. Names match exactly, with no case-folding.
+/// A named SQL parameter. Values are stored on a notebook cell, or held by an
+/// editor tab for the session. Nil `value` is SQL NULL. Names match exactly,
+/// with no case-folding.
 nonisolated struct QueryParameter: Codable, Equatable, Sendable {
   var name: String
   var value: String?

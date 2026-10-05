@@ -78,7 +78,7 @@ extension NotebookViewModel {
     defer { isEditorQueryRunning = false }
     // A confirmed run passes the binds captured with the dialog. Nil reads the live values.
     if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
-    let parameters = boundParameters ?? boundParameterValues(for: query)
+    let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
 
     let startTime = Date()
 

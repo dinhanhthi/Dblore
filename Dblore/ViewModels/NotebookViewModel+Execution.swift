@@ -141,7 +141,7 @@ extension NotebookViewModel {
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
 
     // The dialog still holds the binds taken when it opened. Enqueue copies them: clear() runs
-    // before the queue sends, and a later edit of notebook.parameters must not change this run.
+    // before the queue sends, and a later edit of the cell's values must not change this run.
     if queryConfirmationState.pendingCellId == id, queryConfirmationState.pendingQuery == query {
       ConfirmedParameterSnapshot.stashCell(
         self, cellId: id, query: query, values: queryConfirmationState.parameterValues)
@@ -191,7 +191,7 @@ extension NotebookViewModel {
     if snapshotted == nil, refuseMissingParameters(task.query, cellId: task.cellId) != nil {
       return notebook.cells[index].result
     }
-    let parameters = snapshotted ?? boundParameterValues(for: task.query)
+    let parameters = snapshotted ?? boundParameterValues(for: task.query, cellId: task.cellId)
 
     notebook.cells[index].isRunning = true
 

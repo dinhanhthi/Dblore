@@ -199,15 +199,18 @@ struct QueryParameterDocumentTests {
 
     let notebook = try DocumentCoder.decode(from: data)
 
-    #expect(notebook.parameters == [])
     #expect(notebook.cells[0].parameters == [])
   }
 
   @Test("Encode writes no top-level parameters key")
   func encodeWritesNoTopLevelParametersKey() throws {
     let notebook = DbloreNotebook(
-      cells: [NotebookCell(content: "SELECT :id")],
-      parameters: [QueryParameter(name: "id", value: "1")]
+      cells: [
+        NotebookCell(
+          content: "SELECT :id",
+          parameters: [QueryParameter(name: "id", value: "1")],
+          savesParameterValues: true)
+      ]
     )
 
     let data = try DocumentCoder.encode(notebook, includeResultsOnSave: false)

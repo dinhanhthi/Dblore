@@ -52,6 +52,7 @@ extension NotebookViewModel {
     let previousSelection = selectedCellId
 
     notebook.cells.remove(at: index)
+    openParameterFormCellIds.remove(id)
 
     // Update selection
     if selectedCellId == id {
@@ -139,7 +140,9 @@ extension NotebookViewModel {
     let original = notebook.cells[index]
     var duplicate = NotebookCell(
       cellType: original.cellType,
-      content: original.content
+      content: original.content,
+      parameters: original.parameters,
+      savesParameterValues: original.savesParameterValues
     )
     duplicate.result = nil
     duplicate.executionCount = nil

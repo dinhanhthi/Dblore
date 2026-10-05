@@ -15,7 +15,7 @@ extension NotebookViewModel {
     // Use per-connection SafeMode if set, otherwise fall back to global setting
     let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
     let classified = classifiedStatements(for: query)
-    let parameters = boundParameterValues(for: query) ?? [:]
+    let parameters = boundParameterValues(for: query, cellId: cellId) ?? [:]
     guard
       let statements = Self.statementsNeedingConfirmation(
         classified, safeMode: safeMode, parameters: parameters, dialect: sqlDialect)

@@ -367,6 +367,8 @@ struct WorkspaceTabContentView: View {
       }
       .onChange(of: tabId) { _, _ in
         setupDocumentChangedCallback()
+        removeKeyEventMonitor()
+        setupKeyEventMonitor()
       }
       .onChange(of: workspaceManager.connectionState) { _, _ in
         syncConnectionState()

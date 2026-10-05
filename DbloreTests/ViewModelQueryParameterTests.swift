@@ -50,7 +50,7 @@ struct ViewModelQueryParameterTests {
     #expect(session.statementBinds == [[.text(boundValue)], [.text("name-value")]])
   }
 
-  @Test("A missing parameter sends nothing and opens the Parameters sidebar")
+  @Test("A missing parameter sends nothing and opens the cell's parameter form")
   func missingParameterSendsNothing() async throws {
     let (viewModel, session) = try await connectedViewModel(sql: namedSQL)
     let cellId = viewModel.notebook.cells[0].id
@@ -61,8 +61,8 @@ struct ViewModelQueryParameterTests {
     #expect(error.contains("id"))
     #expect(error.contains("Nothing was executed"))
     #expect(session.statements.isEmpty)
-    #expect(viewModel.rightSidebarContent == .parameters)
-    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.openParameterFormCellIds.contains(cellId))
+    #expect(!viewModel.isRightSidebarVisible)
     #expect(!viewModel.queryConfirmationState.showDialog)
 
     viewModel.notebook.cells[0].content = "DELETE FROM t WHERE id = :id"
@@ -87,8 +87,8 @@ struct ViewModelQueryParameterTests {
     let viewModel = NotebookViewModel(
       notebook: DbloreNotebook(
         connectionConfig: ConnectionConfig(
-          protectionLevel: .none, safeMode: .alertRead, protectedMode: false),
-        parameters: [QueryParameter(name: "id", value: boundValue)]))
+          protectionLevel: .none, safeMode: .alertRead, protectedMode: false)))
+    viewModel.editorParameters = [QueryParameter(name: "id", value: boundValue)]
 
     #expect(!viewModel.presentConfirmationIfNeeded(for: "SELECT :id", cellId: nil))
     #expect(!viewModel.queryConfirmationState.showDialog)
@@ -106,8 +106,8 @@ struct ViewModelQueryParameterTests {
 
   @Test("An editor run passes the same binds")
   func editorRunBindsNamedParameter() async throws {
-    let (viewModel, session) = try await connectedViewModel(
-      sql: namedSQL, parameters: [QueryParameter(name: "id", value: boundValue)])
+    let (viewModel, session) = try await connectedViewModel(sql: namedSQL)
+    viewModel.editorParameters = [QueryParameter(name: "id", value: boundValue)]
     viewModel.viewMode = .editor
     viewModel.editorContent = namedSQL
     let previousSimpleMode = AppSettings.shared.editorSimpleMode
@@ -118,6 +118,26 @@ struct ViewModelQueryParameterTests {
 
     #expect(session.statements == [rewrittenSQL])
     #expect(session.statementBinds == [[.text(boundValue)]])
+  }
+
+  @Test("A missing editor parameter still opens the Parameters sidebar")
+  func editorMissingParameterOpensSidebar() async throws {
+    let (viewModel, session) = try await connectedViewModel(sql: "SELECT 1")
+    viewModel.viewMode = .editor
+    viewModel.editorContent = namedSQL
+    let previousSimpleMode = AppSettings.shared.editorSimpleMode
+    AppSettings.shared.editorSimpleMode = false
+    defer { AppSettings.shared.editorSimpleMode = previousSimpleMode }
+
+    await viewModel.runEditorQuery()
+
+    let error = try #require(viewModel.editorResult?.error)
+    #expect(error.contains("id"))
+    #expect(error.contains("Nothing was executed"))
+    #expect(session.statements.isEmpty)
+    #expect(viewModel.rightSidebarContent == .parameters)
+    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.openParameterFormCellIds.isEmpty)
   }
 
   @Test("Run All passes the same binds")
@@ -137,6 +157,7 @@ struct ViewModelQueryParameterTests {
     let (viewModel, session) = try await connectedViewModel(sql: "SELECT 1")
     viewModel.notebook.cells.append(
       NotebookCell(cellType: .sql, content: namedSQL))
+    let parameterCellId = viewModel.notebook.cells[1].id
 
     await viewModel.runAllCells(bypass: true)
     await viewModel.executionQueue.waitForIdle()
@@ -146,8 +167,8 @@ struct ViewModelQueryParameterTests {
     let error = try #require(viewModel.notebook.cells[1].result?.error)
     #expect(error.contains("id"))
     #expect(error.contains("Nothing was executed"))
-    #expect(viewModel.rightSidebarContent == .parameters)
-    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.openParameterFormCellIds.contains(parameterCellId))
+    #expect(!viewModel.isRightSidebarVisible)
   }
 
   @Test("Explain binds :id and sends nothing when the value is missing")
@@ -162,9 +183,10 @@ struct ViewModelQueryParameterTests {
     #expect(session.statements.isEmpty)
     #expect(!viewModel.queryConfirmationState.showDialog)
     #expect(viewModel.notebook.cells[0].result?.error?.contains("Nothing was executed") == true)
-    #expect(viewModel.rightSidebarContent == .parameters)
+    #expect(viewModel.openParameterFormCellIds.contains(cellId))
+    #expect(!viewModel.isRightSidebarVisible)
 
-    viewModel.notebook.parameters = [QueryParameter(name: "id", value: boundValue)]
+    viewModel.notebook.cells[0].parameters = [QueryParameter(name: "id", value: boundValue)]
     await viewModel.explain(statement: namedSQL, analyze: false, buffers: false, cellId: cellId)
     await viewModel.executionQueue.waitForIdle()
 
@@ -181,7 +203,7 @@ struct ViewModelQueryParameterTests {
     let cellId = viewModel.notebook.cells[0].id
 
     viewModel.confirmAndRunCell(id: cellId)
-    viewModel.notebook.parameters = [QueryParameter(name: "id", value: "second")]
+    viewModel.notebook.cells[0].parameters = [QueryParameter(name: "id", value: "second")]
     await viewModel.executePendingQuery()
     await viewModel.executionQueue.waitForIdle()
 
@@ -246,12 +268,14 @@ struct ViewModelQueryParameterTests {
     let secret = "secret-value"
     let (viewModel, session) = try await connectedViewModel(
       sql: namedSQL, parameters: [QueryParameter(name: "id", value: live)])
+    let cellId = viewModel.notebook.cells[0].id
     ConfirmedParameterSnapshot.armExplain(
       viewModel, sql: namedSQL, values: ["id": .text(secret)])
     viewModel.pendingExplainSQL = namedSQL
 
     viewModel.cancelPendingQuery()
-    await viewModel.runExplained(namedSQL, cellId: nil)
+    await viewModel.runExplained(namedSQL, cellId: cellId)
+    await viewModel.executionQueue.waitForIdle()
 
     #expect(session.statementBinds == [[.text(live)]])
   }
@@ -606,55 +630,68 @@ struct ViewModelQueryParameterTests {
     viewModel.updateParameter("%", for: "pat")
     viewModel.updateParameter("%", for: "pat")
 
-    #expect(viewModel.notebook.parameters == [QueryParameter(name: "pat", value: "%")])
+    #expect(viewModel.editorParameters == [QueryParameter(name: "pat", value: "%")])
     #expect(notifications == 0)
   }
 
-  @Test("A notebook parameter edit marks the file dirty")
-  func notebookParameterEditNotifies() {
-    let viewModel = parameterViewModel(value: "%")
+  @Test("A cell parameter edit marks the file dirty only when the cell saves values")
+  func cellParameterEditNotifies() {
+    let viewModel = NotebookViewModel(
+      notebook: DbloreNotebook(
+        cells: [NotebookCell(cellType: .sql, content: "SELECT :pat")]))
+    let cellId = viewModel.notebook.cells[0].id
     var notifications = 0
     viewModel.onDocumentChanged = { notifications += 1 }
 
-    viewModel.updateParameter("a", for: "pat")
+    viewModel.updateParameter("a", for: "pat", cellId: cellId)
 
+    #expect(viewModel.notebook.cells[0].parameters == [QueryParameter(name: "pat", value: "a")])
+    #expect(notifications == 0)
+
+    viewModel.setSavesParameterValues(true, cellId: cellId)
     #expect(notifications == 1)
-    #expect(viewModel.notebook.parameters == [QueryParameter(name: "pat", value: "a")])
+
+    viewModel.updateParameter("b", for: "pat", cellId: cellId)
+
+    #expect(viewModel.notebook.cells[0].parameters == [QueryParameter(name: "pat", value: "b")])
+    #expect(notifications == 2)
   }
 
-  @Test("Removing an unused parameter drops it and marks the file dirty; a used one stays")
+  @Test("Removing an unused editor parameter drops it; a used one stays")
   func removeUnusedParameter() {
-    let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(
-        cells: [NotebookCell(cellType: .sql, content: "SELECT :used")],
-        parameters: [
-          QueryParameter(name: "used", value: "1"),
-          QueryParameter(name: "old", value: "secret"),
-        ]))
+    let viewModel = NotebookViewModel(notebook: DbloreNotebook())
+    viewModel.viewMode = .editor
+    viewModel.editorContent = "SELECT :used"
+    viewModel.editorParameters = [
+      QueryParameter(name: "used", value: "1"),
+      QueryParameter(name: "old", value: "secret"),
+    ]
+    let previousSimpleMode = AppSettings.shared.editorSimpleMode
+    AppSettings.shared.editorSimpleMode = false
+    defer { AppSettings.shared.editorSimpleMode = previousSimpleMode }
     var notifications = 0
     viewModel.onDocumentChanged = { notifications += 1 }
 
     viewModel.removeUnusedParameter(named: "used")
-    #expect(viewModel.notebook.parameters.map(\.name) == ["used", "old"])
+    #expect(viewModel.editorParameters.map(\.name) == ["used", "old"])
     #expect(notifications == 0)
 
     viewModel.removeUnusedParameter(named: "old")
-    #expect(viewModel.notebook.parameters == [QueryParameter(name: "used", value: "1")])
-    #expect(notifications == 1)
+    #expect(viewModel.editorParameters == [QueryParameter(name: "used", value: "1")])
+    #expect(notifications == 0)
   }
 
   @Test("Removing an unused script parameter does not mark the file dirty")
   func removeUnusedScriptParameterDoesNotNotify() {
-    let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(
-        documentType: .script, parameters: [QueryParameter(name: "old", value: "secret")]))
+    let viewModel = NotebookViewModel(notebook: DbloreNotebook(documentType: .script))
     viewModel.viewMode = .editor
+    viewModel.editorParameters = [QueryParameter(name: "old", value: "secret")]
     var notifications = 0
     viewModel.onDocumentChanged = { notifications += 1 }
 
     viewModel.removeUnusedParameter(named: "old")
 
-    #expect(viewModel.notebook.parameters.isEmpty)
+    #expect(viewModel.editorParameters.isEmpty)
     #expect(notifications == 0)
   }
 
@@ -663,11 +700,12 @@ struct ViewModelQueryParameterTests {
     let viewModel = NotebookViewModel(
       notebook: DbloreNotebook(
         cells: [
-          NotebookCell(cellType: .sql, content: "DELETE FROM t WHERE name LIKE :pat")
+          NotebookCell(
+            cellType: .sql, content: "DELETE FROM t WHERE name LIKE :pat",
+            parameters: [QueryParameter(name: "pat", value: "%")])
         ],
         connectionConfig: ConnectionConfig(
-          protectionLevel: .none, safeMode: .safeAll, protectedMode: false),
-        parameters: [QueryParameter(name: "pat", value: "%")]))
+          protectionLevel: .none, safeMode: .safeAll, protectedMode: false)))
 
     await viewModel.runAllCells()
 
@@ -732,11 +770,12 @@ struct ViewModelQueryParameterTests {
   private func parameterViewModel(
     parameters: [QueryParameter], safeMode: SafeMode = .alertRead
   ) -> NotebookViewModel {
-    NotebookViewModel(
+    let viewModel = NotebookViewModel(
       notebook: DbloreNotebook(
         connectionConfig: ConnectionConfig(
-          protectionLevel: .none, safeMode: safeMode, protectedMode: false),
-        parameters: parameters))
+          protectionLevel: .none, safeMode: safeMode, protectedMode: false)))
+    viewModel.editorParameters = parameters
+    return viewModel
   }
 
   private func connectedViewModel(
@@ -751,9 +790,8 @@ struct ViewModelQueryParameterTests {
     try await manager.connect(config: config)
     let viewModel = NotebookViewModel(
       notebook: DbloreNotebook(
-        cells: [NotebookCell(cellType: .sql, content: sql)],
-        connectionConfig: config,
-        parameters: parameters))
+        cells: [NotebookCell(cellType: .sql, content: sql, parameters: parameters)],
+        connectionConfig: config))
     viewModel.connectionManager = manager
     viewModel.connectionState = .connected
     let session = try #require(factory.sessions.first)
