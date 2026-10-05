@@ -78,6 +78,34 @@ struct SQLiteWorkspaceTests {
     #expect(heapTarget == nil)
   }
 
+  @Test("A generated column before a plain column keeps origin ordinals on the table's columns")
+  func generatedColumnKeepsOriginIdentity() async throws {
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute(
+      "CREATE TABLE gen (id INTEGER PRIMARY KEY, g INTEGER AS (id * 2), name TEXT)")
+    try handle.execute("INSERT INTO gen (id, name) VALUES (1, 'a')")
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: sqliteConfig(path: url.path))
+    defer { Task { await manager.disconnect() } }
+    let epoch = await manager.connectionEpoch
+    let viewModel = NotebookViewModel(notebook: .newDocument())
+
+    // `name` renamed to the generated column's name is not that column
+    let aliased = "SELECT id, name AS g FROM gen"
+    let renamed = try await manager.execute(userSQL: aliased, policy: open)
+    let renamedTarget = await viewModel.editTarget(
+      for: aliased, result: renamed, connectionManager: manager, epoch: epoch)
+    #expect(renamedTarget == nil)
+
+    let plain = "SELECT id, name FROM gen"
+    let direct = try await manager.execute(userSQL: plain, policy: open)
+    let directTarget = await viewModel.editTarget(
+      for: plain, result: direct, connectionManager: manager, epoch: epoch)
+    #expect(directTarget?.primaryKeyColumns == ["id"])
+  }
+
   private func sqliteConfig(path: String) -> ConnectionConfig {
     ConnectionConfig(
       databaseType: .sqlite,

@@ -422,7 +422,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     return (columns, declared)
   }
 
-  /// `cid` from `pragma_table_info` (0-based). Nil when the column is an expression or the
+  /// `cid` from `pragma_table_xinfo` (0-based, hidden and generated columns counted, the same
+  /// ordinals as `EditTable.attributeNames`). Nil when the column is an expression or the
   /// library has no column metadata.
   private func columnOrigin(
     _ column: CopiedColumn, ordinals: inout [String: [String: Int]]
@@ -447,7 +448,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     }
     guard let db = withState({ db }) else { return [:] }
     var statement: OpaquePointer?
-    let sql = "SELECT cid, name FROM pragma_table_info(?, ?)"
+    let sql = "SELECT cid, name FROM pragma_table_xinfo(?, ?)"
     let code = sql.withCString { pointer in
       sqlite3_prepare_v2(db, pointer, -1, &statement, nil)
     }

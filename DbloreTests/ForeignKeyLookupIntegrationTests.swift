@@ -3,6 +3,7 @@
 // lookupReferencedRow sends, through the protection gate, and history does not store it.
 // A NULL component sends nothing.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -22,6 +23,35 @@ struct ForeignKeyLookupIntegrationTests {
       #expect(row.contains(.int(7)))
       #expect(row.contains(.string("ada's")))
       #expect(await settledSQL(recorder).isEmpty)
+    }
+  }
+
+  @Test(
+    "Another column aliased as the key source offers no reference; the real one does",
+    .timeLimit(.minutes(2)))
+  func aliasedColumnOffersNoReference() async throws {
+    try await withPair { viewModel, _, _, child in
+      let manager = try #require(viewModel.connectionManager)
+      let epoch = await manager.connectionEpoch
+      let policy = ProtectionPolicy(protectionLevel: .readOnly)
+      @MainActor func keyOffered(_ sql: String, column: Int) async throws -> ForeignKey? {
+        let result = try await manager.execute(userSQL: sql, policy: policy)
+        let target = await viewModel.editTarget(
+          for: sql, result: result, connectionManager: manager, epoch: epoch)
+        let coordinator = ResultGridCoordinator()
+        let cellResult = CellResult(
+          columns: result.columns, rows: result.rows, rowCount: result.rowCount,
+          editTarget: target)
+        coordinator.update(NSTableView(), result: cellResult, sortColumn: nil, ascending: true)
+        let relation = referencedRelation(dataViewer: nil, editTarget: target)
+        coordinator.relationSchema = relation?.schema
+        coordinator.relationTable = relation?.table
+        coordinator.foreignKeys = viewModel.databaseForeignKeys
+        return coordinator.referencedForeignKey(column: column)
+      }
+
+      #expect(try await keyOffered("SELECT id, id AS parent_id FROM \(child)", column: 1) == nil)
+      #expect(try await keyOffered("SELECT id, parent_id FROM \(child)", column: 1) != nil)
     }
   }
 
