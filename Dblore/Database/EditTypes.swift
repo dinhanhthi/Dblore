@@ -157,6 +157,29 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     return table.primaryKeyColumns.allSatisfy(names.contains) ? table.primaryKeyColumns : []
   }
 
+  /// Read-only relation of a single-table result for the referenced-row lookup, or nil. Every
+  /// column with an origin must come from `table`; a column of another table (a join) gives
+  /// nil. A column with no origin (an expression) or an unknown ordinal maps to no base column.
+  /// Never an edit target: editing keeps `editablePrimaryKey`.
+  static func lookupRelation(columns: [ColumnInfo], table: EditTable?) -> LookupRelation? {
+    guard let table, let schema = table.schema, let name = table.name else { return nil }
+    let tableID = table.resolvedTableRef
+    var baseColumns: [String?] = []
+    for column in columns {
+      guard let origin = column.tableOrigin else {
+        baseColumns.append(nil)
+        continue
+      }
+      guard origin.tableID == tableID else { return nil }
+      baseColumns.append(
+        Int16(exactly: origin.columnOrdinal).flatMap { table.attributeNames[$0] })
+    }
+    guard baseColumns.contains(where: { $0 != nil }) else { return nil }
+    return LookupRelation(
+      schema: schema, table: name, baseColumns: baseColumns,
+      connectionEpoch: table.connectionEpoch)
+  }
+
   /// `"name"` with embedded double quotes doubled. A NUL cannot be quoted by the dialect,
   /// so it keeps the historical quote-and-double-quotes text.
   static func quoteIdentifier(_ name: String) -> String {
@@ -207,6 +230,22 @@ nonisolated struct EditTable: Sendable, Equatable {
     tableRef ?? .postgresql(oid: oid)
   }
 }
+
+/// Read-only source relation of a single-table result for "Referenced Row...", aliased columns
+/// included. Never used to edit. Session-only (never persisted). `connectionEpoch` pins the
+/// lookup to the connection the table was resolved on.
+nonisolated struct LookupRelation: Sendable, Equatable {
+  /// Unquoted catalog schema and table name
+  let schema: String
+  let table: String
+  /// Base column name of each result column, in result order. Nil: an expression or a column
+  /// the table does not name.
+  let baseColumns: [String?]
+  let connectionEpoch: UInt64
+}
+
+/// Edit target and lookup relation resolved for one live result
+typealias ResultTargets = (editTarget: EditTarget?, lookupRelation: LookupRelation?)
 
 /// The validated target of inline edits for one live result: server-resolved qualified name,
 /// table identity and primary key columns in key order. Session-only (never persisted); each live

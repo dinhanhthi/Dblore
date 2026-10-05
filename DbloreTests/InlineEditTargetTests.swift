@@ -84,6 +84,65 @@ struct InlineEditTargetTests {
     #expect(CellUpdateStatement.editablePrimaryKey(columns: columns, table: table).isEmpty)
   }
 
+  /// `orders` with its catalog schema and name, as the server resolves it
+  private var namedOrders: EditTable {
+    EditTable(
+      oid: Self.ordersOID, attributeNames: [1: "id", 2: "customer_id", 3: "total"],
+      primaryKeyColumns: ["id"], connectionEpoch: 4, schema: "public", name: "orders")
+  }
+
+  @Test("Lookup relation: an alias maps to its base column, an expression maps to nothing")
+  func lookupRelationMapsAliases() throws {
+    // SELECT id, customer_id AS cid, 1 AS x FROM orders
+    let columns = [
+      column("id", Self.ordersOID, 1), column("cid", Self.ordersOID, 2), column("x"),
+    ]
+    let relation = try #require(
+      CellUpdateStatement.lookupRelation(columns: columns, table: namedOrders))
+    #expect(relation.schema == "public")
+    #expect(relation.table == "orders")
+    #expect(relation.baseColumns == ["id", "customer_id", nil])
+    #expect(relation.connectionEpoch == 4)
+    // Editing stays fail-closed for the same columns
+    #expect(CellUpdateStatement.editablePrimaryKey(columns: columns, table: namedOrders).isEmpty)
+  }
+
+  @Test("Lookup relation: columns from two tables, no origin, or no catalog name -> none")
+  func lookupRelationFailsClosed() {
+    let join = [column("id", Self.ordersOID, 1), column("name", Self.customersOID, 2)]
+    #expect(CellUpdateStatement.lookupRelation(columns: join, table: namedOrders) == nil)
+    #expect(
+      CellUpdateStatement.lookupRelation(columns: [column("x")], table: namedOrders) == nil)
+    let plain = [column("cid", Self.ordersOID, 2)]
+    #expect(CellUpdateStatement.lookupRelation(columns: plain, table: orders) == nil)
+    #expect(CellUpdateStatement.lookupRelation(columns: plain, table: nil) == nil)
+  }
+
+  @Test("An aliased result gets a lookup relation and still no edit target")
+  @MainActor
+  func aliasedResultLooksUpButStaysReadOnly() async {
+    let orders = TableRef.postgresql(oid: Self.ordersOID)
+    let manager = DatabaseConnectionManager()
+    var table = namedOrders
+    table.qualifiedName = "public.orders"
+    table.connectionEpoch = 0
+    await manager.seedPausedEditTable(table, id: orders)
+    let columns = [
+      ColumnInfo(
+        name: "id", type: "int4", origin: ColumnOrigin(tableID: orders, columnOrdinal: 1)),
+      ColumnInfo(
+        name: "cid", type: "int4", origin: ColumnOrigin(tableID: orders, columnOrdinal: 2)),
+      ColumnInfo(name: "x", type: "int4"),
+    ]
+    let result = QueryResult(
+      columns: columns, rows: [[.int(1), .int(9), .int(1)]], rowCount: 1, executionTime: 0)
+    let targets = await NotebookViewModel().resultTargets(
+      for: "SELECT id, customer_id AS cid, 1 AS x FROM orders", result: result,
+      connectionManager: manager, epoch: 0)
+    #expect(targets.editTarget == nil)
+    #expect(targets.lookupRelation?.baseColumns == ["id", "customer_id", nil])
+  }
+
   @Test("A pending transaction resolves the edit target from the column table identity")
   @MainActor
   func pendingTransactionResolvesColumnTableIdentity() async {

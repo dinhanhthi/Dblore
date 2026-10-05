@@ -273,7 +273,7 @@ extension NotebookViewModel {
         executionCounter += 1
 
         // Session-only, server-validated inline edit target (nil = not editable)
-        let target = await editTarget(
+        let (target, lookup) = await resultTargets(
           for: task.query, result: queryResult, connectionManager: connectionManager,
           epoch: epoch)
 
@@ -289,7 +289,8 @@ extension NotebookViewModel {
           tableName: target?.qualifiedName,
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: queryResult.affectedRows,
-          editTarget: target
+          editTarget: target,
+          lookupRelation: lookup
         ).withCapInfo(from: queryResult)
 
         carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)

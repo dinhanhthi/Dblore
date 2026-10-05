@@ -147,6 +147,9 @@ struct CellResult: Codable, Sendable {
   /// Validated inline-edit target of a live execution. Session-only: not coded, so a result
   /// read from a file is read-only until the cell is run again.
   var editTarget: EditTarget? = nil
+  /// Read-only relation for the referenced-row lookup of a live single-table result, aliased
+  /// columns included. Session-only: not coded.
+  var lookupRelation: LookupRelation? = nil
   /// Session-only (not coded, see `withCapInfo(from:)`): the row cap closed and reopened the
   /// session, statements after it did not run. A truncated result is persisted as `wasLimited`.
   var sessionReset = false
@@ -171,7 +174,8 @@ struct CellResult: Codable, Sendable {
     tableName: String? = nil,
     primaryKeyColumns: [String] = [],
     affectedRows: Int? = nil,
-    editTarget: EditTarget? = nil
+    editTarget: EditTarget? = nil,
+    lookupRelation: LookupRelation? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -185,6 +189,7 @@ struct CellResult: Codable, Sendable {
     self.primaryKeyColumns = primaryKeyColumns
     self.affectedRows = affectedRows
     self.editTarget = editTarget
+    self.lookupRelation = lookupRelation
   }
 
   /// Creates an error result

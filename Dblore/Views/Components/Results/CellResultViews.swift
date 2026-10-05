@@ -572,8 +572,10 @@ struct NotebookResultGridView: View {
           result: result, chartSpec: chartSpecBinding, mode: displayMode,
           showsPicker: showsDisplayPicker
         ) {
-          let relation = referencedRelation(dataViewer: nil, editTarget: result.editTarget)
-          let referencedRow = referencedRowHandlers(viewModel, editTarget: result.editTarget)
+          let relation = referencedRelation(
+            dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+          let referencedRow = referencedRowHandlers(
+            viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
           ResultGridView(
             result: result,
             sortColumn: sortColumn,
@@ -602,6 +604,7 @@ struct NotebookResultGridView: View {
             hideColumnTypes: AppSettings.shared.hideColumnTypes,
             relationSchema: relation?.schema,
             relationTable: relation?.table,
+            baseColumnNames: relation?.baseColumns,
             foreignKeys: viewModel.databaseForeignKeys,
             lookupDialect: viewModel.sqlDialect,
             onLookupReferencedRow: referencedRow.lookup,

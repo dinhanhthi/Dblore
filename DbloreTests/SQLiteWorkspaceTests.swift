@@ -2,6 +2,7 @@
 // A temporary SQLite file: the sidebar schema model loads its tables, a capped read keeps
 // a temp table, and inline edit follows the column-origin table identity.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -104,6 +105,55 @@ struct SQLiteWorkspaceTests {
     let directTarget = await viewModel.editTarget(
       for: plain, result: direct, connectionManager: manager, epoch: epoch)
     #expect(directTarget?.primaryKeyColumns == ["id"])
+  }
+
+  @Test("An aliased key column offers the referenced row and stays read-only")
+  func aliasedKeyColumnLooksUpReferencedRow() async throws {
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute(
+      "CREATE TABLE refs (id INTEGER PRIMARY KEY, item_id INTEGER REFERENCES items (id))")
+    try handle.execute("INSERT INTO refs (id, item_id) VALUES (1, 2)")
+    let config = sqliteConfig(path: url.path)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    let epoch = await manager.connectionEpoch
+    let viewModel = NotebookViewModel(notebook: DbloreNotebook(connectionConfig: config))
+    viewModel.connectionManager = manager
+    viewModel.connectionState = .connected
+    viewModel.databaseForeignKeys = try await manager.fetchForeignKeys()
+
+    let sql = "SELECT id, item_id AS i FROM refs"
+    let queried = try await manager.execute(userSQL: sql, policy: open)
+    let targets = await viewModel.resultTargets(
+      for: sql, result: queried, connectionManager: manager, epoch: epoch)
+    #expect(targets.editTarget == nil)
+    let lookup = try #require(targets.lookupRelation)
+    #expect(lookup.schema == "main")
+    #expect(lookup.table == "refs")
+    #expect(lookup.baseColumns == ["id", "item_id"])
+
+    let coordinator = ResultGridCoordinator()
+    let result = CellResult(
+      columns: queried.columns, rows: queried.rows, rowCount: queried.rows.count,
+      lookupRelation: lookup)
+    coordinator.update(NSTableView(), result: result, sortColumn: nil, ascending: true)
+    let relation = try #require(
+      referencedRelation(dataViewer: nil, editTarget: nil, lookupRelation: lookup))
+    coordinator.relationSchema = relation.schema
+    coordinator.relationTable = relation.table
+    coordinator.baseColumnNames = relation.baseColumns
+    coordinator.foreignKeys = viewModel.databaseForeignKeys
+    let request = try #require(coordinator.referencedRowRequest(row: 0, column: 1))
+    #expect(request.foreignKey.targetTable == "items")
+
+    let found = try await viewModel.lookupReferencedRow(
+      column: request.column, schema: request.schema, table: request.table,
+      rowColumns: request.rowColumns, values: request.values,
+      expectedEpoch: lookup.connectionEpoch)
+    #expect(found?.rows == [[.int(2), .string("b")]])
   }
 
   @Test("A generated column is read-only while the other columns of the row stay editable")

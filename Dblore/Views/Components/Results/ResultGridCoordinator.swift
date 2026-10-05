@@ -121,9 +121,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private var columnFilterPopover: NSPopover?
   /// "Referenced Row..." popover. Closed when the result identity changes.
   private var referencedRowPopover: NSPopover?
-  /// Catalog relation this grid shows. Nil for a join or a result with no edit target.
+  /// Catalog relation this grid shows. Nil for a join or a result with no relation.
   var relationSchema: String?
   var relationTable: String?
+  /// Base column of each result column of `relation` (aliases), nil entry for an expression.
+  /// Nil: the result column names are the base names. Keys match base names only.
+  var baseColumnNames: [String?]?
   var foreignKeys: [ForeignKey] = []
   /// Connection dialect. Only decides whether `ForeignKeyLookup` can follow the cell.
   var lookupDialect: SQLDialect = .postgresql
@@ -433,12 +436,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// The key that owns this result column, or nil when the relation or the key is missing.
   /// A composite key counts only when every source column is in the row.
   func referencedForeignKey(column: Int) -> ForeignKey? {
-    guard let model, let schema = relationSchema, let table = relationTable,
-      model.columns.indices.contains(column)
+    guard let schema = relationSchema, let table = relationTable,
+      let name = baseColumnName(column)
     else { return nil }
     return ForeignKeyLookup.reference(
-      for: model.columns[column].name, schema: schema, table: table, foreignKeys: foreignKeys,
-      rowColumns: model.columns.map(\.name))
+      for: name, schema: schema, table: table, foreignKeys: foreignKeys,
+      rowColumns: baseRowColumns)
+  }
+
+  /// Base name of a result column: `baseColumnNames` when set, else the column name.
+  /// Nil for a column with no base column (an expression) or out of range.
+  private func baseColumnName(_ column: Int) -> String? {
+    guard let model, model.columns.indices.contains(column) else { return nil }
+    guard let baseColumnNames else { return model.columns[column].name }
+    return baseColumnNames.indices.contains(column) ? baseColumnNames[column] : nil
+  }
+
+  /// Base names of the result columns that have one, in result order
+  private var baseRowColumns: [String] {
+    (model?.columns.indices).map { $0.compactMap(baseColumnName) } ?? []
   }
 
   /// Values for the popover. Nil when the cell has no reference. `followsReference` is false
@@ -450,10 +466,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let values = rowValues(at: row)
     let follows =
       ForeignKeyLookup.lookupSQL(for: key, values: values, dialect: lookupDialect) != nil
+    guard let name = baseColumnName(column) else { return nil }
     return ReferencedRowRequest(
-      column: model.columns[column].name, schema: schema, table: table,
-      rowColumns: model.columns.map(\.name), values: values, foreignKey: key,
-      followsReference: follows)
+      column: name, schema: schema, table: table, rowColumns: baseRowColumns, values: values,
+      foreignKey: key, followsReference: follows)
   }
 
   /// Popover anchored to the cell, the same transient popover as the column filter.
@@ -491,14 +507,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     popover.show(relativeTo: rect, of: tableView, preferredEdge: .maxY)
   }
 
-  /// Displayed row values by column name. The first column keeps a duplicated name.
+  /// Displayed row values by base column name. The first column keeps a duplicated name.
   private func rowValues(at row: Int) -> [String: CellValue] {
     guard let model, row >= 0, row < model.rowCount else { return [:] }
     let cells = model.row(at: row)
     var values: [String: CellValue] = [:]
-    for (index, column) in model.columns.enumerated() where values[column.name] == nil {
-      guard cells.indices.contains(index) else { continue }
-      values[column.name] = cells[index]
+    for index in model.columns.indices {
+      guard let name = baseColumnName(index), values[name] == nil, cells.indices.contains(index)
+      else { continue }
+      values[name] = cells[index]
     }
     return values
   }

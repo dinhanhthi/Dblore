@@ -75,9 +75,11 @@ struct ResultGridView: NSViewRepresentable {
   var highlight: TableHighlight? = nil
   /// Dialect the highlight is evaluated in (`like` case sensitivity)
   var highlightDialect: DatabaseType = .postgresql
-  /// Catalog relation for "Referenced Row...". Nil hides the item (a join, or no edit target).
+  /// Catalog relation for "Referenced Row...". Nil hides the item (a join, or no relation).
   var relationSchema: String? = nil
   var relationTable: String? = nil
+  /// Base column of each result column (aliases). Nil: the result column names are the base names.
+  var baseColumnNames: [String?]? = nil
   var foreignKeys: [ForeignKey] = []
   /// Connection dialect. Only decides whether a NULL component skips the lookup.
   var lookupDialect: SQLDialect = .postgresql
@@ -187,6 +189,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onClearHighlight = onClearHighlight
     coordinator.relationSchema = relationSchema
     coordinator.relationTable = relationTable
+    coordinator.baseColumnNames = baseColumnNames
     coordinator.foreignKeys = foreignKeys
     coordinator.lookupDialect = lookupDialect
     coordinator.onLookupReferencedRow = onLookupReferencedRow
@@ -208,27 +211,31 @@ struct ResultGridView: NSViewRepresentable {
 }
 
 /// Schema and table for "Referenced Row...". A data viewer uses its relation. Otherwise the
-/// edit target's catalog name. Nil for a join or a target that has no name.
+/// edit target's catalog name, else the lookup relation of a single-table result with aliased
+/// columns, whose `baseColumns` map the result columns. Nil for a join or a result with neither.
 func referencedRelation(
-  dataViewer: DataViewerState?, editTarget: EditTarget?
+  dataViewer: DataViewerState?, editTarget: EditTarget?, lookupRelation: LookupRelation? = nil
 ) -> (
-  schema: String, table: String
+  schema: String, table: String, baseColumns: [String?]?
 )? {
   if let dataViewer {
-    return (dataViewer.schema, dataViewer.name)
+    return (dataViewer.schema, dataViewer.name, nil)
   }
-  guard let schema = editTarget?.schema, let table = editTarget?.name else { return nil }
-  return (schema, table)
+  if let schema = editTarget?.schema, let table = editTarget?.name {
+    return (schema, table, nil)
+  }
+  guard let lookupRelation else { return nil }
+  return (lookupRelation.schema, lookupRelation.table, lookupRelation.baseColumns)
 }
 
 /// The view model's lookup and jump, unchanged. The grid does not send its own SQL.
-/// The lookup is pinned to `editTarget`'s connection epoch when the result has one.
+/// The lookup is pinned to the connection epoch of `editTarget`, else of `lookupRelation`.
 func referencedRowHandlers(
-  _ viewModel: NotebookViewModel, editTarget: EditTarget?
+  _ viewModel: NotebookViewModel, editTarget: EditTarget?, lookupRelation: LookupRelation? = nil
 ) -> (
   lookup: ReferencedRowLookup, jump: ReferencedRowJump
 ) {
-  let epoch = editTarget?.connectionEpoch
+  let epoch = editTarget?.connectionEpoch ?? lookupRelation?.connectionEpoch
   return (
     { column, schema, table, rowColumns, values in
       try await viewModel.lookupReferencedRow(

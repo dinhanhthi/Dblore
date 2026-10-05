@@ -100,7 +100,7 @@ extension NotebookViewModel {
         var results: [StatementResult] = []
         for (index, tuple) in statementResults.enumerated() {
           // Session-only inline edit target (nil = not editable)
-          let target = await editTarget(
+          let (target, lookup) = await resultTargets(
             for: tuple.queryText, result: tuple.result, connectionManager: connectionManager,
             epoch: epoch)
 
@@ -119,7 +119,8 @@ extension NotebookViewModel {
                 tableName: target?.qualifiedName,
                 primaryKeyColumns: target?.primaryKeyColumns ?? [],
                 affectedRows: tuple.result.affectedRows,
-                editTarget: target
+                editTarget: target,
+                lookupRelation: lookup
               ).withCapInfo(from: tuple.result),
               statementIndex: index
             ))
@@ -157,7 +158,7 @@ extension NotebookViewModel {
         totalExecutionTime = executionTime
 
         // Session-only inline edit target (nil = not editable)
-        let target = await editTarget(
+        let (target, lookup) = await resultTargets(
           for: query, result: result, connectionManager: connectionManager, epoch: epoch)
 
         let cellResult = CellResult(
@@ -172,7 +173,8 @@ extension NotebookViewModel {
           tableName: target?.qualifiedName,
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: result.affectedRows,
-          editTarget: target
+          editTarget: target,
+          lookupRelation: lookup
         ).withCapInfo(from: result)
 
         editorResult = cellResult

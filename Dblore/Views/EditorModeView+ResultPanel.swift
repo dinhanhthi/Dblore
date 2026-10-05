@@ -347,8 +347,10 @@ struct EditorResultGridView: View {
         showsPicker: showsDisplayPicker
       ) {
         let relation = referencedRelation(
-          dataViewer: viewModel.dataViewer, editTarget: result.editTarget)
-        let referencedRow = referencedRowHandlers(viewModel, editTarget: result.editTarget)
+          dataViewer: viewModel.dataViewer, editTarget: result.editTarget,
+          lookupRelation: result.lookupRelation)
+        let referencedRow = referencedRowHandlers(
+          viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
         ResultGridView(
           result: result,
           sortColumn: sortColumn,
@@ -426,6 +428,7 @@ struct EditorResultGridView: View {
           highlightDialect: dialect,
           relationSchema: relation?.schema,
           relationTable: relation?.table,
+          baseColumnNames: relation?.baseColumns,
           foreignKeys: viewModel.databaseForeignKeys,
           lookupDialect: viewModel.sqlDialect,
           onLookupReferencedRow: referencedRow.lookup,

@@ -27,31 +27,52 @@ struct ForeignKeyLookupIntegrationTests {
   }
 
   @Test(
-    "Another column aliased as the key source offers no reference; the real one does",
+    "An aliased key column offers its reference and finds the row; a fake alias offers none",
     .timeLimit(.minutes(2)))
-  func aliasedColumnOffersNoReference() async throws {
-    try await withPair { viewModel, _, _, child in
+  func aliasedColumnFollowsItsBaseColumn() async throws {
+    try await withPair { viewModel, recorder, _, child in
       let manager = try #require(viewModel.connectionManager)
       let epoch = await manager.connectionEpoch
       let policy = ProtectionPolicy(protectionLevel: .readOnly)
-      @MainActor func keyOffered(_ sql: String, column: Int) async throws -> ForeignKey? {
+      @MainActor func offered(
+        _ sql: String, column: Int
+      ) async throws -> (request: ReferencedRowRequest?, targets: ResultTargets) {
         let result = try await manager.execute(userSQL: sql, policy: policy)
-        let target = await viewModel.editTarget(
+        let targets = await viewModel.resultTargets(
           for: sql, result: result, connectionManager: manager, epoch: epoch)
         let coordinator = ResultGridCoordinator()
         let cellResult = CellResult(
           columns: result.columns, rows: result.rows, rowCount: result.rowCount,
-          editTarget: target)
+          editTarget: targets.editTarget, lookupRelation: targets.lookupRelation)
         coordinator.update(NSTableView(), result: cellResult, sortColumn: nil, ascending: true)
-        let relation = referencedRelation(dataViewer: nil, editTarget: target)
+        let relation = referencedRelation(
+          dataViewer: nil, editTarget: targets.editTarget, lookupRelation: targets.lookupRelation)
         coordinator.relationSchema = relation?.schema
         coordinator.relationTable = relation?.table
+        coordinator.baseColumnNames = relation?.baseColumns
         coordinator.foreignKeys = viewModel.databaseForeignKeys
-        return coordinator.referencedForeignKey(column: column)
+        return (coordinator.referencedRowRequest(row: 0, column: column), targets)
       }
 
-      #expect(try await keyOffered("SELECT id, id AS parent_id FROM \(child)", column: 1) == nil)
-      #expect(try await keyOffered("SELECT id, parent_id FROM \(child)", column: 1) != nil)
+      let fake = try await offered("SELECT id, id AS parent_id FROM \(child)", column: 1)
+      #expect(fake.request == nil)
+      #expect(fake.targets.editTarget == nil)
+      #expect(try await offered("SELECT id, parent_id FROM \(child)", column: 1).request != nil)
+
+      let renamed = try await offered(
+        "SELECT id, parent_id AS p, 1 AS one FROM \(child)", column: 1)
+      #expect(renamed.targets.editTarget == nil)
+      #expect(renamed.targets.lookupRelation?.baseColumns == ["id", "parent_id", nil])
+      let aliased = try #require(renamed.request)
+      #expect(aliased.column == "parent_id")
+      #expect(aliased.values["parent_id"] == .int(7))
+      let handlers = referencedRowHandlers(
+        viewModel, editTarget: nil, lookupRelation: renamed.targets.lookupRelation)
+      let found = try await handlers.lookup(
+        aliased.column, aliased.schema, aliased.table, aliased.rowColumns, aliased.values)
+      #expect(found?.rows.count == 1)
+      #expect(found?.rows.first?.contains(.string("ada's")) == true)
+      #expect(await settledSQL(recorder).isEmpty)
     }
   }
 

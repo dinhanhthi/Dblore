@@ -115,6 +115,66 @@ struct ResultGridCoordinatorTests {
     #expect(!join.contains("Referenced Row..."))
   }
 
+  /// `SELECT id, customer_id AS cid, total AS customer_id, tenant AS t FROM orders`
+  private func aliasedGrid() -> ResultGridCoordinator {
+    let aliased = CellResult(
+      columns: ["id", "cid", "customer_id", "t"].map { ColumnInfo(name: $0, type: "int4") },
+      rows: [[.int(1), .int(9), .int(500), .int(3)]], rowCount: 1)
+    let coordinator = ResultGridCoordinator()
+    coordinator.update(NSTableView(), result: aliased, sortColumn: nil, ascending: true)
+    coordinator.relationSchema = "public"
+    coordinator.relationTable = "orders"
+    coordinator.baseColumnNames = ["id", "customer_id", "total", "tenant"]
+    return coordinator
+  }
+
+  private let customerKey = ForeignKey(
+    constraintName: "orders_customer", sourceSchema: "public", sourceTable: "orders",
+    sourceColumns: ["customer_id"], targetSchema: "public", targetTable: "customers",
+    targetColumns: ["id"])
+
+  @Test("An aliased key column offers its reference under the base column name")
+  func aliasedColumnOffersReference() throws {
+    let coordinator = aliasedGrid()
+    coordinator.foreignKeys = [customerKey]
+    #expect(coordinator.referencedForeignKey(column: 1)?.constraintName == "orders_customer")
+    let request = try #require(coordinator.referencedRowRequest(row: 0, column: 1))
+    #expect(request.column == "customer_id")
+    #expect(request.values["customer_id"] == .int(9))
+    #expect(request.foreignKey.targetTable == "customers")
+    #expect(request.followsReference)
+    let query = try #require(
+      ForeignKeyLookup.lookupSQL(
+        for: request.foreignKey, values: request.values, dialect: .postgresql))
+    #expect(query.parameters["fk1"] == .text("9"))
+  }
+
+  @Test("A column renamed to a key column's name is not that key")
+  func renamedColumnIsNotTheKey() {
+    let coordinator = aliasedGrid()
+    coordinator.foreignKeys = [customerKey]
+    // Column 2 is `total AS customer_id`
+    #expect(coordinator.referencedForeignKey(column: 2) == nil)
+    #expect(coordinator.referencedRowRequest(row: 0, column: 2) == nil)
+  }
+
+  @Test("A composite key needs every source column through the base names")
+  func compositeKeyThroughAliases() {
+    let coordinator = aliasedGrid()
+    let pair = ForeignKey(
+      constraintName: "orders_pair", sourceSchema: "public", sourceTable: "orders",
+      sourceColumns: ["customer_id", "tenant"], targetSchema: "public", targetTable: "accounts",
+      targetColumns: ["id", "tenant"])
+    coordinator.foreignKeys = [pair]
+    #expect(coordinator.referencedForeignKey(column: 1)?.constraintName == "orders_pair")
+    #expect(coordinator.referencedForeignKey(column: 3)?.constraintName == "orders_pair")
+    #expect(coordinator.referencedRowRequest(row: 0, column: 3)?.values["tenant"] == .int(3))
+
+    coordinator.baseColumnNames = ["id", "customer_id", "total", nil]
+    #expect(coordinator.referencedForeignKey(column: 1) == nil)
+    #expect(coordinator.referencedForeignKey(column: 3) == nil)
+  }
+
   @Test("A NULL component stays on the menu and is not a lookup")
   func nullComponentIsNotALookup() {
     let (coordinator, _) = makeGrid(sortColumn: nil)

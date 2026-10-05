@@ -42,6 +42,12 @@ extension ColumnInfo {
     }
     self.init(name: name, type: type, origin: columnOrigin)
   }
+
+  /// `origin` when the column was read from a table. Nil for an expression, which PostgreSQL
+  /// describes with table OID 0.
+  nonisolated var tableOrigin: ColumnOrigin? {
+    origin?.tableID == .postgresql(oid: 0) ? nil : origin
+  }
 }
 
 // MARK: - PostgreSQL Type Mapping & Parsing

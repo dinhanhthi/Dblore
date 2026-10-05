@@ -55,18 +55,33 @@ extension NotebookViewModel {
     for query: String, result: QueryResult, connectionManager: DatabaseConnectionManager,
     epoch: UInt64
   ) async -> EditTarget? {
+    await resultTargets(
+      for: query, result: result, connectionManager: connectionManager, epoch: epoch
+    ).editTarget
+  }
+
+  /// `editTarget(for:)` plus the read-only lookup relation from the same resolved table: columns
+  /// with an origin must all name that table, aliased and expression columns allowed
+  /// (`CellUpdateStatement.lookupRelation`). The edit target keeps its own stricter checks.
+  func resultTargets(
+    for query: String, result: QueryResult, connectionManager: DatabaseConnectionManager,
+    epoch: UInt64
+  ) async -> ResultTargets {
     guard !result.columns.isEmpty, let relation = CellUpdateStatement.singleRelation(in: query),
-      let tableID = Self.columnTableID(result.columns),
+      let tableID = Self.originTableID(result.columns),
       let table = await editTable(relation, tableID: tableID, connectionManager),
       table.connectionEpoch == epoch,
       CellUpdateStatement.isServerQualifiedName(table.qualifiedName)
-    else { return nil }
+    else { return (nil, nil) }
+    let lookup = CellUpdateStatement.lookupRelation(columns: result.columns, table: table)
+    guard Self.columnTableID(result.columns) == tableID else { return (nil, lookup) }
     let primaryKey = CellUpdateStatement.editablePrimaryKey(columns: result.columns, table: table)
-    guard !primaryKey.isEmpty else { return nil }
-    return EditTarget(
+    guard !primaryKey.isEmpty else { return (nil, lookup) }
+    let target = EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
       name: table.name, generatedColumns: table.generatedColumns)
+    return (target, lookup)
   }
 
   /// The one table identity shared by every column, or nil when any column came from elsewhere.
@@ -75,6 +90,13 @@ extension NotebookViewModel {
       columns.allSatisfy({ $0.origin?.tableID == tableID })
     else { return nil }
     return tableID
+  }
+
+  /// The one table identity shared by the columns read from a table (`tableOrigin`), or nil
+  /// when there is none or more than one.
+  static func originTableID(_ columns: [ColumnInfo]) -> TableRef? {
+    let tableIDs = Set(columns.compactMap(\.tableOrigin?.tableID))
+    return tableIDs.count == 1 ? tableIDs.first : nil
   }
 
   /// `relation` resolved by the server, or, while the app transaction is pending (no catalog
@@ -92,15 +114,18 @@ extension NotebookViewModel {
     }
   }
 
-  /// The connection changed (connect/disconnect): no displayed result stays editable, and the
-  /// open sidebar cell or a pending edit can no longer be sent. Results stay displayed.
+  /// The connection changed (connect/disconnect): no displayed result stays editable or offers
+  /// a referenced-row lookup, and the open sidebar cell or a pending edit can no longer be sent.
+  /// Results stay displayed.
   func invalidateEditTargets() {
     for index in notebook.cells.indices {
       notebook.cells[index].result?.editTarget = nil
+      notebook.cells[index].result?.lookupRelation = nil
       notebook.cells[index].statementResults = notebook.cells[index].statementResults.map(
         Self.withoutEditTarget)
     }
     editorResult?.editTarget = nil
+    editorResult?.lookupRelation = nil
     editorStatementResults = editorStatementResults.map(Self.withoutEditTarget)
     cellDetailEditTarget = nil
   }
@@ -109,6 +134,7 @@ extension NotebookViewModel {
   {
     var result = statement.result
     result.editTarget = nil
+    result.lookupRelation = nil
     return StatementResult(
       id: statement.id, queryText: statement.queryText, result: result,
       statementIndex: statement.statementIndex)
