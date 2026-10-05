@@ -79,7 +79,9 @@ struct EditTargetConnectionEpochTests {
   private func result(_ target: EditTarget) -> CellResult {
     CellResult(
       columns: [ColumnInfo(name: "id", type: "int4")], rows: [[.int(1)]], rowCount: 1,
-      tableName: target.qualifiedName, primaryKeyColumns: ["id"], editTarget: target)
+      tableName: target.qualifiedName, primaryKeyColumns: ["id"], editTarget: target,
+      lookupRelation: LookupRelation(
+        schema: "public", table: "users", baseColumns: ["id"], connectionEpoch: 0))
   }
 
   private func seed(_ viewModel: NotebookViewModel) {
@@ -97,14 +99,16 @@ struct EditTargetConnectionEpochTests {
     viewModel.cellDetailEditTarget = target
   }
 
+  /// Also checks the lookup relation: the FK jump does not pin the connection epoch.
   private func hasNoEditTarget(_ viewModel: NotebookViewModel) -> Bool {
-    let cellTargets = viewModel.notebook.cells.flatMap { cell in
-      [cell.result?.editTarget] + cell.statementResults.map(\.result.editTarget)
+    let cellResults = viewModel.notebook.cells.flatMap { cell in
+      [cell.result] + cell.statementResults.map { Optional($0.result) }
     }
-    let editorTargets =
-      [viewModel.editorResult?.editTarget]
-      + viewModel.editorStatementResults.map(\.result.editTarget)
-    return (cellTargets + editorTargets).allSatisfy { $0 == nil }
+    let editorResults =
+      [viewModel.editorResult] + viewModel.editorStatementResults.map { Optional($0.result) }
+    return (cellResults + editorResults).allSatisfy {
+      $0?.editTarget == nil && $0?.lookupRelation == nil
+    }
       && viewModel.cellDetailEditTarget == nil
   }
 
