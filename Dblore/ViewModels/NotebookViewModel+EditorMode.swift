@@ -44,6 +44,7 @@ extension NotebookViewModel {
       showToast(message, type: .error)
       return
     }
+    if refuseMissingParameters(query, cellId: nil) != nil { return }
 
     // Safe Mode: confirm based on every statement (see statementsNeedingConfirmation)
     if presentConfirmationIfNeeded(for: query, cellId: nil) { return }
@@ -54,7 +55,9 @@ extension NotebookViewModel {
   /// Execute the pending editor query after confirmation
   func executeConfirmedEditorQuery() async {
     guard !queryConfirmationState.pendingQuery.isEmpty else { return }
-    await executeEditorQuery(queryConfirmationState.pendingQuery)
+    let query = queryConfirmationState.pendingQuery
+    let parameters = queryConfirmationState.parameterValues
+    await executeEditorQuery(query, parameters: parameters)
     queryConfirmationState.clear()
   }
 
@@ -62,7 +65,8 @@ extension NotebookViewModel {
   /// `source` is `.editor` for a user run and `.internal` for a data-viewer page, which is not
   /// recorded.
   func executeEditorQuery(
-    _ query: String, maxRows: Int? = nil, source: QueryHistoryRecordSource = .editor
+    _ query: String, maxRows: Int? = nil, source: QueryHistoryRecordSource = .editor,
+    parameters boundParameters: [String: SQLBindValue]? = nil
   ) async {
     guard let connectionManager = connectionManager else {
       showToast("No database connection available", type: .error)
@@ -72,6 +76,9 @@ extension NotebookViewModel {
     // No client-side timeout: the server `statement_timeout` is the brake, Cancel stops it
     isEditorQueryRunning = true
     defer { isEditorQueryRunning = false }
+    // A confirmed run passes the binds captured with the dialog. Nil reads the live values.
+    if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
+    let parameters = boundParameters ?? boundParameterValues(for: query)
 
     let startTime = Date()
 
@@ -84,7 +91,7 @@ extension NotebookViewModel {
         let (statementResults, totalTime) =
           try await connectionManager
           .executeDetailed(
-            userSQL: query, policy: protectionPolicy,
+            userSQL: query, parameters: parameters, policy: protectionPolicy,
             maxRows: maxRows ?? effectiveRowCap, caller: id)
 
         totalExecutionTime = totalTime
@@ -139,7 +146,8 @@ extension NotebookViewModel {
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         let epoch = await connectionManager.connectionEpoch
         let result = try await connectionManager.execute(
-          userSQL: query, policy: protectionPolicy, maxRows: maxRows, caller: id)
+          userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
+          caller: id)
 
         let executionTime = Date().timeIntervalSince(startTime)
 

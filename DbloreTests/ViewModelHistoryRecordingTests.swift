@@ -1,6 +1,6 @@
 // ViewModelHistoryRecordingTests.swift
 // Query history recording: one entry per user statement, never internal queries,
-// password statements, or a disabled history setting.
+// password statements, or a disabled history setting. Kind follows the SQL text.
 
 import Foundation
 import Testing
@@ -107,6 +107,54 @@ struct ViewModelHistoryRecordingTests {
         source: .cell)
 
       #expect(await recorder.entries.isEmpty)
+    }
+  }
+
+  @Test("SELECT, UPDATE, CREATE, and a write-then-read script get read, write, schema, write")
+  func statementKindFollowsClassification() async throws {
+    try await withViewModel { viewModel, recorder in
+      await viewModel.recordExecution(
+        [
+          outcome("SELECT 1"),
+          outcome("UPDATE t SET n = 1"),
+          outcome("CREATE TABLE t (id int)"),
+          outcome("UPDATE t SET n = 1; SELECT a"),
+        ],
+        source: .cell)
+
+      let entries = await recorder.entries
+      #expect(entries.map(\.kind) == [.read, .write, .schema, .write])
+      #expect(entries.count == 4)
+    }
+  }
+
+  @Test("Blank and comment-only SQL is stored with no kind")
+  func blankAndCommentStayUnclassified() async throws {
+    try await withViewModel { viewModel, recorder in
+      await viewModel.recordExecution(
+        [outcome("   "), outcome("-- only")],
+        source: .editor)
+
+      let entries = await recorder.entries
+      #expect(entries.map(\.sql) == ["   ", "-- only"])
+      #expect(entries.allSatisfy { $0.kind == nil })
+    }
+  }
+
+  @Test("PRAGMA kind follows the connection dialect")
+  func pragmaKindFollowsDialect() async throws {
+    try await withViewModel { viewModel, recorder in
+      var config = try #require(viewModel.notebook.connectionConfig)
+      config.databaseType = .sqlite
+      viewModel.notebook.connectionConfig = config
+      await viewModel.recordExecution([outcome("PRAGMA foreign_keys")], source: .editor)
+
+      #expect(await recorder.entries.first?.kind == .read)
+    }
+    try await withViewModel { viewModel, recorder in
+      await viewModel.recordExecution([outcome("PRAGMA foreign_keys")], source: .editor)
+
+      #expect(await recorder.entries.first?.kind == .other)
     }
   }
 

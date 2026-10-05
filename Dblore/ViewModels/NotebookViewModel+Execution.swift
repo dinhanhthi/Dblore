@@ -4,6 +4,117 @@
 //
 
 import Foundation
+import os
+
+/// Binds captured when a confirmation dialog is created, sent later instead of live parameters.
+/// Cell runs copy the dialog snapshot in `runCell` (state is cleared after enqueue). Explain
+/// copies it when the dialog is shown, because confirmation clears state before `runExplained`.
+/// The maps are static, so a tab close clears them from `deinit` (not the main actor). A lock
+/// covers that and every later read.
+nonisolated enum ConfirmedParameterSnapshot {
+  private struct CellBind: Sendable {
+    var query: String
+    var values: [String: SQLBindValue]
+  }
+
+  private struct ExplainBind: Sendable {
+    var sql: String
+    var values: [String: SQLBindValue]
+  }
+
+  private struct Store: Sendable {
+    var cells: [ObjectIdentifier: [UUID: CellBind]] = [:]
+    var explains: [ObjectIdentifier: ExplainBind] = [:]
+  }
+
+  private static let store = OSAllocatedUnfairLock(initialState: Store())
+
+  /// Drops every snapshot for `owner`.
+  static func reset(_ owner: ObjectIdentifier) {
+    store.withLock { state in
+      state.cells[owner] = nil
+      state.explains[owner] = nil
+    }
+  }
+
+  /// Drops the explain snapshot and any cell snapshot that is not still queued.
+  static func release(_ owner: ObjectIdentifier, keeping cellIds: Set<UUID>) {
+    store.withLock { state in
+      state.explains[owner] = nil
+      guard var map = state.cells[owner] else { return }
+      map = map.filter { cellIds.contains($0.key) }
+      state.cells[owner] = map.isEmpty ? nil : map
+    }
+  }
+
+  @MainActor
+  static func stashCell(
+    _ owner: NotebookViewModel, cellId: UUID, query: String, values: [String: SQLBindValue]
+  ) {
+    let key = ObjectIdentifier(owner)
+    store.withLock { state in
+      var map = state.cells[key] ?? [:]
+      map[cellId] = CellBind(query: query, values: values)
+      state.cells[key] = map
+    }
+  }
+
+  /// Removes the entry either way. A different query must not keep the old binds.
+  @MainActor
+  static func takeCell(
+    _ owner: NotebookViewModel, cellId: UUID, query: String
+  ) -> [String: SQLBindValue]? {
+    let key = ObjectIdentifier(owner)
+    return store.withLock { state in
+      guard var map = state.cells[key], let armed = map.removeValue(forKey: cellId) else {
+        return nil
+      }
+      state.cells[key] = map.isEmpty ? nil : map
+      guard armed.query == query else { return nil }
+      return armed.values
+    }
+  }
+
+  /// Drops a snapshot a cancelled run left behind, so the next unconfirmed run reads live values.
+  @MainActor
+  static func dropCell(_ owner: NotebookViewModel, cellId: UUID) {
+    let key = ObjectIdentifier(owner)
+    store.withLock { state in
+      guard var map = state.cells[key] else { return }
+      map[cellId] = nil
+      state.cells[key] = map.isEmpty ? nil : map
+    }
+  }
+
+  @MainActor
+  static func armExplain(
+    _ owner: NotebookViewModel, sql: String, values: [String: SQLBindValue]
+  ) {
+    let key = ObjectIdentifier(owner)
+    store.withLock { state in
+      state.explains[key] = ExplainBind(sql: sql, values: values)
+    }
+  }
+
+  @MainActor
+  static func disarmExplain(_ owner: NotebookViewModel) {
+    let key = ObjectIdentifier(owner)
+    store.withLock { state in
+      state.explains[key] = nil
+    }
+  }
+
+  /// Removes the entry either way. A different script must not keep the old binds.
+  @MainActor
+  static func takeExplain(_ owner: NotebookViewModel, sql: String) -> [String: SQLBindValue]? {
+    let key = ObjectIdentifier(owner)
+    return store.withLock { state in
+      guard let armed = state.explains.removeValue(forKey: key) else { return nil }
+      guard armed.sql == sql else { return nil }
+      return armed.values
+    }
+  }
+}
 
 // MARK: - Cell Execution
 
@@ -26,13 +137,17 @@ extension NotebookViewModel {
       return
     }
 
-    // IMPORTANT: Force blur to ensure text content is saved before execution
-    // This is needed because text binding only updates on blur (to prevent undo/redo issues)
+    // Resign first responder. textDidChange already wrote the binding, so the cell content is current.
     NotificationCenter.default.post(name: .unfocusEditor, object: nil)
 
-    // Give a tiny delay to allow the blur callback to update the binding
-    // This ensures cell.content is up-to-date before we execute the query
-    try? await Task.sleep(for: .milliseconds(50))
+    // The dialog still holds the binds taken when it opened. Enqueue copies them: clear() runs
+    // before the queue sends, and a later edit of notebook.parameters must not change this run.
+    if queryConfirmationState.pendingCellId == id, queryConfirmationState.pendingQuery == query {
+      ConfirmedParameterSnapshot.stashCell(
+        self, cellId: id, query: query, values: queryConfirmationState.parameterValues)
+    } else {
+      ConfirmedParameterSnapshot.dropCell(self, cellId: id)
+    }
 
     // Enqueue the cell execution
     executionQueue.enqueue(cellId: id, query: query)
@@ -40,6 +155,9 @@ extension NotebookViewModel {
 
   /// Internal method to execute a task (called by ExecutionQueue)
   func executeTask(_ task: ExecutionTask) async -> CellResult? {
+    // Returns before takeCell still have to drop the stash (missing cell, no connection,
+    // another tab's transaction, a refused batch, or a cancel that never reached takeCell).
+    defer { ConfirmedParameterSnapshot.dropCell(self, cellId: task.cellId) }
     guard let queuedIndex = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
@@ -63,6 +181,17 @@ extension NotebookViewModel {
     guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
+    let snapshotted = ConfirmedParameterSnapshot.takeCell(
+      self, cellId: task.cellId, query: task.query)
+    // Cancelled during admission: the stash may already have been dropped. Do not turn that
+    // into a missing-parameter error, and do not send.
+    if Task.isCancelled {
+      return nil
+    }
+    if snapshotted == nil, refuseMissingParameters(task.query, cellId: task.cellId) != nil {
+      return notebook.cells[index].result
+    }
+    let parameters = snapshotted ?? boundParameterValues(for: task.query)
 
     notebook.cells[index].isRunning = true
 
@@ -91,8 +220,8 @@ extension NotebookViewModel {
       if connectionManager.hasMultipleStatements(task.query) {
         let detailed = try await Task {
           try await connectionManager.executeDetailed(
-            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
-            expectedEpoch: expectedEpoch)
+            userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
+            caller: caller, expectedEpoch: expectedEpoch)
         }.value
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
@@ -137,8 +266,8 @@ extension NotebookViewModel {
         let epoch = await connectionManager.connectionEpoch
         let queryResult = try await Task {
           try await connectionManager.execute(
-            userSQL: task.query, policy: policy, maxRows: maxRows, caller: caller,
-            expectedEpoch: expectedEpoch)
+            userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
+            caller: caller, expectedEpoch: expectedEpoch)
         }.value
 
         executionCounter += 1

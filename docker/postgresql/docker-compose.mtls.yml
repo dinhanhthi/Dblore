@@ -1,0 +1,37 @@
+name: dblore-mtls
+
+services:
+  postgres-mtls:
+    image: postgres:16-alpine
+    container_name: dblore-postgres-mtls
+    environment:
+      POSTGRES_DB: dblore_mtls
+      POSTGRES_USER: dblore_mtls
+      POSTGRES_PASSWORD: dblore123
+    ports:
+      - "${MTLS_POSTGRES_PORT:-5436}:5432"
+    volumes:
+      - postgres_mtls_data:/var/lib/postgresql/data
+      - ./data/mtls/server:/mtls:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /tmp/dblore-mtls
+        cp /mtls/* /tmp/dblore-mtls/
+        chown -R postgres:postgres /tmp/dblore-mtls
+        chmod 600 /tmp/dblore-mtls/server.key
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/tmp/dblore-mtls/server.crt \
+          -c ssl_key_file=/tmp/dblore-mtls/server.key \
+          -c ssl_ca_file=/tmp/dblore-mtls/ca.crt \
+          -c hba_file=/tmp/dblore-mtls/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dblore_mtls -d dblore_mtls"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+volumes:
+  postgres_mtls_data:
+    name: dblore-postgres-mtls-data

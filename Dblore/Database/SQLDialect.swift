@@ -122,8 +122,16 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
+  /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:
+  /// every `\` becomes `\\` and every `'` becomes `''`, so those characters stay
+  /// data with `standard_conforming_strings` on or off. SQLite never uses `E`.
   private func quoteLiteral(_ text: String) -> String {
-    "'" + text.replacingOccurrences(of: "'", with: "''") + "'"
+    let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
+    guard engine == .postgresql, text.contains("\\") else {
+      return "'\(doubledQuotes)'"
+    }
+    let escaped = doubledQuotes.replacingOccurrences(of: "\\", with: "\\\\")
+    return "E'\(escaped)'"
   }
 
   private func doubleLiteral(_ number: Double) -> String {

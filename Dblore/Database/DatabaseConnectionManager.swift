@@ -22,6 +22,8 @@ actor DatabaseConnectionManager {
     return PostgresSchemaIntrospector()
   }
   private(set) var config: ConnectionConfig?
+  /// PEM for an unremembered connection, owned only while this actor's session is active.
+  var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -39,6 +41,10 @@ actor DatabaseConnectionManager {
   var transactionEndHook: (@Sendable (TransactionEndKind) async -> Void)?
   /// Test hook awaited at the `ScriptCheckpoint`s of `runUserStatements`; nil in the app
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
+  /// Test hook after a batch statement returns, before the next one is sent.
+  var batchCheckpointHook: (@Sendable (Int) async -> Void)?
+  /// Advances when Cancel is requested, even if SQLite's interrupt misses between statements.
+  var batchCancellationGeneration: UInt64 = 0
   /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
   /// Nil until a file grant is stored. Must not call back into this actor.
   var sqliteFileAccessRelease: (@Sendable () -> Void)?
@@ -100,6 +106,7 @@ actor DatabaseConnectionManager {
   /// Connect to PostgreSQL. The session is published only after its brakes are applied, so
   /// no user statement can run before the timeouts are set.
   func connect(config: ConnectionConfig) async throws {
+    let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
@@ -143,6 +150,9 @@ actor DatabaseConnectionManager {
 
     session = opening
     self.config = prepared.config
+    if !config.rememberConnection {
+      activeUnrememberedCertificate = suppliedCertificate
+    }
     sqliteFileAccessRelease = prepared.release
     sqliteReadOnlyReason = prepared.readOnlyReason
     connectionEpoch &+= 1
@@ -152,6 +162,21 @@ actor DatabaseConnectionManager {
 
     await AppLogger.shared.info(
       "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
+  }
+
+  /// Internal reset of this connection. A fresh connect must use the active unremembered
+  /// certificate rather than a same-account Keychain item from an older saved connection.
+  func reconnectWithActiveCertificate(
+    config: ConnectionConfig,
+    material: ClientCertificateStoreFactory.ConnectionMaterial?
+  ) async throws {
+    let scoped = material.map {
+      ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
+    }
+    defer { scoped?.clear() }
+    try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      try await connect(config: config)
+    }
   }
 
   /// Test connection without storing it.
@@ -215,6 +240,7 @@ actor DatabaseConnectionManager {
 
   /// Disconnect from database
   func disconnect() async {
+    activeUnrememberedCertificate = nil
     let releaseFileAccess = sqliteFileAccessRelease
     sqliteFileAccessRelease = nil
 

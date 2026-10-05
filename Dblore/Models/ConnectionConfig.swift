@@ -132,6 +132,12 @@ enum ConnectionProtectionLevel: String, Codable, CaseIterable, Sendable {
 }
 
 /// Configuration for database connection
+nonisolated struct ClientCertificateInfo: Codable, Equatable, Sendable {
+  var subject: String
+  var expiry: Date?
+  var hasCA: Bool
+}
+
 struct ConnectionConfig: Codable, Equatable, Sendable {
   var databaseType: DatabaseType
   var host: String
@@ -140,6 +146,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var username: String
   var password: String
   var sslMode: SSLMode
+  /// Display metadata only. PEM bytes live in ClientCertificateStore.
+  var clientCertificate: ClientCertificateInfo?
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -157,7 +165,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
-    case databaseType, host, port, database, username, password, sslMode
+    case databaseType, host, port, database, username, password, sslMode, clientCertificate
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -179,6 +187,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     username = try container.decode(String.self, forKey: .username)
     password = try container.decodeIfPresent(String.self, forKey: .password) ?? ""
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
+    clientCertificate = try container.decodeIfPresent(
+      ClientCertificateInfo.self, forKey: .clientCertificate)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -225,6 +235,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(username, forKey: .username)
     try container.encode(password, forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
+    try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)
@@ -247,6 +258,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     username: String = "",
     password: String = "",
     sslMode: SSLMode = .prefer,
+    clientCertificate: ClientCertificateInfo? = nil,
     rememberConnection: Bool = true,
     timeoutSeconds: Int = 30,
     protectionLevel: ConnectionProtectionLevel = .none,
@@ -267,6 +279,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.username = username
     self.password = password
     self.sslMode = sslMode
+    self.clientCertificate = clientCertificate
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
     self.protectionLevel = protectionLevel

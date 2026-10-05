@@ -55,6 +55,10 @@ enum DatabaseError: LocalizedError {
   case emptyQuery
   /// The execution gate refused the whole script before sending anything
   case blockedByProtection(statementIndex: Int, kind: StatementKind, reason: String)
+  /// An allowed statement's `:name` has no value in the caller's dictionary
+  case missingParameters([String])
+  /// One statement uses both a `:name` and a positional placeholder
+  case mixedPlaceholders
   /// An inline grid edit cannot be targeted at exactly one row (no primary key, ...)
   case notEditable(String)
   /// The Protected mode transaction failed, was lost, or cannot be committed (full message)
@@ -71,6 +75,8 @@ enum DatabaseError: LocalizedError {
   /// `index` is 0-based. When `rolledBack` is true the whole batch was undone; when false the
   /// statement stays in the user's own open transaction.
   case batchStatementFailed(index: Int, sqlPrefix: String, reason: String, rolledBack: Bool)
+  /// Cancel arrived between batch statements; the batch transaction is being rolled back.
+  case batchCancelled
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -103,6 +109,11 @@ enum DatabaseError: LocalizedError {
     case .blockedByProtection(let statementIndex, _, let reason):
       return
         "Blocked by connection protection (statement \(statementIndex + 1)): \(reason). Nothing was executed."
+    case .missingParameters(let names):
+      return "Missing parameters: \(names.joined(separator: ", ")). Nothing was executed."
+    case .mixedPlaceholders:
+      return "Named and positional placeholders cannot be mixed in one statement. "
+        + "Nothing was executed."
     case .notEditable(let reason):
       return "Cannot edit this value: \(reason). Nothing was executed."
     case .transactionAborted(let message), .connectionLost(let message):
@@ -131,6 +142,8 @@ enum DatabaseError: LocalizedError {
         ? "The batch was rolled back."
         : "It is still in your open transaction; roll it back (ROLLBACK) to undo it."
       return "Batch statement \(index + 1) (\(sqlPrefix)) failed: \(reason). \(outcome)"
+    case .batchCancelled:
+      return "Batch cancelled before the next statement."
     case .queryCancelled(let pendingCount, let userTxRolledBack):
       return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
     case .sessionChanged(let count):

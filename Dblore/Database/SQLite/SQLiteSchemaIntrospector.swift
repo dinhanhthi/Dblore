@@ -95,7 +95,9 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
       primaryKeyColumns: described.primaryKey,
       qualifiedName: "\(quoted).\(try quote(relation.table))",
       updateOnly: false,
-      tableRef: .sqlite(schema: relation.schema, table: relation.table))
+      tableRef: .sqlite(schema: relation.schema, table: relation.table),
+      schema: relation.schema,
+      name: relation.table)
   }
 
   func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int

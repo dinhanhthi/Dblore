@@ -47,6 +47,9 @@ class WorkspaceManager: Identifiable {
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
+  var pendingWeakeningCertificate: ClientCertificateMaterial?
+  /// Unremembered certificate for the current workspace connection and its banner Reconnect.
+  var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
   /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
@@ -155,6 +158,13 @@ class WorkspaceManager: Identifiable {
   var historyDetail: QueryHistoryEntry?
   /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
   @ObservationIgnored var historyBrowser: QueryHistoryStore?
+
+  // MARK: - Command Palette
+
+  /// Open palette. Nil hides it.
+  var commandPalette: CommandPaletteModel?
+  /// True while the palette text field is focused. Cmd+K must not dismiss that field.
+  var commandPaletteFieldFocused = false
 
   // MARK: - Settings
 
@@ -331,6 +341,8 @@ class WorkspaceManager: Identifiable {
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false
   ) async throws {
+    let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
+    activeUnrememberedCertificate = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     if !isAutoConnect { await supersedeAutoConnect() }
@@ -342,8 +354,14 @@ class WorkspaceManager: Identifiable {
       try await PerfSignpost.interval("db.connect") {
         try await connectionManager.connect(config: config)
       }
+      guard SessionManager.saveConnection(config) else {
+        throw CertificateFormError.keychainSave
+      }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
+      if !config.rememberConnection {
+        activeUnrememberedCertificate = suppliedCertificate
+      }
       workspace.connectionKeychainKey =
         "\(config.host):\(config.port):\(config.database):\(config.username)"
       editingConnectionConfig = config
@@ -352,9 +370,6 @@ class WorkspaceManager: Identifiable {
       readOnlyFileNotice = await connectionManager.sqliteReadOnlyReason
       await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
-
-      // Save to connection history
-      SessionManager.saveConnection(config)
 
       // Update all tab ViewModels with connection state
       syncConnectionStateToTabs()
@@ -368,6 +383,7 @@ class WorkspaceManager: Identifiable {
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()
     } catch {
+      await connectionManager.disconnect()
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
       await refreshPendingTransaction()
@@ -489,23 +505,43 @@ class WorkspaceManager: Identifiable {
 
   /// Show a table/view in a data viewer tab: select the tab already showing it, else reuse the
   /// preview tab, else open a new preview tab. The preview tab that opened a pending Protected
-  /// transaction is pinned instead of replaced.
-  func openDataViewer(schema: String, name: String, orderColumns: [String]) {
+  /// transaction, or that still has staged edits, is pinned instead of replaced.
+  /// `filter` nil leaves an existing viewer's filter unchanged. An existing tab applies `filter`
+  /// after the staged-leave prompt. A new tab opens with `filter` already applied.
+  func openDataViewer(
+    schema: String, name: String, orderColumns: [String], filter: TableFilter? = nil
+  ) {
     if let id = tabs.first(where: {
       let state = viewModels[$0.id]?.dataViewer
       return state?.schema == schema && state?.name == name
     })?.id {
       selectTab(id: id)
+      if let filter, let viewModel = viewModels[id] {
+        Task {
+          viewModel.filterDraft = filter
+          await viewModel.applyFilter()
+        }
+      }
       return
     }
 
     var state = DataViewerState(schema: schema, name: name, orderColumns: orderColumns)
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
+    if let filter {
+      state.filter = filter
+    }
     if let index = tabs.firstIndex(where: \.isPreview) {
-      if tabs[index].id == transactionOriginTabId {
-        pinTab(id: tabs[index].id)
-      } else if let viewModel = viewModels[tabs[index].id] {
+      let previewId = tabs[index].id
+      let keepPreview =
+        previewId == transactionOriginTabId
+        || viewModels[previewId]?.hasPendingStagedChanges == true
+      if keepPreview {
+        pinTab(id: previewId)
+      } else if let viewModel = viewModels[previewId] {
         viewModel.dataViewer = state
+        if let filter {
+          viewModel.filterDraft = filter
+        }
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
@@ -519,6 +555,9 @@ class WorkspaceManager: Identifiable {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
+    if let filter {
+      viewModel.filterDraft = filter
+    }
 
     let tab = TabItem(
       documentType: .dataViewer, title: state.title, isDirty: false, isPreview: true)
@@ -770,6 +809,10 @@ class WorkspaceManager: Identifiable {
       guard let self else { return }
       Task { await self.refreshHistory() }
     }
+    viewModel.onOpenDataViewer = { [weak self] schema, name, orderColumns, filter in
+      self?.openDataViewer(
+        schema: schema, name: name, orderColumns: orderColumns, filter: filter)
+    }
 
     return viewModel
   }
@@ -897,6 +940,8 @@ class WorkspaceManager: Identifiable {
 
   /// Stop accessing the workspace, its folder and its tab files (workspace closed)
   func releaseFileAccess() {
+    activeUnrememberedCertificate = nil
+    pendingWeakeningCertificate = nil
     for token in tabAccess.values { token.release() }
     tabAccess = [:]
     workspaceAccess?.release()

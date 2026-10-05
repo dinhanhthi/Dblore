@@ -28,6 +28,7 @@ enum SidebarContent: Equatable {
   case executedQuery(query: String, cellId: UUID?)  // Show executed query with syntax highlighting
   case tableFilter  // Filter form of the data viewer tab
   case tableHighlight  // Highlight form of the data viewer tab
+  case parameters  // Named SQL parameters for this notebook
 }
 
 /// Persists one history row. A failure stays inside the recorder and never fails the query.
@@ -99,8 +100,12 @@ class NotebookViewModel {
   // Execution queue for managing cell executions
   private(set) var executionQueue: ExecutionQueue!
 
-  // Undo/Redo manager
-  let undoManager = UndoManager()
+  // Undo/Redo for notebook cells and staged data-viewer edits. Cap matches the grid undo decision.
+  let undoManager: UndoManager = {
+    let manager = UndoManager()
+    manager.levelsOfUndo = 100
+    return manager
+  }()
 
   // Callback to sync document after changes
   var onDocumentChanged: (() -> Void)?
@@ -108,7 +113,11 @@ class NotebookViewModel {
   var lastSaved: Date?
 
   // MARK: - Toast (delegated to WorkspaceWindowManager)
-  // Toast is now managed at app level via WorkspaceWindowManager.shared
+
+  /// App-level toast. Tests inject a recorder instead of the shared window manager.
+  @ObservationIgnored var toastPresenter: @MainActor (String, ToastMessage.ToastType) -> Void = {
+    WorkspaceWindowManager.shared.showToast($0, type: $1)
+  }
 
   // MARK: - File Size State (10.3.2 optimization)
   var fileSizeState: FileSizeState = FileSizeState()
@@ -146,8 +155,11 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
-  /// Table/view data viewer tab state (nil for every other tab)
-  var dataViewer: DataViewerState?
+  /// Table/view data viewer tab state (nil for every other tab).
+  /// Changing page, page size, filter, or relation drops staged undo for the previous page.
+  var dataViewer: DataViewerState? {
+    didSet { clearStagedUndoIfViewerPageChanged(from: oldValue) }
+  }
   /// Cells with an inline edit sent since the last Commit / Rollback; re-run after a Rollback
   /// so their result shows the original values again.
   @ObservationIgnored var cellsEditedInTransaction: Set<UUID> = []
@@ -186,6 +198,14 @@ class NotebookViewModel {
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
+  /// Opens a table in the data viewer. `WorkspaceManager` sets this.
+  /// Arguments are schema, name, order columns, and an optional filter.
+  @ObservationIgnored var onOpenDataViewer:
+    (
+      @MainActor (
+        _ schema: String, _ name: String, _ orderColumns: [String], _ filter: TableFilter?
+      ) -> Void
+    )?
   /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer
@@ -217,11 +237,17 @@ class NotebookViewModel {
     recalculateFileSize()
   }
 
+  deinit {
+    // Synchronous: this id can be reused as soon as deinit returns, and deinit is not on the
+    // main actor. A hop would clear the next tab's snapshot, or clear nothing.
+    ConfirmedParameterSnapshot.reset(ObjectIdentifier(self))
+  }
+
   // MARK: - Toast Notifications (delegated to WorkspaceWindowManager)
 
   /// Show toast via app-level toast system
   func showToast(_ message: String, type: ToastMessage.ToastType = .info) {
-    WorkspaceWindowManager.shared.showToast(message, type: type)
+    toastPresenter(message, type)
   }
 
   // MARK: - Statistics
@@ -275,6 +301,12 @@ class NotebookViewModel {
     isApplyingWorkspaceConfig = false
   }
 
+  /// Staged undo names rows on the page that was showing. Leaving that page drops the stack.
+  private func clearStagedUndoIfViewerPageChanged(from previous: DataViewerState?) {
+    guard let previous, dataViewer?.loadKey != previous.loadKey else { return }
+    undoManager.removeAllActions()
+  }
+
   private func connectionConfigDidChange() {
     let current = notebook.connectionConfig
     guard current != observedConnectionConfig else { return }
@@ -317,7 +349,7 @@ class NotebookViewModel {
   /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
   func protectionBlockMessage(for query: String) -> String? {
     let decision = DatabaseConnectionManager.evaluate(
-      SQLStatementClassifier.classify(query, dialect: sqlDialect), policy: protectionPolicy)
+      classifiedStatements(for: query), policy: protectionPolicy)
     guard case .blocked(let index, let kind, let reason) = decision else { return nil }
     return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
       .localizedDescription
@@ -333,6 +365,7 @@ class NotebookViewModel {
       showToast(message, type: .error)
       return
     }
+    if refuseMissingParameters(query, cellId: id) != nil { return }
 
     // Safe Mode: confirm based on every statement of the cell (see statementsNeedingConfirmation)
     if presentConfirmationIfNeeded(for: query, cellId: id) { return }
@@ -383,6 +416,16 @@ class NotebookViewModel {
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }
+    // The explain stash is armed while the dialog is up. A cell already queued keeps the binds
+    // captured when that cell was confirmed; every other snapshot for this tab is dropped.
+    let queued = Set(
+      executionQueue.tasks.compactMap { task -> UUID? in
+        switch task.state {
+        case .pending, .executing: return task.cellId
+        case .completed, .cancelled, .failed: return nil
+        }
+      })
+    ConfirmedParameterSnapshot.release(ObjectIdentifier(self), keeping: queued)
     queryConfirmationState.clear()
   }
 }

@@ -351,11 +351,12 @@ struct InlineEditTransactionIntegrationTests {
     let table = "p6_grid_staged"
     try await withTable(table, protectedMode: false) { manager, observer in
       let viewModel = gridViewModel(protectedMode: false)
+      var toasts: [(String, ToastMessage.ToastType)] = []
+      viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
-      WorkspaceWindowManager.shared.dismissToast()
       try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: false)
       // No toast either way: the pending banner shows it, the user still has to Commit
-      #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+      #expect(toasts.isEmpty)
       #expect(await isAppTx(manager))
       #expect(await manager.transactionSnapshot().pending.count == 1)
       #expect(try await value(observer, table) == .int(10))
@@ -367,11 +368,12 @@ struct InlineEditTransactionIntegrationTests {
     let table = "p6_grid_commit"
     try await withTable(table, protectedMode: true) { manager, observer in
       let viewModel = gridViewModel(protectedMode: true)
+      var toasts: [(String, ToastMessage.ToastType)] = []
+      viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
-      WorkspaceWindowManager.shared.dismissToast()
       try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
       // No toast: the refreshed cell shows the committed value
-      #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+      #expect(toasts.isEmpty)
       #expect(await manager.transactionSnapshot().isIdle)
       #expect(try await value(observer, table) == .int(11))
     }

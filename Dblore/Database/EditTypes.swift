@@ -182,7 +182,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
 }
 
 /// The table an inline edit targets, as resolved by the server: OID, column names by attribute
-/// number, and primary key columns in key order.
+/// number, primary key columns in key order, and the unquoted catalog schema and table name.
 nonisolated struct EditTable: Sendable, Equatable {
   let oid: UInt32
   let attributeNames: [Int16: String]
@@ -195,6 +195,10 @@ nonisolated struct EditTable: Sendable, Equatable {
   var updateOnly: Bool = false
   /// Column-origin identity. Nil uses PostgreSQL `pg:<oid>`.
   var tableRef: TableRef? = nil
+  /// Unquoted catalog schema (`nspname` or the SQLite schema). Nil when unknown.
+  var schema: String? = nil
+  /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
+  var name: String? = nil
 
   /// Identity compared with result column origins.
   var resolvedTableRef: TableRef {
@@ -215,10 +219,15 @@ nonisolated struct EditTarget: Sendable, Equatable {
   /// Emit `UPDATE ONLY` (plain table)
   let updateOnly: Bool
   let generation: UUID
+  /// Unquoted catalog schema (`nspname` or the SQLite schema). Nil when unknown.
+  let schema: String?
+  /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
+  let name: String?
 
   init(
     qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
-    connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID()
+    connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID(),
+    schema: String? = nil, name: String? = nil
   ) {
     self.qualifiedName = qualifiedName
     self.tableID = tableID
@@ -226,5 +235,7 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.connectionEpoch = connectionEpoch
     self.updateOnly = updateOnly
     self.generation = generation
+    self.schema = schema
+    self.name = name
   }
 }

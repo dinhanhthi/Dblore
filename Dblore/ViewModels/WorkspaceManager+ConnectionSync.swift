@@ -116,9 +116,11 @@ extension WorkspaceManager {
       current: workspace.connectionConfig, new: config, globalSafeMode: globalSafeMode)
     {
       pendingWeakeningConnect = config
+      pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
       throw WorkspaceConnectError.unlockRequired
     }
     pendingWeakeningConnect = nil
+    pendingWeakeningCertificate = nil
     try await connectWithoutUnlockCheck(config: config, isAutoConnect: isAutoConnect)
   }
 
@@ -127,13 +129,27 @@ extension WorkspaceManager {
   /// it is cleared on success.
   func completePendingWeakeningConnect() async throws {
     guard let config = pendingWeakeningConnect else { return }
-    try await connectWithoutUnlockCheck(config: config)
+    let scopedMaterial = pendingWeakeningCertificate.map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: config), material: $0)
+    }
+    pendingWeakeningCertificate = nil
+    defer { scopedMaterial?.clear() }
+    do {
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
+        try await connectWithoutUnlockCheck(config: config)
+      }
+    } catch {
+      pendingWeakeningConnect = nil
+      throw error
+    }
     pendingWeakeningConnect = nil
   }
 
   /// Unlock cancelled: nothing connects (the form keeps its values).
   func cancelPendingWeakeningConnect() {
     pendingWeakeningConnect = nil
+    pendingWeakeningCertificate = nil
   }
 
   /// Connect/disconnect: results shown in every tab came from the previous connection, so none

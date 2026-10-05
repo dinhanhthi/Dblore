@@ -12,6 +12,7 @@ import SwiftUI
 /// Used when connected but no active tab exists
 struct WorkspaceLeftSidebarContent: View {
   @Bindable var workspaceManager: WorkspaceManager
+  let onImportTable: (DatabaseTable) -> Void
   @State private var selectedTab: SidebarTab = .public
   @State private var publicFilter = ""
   @State private var securityFilter = ""
@@ -232,7 +233,8 @@ struct WorkspaceLeftSidebarContent: View {
                     },
                     onColumnClick: { _ in
                       // No active cell to insert into when no document is open
-                    }
+                    },
+                    onImport: { onImportTable(table.source) }
                   )
                 }
               }

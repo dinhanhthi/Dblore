@@ -55,7 +55,8 @@ extension NotebookViewModel {
     guard !primaryKey.isEmpty else { return nil }
     return EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
-      connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly)
+      connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
+      name: table.name)
   }
 
   /// The one table identity shared by every column, or nil when any column came from elsewhere.
@@ -116,9 +117,11 @@ extension NotebookViewModel {
     return results.contains { $0.editTarget == target }
   }
 
-  /// Input text to bind for an edited value: nil (NULL) when a NULL cell is left empty or set
-  /// to "null", otherwise the text as typed (PostgreSQL parses it for the column type).
-  nonisolated static func bindText(for newValue: String, original: CellValue) -> String? {
+  /// Input text to bind for an edited value. Nil is an explicit NULL. A NULL cell left empty
+  /// or set to "null" also binds NULL. Any other text is kept (PostgreSQL parses it for the
+  /// column type).
+  nonisolated static func bindText(for newValue: String?, original: CellValue) -> String? {
+    guard let newValue else { return nil }
     if case .null = original, newValue.isEmpty || newValue.lowercased() == "null" {
       return nil
     }
@@ -143,7 +146,7 @@ extension NotebookViewModel {
   func handleCellValueEdit(
     columnName: String,
     columnType: String,
-    newValue: String,
+    newValue: String?,
     originalValue: CellValue,
     tableName: String?,
     rowData: [String: CellValue]?,
@@ -153,9 +156,11 @@ extension NotebookViewModel {
   ) {
     let bindText = Self.bindText(for: newValue, original: originalValue)
 
-    // Copy to clipboard
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(newValue, forType: .string)
+    // Copy to clipboard (an explicit NULL has no text to copy)
+    if let newValue {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(newValue, forType: .string)
+    }
 
     // Update the sidebar content with the new value
     rightSidebarContent = .cellInfo(
@@ -264,8 +269,10 @@ extension NotebookViewModel {
     await onStatementsExecuted?()
   }
 
-  /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits)
-  static func editedCellValue(_ newValue: String, original: CellValue) -> CellValue {
+  /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).
+  /// Nil is NULL, whatever the original type.
+  static func editedCellValue(_ newValue: String?, original: CellValue) -> CellValue {
+    guard let newValue else { return .null }
     switch original {
     case .string:
       return .string(newValue)

@@ -154,6 +154,8 @@ extension WorkspaceManager {
       return true
     }
     let summary = PendingTransactionSummary(state: before)
+    let statementCount = before.pending.count
+    let originTabId = transactionOriginTabId
     // The banner shows "Committing…" with its buttons disabled until the refresh below
     applyTransactionState(
       .ending(kind: .commit, pending: before.pending), originTabId: transactionOriginTabId)
@@ -163,6 +165,8 @@ extension WorkspaceManager {
       showTransactionToast(
         "Committed \(Self.statements(summary.statementCount))", type: .success)
       for viewModel in viewModels.values { viewModel.cellsEditedInTransaction = [] }
+      await recordTransactionEnd(
+        "COMMIT (\(statementCount) statements)", originTabId: originTabId)
       return true
     } catch {
       await refreshPendingTransaction()
@@ -183,12 +187,18 @@ extension WorkspaceManager {
       await refreshPendingTransaction()
       return true
     }
+    let statementCount = before.pending.count
+    let originTabId = transactionOriginTabId
     applyTransactionState(
       .ending(kind: .rollback, pending: before.pending), originTabId: transactionOriginTabId)
     do {
       try await connectionManager.rollbackAppTransaction()
       await refreshPendingTransaction()
       showTransactionToast("Rolled back \(Self.statements(before.pending.count))", type: .info)
+      // Before reload and cell rerun. Those awaits free the main actor, and a reload that
+      // never returns would otherwise drop this row.
+      await recordTransactionEnd(
+        "ROLLBACK (\(statementCount) statements)", originTabId: originTabId)
       // A page loaded while the transaction was open still shows those rows
       await reloadDataViewersAfterRollback()
       await rerunEditedCellsAfterRollback()
@@ -286,7 +296,8 @@ extension WorkspaceManager {
 
   /// Close the connection and clear everything that came from it (no resolve: the caller did it,
   /// or chose to discard the pending changes by disconnecting)
-  func performDisconnect() async {
+  func performDisconnect(preserveCertificateForReconnect: Bool = false) async {
+    if !preserveCertificateForReconnect { activeUnrememberedCertificate = nil }
     autoConnectTask?.cancel()
     cancelSchemaLoad()
     await connectionManager.disconnect()
@@ -394,6 +405,19 @@ extension WorkspaceManager {
 
   private static func statements(_ count: Int) -> String {
     "\(count) statement\(count == 1 ? "" : "s")"
+  }
+
+  /// One history row after Commit or Rollback succeeded. The tab that opened the transaction
+  /// records it; once that tab is gone, the active tab does. Neither means nothing is stored.
+  private func recordTransactionEnd(_ sql: String, originTabId: UUID?) async {
+    let viewModel = originTabId.flatMap { viewModels[$0] } ?? activeViewModel
+    guard let viewModel else { return }
+    await viewModel.recordExecution(
+      [
+        QueryHistoryOutcome(
+          sql: sql, duration: 0, rowCount: nil, status: .success, errorMessage: nil)
+      ],
+      source: .editor)
   }
 
   private func showTransactionToast(_ message: String, type: ToastMessage.ToastType) {

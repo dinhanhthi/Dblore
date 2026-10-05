@@ -8,7 +8,8 @@
 //  `stagesEdits` stages that commit, and Delete/Backspace, instead of an immediate UPDATE.
 //  A click only selects; the details button shown over the hovered cell reports it
 //  (`onShowCellDetails`), a header click the sort (`onSortChange`), the filter icon a
-//  category filter of the loaded rows (`onValueFilterChange`).
+//  category filter of the loaded rows (`onValueFilterChange`). "Referenced Row..." opens
+//  when the column has a foreign key.
 //
 
 import AppKit
@@ -72,6 +73,14 @@ struct ResultGridView: NSViewRepresentable {
   var highlight: TableHighlight? = nil
   /// Dialect the highlight is evaluated in (`like` case sensitivity)
   var highlightDialect: DatabaseType = .postgresql
+  /// Catalog relation for "Referenced Row...". Nil hides the item (a join, or no edit target).
+  var relationSchema: String? = nil
+  var relationTable: String? = nil
+  var foreignKeys: [ForeignKey] = []
+  /// Connection dialect. Only decides whether a NULL component skips the lookup.
+  var lookupDialect: SQLDialect = .postgresql
+  var onLookupReferencedRow: ReferencedRowLookup? = nil
+  var onJumpToReferencedRow: ReferencedRowJump? = nil
   /// Result cell text size. The default reads Settings so a slider move refreshes the grid.
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
 
@@ -173,6 +182,12 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onShowCellDetails = onShowCellDetails
     coordinator.onHighlightCell = onHighlightCell
     coordinator.onClearHighlight = onClearHighlight
+    coordinator.relationSchema = relationSchema
+    coordinator.relationTable = relationTable
+    coordinator.foreignKeys = foreignKeys
+    coordinator.lookupDialect = lookupDialect
+    coordinator.onLookupReferencedRow = onLookupReferencedRow
+    coordinator.onJumpToReferencedRow = onJumpToReferencedRow
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
@@ -187,6 +202,38 @@ struct ResultGridView: NSViewRepresentable {
       tableView.reloadData()
     }
   }
+}
+
+/// Schema and table for "Referenced Row...". A data viewer uses its relation. Otherwise the
+/// edit target's catalog name. Nil for a join or a target that has no name.
+func referencedRelation(
+  dataViewer: DataViewerState?, editTarget: EditTarget?
+) -> (
+  schema: String, table: String
+)? {
+  if let dataViewer {
+    return (dataViewer.schema, dataViewer.name)
+  }
+  guard let schema = editTarget?.schema, let table = editTarget?.name else { return nil }
+  return (schema, table)
+}
+
+/// The view model's lookup and jump, unchanged. The grid does not send its own SQL.
+func referencedRowHandlers(
+  _ viewModel: NotebookViewModel
+) -> (
+  lookup: ReferencedRowLookup, jump: ReferencedRowJump
+) {
+  (
+    { column, schema, table, rowColumns, values in
+      try await viewModel.lookupReferencedRow(
+        column: column, schema: schema, table: table, rowColumns: rowColumns, values: values)
+    },
+    { column, schema, table, rowColumns, values in
+      viewModel.jumpToReferencedRow(
+        column: column, schema: schema, table: table, rowColumns: rowColumns, values: values)
+    }
+  )
 }
 
 /// The match the grid should highlight. When `match` is a table-data row `valueFilter` hides,
@@ -261,27 +308,51 @@ final class ResultGridScrollView: NSScrollView {
   /// Whether a vertical scroll of `deltaY` (> 0 toward the top) at `offsetY` (0 = top) goes to
   /// the parent: the content fits, or the grid is already at the edge it scrolls toward
   /// (within 1 pt, for fractional offsets)
-  static func shouldForward(deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat) -> Bool {
+  nonisolated static func shouldForward(
+    deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat
+  ) -> Bool {
     maxOffsetY < 1 || (deltaY > 0 && offsetY < 1) || (deltaY < 0 && offsetY > maxOffsetY - 1)
   }
 
-  override func scrollWheel(with event: NSEvent) {
+  /// One scroll event's hand-off. `locksForward` is nil when the event must not choose
+  /// (no delta, or Shift+wheel). The view locks that choice for the rest of the gesture.
+  nonisolated static func scrollHandOff(
+    deltaX: CGFloat,
+    deltaY: CGFloat,
+    phase: NSEvent.Phase,
+    momentumPhase: NSEvent.Phase,
+    modifiers: NSEvent.ModifierFlags,
+    offsetY: CGFloat,
+    maxOffsetY: CGFloat,
+    forwardsToParent: Bool
+  ) -> (startsGesture: Bool, locksForward: Bool?) {
     let startsGesture =
-      event.phase == .mayBegin || event.phase == .began
-      || (event.phase.isEmpty && event.momentumPhase.isEmpty)
-    if startsGesture { forwardsGesture = nil }
-    let deltaX = event.scrollingDeltaX
-    let deltaY = event.scrollingDeltaY
-    // Shift+wheel is a horizontal scroll (mouse), handled by the grid
-    if forwardsGesture == nil, deltaX != 0 || deltaY != 0, !event.modifierFlags.contains(.shift) {
-      let insets = contentView.contentInsets
-      let bounds = contentView.bounds
-      let maxOffsetY =
-        (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
-      forwardsGesture =
-        forwardsToParent && abs(deltaY) > abs(deltaX)
-        && Self.shouldForward(
-          deltaY: deltaY, offsetY: bounds.origin.y + insets.top, maxOffsetY: maxOffsetY)
+      phase == .mayBegin || phase == .began || (phase.isEmpty && momentumPhase.isEmpty)
+    let locksForward: Bool? =
+      (deltaX != 0 || deltaY != 0) && !modifiers.contains(.shift)
+      ? forwardsToParent && abs(deltaY) > abs(deltaX)
+        && shouldForward(deltaY: deltaY, offsetY: offsetY, maxOffsetY: maxOffsetY)
+      : nil
+    return (startsGesture, locksForward)
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    let insets = contentView.contentInsets
+    let bounds = contentView.bounds
+    let maxOffsetY =
+      (documentView?.frame.height ?? 0) + insets.top + insets.bottom - bounds.height
+    let handOff = Self.scrollHandOff(
+      deltaX: event.scrollingDeltaX,
+      deltaY: event.scrollingDeltaY,
+      phase: event.phase,
+      momentumPhase: event.momentumPhase,
+      modifiers: event.modifierFlags,
+      offsetY: bounds.origin.y + insets.top,
+      maxOffsetY: maxOffsetY,
+      forwardsToParent: forwardsToParent)
+    if handOff.startsGesture { forwardsGesture = nil }
+    if forwardsGesture == nil, let locksForward = handOff.locksForward {
+      forwardsGesture = locksForward
     }
     if forwardsGesture == true {
       nextResponder?.scrollWheel(with: event)

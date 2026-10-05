@@ -12,6 +12,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
   case cell
   case editor
   case dataViewerEdit
+  case dataImport
   case `internal`
 
   var stored: QueryHistoryEntry.Source? {
@@ -19,6 +20,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
     case .cell: .cell
     case .editor: .editor
     case .dataViewerEdit: .dataViewerEdit
+    case .dataImport: .dataImport
     case .internal: nil
     }
   }
@@ -52,11 +54,13 @@ extension NotebookViewModel {
   }
 
   /// Writes one history row per outcome. Skips `.internal`, a disabled history setting, and
-  /// role/user statements that contain a password. Fire-and-forget callers use `scheduleHistory`.
+  /// role/user statements that contain a password. Blank or comment-only SQL is stored with
+  /// no kind. Fire-and-forget callers use `scheduleHistory`.
   func recordExecution(_ outcomes: [QueryHistoryOutcome], source: QueryHistoryRecordSource) async {
     guard let stored = source.stored, historySettings.historyEnabled else { return }
     let connection = historyConnection()
     let workspace = historyWorkspace()
+    let dialect = sqlDialect
     var recorded = false
     for outcome in outcomes {
       guard !SQLStatementClassifier.containsPasswordLiteral(outcome.sql) else { continue }
@@ -67,12 +71,15 @@ extension NotebookViewModel {
         durationMs: Int((outcome.duration * 1_000).rounded()),
         rowCount: outcome.rowCount,
         status: outcome.status,
-        errorMessage: outcome.errorMessage,
+        errorMessage: source == .dataImport && outcome.errorMessage != nil
+          ? (outcome.status == .cancelled ? "Import cancelled" : "Import failed")
+          : outcome.errorMessage,
         connectionKey: connection.key,
         connectionLabel: connection.label,
         workspaceID: workspace?.id,
         workspaceName: workspace?.name,
-        source: stored)
+        source: stored,
+        kind: Self.recordedKind(of: outcome.sql, dialect: dialect))
       await historyRecorder.record(entry)
       recorded = true
     }
@@ -104,15 +111,51 @@ extension NotebookViewModel {
   }
 
   func recordFailure(
-    _ error: Error, sql: String, duration: TimeInterval, source: QueryHistoryRecordSource
+    _ error: Error, sql: String, duration: TimeInterval, source: QueryHistoryRecordSource,
+    errorMessage: String? = nil
   ) {
     scheduleHistory(
       [
         QueryHistoryOutcome(
           sql: sql, duration: duration, rowCount: nil, status: Self.historyStatus(for: error),
-          errorMessage: error.localizedDescription)
+          errorMessage: errorMessage ?? error.localizedDescription)
       ],
       source: source)
+  }
+
+  /// Blank or comment-only SQL stays nil. Several statements keep a write over schema,
+  /// then transaction, other, and read, so a trailing write is not stored as a read.
+  private nonisolated static func recordedKind(
+    of sql: String, dialect: SQLDialect
+  ) -> QueryHistoryEntry.Kind? {
+    SQLStatementClassifier.classify(sql, dialect: dialect)
+      .map { historyKind($0.kind) }
+      .max { historyRank($0) < historyRank($1) }
+  }
+
+  private nonisolated static func historyKind(_ kind: StatementKind) -> QueryHistoryEntry.Kind {
+    switch SQLStatementClassifier.effectiveKind(kind) {
+    case .read:
+      .read
+    case .dml:
+      .write
+    case .ddl:
+      .schema
+    case .tcl:
+      .transaction
+    case .sessionSet, .utility, .unknown, .explain:
+      .other
+    }
+  }
+
+  private nonisolated static func historyRank(_ kind: QueryHistoryEntry.Kind) -> Int {
+    switch kind {
+    case .read: 0
+    case .other: 1
+    case .transaction: 2
+    case .schema: 3
+    case .write: 4
+    }
   }
 
   /// Affected-row count when the statement returned no result rows; otherwise the row count.
@@ -125,8 +168,11 @@ extension NotebookViewModel {
   }
 
   private static func historyStatus(for error: Error) -> QueryHistoryEntry.Status {
-    if let error = error as? DatabaseError, case .queryCancelled = error {
-      return .cancelled
+    if let error = error as? DatabaseError {
+      switch error {
+      case .queryCancelled, .batchCancelled: return .cancelled
+      default: break
+      }
     }
     return .error
   }

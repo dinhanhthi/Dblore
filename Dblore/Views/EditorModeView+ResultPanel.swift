@@ -346,6 +346,9 @@ struct EditorResultGridView: View {
         result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
         showsPicker: showsDisplayPicker
       ) {
+        let relation = referencedRelation(
+          dataViewer: viewModel.dataViewer, editTarget: result.editTarget)
+        let referencedRow = referencedRowHandlers(viewModel)
         ResultGridView(
           result: result,
           sortColumn: sortColumn,
@@ -419,7 +422,13 @@ struct EditorResultGridView: View {
           hideColumnTypes: AppSettings.shared.hideColumnTypes,
           hiddenColumns: hiddenColumns,
           highlight: highlight,
-          highlightDialect: dialect
+          highlightDialect: dialect,
+          relationSchema: relation?.schema,
+          relationTable: relation?.table,
+          foreignKeys: viewModel.databaseForeignKeys,
+          lookupDialect: viewModel.sqlDialect,
+          onLookupReferencedRow: referencedRow.lookup,
+          onJumpToReferencedRow: referencedRow.jump
         )
       }
     }

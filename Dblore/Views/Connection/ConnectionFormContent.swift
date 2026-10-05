@@ -36,6 +36,16 @@ struct ConnectionFormContent: View {
   @State private var parseError: String?
   @State private var connectionStringSSLMode: SSLMode = .prefer
 
+  // PEM bytes are transient form state; ConnectionConfig contains display metadata only.
+  @State var certificatePEM: String?
+  @State var privateKeyPEM: String?
+  @State var caPEM: String?
+  @State var certificatePassphrase = ""
+  @State var certificateInfo: ClientCertificateInfo?
+  @State var certificateError: String?
+  @State var certificateDraftChanged = false
+  @State var certificateRemovalAccount: String?
+
   // Connection history
   @State private var connectionHistory: [ConnectionHistoryEntry] = []
   @State private var selectedHistoryId: UUID?
@@ -141,6 +151,7 @@ struct ConnectionFormContent: View {
           fieldsEngine = connectionConfig.databaseType
         }
         loadConnectionHistory()
+        restoreCertificateDraft()
         refreshSQLiteFileBookmark()
       }
       .onChange(of: connectionConfig.databaseType) { _, newType in
@@ -159,6 +170,7 @@ struct ConnectionFormContent: View {
         connectionConfig = replacement
       }
       .onChange(of: Self.connectionTargetKey(connectionConfig)) { _, _ in
+        restoreCertificateDraft()
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
         guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
@@ -171,6 +183,9 @@ struct ConnectionFormContent: View {
         if selectedHistoryId != retained {
           selectedHistoryId = retained
         }
+      }
+      .onChange(of: connectionConfig.clientCertificate) { _, _ in
+        restoreCertificateDraft()
       }
 
       footerView()
@@ -495,13 +510,29 @@ struct ConnectionFormContent: View {
       return
     }
 
+    let config: ConnectionConfig
+    do {
+      config = try preparedCertificateConfig()
+    } catch {
+      testResult = .failure(error.localizedDescription)
+      return
+    }
+
     isTesting = true
     testResult = nil
-    let config = connectionConfig
+    let scopedMaterial = certificateMaterialForOperation(config).map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: config), material: $0)
+    }
 
     Task { @MainActor in
+      defer { scopedMaterial?.clear() }
       do {
-        let success = try await onTest(config)
+        let success = try await ClientCertificateStoreFactory.$operationMaterial.withValue(
+          scopedMaterial
+        ) {
+          try await onTest(config)
+        }
         isTesting = false
         testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
@@ -527,12 +558,28 @@ struct ConnectionFormContent: View {
       return
     }
 
+    let config: ConnectionConfig
+    do {
+      config = try preparedCertificateConfig()
+    } catch {
+      testResult = .failure(error.localizedDescription)
+      return
+    }
+
     isConnecting = true
-    let config = connectionConfig
+    let scopedMaterial = certificateMaterialForOperation(config).map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: config), material: $0)
+    }
 
     Task { @MainActor in
+      defer { scopedMaterial?.clear() }
       do {
-        try await onConnectCallback(config)
+        try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
+          try await onConnectCallback(config)
+        }
+        connectionConfig.clientCertificate = config.clientCertificate
+        certificateDraftChanged = false
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {

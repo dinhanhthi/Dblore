@@ -277,4 +277,41 @@ struct InlineEditViewModelTests {
     #expect(viewModel.queryConfirmationState.requiresPassword == false)
     #expect(viewModel.queryConfirmationState.pendingQuery.isEmpty)
   }
+
+  // MARK: Set NULL
+
+  @Test("A nil edit binds NULL and the sidebar shows .null")
+  func nilEditBindsNull() {
+    #expect(NotebookViewModel.bindText(for: nil, original: .int(3)) == nil)
+    #expect(NotebookViewModel.editedCellValue(nil, original: .int(3)) == .null)
+
+    let viewModel = makeViewModel(config: ConnectionConfig(protectionLevel: .none))
+    viewModel.handleCellValueEdit(
+      columnName: "name", columnType: "text", newValue: nil, originalValue: .int(3),
+      tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
+      connectionManager: nil)
+    guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
+      Issue.record("sidebar did not update")
+      return
+    }
+    #expect(value == .null)
+  }
+
+  @Test("A string edit still binds and displays the typed text")
+  func stringEditStaysText() {
+    #expect(NotebookViewModel.bindText(for: "new", original: .string("old")) == "new")
+    #expect(NotebookViewModel.editedCellValue("42", original: .int(1)) == .int(42))
+    #expect(NotebookViewModel.editedCellValue("new", original: .string("old")) == .string("new"))
+
+    let viewModel = makeViewModel(config: ConnectionConfig(protectionLevel: .none))
+    viewModel.handleCellValueEdit(
+      columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
+      tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
+      connectionManager: nil)
+    guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
+      Issue.record("sidebar did not update")
+      return
+    }
+    #expect(value == .string("new"))
+  }
 }

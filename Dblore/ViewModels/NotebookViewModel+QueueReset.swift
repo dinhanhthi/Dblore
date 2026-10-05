@@ -36,7 +36,7 @@ extension NotebookViewModel {
     }
     guard batch.epoch != current else { return .run(expectedEpoch: current) }
 
-    let message = CellResult.queuedCellsNotRunMessage(1 + executionQueue.cancelPending())
+    let message = CellResult.queuedCellsNotRunMessage(1 + cancelPendingCells())
     let result = CellResult.errorResult(message, sourceQuery: task.query)
     if let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) {
       notebook.cells[index].result = result
@@ -56,7 +56,7 @@ extension NotebookViewModel {
       notebook.cells[index].result?.sessionReset == true
         || notebook.cells[index].statementResults.contains(where: \.result.sessionReset)
     else { return }
-    let count = executionQueue.cancelPending()
+    let count = cancelPendingCells()
     guard count > 0 else { return }
 
     notebook.cells[index].result?.skippedQueuedCells = count

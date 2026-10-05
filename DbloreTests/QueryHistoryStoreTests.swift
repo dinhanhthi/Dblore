@@ -204,7 +204,7 @@ struct QueryHistoryStoreTests {
     #expect(stored.sql.count == 100_000 + "\n-- truncated".count)
   }
 
-  @Test("An empty v0 file migrates to userVersion 1 and a second open stays at 1")
+  @Test("An empty v0 file migrates to userVersion 2 and a second open stays at 2")
   func migrationFromEmptyV0() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
@@ -213,12 +213,198 @@ struct QueryHistoryStoreTests {
       #expect(empty.userVersion == 0)
     }
     let store = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 1)
+    #expect(try SQLiteHandle(url: url).userVersion == 2)
     #expect(try await store.fileSize() > 0)
     #expect(try await store.count() == 0)
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 1)
+    #expect(try SQLiteHandle(url: url).userVersion == 2)
     #expect(try await reopened.count() == 0)
+  }
+
+  @Test("A v1 file gains kind, backfills from the connection dialect, and leaves NULL")
+  func version1MigratesAndBackfillsKind() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let postgres = "PostgreSQL|localhost|5432|app|user"
+    let sqlite = "SQLite|/tmp/app.sqlite|0|app|user"
+    let rows: [(sql: String, key: String, kind: QueryHistoryEntry.Kind?)] = [
+      ("SELECT 1", postgres, .read),
+      ("UPDATE t SET a = 1", postgres, .write),
+      ("CREATE TABLE t (a int)", postgres, .schema),
+      ("COMMIT", postgres, .transaction),
+      ("VACUUM", postgres, .other),
+      ("-- comment only", postgres, nil),
+      ("PRAGMA foreign_keys", sqlite, .read),
+      ("PRAGMA foreign_keys", postgres, .other),
+      ("REPLACE INTO t VALUES (1)", sqlite, .write),
+      ("REPLACE INTO t VALUES (1)", postgres, .other),
+      ("SELECT 1; DELETE FROM t", postgres, .write),
+      ("DROP TABLE t; INSERT INTO t VALUES (1)", postgres, .write),
+      ("EXPLAIN SELECT 1", postgres, .read),
+      ("EXPLAIN ANALYZE DELETE FROM t", postgres, .write),
+    ]
+    try seedVersion1(at: url, rows: rows.map { (sql: $0.sql, key: $0.key) })
+    #expect(try SQLiteHandle(url: url).userVersion == 1)
+
+    let store = try QueryHistoryStore(url: url)
+    let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
+    #expect(try SQLiteHandle(url: url).userVersion == 2)
+    let info = try SQLiteHandle(url: url)
+    let tables = try info.prepare(
+      "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'history'")
+    #expect(try tables.step())
+    #expect(tables.columnInt(0) == 1)
+    let columns = try info.prepare(
+      "SELECT COUNT(*) FROM pragma_table_info('history') WHERE name = 'kind'")
+    #expect(try columns.step())
+    #expect(columns.columnInt(0) == 1)
+    let trigger = try info.prepare(
+      "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'history_au'")
+    #expect(try trigger.step())
+    #expect(trigger.columnInt(0) == 1)
+
+    let actual = loaded.map { row in
+      "\(row.connectionKey)|\(row.sql)|\(row.kind?.rawValue ?? "nil")"
+    }.sorted()
+    let wanted = rows.map { row in
+      "\(row.key)|\(row.sql)|\(row.kind?.rawValue ?? "nil")"
+    }.sorted()
+    #expect(actual == wanted)
+    let matched = try await store.search(text: "UPDATE", scope: .all, limit: 20, offset: 0)
+    #expect(matched.contains { $0.sql == "UPDATE t SET a = 1" })
+
+    let reopened = try QueryHistoryStore(url: url)
+    let again = try await reopened.search(text: "", scope: .all, limit: 50, offset: 0)
+    #expect(again == loaded)
+  }
+
+  @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
+  func writesOnlyFiltersSearchAndCount() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    try await store.record(Self.entry(sql: "SELECT plain", kind: .read))
+    try await store.record(Self.entry(sql: "UPDATE t SET a = 1", kind: .write))
+    try await store.record(
+      Self.entry(sql: "DELETE FROM other", connectionKey: "other", kind: .write))
+    try await store.record(Self.entry(sql: "CREATE TABLE t (a int)", kind: .schema))
+    try await store.record(Self.entry(sql: "COMMIT", kind: .transaction))
+    try await store.record(Self.entry(sql: "VACUUM", kind: .other))
+    try await store.record(Self.entry(sql: "UPDATE unclassified SET a = 1"))
+    try await store.record(Self.entry(sql: "SELECT labeled", kind: .write))
+
+    let writes = try await store.search(
+      text: "", scope: .all, limit: 20, offset: 0, writesOnly: true)
+    #expect(
+      writes.map(\.sql).sorted() == [
+        "DELETE FROM other", "SELECT labeled", "UPDATE t SET a = 1",
+      ])
+    #expect(try await store.count(text: "", scope: .all, writesOnly: true) == 3)
+    #expect(try await store.count(text: "", scope: .all) == 8)
+    #expect(try await store.count() == 8)
+
+    let scoped = try await store.search(
+      text: "", scope: .connection("other"), limit: 10, offset: 0, writesOnly: true)
+    #expect(scoped.map(\.sql) == ["DELETE FROM other"])
+    #expect(
+      try await store.count(text: "", scope: .connection("other"), writesOnly: true) == 1)
+
+    let matched = try await store.search(
+      text: "update", scope: .all, limit: 10, offset: 0, writesOnly: true)
+    #expect(matched.map(\.sql) == ["UPDATE t SET a = 1"])
+    #expect(try await store.count(text: "update", scope: .all, writesOnly: true) == 1)
+    #expect(try await store.count(text: "update", scope: .all) == 2)
+
+    let reads = try await store.search(
+      text: "select", scope: .all, limit: 10, offset: 0, writesOnly: true)
+    #expect(reads.map(\.sql) == ["SELECT labeled"])
+    #expect(try await store.count(text: "select", scope: .all, writesOnly: true) == 1)
+  }
+
+  @Test("Old JSON without kind imports, and a present kind is stored as written")
+  func oldJSONImportDecodesMissingKind() async throws {
+    let url = temporaryDatabaseURL()
+    let jsonURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-history-\(UUID().uuidString).json")
+    defer {
+      removeDatabase(at: url)
+      try? FileManager.default.removeItem(at: jsonURL)
+    }
+    let json = """
+      [
+        {
+          "connectionKey": "k",
+          "connectionLabel": "label",
+          "durationMs": 4,
+          "executedAt": 1700000000,
+          "id": 4,
+          "rowCount": 1,
+          "source": "cell",
+          "sql": "DELETE FROM old",
+          "status": "success"
+        },
+        {
+          "connectionKey": "k",
+          "connectionLabel": "label",
+          "durationMs": 4,
+          "executedAt": 1700000100,
+          "id": 9,
+          "kind": "write",
+          "rowCount": 1,
+          "source": "editor",
+          "sql": "SELECT kept",
+          "status": "success"
+        },
+        {
+          "connectionKey": "k",
+          "connectionLabel": "label",
+          "durationMs": 4,
+          "executedAt": 1700000200,
+          "id": 10,
+          "kind": null,
+          "source": "dataViewerEdit",
+          "sql": "SELECT present",
+          "status": "cancelled"
+        }
+      ]
+      """
+    try json.write(to: jsonURL, atomically: true, encoding: .utf8)
+    let store = try QueryHistoryStore(url: url)
+    try await store.record(Self.entry(sql: "SHOULD BE CLEARED"))
+    try await store.importJSON(from: jsonURL, replace: true)
+
+    let imported = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(imported.map(\.sql) == ["SELECT present", "SELECT kept", "DELETE FROM old"])
+    #expect(imported.map(\.id) == [10, 9, 4])
+    #expect(imported.map(\.kind) == [nil, .write, nil])
+    #expect(imported.map(\.source) == [.dataViewerEdit, .editor, .cell])
+    #expect(imported[0].status == .cancelled)
+    #expect(imported[2].status == .success)
+  }
+
+  @Test("An unknown source raw value is read as editor")
+  func unknownSourceReadsAsEditor() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    try await store.record(Self.entry(sql: "SELECT cell", source: .cell))
+    let database = try SQLiteHandle(url: url)
+    let statement = try database.prepare(
+      """
+      INSERT INTO history (
+        sql, executed_at, duration_ms, row_count, status,
+        connection_key, connection_label, source, kind
+      ) VALUES ('SELECT kept', 1700000000, 1, 1, 'success', 'k', 'label', 'futureSource', 'read')
+      """
+    )
+    while try statement.step() {}
+
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    let unknown = try #require(rows.first { $0.sql == "SELECT kept" })
+    #expect(unknown.source == .editor)
+    #expect(unknown.kind == .read)
+    let known = try #require(rows.first { $0.sql == "SELECT cell" })
+    #expect(known.source == .cell)
   }
 
   @Test("200 concurrent records of distinct SQL insert 200 rows")
@@ -305,7 +491,8 @@ struct QueryHistoryStoreTests {
     connectionLabel: String = "localhost/app",
     workspaceID: UUID? = nil,
     workspaceName: String? = nil,
-    source: QueryHistoryEntry.Source = .cell
+    source: QueryHistoryEntry.Source = .cell,
+    kind: QueryHistoryEntry.Kind? = nil
   ) -> QueryHistoryEntry {
     QueryHistoryEntry(
       id: 0,
@@ -319,8 +506,98 @@ struct QueryHistoryStoreTests {
       connectionLabel: connectionLabel,
       workspaceID: workspaceID,
       workspaceName: workspaceName,
-      source: source
+      source: source,
+      kind: kind
     )
+  }
+
+  /// Frozen version-1 schema: no `kind` column, `user_version` 1.
+  private func seedVersion1(at url: URL, rows: [(sql: String, key: String)]) throws {
+    let database = try SQLiteHandle(url: url)
+    try database.transaction {
+      try database.execute(
+        """
+        CREATE TABLE history (
+          id INTEGER PRIMARY KEY,
+          sql TEXT NOT NULL,
+          executed_at REAL NOT NULL,
+          duration_ms INTEGER NOT NULL,
+          row_count INTEGER,
+          status TEXT NOT NULL,
+          error_message TEXT,
+          connection_key TEXT NOT NULL,
+          connection_label TEXT NOT NULL,
+          workspace_id TEXT,
+          workspace_name TEXT,
+          source TEXT NOT NULL
+        )
+        """
+      )
+      try database.execute(
+        """
+        CREATE VIRTUAL TABLE history_fts USING fts5(
+          sql,
+          error_message,
+          connection_label,
+          workspace_name,
+          content='history',
+          content_rowid='id',
+          tokenize='unicode61 remove_diacritics 2'
+        )
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
+          INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name)
+          VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name);
+        END
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_ad AFTER DELETE ON history BEGIN
+          INSERT INTO history_fts(
+            history_fts, rowid, sql, error_message, connection_label, workspace_name
+          )
+          VALUES (
+            'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name
+          );
+        END
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_au AFTER UPDATE ON history BEGIN
+          INSERT INTO history_fts(
+            history_fts, rowid, sql, error_message, connection_label, workspace_name
+          )
+          VALUES (
+            'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name
+          );
+          INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name)
+          VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name);
+        END
+        """
+      )
+      try database.execute("CREATE INDEX history_executed_at ON history(executed_at)")
+      try database.execute("CREATE INDEX history_connection_key ON history(connection_key)")
+      try database.execute("PRAGMA user_version = 1")
+    }
+    for (offset, row) in rows.enumerated() {
+      let statement = try database.prepare(
+        """
+        INSERT INTO history (
+          sql, executed_at, duration_ms, row_count, status,
+          connection_key, connection_label, source
+        ) VALUES (?, ?, 1, 1, 'success', ?, 'label', 'cell')
+        """
+      )
+      try statement.bind(1, .string(row.sql))
+      try statement.bind(2, .double(Double(1_700_000_000 + offset)))
+      try statement.bind(3, .string(row.key))
+      while try statement.step() {}
+    }
   }
 
   private func temporaryDatabaseURL() -> URL {

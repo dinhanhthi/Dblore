@@ -71,7 +71,10 @@ struct DataSettingsModelTests {
     let logs = Store(text: "alpha", bytes: 4, itemCount: 1)
     let database = SecretItem(service: "db", account: "ada", label: "ada", kind: .dbPassword)
     let key = SecretItem(service: "ai", account: "openai", label: "openai", kind: .aiKey)
-    let inventory = InMemorySecretInventory(items: [database, key])
+    let certificate = SecretItem.listed(
+      service: KeychainClientCertificateStore.serviceName,
+      account: "db.example:5432:app:ada")
+    let inventory = InMemorySecretInventory(items: [database, key, certificate])
     let model = DataSettingsModel(
       providers: [FakeProvider(category: .logs, store: logs)],
       inventory: inventory)
@@ -79,12 +82,12 @@ struct DataSettingsModelTests {
     let mismatched = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: true, confirmed: mismatched)
     #expect(logs.clearCount == 0)
-    #expect(await inventory.items() == [database, key])
+    #expect(await inventory.items() == [database, key, certificate])
 
     let keepSecrets = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: false, confirmed: keepSecrets)
     #expect(logs.clearCount == 1)
-    #expect(await inventory.items() == [database, key])
+    #expect(await inventory.items() == [database, key, certificate])
 
     let removeSecrets = model.prepareClearAll(includeSecrets: true)
     await model.clearAll(includeSecrets: true, confirmed: removeSecrets)
@@ -94,7 +97,9 @@ struct DataSettingsModelTests {
 
   @Test("Delete ignores a token from another action")
   func deleteRequiresMatchingToken() async {
-    let item = SecretItem(service: "svc", account: "ada", label: "ada", kind: .aiKey)
+    let item = SecretItem.listed(
+      service: KeychainClientCertificateStore.serviceName,
+      account: "db.example:5432:app:ada")
     let inventory = InMemorySecretInventory(items: [item])
     let logs = Store(text: "alpha", bytes: 4, itemCount: 1)
     let model = DataSettingsModel(

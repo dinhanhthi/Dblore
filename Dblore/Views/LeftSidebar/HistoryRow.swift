@@ -24,6 +24,9 @@ struct HistoryRow: View {
 
   private var showsActions: Bool { isHovering || isHoveringInsert || isHoveringDetail }
 
+  /// Transaction summaries are labels. Insert and Copy would put non-SQL where it can be run.
+  private var canReplay: Bool { !QueryHistoryEntry.isTransactionSummary(entry.sql) }
+
   var body: some View {
     HStack(alignment: .top, spacing: Spacing.xs) {
       Circle()
@@ -39,6 +42,11 @@ struct HistoryRow: View {
           Text(durationLabel)
           Text("·")
           Text(HistoryRelativeTime.label(from: entry.executedAt, now: now))
+            .layoutPriority(1)
+          if let kind = HistoryRowLabels.kindLabel(entry.kind) {
+            historyBadge(kind)
+          }
+          historyBadge(HistoryRowLabels.sourceLabel(entry.source))
         }
         .font(.caption)
         .foregroundColor(.foregroundMuted)
@@ -50,7 +58,13 @@ struct HistoryRow: View {
     .padding(.vertical, Spacing.xsm)
     .frame(maxWidth: .infinity, alignment: .top)
     .contentShape(Rectangle())
-    .onTapGesture(count: 2) { onInsert() }
+    .onTapGesture(count: 2) {
+      if canReplay {
+        onInsert()
+      } else {
+        onViewDetail()
+      }
+    }
     .background { rowBackground }
     .overlay(alignment: .topTrailing) {
       if showsActions {
@@ -61,12 +75,14 @@ struct HistoryRow: View {
             action: onViewDetail,
             isHovering: $isHoveringDetail
           )
-          HistoryHoverButton(
-            systemName: "text.badge.plus",
-            help: "Insert into the current editor",
-            action: onInsert,
-            isHovering: $isHoveringInsert
-          )
+          if canReplay {
+            HistoryHoverButton(
+              systemName: "text.badge.plus",
+              help: "Insert into the current editor",
+              action: onInsert,
+              isHovering: $isHoveringInsert
+            )
+          }
         }
         .background { rowBackground }
         .padding(.top, Spacing.xsm)
@@ -77,9 +93,11 @@ struct HistoryRow: View {
     .animation(.easeOut(duration: 0.12), value: showsActions)
     .onHover { isHovering = $0 }
     .contextMenu {
-      Button("Insert") { onInsert() }
+      if canReplay {
+        Button("Insert") { onInsert() }
+        Button("Copy") { onCopy() }
+      }
       Button("View Detail") { onViewDetail() }
-      Button("Copy") { onCopy() }
       Divider()
       Button("Delete", role: .destructive) { onDelete() }
     }
@@ -130,6 +148,17 @@ struct HistoryRow: View {
       }
     }
   }
+
+  /// Same capsule tokens as the filter row. Kind does not pick a color.
+  private func historyBadge(_ title: String) -> some View {
+    Text(title)
+      .font(.caption2)
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .padding(.horizontal, Spacing.xs)
+      .background(Capsule().fill(Color.inputBackground))
+      .overlay(Capsule().strokeBorder(Color.border, lineWidth: 1))
+  }
 }
 
 /// Minute-resolution age. Under a minute stays "just now", so the row does not tick each second.
@@ -158,6 +187,29 @@ enum HistoryRelativeTime {
     formatter.timeStyle = .none
     return formatter
   }()
+}
+
+/// Visible kind and source badges. Nil kind has no kind label.
+nonisolated enum HistoryRowLabels: Sendable {
+  static func kindLabel(_ kind: QueryHistoryEntry.Kind?) -> String? {
+    switch kind {
+    case .read: "Read"
+    case .write: "Write"
+    case .schema: "Schema"
+    case .transaction: "Transaction"
+    case .other: "Other"
+    case nil: nil
+    }
+  }
+
+  static func sourceLabel(_ source: QueryHistoryEntry.Source) -> String {
+    switch source {
+    case .cell: "Cell"
+    case .editor: "Editor"
+    case .dataViewerEdit: "Data Viewer Edit"
+    case .dataImport: "Data Import"
+    }
+  }
 }
 
 /// Up to two non-empty lines of recorded SQL.

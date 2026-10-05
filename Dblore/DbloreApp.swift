@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Combine
 @preconcurrency import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
@@ -374,6 +375,12 @@ struct SharedCommands: Commands {
     CommandGroup(after: .appInfo) {
       CheckForUpdatesButton()
     }
+
+    // Cell and staged grid edits live on the view model's undo manager, not the text
+    // view's. No key equivalent: Cmd+Z stays on the system Undo item.
+    CommandGroup(after: .undoRedo) {
+      CellUndoCommandButtons()
+    }
   }
 
   private func showAboutWindow() {
@@ -398,6 +405,94 @@ private struct CheckForUpdatesButton: View {
       updater.checkForUpdates()
     }
     .disabled(!updater.canCheckForUpdates)
+  }
+}
+
+/// Edit menu items for the focused notebook or data viewer undo stack.
+private struct CellUndoCommandButtons: View {
+  @ObservedObject private var refresh = CellUndoMenuRefresh.shared
+  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+
+  var body: some View {
+    let _ = refresh.revision
+    Button(title(prefix: "Undo", actionName: cellUndoTarget?.undoManager.undoActionName)) {
+      cellUndoTarget?.undoCellChange()
+    }
+    .disabled(cellUndoTarget?.undoManager.canUndo != true)
+
+    Button(title(prefix: "Redo", actionName: cellUndoTarget?.undoManager.redoActionName)) {
+      cellUndoTarget?.redoCellChange()
+    }
+    .disabled(cellUndoTarget?.undoManager.canRedo != true)
+  }
+
+  /// Notebook tabs and data viewer tabs. A plain SQL editor keeps the system items only.
+  private var cellUndoTarget: NotebookViewModel? {
+    guard let activeViewModel else { return nil }
+    guard activeViewModel.viewMode == .notebook || activeViewModel.dataViewer != nil else {
+      return nil
+    }
+    return activeViewModel
+  }
+
+  /// Empty stack (no action name) stays "Undo Cell Change" / "Redo Cell Change".
+  private func title(prefix: String, actionName: String?) -> String {
+    guard let actionName, !actionName.isEmpty else { return "\(prefix) Cell Change" }
+    return "\(prefix) \(actionName)"
+  }
+}
+
+/// Republishes so the cell undo titles match the focused view model's undo manager.
+/// `removeAllActions` does not close a group; opening a menu reads the stack again.
+@MainActor
+private final class CellUndoMenuRefresh: ObservableObject {
+  static let shared = CellUndoMenuRefresh()
+
+  @Published private(set) var revision = 0
+  private var tokens: [any NSObjectProtocol] = []
+  private var didRefreshForTracking = false
+
+  private init() {
+    let stackNames: [Notification.Name] = [
+      .NSUndoManagerDidCloseUndoGroup,
+      .NSUndoManagerDidUndoChange,
+      .NSUndoManagerDidRedoChange,
+    ]
+    for name in stackNames {
+      tokens.append(
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+          MainActor.assumeIsolated {
+            CellUndoMenuRefresh.shared.revision += 1
+          }
+        })
+    }
+    tokens.append(
+      NotificationCenter.default.addObserver(
+        forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+      ) { _ in
+        MainActor.assumeIsolated {
+          CellUndoMenuRefresh.shared.menuDidBeginTracking()
+        }
+      })
+    tokens.append(
+      NotificationCenter.default.addObserver(
+        forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main
+      ) { _ in
+        MainActor.assumeIsolated {
+          CellUndoMenuRefresh.shared.menuDidEndTracking()
+        }
+      })
+  }
+
+  /// One refresh per tracking session, so rebuilding the items cannot loop.
+  private func menuDidBeginTracking() {
+    guard !didRefreshForTracking else { return }
+    didRefreshForTracking = true
+    revision += 1
+  }
+
+  private func menuDidEndTracking() {
+    didRefreshForTracking = false
   }
 }
 

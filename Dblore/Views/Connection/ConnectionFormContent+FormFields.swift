@@ -6,6 +6,8 @@
 //
 
 import AppKit
+import NIOSSL
+import Security
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -71,6 +73,9 @@ extension ConnectionFormContent {
         sslModeMenu(selection: $connectionConfig.sslMode) {
           connectionConfig.sslMode = $0
         }
+        if usesClientCertificate(connectionConfig.sslMode) {
+          clientCertificateSection()
+        }
       }
 
       FormField(label: "Timeout (seconds)") {
@@ -126,6 +131,9 @@ extension ConnectionFormContent {
           connectionConfig.sslMode = mode
           clearTestResult()
         }
+        if usesClientCertificate(connectionStringSSLModeBinding.wrappedValue) {
+          clientCertificateSection()
+        }
       }
     }
   }
@@ -155,6 +163,252 @@ extension ConnectionFormContent {
       .linkPointer()
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  private func usesClientCertificate(_ mode: SSLMode) -> Bool {
+    mode == .require || mode == .verifyCa || mode == .verifyFull
+  }
+
+  @ViewBuilder
+  private func clientCertificateSection() -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Client certificate (PEM)") {
+        HStack(spacing: Spacing.sm) {
+          Button(certificatePEM == nil ? "Choose certificate" : "Replace certificate") {
+            chooseCertificateFile(.certificate)
+          }
+          .buttonStyle(SecondaryButtonStyle())
+          if certificatePEM != nil {
+            Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
+          }
+        }
+      }
+
+      FormField(label: "Private key (PEM)") {
+        HStack(spacing: Spacing.sm) {
+          Button(privateKeyPEM == nil ? "Choose key" : "Replace key") {
+            chooseCertificateFile(.privateKey)
+          }
+          .buttonStyle(SecondaryButtonStyle())
+          if privateKeyPEM != nil {
+            Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
+          }
+        }
+      }
+
+      FormField(label: "Key passphrase (if encrypted)") {
+        SecureField("Optional passphrase", text: certificatePassphraseBinding)
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
+      }
+
+      FormField(label: "Custom CA (PEM, optional)") {
+        HStack(spacing: Spacing.sm) {
+          Button(caPEM == nil ? "Choose CA" : "Replace CA") {
+            chooseCertificateFile(.ca)
+          }
+          .buttonStyle(SecondaryButtonStyle())
+          if caPEM != nil {
+            Button("Remove CA") {
+              caPEM = nil
+              certificateDraftChanged = true
+              certificateError = nil
+            }
+            .buttonStyle(SecondaryButtonStyle())
+          }
+        }
+      }
+
+      if let info = certificateInfo {
+        Text(info.subject)
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+        if let expiry = info.expiry {
+          Text("Expires \(expiry.formatted(date: .abbreviated, time: .omitted))")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        }
+      }
+
+      if certificatePEM != nil || privateKeyPEM != nil || connectionConfig.clientCertificate != nil
+      {
+        Button("Remove client certificate", role: .destructive) {
+          removeClientCertificate()
+        }
+        .buttonStyle(SecondaryButtonStyle())
+      }
+      if let certificateError {
+        Text(certificateError)
+          .font(.caption)
+          .foregroundColor(.destructive)
+      }
+    }
+  }
+
+  private enum CertificateFileKind: Sendable {
+    case certificate, privateKey, ca
+  }
+
+  private var certificatePassphraseBinding: Binding<String> {
+    Binding(
+      get: { certificatePassphrase },
+      set: {
+        certificatePassphrase = $0
+        certificateDraftChanged = true
+      })
+  }
+
+  private func chooseCertificateFile(_ kind: CertificateFileKind) {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = ["pem", "crt", "cer", "key"].compactMap {
+      UTType(filenameExtension: $0)
+    }
+    panel.begin { response in
+      guard response == .OK, let url = panel.url else { return }
+      Task { @MainActor in
+        do {
+          let pem = try readPEM(at: url)
+          switch kind {
+          case .certificate:
+            certificateInfo = try Self.certificateInfo(from: pem, hasCA: caPEM != nil)
+            certificatePEM = pem
+          case .privateKey:
+            guard
+              pem.contains("-----BEGIN PRIVATE KEY-----")
+                || pem.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+                || pem.contains("-----BEGIN RSA PRIVATE KEY-----")
+                || pem.contains("-----BEGIN EC PRIVATE KEY-----")
+            else { throw CertificateFormError.invalidPEM }
+            privateKeyPEM = pem
+          case .ca:
+            guard !(try NIOSSLCertificate.fromPEMBytes(Array(pem.utf8))).isEmpty else {
+              throw CertificateFormError.invalidPEM
+            }
+            caPEM = pem
+          }
+          certificateDraftChanged = true
+          certificateError = nil
+        } catch {
+          certificateError = "Choose a valid PEM file smaller than 1 MB."
+        }
+      }
+    }
+  }
+
+  private func readPEM(at url: URL) throws -> String {
+    let granted = url.startAccessingSecurityScopedResource()
+    defer { if granted { url.stopAccessingSecurityScopedResource() } }
+    let file = try FileHandle(forReadingFrom: url)
+    defer { try? file.close() }
+    let data = try file.read(upToCount: 1_048_577) ?? Data()
+    guard data.count <= 1_048_576, let pem = String(data: data, encoding: .utf8) else {
+      throw CertificateFormError.invalidPEM
+    }
+    return pem
+  }
+
+  static func certificateInfo(from pem: String, hasCA: Bool) throws -> ClientCertificateInfo {
+    guard let certificate = try NIOSSLCertificate.fromPEMBytes(Array(pem.utf8)).first,
+      let securityCertificate = SecCertificateCreateWithData(
+        nil, Data(try certificate.toDERBytes()) as CFData)
+    else { throw CertificateFormError.invalidPEM }
+    let subject =
+      SecCertificateCopySubjectSummary(securityCertificate) as String? ?? "Unknown subject"
+    return ClientCertificateInfo(
+      subject: subject,
+      expiry: Date(timeIntervalSince1970: TimeInterval(certificate.notValidAfter)),
+      hasCA: hasCA)
+  }
+
+  func restoreCertificateDraft() {
+    let account = ClientCertificateStoreFactory.account(for: connectionConfig)
+    if connectionConfig.clientCertificate != nil { certificateRemovalAccount = nil }
+    if certificateRemovalAccount != nil && certificateRemovalAccount != account {
+      certificateRemovalAccount = nil
+    }
+    if certificateRemovalAccount == account && connectionConfig.clientCertificate == nil { return }
+    certificatePEM = nil
+    privateKeyPEM = nil
+    caPEM = nil
+    certificatePassphrase = ""
+    certificateInfo = connectionConfig.clientCertificate
+    certificateDraftChanged = false
+    certificateError = nil
+    guard connectionConfig.clientCertificate != nil else { return }
+    guard let material = ClientCertificateStoreFactory.load(for: connectionConfig) else {
+      certificateError = "Saved client certificate is missing. Choose the PEM files again."
+      return
+    }
+    certificatePEM = material.certificatePEM
+    privateKeyPEM = material.privateKeyPEM
+    caPEM = material.caPEM
+    certificatePassphrase = material.passphrase ?? ""
+  }
+
+  private func removeClientCertificate() {
+    if connectionConfig.clientCertificate != nil {
+      certificateRemovalAccount = ClientCertificateStoreFactory.account(for: connectionConfig)
+    }
+    certificatePEM = nil
+    privateKeyPEM = nil
+    caPEM = nil
+    certificatePassphrase = ""
+    certificateInfo = nil
+    certificateError = nil
+    certificateDraftChanged = true
+    connectionConfig.clientCertificate = nil
+  }
+
+  func preparedCertificateConfig() throws -> ConnectionConfig {
+    var config = connectionConfig
+
+    if config.clientCertificate != nil && !usesClientCertificate(config.sslMode) {
+      throw CertificateFormError.tlsMode
+    }
+
+    if !certificateDraftChanged {
+      if config.clientCertificate != nil && ClientCertificateStoreFactory.load(for: config) == nil {
+        throw CertificateFormError.missingMaterial
+      }
+      return config
+    }
+
+    if certificatePEM == nil && privateKeyPEM == nil {
+      config.clientCertificate = nil
+      return config
+    }
+
+    guard usesClientCertificate(config.sslMode) else {
+      throw CertificateFormError.tlsMode
+    }
+    guard let certificatePEM, let privateKeyPEM else {
+      throw CertificateFormError.incompleteMaterial
+    }
+    let material = ClientCertificateMaterial(
+      certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM,
+      caPEM: caPEM, passphrase: certificatePassphrase.isEmpty ? nil : certificatePassphrase)
+    do {
+      _ = try PostgresSession.tlsConfiguration(sslMode: config.sslMode, material: material)
+    } catch {
+      throw CertificateFormError.invalidPEM
+    }
+    let info = try Self.certificateInfo(from: certificatePEM, hasCA: caPEM != nil)
+    config.clientCertificate = info
+    return config
+  }
+
+  func certificateMaterialForOperation(_ config: ConnectionConfig) -> ClientCertificateMaterial? {
+    guard config.clientCertificate != nil else { return nil }
+    if certificateDraftChanged, let certificatePEM, let privateKeyPEM {
+      return ClientCertificateMaterial(
+        certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM,
+        caPEM: caPEM, passphrase: certificatePassphrase.isEmpty ? nil : certificatePassphrase)
+    }
+    return ClientCertificateStoreFactory.load(for: config)
   }
 
   /// Name plus Browse. The chosen path is shown under the button.
@@ -458,6 +712,24 @@ extension ConnectionFormContent {
         let clamped = clamp(newValue)
         if clamped != newValue { value.wrappedValue = clamped }
       }
+    }
+  }
+}
+
+enum CertificateFormError: LocalizedError {
+  case invalidPEM
+  case missingMaterial
+  case incompleteMaterial
+  case tlsMode
+  case keychainSave
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidPEM: "The certificate, private key, CA, or passphrase is invalid."
+    case .missingMaterial: "Saved client certificate is missing. Choose the PEM files again."
+    case .incompleteMaterial: "Choose both a client certificate and private key."
+    case .tlsMode: "Client certificates require Require, Verify CA, or Verify Full TLS mode."
+    case .keychainSave: "Could not save the client certificate to Keychain."
     }
   }
 }

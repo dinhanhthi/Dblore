@@ -45,6 +45,10 @@ struct RightSidebarView: View {
               .padding(Spacing.md)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if content == .parameters {
+          // QueryParametersContent handles its own ScrollView
+          contentView(for: content)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
           // Other content types use ScrollView wrapper
           ScrollView {
@@ -174,6 +178,8 @@ struct RightSidebarView: View {
       return "Filter"
     case .tableHighlight:
       return "Highlight"
+    case .parameters:
+      return "Parameters"
     }
   }
 
@@ -210,7 +216,20 @@ struct RightSidebarView: View {
         // Editable only for a single table with a primary key, on a writable connection
         isReadOnly: !viewModel.canEdit(
           tableName: tableName, primaryKeyColumns: primaryKeyColumns,
-          columnNames: Set(rowData.map { Array($0.keys) } ?? []))
+          columnNames: Set(rowData.map { Array($0.keys) } ?? [])),
+        onSetNull: { [workspaceManager] in
+          viewModel.handleCellValueEdit(
+            columnName: columnName,
+            columnType: columnType,
+            newValue: nil,
+            originalValue: value,
+            tableName: tableName,
+            rowData: rowData,
+            primaryKeyColumns: primaryKeyColumns,
+            cellId: cellId,
+            connectionManager: workspaceManager?.connectionManager
+          )
+        }
       )
       .environment(viewModel)
     case .executedQuery(let query, let cellId):
@@ -219,6 +238,8 @@ struct RightSidebarView: View {
       TableFilterContent(viewModel: viewModel)
     case .tableHighlight:
       TableHighlightContent(viewModel: viewModel)
+    case .parameters:
+      QueryParametersContent(viewModel: viewModel)
     }
   }
 

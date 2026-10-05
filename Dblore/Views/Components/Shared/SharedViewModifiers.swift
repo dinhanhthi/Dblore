@@ -119,12 +119,19 @@ private struct QueryConfirmationModifier: ViewModifier {
           viewModel.cancelPendingQuery()
         }
       } message: {
+        let state = viewModel.queryConfirmationState
         VStack(alignment: .leading, spacing: 8) {
-          if viewModel.queryConfirmationState.affectsAllRows {
+          if state.affectsAllRows {
             Text("⚠️ WARNING: This query has no WHERE clause and will affect ALL rows!")
               .font(.body.bold())
               .foregroundStyle(.red)
-          } else {
+          }
+          if state.likePatternAffectsAllRows {
+            Text(StatementConfirmation.likePatternAllRowsReason)
+              .font(.body.bold())
+              .foregroundStyle(.red)
+          }
+          if !state.affectsAllRows && !state.likePatternAffectsAllRows {
             Text("These statements need confirmation:")
               .font(.body)
           }
@@ -150,16 +157,10 @@ private struct QueryConfirmationModifier: ViewModifier {
 
       // Warning for dangerous queries
       if viewModel.queryConfirmationState.affectsAllRows {
-        HStack(spacing: Spacing.sm) {
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundColor(.destructive)
-          Text("WARNING: This query has no WHERE clause and will affect ALL rows!")
-            .font(.bodyText)
-            .foregroundColor(.destructive)
-        }
-        .padding(Spacing.md)
-        .background(Color.destructive.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        allRowsWarning("WARNING: This query has no WHERE clause and will affect ALL rows!")
+      }
+      if viewModel.queryConfirmationState.likePatternAffectsAllRows {
+        allRowsWarning(StatementConfirmation.likePatternAllRowsReason)
       }
 
       // Statements that need confirmation
@@ -208,6 +209,19 @@ private struct QueryConfirmationModifier: ViewModifier {
     }
   }
 
+  private func allRowsWarning(_ text: String) -> some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.destructive)
+      Text(text)
+        .font(.bodyText)
+        .foregroundColor(.destructive)
+    }
+    .padding(Spacing.md)
+    .background(Color.destructive.opacity(0.1))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+  }
+
   /// Touch ID is enabled for Safe Mode and usable now
   private var showsTouchID: Bool {
     AppSettings.shared.isBiometricEnabled && AppSettings.shared.canUseTouchID
@@ -231,6 +245,12 @@ private struct QueryConfirmationModifier: ViewModifier {
               .font(.mono)
               .foregroundColor(.foregroundMuted)
               .lineLimit(2)
+            if let note = statement.parameterNote {
+              Text(note)
+                .font(.mono)
+                .foregroundColor(.foregroundMuted)
+                .lineLimit(3)
+            }
             Text(statement.kindLabel)
               .font(.small)
               .foregroundColor(.foregroundSubtle)

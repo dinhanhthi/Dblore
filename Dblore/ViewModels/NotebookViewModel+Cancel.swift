@@ -17,6 +17,7 @@ extension NotebookViewModel {
   func cancelCell(id: UUID) {
     guard executionQueue.isExecuting(cellId: id) else {
       executionQueue.cancel(cellId: id)
+      ConfirmedParameterSnapshot.dropCell(self, cellId: id)
       if let index = notebook.cells.firstIndex(where: { $0.id == id }) {
         notebook.cells[index].isRunning = false
       }
@@ -34,12 +35,31 @@ extension NotebookViewModel {
   /// Cancel all pending and executing cells in the queue only (nothing is sent to the server;
   /// used before resolving the pending transaction, which then commits, rolls back or closes)
   func cancelAllCells() {
+    let cellIds = executionQueue.tasks.compactMap { task -> UUID? in
+      task.state.isTerminal ? nil : task.cellId
+    }
     executionQueue.cancelAll()
+    // Pending cells never reach takeCell. The running one has already copied its binds, or it
+    // sees the cancelled task and sends nothing.
+    for cellId in cellIds {
+      ConfirmedParameterSnapshot.dropCell(self, cellId: cellId)
+    }
 
     // Update UI state for all cells
     for index in notebook.cells.indices {
       notebook.cells[index].isRunning = false
     }
+  }
+
+  /// Cancels queued cells that have not started and drops the binds they would have sent.
+  @discardableResult
+  func cancelPendingCells() -> Int {
+    let pendingIds = executionQueue.tasks.filter { $0.state == .pending }.map(\.cellId)
+    let count = executionQueue.cancelPending()
+    for cellId in pendingIds {
+      ConfirmedParameterSnapshot.dropCell(self, cellId: cellId)
+    }
+    return count
   }
 
   /// Stop the running statement on the server, after confirmation when that discards pending

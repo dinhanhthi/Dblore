@@ -251,7 +251,9 @@ final class DataSettingsModel {
   }
 
   @concurrent private static func removeSecrets(_ inventory: any SecretInventory) async throws {
-    let kinds: [SecretKind] = [.dbPassword, .aiKey, .chatGPTToken, .safeModePassword]
+    let kinds: [SecretKind] = [
+      .dbPassword, .aiKey, .chatGPTToken, .safeModePassword, .clientCertificate,
+    ]
     for kind in kinds {
       try await inventory.deleteAll(kind: kind)
     }

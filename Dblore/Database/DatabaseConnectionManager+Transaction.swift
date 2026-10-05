@@ -32,6 +32,9 @@ extension DatabaseConnectionManager {
   /// opened it may run statements (checked again before every statement).
   /// A read cut by the row cap with no app transaction resets the session
   /// (`resetSessionIfCapped`) and ends the script: the rest is listed in `skippedStatements`.
+  /// `binds` lines up with `statements` (a missing slot is sent unbound). When `originalTexts`
+  /// is set, `queryText` and skipped-statement text come from it; the text sent stays
+  /// `statement.text`.
   /// - Throws: `DatabaseError.queryCancelled` once the user cancelled (the session was closed);
   ///   `DatabaseError.sessionChanged` when the connection changed between two statements, or
   ///   is not `expectedEpoch` (a Run All batch's connection) on entry (nothing sent);
@@ -41,7 +44,7 @@ extension DatabaseConnectionManager {
   ///   a statement error (after moving the app transaction to `.aborted`).
   func runUserStatements(
     _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?,
-    expectedEpoch: UInt64? = nil
+    expectedEpoch: UInt64? = nil, binds: [[SQLBindValue]] = [], originalTexts: [String]? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     guard session != nil else { throw DatabaseError.notConnected }
     guard !statements.isEmpty else { throw DatabaseError.emptyQuery }
@@ -62,7 +65,13 @@ extension DatabaseConnectionManager {
     let start = Date()
     var openedHere = false
     var results: [(queryText: String, result: QueryResult)] = []
-    for statement in statements {
+    func shownText(at index: Int) -> String {
+      guard let originalTexts, originalTexts.indices.contains(index) else {
+        return statements[index].text
+      }
+      return originalTexts[index]
+    }
+    for (index, statement) in statements.enumerated() {
       await scriptCheckpointHook?(.beforeStatement(caller: caller, index: results.count))
       // Cancelled, reset or reconnected between two statements: the rest must not run on the
       // new session (outside the user's BEGIN, without its temp tables / SET)
@@ -90,8 +99,9 @@ extension DatabaseConnectionManager {
       var result: QueryResult
       do {
         let inTransaction = !txState.isIdle || userTxOpen
+        let statementBinds = binds.indices.contains(index) ? binds[index] : []
         result = try await executeSingleStatement(
-          statement.text, maxRows: maxRows, inTransaction: inTransaction)
+          statement.text, maxRows: maxRows, inTransaction: inTransaction, binds: statementBinds)
       } catch {
         // The session is gone: nothing of the old transaction state applies any more
         if let cancelled = cancelError(since: epoch) { throw cancelled }
@@ -104,7 +114,15 @@ extension DatabaseConnectionManager {
       if action != .run {
         recordPending(
           StatementSummary(
-            statement: statement, affectedRows: statement.kind == .dml ? result.affectedRows : nil))
+            statement: ClassifiedStatement(
+              text: shownText(at: index), kind: statement.kind,
+              hasReturning: statement.hasReturning,
+              hasTopLevelReturning: statement.hasTopLevelReturning,
+              affectsAllRows: statement.affectsAllRows,
+              nonTransactional: statement.nonTransactional,
+              resetsSessionBrakes: statement.resetsSessionBrakes,
+              changesPrivileges: statement.changesPrivileges, createsTable: statement.createsTable),
+            affectedRows: statement.kind == .dml ? result.affectedRows : nil))
       }
       if !protectedMode {
         userTxOpen = ProtectedTransactionRules.userTxOpen(
@@ -113,12 +131,11 @@ extension DatabaseConnectionManager {
       result = await resetSessionIfCapped(result, statement: statement)
       if result.sessionReset {
         // The rest would run outside the user's session state (temp tables, SET, BEGIN)
-        let index = results.count
-        result.skippedStatements = statements.dropFirst(index + 1).map(\.text)
-        results.append((queryText: statement.text, result: result))
+        result.skippedStatements = ((index + 1)..<statements.count).map { shownText(at: $0) }
+        results.append((queryText: shownText(at: index), result: result))
         break
       }
-      results.append((queryText: statement.text, result: result))
+      results.append((queryText: shownText(at: index), result: result))
     }
     return (results: results, totalTime: Date().timeIntervalSince(start))
   }

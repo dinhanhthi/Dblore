@@ -125,6 +125,36 @@ struct WorkspaceConnectUnlockTests {
     #expect(await !manager.connectionManager.isConnected)
   }
 
+  @Test("Cancelling an unlock also drops its pending private key")
+  func cancelPendingCertificate() async {
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: Self.strict), restoreTabs: false)
+    let material = ClientCertificateMaterial(certificatePEM: "draft", privateKeyPEM: "draft-key")
+    let scoped = ClientCertificateStoreFactory.ScopedMaterial(
+      account: ClientCertificateStoreFactory.account(for: Self.weak), material: material)
+    await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(config: Self.weak, globalSafeMode: .silent)
+      }
+    }
+    scoped.clear()
+    #expect(manager.pendingWeakeningCertificate == material)
+    manager.cancelPendingWeakeningConnect()
+    #expect(manager.pendingWeakeningCertificate == nil)
+    #expect(scoped.material == nil)
+  }
+
+  @Test("Closing a lost workspace releases its ephemeral certificate")
+  func closingLostWorkspaceReleasesCertificate() {
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: Self.weak), restoreTabs: false)
+    let material = ClientCertificateMaterial(certificatePEM: "draft", privateKeyPEM: "draft-key")
+    manager.activeUnrememberedCertificate = .init(
+      account: ClientCertificateStoreFactory.account(for: Self.weak), material: material)
+    manager.releaseFileAccess()
+    #expect(manager.activeUnrememberedCertificate == nil)
+  }
+
   @Test("Completing without a pending connect does nothing")
   func completeWithoutPending() async throws {
     let manager = WorkspaceManager(

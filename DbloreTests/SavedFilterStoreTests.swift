@@ -77,6 +77,47 @@ struct SavedFilterStoreTests {
     #expect(store.list(for: key(type: .sqlite)).isEmpty)
   }
 
+  @Test("A condition saved without the empty-string flag still decodes")
+  func decodesConditionWithoutEmptyStringFlag() throws {
+    let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defaults.removePersistentDomain(forName: name)
+    let filterID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    let conditionID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    let json = """
+      {
+        "\(key())": [
+          {
+            "id": "\(filterID.uuidString)",
+            "name": "old",
+            "filter": {
+              "conditions": [
+                {
+                  "id": "\(conditionID.uuidString)",
+                  "column": "name",
+                  "op": "equals",
+                  "value": "1",
+                  "connector": "and"
+                }
+              ]
+            }
+          }
+        ]
+      }
+      """
+    defaults.set(Data(json.utf8), forKey: "ace.thi.dblore.savedFilters")
+    let saved = SavedFilterStore(defaults: defaults).list(for: key())
+    #expect(saved.count == 1)
+    #expect(saved[0].name == "old")
+    #expect(saved[0].filter.conditions.count == 1)
+    #expect(saved[0].filter.conditions[0].id == conditionID)
+    #expect(saved[0].filter.conditions[0].column == "name")
+    #expect(saved[0].filter.conditions[0].value == "1")
+    #expect(saved[0].filter.conditions[0].emptyStringIsValue == false)
+    #expect(saved[0].filter.whereClause(dialect: .postgresql) == #""name" = '1'"#)
+    defaults.removePersistentDomain(forName: name)
+  }
+
   @Test("Undecodable data gives an empty list")
   func decodeFailure() {
     let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"

@@ -15,6 +15,8 @@ struct PendingStagedBatch: Sendable {
   var statements: [BoundStatement]
   var preview: String
   var connectionEpoch: UInt64
+  var historySource: QueryHistoryRecordSource = .dataViewerEdit
+  var rowRanges: [ClosedRange<Int>?] = []
 }
 
 extension NotebookViewModel {
@@ -42,7 +44,7 @@ extension NotebookViewModel {
   @discardableResult
   func stageInsert(values: [String: CellValue] = [:]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
-    return changeSet { $0.stageInsert(values: values) }
+    return changeSet("Add Row") { $0.stageInsert(values: values) }
   }
 
   /// + Row. A single integer primary key with no database default is set to the next number.
@@ -69,7 +71,7 @@ extension NotebookViewModel {
         next = advanced
       }
     }
-    return changeSet { set in
+    return changeSet("Add Row") { set in
       for values in copies { set.stageInsert(values: values) }
     }
   }
@@ -81,7 +83,7 @@ extension NotebookViewModel {
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
     let keys = rows.compactMap { rowKey(at: $0, target: target) }
     if keys.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
-    return changeSet { set in
+    return changeSet("Delete Rows") { set in
       for key in keys { set.stageDelete(row: key) }
     }
   }
@@ -97,7 +99,7 @@ extension NotebookViewModel {
       dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: row, column: column)
       ?? .null
     do {
-      return try changeSet { set in
+      return try changeSet("Edit Cell") { set in
         if let tempID = key.tempID {
           set.updateInsert(tempID: tempID, column: column, value: value)
         } else {
@@ -117,7 +119,7 @@ extension NotebookViewModel {
     if let reason = rowStagingUnavailableReason { return reason }
     guard let target = stagedEditTarget, dataViewer?.changeSet != nil else { return nil }
     let keys = rows.compactMap { rowKey(at: $0, target: target) }
-    return changeSet { $0.revert(rows: keys) }
+    return changeSet("Revert") { $0.revert(rows: keys) }
   }
 
   /// Asks Commit / Discard / Cancel when this data viewer has staged rows.
@@ -159,6 +161,7 @@ extension NotebookViewModel {
   /// Drops every staged change. A Safe Mode dialog for this batch is cancelled with it.
   func discardStaged() {
     dataViewer?.changeSet = nil
+    undoManager.removeAllActions()
     guard pendingStagedBatch != nil else { return }
     pendingStagedBatch = nil
     queryConfirmationState.clear()
@@ -175,6 +178,7 @@ extension NotebookViewModel {
     guard let target = stagedEditTarget else { return }
     if let set = dataViewer?.changeSet, let reason = set.invalidated(by: target) {
       dataViewer?.changeSet = nil
+      undoManager.removeAllActions()
       showToast(reason, type: .warning)
       return
     }
@@ -190,32 +194,69 @@ extension NotebookViewModel {
   }
 
   /// Sends a batch the user already confirmed, or one that Safe Mode did not need to confirm.
-  func runConfirmedStagedBatch(_ batch: PendingStagedBatch) async {
-    guard !refuseWhileTransactionPendingElsewhere() else { return }
+  @discardableResult
+  func runConfirmedStagedBatch(_ batch: PendingStagedBatch) async -> String? {
+    guard !refuseWhileTransactionPendingElsewhere() else {
+      return "A transaction is pending in another tab"
+    }
     guard let connectionManager else {
       showToast("No database connection available", type: .error)
-      return
+      return "No database connection available"
     }
     let started = Date()
+    var failure: String?
     do {
       let counts = try await connectionManager.executeGatedBatch(
         batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
         caller: id)
-      dataViewer?.changeSet = nil
+      if batch.historySource == .dataViewerEdit {
+        dataViewer?.changeSet = nil
+        undoManager.removeAllActions()
+      }
       await recordExecution(
         [
           QueryHistoryOutcome(
             sql: batch.preview, duration: Date().timeIntervalSince(started),
             rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
-        ], source: .dataViewerEdit)
-      await loadDataViewerPage()
+        ], source: batch.historySource)
+      if dataViewer != nil { await loadDataViewerPage() }
     } catch {
+      let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: .dataViewerEdit)
-      showToast(error.localizedDescription, type: .error)
+        source: batch.historySource, errorMessage: message)
+      showToast(message, type: .error)
+      failure = message
     }
     await onStatementsExecuted?()
+    return failure
+  }
+
+  /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
+  func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
+    guard !hasPendingStagedChanges else {
+      return "Commit or discard staged changes before importing"
+    }
+    if case .blocked(_, _, let reason) = DatabaseConnectionManager.evaluateBatch(
+      batch.statements, policy: protectionPolicy, dialect: sqlDialect)
+    {
+      return reason
+    }
+    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+      pendingExplainSQL = nil
+      pendingStagedBatch = batch
+      return nil
+    }
+    return await runConfirmedStagedBatch(batch)
+  }
+
+  private static func batchFailureMessage(
+    _ error: Error, ranges: [ClosedRange<Int>?]
+  ) -> String {
+    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
+      ranges.indices.contains(index), let range = ranges[index]
+    else { return error.localizedDescription }
+    return "Rows \(range.lowerBound)–\(range.upperBound): \(error.localizedDescription)"
   }
 
   // MARK: - Private
@@ -368,22 +409,49 @@ extension NotebookViewModel {
 
   /// Applies `body` to the current set, creating one for `stagedEditTarget` when needed.
   /// An empty set is stored as nil. A thrown error leaves the previous set unchanged.
-  private func changeSet(_ body: (inout RowChangeSet) throws -> Void) rethrows -> String? {
+  /// `actionName` registers a snapshot on `undoManager` (nil skips that: the key fill before commit).
+  private func changeSet(
+    _ actionName: String? = nil, _ body: (inout RowChangeSet) throws -> Void
+  ) rethrows -> String? {
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
-    var set: RowChangeSet
-    if let existing = dataViewer?.changeSet {
-      if let reason = existing.invalidated(by: target) {
-        dataViewer?.changeSet = nil
-        showToast(reason, type: .warning)
-        return reason
-      }
-      set = existing
-    } else {
-      set = RowChangeSet(target: target)
+    if let existing = dataViewer?.changeSet, let reason = existing.invalidated(by: target) {
+      dataViewer?.changeSet = nil
+      undoManager.removeAllActions()
+      showToast(reason, type: .warning)
+      return reason
     }
+    var set = dataViewer?.changeSet ?? RowChangeSet(target: target)
+    let previous = dataViewer?.changeSet
     try body(&set)
-    dataViewer?.changeSet = set.isEmpty ? nil : set
+    let stored: RowChangeSet? = set.isEmpty ? nil : set
+    if stored != previous, let actionName {
+      registerStagedUndo(restoring: previous, actionName: actionName)
+    }
+    dataViewer?.changeSet = stored
     return nil
+  }
+
+  /// Records an undo that puts `snapshot` back. Called again from that undo, it becomes the redo.
+  private func registerStagedUndo(restoring snapshot: RowChangeSet?, actionName: String) {
+    undoManager.registerUndo(withTarget: self) { target in
+      MainActor.assumeIsolated {
+        target.restoreStagedChangeSet(snapshot, actionName: actionName)
+      }
+    }
+    undoManager.setActionName(actionName)
+  }
+
+  /// Swaps the staged set for `snapshot` and registers the inverse under the same action name.
+  /// A Safe Mode dialog still holding the previous batch is closed first: Execute Query would
+  /// otherwise send that captured SQL, then clear this undo.
+  private func restoreStagedChangeSet(_ snapshot: RowChangeSet?, actionName: String) {
+    if pendingStagedBatch != nil {
+      pendingStagedBatch = nil
+      queryConfirmationState.clear()
+    }
+    let current = dataViewer?.changeSet
+    registerStagedUndo(restoring: current, actionName: actionName)
+    dataViewer?.changeSet = snapshot
   }
 
   private func rowKey(at row: Int, target: EditTarget) -> RowChangeSet.RowKey? {

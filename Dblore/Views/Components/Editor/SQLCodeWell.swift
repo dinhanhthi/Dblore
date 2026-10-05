@@ -14,14 +14,20 @@ struct SQLCodeWell: View {
   let sql: String
   var placeholder: String?
   var dialect: SQLDialect = .postgresql
+  /// Transaction summaries turn this off so the label cannot be copied out as SQL.
+  var allowsTextSelection: Bool = true
 
   @Bindable private var appSettings = AppSettings.shared
   @State private var wordWrapEnabled: Bool
 
-  init(sql: String, placeholder: String? = nil, dialect: SQLDialect = .postgresql) {
+  init(
+    sql: String, placeholder: String? = nil, dialect: SQLDialect = .postgresql,
+    allowsTextSelection: Bool = true
+  ) {
     self.sql = sql
     self.placeholder = placeholder
     self.dialect = dialect
+    self.allowsTextSelection = allowsTextSelection
     self._wordWrapEnabled = State(initialValue: AppSettings.shared.wordWrapEnabled)
   }
 
@@ -73,7 +79,7 @@ struct SQLCodeWell: View {
       }
     }
     .font(.system(size: 13, design: .monospaced))
-    .textSelection(.enabled)
+    .modifier(SQLWellTextSelection(allowsSelection: allowsTextSelection))
     .fixedSize(horizontal: !wordWrapEnabled, vertical: true)
     .padding(Spacing.md)
     // Clears the floating toggles so the last line can scroll above them.
@@ -83,6 +89,20 @@ struct SQLCodeWell: View {
 
   private var highlightedSQL: AttributedString {
     AttributedString(SQLSyntaxHighlighter.highlight(sql, dialect: dialect))
+  }
+}
+
+/// `.enabled` and `.disabled` are different types, so a ternary cannot pick one.
+private struct SQLWellTextSelection: ViewModifier {
+  var allowsSelection: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if allowsSelection {
+      content.textSelection(.enabled)
+    } else {
+      content.textSelection(.disabled)
+    }
   }
 }
 

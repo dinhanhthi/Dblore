@@ -807,3 +807,300 @@ struct WorkspaceTransactionIntegrationTests {
     await tearDown(fixture)
   }
 }
+
+// MARK: - History rows for Commit / Rollback
+
+@Suite("Workspace Transaction - History")
+@MainActor
+struct WorkspaceTransactionHistoryTests {
+  @Test("Commit records on the origin tab, not the active tab")
+  func commitRecordsOnOriginTab() async throws {
+    try await withWorkspace { env in
+      let first = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(first.error == nil)
+      let second = try await env.run("UPDATE notes SET label = 'b' WHERE id = 1", on: env.origin)
+      #expect(second.error == nil)
+      #expect(env.workspace.transactionOriginTabId == env.origin.id)
+      #expect(env.workspace.activeTabId == env.active.id)
+      #expect(env.workspace.pendingTransaction.pending.count == 2)
+
+      env.workspace.requestCommit()
+      #expect(await env.workspace.confirmCommit(globalSafeMode: .silent))
+
+      let commits = await env.transactionRows(in: env.origin.history, verb: "COMMIT")
+      #expect(commits.map(\.sql) == ["COMMIT (2 statements)"])
+      #expect(commits.map(\.kind) == [.transaction])
+      #expect(commits.map(\.source) == [.editor])
+      #expect(await env.transactionRows(in: env.active.history, verb: "COMMIT").isEmpty)
+    }
+  }
+
+  @Test("Rollback history is stored before the edited cell is re-run")
+  func rollbackHistoryPrecedesCellRerun() async throws {
+    try await withWorkspace(tabCount: 1) { env in
+      let updated = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(updated.error == nil)
+      let cell = NotebookCell(cellType: .sql, content: "SELECT label FROM notes")
+      env.origin.viewModel.notebook.cells.append(cell)
+      env.origin.viewModel.cellsEditedInTransaction = [cell.id]
+      env.origin.viewModel.dataViewer = DataViewerState(
+        schema: "main", name: "notes", orderColumns: ["id"], databaseType: .sqlite)
+
+      #expect(await env.workspace.rollback())
+      await env.origin.viewModel.executionQueue.waitForIdle()
+
+      let history = await env.origin.history.entries
+      let rollback = try #require(history.first { $0.sql.hasPrefix("ROLLBACK (") })
+      let rerun = history.filter { $0.sql == "SELECT label FROM notes" }
+      #expect(!rerun.isEmpty)
+      #expect(rerun.allSatisfy { rollback.executedAt <= $0.executedAt })
+    }
+  }
+
+  @Test("Rollback records on the origin tab, including one statement")
+  func rollbackRecordsOnOriginTab() async throws {
+    try await withWorkspace { env in
+      let updated = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(updated.error == nil)
+      #expect(env.workspace.transactionOriginTabId == env.origin.id)
+
+      #expect(await env.workspace.rollback())
+
+      let rows = await env.transactionRows(in: env.origin.history, verb: "ROLLBACK")
+      #expect(rows.map(\.sql) == ["ROLLBACK (1 statements)"])
+      #expect(rows.map(\.kind) == [.transaction])
+      #expect(rows.map(\.source) == [.editor])
+      #expect(await env.transactionRows(in: env.active.history, verb: "ROLLBACK").isEmpty)
+    }
+  }
+
+  @Test("Commit records on the active tab when there is no origin tab")
+  func commitRecordsOnActiveTabWithoutOrigin() async throws {
+    try await withWorkspace { env in
+      let policy = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+      _ = try await env.workspace.connectionManager.execute(
+        userSQL: "UPDATE notes SET label = 'a' WHERE id = 1", policy: policy, caller: nil)
+      await env.workspace.refreshPendingTransaction()
+      #expect(env.workspace.transactionOriginTabId == nil)
+      #expect(env.workspace.activeTabId == env.active.id)
+
+      env.workspace.requestCommit()
+      #expect(await env.workspace.confirmCommit(globalSafeMode: .silent))
+
+      let commits = await env.transactionRows(in: env.active.history, verb: "COMMIT")
+      #expect(commits.map(\.sql) == ["COMMIT (1 statements)"])
+      #expect(commits.map(\.kind) == [.transaction])
+      #expect(commits.map(\.source) == [.editor])
+      #expect(await env.transactionRows(in: env.origin.history, verb: "COMMIT").isEmpty)
+    }
+  }
+
+  @Test("Rollback records nothing when no view model can take it")
+  func rollbackRecordsNothingWithoutViewModel() async throws {
+    try await withWorkspace(tabCount: 1) { env in
+      let policy = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+      _ = try await env.workspace.connectionManager.execute(
+        userSQL: "UPDATE notes SET label = 'a' WHERE id = 1", policy: policy, caller: nil)
+      await env.workspace.refreshPendingTransaction()
+      env.workspace.activeTabId = nil
+      env.workspace.transactionOriginTabId = UUID()
+
+      #expect(await env.workspace.rollback())
+      #expect(env.workspace.pendingTransaction.isIdle)
+      #expect(await env.transactionRows(in: env.origin.history, verb: "ROLLBACK").isEmpty)
+    }
+  }
+
+  @Test("Disabled history on the origin tab records no transaction row")
+  func disabledOriginHistoryRecordsNothing() async throws {
+    let suiteName = "WorkspaceTransactionHistoryTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: suiteName))
+    suite.removePersistentDomain(forName: suiteName)
+    defer { suite.removePersistentDomain(forName: suiteName) }
+    let settings = AppSettings(defaults: suite)
+    settings.historyEnabled = false
+
+    try await withWorkspace { env in
+      env.origin.viewModel.historySettings = settings
+      let updated = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(updated.error == nil)
+      #expect(await env.workspace.rollback())
+      #expect(await env.transactionRows(in: env.origin.history, verb: "ROLLBACK").isEmpty)
+      #expect(await env.transactionRows(in: env.active.history, verb: "ROLLBACK").isEmpty)
+    }
+  }
+
+  @Test("A failed commit records nothing")
+  func failedCommitRecordsNothing() async throws {
+    try await withWorkspace(tabCount: 1) { env in
+      let first = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(first.error == nil)
+      env.workspace.requestCommit()
+      let second = try await env.run("UPDATE notes SET label = 'b' WHERE id = 1", on: env.origin)
+      #expect(second.error == nil)
+
+      #expect(!(await env.workspace.confirmCommit(globalSafeMode: .silent)))
+      #expect(!env.workspace.pendingTransaction.isIdle)
+      #expect(await env.transactionRows(in: env.origin.history, verb: "COMMIT").isEmpty)
+    }
+  }
+
+  @Test("A failed rollback records nothing")
+  func failedRollbackRecordsNothing() async throws {
+    try await withWorkspace(tabCount: 1) { env in
+      let updated = try await env.run("UPDATE notes SET label = 'a' WHERE id = 1", on: env.origin)
+      #expect(updated.error == nil)
+      let hold = await holdTransactionEnd(env.workspace.connectionManager)
+      defer { hold.release.finish() }
+      env.workspace.requestCommit()
+      let committing = Task { await env.workspace.confirmCommit(globalSafeMode: .silent) }
+      var reached = hold.reached.makeAsyncIterator()
+      _ = await reached.next()
+
+      #expect(!(await env.workspace.rollback()))
+      #expect(await env.transactionRows(in: env.origin.history, verb: "ROLLBACK").isEmpty)
+
+      hold.release.finish()
+      _ = await committing.value
+    }
+  }
+
+  @Test("Idle commit and rollback record nothing")
+  func idleCommitAndRollbackRecordNothing() async {
+    let workspace = WorkspaceManager(workspace: Workspace())
+    workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
+    let tabId = workspace.newNotebook()
+    let viewModel = workspace.viewModel(for: tabId)
+    let history = CapturedHistory()
+    viewModel?.historyRecorder = history
+    #expect(await workspace.rollback())
+    #expect(await history.entries.isEmpty)
+
+    let pending = SQLStatementClassifier.classify("UPDATE t SET v = 1 WHERE id = 1").map {
+      StatementSummary(statement: $0, affectedRows: 1)
+    }
+    workspace.pendingTransaction = .appTx(pending: pending)
+    workspace.pendingTransactionGeneration = 1
+    workspace.requestCommit()
+    #expect(await workspace.confirmCommit(globalSafeMode: .silent))
+    #expect(workspace.pendingTransaction.isIdle)
+    #expect(await history.entries.isEmpty)
+  }
+
+  private struct TabSlot {
+    let id: UUID
+    let viewModel: NotebookViewModel
+    let history: CapturedHistory
+  }
+
+  @MainActor
+  private struct Env {
+    let workspace: WorkspaceManager
+    let url: URL
+    let tabs: [TabSlot]
+
+    var origin: TabSlot { tabs[0] }
+    var active: TabSlot { tabs[tabs.count - 1] }
+
+    func run(_ sql: String, on tab: TabSlot) async throws -> CellResult {
+      let cell = NotebookCell(cellType: .sql, content: sql)
+      tab.viewModel.notebook.cells.append(cell)
+      let result = await tab.viewModel.executeTask(ExecutionTask(cellId: cell.id, query: sql))
+      return try #require(result)
+    }
+
+    func transactionRows(in history: CapturedHistory, verb: String) async -> [QueryHistoryEntry] {
+      await history.entries.filter { $0.sql.hasPrefix("\(verb) (") }
+    }
+  }
+
+  private func withWorkspace(
+    tabCount: Int = 2, _ body: @MainActor (Env) async throws -> Void
+  ) async throws {
+    let url = try makeDatabase()
+    let workspace = WorkspaceManager(workspace: Workspace())
+    workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
+    var tabs: [TabSlot] = []
+    for _ in 0..<tabCount {
+      let id = workspace.newNotebook()
+      let viewModel = try #require(workspace.viewModel(for: id))
+      let history = CapturedHistory()
+      viewModel.historyRecorder = history
+      tabs.append(TabSlot(id: id, viewModel: viewModel, history: history))
+    }
+    let env = Env(workspace: workspace, url: url, tabs: tabs)
+    do {
+      try await workspace.connect(config: sqliteConfig(path: url.path), globalSafeMode: .silent)
+      await workspace.awaitSchemaLoad()
+      try await body(env)
+    } catch {
+      await tearDown(env)
+      throw error
+    }
+    await tearDown(env)
+  }
+
+  private func tearDown(_ env: Env) async {
+    await env.workspace.connectionManager.setTransactionEndHook(nil)
+    if await !env.workspace.connectionManager.transactionSnapshot().isIdle {
+      _ = await env.workspace.rollback()
+    }
+    await env.workspace.disconnect(resolution: .rollback)
+    removeDatabase(env.url)
+  }
+
+  /// Suspends Commit / Rollback after the state is `.ending` and before the command is sent.
+  private func holdTransactionEnd(_ manager: DatabaseConnectionManager) async -> EndHold {
+    let (reached, reachedContinuation) = AsyncStream<Void>.makeStream()
+    let (released, releaseContinuation) = AsyncStream<Void>.makeStream()
+    await manager.setTransactionEndHook { _ in
+      reachedContinuation.yield()
+      for await _ in released { break }
+    }
+    return EndHold(reached: reached, release: releaseContinuation)
+  }
+
+  private struct EndHold {
+    let reached: AsyncStream<Void>
+    let release: AsyncStream<Void>.Continuation
+  }
+
+  private func sqliteConfig(path: String) -> ConnectionConfig {
+    ConnectionConfig(
+      databaseType: .sqlite,
+      host: "",
+      port: 0,
+      database: path,
+      username: "",
+      rememberConnection: false,
+      protectionLevel: .none,
+      safeMode: .silent,
+      protectedMode: true)
+  }
+
+  private func makeDatabase() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-tx-history-\(UUID().uuidString).sqlite")
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, label TEXT)")
+    try handle.execute("INSERT INTO notes (label) VALUES ('old')")
+    return url
+  }
+
+  private func removeDatabase(_ url: URL) {
+    let fileManager = FileManager.default
+    try? fileManager.removeItem(at: url)
+    for suffix in ["-wal", "-shm", "-journal"] {
+      try? fileManager.removeItem(at: URL(fileURLWithPath: url.path + suffix))
+    }
+  }
+}
+
+/// Appends recorded entries for workspace transaction history tests.
+private actor CapturedHistory: QueryHistoryRecording {
+  private(set) var entries: [QueryHistoryEntry] = []
+
+  func record(_ entry: QueryHistoryEntry) async {
+    entries.append(entry)
+  }
+}

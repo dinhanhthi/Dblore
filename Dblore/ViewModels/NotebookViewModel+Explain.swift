@@ -36,6 +36,7 @@ extension NotebookViewModel {
     rollbackAfterAnalyze: Bool = true,
     cellId: UUID? = nil
   ) async {
+    ConfirmedParameterSnapshot.disarmExplain(self)
     let request: ExplainRequest
     do {
       request = try ExplainRequest(
@@ -56,7 +57,10 @@ extension NotebookViewModel {
       return
     }
     let targetCell = viewMode == .editor ? nil : (cellId ?? selectedCellId)
+    if refuseMissingParameters(sql, cellId: targetCell) != nil { return }
     if presentConfirmationIfNeeded(for: sql, cellId: targetCell) {
+      ConfirmedParameterSnapshot.armExplain(
+        self, sql: sql, values: queryConfirmationState.parameterValues)
       pendingExplainSQL = sql
       pendingStagedBatch = nil
       return
@@ -81,9 +85,10 @@ extension NotebookViewModel {
   /// Editor runs and cell runs both record the explain SQL through the normal history path.
   /// Called again after Safe Mode confirmation (`executePendingQuery`).
   func runExplained(_ sql: String, cellId: UUID?) async {
+    let snapshotted = ConfirmedParameterSnapshot.takeExplain(self, sql: sql)
     guard !refuseWhileTransactionPendingElsewhere() else { return }
     if viewMode != .editor, let cellId {
-      await runCellStatement(id: cellId, query: sql)
+      await runCellStatement(id: cellId, query: sql, parameters: snapshotted)
       return
     }
     guard connectionState.isConnected else {
@@ -91,11 +96,14 @@ extension NotebookViewModel {
       return
     }
     let source: QueryHistoryRecordSource = viewMode == .editor ? .editor : .cell
-    await executeEditorQuery(sql, source: source)
+    await executeEditorQuery(sql, source: source, parameters: snapshotted)
   }
 
   /// Same send path as `runCell`, with the explain script in place of the cell text.
-  private func runCellStatement(id: UUID, query: String) async {
+  /// `parameters` is the dialog snapshot. Nil reads the live values at send time.
+  private func runCellStatement(
+    id: UUID, query: String, parameters: [String: SQLBindValue]? = nil
+  ) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }),
       notebook.cells[index].cellType == .sql
     else { return }
@@ -105,6 +113,11 @@ extension NotebookViewModel {
       return
     }
     guard !executionQueue.isInQueue(cellId: id) else { return }
+    if let parameters {
+      ConfirmedParameterSnapshot.stashCell(self, cellId: id, query: query, values: parameters)
+    } else {
+      ConfirmedParameterSnapshot.dropCell(self, cellId: id)
+    }
     executionQueue.enqueue(cellId: id, query: query)
   }
 }

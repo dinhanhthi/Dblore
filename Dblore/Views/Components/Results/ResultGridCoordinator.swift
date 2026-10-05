@@ -13,6 +13,18 @@
 import AppKit
 import SwiftUI
 
+/// Bound lookup of the referenced row. The view model sends it and does not record it.
+typealias ReferencedRowLookup = (
+  _ column: String, _ schema: String?, _ table: String?, _ rowColumns: [String],
+  _ values: [String: CellValue]
+) async throws -> QueryResult?
+
+/// Opens the referenced table through the existing data-viewer jump.
+typealias ReferencedRowJump = (
+  _ column: String, _ schema: String?, _ table: String?, _ rowColumns: [String],
+  _ values: [String: CellValue]
+) -> Bool
+
 @MainActor
 final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate,
   NSTextFieldDelegate
@@ -105,6 +117,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private var sourceResult: CellResult?
   private var valueFilter = ColumnValueFilter()
   private var columnFilterPopover: NSPopover?
+  /// "Referenced Row..." popover. Closed when the result identity changes.
+  private var referencedRowPopover: NSPopover?
+  /// Catalog relation this grid shows. Nil for a join or a result with no edit target.
+  var relationSchema: String?
+  var relationTable: String?
+  var foreignKeys: [ForeignKey] = []
+  /// Connection dialect. Only decides whether `ForeignKeyLookup` can follow the cell.
+  var lookupDialect: SQLDialect = .postgresql
+  var onLookupReferencedRow: ReferencedRowLookup?
+  var onJumpToReferencedRow: ReferencedRowJump?
   /// Called with the displayed row values, its index into `CellResult.rows` and the result
   /// column index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
@@ -204,6 +226,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     if newKey.timestamp != key?.timestamp || newKey.columnNames != key?.columnNames {
       columnFilterPopover?.close()
       columnFilterPopover = nil
+      referencedRowPopover?.close()
+      referencedRowPopover = nil
     }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -298,7 +322,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   /// Context menu of the cell at a displayed row and result column: copy, details in the right
-  /// sidebar and, when the grid supports it, highlight by cell or row in a preset color
+  /// sidebar, "Referenced Row..." when that column has a foreign key, and, when the grid
+  /// supports it, highlight by cell or row in a preset color
   func contextMenu(row: Int, column: Int) -> NSMenu? {
     guard let model, row >= 0, row < model.rowCount, column >= 0, column < model.columns.count
     else { return nil }
@@ -321,6 +346,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     inList.isEnabled = selectedColumns.count <= 1
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
+    if referencedForeignKey(column: column) != nil {
+      addItem(
+        to: menu, "Referenced Row...", #selector(showReferencedRow(_:)),
+        MenuTarget(row: row, column: column))
+    }
     if stagesEdits {
       let pages = pageIndexes(in: displayedRows)
       menu.addItem(.separator())
@@ -391,6 +421,84 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   @objc private func seeMore(_ sender: NSMenuItem) {
     guard let target = sender.representedObject as? MenuTarget else { return }
     showCellDetails(row: target.row, column: target.column)
+  }
+
+  @objc private func showReferencedRow(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    showReferencedRow(row: target.row, column: target.column)
+  }
+
+  /// The key that owns this result column, or nil when the relation or the key is missing.
+  /// A composite key counts only when every source column is in the row.
+  func referencedForeignKey(column: Int) -> ForeignKey? {
+    guard let model, let schema = relationSchema, let table = relationTable,
+      model.columns.indices.contains(column)
+    else { return nil }
+    return ForeignKeyLookup.reference(
+      for: model.columns[column].name, schema: schema, table: table, foreignKeys: foreignKeys,
+      rowColumns: model.columns.map(\.name))
+  }
+
+  /// Values for the popover. Nil when the cell has no reference. `followsReference` is false
+  /// when a component is NULL: the popover does not call the lookup.
+  func referencedRowRequest(row: Int, column: Int) -> ReferencedRowRequest? {
+    guard let model, let schema = relationSchema, let table = relationTable,
+      let key = referencedForeignKey(column: column), row >= 0, row < model.rowCount
+    else { return nil }
+    let values = rowValues(at: row)
+    let follows =
+      ForeignKeyLookup.lookupSQL(for: key, values: values, dialect: lookupDialect) != nil
+    return ReferencedRowRequest(
+      column: model.columns[column].name, schema: schema, table: table,
+      rowColumns: model.columns.map(\.name), values: values, foreignKey: key,
+      followsReference: follows)
+  }
+
+  /// Popover anchored to the cell, the same transient popover as the column filter.
+  /// The lookup is `onLookupReferencedRow`; the button is `onJumpToReferencedRow`.
+  private func showReferencedRow(row: Int, column: Int) {
+    guard let request = referencedRowRequest(row: row, column: column),
+      let lookup = onLookupReferencedRow, let jump = onJumpToReferencedRow,
+      let tableView = gridTableView,
+      let tableColumn = tableView.tableColumns.firstIndex(where: {
+        Int($0.identifier.rawValue) == column
+      })
+    else { return }
+    let rect = tableView.frameOfCell(atColumn: tableColumn, row: row)
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.animates = true
+    let hosting = NSHostingController(
+      rootView: ForeignKeyLookupPopover(
+        request: request,
+        lookup: {
+          try await lookup(
+            request.column, request.schema, request.table, request.rowColumns, request.values)
+        },
+        jump: {
+          _ = jump(
+            request.column, request.schema, request.table, request.rowColumns, request.values)
+        }))
+    hosting.sizingOptions = [.preferredContentSize, .intrinsicContentSize]
+    popover.contentViewController = hosting
+    referencedRowPopover?.close()
+    referencedRowPopover = popover
+    columnFilterPopover?.close()
+    columnFilterPopover = nil
+    // The table is flipped: maxY is the bottom edge, so the popover opens under the cell.
+    popover.show(relativeTo: rect, of: tableView, preferredEdge: .maxY)
+  }
+
+  /// Displayed row values by column name. The first column keeps a duplicated name.
+  private func rowValues(at row: Int) -> [String: CellValue] {
+    guard let model, row >= 0, row < model.rowCount else { return [:] }
+    let cells = model.row(at: row)
+    var values: [String: CellValue] = [:]
+    for (index, column) in model.columns.enumerated() where values[column.name] == nil {
+      guard cells.indices.contains(index) else { continue }
+      values[column.name] = cells[index]
+    }
+    return values
   }
 
   @objc private func highlightCell(_ sender: NSMenuItem) {
@@ -826,6 +934,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         }))
     columnFilterPopover?.close()
     columnFilterPopover = popover
+    referencedRowPopover?.close()
+    referencedRowPopover = nil
     // Header is flipped: maxY is the bottom edge, so the popover opens under the icon
     popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
   }

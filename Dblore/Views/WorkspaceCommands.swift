@@ -13,8 +13,15 @@ struct WorkspaceCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
+  @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
+  @FocusedValue(\.openTableImportAction) private var openTableImportAction
 
   var body: some Commands {
+    CommandGroup(after: .newItem) {
+      Button("Import Data...") { openTableImportAction?() }
+        .disabled(openTableImportAction == nil)
+    }
+
     // Sidebar toggle commands - only show when no document is open
     // (NotebookCommands and EditorCommands handle their own modes)
     if documentMode == nil {
@@ -43,6 +50,16 @@ struct WorkspaceCommands: Commands {
       }
       .keyboardShortcut("l", modifiers: .command)
       .disabled(toggleAIAssistantAction == nil)
+
+      Divider()
+
+      Button {
+        openCommandPaletteAction?()
+      } label: {
+        Label("Command Palette", systemImage: "magnifyingglass")
+      }
+      .keyboardShortcut("k", modifiers: .command)
+      .disabled(openCommandPaletteAction == nil)
     }
   }
 }
@@ -57,10 +74,28 @@ struct ToggleAIAssistantActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+struct OpenCommandPaletteActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct OpenTableImportActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
     set { self[ToggleAIAssistantActionKey.self] = newValue }
+  }
+
+  var openCommandPaletteAction: (() -> Void)? {
+    get { self[OpenCommandPaletteActionKey.self] }
+    set { self[OpenCommandPaletteActionKey.self] = newValue }
+  }
+
+  var openTableImportAction: (() -> Void)? {
+    get { self[OpenTableImportActionKey.self] }
+    set { self[OpenTableImportActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

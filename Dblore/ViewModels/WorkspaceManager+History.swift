@@ -57,7 +57,7 @@ nonisolated enum HistoryScope: Equatable, Sendable {
   }
 }
 
-/// One page of query history for the sidebar. `query` changes wait 250 ms, then call `searchNow()`.
+/// One page of query history for the sidebar. Filter changes wait 250 ms, then call `searchNow()`.
 @MainActor
 @Observable
 final class HistoryListModel {
@@ -83,6 +83,15 @@ final class HistoryListModel {
   var status: QueryHistoryEntry.Status? {
     didSet {
       guard status != oldValue else { return }
+      page = 1
+      scheduleSearch()
+    }
+  }
+
+  /// Keeps `kind == write`. NULL is not a write. The store applies the filter.
+  var writesOnly: Bool = false {
+    didSet {
+      guard writesOnly != oldValue else { return }
       page = 1
       scheduleSearch()
     }
@@ -144,7 +153,7 @@ final class HistoryListModel {
     searchEpoch += 1
     let epoch = searchEpoch
     page = 1
-    await load(requestedPage: 1, epoch: epoch)
+    await load(requestedPage: 1, epoch: epoch, writesOnly: writesOnly)
     if appliedEpoch >= epoch { return }
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       if appliedEpoch >= epoch {
@@ -161,7 +170,7 @@ final class HistoryListModel {
     searchTask = nil
     searchEpoch += 1
     let epoch = searchEpoch
-    await load(requestedPage: max(newPage, 1), epoch: epoch)
+    await load(requestedPage: max(newPage, 1), epoch: epoch, writesOnly: writesOnly)
   }
 
   private func scheduleSearch() {
@@ -176,7 +185,7 @@ final class HistoryListModel {
     }
   }
 
-  private func load(requestedPage: Int, epoch: Int) async {
+  private func load(requestedPage: Int, epoch: Int, writesOnly: Bool) async {
     isLoading = true
     defer {
       if epoch == searchEpoch { isLoading = false }
@@ -191,13 +200,15 @@ final class HistoryListModel {
     }
     do {
       let scope = resolvedScope()
-      let total = try await store.count(text: query, scope: scope, status: status)
+      let total = try await store.count(
+        text: query, scope: scope, status: status, writesOnly: writesOnly)
       guard epoch == searchEpoch else { return }
       let pages = total == 0 ? 1 : (total + Self.pageSize - 1) / Self.pageSize
       let resolved = min(max(requestedPage, 1), pages)
       let offset = (resolved - 1) * Self.pageSize
       let rows = try await store.search(
-        text: query, scope: scope, status: status, limit: Self.pageSize, offset: offset)
+        text: query, scope: scope, status: status, limit: Self.pageSize, offset: offset,
+        writesOnly: writesOnly)
       guard epoch == searchEpoch else { return }
       totalCount = total
       page = resolved
@@ -231,9 +242,11 @@ final class HistoryListModel {
 }
 
 extension WorkspaceManager {
-  /// SQL text placed on the pasteboard. The action is what talks to `NSPasteboard`.
-  static func historyClipboardText(_ entry: QueryHistoryEntry) -> String {
-    entry.sql
+  /// SQL text placed on the pasteboard, or nil for a transaction summary label.
+  /// The action is what talks to `NSPasteboard`.
+  static func historyClipboardText(_ entry: QueryHistoryEntry) -> String? {
+    guard !QueryHistoryEntry.isTransactionSummary(entry.sql) else { return nil }
+    return entry.sql
   }
 
   /// Store for the history list. The test host never opens `QueryHistoryStore.shared`.
@@ -251,15 +264,22 @@ extension WorkspaceManager {
   }
 
   /// Inserts the statement at the cursor, the same way a favorite does.
+  /// A transaction summary is a label. Running it with Protected mode off is a syntax error
+  /// that the client still treats as a finished COMMIT or ROLLBACK.
   func insertHistory(_ entry: QueryHistoryEntry) {
+    guard !QueryHistoryEntry.isTransactionSummary(entry.sql) else { return }
     activeViewModel?.insertTextIntoSelectedCell(entry.sql)
   }
 
-  /// Copies `entry.sql` to the pasteboard.
-  func copyHistory(_ entry: QueryHistoryEntry) {
+  /// Copies `entry.sql` to the pasteboard. A transaction summary is not copied:
+  /// pasting it into the editor and running it is the same hazard as Insert.
+  @discardableResult
+  func copyHistory(_ entry: QueryHistoryEntry) -> Bool {
+    guard let text = Self.historyClipboardText(entry) else { return false }
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
-    pasteboard.setString(Self.historyClipboardText(entry), forType: .string)
+    pasteboard.setString(text, forType: .string)
+    return true
   }
 
   /// Deletes the rows from the store and reloads the page the user is on.

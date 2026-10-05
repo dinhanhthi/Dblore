@@ -52,16 +52,22 @@ extension WorkspaceManager {
   /// or when the actor already holds a newer connection.
   func connectionWasLost(_ event: SessionLostEvent) async {
     guard connectionState.isConnected, await !connectionManager.isConnected else { return }
-    await performDisconnect()
+    await performDisconnect(preserveCertificateForReconnect: true)
     connectionLostMessage = event.message
   }
 
   /// Banner Reconnect: connect again with the workspace connection (errors as a toast)
   func reconnectAfterConnectionLoss() async {
     guard let config = workspace.connectionConfig else { return }
+    let scoped = activeUnrememberedCertificate.map {
+      ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
+    }
+    defer { scoped?.clear() }
     connectionLostMessage = nil
     do {
-      try await connect(config: config)
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+        try await connect(config: config)
+      }
     } catch {
       WorkspaceWindowManager.shared.showToast(
         "Reconnect failed: \(error.localizedDescription)", type: .error)
@@ -70,5 +76,6 @@ extension WorkspaceManager {
 
   func dismissConnectionLost() {
     connectionLostMessage = nil
+    if !connectionState.isConnected { activeUnrememberedCertificate = nil }
   }
 }

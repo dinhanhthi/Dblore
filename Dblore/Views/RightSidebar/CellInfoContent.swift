@@ -13,6 +13,7 @@ struct CellInfoContent: View {
   let value: CellValue
   let onSave: ((String) -> Void)?
   let isReadOnly: Bool
+  let onSetNull: () -> Void
 
   @State private var isCopied = false
   @State private var isEditing = false
@@ -64,6 +65,11 @@ struct CellInfoContent: View {
             .foregroundColor(.foregroundSubtle)
 
           Spacer()
+
+          if canSetNull {
+            Button("Set NULL", action: setNull)
+              .buttonStyle(GhostButtonStyle())
+          }
 
           if isEditing {
             // Cancel and Save icon buttons (for non-boolean types)
@@ -306,6 +312,16 @@ struct CellInfoContent: View {
 
   private var hasBooleanValueChanged: Bool {
     editedBoolValue != originalBoolValue
+  }
+
+  /// Editable cell that still has a value. NULL is already set, so the button stays hidden.
+  private var canSetNull: Bool {
+    !isReadOnly && !value.isNull
+  }
+
+  private func setNull() {
+    if isEditing { cancelEdit() }
+    onSetNull()
   }
 
   private func startEdit() {
