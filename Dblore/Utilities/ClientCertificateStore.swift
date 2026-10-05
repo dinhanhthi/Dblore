@@ -149,9 +149,15 @@ nonisolated enum ClientCertificateStoreFactory {
     {
       return material
     }
+    // When both exist the v2 item wins; save and delete already remove the legacy one.
     if let material = store.load(account: account) { return material }
-    guard let legacy = legacyAccount(for: config) else { return nil }
-    return store.load(account: legacy)
+    // Legacy fallback: drop after one release, see
+    // docs/later/2026-10-05-client-certificate-legacy-account-migration.md.
+    guard let legacy = legacyAccount(for: config), let material = store.load(account: legacy)
+    else { return nil }
+    // Delete the old item only after the copy succeeds, so a failed write never locks the user out.
+    if store.save(material, account: account) { store.delete(account: legacy) }
+    return material
   }
 
   @discardableResult

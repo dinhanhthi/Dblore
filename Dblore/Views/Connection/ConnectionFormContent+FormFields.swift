@@ -349,6 +349,7 @@ extension ConnectionFormContent {
       (caPEM, certificatePassphrase) = Self.keptCertificateExtras(
         caPEM: caPEM, caPicked: caFilePicked, passphrase: certificatePassphrase,
         passphraseEdited: passphraseEdited)
+      certificateInfo?.hasCA = caPEM != nil
       return
     }
     certificatePEM = nil
