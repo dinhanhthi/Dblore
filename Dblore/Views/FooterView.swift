@@ -54,9 +54,7 @@ struct FooterView: View {
 
         // Connection status
         connectionStatusIcon
-        Text(Self.connectionStatusText(for: connectionState, config: connectionConfig))
-          .font(.small)
-          .foregroundColor(.foregroundMuted)
+        connectionStatusLabel
 
         if let viewModel, connectionState.isConnected {
           ConnectionSafetyMenus(viewModel: viewModel)
@@ -140,8 +138,9 @@ struct FooterView: View {
     }
   }
 
-  /// Connection state only. The name stays in the Name field, so a line break
-  /// in a saved name cannot stretch this label.
+  /// Short connection state. A saved name or a server error stays out of this
+  /// label so a line break cannot stretch the footer, the details row, or the
+  /// welcome screen.
   static func connectionStatusText(for state: ConnectionState, config _: ConnectionConfig?)
     -> String
   {
@@ -152,8 +151,29 @@ struct FooterView: View {
       return "Connecting..."
     case .connected:
       return "Connected"
-    case .error(let message):
-      return "Error: \(message)"
+    case .error:
+      return "Connection failed"
+    }
+  }
+
+  /// Server text for a failed connection. Hover-only; the status label stays short.
+  static func connectionFailureDetail(for state: ConnectionState) -> String? {
+    guard case .error(let message) = state else { return nil }
+    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  @ViewBuilder
+  private var connectionStatusLabel: some View {
+    let label = Text(Self.connectionStatusText(for: connectionState, config: connectionConfig))
+      .font(.small)
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .truncationMode(.tail)
+    if let detail = Self.connectionFailureDetail(for: connectionState) {
+      label.help(detail)
+    } else {
+      label
     }
   }
 

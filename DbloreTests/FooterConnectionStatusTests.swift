@@ -24,6 +24,10 @@ struct FooterConnectionStatusTests {
     #expect(FooterView.connectionStatusText(for: .connected, config: unnamed) == "Connected")
     #expect(FooterView.connectionStatusText(for: .connected, config: multiline) == "Connected")
     #expect(FooterView.connectionStatusText(for: .connected, config: nil) == "Connected")
-    #expect(FooterView.connectionStatusText(for: .error("boom"), config: nil) == "Error: boom")
+    #expect(FooterView.connectionStatusText(for: .error("boom"), config: nil) == "Connection failed")
+    #expect(
+      FooterView.connectionStatusText(
+        for: .error("password authentication failed\nFATAL: remaining connection slots"),
+        config: multiline) == "Connection failed")
   }
 }

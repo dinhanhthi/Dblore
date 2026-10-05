@@ -210,10 +210,7 @@ struct ConnectionStatusView: View {
         .fill(statusColor)
         .frame(width: 8, height: 8)
 
-      Text(statusText)
-        .font(.subheadline)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(1)
+      statusLabel
 
       if workspaceManager.connectionState == .disconnected {
         Button("Connect") {
@@ -231,6 +228,20 @@ struct ConnectionStatusView: View {
     case .connecting: return .orange
     case .disconnected: return .foregroundSubtle
     case .error: return .red
+    }
+  }
+
+  @ViewBuilder
+  private var statusLabel: some View {
+    let label = Text(statusText)
+      .font(.subheadline)
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .truncationMode(.tail)
+    if let detail = FooterView.connectionFailureDetail(for: workspaceManager.connectionState) {
+      label.help(detail)
+    } else {
+      label
     }
   }
 

@@ -157,7 +157,8 @@ struct WorkspaceInfoModal: View {
                 label: "Status",
                 value: FooterView.connectionStatusText(
                   for: workspaceManager.connectionState,
-                  config: workspace.connectionConfig)
+                  config: workspace.connectionConfig),
+                help: FooterView.connectionFailureDetail(for: workspaceManager.connectionState)
               )
               if let config = workspace.connectionConfig {
                 infoRow(label: "Type", value: config.databaseType.displayName)
@@ -281,8 +282,9 @@ struct WorkspaceInfoModal: View {
     )
   }
 
-  private func infoRow(label: String, value: String) -> some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
+  @ViewBuilder
+  private func infoRow(label: String, value: String, help: String? = nil) -> some View {
+    let row = VStack(alignment: .leading, spacing: Spacing.xs) {
       Text(label)
         .font(.caption)
         .foregroundColor(.foregroundSubtle)
@@ -291,7 +293,13 @@ struct WorkspaceInfoModal: View {
         .font(.mono)
         .foregroundColor(.foreground)
         .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
+        .lineLimit(1)
+        .truncationMode(.tail)
+    }
+    if let help {
+      row.help(help)
+    } else {
+      row
     }
   }
 }
