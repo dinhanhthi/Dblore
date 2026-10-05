@@ -321,6 +321,41 @@ struct QueryHistoryStoreTests {
     #expect(try await store.count(text: "select", scope: .all, writesOnly: true) == 1)
   }
 
+  @Test("Status and writesOnly combine, and NULL kind stays out")
+  func statusAndWritesOnlyCombine() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    let rows: [(sql: String, status: QueryHistoryEntry.Status, kind: QueryHistoryEntry.Kind?)] = [
+      ("UPDATE failed one", .error, .write),
+      ("UPDATE failed two", .error, .write),
+      ("UPDATE ok", .success, .write),
+      ("SELECT failed", .error, .read),
+      ("UPDATE failed unlabeled", .error, nil),
+      ("DELETE cancelled", .cancelled, .write),
+    ]
+    for (index, row) in rows.enumerated() {
+      try await store.record(
+        Self.entry(
+          sql: row.sql, at: start.addingTimeInterval(Double(index) * 10), status: row.status,
+          kind: row.kind))
+    }
+
+    #expect(try await store.count(text: "", scope: .all, status: .error, writesOnly: true) == 2)
+    let firstPage = try await store.search(
+      text: "", scope: .all, status: .error, limit: 1, offset: 0, writesOnly: true)
+    #expect(firstPage.map(\.sql) == ["UPDATE failed two"])
+    let secondPage = try await store.search(
+      text: "", scope: .all, status: .error, limit: 1, offset: 1, writesOnly: true)
+    #expect(secondPage.map(\.sql) == ["UPDATE failed one"])
+
+    #expect(try await store.count(text: "", scope: .all, status: .error) == 4)
+    #expect(try await store.count(text: "", scope: .all, writesOnly: true) == 4)
+    #expect(
+      try await store.count(text: "update", scope: .all, status: .success, writesOnly: true) == 1)
+  }
+
   @Test("Old JSON without kind imports, and a present kind is stored as written")
   func oldJSONImportDecodesMissingKind() async throws {
     let url = temporaryDatabaseURL()
