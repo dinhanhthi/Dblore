@@ -88,7 +88,7 @@ extension ConnectionFormContent {
       Button("Cancel", role: .cancel) {}
     } message: {
       Text(
-        "This removes the connection from history. Its saved certificate is deleted when no other connection uses it."
+        "This removes the connection from Recent connections. Its saved certificate is removed when no other Recent connection uses it."
       )
     }
   }
@@ -109,6 +109,7 @@ extension ConnectionFormContent {
     setSelectedHistoryId(entry.id)
     setFieldsEngine(entry.config.databaseType)
     connectionConfig = entry.config
+    resetCertificateDraft()
 
     if getInputMode() == .connectionString {
       setConnectionString(generateConnectionString())
@@ -125,6 +126,7 @@ extension ConnectionFormContent {
     if getSelectedHistoryId() == id {
       setSelectedHistoryId(nil)
       connectionConfig = ConnectionConfig()
+      resetCertificateDraft()
     }
   }
 
@@ -133,5 +135,6 @@ extension ConnectionFormContent {
     loadConnectionHistory()
     setSelectedHistoryId(nil)
     connectionConfig = ConnectionConfig()
+    resetCertificateDraft()
   }
 }

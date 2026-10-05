@@ -53,7 +53,10 @@ nonisolated final class KeychainClientCertificateStore: ClientCertificateStore, 
     guard let data = try? JSONEncoder().encode(material) else { return false }
     let status = SecItemUpdate(
       baseQuery(account: account) as CFDictionary,
-      [kSecValueData as String: data] as CFDictionary)
+      [
+        kSecValueData as String: data,
+        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+      ] as CFDictionary)
     if status == errSecSuccess { return true }
     guard status == errSecItemNotFound else { return false }
     var attributes = baseQuery(account: account)

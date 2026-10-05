@@ -16,6 +16,7 @@ struct ConnectionFormModal: View {
   var showsRecentHistory: Bool = true
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
   var onConnect: ((ConnectionConfig) async throws -> Void)?
+  var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -28,7 +29,8 @@ struct ConnectionFormModal: View {
         onConnect: onConnect,
         onConnectionSuccess: { isPresented = false },
         submitTitle: submitTitle,
-        showsRecentHistory: showsRecentHistory
+        showsRecentHistory: showsRecentHistory,
+        unrememberedCertificate: unrememberedCertificate
       )
     }
     .frame(width: 440, height: connectionConfig.databaseType == .sqlite ? 420 : 640)
@@ -68,7 +70,8 @@ extension View {
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
-    onConnect: ((ConnectionConfig) async throws -> Void)? = nil
+    onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
+    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
       ConnectionFormModal(
@@ -78,7 +81,8 @@ extension View {
         submitTitle: submitTitle,
         showsRecentHistory: showsRecentHistory,
         onTestConnection: onTestConnection,
-        onConnect: onConnect
+        onConnect: onConnect,
+        unrememberedCertificate: unrememberedCertificate
       )
     }
   }
@@ -103,7 +107,8 @@ extension View {
       },
       onConnect: { config in
         try await workspaceManager.connect(config: config)
-      }
+      },
+      unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate }
     )
     .sheet(
       isPresented: Binding(

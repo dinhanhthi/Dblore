@@ -28,6 +28,9 @@ struct ConnectionFormContent: View {
   /// Recent-connections picker. Hidden while editing one card so Save stays on that card.
   var showsRecentHistory: Bool = true
 
+  /// Certificate held by the workspace for its unremembered connection (not in the keychain).
+  var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
+
   @State private var isTesting = false
   @State private var testResult: TestResult?
   @State private var isConnecting = false
@@ -44,8 +47,9 @@ struct ConnectionFormContent: View {
   @State var certificateInfo: ClientCertificateInfo?
   @State var certificateError: String?
   @State var certificateDraftChanged = false
-  /// Certificate and key came from files picked in this form, not from the keychain.
-  @State var certificateFilesPicked = false
+  /// Certificate or key came from a file picked in this form, not from the keychain.
+  @State var certificateFilePicked = false
+  @State var privateKeyFilePicked = false
   @State var certificateRemovalAccount: String?
 
   // Connection history
@@ -78,7 +82,8 @@ struct ConnectionFormContent: View {
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
     onConnectionSuccess: (() -> Void)? = nil,
     submitTitle: String = "Connect",
-    showsRecentHistory: Bool = true
+    showsRecentHistory: Bool = true,
+    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
@@ -86,6 +91,7 @@ struct ConnectionFormContent: View {
     self.onConnectionSuccess = onConnectionSuccess
     self.submitTitle = submitTitle
     self.showsRecentHistory = showsRecentHistory
+    self.unrememberedCertificate = unrememberedCertificate
   }
 
   // MARK: - Body
@@ -178,14 +184,14 @@ struct ConnectionFormContent: View {
           history: connectionHistory,
           config: connectionConfig
         )
-        // A matching row means it was just loaded, not edited. The engine is the first key part.
-        let separator: Character = "\u{1e}"
+        // A matching row means it was just loaded, not edited.
         restoreCertificateDraft(
           keepingPendingDraft: Self.keepsCertificateDraft(
-            filesPicked: certificateFilesPicked,
+            filesPicked: Self.draftCameFromFiles(
+              hasCertificate: certificatePEM != nil, certificatePicked: certificateFilePicked,
+              hasKey: privateKeyPEM != nil, keyPicked: privateKeyFilePicked),
             isHistoryLoad: retained != nil,
-            engineChanged: oldKey.split(separator: separator).first
-              != newKey.split(separator: separator).first,
+            engineChanged: Self.engineChanged(oldKey: oldKey, newKey: newKey),
             isBlankForm: connectionConfig == ConnectionConfig()))
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
@@ -200,6 +206,7 @@ struct ConnectionFormContent: View {
 
       footerView()
     }
+    .onDisappear { clearCertificateDraft() }
   }
 
   func sectionTitle(_ title: String) -> some View {
@@ -269,6 +276,31 @@ struct ConnectionFormContent: View {
       config.database,
       config.username,
     ].joined(separator: "\u{1e}")
+  }
+
+  /// The engine is the first part of `connectionTargetKey`.
+  static func engineChanged(oldKey: String, newKey: String) -> Bool {
+    let separator: Character = "\u{1e}"
+    return oldKey.split(separator: separator).first != newKey.split(separator: separator).first
+  }
+
+  /// Every half in the draft was picked from a file in this form. Replacing only one half of a
+  /// keychain-loaded pair still holds the old target's material, so it does not count.
+  static func draftCameFromFiles(
+    hasCertificate: Bool, certificatePicked: Bool, hasKey: Bool, keyPicked: Bool
+  ) -> Bool {
+    (certificatePicked || keyPicked) && (!hasCertificate || certificatePicked)
+      && (!hasKey || keyPicked)
+  }
+
+  /// Session material for an unremembered connection to this target. Nothing is in the keychain.
+  static func unrememberedMaterial(
+    _ active: ClientCertificateStoreFactory.ConnectionMaterial?, for config: ConnectionConfig
+  ) -> ClientCertificateMaterial? {
+    guard !config.rememberConnection, let active,
+      active.account == ClientCertificateStoreFactory.account(for: config)
+    else { return nil }
+    return active.material
   }
 
   /// Freshly picked PEM files are not bound to an account until saved, so editing the target
@@ -598,7 +630,7 @@ struct ConnectionFormContent: View {
           try await onConnectCallback(config)
         }
         connectionConfig.clientCertificate = config.clientCertificate
-        certificateDraftChanged = false
+        clearCertificateDraft()
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {

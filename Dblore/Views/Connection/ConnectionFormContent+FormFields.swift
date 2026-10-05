@@ -282,13 +282,11 @@ extension ConnectionFormContent {
       Task { @MainActor in
         do {
           let pem = try readPEM(at: url)
-          // Replacing half of a keychain-loaded pair still holds the old target's material.
-          let startsEmpty = certificatePEM == nil && privateKeyPEM == nil
           switch kind {
           case .certificate:
             certificateInfo = try Self.certificateInfo(from: pem, hasCA: caPEM != nil)
             certificatePEM = pem
-            if startsEmpty { certificateFilesPicked = true }
+            certificateFilePicked = true
           case .privateKey:
             guard
               pem.contains("-----BEGIN PRIVATE KEY-----")
@@ -297,7 +295,7 @@ extension ConnectionFormContent {
                 || pem.contains("-----BEGIN EC PRIVATE KEY-----")
             else { throw CertificateFormError.invalidPEM }
             privateKeyPEM = pem
-            if startsEmpty { certificateFilesPicked = true }
+            privateKeyFilePicked = true
           case .ca:
             guard !(try NIOSSLCertificate.fromPEMBytes(Array(pem.utf8))).isEmpty else {
               throw CertificateFormError.invalidPEM
@@ -352,9 +350,19 @@ extension ConnectionFormContent {
     certificatePassphrase = ""
     certificateInfo = connectionConfig.clientCertificate
     certificateDraftChanged = false
-    certificateFilesPicked = false
+    certificateFilePicked = false
+    privateKeyFilePicked = false
     certificateError = nil
     guard connectionConfig.clientCertificate != nil else { return }
+    // Not in the keychain: held as a draft so Connect uses it instead of the store.
+    if let material = Self.unrememberedMaterial(unrememberedCertificate?(), for: connectionConfig) {
+      certificatePEM = material.certificatePEM
+      privateKeyPEM = material.privateKeyPEM
+      caPEM = material.caPEM
+      certificatePassphrase = material.passphrase ?? ""
+      certificateDraftChanged = true
+      return
+    }
     guard let material = ClientCertificateStoreFactory.load(for: connectionConfig) else {
       certificateError = "Saved client certificate is missing. Choose the PEM files again."
       return
@@ -363,6 +371,25 @@ extension ConnectionFormContent {
     privateKeyPEM = material.privateKeyPEM
     caPEM = material.caPEM
     certificatePassphrase = material.passphrase ?? ""
+  }
+
+  /// A different connection was loaded or the form was blanked: drop any draft, picked or not.
+  func resetCertificateDraft() {
+    certificateFilePicked = false
+    privateKeyFilePicked = false
+    certificateRemovalAccount = nil
+    restoreCertificateDraft()
+  }
+
+  /// PEM bytes leave form state after a successful Connect or Save and when the form closes.
+  func clearCertificateDraft() {
+    certificatePEM = nil
+    privateKeyPEM = nil
+    caPEM = nil
+    certificatePassphrase = ""
+    certificateDraftChanged = false
+    certificateFilePicked = false
+    privateKeyFilePicked = false
   }
 
   private func removeClientCertificate() {
@@ -376,7 +403,8 @@ extension ConnectionFormContent {
     certificateInfo = nil
     certificateError = nil
     certificateDraftChanged = true
-    certificateFilesPicked = false
+    certificateFilePicked = false
+    privateKeyFilePicked = false
     connectionConfig.clientCertificate = nil
   }
 

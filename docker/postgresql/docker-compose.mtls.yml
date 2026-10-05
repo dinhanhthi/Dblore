@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: dblore_mtls
       POSTGRES_PASSWORD: dblore123
     ports:
-      - "${MTLS_POSTGRES_PORT:-5436}:5432"
+      - "127.0.0.1:${MTLS_POSTGRES_PORT:-5436}:5432"
     volumes:
       - postgres_mtls_data:/var/lib/postgresql/data
       - ./data/mtls/server:/mtls:ro
