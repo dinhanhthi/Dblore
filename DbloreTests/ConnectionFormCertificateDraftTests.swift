@@ -82,6 +82,40 @@ struct ConnectionFormCertificateDraftSourceTests {
   }
 }
 
+@Suite("Connection form kept certificate extras")
+@MainActor
+struct ConnectionFormKeptCertificateExtrasTests {
+  @Test("A kept draft drops the CA and passphrase loaded with the old pair")
+  func loadedExtrasAreDropped() {
+    // Loaded pair, both halves picked, then a target edit: the draft is kept.
+    #expect(
+      ConnectionFormContent.keepsCertificateDraft(
+        filesPicked: ConnectionFormContent.draftCameFromFiles(
+          hasCertificate: true, certificatePicked: true, hasKey: true, keyPicked: true),
+        isHistoryLoad: false, engineChanged: false, isBlankForm: false))
+    let kept = ConnectionFormContent.keptCertificateExtras(
+      caPEM: "old CA", caPicked: false, passphrase: "old secret", passphraseEdited: false)
+    #expect(kept.caPEM == nil)
+    #expect(kept.passphrase == "")
+  }
+
+  @Test("A CA picked in this form survives a target edit")
+  func pickedCAIsKept() {
+    let kept = ConnectionFormContent.keptCertificateExtras(
+      caPEM: "new CA", caPicked: true, passphrase: "old secret", passphraseEdited: false)
+    #expect(kept.caPEM == "new CA")
+    #expect(kept.passphrase == "")
+  }
+
+  @Test("A passphrase typed in this form survives a target edit")
+  func typedPassphraseIsKept() {
+    let kept = ConnectionFormContent.keptCertificateExtras(
+      caPEM: "old CA", caPicked: false, passphrase: "typed", passphraseEdited: true)
+    #expect(kept.caPEM == nil)
+    #expect(kept.passphrase == "typed")
+  }
+}
+
 @Suite("Connection form engine change")
 @MainActor
 struct ConnectionFormEngineChangeTests {

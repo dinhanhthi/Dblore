@@ -53,6 +53,14 @@ struct CellUpdateStatementTests {
     #expect(statement.values == ["x", "2023-11-14T22:13:20.123Z"])
   }
 
+  @Test("A date primary key just below a millisecond boundary rounds up")
+  func datePrimaryKeyRoundsToNearestMillisecond() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.t", columnName: "note", newValue: "x", primaryKeyColumns: ["at"],
+      rowData: ["at": .date(Date(timeIntervalSince1970: 1_700_000_000.1229995))])
+    #expect(statement.values == ["x", "2023-11-14T22:13:20.123Z"])
+  }
+
   @Test("No primary key is refused (no all-columns fallback)")
   func noPrimaryKeyRefused() {
     #expect(throws: DatabaseError.self) {

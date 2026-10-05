@@ -40,7 +40,8 @@ actor QueryHistoryStore {
   private let database: SQLiteHandle
   private let fileURL: URL
   private var successfulInserts = 0
-  /// Set by the first failed migration. Later calls throw it without migrating again.
+  /// Set by the first failed migration that is not SQLITE_BUSY or SQLITE_LOCKED. Later calls
+  /// throw it without migrating again.
   private var migrationError: (any Error)?
 
   init(url: URL) throws {
@@ -56,15 +57,19 @@ actor QueryHistoryStore {
   }
 
   /// Finishes the version-2 migration on this actor. A failure is logged and rethrown; the
-  /// file stays on version 1 and the process keeps running. Later calls rethrow that error
-  /// without another attempt, so history stays unavailable for the session.
+  /// file stays on version 1 and the process keeps running. SQLITE_BUSY or SQLITE_LOCKED
+  /// (another connection held the file past the busy timeout) is not stored, so the next call
+  /// tries again. Any other error is stored and later calls rethrow it without another
+  /// attempt, so history stays unavailable for the session.
   private func prepare() throws {
     if let migrationError { throw migrationError }
     guard database.userVersion < 2 else { return }
     do {
       try Self.migrate(database)
     } catch {
-      migrationError = error
+      if !Self.isTransient(error) {
+        migrationError = error
+      }
       let message = error.localizedDescription
       Task {
         await AppLogger.shared.error(
@@ -72,6 +77,12 @@ actor QueryHistoryStore {
       }
       throw error
     }
+  }
+
+  /// Another connection holds the lock. A later attempt can succeed.
+  private static func isTransient(_ error: any Error) -> Bool {
+    guard let error = error as? SQLiteError else { return false }
+    return error.code == SQLITE_BUSY || error.code == SQLITE_LOCKED
   }
 
   /// Inserts the entry, or updates the newest row when it is the same SQL on the same

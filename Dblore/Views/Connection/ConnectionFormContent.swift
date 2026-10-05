@@ -50,6 +50,9 @@ struct ConnectionFormContent: View {
   /// Certificate or key came from a file picked in this form, not from the keychain.
   @State var certificateFilePicked = false
   @State var privateKeyFilePicked = false
+  /// CA picked or passphrase typed in this form, not loaded from the keychain.
+  @State var caFilePicked = false
+  @State var passphraseEdited = false
   @State var certificateRemovalAccount: String?
 
   // Connection history
@@ -291,6 +294,14 @@ struct ConnectionFormContent: View {
   ) -> Bool {
     (certificatePicked || keyPicked) && (!hasCertificate || certificatePicked)
       && (!hasKey || keyPicked)
+  }
+
+  /// A kept draft keeps only the CA and passphrase picked or typed in this form. Values loaded
+  /// with the old pair belong to the old target's account and are dropped.
+  static func keptCertificateExtras(
+    caPEM: String?, caPicked: Bool, passphrase: String, passphraseEdited: Bool
+  ) -> (caPEM: String?, passphrase: String) {
+    (caPicked ? caPEM : nil, passphraseEdited ? passphrase : "")
   }
 
   /// Session material for an unremembered connection to this target. Nothing is in the keychain.

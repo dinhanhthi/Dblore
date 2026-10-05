@@ -180,11 +180,14 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     }
   }
 
-  /// ISO 8601 with milliseconds, so a sub-second timestamp still matches its row
+  /// ISO 8601 rounded to the nearest millisecond, so a millisecond-precision timestamp matches
+  /// its row. PostgreSQL microsecond values can still miss.
   private static func dateText(_ date: Date) -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: date)
+    let rounded = Date(
+      timeIntervalSinceReferenceDate: (date.timeIntervalSinceReferenceDate * 1000).rounded() / 1000)
+    return formatter.string(from: rounded)
   }
 }
 

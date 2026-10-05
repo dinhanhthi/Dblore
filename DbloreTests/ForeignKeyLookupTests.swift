@@ -224,4 +224,12 @@ struct ForeignKeyLookupTests {
       for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)
     #expect(query?.parameters["fk1"] == .text("2023-11-14T22:13:20.123Z"))
   }
+
+  @Test("A date just below a millisecond boundary rounds up")
+  func dateRoundsToNearestMillisecond() {
+    let date = Date(timeIntervalSince1970: 1_700_000_000.1229995)
+    let query = ForeignKeyLookup.lookupSQL(
+      for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)
+    #expect(query?.parameters["fk1"] == .text("2023-11-14T22:13:20.123Z"))
+  }
 }

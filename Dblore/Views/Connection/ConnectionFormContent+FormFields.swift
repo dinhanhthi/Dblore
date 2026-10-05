@@ -264,6 +264,7 @@ extension ConnectionFormContent {
       get: { certificatePassphrase },
       set: {
         certificatePassphrase = $0
+        passphraseEdited = true
         certificateDraftChanged = true
       })
   }
@@ -301,6 +302,7 @@ extension ConnectionFormContent {
               throw CertificateFormError.invalidPEM
             }
             caPEM = pem
+            caFilePicked = true
           }
           certificateDraftChanged = true
           certificateError = nil
@@ -343,7 +345,12 @@ extension ConnectionFormContent {
       certificateRemovalAccount = nil
     }
     if certificateRemovalAccount == account && connectionConfig.clientCertificate == nil { return }
-    if keepingPendingDraft { return }
+    if keepingPendingDraft {
+      (caPEM, certificatePassphrase) = Self.keptCertificateExtras(
+        caPEM: caPEM, caPicked: caFilePicked, passphrase: certificatePassphrase,
+        passphraseEdited: passphraseEdited)
+      return
+    }
     certificatePEM = nil
     privateKeyPEM = nil
     caPEM = nil
@@ -352,6 +359,8 @@ extension ConnectionFormContent {
     certificateDraftChanged = false
     certificateFilePicked = false
     privateKeyFilePicked = false
+    caFilePicked = false
+    passphraseEdited = false
     certificateError = nil
     guard connectionConfig.clientCertificate != nil else { return }
     // Not in the keychain: held as a draft so Connect uses it instead of the store.
@@ -377,6 +386,8 @@ extension ConnectionFormContent {
   func resetCertificateDraft() {
     certificateFilePicked = false
     privateKeyFilePicked = false
+    caFilePicked = false
+    passphraseEdited = false
     certificateRemovalAccount = nil
     restoreCertificateDraft()
   }
@@ -390,6 +401,8 @@ extension ConnectionFormContent {
     certificateDraftChanged = false
     certificateFilePicked = false
     privateKeyFilePicked = false
+    caFilePicked = false
+    passphraseEdited = false
   }
 
   private func removeClientCertificate() {
@@ -405,6 +418,8 @@ extension ConnectionFormContent {
     certificateDraftChanged = true
     certificateFilePicked = false
     privateKeyFilePicked = false
+    caFilePicked = false
+    passphraseEdited = false
     connectionConfig.clientCertificate = nil
   }
 

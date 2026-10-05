@@ -2,6 +2,7 @@
 // Query history persists in SQLite, searches with FTS5, and round-trips as JSON.
 
 import Foundation
+import SQLite3
 import Testing
 
 @testable import Dblore
@@ -309,6 +310,27 @@ struct QueryHistoryStoreTests {
     #expect(second as? SQLiteError == first as? SQLiteError)
     #expect((first as? SQLiteError)?.message.contains("duplicate column name: kind") == true)
     #expect(try SQLiteHandle(url: url).userVersion == 1)
+  }
+
+  @Test("A busy file fails the migration without latching, and a later call migrates")
+  func busyMigrationRetriesOnNextCall() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    try seedVersion1(at: url, rows: [(sql: "UPDATE t SET a = 1", key: "PostgreSQL|h|5432|d|u")])
+    let store = try QueryHistoryStore(url: url)
+
+    // Another connection holds the write lock past the 2 s busy timeout.
+    let holder = try SQLiteHandle(url: url)
+    try holder.execute("BEGIN EXCLUSIVE")
+    let first = await #expect(throws: (any Error).self) {
+      try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    }
+    #expect((first as? SQLiteError)?.code == SQLITE_BUSY)
+    try holder.execute("ROLLBACK")
+
+    let entries = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(entries.map(\.kind) == [.write])
+    #expect(try SQLiteHandle(url: url).userVersion == 2)
   }
 
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
