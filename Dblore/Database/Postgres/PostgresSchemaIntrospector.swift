@@ -302,12 +302,14 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   func editTable(named name: String, in session: any DatabaseSession) async throws -> EditTable? {
+    // attgenerated is PostgreSQL 12+. Read it through to_jsonb so older servers see no key.
     let query = """
       SELECT c.oid::int8, a.attnum::int4, a.attname::text,
              COALESCE((SELECT k.ord FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(att, ord)
                        WHERE k.att = a.attnum), 0)::int4,
              format('%I.%I', n.nspname, c.relname), c.relkind::text, c.relhassubclass,
-             n.nspname::text, c.relname::text, a.attgenerated <> ''
+             n.nspname::text, c.relname::text,
+             COALESCE(to_jsonb(a) ->> 'attgenerated', '') <> ''
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped

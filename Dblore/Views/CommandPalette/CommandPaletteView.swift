@@ -186,16 +186,15 @@ struct CommandPaletteView: View {
   }
 
   private func activateSelection() {
-    guard let selectedID, let item = flatItems.first(where: { $0.id == selectedID }),
-      model.canPerform(item)
-    else {
+    guard let selectedID, let item = flatItems.first(where: { $0.id == selectedID }) else {
       return
     }
     activate(item)
   }
 
+  /// Return and click both refuse a row left over from an older query.
   private func activate(_ item: CommandPaletteItem) {
-    guard onPerform(item) else { return }
+    guard model.canPerform(item), onPerform(item) else { return }
     isPresented = false
   }
 }
