@@ -149,10 +149,13 @@ extension WorkspaceManager {
     case .disconnect:
       Task { await disconnect() }
     case .commit:
-      guard case .appTx = pendingTransaction else { return false }
+      // Same guards as the banner: nothing while ending or the origin tab is running
+      guard case .appTx = pendingTransaction, !isTransactionOriginRunning else { return false }
       requestCommit()
     case .rollback:
-      guard !pendingTransaction.isIdle else { return false }
+      guard !pendingTransaction.isIdle, pendingTransaction.endingKind == nil,
+        !isTransactionOriginRunning
+      else { return false }
       Task { await rollback() }
     }
     return true

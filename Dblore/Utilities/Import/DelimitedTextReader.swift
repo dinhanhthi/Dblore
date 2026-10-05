@@ -9,6 +9,7 @@ nonisolated enum DelimitedTextError: Error, LocalizedError, Equatable, Sendable 
   case cellLimitExceeded
   case rowLimitExceeded
   case fieldLimitExceeded
+  case encodingChanged
 
   var errorDescription: String? {
     switch self {
@@ -16,6 +17,8 @@ nonisolated enum DelimitedTextError: Error, LocalizedError, Equatable, Sendable 
     case .cellLimitExceeded: "Import exceeds the 1,000,000-cell safety limit"
     case .rowLimitExceeded: "Import exceeds the 100,000-row safety limit"
     case .fieldLimitExceeded: "Import contains a field longer than the safety limit"
+    case .encodingChanged:
+      "The file is not valid UTF-8 after the preview. Save it as UTF-8 and import again."
     }
   }
 }
@@ -29,11 +32,13 @@ nonisolated enum DelimitedTextReader {
     var maxCells: Int
     var maxRows: Int
     var maxFieldCharacters: Int
+    /// nil = UTF-8, then Latin-1. UTF-8 = fail instead of falling back to Latin-1.
+    var encoding: String.Encoding?
 
     init(
       delimiter: Character? = nil, hasHeader: Bool = true, rowLimit: Int? = nil,
       maxCells: Int = 1_000_000, maxRows: Int = 100_000,
-      maxFieldCharacters: Int = 8 * 1_024 * 1_024
+      maxFieldCharacters: Int = 8 * 1_024 * 1_024, encoding: String.Encoding? = nil
     ) {
       self.delimiter = delimiter
       self.hasHeader = hasHeader
@@ -41,6 +46,7 @@ nonisolated enum DelimitedTextReader {
       self.maxCells = max(maxCells, 0)
       self.maxRows = max(maxRows, 0)
       self.maxFieldCharacters = max(maxFieldCharacters, 0)
+      self.encoding = encoding
     }
   }
 
@@ -48,6 +54,7 @@ nonisolated enum DelimitedTextReader {
     var delimiter: Character
     var columns: [String]
     var rows: [[String]]
+    var encoding: String.Encoding = .utf8
   }
 
   static func read(_ data: Data, options: Options = Options()) throws -> Table {
@@ -60,15 +67,17 @@ nonisolated enum DelimitedTextReader {
   private static let detectionRows = 20
 
   private static func parse(_ data: Data, options: Options) throws -> Table {
-    let text = decodedText(data)
+    let (text, encoding) = try decodedText(data, encoding: options.encoding)
     try Task.checkCancellation()
     let delimiter = options.delimiter ?? detectDelimiter(in: text, options: options)
     let scalar = delimiter.unicodeScalars[delimiter.unicodeScalars.startIndex]
     let parsed = try records(
       in: text, delimiter: scalar, maxRecords: recordCap(options), options: options)
-    return try makeTable(
+    var table = try makeTable(
       records: parsed, delimiter: delimiter, hasHeader: options.hasHeader,
       maxCells: options.maxCells)
+    table.encoding = encoding
+    return table
   }
 
   /// Equal scores keep the earlier candidate: comma, semicolon, tab, pipe.
@@ -242,14 +251,19 @@ nonisolated enum DelimitedTextReader {
     return row + Array(repeating: "", count: width - row.count)
   }
 
-  private static func decodedText(_ data: Data) -> String {
+  private static func decodedText(
+    _ data: Data, encoding: String.Encoding?
+  ) throws -> (String, String.Encoding) {
     let payload: Data
     if data.starts(with: [0xEF, 0xBB, 0xBF]) {
       payload = Data(data.dropFirst(3))
     } else {
       payload = data
     }
-    if let text = String(data: payload, encoding: .utf8) { return text }
-    return String(data: payload, encoding: .isoLatin1) ?? ""
+    if encoding != .isoLatin1, let text = String(data: payload, encoding: .utf8) {
+      return (text, .utf8)
+    }
+    if encoding == .utf8 { throw DelimitedTextError.encodingChanged }
+    return (String(data: payload, encoding: .isoLatin1) ?? "", .isoLatin1)
   }
 }

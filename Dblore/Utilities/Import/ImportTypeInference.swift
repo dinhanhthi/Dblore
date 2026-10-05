@@ -51,7 +51,7 @@ nonisolated enum ImportTypeInference {
         return normalizedValue(row[column])?.trimmingCharacters(in: .whitespacesAndNewlines)
       }
       guard !values.isEmpty else { return .text }
-      if values.allSatisfy({ Int64($0) != nil }) { return .integer }
+      if values.allSatisfy(isInteger) { return .integer }
       if values.allSatisfy(isDecimal) { return .decimal }
       if values.allSatisfy({
         $0.caseInsensitiveCompare("true") == .orderedSame
@@ -69,6 +69,12 @@ nonisolated enum ImportTypeInference {
       }
       return .text
     }
+  }
+
+  /// Leading zeros ("00501") stay text so they are not lost
+  private static func isInteger(_ value: String) -> Bool {
+    Int64(value) != nil
+      && value.range(of: #"^-?(?:0|[1-9][0-9]*)$"#, options: .regularExpression) != nil
   }
 
   private static func isDecimal(_ value: String) -> Bool {

@@ -44,6 +44,8 @@ struct ConnectionFormContent: View {
   @State var certificateInfo: ClientCertificateInfo?
   @State var certificateError: String?
   @State var certificateDraftChanged = false
+  /// Certificate and key came from files picked in this form, not from the keychain.
+  @State var certificateFilesPicked = false
   @State var certificateRemovalAccount: String?
 
   // Connection history
@@ -169,17 +171,25 @@ struct ConnectionFormContent: View {
         selectedHistoryId = nil
         connectionConfig = replacement
       }
-      .onChange(of: Self.connectionTargetKey(connectionConfig)) { _, _ in
-        restoreCertificateDraft()
-        // SQLite Browse clears the row itself. Resolving a bookmark can change the
-        // path string without the user picking a different connection.
-        guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
+      .onChange(of: Self.connectionTargetKey(connectionConfig)) { oldKey, newKey in
         // A loaded recent row stays selected only while host, port, database, and user match.
         let retained = Self.retainedHistoryId(
           selectedId: selectedHistoryId,
           history: connectionHistory,
           config: connectionConfig
         )
+        // A matching row means it was just loaded, not edited. The engine is the first key part.
+        let separator: Character = "\u{1e}"
+        restoreCertificateDraft(
+          keepingPendingDraft: Self.keepsCertificateDraft(
+            filesPicked: certificateFilesPicked,
+            isHistoryLoad: retained != nil,
+            engineChanged: oldKey.split(separator: separator).first
+              != newKey.split(separator: separator).first,
+            isBlankForm: connectionConfig == ConnectionConfig()))
+        // SQLite Browse clears the row itself. Resolving a bookmark can change the
+        // path string without the user picking a different connection.
+        guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
         if selectedHistoryId != retained {
           selectedHistoryId = retained
         }
@@ -259,6 +269,15 @@ struct ConnectionFormContent: View {
       config.database,
       config.username,
     ].joined(separator: "\u{1e}")
+  }
+
+  /// Freshly picked PEM files are not bound to an account until saved, so editing the target
+  /// keeps them. Material loaded from the keychain belongs to the old target and is reloaded.
+  /// Loading a Recent row, changing the engine, or blanking the form always resets.
+  static func keepsCertificateDraft(
+    filesPicked: Bool, isHistoryLoad: Bool, engineChanged: Bool, isBlankForm: Bool
+  ) -> Bool {
+    filesPicked && !isHistoryLoad && !engineChanged && !isBlankForm
   }
 
   /// Keeps the Recent connections row only while host, port, database, and username match.

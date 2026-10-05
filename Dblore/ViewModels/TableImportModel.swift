@@ -71,6 +71,8 @@ nonisolated enum TableImportError: Error, LocalizedError, Sendable {
 private nonisolated struct ParsedImportFile: Sendable {
   var columns: [String]
   var rows: [[String?]]
+  /// Delimited text only: the full import decodes with the preview's encoding
+  var encoding: String.Encoding?
 }
 
 /// Owns the import sheet's preview and mapping. Full file parsing happens only at submit.
@@ -93,6 +95,7 @@ final class TableImportModel {
   @ObservationIgnored private var parseTask: Task<ParsedImportFile, Error>?
   @ObservationIgnored private var batchTask: Task<PendingStagedBatch, Error>?
   @ObservationIgnored private var operationID = UUID()
+  @ObservationIgnored private var previewEncoding: String.Encoding?
 
   init(chooseFile: @escaping @MainActor () async -> URL? = TableImportModel.showOpenPanel) {
     self.chooseFile = chooseFile
@@ -115,6 +118,7 @@ final class TableImportModel {
     errorMessage = nil
     previewRows = []
     mappings = []
+    previewEncoding = nil
     progress = 0.1
     isLoading = true
     let hasHeader = self.hasHeader
@@ -135,6 +139,7 @@ final class TableImportModel {
       let parsed = try await task.value
       guard self.operationID == operationID else { throw CancellationError() }
       previewRows = parsed.rows
+      previewEncoding = parsed.encoding
       let kinds = ImportTypeInference.infer(rows: parsed.rows, columnCount: parsed.columns.count)
       mappings = parsed.columns.enumerated().map { index, name in
         TableImportColumnMapping(sourceName: name, targetName: name, kind: kinds[index])
@@ -182,8 +187,10 @@ final class TableImportModel {
     progress = 0.1
     let format = self.format
     let hasHeader = self.hasHeader
+    let encoding = previewEncoding
     let parse = Task.detached(priority: .userInitiated) {
-      try Self.parse(url: fileURL, format: format, hasHeader: hasHeader, rowLimit: nil)
+      try Self.parse(
+        url: fileURL, format: format, hasHeader: hasHeader, rowLimit: nil, encoding: encoding)
     }
     parseTask = parse
     let parsed = try await parse.value
@@ -245,7 +252,8 @@ final class TableImportModel {
   }
 
   private nonisolated static func parse(
-    url: URL, format: TableImportFormat, hasHeader: Bool, rowLimit: Int?
+    url: URL, format: TableImportFormat, hasHeader: Bool, rowLimit: Int?,
+    encoding: String.Encoding?
   ) throws -> ParsedImportFile {
     try Task.checkCancellation()
     let accessed = url.startAccessingSecurityScopedResource()
@@ -265,7 +273,8 @@ final class TableImportModel {
       data.append(chunk)
       guard data.count <= maxBytes else { throw TableImportError.fileTooLarge }
     }
-    return try parse(data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit)
+    return try parse(
+      data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit, encoding: encoding)
   }
 
   /// Read only enough bytes for the preview. Full import still reparses the entire file.
@@ -314,7 +323,8 @@ final class TableImportModel {
   }
 
   private nonisolated static func parse(
-    data: Data, format: TableImportFormat, hasHeader: Bool, rowLimit: Int?
+    data: Data, format: TableImportFormat, hasHeader: Bool, rowLimit: Int?,
+    encoding: String.Encoding? = nil
   ) throws -> ParsedImportFile {
     try Task.checkCancellation()
     switch format {
@@ -324,9 +334,12 @@ final class TableImportModel {
     case .csv, .tsv:
       let delimiter: Character? = format == .tsv ? "\t" : nil
       let table = try DelimitedTextReader.read(
-        data, options: .init(delimiter: delimiter, hasHeader: hasHeader, rowLimit: rowLimit))
+        data,
+        options: .init(
+          delimiter: delimiter, hasHeader: hasHeader, rowLimit: rowLimit, encoding: encoding))
       return ParsedImportFile(
-        columns: table.columns, rows: table.rows.map { $0.map(Optional.some) })
+        columns: table.columns, rows: table.rows.map { $0.map(Optional.some) },
+        encoding: table.encoding)
     }
   }
 

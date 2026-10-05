@@ -75,6 +75,8 @@ extension ConnectionFormContent {
         }
         if usesClientCertificate(connectionConfig.sslMode) {
           clientCertificateSection()
+        } else {
+          removeClientCertificateButton()
         }
       }
 
@@ -133,6 +135,8 @@ extension ConnectionFormContent {
         }
         if usesClientCertificate(connectionStringSSLModeBinding.wrappedValue) {
           clientCertificateSection()
+        } else {
+          removeClientCertificateButton()
         }
       }
     }
@@ -230,18 +234,24 @@ extension ConnectionFormContent {
         }
       }
 
-      if certificatePEM != nil || privateKeyPEM != nil || connectionConfig.clientCertificate != nil
-      {
-        Button("Remove client certificate", role: .destructive) {
-          removeClientCertificate()
-        }
-        .buttonStyle(SecondaryButtonStyle())
-      }
+      removeClientCertificateButton()
       if let certificateError {
         Text(certificateError)
           .font(.caption)
           .foregroundColor(.destructive)
       }
+    }
+  }
+
+  /// Also shown outside require/verify-ca/verify-full: a certificate blocks those modes, so
+  /// this is how the user clears it after switching to Prefer, Allow, or Disable.
+  @ViewBuilder
+  private func removeClientCertificateButton() -> some View {
+    if certificatePEM != nil || privateKeyPEM != nil || connectionConfig.clientCertificate != nil {
+      Button("Remove client certificate", role: .destructive) {
+        removeClientCertificate()
+      }
+      .buttonStyle(SecondaryButtonStyle())
     }
   }
 
@@ -272,10 +282,13 @@ extension ConnectionFormContent {
       Task { @MainActor in
         do {
           let pem = try readPEM(at: url)
+          // Replacing half of a keychain-loaded pair still holds the old target's material.
+          let startsEmpty = certificatePEM == nil && privateKeyPEM == nil
           switch kind {
           case .certificate:
             certificateInfo = try Self.certificateInfo(from: pem, hasCA: caPEM != nil)
             certificatePEM = pem
+            if startsEmpty { certificateFilesPicked = true }
           case .privateKey:
             guard
               pem.contains("-----BEGIN PRIVATE KEY-----")
@@ -284,6 +297,7 @@ extension ConnectionFormContent {
                 || pem.contains("-----BEGIN EC PRIVATE KEY-----")
             else { throw CertificateFormError.invalidPEM }
             privateKeyPEM = pem
+            if startsEmpty { certificateFilesPicked = true }
           case .ca:
             guard !(try NIOSSLCertificate.fromPEMBytes(Array(pem.utf8))).isEmpty else {
               throw CertificateFormError.invalidPEM
@@ -324,19 +338,21 @@ extension ConnectionFormContent {
       hasCA: hasCA)
   }
 
-  func restoreCertificateDraft() {
+  func restoreCertificateDraft(keepingPendingDraft: Bool = false) {
     let account = ClientCertificateStoreFactory.account(for: connectionConfig)
     if connectionConfig.clientCertificate != nil { certificateRemovalAccount = nil }
     if certificateRemovalAccount != nil && certificateRemovalAccount != account {
       certificateRemovalAccount = nil
     }
     if certificateRemovalAccount == account && connectionConfig.clientCertificate == nil { return }
+    if keepingPendingDraft { return }
     certificatePEM = nil
     privateKeyPEM = nil
     caPEM = nil
     certificatePassphrase = ""
     certificateInfo = connectionConfig.clientCertificate
     certificateDraftChanged = false
+    certificateFilesPicked = false
     certificateError = nil
     guard connectionConfig.clientCertificate != nil else { return }
     guard let material = ClientCertificateStoreFactory.load(for: connectionConfig) else {
@@ -360,6 +376,7 @@ extension ConnectionFormContent {
     certificateInfo = nil
     certificateError = nil
     certificateDraftChanged = true
+    certificateFilesPicked = false
     connectionConfig.clientCertificate = nil
   }
 

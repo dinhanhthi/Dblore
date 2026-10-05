@@ -112,6 +112,23 @@ struct TableImportModelTests {
     #expect(model.mappings.map(\.sourceName) == ["café"])
   }
 
+  @Test("A UTF-8 preview fails the full import instead of switching to Latin-1")
+  func encodingChangesAfterPreview() async throws {
+    // The invalid byte sits past the first 64 KB read, so only the full parse sees it
+    var data = Data(("name\n" + String(repeating: "caf\u{00e9}\n", count: 20_000)).utf8)
+    data.append(contentsOf: [0xFF, 0x0A])
+    let url = temporaryFile("", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try data.write(to: url)
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .new(schema: nil, table: "people")
+    #expect(model.previewRows.first == ["caf\u{00e9}"])
+    await #expect(throws: DelimitedTextError.encodingChanged) {
+      _ = try await model.prepareBatch(dialect: .sqlite, connectionEpoch: 1)
+    }
+  }
+
   @Test("A huge record stops preview at its memory budget")
   func previewBudget() async throws {
     let url = temporaryFile(

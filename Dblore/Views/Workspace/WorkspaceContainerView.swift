@@ -348,8 +348,8 @@ struct WorkspaceTabContentView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Bindable var viewModel: NotebookViewModel
 
+  @Environment(\.hostWindowReference) private var hostWindow
   @State private var keyEventMonitor: Any?
-  @State private var monitorWindow: NSWindow?
 
   var body: some View {
     contentView
@@ -530,18 +530,10 @@ struct WorkspaceTabContentView: View {
         return event
       }
 
-      // Store our window on first event if not set
-      if self.monitorWindow == nil {
-        self.monitorWindow = eventWindow
-      }
-
-      // Only handle if this is OUR window
-      guard eventWindow == self.monitorWindow else {
-        return event
-      }
-
-      // Only handle for active tab
-      guard workspaceManager.activeTabId == tabId else {
+      // Only handle in this tab's own window, while it is the active tab there
+      guard eventWindow === hostWindow?.window,
+        workspaceManager.isActiveTab(tabId, in: hostWindow)
+      else {
         return event
       }
 

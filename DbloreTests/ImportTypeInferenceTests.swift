@@ -33,6 +33,12 @@ struct ImportTypeInferenceTests {
       ])
   }
 
+  @Test("Leading-zero values stay text so their zeros are kept")
+  func leadingZerosAreText() {
+    let rows: [[String?]] = [["00501", "0"], ["02134", "-12"], ["007", "34"]]
+    #expect(ImportTypeInference.infer(rows: rows, columnCount: 2) == [.text, .integer])
+  }
+
   @Test("Database types match the inferred kind")
   func sqlTypes() {
     let kinds: [ImportTypeInference.Kind] = [

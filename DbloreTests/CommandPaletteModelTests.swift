@@ -284,7 +284,22 @@ struct CommandPaletteModelTests {
     #expect(manager.isCommitConfirmationVisible)
     #expect(manager.perform(.action(id: "rollback", title: "Roll Back")))
 
+    manager.isCommitConfirmationVisible = false
+    manager.pendingTransaction = .ending(kind: .commit, pending: [])
+    #expect(!manager.perform(.action(id: "commit", title: "Commit")))
+    #expect(!manager.perform(.action(id: "rollback", title: "Roll Back")))
+
     manager.newNotebook()
+    manager.pendingTransaction = .appTx(pending: [])
+    manager.transactionOriginTabId = manager.activeTabId
+    manager.activeViewModel?.isEditorQueryRunning = true
+    #expect(!manager.perform(.action(id: "commit", title: "Commit")))
+    #expect(!manager.isCommitConfirmationVisible)
+    #expect(!manager.perform(.action(id: "rollback", title: "Roll Back")))
+    manager.activeViewModel?.isEditorQueryRunning = false
+    manager.pendingTransaction = .idle
+    manager.transactionOriginTabId = nil
+
     #expect(manager.activeViewModel?.isRightSidebarVisible == false)
     #expect(manager.perform(.action(id: "toggle-right-sidebar", title: "Toggle Right Sidebar")))
     #expect(manager.activeViewModel?.isRightSidebarVisible == true)
