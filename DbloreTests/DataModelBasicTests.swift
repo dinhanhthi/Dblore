@@ -284,6 +284,36 @@ struct DataModelBasicTests {
     #expect(roundTrip.chartSpec == nil)
   }
 
+  @Test("NotebookCell parameters and savesParameterValues round-trip")
+  func notebookCellParametersRoundTrip() throws {
+    let cell = NotebookCell(
+      id: UUID(),
+      cellType: .sql,
+      content: "SELECT :id;",
+      parameters: [QueryParameter(name: "id", value: "4")],
+      savesParameterValues: true
+    )
+
+    let data = try JSONEncoder().encode(cell)
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.parameters == cell.parameters)
+    #expect(decoded.savesParameterValues == cell.savesParameterValues)
+  }
+
+  @Test("NotebookCell without parameter keys still decodes")
+  func notebookCellWithoutParameterKeysDecodes() throws {
+    let id = UUID()
+    let legacy = """
+      {"id":"\(id.uuidString)","cellType":"sql","content":"SELECT 1"}
+      """
+    let data = try #require(legacy.data(using: .utf8))
+    let decoded = try JSONDecoder().decode(NotebookCell.self, from: data)
+
+    #expect(decoded.parameters == [])
+    #expect(decoded.savesParameterValues == false)
+  }
+
   // MARK: - NotebookMetadata Tests
 
   @Test("NotebookMetadata encoding and decoding")

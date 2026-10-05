@@ -22,6 +22,10 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var totalExecutionTime: TimeInterval?
   /// Chart configuration for this cell's result. Absent in older `.sqlnb` files.
   var chartSpec: ChartSpec?
+  /// Named :name parameter values for this cell's SQL. Absent in older files.
+  var parameters: [QueryParameter]
+  /// Persist `parameters` in the saved file. Off keeps the values session-only.
+  var savesParameterValues: Bool
 
   // MARK: - Codable
 
@@ -37,6 +41,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case selectedStatementIndex
     case totalExecutionTime
     case chartSpec
+    case parameters
+    case savesParameterValues
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -56,6 +62,10 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
     chartSpec = try container.decodeIfPresent(ChartSpec.self, forKey: .chartSpec)
+    parameters =
+      try container.decodeIfPresent([QueryParameter].self, forKey: .parameters) ?? []
+    savesParameterValues =
+      try container.decodeIfPresent(Bool.self, forKey: .savesParameterValues) ?? false
     // Legacy `paginationInfo` / `statementPaginationInfo` (LIMIT-rewrite pagination) are ignored
   }
 
@@ -72,6 +82,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encode(selectedStatementIndex, forKey: .selectedStatementIndex)
     try container.encodeIfPresent(totalExecutionTime, forKey: .totalExecutionTime)
     try container.encodeIfPresent(chartSpec, forKey: .chartSpec)
+    try container.encode(parameters, forKey: .parameters)
+    try container.encode(savesParameterValues, forKey: .savesParameterValues)
   }
 
   nonisolated init(
@@ -85,7 +97,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     statementResults: [StatementResult] = [],
     selectedStatementIndex: Int = 0,
     totalExecutionTime: TimeInterval? = nil,
-    chartSpec: ChartSpec? = nil
+    chartSpec: ChartSpec? = nil,
+    parameters: [QueryParameter] = [],
+    savesParameterValues: Bool = false
   ) {
     self.id = id
     self.cellType = cellType
@@ -98,6 +112,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.selectedStatementIndex = selectedStatementIndex
     self.totalExecutionTime = totalExecutionTime
     self.chartSpec = chartSpec
+    self.parameters = parameters
+    self.savesParameterValues = savesParameterValues
   }
 }
 

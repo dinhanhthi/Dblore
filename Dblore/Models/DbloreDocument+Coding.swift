@@ -93,6 +93,10 @@ enum DocumentCoder {
         // A missing or malformed chartSpec leaves the cell chartable from a suggestion.
         let chartSpec = (cellDict["chartSpec"] as? [String: Any]).flatMap(Self.chartSpec(from:))
 
+        // Named parameters. A missing key, or an old file, is an empty list.
+        let parameters = Self.queryParameters(from: cellDict["parameters"])
+        let savesParameterValues = cellDict["savesParameterValues"] as? Bool ?? false
+
         let cell = NotebookCell(
           id: cellId,
           cellType: cellType,
@@ -104,7 +108,9 @@ enum DocumentCoder {
           statementResults: statementResults,
           selectedStatementIndex: selectedStatementIndex,
           totalExecutionTime: totalExecutionTime,
-          chartSpec: chartSpec
+          chartSpec: chartSpec,
+          parameters: parameters,
+          savesParameterValues: savesParameterValues
         )
         cells.append(cell)
       }
@@ -114,12 +120,9 @@ enum DocumentCoder {
     let documentTypeRaw = json["documentType"] as? String
     let documentType = documentTypeRaw.flatMap { DocumentType(rawValue: $0) } ?? .notebook
 
-    // Named parameters. A missing key, or an old file, is an empty list.
-    let parameters = Self.queryParameters(from: json["parameters"])
-
     return DbloreNotebook(
       id: id, cells: cells, metadata: metadata, connectionConfig: connectionConfig,
-      settings: settings, documentType: documentType, parameters: parameters)
+      settings: settings, documentType: documentType)
   }
 
   nonisolated static func encode(
@@ -192,10 +195,22 @@ enum DocumentCoder {
         cellDict["chartSpec"] = chartSpecObject(chartSpec)
       }
 
+      // Named values are opt-in, pruned to the names the SQL still uses,
+      // and written whether or not results are saved.
+      if cell.savesParameterValues {
+        cellDict["savesParameterValues"] = true
+        // No connection in the file means the name scan falls back to PostgreSQL.
+        let dialect = notebook.connectionConfig?.databaseType.dialect ?? .postgresql
+        let used = SQLParameterRewriter.parameterNames(in: cell.content, dialect: dialect)
+        let kept = cell.parameters.filter { used.contains($0.name) }
+        if !kept.isEmpty {
+          cellDict["parameters"] = kept.map(Self.parameterObject)
+        }
+      }
+
       cellsArray.append(cellDict)
     }
     json["cells"] = cellsArray
-    json["parameters"] = notebook.parameters.map(Self.parameterObject)
 
     // Use compact format for better performance (10.1.10 optimization)
     // Removed .prettyPrinted to improve save speed by 50%
