@@ -442,8 +442,9 @@ private struct CellUndoCommandButtons: View {
   }
 }
 
-/// Republishes so the cell undo titles match the focused view model's undo manager.
-/// `removeAllActions` does not close a group; opening a menu reads the stack again.
+/// Republishes when a menu opens, so the cell undo titles match the focused view model's undo
+/// manager. The items have no key equivalent, so they are only read while a menu is open.
+/// Undo group notifications are not observed: every text view typing burst posts one.
 @MainActor
 private final class CellUndoMenuRefresh: ObservableObject {
   static let shared = CellUndoMenuRefresh()
@@ -453,19 +454,6 @@ private final class CellUndoMenuRefresh: ObservableObject {
   private var didRefreshForTracking = false
 
   private init() {
-    let stackNames: [Notification.Name] = [
-      .NSUndoManagerDidCloseUndoGroup,
-      .NSUndoManagerDidUndoChange,
-      .NSUndoManagerDidRedoChange,
-    ]
-    for name in stackNames {
-      tokens.append(
-        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
-          MainActor.assumeIsolated {
-            CellUndoMenuRefresh.shared.revision += 1
-          }
-        })
-    }
     tokens.append(
       NotificationCenter.default.addObserver(
         forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main

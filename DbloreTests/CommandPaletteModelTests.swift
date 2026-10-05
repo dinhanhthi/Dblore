@@ -275,6 +275,15 @@ struct CommandPaletteModelTests {
     #expect(!manager.perform(.action(id: "rollback", title: "Roll Back")))
     #expect(!manager.perform(.action(id: "toggle-right-sidebar", title: "Toggle Right Sidebar")))
 
+    // The connection-loss banner's Reconnect needs the unremembered certificate.
+    let certificate = ClientCertificateStoreFactory.ConnectionMaterial(
+      account: "lost", material: ClientCertificateMaterial(certificatePEM: "c", privateKeyPEM: "k"))
+    manager.activeUnrememberedCertificate = certificate
+    #expect(manager.connectionState == .disconnected)
+    #expect(!manager.perform(.action(id: "disconnect", title: "Disconnect")))
+    #expect(manager.activeUnrememberedCertificate == certificate)
+    manager.activeUnrememberedCertificate = nil
+
     manager.pendingTransaction = .aborted(reason: "failed", pending: [])
     #expect(!manager.perform(.action(id: "commit", title: "Commit")))
     #expect(!manager.isCommitConfirmationVisible)

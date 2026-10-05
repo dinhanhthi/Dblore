@@ -40,6 +40,8 @@ actor QueryHistoryStore {
   private let database: SQLiteHandle
   private let fileURL: URL
   private var successfulInserts = 0
+  /// Set by the first failed migration. Later calls throw it without migrating again.
+  private var migrationError: (any Error)?
 
   init(url: URL) throws {
     let database = try SQLiteHandle(url: url)
@@ -54,12 +56,15 @@ actor QueryHistoryStore {
   }
 
   /// Finishes the version-2 migration on this actor. A failure is logged and rethrown; the
-  /// file stays on version 1 and the process keeps running.
+  /// file stays on version 1 and the process keeps running. Later calls rethrow that error
+  /// without another attempt, so history stays unavailable for the session.
   private func prepare() throws {
+    if let migrationError { throw migrationError }
     guard database.userVersion < 2 else { return }
     do {
       try Self.migrate(database)
     } catch {
+      migrationError = error
       let message = error.localizedDescription
       Task {
         await AppLogger.shared.error(

@@ -153,7 +153,7 @@ final class HistoryListModel {
     searchEpoch += 1
     let epoch = searchEpoch
     page = 1
-    await load(requestedPage: 1, epoch: epoch, writesOnly: writesOnly)
+    await load(requestedPage: 1, epoch: epoch)
     if appliedEpoch >= epoch { return }
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       if appliedEpoch >= epoch {
@@ -170,7 +170,7 @@ final class HistoryListModel {
     searchTask = nil
     searchEpoch += 1
     let epoch = searchEpoch
-    await load(requestedPage: max(newPage, 1), epoch: epoch, writesOnly: writesOnly)
+    await load(requestedPage: max(newPage, 1), epoch: epoch)
   }
 
   private func scheduleSearch() {
@@ -185,7 +185,7 @@ final class HistoryListModel {
     }
   }
 
-  private func load(requestedPage: Int, epoch: Int, writesOnly: Bool) async {
+  private func load(requestedPage: Int, epoch: Int) async {
     isLoading = true
     defer {
       if epoch == searchEpoch { isLoading = false }

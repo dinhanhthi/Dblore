@@ -147,6 +147,8 @@ extension WorkspaceManager {
       // The Connect button opens the form. It does not connect by itself.
       showConnectionForm()
     case .disconnect:
+      // Disconnecting again would clear the certificate the loss banner's Reconnect needs
+      guard connectionState.isConnected || connectionState.isConnecting else { return false }
       Task { await disconnect() }
     case .commit:
       // Same guards as the banner: nothing while ending or the origin tab is running

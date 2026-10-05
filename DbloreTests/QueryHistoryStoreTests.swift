@@ -278,6 +278,39 @@ struct QueryHistoryStoreTests {
     #expect(again == loaded)
   }
 
+  @Test("A failed v1 migration rolls back, stays on v1, and later calls throw the same error")
+  func failedVersion1MigrationRollsBackAndRethrows() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    try seedVersion1(at: url, rows: [(sql: "UPDATE t SET a = 1", key: "PostgreSQL|h|5432|d|u")])
+    // A v1 file that already has `kind` makes `ALTER TABLE ... ADD COLUMN kind` fail.
+    try SQLiteHandle(url: url).execute("ALTER TABLE history ADD COLUMN kind TEXT")
+
+    let store = try QueryHistoryStore(url: url)
+    let first = await #expect(throws: (any Error).self) {
+      try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    }
+    do {
+      let info = try SQLiteHandle(url: url)
+      #expect(info.userVersion == 1)
+      let trigger = try info.prepare(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'history_au'")
+      #expect(try trigger.step())
+      #expect(trigger.columnInt(0) == 1)
+      let kinds = try info.prepare("SELECT COUNT(*) FROM history WHERE kind IS NOT NULL")
+      #expect(try kinds.step())
+      #expect(kinds.columnInt(0) == 0)
+    }
+
+    // The store keeps its schema cache, so the only signal is the stored error coming back.
+    let second = await #expect(throws: (any Error).self) {
+      try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    }
+    #expect(second as? SQLiteError == first as? SQLiteError)
+    #expect((first as? SQLiteError)?.message.contains("duplicate column name: kind") == true)
+    #expect(try SQLiteHandle(url: url).userVersion == 1)
+  }
+
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
   func writesOnlyFiltersSearchAndCount() async throws {
     let url = temporaryDatabaseURL()
