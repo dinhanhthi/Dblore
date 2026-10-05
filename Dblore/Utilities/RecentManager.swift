@@ -225,9 +225,11 @@ class RecentManager {
   }
 
   /// Replace one recent connection in place.
-  func replaceConnection(id: UUID, with config: ConnectionConfig) {
-    SessionManager.replaceConnection(id: id, with: config)
+  @discardableResult
+  func replaceConnection(id: UUID, with config: ConnectionConfig) -> Bool {
+    guard SessionManager.replaceConnection(id: id, with: config) else { return false }
     connectionsRevision += 1
+    return true
   }
 
   /// Remove a connection from recent list

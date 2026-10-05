@@ -98,8 +98,8 @@ extension View {
         get: { workspaceManager.editingConnectionConfig },
         set: { workspaceManager.editingConnectionConfig = $0 }
       ),
-      onTestConnection: { _ in
-        try await workspaceManager.testConnection()
+      onTestConnection: { config in
+        try await workspaceManager.connectionManager.testConnection(config: config)
       },
       onConnect: { config in
         try await workspaceManager.connect(config: config)

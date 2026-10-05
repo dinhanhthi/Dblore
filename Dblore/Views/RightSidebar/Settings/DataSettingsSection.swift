@@ -37,7 +37,7 @@ struct DataSettingsSection: View {
       ForEach(DataSettingsGroup.allCases, id: \.self) { group in
         groupCard(group)
       }
-      DataSettingsCard(title: "Saved passwords and keys") {
+      DataSettingsCard(title: "Saved credentials") {
         secrets
       }
     }
@@ -109,7 +109,12 @@ struct DataSettingsSection: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: { item in
-      Text("Removes \(item.label) (\(dataSecretKindTitle(item.kind))). The saved value is deleted.")
+      if item.kind == .clientCertificate {
+        Text("Deletes the saved client certificate and private key for account \(item.account).")
+      } else {
+        Text(
+          "Removes \(item.label) (\(dataSecretKindTitle(item.kind))). The saved value is deleted.")
+      }
     }
   }
 
@@ -182,7 +187,7 @@ struct DataSettingsSection: View {
 
   private var secrets: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text("Names only. Values stay in the Keychain until you delete them.")
+      Text("Account names only. Credential contents stay in the Keychain until you delete them.")
         .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
 
@@ -194,19 +199,22 @@ struct DataSettingsSection: View {
       }
 
       if model.secrets.isEmpty {
-        Text("No saved passwords or keys.")
+        Text("No saved credentials.")
           .font(.bodyText)
           .foregroundColor(.foregroundMuted)
       } else {
         ForEach(model.secrets) { item in
           HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
             VStack(alignment: .leading, spacing: Spacing.xxs) {
-              Text(item.label)
+              Text(item.kind == .clientCertificate ? "Client certificate" : item.label)
                 .font(.bodyText)
                 .foregroundColor(.foreground)
-              Text(dataSecretKindTitle(item.kind))
-                .font(.bodyText)
-                .foregroundColor(.foregroundSubtle)
+              Text(
+                item.kind == .clientCertificate
+                  ? "Account: \(item.account)" : dataSecretKindTitle(item.kind)
+              )
+              .font(.bodyText)
+              .foregroundColor(.foregroundSubtle)
             }
             Spacer(minLength: Spacing.sm)
             Button("Delete") { pendingSecret = item }
@@ -440,6 +448,7 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .aiKey: "API key"
   case .chatGPTToken: "ChatGPT sign-in"
   case .safeModePassword: "Safe Mode password"
+  case .clientCertificate: "Client certificate"
   }
 }
 
@@ -598,11 +607,11 @@ private struct DataClearAllSheet: View {
             }
           }
           .padding(.leading, Spacing.md)
-          Toggle("Also delete saved passwords and keys", isOn: $alsoDeleteSecrets)
+          Toggle("Also delete saved credentials", isOn: $alsoDeleteSecrets)
             .toggleStyle(.checkbox)
             .font(.bodyText)
             .disabled(working)
-          Text("Passwords and keys are deleted only when that box is checked.")
+          Text("Saved credentials are deleted only when that box is checked.")
             .font(.small)
             .foregroundColor(.foregroundSubtle)
         }

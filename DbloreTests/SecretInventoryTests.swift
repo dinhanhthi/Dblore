@@ -35,6 +35,11 @@ struct SecretInventoryTests {
         account: KeychainPasswordStore.accountName,
         label: KeychainPasswordStore.accountName,
         kind: .safeModePassword),
+      SecretItem(
+        service: KeychainClientCertificateStore.serviceName,
+        account: "db.example:5432:app:ada",
+        label: "db.example:5432:app:ada",
+        kind: .clientCertificate),
     ]
   }
 
@@ -50,7 +55,7 @@ struct SecretInventoryTests {
     let items = planted()
     let inventory = InMemorySecretInventory(items: items)
     try await inventory.delete(items[4])
-    #expect(await inventory.items() == Array(items.prefix(4)))
+    #expect(await inventory.items() == [items[0], items[1], items[2], items[3], items[5]])
   }
 
   @Test("deleteAll removes only that kind")
@@ -58,7 +63,7 @@ struct SecretInventoryTests {
     let items = planted()
     let inventory = InMemorySecretInventory(items: items)
     try await inventory.deleteAll(kind: .aiKey)
-    #expect(await inventory.items() == [items[0], items[3], items[4]])
+    #expect(await inventory.items() == [items[0], items[3], items[4], items[5]])
   }
 
   @Test("ChatGPT tokens and API keys are different kinds")
@@ -81,6 +86,12 @@ struct SecretInventoryTests {
     let safeMode = SecretItem.listed(
       service: KeychainPasswordStore.serviceName, account: KeychainPasswordStore.accountName)
     #expect(safeMode.kind == .safeModePassword)
+
+    let certificate = SecretItem.listed(
+      service: KeychainClientCertificateStore.serviceName,
+      account: "db.example:5432:app:ada")
+    #expect(certificate.kind == .clientCertificate)
+    #expect(certificate.label == certificate.account)
   }
 
   @Test("The default inventory is in-memory under the test host")

@@ -258,6 +258,41 @@ struct LocalDataBackupTests {
     }
   }
 
+  @Test("A backup round trip never contains planted client certificate PEM")
+  func plantedClientCertificateStaysOutOfBackup() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let material = ClientCertificateMaterial(
+      certificatePEM: "-----BEGIN CERTIFICATE-----\nplanted-client-cert\n-----END CERTIFICATE-----",
+      privateKeyPEM: "-----BEGIN PRIVATE KEY-----\nplanted-client-key\n-----END PRIVATE KEY-----",
+      caPEM: "-----BEGIN CERTIFICATE-----\nplanted-client-ca\n-----END CERTIFICATE-----",
+      passphrase: "planted-passphrase")
+    let certificates = InMemoryClientCertificateStore()
+    #expect(certificates.save(material, account: "db.example:5432:app:ada"))
+    let memory = TextMemory("before")
+    let provider = TextProvider(category: .logs, memory: memory, contents: "safe log")
+    let package = root.appendingPathComponent("NoCertificates.dblorebackup", isDirectory: true)
+    try await LocalDataBackup.export(
+      categories: [.logs], providers: [provider], to: package, appVersion: "9.2.0",
+      created: created)
+    try await LocalDataBackup.import(package, categories: [.logs], providers: [provider])
+    #expect(memory.text == "safe log")
+    #expect(certificates.load(account: "db.example:5432:app:ada") == material)
+    for relative in try FileManager.default.subpathsOfDirectory(atPath: package.path) {
+      let url = package.appendingPathComponent(relative)
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+        !isDirectory.boolValue
+      else { continue }
+      let data = try Data(contentsOf: url)
+      for secret in [
+        material.certificatePEM, material.privateKeyPEM, material.caPEM!, material.passphrase!,
+      ] {
+        #expect(data.range(of: Data(secret.utf8)) == nil)
+      }
+    }
+  }
+
   @Test("The backup package is an exported directory UTI")
   func exportedType() throws {
     let plist = try source("Dblore/Info.plist")

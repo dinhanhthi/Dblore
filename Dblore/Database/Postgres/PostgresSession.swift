@@ -65,7 +65,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
     let tlsConfig: PostgresConnection.Configuration.TLS
     do {
-      tlsConfig = try Self.configureTLS(for: config.sslMode)
+      tlsConfig = try Self.configureTLS(
+        sslMode: config.sslMode, material: try clientCertificateMaterial())
     } catch {
       try? await group.shutdownGracefully()
       setGroup(nil)
@@ -103,7 +104,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
     let tlsConfig: PostgresConnection.Configuration.TLS
     do {
-      tlsConfig = try Self.configureTLS(for: config.sslMode)
+      tlsConfig = try Self.configureTLS(
+        sslMode: config.sslMode, material: try clientCertificateMaterial())
     } catch {
       try? await group.shutdownGracefully()
       throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
@@ -417,46 +419,67 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     )
   }
 
-  private static func configureTLS(
-    for sslMode: SSLMode
-  ) throws
-    -> PostgresConnection.Configuration
-    .TLS
-  {
+  private func clientCertificateMaterial() throws -> ClientCertificateMaterial? {
+    guard config.clientCertificate != nil else { return nil }
+    guard
+      config.sslMode == .require || config.sslMode == .verifyCa
+        || config.sslMode == .verifyFull
+    else {
+      throw DatabaseError.connectionFailed(
+        "Client certificate requires Require, Verify CA, or Verify Full TLS mode")
+    }
+    guard let material = ClientCertificateStoreFactory.load(for: config) else {
+      throw DatabaseError.connectionFailed("Client certificate is missing from the Keychain")
+    }
+    return material
+  }
+
+  static func configureTLS(
+    sslMode: SSLMode, material: ClientCertificateMaterial?
+  ) throws -> PostgresConnection.Configuration.TLS {
     switch sslMode {
     case .disable:
       return .disable
 
     case .allow, .prefer:
-      do {
-        let context = try NIOSSLContext(configuration: .makeClientConfiguration())
-        return .prefer(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for prefer mode: \(error.localizedDescription)")
-      }
+      let context = try NIOSSLContext(
+        configuration: tlsConfiguration(
+          sslMode: sslMode, material: material))
+      return .prefer(context)
 
-    case .require:
-      do {
-        let sslConfig = TLSConfiguration.makeClientConfiguration()
-        let context = try NIOSSLContext(configuration: sslConfig)
-        return .require(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for require mode: \(error.localizedDescription)")
-      }
+    case .require, .verifyCa, .verifyFull:
+      let context = try NIOSSLContext(
+        configuration: tlsConfiguration(
+          sslMode: sslMode, material: material))
+      return .require(context)
+    }
+  }
 
-    case .verifyCa, .verifyFull:
-      do {
-        var sslConfig = TLSConfiguration.makeClientConfiguration()
-        sslConfig.certificateVerification = .fullVerification
-        let context = try NIOSSLContext(configuration: sslConfig)
-        return .require(context)
-      } catch {
-        throw DatabaseError.connectionFailed(
-          "Failed to create TLS context for verify mode: \(error.localizedDescription)")
+  static func tlsConfiguration(
+    sslMode: SSLMode, material: ClientCertificateMaterial?
+  ) throws -> TLSConfiguration {
+    var tls = TLSConfiguration.makeClientConfiguration()
+    if sslMode == .verifyCa { tls.certificateVerification = .noHostnameVerification }
+    if let material {
+      let certificates = try NIOSSLCertificate.fromPEMBytes(Array(material.certificatePEM.utf8))
+      guard !certificates.isEmpty else {
+        throw DatabaseError.connectionFailed("Client certificate is empty")
+      }
+      tls.certificateChain = certificates.map { .certificate($0) }
+      let passphrase = Array((material.passphrase ?? "").utf8)
+      tls.privateKey = .privateKey(
+        try NIOSSLPrivateKey(
+          bytes: Array(material.privateKeyPEM.utf8), format: .pem,
+          passphraseCallback: { setPassphrase in setPassphrase(passphrase) }))
+      if let caPEM = material.caPEM {
+        let roots = try NIOSSLCertificate.fromPEMBytes(Array(caPEM.utf8))
+        guard !roots.isEmpty else {
+          throw DatabaseError.connectionFailed("Certificate authority is empty")
+        }
+        tls.trustRoots = .certificates(roots)
       }
     }
+    return tls
   }
 
   private static func postgresQuery(_ sql: String, binds: [SQLBindValue]) -> PostgresQuery {

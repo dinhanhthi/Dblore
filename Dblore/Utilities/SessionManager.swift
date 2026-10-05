@@ -92,40 +92,40 @@ class SessionManager {
   private static func saveHistory(
     _ entries: [ConnectionHistoryEntry], defaults: UserDefaults = .standard
   ) {
+    if let encoded = encodedHistory(entries) {
+      defaults.set(encoded, forKey: historyKey)
+    }
+  }
+
+  private static func encodedHistory(_ entries: [ConnectionHistoryEntry]) -> Data? {
     // Remove passwords before saving
     var cleanEntries = entries
     for i in 0..<cleanEntries.count {
       cleanEntries[i].config.password = ""
     }
 
-    if let encoded = try? JSONEncoder().encode(cleanEntries) {
-      defaults.set(encoded, forKey: historyKey)
-    }
+    return try? JSONEncoder().encode(cleanEntries)
   }
 
   /// Maximum number of connection history entries to store
   private static let maxConnectionHistorySize = 6
 
   /// Add or update connection in history
+  @discardableResult
   static func saveConnection(
     _ config: ConnectionConfig,
     defaults: UserDefaults = .standard,
-    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
-  ) {
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+  ) -> Bool {
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
-      return
+      return true
     }
 
     var history = loadHistory(defaults: defaults, passwords: passwords)
+    let previous = history
     let newEntry = ConnectionHistoryEntry(config: config)
-
-    // Save password BEFORE adding to history
-    // (because ConnectionHistoryEntry.init strips password from config).
-    // Engines without passwords are not written.
-    if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
-      passwords.savePassword(config.password, forKey: newEntry.keychainKey)
-    }
 
     // Check if connection already exists (same host+port+db+user)
     if let index = history.firstIndex(where: { $0.keychainKey == newEntry.keychainKey }) {
@@ -138,30 +138,39 @@ class SessionManager {
 
     // Trim to max size
     if history.count > maxConnectionHistorySize {
-      // Remove oldest entries and their passwords
-      let entriesToRemove = history.suffix(history.count - maxConnectionHistorySize)
-      for entry in entriesToRemove {
-        deleteStoredPassword(for: entry, passwords: passwords)
-      }
       history = Array(history.prefix(maxConnectionHistorySize))
     }
 
-    saveHistory(history, defaults: defaults)
+    guard let encoded = encodedHistory(history),
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+    else { return false }
+    if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
+      passwords.savePassword(config.password, forKey: newEntry.keychainKey)
+    }
+    defaults.set(encoded, forKey: historyKey)
+    for entry in previous where !history.contains(where: { $0.keychainKey == entry.keychainKey }) {
+      deleteStoredPassword(for: entry, passwords: passwords)
+    }
+    pruneCertificates(previous: previous, current: history, certificates: certificates)
+    return true
   }
 
   /// Replace one history row in place. The id, position, and last-used date stay.
   /// A changed host, port, database, or username takes the password with it.
   /// An empty password deletes the stored one. Remember off removes the row.
+  @discardableResult
   static func replaceConnection(
     id: UUID,
     with config: ConnectionConfig,
     defaults: UserDefaults = .standard,
-    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
-  ) {
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+  ) -> Bool {
     var history = loadHistory(defaults: defaults, passwords: passwords)
+    let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {
-      saveConnection(config, defaults: defaults, passwords: passwords)
-      return
+      return saveConnection(
+        config, defaults: defaults, passwords: passwords, certificates: certificates)
     }
 
     let previous = history[index]
@@ -171,23 +180,27 @@ class SessionManager {
       }
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
-      return
+      pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+      return true
     }
 
     var updated = previous
     updated.config = config
     let newKey = updated.keychainKey
+    history.removeAll { $0.id != id && $0.keychainKey == newKey }
+    guard let kept = history.firstIndex(where: { $0.id == id }) else {
+      return saveConnection(
+        config, defaults: defaults, passwords: passwords, certificates: certificates)
+    }
+    history[kept] = updated
+    guard let encoded = encodedHistory(history),
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+    else { return false }
     if previous.keychainKey != newKey,
       !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
     {
       deleteStoredPassword(for: previous, passwords: passwords)
     }
-    history.removeAll { $0.id != id && $0.keychainKey == newKey }
-    guard let kept = history.firstIndex(where: { $0.id == id }) else {
-      saveConnection(config, defaults: defaults, passwords: passwords)
-      return
-    }
-    history[kept] = updated
     if config.databaseType.capabilities.usesPassword {
       if config.password.isEmpty {
         passwords.deletePassword(forKey: newKey)
@@ -195,7 +208,9 @@ class SessionManager {
         passwords.savePassword(config.password, forKey: newKey)
       }
     }
-    saveHistory(history, defaults: defaults)
+    defaults.set(encoded, forKey: historyKey)
+    pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+    return true
   }
 
   /// Get most recent connection
@@ -206,13 +221,15 @@ class SessionManager {
   /// Clear all connection history
   static func clearAllHistory(
     defaults: UserDefaults = .standard,
-    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
   ) {
     let history = loadHistory(defaults: defaults, passwords: passwords)
 
     for entry in history {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
+    pruneCertificates(previous: history, current: [], certificates: certificates)
 
     defaults.removeObject(forKey: historyKey)
   }
@@ -221,16 +238,19 @@ class SessionManager {
   static func removeConnection(
     id: UUID,
     defaults: UserDefaults = .standard,
-    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
   ) {
     var history = loadHistory(defaults: defaults, passwords: passwords)
 
     if let index = history.firstIndex(where: { $0.id == id }) {
+      let previous = history
       deleteStoredPassword(for: history[index], passwords: passwords)
 
       // Remove from array
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
+      pruneCertificates(previous: previous, current: history, certificates: certificates)
     }
   }
 
@@ -282,6 +302,23 @@ class SessionManager {
   ) {
     guard entry.config.databaseType.capabilities.usesPassword else { return }
     passwords.deletePassword(forKey: entry.keychainKey)
+  }
+
+  private static func pruneCertificates(
+    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
+    certificates: any ClientCertificateStore
+  ) {
+    let retained = Set(
+      current.compactMap { entry in
+        entry.config.clientCertificate == nil
+          ? nil : ClientCertificateStoreFactory.account(for: entry.config)
+      })
+    for entry in previous where entry.config.clientCertificate != nil {
+      let account = ClientCertificateStoreFactory.account(for: entry.config)
+      if !retained.contains(account) {
+        ClientCertificateStoreFactory.delete(for: entry.config, from: certificates)
+      }
+    }
   }
 
   // MARK: - Local data (UserDefaults only)

@@ -8,6 +8,198 @@ import Testing
 @Suite("Connection history replace")
 @MainActor
 struct ConnectionHistoryReplaceTests {
+  @Test("Deleting one of two saved references retains the certificate")
+  func sharedCertificateSurvivesOneRemoval() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let certificates = InMemoryClientCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: true, name: "First")
+    config.clientCertificate = ClientCertificateInfo(subject: "client", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    let material = ClientCertificateMaterial(certificatePEM: "cert", privateKeyPEM: "key")
+    #expect(certificates.save(material, account: account))
+    let first = ConnectionHistoryEntry(config: config)
+    config.name = "Second"
+    let second = ConnectionHistoryEntry(config: config)
+    harness.defaults.set(
+      try JSONEncoder().encode([first, second]),
+      forKey: "ace.thi.dblore.connectionHistory")
+
+    SessionManager.removeConnection(
+      id: first.id, defaults: harness.defaults, passwords: harness.store,
+      certificates: certificates)
+    #expect(certificates.load(account: account) == material)
+    SessionManager.removeConnection(
+      id: second.id, defaults: harness.defaults, passwords: harness.store,
+      certificates: certificates)
+    #expect(certificates.load(account: account) == nil)
+  }
+
+  @Test("Clear history removes its saved certificate")
+  func clearCertificate() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let certificates = InMemoryClientCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: true)
+    config.clientCertificate = ClientCertificateInfo(subject: "client", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    #expect(
+      certificates.save(
+        ClientCertificateMaterial(certificatePEM: "cert", privateKeyPEM: "key"), account: account))
+    SessionManager.saveConnection(
+      config, defaults: harness.defaults, passwords: harness.store, certificates: certificates)
+    SessionManager.clearAllHistory(
+      defaults: harness.defaults, passwords: harness.store, certificates: certificates)
+    #expect(certificates.load(account: account) == nil)
+  }
+
+  @Test("Saving a certificate commits pending material only for remembered connections")
+  func pendingMaterialLifecycle() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let certificates = InMemoryClientCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: false)
+    config.clientCertificate = ClientCertificateInfo(subject: "client", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    let material = ClientCertificateMaterial(certificatePEM: "cert", privateKeyPEM: "key")
+    ClientCertificateStoreFactory.$operationMaterial.withValue(
+      .init(account: account, material: material)
+    ) {
+      #expect(
+        SessionManager.saveConnection(
+          config, defaults: harness.defaults, passwords: harness.store,
+          certificates: certificates))
+    }
+    #expect(certificates.load(account: account) == nil)
+    #expect(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).isEmpty)
+
+    config.rememberConnection = true
+    ClientCertificateStoreFactory.$operationMaterial.withValue(
+      .init(account: account, material: material)
+    ) {
+      #expect(
+        SessionManager.saveConnection(
+          config, defaults: harness.defaults, passwords: harness.store,
+          certificates: certificates))
+    }
+    #expect(certificates.load(account: account) == material)
+  }
+
+  @Test("Certificate write failure preserves prior history and certificate")
+  func certificateWriteFailureDoesNotSaveHistory() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let store = RejectingCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: true)
+    config.clientCertificate = ClientCertificateInfo(subject: "client", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    let old = ClientCertificateMaterial(certificatePEM: "old", privateKeyPEM: "old-key")
+    store.existing = old
+    let originalEntry = ConnectionHistoryEntry(config: config)
+    harness.defaults.set(
+      try JSONEncoder().encode([originalEntry]),
+      forKey: "ace.thi.dblore.connectionHistory")
+    config.clientCertificate = ClientCertificateInfo(subject: "new", expiry: nil, hasCA: false)
+    let draft = ClientCertificateMaterial(certificatePEM: "new", privateKeyPEM: "new-key")
+    let oldHistory = SessionManager.loadHistory(
+      defaults: harness.defaults, passwords: harness.store)
+    let saved = ClientCertificateStoreFactory.$operationMaterial.withValue(
+      .init(account: account, material: draft)
+    ) {
+      SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store, certificates: store)
+    }
+    #expect(!saved)
+    #expect(store.load(account: account) == old)
+    #expect(
+      SessionManager.loadHistory(
+        defaults: harness.defaults, passwords: harness.store
+      ).map(\.id) == oldHistory.map(\.id))
+    #expect(
+      SessionManager.loadHistory(
+        defaults: harness.defaults, passwords: harness.store
+      ).first?.config.clientCertificate?.subject
+        == "client")
+  }
+
+  @Test("Saved-card edit reports certificate failure and keeps the original card")
+  func replaceCertificateFailureKeepsHistory() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let store = RejectingCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: true, name: "Original")
+    config.clientCertificate = ClientCertificateInfo(subject: "old", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    let old = ClientCertificateMaterial(certificatePEM: "old", privateKeyPEM: "old-key")
+    store.existing = old
+    let entry = ConnectionHistoryEntry(config: config)
+    harness.defaults.set(
+      try JSONEncoder().encode([entry]),
+      forKey: "ace.thi.dblore.connectionHistory")
+    config.name = "Edited"
+    config.clientCertificate = ClientCertificateInfo(subject: "new", expiry: nil, hasCA: false)
+    let draft = ClientCertificateMaterial(certificatePEM: "new", privateKeyPEM: "new-key")
+
+    let saved = ClientCertificateStoreFactory.$operationMaterial.withValue(
+      .init(account: account, material: draft)
+    ) {
+      SessionManager.replaceConnection(
+        id: entry.id, with: config, defaults: harness.defaults, passwords: harness.store,
+        certificates: store)
+    }
+    #expect(!saved)
+    #expect(store.load(account: account) == old)
+    let after = try #require(
+      SessionManager.loadHistory(
+        defaults: harness.defaults, passwords: harness.store
+      ).first)
+    #expect(after.id == entry.id)
+    #expect(after.config.name == "Original")
+    #expect(after.config.clientCertificate?.subject == "old")
+  }
+
+  private final class RejectingCertificateStore: ClientCertificateStore, @unchecked Sendable {
+    var existing: ClientCertificateMaterial?
+    func load(account: String) -> ClientCertificateMaterial? { existing }
+    func save(_ material: ClientCertificateMaterial, account: String) -> Bool { false }
+    func delete(account: String) { existing = nil }
+  }
+
+  @Test("Removing certificate metadata deletes old material after a saved edit")
+  func replaceRemovesCertificate() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let certificates = InMemoryClientCertificateStore()
+    var config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "app", username: "ada",
+      rememberConnection: true)
+    config.clientCertificate = ClientCertificateInfo(subject: "client", expiry: nil, hasCA: false)
+    let account = ClientCertificateStoreFactory.account(for: config)
+    #expect(
+      certificates.save(
+        ClientCertificateMaterial(certificatePEM: "cert", privateKeyPEM: "key"), account: account))
+    SessionManager.saveConnection(
+      config, defaults: harness.defaults, passwords: harness.store, certificates: certificates)
+    let entry = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+    config.clientCertificate = nil
+    SessionManager.replaceConnection(
+      id: entry.id, with: config, defaults: harness.defaults, passwords: harness.store,
+      certificates: certificates)
+    #expect(certificates.load(account: account) == nil)
+  }
+
   @Test("Replace keeps the row id and position and moves the password")
   func replaceMovesPassword() throws {
     let harness = try Harness()

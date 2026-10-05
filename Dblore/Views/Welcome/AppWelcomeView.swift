@@ -214,28 +214,12 @@ struct AppWelcomeView: View {
   /// Connect creates a workspace. Save updates the recent card that was opened.
   private func submitConnectionForm(_ config: ConnectionConfig) async throws {
     if let id = editingConnectionId {
-      recentManager.replaceConnection(id: id, with: config)
+      guard recentManager.replaceConnection(id: id, with: config) else {
+        throw CertificateFormError.keychainSave
+      }
       return
     }
     try await connectAndCreateWorkspaceForWelcome(config)
-  }
-
-  private func createWorkspaceWithConnection(_ config: ConnectionConfig) {
-    // Close modal first
-    isShowingConnectionSidebar = false
-
-    // Create workspace with connection and auto-connect
-    let manager = WorkspaceWindowManager.shared.newWorkspace(connection: config)
-    // Open workspace in THIS window (replace welcome)
-    onWorkspaceSelected?(manager.id)
-
-    Task {
-      do {
-        try await manager.connect(config: config)
-      } catch {
-        await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
-      }
-    }
   }
 
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
@@ -244,12 +228,15 @@ struct AppWelcomeView: View {
   }
 
   private func connectAndCreateWorkspaceForWelcome(_ config: ConnectionConfig) async throws {
-    let tempManager = DatabaseConnectionManager()
-    let success = try await tempManager.testConnection(config: config)
-    if success {
-      await MainActor.run {
-        createWorkspaceWithConnection(config)
-      }
+    let windowManager = WorkspaceWindowManager.shared
+    let manager = windowManager.newWorkspace(connection: config)
+    do {
+      try await manager.connect(config: config)
+      isShowingConnectionSidebar = false
+      onWorkspaceSelected?(manager.id)
+    } catch {
+      _ = await windowManager.closeWorkspace(id: manager.id, force: true)
+      throw error
     }
   }
 }

@@ -47,6 +47,9 @@ class WorkspaceManager: Identifiable {
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
+  var pendingWeakeningCertificate: ClientCertificateMaterial?
+  /// Unremembered certificate for the current workspace connection and its banner Reconnect.
+  var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
   /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
@@ -338,6 +341,8 @@ class WorkspaceManager: Identifiable {
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false
   ) async throws {
+    let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
+    activeUnrememberedCertificate = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     if !isAutoConnect { await supersedeAutoConnect() }
@@ -349,8 +354,14 @@ class WorkspaceManager: Identifiable {
       try await PerfSignpost.interval("db.connect") {
         try await connectionManager.connect(config: config)
       }
+      guard SessionManager.saveConnection(config) else {
+        throw CertificateFormError.keychainSave
+      }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
+      if !config.rememberConnection {
+        activeUnrememberedCertificate = suppliedCertificate
+      }
       workspace.connectionKeychainKey =
         "\(config.host):\(config.port):\(config.database):\(config.username)"
       editingConnectionConfig = config
@@ -359,9 +370,6 @@ class WorkspaceManager: Identifiable {
       readOnlyFileNotice = await connectionManager.sqliteReadOnlyReason
       await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
-
-      // Save to connection history
-      SessionManager.saveConnection(config)
 
       // Update all tab ViewModels with connection state
       syncConnectionStateToTabs()
@@ -375,6 +383,7 @@ class WorkspaceManager: Identifiable {
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()
     } catch {
+      await connectionManager.disconnect()
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
       await refreshPendingTransaction()
@@ -931,6 +940,8 @@ class WorkspaceManager: Identifiable {
 
   /// Stop accessing the workspace, its folder and its tab files (workspace closed)
   func releaseFileAccess() {
+    activeUnrememberedCertificate = nil
+    pendingWeakeningCertificate = nil
     for token in tabAccess.values { token.release() }
     tabAccess = [:]
     workspaceAccess?.release()

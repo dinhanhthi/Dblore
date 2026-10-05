@@ -106,12 +106,13 @@ extension DatabaseConnectionManager {
     else { return result }
     var reset = result
     reset.sessionReset = true
+    let certificate = activeUnrememberedCertificate
     // Forgotten in this actor turn: no caller entering meanwhile can send on the closing session
     let forgotten = forgetConnection()
     lastSessionLoss = nil
     do {
       await Self.closeForgotten(forgotten, includingConnection: true)
-      try await connect(config: config)
+      try await reconnectWithActiveCertificate(config: config, material: certificate)
       sessionResetsContinuation.yield(
         SessionResetEvent(epoch: connectionEpoch, userTxRolledBack: false))
     } catch {

@@ -10,6 +10,7 @@ nonisolated enum SecretKind: String, Sendable {
   case aiKey
   case chatGPTToken
   case safeModePassword
+  case clientCertificate
 }
 
 /// One Keychain account. `label` is the account name. The value itself is not here.
@@ -35,6 +36,8 @@ nonisolated struct SecretItem: Identifiable, Equatable, Sendable {
       return .dbPassword
     case KeychainPasswordStore.serviceName:
       return .safeModePassword
+    case KeychainClientCertificateStore.serviceName:
+      return .clientCertificate
     case KeychainAIKeyStore.serviceName:
       return account == ChatGPTTokenStorage.account ? .chatGPTToken : .aiKey
     default:
@@ -86,6 +89,7 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     SessionManager.keychainService,
     KeychainAIKeyStore.serviceName,
     KeychainPasswordStore.serviceName,
+    KeychainClientCertificateStore.serviceName,
   ]
 
   func items() async -> [SecretItem] {

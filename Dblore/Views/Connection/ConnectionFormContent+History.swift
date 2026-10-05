@@ -87,7 +87,9 @@ extension ConnectionFormContent {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("This will remove the connection from history and delete the saved password.")
+      Text(
+        "This removes the connection from history. Its saved certificate is deleted when no other connection uses it."
+      )
     }
   }
 

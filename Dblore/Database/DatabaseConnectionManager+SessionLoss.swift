@@ -103,6 +103,7 @@ extension DatabaseConnectionManager {
     guard session != nil, connectionEpoch == epoch else { return }
     let event = SessionLostEvent(state: txState, userTxOpen: userTxOpen, epoch: connectionEpoch)
     let forgotten = forgetConnection()
+    activeUnrememberedCertificate = nil
     lastSessionLoss = event
     sessionEventsContinuation.yield(event)
     Task.detached {
