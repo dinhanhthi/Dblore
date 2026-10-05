@@ -77,17 +77,49 @@ struct CommandPaletteModelTests {
       ])
     model.open(snapshot)
     #expect(await waitUntil { model.ranked.count == 2 })
+    #expect(model.isRankFresh)
+    let old = model.ranked
 
+    // The previous rows stay on screen, marked stale, so Return refuses them.
     model.query = "block"
-    #expect(model.ranked.isEmpty)
+    #expect(model.ranked == old)
+    #expect(!model.isRankFresh)
+    #expect(!model.canPerform(old[0]))
     #expect(await gate.waitUntilStarted())
-    #expect(model.ranked.isEmpty)
+    #expect(model.ranked == old)
+    #expect(!model.canPerform(old[0]))
 
     model.query = "orders"
     #expect(await gate.waitUntilCancelled())
     let orders: [CommandPaletteItem] = [.table(schema: "public", name: "orders")]
     #expect(await waitUntil { model.ranked == orders })
     #expect(model.ranked == orders)
+    #expect(model.isRankFresh)
+    #expect(model.canPerform(orders[0]))
+  }
+
+  @Test("no matches shows only when the current query's results are empty")
+  func noMatchesOnlyForFreshEmptyResults() async {
+    let gate = PaletteRankGate()
+    let model = CommandPaletteModel(rank: BlockingRank.make(gate))
+    model.open(CommandPaletteSnapshot(tables: [.init(schema: "public", name: "orders")]))
+    #expect(await waitUntil { model.ranked.count == 1 })
+    #expect(!model.showsNoMatches)
+
+    model.query = "block"
+    #expect(await gate.waitUntilStarted())
+    #expect(model.ranked.count == 1)
+    #expect(!model.showsNoMatches)
+
+    model.query = "zzz"
+    #expect(await waitUntil { model.ranked.isEmpty && model.isRankFresh })
+    #expect(model.showsNoMatches)
+
+    // Fresh-empty, then a pending query: the old "No matches" is not the new query's answer.
+    // The rank cannot land before this check: adopting it needs the main actor.
+    model.query = "zzzz"
+    #expect(!model.showsNoMatches)
+    #expect(await waitUntil { model.showsNoMatches })
   }
 
   @Test("history search uses the injected store, this connection, and a 250 ms debounce")
@@ -127,10 +159,18 @@ struct CommandPaletteModelTests {
     #expect(!model.history.map(\.title).contains("SELECT other_connection"))
     #expect(Set(model.history.map(\.id)).count == model.history.count)
 
+    #expect(model.isHistoryFresh)
+    let blankHistory = model.history
+
+    // The History section stays through the debounce, stale until the new search lands.
     model.query = "delete"
-    #expect(model.history.isEmpty)
+    #expect(model.history == blankHistory)
+    #expect(!model.isHistoryFresh)
+    #expect(!model.canPerform(blankHistory[0]))
     #expect(await waitUntil { model.history.map(\.title) == ["DELETE row write"] })
     #expect(model.history.map(\.title) == ["DELETE row write"])
+    #expect(model.isHistoryFresh)
+    #expect(model.canPerform(model.history[0]))
 
     try await store.record(
       Self.entry(
@@ -140,8 +180,9 @@ struct CommandPaletteModelTests {
       text: "commit", scope: .connection(connectionKey), limit: 10, offset: 0, writesOnly: false)
     #expect(stored.map(\.sql).contains("COMMIT (2 statements)"))
     model.query = "commit"
-    #expect(model.history.isEmpty)
-    try await Task.sleep(for: .milliseconds(500))
+    #expect(model.history.map(\.title) == ["DELETE row write"])
+    #expect(!model.isHistoryFresh)
+    #expect(await waitUntil { model.isHistoryFresh })
     #expect(model.history.isEmpty)
 
     model.query = " \t "

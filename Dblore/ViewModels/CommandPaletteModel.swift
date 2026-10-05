@@ -132,10 +132,29 @@ final class CommandPaletteModel {
   /// History for `connectionKey`, newest first when the query is blank. At most 50.
   private(set) var history: [CommandPaletteItem] = []
 
+  /// Bumped on each query. `ranked` and `history` stay on screen until their own generation
+  /// catches up. Observed so the view redraws when a keystroke makes them stale.
+  private var generation = 0
+  private var rankedGeneration = 0
+  private var historyGeneration = 0
+
+  /// `ranked` belongs to the current query.
+  var isRankFresh: Bool { rankedGeneration == generation }
+  /// `history` belongs to the current query. Always true without a store.
+  var isHistoryFresh: Bool { historyStore == nil || historyGeneration == generation }
+  /// The current query's results are in, and they are empty.
+  var showsNoMatches: Bool {
+    isRankFresh && isHistoryFresh && ranked.isEmpty && history.isEmpty
+  }
+
+  /// Return must not run a row left over from an older query.
+  func canPerform(_ item: CommandPaletteItem) -> Bool {
+    (isRankFresh && ranked.contains(item)) || (isHistoryFresh && history.contains(item))
+  }
+
   @ObservationIgnored private var snapshotItems: [CommandPaletteItem] = []
   @ObservationIgnored private var connectionKey = ""
   @ObservationIgnored private var didOpen = false
-  @ObservationIgnored private var generation = 0
   @ObservationIgnored private var rankTask: Task<Void, Never>?
   @ObservationIgnored private var historyTask: Task<Void, Never>?
   @ObservationIgnored private let historyStore: QueryHistoryStore?
@@ -160,9 +179,7 @@ final class CommandPaletteModel {
 
   private func schedule() {
     guard didOpen else { return }
-    // Drop the previous page before the new rank. Return must not run it.
-    history = []
-    ranked = []
+    // Keep the previous rows on screen. The new generation marks them stale for Return.
     generation += 1
     let generation = generation
     let items = snapshotItems
@@ -190,6 +207,7 @@ final class CommandPaletteModel {
   private func adoptRank(_ items: [CommandPaletteItem], generation: Int) {
     guard generation == self.generation else { return }
     ranked = items
+    rankedGeneration = generation
   }
 
   private func loadHistory(
@@ -203,6 +221,7 @@ final class CommandPaletteModel {
     } catch {
       guard generation == self.generation else { return }
       history = []
+      historyGeneration = generation
       return
     }
     guard generation == self.generation, !Task.isCancelled else { return }
@@ -210,5 +229,6 @@ final class CommandPaletteModel {
       guard !QueryHistoryEntry.isTransactionSummary(row.sql) else { return nil }
       return .history(id: row.id, sql: row.sql)
     }
+    historyGeneration = generation
   }
 }

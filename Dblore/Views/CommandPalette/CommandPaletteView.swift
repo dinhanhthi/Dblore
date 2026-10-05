@@ -92,7 +92,7 @@ struct CommandPaletteView: View {
   private var results: some View {
     ScrollViewReader { proxy in
       ScrollView {
-        if sections.isEmpty {
+        if model.showsNoMatches {
           Text("No matches")
             .font(.caption)
             .foregroundColor(.foregroundMuted)
@@ -186,7 +186,9 @@ struct CommandPaletteView: View {
   }
 
   private func activateSelection() {
-    guard let selectedID, let item = flatItems.first(where: { $0.id == selectedID }) else {
+    guard let selectedID, let item = flatItems.first(where: { $0.id == selectedID }),
+      model.canPerform(item)
+    else {
       return
     }
     activate(item)
