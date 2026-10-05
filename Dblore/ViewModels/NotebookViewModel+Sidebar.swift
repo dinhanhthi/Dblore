@@ -273,7 +273,7 @@ extension NotebookViewModel {
 
   /// Inline edit committed in the result grid at result column `index`: `row` is the displayed
   /// row's values, so the primary key is that row's. A data viewer with a primary-key edit
-  /// target stages the cell (`stageEdit`). A notebook grid goes through `handleCellValueEdit`
+  /// target applies its inline auto-commit setting. A notebook grid goes through `handleCellValueEdit`
   /// (live target, protection gate) and sends one UPDATE, without opening the sidebar.
   func handleGridCellEdit(
     row: [CellValue], column index: Int, newValue: String, result: CellResult, cellId: UUID?,
@@ -304,14 +304,34 @@ extension NotebookViewModel {
     )
   }
 
-  /// Staged cell edit from the data-viewer grid. `row` is a loaded-page index, or a staged
-  /// insert appended after those rows. Does not send an UPDATE.
+  /// Cell edit from the data-viewer grid. Loaded rows follow the inline auto-commit setting;
+  /// inserts appended after those rows remain staged until their batch is committed.
   func handleStagedGridCellEdit(
     row: Int, column index: Int, newValue: String, result: CellResult
   ) {
     guard result.columns.indices.contains(index) else { return }
     let name = result.columns[index].name
     let original = originalStagedCell(row: row, column: name, index: index, result: result)
+    if AppSettings.shared.inlineEditAutoCommit, result.rows.indices.contains(row) {
+      if result.primaryKeyColumns.contains(name) {
+        showToast(RowChangeError.primaryKeyColumn(name).message, type: .error)
+        return
+      }
+      let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
+      let key = RowChangeSet.RowKey(values: result.primaryKeyColumns.compactMap { rowData[$0] })
+      if dataViewer?.changeSet?.deletes.contains(key) == true {
+        showToast(RowChangeError.deletedRow.message, type: .error)
+        return
+      }
+      cellDetailEditTarget = result.editTarget
+      handleCellValueEdit(
+        columnName: name, columnType: result.columns[index].type, newValue: newValue,
+        originalValue: original, tableName: result.tableName,
+        rowData: rowData,
+        primaryKeyColumns: result.primaryKeyColumns, cellId: nil,
+        connectionManager: connectionManager)
+      return
+    }
     let value = Self.editedCellValue(newValue, original: original)
     if let message = stageEdit(row: row, column: name, value: value) {
       showToast(message, type: .error)

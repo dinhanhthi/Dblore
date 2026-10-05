@@ -347,6 +347,21 @@ struct SettingsModalResultTableSection: View {
         )
       }
 
+      SettingsGroupCard(title: "Editing") {
+        SettingsToggle(
+          title: "Commit Inline Edits Immediately",
+          description:
+            "When enabled, a cell edited in the result table, including View mode, is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
+          isOn: $appSettings.inlineEditAutoCommit
+        )
+        .padding(Spacing.sm)
+        .background(
+          RoundedRectangle(cornerRadius: CornerRadius.lg)
+            .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
+        )
+        .padding(-Spacing.sm)
+      }
+
       SettingsGroupCard(title: "Table") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           SettingsToggle(
@@ -378,21 +393,6 @@ struct SettingsModalResultTableSection: View {
           Divider()
           ResultRowCapSetting(appSettings: appSettings)
         }
-      }
-
-      SettingsGroupCard(title: "Editing") {
-        SettingsToggle(
-          title: "Commit Inline Edits Immediately",
-          description:
-            "When enabled, a cell edited in the result table is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
-          isOn: $appSettings.inlineEditAutoCommit
-        )
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.lg)
-            .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
-        )
-        .padding(-Spacing.sm)
       }
     }
   }

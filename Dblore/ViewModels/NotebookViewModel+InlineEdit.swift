@@ -301,8 +301,63 @@ extension NotebookViewModel {
       if let cellId = edit.cellId {
         await runCell(id: cellId)
       } else if dataViewer != nil {
-        // Data viewer: reload the current page
-        await loadDataViewerPage()
+        if hasPendingStagedChanges {
+          // Refresh stored values without replacing the batch's generation or drafts.
+          if isLiveEditTarget(target, cellId: nil), let result = editorResult, let state = dataViewer,
+            let column = result.columns.firstIndex(where: { $0.name == edit.columnName }),
+            let row = result.rows.firstIndex(where: { values in
+              guard let statement = try? CellUpdateStatement.make(
+                qualifiedName: target.qualifiedName, columnName: edit.columnName,
+                newValue: edit.statement.values[0], primaryKeyColumns: target.primaryKeyColumns,
+                rowData: CellResult.rowData(columns: result.columns, row: values))
+              else { return false }
+              return statement.values.dropFirst() == edit.statement.values.dropFirst()
+            })
+          {
+            let value = Self.editedCellValue(
+              edit.statement.values[0], original: result.rows[row][column])
+            let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
+            let key = RowChangeSet.RowKey(
+              values: target.primaryKeyColumns.compactMap { rowData[$0] })
+            if var changes = dataViewer?.changeSet, changes.edits[key]?[edit.columnName] != nil {
+              try changes.stageEdit(
+                row: key, column: edit.columnName, value: value, original: value)
+              dataViewer?.changeSet = changes.isEmpty ? nil : changes
+            }
+            // Undo snapshots must not restore a draft over the value just committed.
+            undoManager.removeAllActions()
+            let stored: QueryResult
+            do {
+              stored = try await edit.connectionManager.execute(
+                userSQL: state.pageSQL, policy: protectionPolicy,
+                maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
+            } catch {
+              showToast(
+                "Cell updated, but failed to refresh: \(error.localizedDescription)", type: .error)
+              await onStatementsExecuted?()
+              return
+            }
+            guard isLiveEditTarget(target, cellId: nil), dataViewer?.loadKey == state.loadKey,
+              stored.columns.map(\.name) == result.columns.map(\.name)
+            else {
+              await onStatementsExecuted?()
+              return
+            }
+            var updated = CellResult(
+              columns: result.columns, rows: stored.rows, executionTime: result.executionTime,
+              rowCount: stored.rows.count, timestamp: result.timestamp, error: result.error,
+              wasLimited: result.wasLimited, sourceQuery: result.sourceQuery,
+              tableName: result.tableName, primaryKeyColumns: result.primaryKeyColumns,
+              affectedRows: result.affectedRows, editTarget: result.editTarget,
+              lookupRelation: result.lookupRelation)
+            updated.sessionReset = result.sessionReset
+            updated.skippedStatements = result.skippedStatements
+            updated.skippedQueuedCells = result.skippedQueuedCells
+            editorResult = updated
+          }
+        } else {
+          await loadDataViewerPage()
+        }
       }
     } catch {
       recordFailure(

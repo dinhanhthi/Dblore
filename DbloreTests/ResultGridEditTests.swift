@@ -106,6 +106,9 @@ struct ResultGridEditTests {
 
   @Test("A data-viewer commit stages the edit and skips the immediate update")
   func dataViewerCommitStagesInsteadOfImmediateUpdate() {
+    let previous = AppSettings.shared.inlineEditAutoCommit
+    AppSettings.shared.inlineEditAutoCommit = false
+    defer { AppSettings.shared.inlineEditAutoCommit = previous }
     let result = makeResult(primaryKeyColumns: ["id"])
     let viewModel = makeViewModel(
       result: result, config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))

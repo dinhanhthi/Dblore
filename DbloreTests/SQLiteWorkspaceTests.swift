@@ -230,6 +230,77 @@ struct SQLiteWorkspaceTests {
     #expect(stored.rows.dropFirst().first?[2] == .string("a"))
   }
 
+  @Test(
+    "View mode auto-commits loaded cells and preserves staged inserts", .serialized,
+    .timeLimit(.minutes(1)),
+    arguments: [false, true])
+  func viewerInlineEditCommitsImmediately(withStagedInsert: Bool) async throws {
+    let previous = AppSettings.shared.inlineEditAutoCommit
+    defer { AppSettings.shared.inlineEditAutoCommit = previous }
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute(
+      "ALTER TABLE items ADD COLUMN label_length INTEGER GENERATED ALWAYS AS (length(label))")
+    var config = sqliteConfig(path: url.path)
+    config.protectedMode = true
+    let manager = DatabaseConnectionManager()
+    let observer = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    try await observer.connect(config: config)
+    defer {
+      Task {
+        await manager.disconnect()
+        await observer.disconnect()
+      }
+    }
+    let viewModel = NotebookViewModel(notebook: DbloreNotebook(connectionConfig: config))
+    viewModel.viewMode = .editor
+    viewModel.connectionState = .connected
+    viewModel.connectionManager = manager
+    viewModel.dataViewer = DataViewerState(
+      schema: "main", name: "items", orderColumns: ["id"], databaseType: .sqlite)
+    await viewModel.loadDataViewerPage()
+    let result = try #require(viewModel.editorResult)
+    let column = try #require(result.columns.firstIndex { $0.name == "label" })
+    if withStagedInsert {
+      #expect(viewModel.stageEdit(row: 0, column: "label", value: .string("previous draft")) == nil)
+      #expect(viewModel.stageInsert(values: ["label": .string("draft")]) == nil)
+      #expect(viewModel.undoManager.canUndo)
+    }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      viewModel.onStatementsExecuted = {
+        viewModel.onStatementsExecuted = nil
+        continuation.resume()
+      }
+      // Other suites reset shared settings while this test loads its page asynchronously.
+      AppSettings.shared.inlineEditAutoCommit = true
+      viewModel.handleStagedGridCellEdit(row: 0, column: column, newValue: "edited", result: result)
+    }
+
+    let stored = try await observer.executeInternal("SELECT label FROM items WHERE id = 1")
+    #expect(stored.rows == [[.string("edited")]])
+    #expect(await manager.transactionSnapshot() == .idle)
+    if withStagedInsert {
+      let refreshed = try #require(viewModel.editorResult)
+      #expect(refreshed.editTarget?.generation == result.editTarget?.generation)
+      #expect(refreshed.rows[0][column] == .string("edited"))
+      let generated = try #require(refreshed.columns.firstIndex { $0.name == "label_length" })
+      #expect(refreshed.rows[0][generated] == .int(6))
+      #expect(viewModel.dataViewer?.changeSet?.inserts.first?.values["label"] == .string("draft"))
+      #expect(viewModel.dataViewer?.changeSet?.edits.isEmpty == true)
+      #expect(!viewModel.undoManager.canUndo)
+      viewModel.handleStagedGridCellEdit(
+        row: refreshed.rows.count, column: column, newValue: "updated draft", result: refreshed)
+      #expect(
+        viewModel.dataViewer?.changeSet?.inserts.first?.values["label"] == .string("updated draft"))
+      let count = try await observer.executeInternal("SELECT COUNT(*) FROM items")
+      #expect(count.rows == [[.int(3)]])
+    } else {
+      #expect(viewModel.dataViewer?.changeSet == nil)
+    }
+  }
+
   private func sqliteConfig(path: String) -> ConnectionConfig {
     ConnectionConfig(
       databaseType: .sqlite,
