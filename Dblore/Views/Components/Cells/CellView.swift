@@ -71,8 +71,10 @@ struct CellView: View {
           .padding(.leading, 0)
           .padding(.trailing, Spacing.md)
 
-          // Parameter form (if open for this cell)
-          if viewModel.openParameterFormCellIds.contains(cell.id) {
+          // Parameter form (if open for this cell and the cell uses :name parameters)
+          if viewModel.openParameterFormCellIds.contains(cell.id)
+            && !viewModel.parameterNames(in: cell.content).isEmpty
+          {
             CellParametersFormView(viewModel: viewModel, cell: cell)
               .padding(.leading, ComponentSize.cellSidebarWidth)
               .padding(.trailing, Spacing.md)
