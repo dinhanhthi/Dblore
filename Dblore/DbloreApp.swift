@@ -874,7 +874,7 @@ struct NotebookCommands: Commands {
       }
 
       // Edit commands - use focused actions for tab-specific behavior
-      CommandMenu("Edit") {
+      CommandGroup(after: .textEditing) {
         Button("Find in Notebook") {
           openSearchAction?()
         }
@@ -927,7 +927,7 @@ struct EditorCommands: Commands {
       }
 
       // Edit commands - use focused actions for tab-specific behavior
-      CommandMenu("Edit") {
+      CommandGroup(after: .textEditing) {
         Button("Find") {
           openSearchAction?()
         }
@@ -992,7 +992,7 @@ struct SchemaVisualizerCommands: Commands {
     // Only show when schema visualizer is active
     if isSchemaVisualizerActive == true {
       // Edit commands for schema search
-      CommandMenu("Edit") {
+      CommandGroup(after: .textEditing) {
         Button("Find in Schema") {
           openSearchAction?()
         }
