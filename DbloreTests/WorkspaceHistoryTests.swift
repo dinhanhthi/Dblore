@@ -12,6 +12,9 @@ import Testing
 struct WorkspaceHistoryTests {
   @Test("A query change waits, then searches")
   func queryIsDebounced() async throws {
+    // A history data change from another suite would search before the debounce ends.
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
@@ -152,6 +155,9 @@ struct WorkspaceHistoryTests {
 
   @Test("writesOnly from page 2 resets, then reloads with and without the filter")
   func writesOnlyResetsPageAndFilters() async throws {
+    // A history data change from another suite would search before the debounce ends.
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)

@@ -460,7 +460,7 @@ struct CommandPaletteModelTests {
   }
 
   private func waitUntil(
-    timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool
+    timeout: Duration = .seconds(30), _ condition: @MainActor () -> Bool
   ) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
@@ -505,6 +505,8 @@ private final class PaletteNoteCount: @unchecked Sendable {
   var unfocus = 0
 }
 
+/// Waits are upper bounds that return as soon as the flag flips. A loaded full-suite run can
+/// delay the detached rank task by tens of seconds, so the bound is generous.
 private actor PaletteRankGate {
   private var started = false
   private var cancelled = false
@@ -513,7 +515,7 @@ private actor PaletteRankGate {
 
   func markCancelled() { cancelled = true }
 
-  func waitUntilStarted(timeout: Duration = .seconds(2)) async -> Bool {
+  func waitUntilStarted(timeout: Duration = .seconds(30)) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
     while !started {
@@ -523,7 +525,7 @@ private actor PaletteRankGate {
     return true
   }
 
-  func waitUntilCancelled(timeout: Duration = .seconds(2)) async -> Bool {
+  func waitUntilCancelled(timeout: Duration = .seconds(30)) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
     while !cancelled {
