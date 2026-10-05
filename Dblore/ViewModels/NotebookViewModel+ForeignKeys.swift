@@ -12,9 +12,10 @@ extension NotebookViewModel {
   /// The referenced rows (at most two), or nil when nothing is looked up.
   /// Nil schema or table, no matching key, or a NULL component sends nothing — never `= NULL`.
   /// A connection or gate failure is thrown. The statement is not recorded.
+  /// `expectedEpoch` (the result's edit target epoch) refuses a lookup on another connection.
   func lookupReferencedRow(
     column: String, schema: String?, table: String?, rowColumns: [String],
-    values: [String: CellValue]
+    values: [String: CellValue], expectedEpoch: UInt64? = nil
   ) async throws -> QueryResult? {
     guard
       let key = referencedKey(
@@ -25,7 +26,7 @@ extension NotebookViewModel {
     // LIMIT 2 is in the SQL. Cap the read at 2 so a smaller result cap cannot hide the second row.
     return try await connectionManager.execute(
       userSQL: query.sql, parameters: query.parameters, policy: protectionPolicy, maxRows: 2,
-      caller: id)
+      caller: id, expectedEpoch: expectedEpoch)
   }
 
   /// Opens the referenced table in the data viewer, filtered to this row.

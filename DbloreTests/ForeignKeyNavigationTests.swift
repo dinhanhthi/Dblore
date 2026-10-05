@@ -255,6 +255,7 @@ struct ForeignKeyNavigationTests {
     viewModel.resolveStagedLeavePrompt(.discard)
     await Self.waitUntil { viewModel.dataViewer?.filter == filter }
 
+    #expect(viewModel.filterDraft == filter)
     #expect(viewModel.hasPendingStagedChanges == false)
     #expect(viewModel.dataViewer?.page == 1)
     #expect(viewModel.stagedLeavePromptVisible == false)
@@ -264,6 +265,8 @@ struct ForeignKeyNavigationTests {
   func cancelLeavesTheFilter() async throws {
     let (manager, viewModel) = try stagedViewer()
     viewModel.dataViewer?.page = 3
+    let draft = Self.equals("nickname", "neo")
+    viewModel.filterDraft = draft
     let filter = Self.equals("id", "7")
 
     manager.openDataViewer(
@@ -276,7 +279,55 @@ struct ForeignKeyNavigationTests {
     #expect(viewModel.dataViewer?.filter.isEmpty == true)
     #expect(viewModel.dataViewer?.page == 3)
     #expect(viewModel.hasPendingStagedChanges)
-    #expect(viewModel.filterDraft == filter)
+    #expect(viewModel.filterDraft == draft)
+  }
+
+  @Test("A jump while the staged-leave prompt is open keeps the draft")
+  func jumpDuringPromptKeepsTheDraft() async throws {
+    let (manager, viewModel) = try stagedViewer()
+    let draft = Self.equals("nickname", "neo")
+    viewModel.filterDraft = draft
+    let first = Self.equals("id", "7")
+    let second = Self.equals("id", "8")
+
+    manager.openDataViewer(
+      schema: "public", name: "users", orderColumns: ["id"], filter: first)
+    await Self.waitUntil { viewModel.stagedLeavePromptVisible }
+    manager.openDataViewer(
+      schema: "public", name: "users", orderColumns: ["id"], filter: second)
+    for _ in 0..<15 { await Task.yield() }
+    #expect(viewModel.filterDraft == draft)
+
+    viewModel.resolveStagedLeavePrompt(.discard)
+    await Self.waitUntil { viewModel.dataViewer?.filter == first }
+    #expect(viewModel.dataViewer?.filter == first)
+    #expect(viewModel.filterDraft == first)
+  }
+
+  @Test("A lookup pinned to another connection epoch fails before any SQL")
+  func staleEpochLookupFails() async throws {
+    let (viewModel, session, _) = try await connectedViewModel(protection: .none)
+    viewModel.databaseForeignKeys = [userKey]
+    let manager = try #require(viewModel.connectionManager)
+    let epoch = await manager.connectionEpoch
+
+    _ = try await viewModel.lookupReferencedRow(
+      column: "user_id", schema: "public", table: "orders", rowColumns: ["user_id"],
+      values: ["user_id": .int(7)], expectedEpoch: epoch)
+    #expect(session.statements.count == 1)
+
+    do {
+      _ = try await viewModel.lookupReferencedRow(
+        column: "user_id", schema: "public", table: "orders", rowColumns: ["user_id"],
+        values: ["user_id": .int(7)], expectedEpoch: epoch &+ 1)
+      Issue.record("Expected sessionChanged")
+    } catch let error as DatabaseError {
+      guard case .sessionChanged = error else {
+        Issue.record("Expected sessionChanged, got \(error)")
+        return
+      }
+    }
+    #expect(session.statements.count == 1)
   }
 
   private var compositeKey: ForeignKey {

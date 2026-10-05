@@ -45,6 +45,14 @@ struct CellUpdateStatementTests {
     #expect(!statement.sql.contains("a1"))
   }
 
+  @Test("A date primary key binds with its milliseconds")
+  func datePrimaryKeyKeepsFractionalSeconds() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.t", columnName: "note", newValue: "x", primaryKeyColumns: ["at"],
+      rowData: ["at": .date(Date(timeIntervalSince1970: 1_700_000_000.1234))])
+    #expect(statement.values == ["x", "2023-11-14T22:13:20.123Z"])
+  }
+
   @Test("No primary key is refused (no all-columns fallback)")
   func noPrimaryKeyRefused() {
     #expect(throws: DatabaseError.self) {

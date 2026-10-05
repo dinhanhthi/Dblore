@@ -116,6 +116,19 @@ extension NotebookViewModel {
   func applyFilter() async {
     guard dataViewer != nil else { return }
     guard await confirmLeaveStagedChanges() else { return }
+    await applyFilterDraft()
+  }
+
+  /// Apply `filter` (a foreign-key jump). The draft becomes `filter` only once staged changes
+  /// are resolved: Cancel, or a prompt already open, keeps the user's draft.
+  func applyFilter(_ filter: TableFilter) async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
+    filterDraft = filter
+    await applyFilterDraft()
+  }
+
+  private func applyFilterDraft() async {
     guard let state = dataViewer else { return }
     let blank = filterDraft.whereClause(dialect: state.databaseType.dialect) == nil
     dataViewer?.filter = blank ? TableFilter(conditions: []) : filterDraft

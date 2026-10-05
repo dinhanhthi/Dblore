@@ -219,15 +219,18 @@ func referencedRelation(
 }
 
 /// The view model's lookup and jump, unchanged. The grid does not send its own SQL.
+/// The lookup is pinned to `editTarget`'s connection epoch when the result has one.
 func referencedRowHandlers(
-  _ viewModel: NotebookViewModel
+  _ viewModel: NotebookViewModel, editTarget: EditTarget?
 ) -> (
   lookup: ReferencedRowLookup, jump: ReferencedRowJump
 ) {
-  (
+  let epoch = editTarget?.connectionEpoch
+  return (
     { column, schema, table, rowColumns, values in
       try await viewModel.lookupReferencedRow(
-        column: column, schema: schema, table: table, rowColumns: rowColumns, values: values)
+        column: column, schema: schema, table: table, rowColumns: rowColumns, values: values,
+        expectedEpoch: epoch)
     },
     { column, schema, table, rowColumns, values in
       viewModel.jumpToReferencedRow(

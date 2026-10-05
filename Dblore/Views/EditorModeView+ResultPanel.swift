@@ -348,7 +348,7 @@ struct EditorResultGridView: View {
       ) {
         let relation = referencedRelation(
           dataViewer: viewModel.dataViewer, editTarget: result.editTarget)
-        let referencedRow = referencedRowHandlers(viewModel)
+        let referencedRow = referencedRowHandlers(viewModel, editTarget: result.editTarget)
         ResultGridView(
           result: result,
           sortColumn: sortColumn,

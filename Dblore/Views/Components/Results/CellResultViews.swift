@@ -573,7 +573,7 @@ struct NotebookResultGridView: View {
           showsPicker: showsDisplayPicker
         ) {
           let relation = referencedRelation(dataViewer: nil, editTarget: result.editTarget)
-          let referencedRow = referencedRowHandlers(viewModel)
+          let referencedRow = referencedRowHandlers(viewModel, editTarget: result.editTarget)
           ResultGridView(
             result: result,
             sortColumn: sortColumn,

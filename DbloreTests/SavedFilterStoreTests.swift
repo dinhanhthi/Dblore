@@ -118,6 +118,21 @@ struct SavedFilterStoreTests {
     defaults.removePersistentDomain(forName: name)
   }
 
+  @Test("A condition encodes every key, including the empty-string flag, and decodes back")
+  func conditionEncodingRoundTrips() throws {
+    let id = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+    let condition = FilterCondition(
+      id: id, column: "code", op: .notEquals, value: "", connector: .or, emptyStringIsValue: true)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    let json = String(decoding: try encoder.encode(condition), as: UTF8.self)
+    #expect(
+      json
+        == #"{"column":"code","connector":"or","emptyStringIsValue":true,"id":"\#(id.uuidString)","op":"notEquals","value":""}"#
+    )
+    #expect(try JSONDecoder().decode(FilterCondition.self, from: Data(json.utf8)) == condition)
+  }
+
   @Test("Undecodable data gives an empty list")
   func decodeFailure() {
     let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"

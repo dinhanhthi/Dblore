@@ -95,10 +95,17 @@ nonisolated enum ForeignKeyLookup: Sendable {
     case .string(let text), .json(let text):
       text
     case .date(let date):
-      ISO8601DateFormatter().string(from: date)
+      dateText(date)
     case .data(let data):
       "\\x" + data.map { String(format: "%02x", $0) }.joined()
     }
+  }
+
+  /// ISO 8601 with milliseconds, so a sub-second timestamp still matches its row
+  private static func dateText(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
   }
 
   /// `"schema"."name"` when schema is non-empty, including the default schema.

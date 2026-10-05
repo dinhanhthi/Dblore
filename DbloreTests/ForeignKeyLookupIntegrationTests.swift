@@ -51,6 +51,40 @@ struct ForeignKeyLookupIntegrationTests {
     }
   }
 
+  @Test(
+    "A key to a partitioned table is listed once, targeting the parent", .timeLimit(.minutes(2)))
+  func partitionedTargetIsListedOnce() async throws {
+    let token = String(UUID().uuidString.prefix(8)).lowercased()
+    let parent = "fk_part_parent_\(token)"
+    let child = "fk_part_child_\(token)"
+    let config = ConnectionConfig(
+      host: TestDatabase.host, port: TestDatabase.port, database: TestDatabase.database,
+      username: TestDatabase.username, password: TestDatabase.password, sslMode: .disable,
+      timeoutSeconds: 30, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    do {
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(parent) (id int PRIMARY KEY) PARTITION BY RANGE (id)")
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(parent)_a PARTITION OF \(parent) FOR VALUES FROM (0) TO (10)")
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(parent)_b PARTITION OF \(parent) FOR VALUES FROM (10) TO (20)")
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(child) (id int PRIMARY KEY, parent_id int REFERENCES \(parent) (id))")
+
+      let keys = try await manager.fetchForeignKeys().filter { $0.sourceTable == child }
+      #expect(keys.count == 1)
+      #expect(keys.first?.targetTable == parent)
+      #expect(keys.first?.targetColumns == ["id"])
+    } catch {
+      await dropPair(parent: parent, child: child, on: manager)
+      throw error
+    }
+    await dropPair(parent: parent, child: child, on: manager)
+  }
+
   private func withPair(
     _ body: (
       NotebookViewModel, LookupHistoryRecorder, String, String

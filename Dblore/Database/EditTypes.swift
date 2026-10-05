@@ -175,9 +175,16 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     case .double(let number): String(number)
     case .bool(let flag): flag ? "true" : "false"
     case .string(let text), .json(let text): text
-    case .date(let date): ISO8601DateFormatter().string(from: date)
+    case .date(let date): dateText(date)
     case .data(let data): "\\x" + data.map { String(format: "%02x", $0) }.joined()
     }
+  }
+
+  /// ISO 8601 with milliseconds, so a sub-second timestamp still matches its row
+  private static func dateText(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
   }
 }
 

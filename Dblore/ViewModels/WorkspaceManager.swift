@@ -518,8 +518,7 @@ class WorkspaceManager: Identifiable {
       selectTab(id: id)
       if let filter, let viewModel = viewModels[id] {
         Task {
-          viewModel.filterDraft = filter
-          await viewModel.applyFilter()
+          await viewModel.applyFilter(filter)
         }
       }
       return

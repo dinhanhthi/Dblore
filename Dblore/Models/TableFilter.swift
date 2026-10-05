@@ -72,6 +72,8 @@ extension FilterCondition {
       try container.decodeIfPresent(Bool.self, forKey: .emptyStringIsValue) ?? false
   }
 
+  /// Same keys as the synthesized encoder, but nonisolated: with MainActor default isolation the
+  /// synthesized one makes the `Encodable` conformance main-actor-isolated.
   nonisolated func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)

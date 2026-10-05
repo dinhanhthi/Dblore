@@ -200,7 +200,7 @@ struct ForeignKeyLookupTests {
   @Test("Non-null cell values become untyped text")
   func cellValuesBecomeText() {
     let date = Date(timeIntervalSince1970: 1_700_000_000)
-    let dateText = ISO8601DateFormatter().string(from: date)
+    let dateText = "2023-11-14T22:13:20.000Z"
     let orders = key(source: ["v"], target: ["v"])
     let cases: [(CellValue, String)] = [
       (.int(42), "42"),
@@ -215,5 +215,13 @@ struct ForeignKeyLookupTests {
         for: orders, values: ["v": value], dialect: .postgresql)
       #expect(query?.parameters["fk1"] == .text(text))
     }
+  }
+
+  @Test("A date keeps its milliseconds")
+  func dateKeepsFractionalSeconds() {
+    let date = Date(timeIntervalSince1970: 1_700_000_000.1234)
+    let query = ForeignKeyLookup.lookupSQL(
+      for: key(source: ["v"], target: ["v"]), values: ["v": .date(date)], dialect: .postgresql)
+    #expect(query?.parameters["fk1"] == .text("2023-11-14T22:13:20.123Z"))
   }
 }

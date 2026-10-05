@@ -242,6 +242,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
     // Column lists are text, not name[]. Binary name[] decodes as bytes, so the names
     // would not match a result column and the referenced-row menu would never appear.
+    // conparentid = 0 drops the per-partition copies of a key (PG11+, like prokind above).
     let query = """
       SELECT
         c.conname AS constraint_name,
@@ -269,6 +270,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_class clt ON c.confrelid = clt.oid
       JOIN pg_namespace nst ON clt.relnamespace = nst.oid
       WHERE c.contype = 'f'
+        AND c.conparentid = 0
         AND ns.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
       ORDER BY ns.nspname, cl.relname, c.conname
       """
