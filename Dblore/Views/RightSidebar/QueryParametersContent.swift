@@ -69,6 +69,13 @@ struct QueryParametersContent: View {
           .foregroundColor(.foreground)
           .controlSize(.small)
           .fixedSize()
+        if row.isUnused {
+          Button(action: { viewModel.removeUnusedParameter(named: row.name) }) {
+            Image(systemName: "trash")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .help("Remove parameter")
+        }
       }
 
       TextField("", text: textBinding(for: row.name))

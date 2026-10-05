@@ -622,6 +622,42 @@ struct ViewModelQueryParameterTests {
     #expect(viewModel.notebook.parameters == [QueryParameter(name: "pat", value: "a")])
   }
 
+  @Test("Removing an unused parameter drops it and marks the file dirty; a used one stays")
+  func removeUnusedParameter() {
+    let viewModel = NotebookViewModel(
+      notebook: DbloreNotebook(
+        cells: [NotebookCell(cellType: .sql, content: "SELECT :used")],
+        parameters: [
+          QueryParameter(name: "used", value: "1"),
+          QueryParameter(name: "old", value: "secret"),
+        ]))
+    var notifications = 0
+    viewModel.onDocumentChanged = { notifications += 1 }
+
+    viewModel.removeUnusedParameter(named: "used")
+    #expect(viewModel.notebook.parameters.map(\.name) == ["used", "old"])
+    #expect(notifications == 0)
+
+    viewModel.removeUnusedParameter(named: "old")
+    #expect(viewModel.notebook.parameters == [QueryParameter(name: "used", value: "1")])
+    #expect(notifications == 1)
+  }
+
+  @Test("Removing an unused script parameter does not mark the file dirty")
+  func removeUnusedScriptParameterDoesNotNotify() {
+    let viewModel = NotebookViewModel(
+      notebook: DbloreNotebook(
+        documentType: .script, parameters: [QueryParameter(name: "old", value: "secret")]))
+    viewModel.viewMode = .editor
+    var notifications = 0
+    viewModel.onDocumentChanged = { notifications += 1 }
+
+    viewModel.removeUnusedParameter(named: "old")
+
+    #expect(viewModel.notebook.parameters.isEmpty)
+    #expect(notifications == 0)
+  }
+
   @Test("Run All unlock copies the LIKE pattern flag and does not say no WHERE")
   func runAllUnlockCopiesLikePatternFlag() async {
     let viewModel = NotebookViewModel(

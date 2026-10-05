@@ -29,7 +29,8 @@ nonisolated enum SQLParameterRewriter: Sendable {
     return names
   }
 
-  /// PostgreSQL `$n`, or SQLite `?` / `?n`. Does not rewrite.
+  /// PostgreSQL `$n`, or SQLite `?` / `?n` / `@name` / `$name`. Does not rewrite.
+  /// SQLite numbers `@name` and `$name` after the `?n` from `:name`, and nothing binds them.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .postgresql {
@@ -39,7 +40,17 @@ nonisolated enum SQLParameterRewriter: Sendable {
       }
       return false
     }
-    return lexemes.contains { isSymbol($0, scalars, "?") }
+    for index in lexemes.indices {
+      if isSymbol(lexemes[index], scalars, "?") { return true }
+      guard isSymbol(lexemes[index], scalars, "@") || isSymbol(lexemes[index], scalars, "$"),
+        index + 1 < lexemes.count
+      else { continue }
+      switch lexemes[index + 1].kind {
+      case .word, .number: return true
+      default: continue
+      }
+    }
+    return false
   }
 
   private struct NamedParameter {
@@ -57,6 +68,8 @@ nonisolated enum SQLParameterRewriter: Sendable {
       guard isSymbol(lexemes[index], scalars, ":") else { continue }
       let next = index + 1
       guard next < lexemes.count, isWord(lexemes[next]) else { continue }
+      // `arr[:n]` and `arr[lo :hi]` read as a parameter, as psql `:var` does. A missing
+      // value refuses the run, so nothing reaches the server unnoticed.
       if index > 0 {
         let previous = lexemes[index - 1]
         if isSymbol(previous, scalars, ":") || blocksNamedParameter(previous, scalars) {

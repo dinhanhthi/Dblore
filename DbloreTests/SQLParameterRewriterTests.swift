@@ -112,12 +112,33 @@ private let positionalCases: [PositionalCase] = [
   PositionalCase(dialect: .sqlite, sql: "SELECT ?1", expected: true),
   PositionalCase(dialect: .sqlite, sql: "SELECT ?12", expected: true),
   PositionalCase(dialect: .sqlite, sql: "SELECT ?name", expected: true),
-  PositionalCase(dialect: .sqlite, sql: "SELECT $1", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT $1", expected: true),
+  PositionalCase(dialect: .sqlite, sql: "SELECT @y", expected: true),
+  PositionalCase(dialect: .sqlite, sql: "SELECT $y", expected: true),
+  PositionalCase(dialect: .sqlite, sql: "SELECT @1", expected: true),
+  PositionalCase(dialect: .sqlite, sql: "SELECT '@y', '$y'", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT 1 -- @y", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT /* $y */ 1", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT \"@y\", [$y], `@y`", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT a$y", expected: false),
+  PositionalCase(dialect: .sqlite, sql: "SELECT @ y, $", expected: false),
+  PositionalCase(dialect: .postgresql, sql: "SELECT @y", expected: false),
+  PositionalCase(dialect: .postgresql, sql: "SELECT $$ @y $$", expected: false),
   PositionalCase(dialect: .sqlite, sql: "SELECT '?'", expected: false),
   PositionalCase(dialect: .sqlite, sql: "SELECT 1 -- ?", expected: false),
   PositionalCase(dialect: .sqlite, sql: "SELECT /* ?1 */ 1", expected: false),
   PositionalCase(dialect: .sqlite, sql: "SELECT [?]", expected: false),
   PositionalCase(dialect: .sqlite, sql: "SELECT :id", expected: false),
+]
+
+/// PostgreSQL slices: `arr[:n]` and `arr[lo :hi]` read as a parameter, as psql `:var` does.
+/// A missing value refuses the run, so nothing reaches the server unnoticed.
+private let sliceCases: [OpaqueCase] = [
+  OpaqueCase(
+    dialect: .postgresql, source: "SELECT arr[:n]", rewritten: "SELECT arr[$1]", names: ["n"]),
+  OpaqueCase(
+    dialect: .postgresql, source: "SELECT arr[lo :hi]", rewritten: "SELECT arr[lo $1]",
+    names: ["hi"]),
 ]
 
 @Suite("SQL Parameter Rewriter")
@@ -150,6 +171,23 @@ struct SQLParameterRewriterTests {
     let result = SQLParameterRewriter.rewrite(statement: sample.source, dialect: sample.dialect)
     #expect(result.text == sample.rewritten)
     #expect(result.names == sample.names)
+  }
+
+  @Test("A PostgreSQL slice bound that starts with :name is a parameter", arguments: sliceCases)
+  func sliceBoundIsParameter(_ sample: OpaqueCase) {
+    let result = SQLParameterRewriter.rewrite(statement: sample.source, dialect: sample.dialect)
+    #expect(result.text == sample.rewritten)
+    #expect(result.names == sample.names)
+  }
+
+  @Test("SQLite :x with @y or $y in one statement is mixed")
+  func sqliteForeignNamedPlaceholdersAreMixed() {
+    for sql in ["WHERE a = :x AND b = @y", "WHERE a = :x AND b = $y"] {
+      #expect(SQLParameterRewriter.parameterNames(in: sql, dialect: .sqlite) == ["x"])
+      #expect(SQLParameterRewriter.containsPositionalPlaceholder(in: sql, dialect: .sqlite))
+    }
+    let quoted = "WHERE a = :x AND b = '@y' -- $y"
+    #expect(!SQLParameterRewriter.containsPositionalPlaceholder(in: quoted, dialect: .sqlite))
   }
 
   @Test("CRLF around a placeholder is preserved")
@@ -195,7 +233,7 @@ struct SQLParameterRewriterTests {
   }
 
   @Test(
-    "Positional placeholders are $n on PostgreSQL and ? or ?n on SQLite",
+    "Positional placeholders are $n on PostgreSQL and ?, ?n, @name or $name on SQLite",
     arguments: positionalCases)
   func positionalPlaceholders(_ sample: PositionalCase) {
     #expect(

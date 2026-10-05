@@ -100,4 +100,15 @@ extension NotebookViewModel {
     guard notebook.documentType != .script else { return }
     onDocumentChanged?()
   }
+
+  /// Drops a stored parameter the visible SQL no longer uses. A used name stays.
+  /// A `.script` tab does not mark the file dirty.
+  func removeUnusedParameter(named name: String) {
+    guard !detectedParameterNames().contains(name),
+      notebook.parameters.contains(where: { $0.name == name })
+    else { return }
+    notebook.parameters.removeAll { $0.name == name }
+    guard notebook.documentType != .script else { return }
+    onDocumentChanged?()
+  }
 }
