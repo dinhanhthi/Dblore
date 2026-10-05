@@ -213,6 +213,7 @@ struct ConnectionStatusView: View {
       Text(statusText)
         .font(.subheadline)
         .foregroundColor(.foregroundMuted)
+        .lineLimit(1)
 
       if workspaceManager.connectionState == .disconnected {
         Button("Connect") {
@@ -234,20 +235,9 @@ struct ConnectionStatusView: View {
   }
 
   private var statusText: String {
-    switch workspaceManager.connectionState {
-    case .connected:
-      // Use connection name if available, otherwise fall back to displayString
-      if let config = workspaceManager.workspace.connectionConfig {
-        return config.name.isEmpty ? config.displayString : config.name
-      }
-      return "Connected"
-    case .connecting:
-      return "Connecting..."
-    case .disconnected:
-      return "Not connected"
-    case .error(let message):
-      return "Error: \(message)"
-    }
+    FooterView.connectionStatusText(
+      for: workspaceManager.connectionState,
+      config: workspaceManager.workspace.connectionConfig)
   }
 }
 

@@ -14,12 +14,15 @@ struct FooterConnectionStatusTests {
     let named = ConnectionConfig(host: "db.local", database: "shop", name: "Prod")
     let unnamed = ConnectionConfig(host: "db.local", database: "shop")
 
+    let multiline = ConnectionConfig(
+      host: "localhost", database: "dblore_test",
+      name: "dblore-postgres-test\n\ndblore-postgres-test")
+
     #expect(FooterView.connectionStatusText(for: .disconnected, config: named) == "Not connected")
     #expect(FooterView.connectionStatusText(for: .connecting, config: named) == "Connecting...")
-    #expect(FooterView.connectionStatusText(for: .connected, config: named) == "Connected to Prod")
-    #expect(
-      FooterView.connectionStatusText(for: .connected, config: unnamed)
-        == "Connected to shop@db.local")
+    #expect(FooterView.connectionStatusText(for: .connected, config: named) == "Connected")
+    #expect(FooterView.connectionStatusText(for: .connected, config: unnamed) == "Connected")
+    #expect(FooterView.connectionStatusText(for: .connected, config: multiline) == "Connected")
     #expect(FooterView.connectionStatusText(for: .connected, config: nil) == "Connected")
     #expect(FooterView.connectionStatusText(for: .error("boom"), config: nil) == "Error: boom")
   }

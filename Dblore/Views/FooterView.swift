@@ -140,7 +140,10 @@ struct FooterView: View {
     }
   }
 
-  static func connectionStatusText(for state: ConnectionState, config: ConnectionConfig?) -> String
+  /// Connection state only. The name stays in the Name field, so a line break
+  /// in a saved name cannot stretch this label.
+  static func connectionStatusText(for state: ConnectionState, config _: ConnectionConfig?)
+    -> String
   {
     switch state {
     case .disconnected:
@@ -148,14 +151,6 @@ struct FooterView: View {
     case .connecting:
       return "Connecting..."
     case .connected:
-      if let config {
-        // Show connection name if available, otherwise show database@host
-        if !config.name.isEmpty {
-          return "Connected to \(config.name)"
-        } else {
-          return "Connected to \(config.database)@\(config.host)"
-        }
-      }
       return "Connected"
     case .error(let message):
       return "Error: \(message)"
