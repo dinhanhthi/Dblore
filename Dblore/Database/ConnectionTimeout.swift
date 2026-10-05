@@ -14,7 +14,8 @@ struct TimeoutError: Error {
 ///   - operation: The async operation to execute
 /// - Returns: Result from the operation
 /// - Throws: TimeoutError if operation exceeds duration, or any error from the operation
-func withTimeout<T: Sendable>(
+/// Runs off the main actor, so a busy main actor cannot delay the deadline or the result.
+@concurrent nonisolated func withTimeout<T: Sendable>(
   of duration: Duration,
   operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
