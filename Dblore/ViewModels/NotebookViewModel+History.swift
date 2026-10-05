@@ -33,6 +33,8 @@ nonisolated struct QueryHistoryOutcome: Sendable {
   var rowCount: Int?
   var status: QueryHistoryEntry.Status
   var errorMessage: String?
+  /// Data import only: failure text built without file values or server detail (row range)
+  var importSummary: String? = nil
 }
 
 /// In-memory stand-in used while the process is the test host.
@@ -72,7 +74,8 @@ extension NotebookViewModel {
         rowCount: outcome.rowCount,
         status: outcome.status,
         errorMessage: source == .dataImport && outcome.errorMessage != nil
-          ? (outcome.status == .cancelled ? "Import cancelled" : "Import failed")
+          ? (outcome.status == .cancelled
+            ? "Import cancelled" : (outcome.importSummary ?? "Import failed"))
           : outcome.errorMessage,
         connectionKey: connection.key,
         connectionLabel: connection.label,
@@ -112,13 +115,13 @@ extension NotebookViewModel {
 
   func recordFailure(
     _ error: Error, sql: String, duration: TimeInterval, source: QueryHistoryRecordSource,
-    errorMessage: String? = nil
+    errorMessage: String? = nil, importSummary: String? = nil
   ) {
     scheduleHistory(
       [
         QueryHistoryOutcome(
           sql: sql, duration: duration, rowCount: nil, status: Self.historyStatus(for: error),
-          errorMessage: errorMessage ?? error.localizedDescription)
+          errorMessage: errorMessage ?? error.localizedDescription, importSummary: importSummary)
       ],
       source: source)
   }

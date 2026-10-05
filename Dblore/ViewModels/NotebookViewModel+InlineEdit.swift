@@ -20,12 +20,22 @@ extension NotebookViewModel {
     return canEdit(target: target, columnNames: Set(result.columns.map(\.name)))
   }
 
-  /// Same check for the sidebar cell (`columnNames` = the row's columns). Only the live target
-  /// captured by `showCellDetail` counts; the passed table name and key are display data.
+  /// Indexes of `result` columns that stay read-only in an editable result: generated columns.
+  func readOnlyColumnIndexes(_ result: CellResult) -> Set<Int> {
+    guard let generated = result.editTarget?.generatedColumns, !generated.isEmpty else { return [] }
+    return Set(result.columns.indices.filter { generated.contains(result.columns[$0].name) })
+  }
+
+  /// Same check for the sidebar cell (`columnNames` = the row's columns), and `columnName` must
+  /// not be generated. Only the live target captured by `showCellDetail` counts; the passed
+  /// table name and key are display data.
   func canEdit(
-    tableName _: String?, primaryKeyColumns _: [String], columnNames: Set<String>
+    tableName _: String?, primaryKeyColumns _: [String], columnNames: Set<String>,
+    columnName: String
   ) -> Bool {
-    guard let target = cellDetailEditTarget else { return false }
+    guard let target = cellDetailEditTarget, !target.generatedColumns.contains(columnName) else {
+      return false
+    }
     return canEdit(target: target, columnNames: columnNames)
   }
 
@@ -56,7 +66,7 @@ extension NotebookViewModel {
     return EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
-      name: table.name)
+      name: table.name, generatedColumns: table.generatedColumns)
   }
 
   /// The one table identity shared by every column, or nil when any column came from elsewhere.
@@ -181,6 +191,10 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
+    guard !target.generatedColumns.contains(columnName) else {
+      showToast(Self.generatedColumnMessage(columnName), type: .error)
+      return
+    }
 
     let statement: CellUpdateStatement
     do {
@@ -208,6 +222,11 @@ extension NotebookViewModel {
     Task { [weak self] in
       await self?.sendInlineEdit(edit, target: target, autoCommit: autoCommit)
     }
+  }
+
+  /// Shown when an edit targets a generated column
+  nonisolated static func generatedColumnMessage(_ column: String) -> String {
+    "'\(column)' is a generated column and cannot be edited"
   }
 
   /// Shown when an edit has no live target (result from a file, re-run or not a single table)

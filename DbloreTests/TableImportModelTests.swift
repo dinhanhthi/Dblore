@@ -278,6 +278,68 @@ struct TableImportModelTests {
     #expect(toasts.first?.contains("UNIQUE") == false)
   }
 
+  @Test("A batch confirmed in Safe Mode after the sheet closed points the toast at History")
+  func confirmedImportFailure() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-import-confirm-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .alertAll, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    let recorder = ImportHistoryRecorder()
+    viewModel.historyRecorder = recorder
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let batch = PendingStagedBatch(
+      statements: [
+        BoundStatement(
+          sql: "INSERT INTO t (id) VALUES (?1), (?2)", values: ["7", "7"], expectedRows: 2)
+      ],
+      preview: "INSERT INTO t (id) -- 2 rows from file",
+      connectionEpoch: await manager.connectionEpoch, historySource: .dataImport,
+      rowRanges: [1...2])
+
+    // The sheet closes once Safe Mode asks; the failure arrives after the user confirms
+    #expect(await viewModel.beginImportBatch(batch) == nil)
+    #expect(viewModel.queryConfirmationState.showDialog)
+    await viewModel.executePendingQuery()
+
+    #expect(toasts.count == 1)
+    let toast = try #require(toasts.first)
+    #expect(toast.contains("Rows 1–2"))
+    #expect(toast.contains("History"))
+    #expect(!toast.contains("import sheet"))
+    #expect(!toast.contains("UNIQUE"))
+    let entry = await recorder.nextEntry()
+    #expect(entry.status == .error)
+    #expect(entry.errorMessage == "Rows 1–2: Import failed")
+  }
+
+  @Test("JSON preview of a single-line array with very long records returns the same rows")
+  func longJSONRecordPreview() async throws {
+    let records = (0..<120).map {
+      "{\"id\":\($0),\"blob\":\"\(String(repeating: "x", count: 66_000))\"}"
+    }
+    let url = temporaryFile("[" + records.joined(separator: ",") + "]", extension: "json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    #expect(model.errorMessage == nil)
+    #expect(model.mappings.map(\.sourceName) == ["id", "blob"])
+    #expect(model.previewRows.count == 100)
+    #expect(model.previewRows.first?.first == "0")
+    #expect(model.previewRows.last?.first == "99")
+    #expect(model.previewRows.last?.last??.count == 66_000)
+  }
+
   @Test("Preview of very long records returns the same rows")
   func longRecordPreview() async throws {
     let rows = (0..<100).map { "\($0),\(String(repeating: "x", count: 70_000))" }

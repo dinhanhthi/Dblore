@@ -131,7 +131,7 @@ struct QueryCancelTests {
   // MARK: - Cancel stops the server work
 
   @Test(
-    "Cancel pg_sleep(30): returns in < 2s, the backend is gone, the next query works",
+    "Cancel pg_sleep(30): returns in < 5s, the backend is gone, the next query works",
     .timeLimit(.minutes(1)))
   func cancelStopsBackend() async throws {
     let table = "c3_cancel_sleep"
@@ -157,7 +157,8 @@ struct QueryCancelTests {
           expectedEpoch: status.epoch)
         #expect(outcome == .cancelled)
         let statement = await running.value
-        #expect(Date().timeIntervalSince(start) < 2)
+        // 5 s, not 2: a loaded full integration run once took 2.0001 s; pg_sleep(30) is far above
+        #expect(Date().timeIntervalSince(start) < 5)
         #expect(isCancelled(statement), "got \(statement)")
         if case .threw(let error) = statement {
           #expect(

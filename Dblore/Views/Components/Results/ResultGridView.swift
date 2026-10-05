@@ -21,6 +21,8 @@ struct ResultGridView: NSViewRepresentable {
   var ascending = true
   /// From `NotebookViewModel.canEdit(result)`; false keeps the grid read-only
   var isEditable = false
+  /// Result column indexes that stay read-only when `isEditable` (generated columns)
+  var readOnlyColumns: Set<Int> = []
   /// Receives the displayed row values, the result column index and the new text of an edit.
   /// Not called when `stagesEdits` is set.
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)? =
@@ -170,6 +172,7 @@ struct ResultGridView: NSViewRepresentable {
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
     let fontChanged = coordinator.noteFontSize(fontSize, tableView: tableView)
     coordinator.isEditable = isEditable
+    coordinator.readOnlyColumns = readOnlyColumns
     coordinator.stagesEdits = stagesEdits
     coordinator.onCommitEdit = onCommitEdit
     coordinator.onStageEdit = onStageEdit

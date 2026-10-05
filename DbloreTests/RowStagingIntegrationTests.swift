@@ -105,6 +105,66 @@ struct RowStagingIntegrationTests {
     }
   }
 
+  @Test(
+    "A stored generated column is read-only and left out of staged rows",
+    .timeLimit(.minutes(1)))
+  func generatedColumnIsNotWritten() async throws {
+    try await withViewer(
+      table: "p74_generated", protectedMode: false,
+      ddl: """
+        CREATE TABLE p74_generated (
+          id int PRIMARY KEY, g int GENERATED ALWAYS AS (id * 2) STORED, name text)
+        """,
+      seed: "INSERT INTO p74_generated (id, name) VALUES (1, 'a')"
+    ) { viewModel, _, observer in
+      let result = try #require(viewModel.editorResult)
+      #expect(result.editTarget?.generatedColumns == ["g"])
+      let generated = try #require(result.columns.firstIndex { $0.name == "g" })
+      #expect(viewModel.readOnlyColumnIndexes(result) == [generated])
+
+      let row = try rowIndex(1, in: viewModel)
+      #expect(viewModel.stageEdit(row: row, column: "name", value: .string("A")) == nil)
+      #expect(await viewModel.stageDuplicate(rows: [row]) == nil)
+
+      await viewModel.commitStaged()
+
+      #expect(viewModel.dataViewer?.changeSet == nil)
+      #expect(
+        try await rows(observer, "SELECT id, g, name FROM p74_generated ORDER BY id")
+          == [[.int(1), .int(2), .string("A")], [.int(2), .int(4), .string("A")]])
+    }
+  }
+
+  @Test(
+    "A timestamptz primary key with microseconds targets exactly its row",
+    .timeLimit(.minutes(1)))
+  func microsecondTimestampKey() async throws {
+    try await withViewer(
+      table: "p74_ts_key", protectedMode: false,
+      ddl: "CREATE TABLE p74_ts_key (id timestamptz PRIMARY KEY, name text)",
+      seed: """
+        INSERT INTO p74_ts_key VALUES
+          ('2024-01-02 03:04:05.123456+00', 'a'), ('2024-01-02 03:04:05.654321+00', 'b')
+        """
+    ) { viewModel, _, observer in
+      let result = try #require(viewModel.editorResult)
+      #expect(result.rows.count == 2)
+      let name = try #require(result.columns.firstIndex { $0.name == "name" })
+      let edited = try #require(result.rows.firstIndex { $0[name] == .string("a") })
+      let deleted = try #require(result.rows.firstIndex { $0[name] == .string("b") })
+      #expect(viewModel.stageEdit(row: edited, column: "name", value: .string("A")) == nil)
+      #expect(viewModel.stageDelete(rows: [deleted]) == nil)
+
+      await viewModel.commitStaged()
+
+      #expect(viewModel.dataViewer?.changeSet == nil)
+      #expect(
+        try await rows(
+          observer, "SELECT to_char(id AT TIME ZONE 'UTC', 'US'), name FROM p74_ts_key")
+          == [[.string("123456"), .string("A")]])
+    }
+  }
+
   private func config(protectedMode: Bool) -> ConnectionConfig {
     ConnectionConfig(
       host: TestDatabase.host, port: TestDatabase.port, database: TestDatabase.database,

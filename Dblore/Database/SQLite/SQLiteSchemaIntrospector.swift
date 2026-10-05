@@ -97,7 +97,8 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
       updateOnly: false,
       tableRef: .sqlite(schema: relation.schema, table: relation.table),
       schema: relation.schema,
-      name: relation.table)
+      name: relation.table,
+      generatedColumns: Set(described.columns.filter(\.isGenerated).map(\.name)))
   }
 
   func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int

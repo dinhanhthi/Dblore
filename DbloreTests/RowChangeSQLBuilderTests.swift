@@ -170,6 +170,60 @@ struct RowChangeSQLBuilderTests {
     #expect(preview == #"UPDATE "t" SET "name" = 'o''brien' WHERE "id" = 1;"#)
     #expect(preview != bound[0].sql)
   }
+
+  @Test("A timestamp primary key binds its microseconds in the WHERE clause")
+  func dateKeyKeepsMicroseconds() throws {
+    let editTarget = target()
+    let edited = Date(timeIntervalSince1970: 1_704_164_645.123_456)
+    let deleted = Date(timeIntervalSince1970: 1_704_164_645.654_321)
+    var set = RowChangeSet(target: editTarget)
+    set.stageDelete(row: RowChangeSet.RowKey(values: [.date(deleted)]))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.date(edited)]), column: "name", value: .string("b"),
+      original: .string("a"))
+
+    let bound = RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+
+    #expect(bound.count == 2)
+    #expect(bound[0].values == ["2024-01-02T03:04:05.654321Z"])
+    #expect(bound[1].values == ["b", "2024-01-02T03:04:05.123456Z"])
+  }
+
+  @Test("Generated columns are left out of staged UPDATE and INSERT")
+  func generatedColumnsAreNotWritten() throws {
+    let editTarget = EditTarget(
+      qualifiedName: #""t""#, tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"],
+      generatedColumns: ["g"])
+    let tableColumns = [
+      ColumnInfo(name: "id", type: "int4"),
+      ColumnInfo(name: "g", type: "int4"),
+      ColumnInfo(name: "name", type: "text"),
+    ]
+    var set = RowChangeSet(target: editTarget)
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(1)]), column: "g", value: .int(9),
+      original: .int(2))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(2)]), column: "name", value: .string("b"),
+      original: .string("a"))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(2)]), column: "g", value: .int(9),
+      original: .int(4))
+    set.stageInsert(values: ["g": .int(6), "name": .string("c")])
+    set.stageInsert(values: ["g": .int(8)])
+
+    let sql = RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: tableColumns, dialect: .postgresql
+    ).map(\.sql)
+
+    #expect(
+      sql == [
+        #"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#,
+        #"INSERT INTO "t" ("name") VALUES ($1)"#,
+        #"INSERT INTO "t" DEFAULT VALUES"#,
+      ])
+  }
 }
 
 private func target(

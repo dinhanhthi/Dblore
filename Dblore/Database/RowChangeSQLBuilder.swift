@@ -55,7 +55,9 @@ nonisolated enum RowChangeSQLBuilder {
     }
     for insert in set.inserts {
       result.append(
-        insertStatement(insert.values, relation: relation, columns: columns, dialect: dialect))
+        insertStatement(
+          insert.values, relation: relation, columns: columns,
+          generated: target.generatedColumns, dialect: dialect))
     }
     return result
   }
@@ -81,6 +83,7 @@ nonisolated enum RowChangeSQLBuilder {
     let keys = Set(target.primaryKeyColumns)
     let edited = columns.filter { column in
       changes[column.name] != nil && !keys.contains(column.name)
+        && !target.generatedColumns.contains(column.name)
     }
     guard !edited.isEmpty else { return nil }
 
@@ -102,9 +105,10 @@ nonisolated enum RowChangeSQLBuilder {
   }
 
   private static func insertStatement(
-    _ values: [String: CellValue], relation: String, columns: [ColumnInfo], dialect: SQLDialect
+    _ values: [String: CellValue], relation: String, columns: [ColumnInfo],
+    generated: Set<String>, dialect: SQLDialect
   ) -> StatementDraft {
-    let included = columns.filter { values[$0.name] != nil }
+    let included = columns.filter { values[$0.name] != nil && !generated.contains($0.name) }
     var draft = StatementDraft()
     draft.text("INSERT INTO \(relation)")
     guard !included.isEmpty else {
@@ -215,7 +219,7 @@ private nonisolated struct StatementDraft {
     case .string(let text), .json(let text):
       text
     case .date(let date):
-      ISO8601DateFormatter().string(from: date)
+      DateBindText.string(from: date)
     case .data(let data):
       "\\x" + data.map { String(format: "%02x", $0) }.joined()
     }

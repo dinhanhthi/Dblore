@@ -17,6 +17,9 @@ struct PendingStagedBatch: Sendable {
   var connectionEpoch: UInt64
   var historySource: QueryHistoryRecordSource = .dataViewerEdit
   var rowRanges: [ClosedRange<Int>?] = []
+  /// Import only: the import sheet is still open to show the failure detail. False once the
+  /// sheet closed for the Safe Mode confirmation.
+  var reportsToImportSheet = true
 }
 
 extension NotebookViewModel {
@@ -95,6 +98,7 @@ extension NotebookViewModel {
     guard let target = stagedEditTarget, let key = rowKey(at: row, target: target) else {
       return Self.rowNotOnPage
     }
+    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
     let original =
       dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: row, column: column)
       ?? .null
@@ -223,7 +227,9 @@ extension NotebookViewModel {
       let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: batch.historySource, errorMessage: message)
+        source: batch.historySource, errorMessage: message,
+        importSummary: Self.batchFailureMessage(
+          error, ranges: batch.rowRanges, detail: "Import failed"))
       showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
@@ -243,7 +249,10 @@ extension NotebookViewModel {
     }
     if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
       pendingExplainSQL = nil
-      pendingStagedBatch = batch
+      // The sheet closes now, so a later failure is reported by the toast and History
+      var confirmed = batch
+      confirmed.reportsToImportSheet = false
+      pendingStagedBatch = confirmed
       return nil
     }
     return await runConfirmedStagedBatch(batch)
@@ -259,14 +268,16 @@ extension NotebookViewModel {
     return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
   }
 
-  /// Import errors can quote file values. The toast stays generic; the sheet shows the detail.
+  /// Import errors can quote file values. The toast stays generic; the sheet shows the detail,
+  /// or History the row range once the sheet closed for Safe Mode.
   private static func batchToastMessage(
     _ error: Error, batch: PendingStagedBatch, fullMessage: String
   ) -> String {
     guard batch.historySource == .dataImport else { return fullMessage }
     if case DatabaseError.batchCancelled = error { return "Import cancelled" }
-    return batchFailureMessage(
-      error, ranges: batch.rowRanges, detail: "Import failed. See the import sheet for details.")
+    let pointer =
+      batch.reportsToImportSheet ? "See the import sheet for details." : "See History for details."
+    return batchFailureMessage(error, ranges: batch.rowRanges, detail: "Import failed. \(pointer)")
   }
 
   // MARK: - Private
@@ -489,18 +500,23 @@ extension NotebookViewModel {
     return result.rows[row][index]
   }
 
-  /// Non-primary-key values, with staged edits applied. Nil when `row` is not on the page.
+  /// Non-primary-key, non-generated values, with staged edits applied. Nil when `row` is not on
+  /// the page.
   private func duplicatedValues(row: Int, target: EditTarget) -> [String: CellValue]? {
     guard let key = rowKey(at: row, target: target) else { return nil }
     if let tempID = key.tempID,
       let insert = dataViewer?.changeSet?.inserts.first(where: { $0.tempID == tempID })
     {
-      return insert.values.filter { !target.primaryKeyColumns.contains($0.key) }
+      return insert.values.filter {
+        !target.primaryKeyColumns.contains($0.key) && !target.generatedColumns.contains($0.key)
+      }
     }
     guard let result = editorResult, result.rows.indices.contains(row) else { return nil }
     var values: [String: CellValue] = [:]
     for (index, column) in result.columns.enumerated() {
-      guard !target.primaryKeyColumns.contains(column.name) else { continue }
+      guard !target.primaryKeyColumns.contains(column.name),
+        !target.generatedColumns.contains(column.name)
+      else { continue }
       let loaded = result.rows[row].indices.contains(index) ? result.rows[row][index] : .null
       values[column.name] = dataViewer?.changeSet?.edits[key]?[column.name] ?? loaded
     }

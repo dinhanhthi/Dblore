@@ -307,7 +307,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
              COALESCE((SELECT k.ord FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(att, ord)
                        WHERE k.att = a.attnum), 0)::int4,
              format('%I.%I', n.nspname, c.relname), c.relkind::text, c.relhassubclass,
-             n.nspname::text, c.relname::text
+             n.nspname::text, c.relname::text, a.attgenerated <> ''
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -322,8 +322,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     var hasSubclass = true
     var catalogSchema: String?
     var catalogName: String?
+    var generated: Set<String> = []
     for row in try await rows(in: session, sql: query, binds: [.text(name)]) {
-      guard row.count >= 9 else { throw CatalogRowError() }
+      guard row.count >= 10 else { throw CatalogRowError() }
       guard let tableOID = CatalogValue.int(row[0]),
         let attnum = CatalogValue.int(row[1]),
         let columnName = CatalogValue.string(row[2]),
@@ -332,7 +333,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         let kind = CatalogValue.string(row[5]),
         let subclass = CatalogValue.bool(row[6]),
         let schemaName = CatalogValue.string(row[7]),
-        let relationName = CatalogValue.string(row[8])
+        let relationName = CatalogValue.string(row[8]),
+        let isGenerated = CatalogValue.bool(row[9])
       else { throw CatalogRowError() }
       guard let number = Int16(exactly: attnum), let tableID = UInt32(exactly: tableOID) else {
         continue
@@ -344,6 +346,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       catalogSchema = schemaName
       catalogName = relationName
       names[number] = columnName
+      if isGenerated { generated.insert(columnName) }
       if keyPosition > 0 { keyPositions.append((keyPosition, columnName)) }
     }
     guard oid != 0, relationKind == "p" || (relationKind == "r" && !hasSubclass) else {
@@ -352,7 +355,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     let primaryKey = keyPositions.sorted { $0.position < $1.position }.map(\.name)
     return EditTable(
       oid: oid, attributeNames: names, primaryKeyColumns: primaryKey, qualifiedName: qualifiedName,
-      updateOnly: relationKind == "r", schema: catalogSchema, name: catalogName)
+      updateOnly: relationKind == "r", schema: catalogSchema, name: catalogName,
+      generatedColumns: generated)
   }
 
   func enrichColumnTypes(

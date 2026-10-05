@@ -354,6 +354,7 @@ struct EditorResultGridView: View {
           sortColumn: sortColumn,
           ascending: sortAscending,
           isEditable: viewModel.canEdit(result),
+          readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
           onCommitEdit: { row, column, newValue in
             viewModel.handleGridCellEdit(
               row: row, column: column, newValue: newValue, result: result, cellId: nil,

@@ -216,7 +216,7 @@ struct RightSidebarView: View {
         // Editable only for a single table with a primary key, on a writable connection
         isReadOnly: !viewModel.canEdit(
           tableName: tableName, primaryKeyColumns: primaryKeyColumns,
-          columnNames: Set(rowData.map { Array($0.keys) } ?? [])),
+          columnNames: Set(rowData.map { Array($0.keys) } ?? []), columnName: columnName),
         onSetNull: { [workspaceManager] in
           viewModel.handleCellValueEdit(
             columnName: columnName,

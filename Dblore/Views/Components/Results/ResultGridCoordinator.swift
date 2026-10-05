@@ -87,6 +87,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// Set by the caller from `NotebookViewModel.canEdit(_:)`: without it no cell can be edited
   var isEditable = false
+  /// Result column indexes that cannot be edited even when `isEditable` (generated columns)
+  var readOnlyColumns: Set<Int> = []
   /// Called with the displayed row values, the edited result column index and the new text.
   /// Not called when `stagesEdits` is set.
   var onCommitEdit: ((_ row: [CellValue], _ column: Int, _ newValue: String) -> Void)?
@@ -588,7 +590,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Returns false when the grid is not editable.
   @discardableResult
   func beginEditing(_ tableView: NSTableView, row: Int, column: Int) -> Bool {
-    guard isEditable, let model, row >= 0, row < model.rowCount,
+    guard isEditable, !readOnlyColumns.contains(column), let model, row >= 0,
+      row < model.rowCount,
       let tableColumn = tableView.tableColumns.firstIndex(where: {
         $0.identifier.rawValue == String(column)
       }),
@@ -614,7 +617,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private func commit(rowValues: [CellValue], column: Int, newValue: String, pageIndex: Int?) {
     let original = column < rowValues.count ? rowValues[column] : .null
-    guard isEditable, newValue != original.fullString else { return }
+    guard isEditable, !readOnlyColumns.contains(column), newValue != original.fullString else {
+      return
+    }
     if stagesEdits {
       guard let pageIndex else { return }
       onStageEdit?(pageIndex, column, newValue)

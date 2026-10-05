@@ -2,7 +2,7 @@
 //  HistoryDetailModal.swift
 //  Dblore
 //
-//  Small modal with the full recorded SQL, and Copy / Cancel.
+//  Small modal with the full recorded SQL, the recorded error of a failed run, and Copy / Cancel.
 //  The SQL well matches every other read-only code modal.
 //
 
@@ -12,6 +12,8 @@ struct HistoryDetailModal: View {
   let sql: String
   /// False for a transaction summary. The label is not SQL and must not reach the pasteboard.
   var canCopy = true
+  /// Recorded error of a failed run (an import keeps only its row range), nil on success
+  var errorMessage: String? = nil
   @Binding var isPresented: Bool
   let onCopy: () -> Bool
 
@@ -19,6 +21,14 @@ struct HistoryDetailModal: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if let errorMessage {
+        Text(errorMessage)
+          .font(.small)
+          .foregroundColor(.destructive)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding([.horizontal, .top], Spacing.md)
+      }
       SQLCodeWell(sql: sql, allowsTextSelection: canCopy)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Spacing.md)
@@ -67,6 +77,7 @@ extension View {
         HistoryDetailModal(
           sql: entry.sql,
           canCopy: !QueryHistoryEntry.isTransactionSummary(entry.sql),
+          errorMessage: entry.status == .success ? nil : entry.errorMessage,
           isPresented: isPresented,
           onCopy: { workspaceManager.copyHistory(entry) }
         )

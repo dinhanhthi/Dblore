@@ -199,6 +199,8 @@ nonisolated struct EditTable: Sendable, Equatable {
   var schema: String? = nil
   /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
   var name: String? = nil
+  /// Generated columns (SQLite `hidden` 2/3, PostgreSQL `attgenerated`): never written
+  var generatedColumns: Set<String> = []
 
   /// Identity compared with result column origins.
   var resolvedTableRef: TableRef {
@@ -223,11 +225,13 @@ nonisolated struct EditTarget: Sendable, Equatable {
   let schema: String?
   /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
   let name: String?
+  /// Generated columns: read-only in the grid and left out of staged UPDATE and INSERT
+  let generatedColumns: Set<String>
 
   init(
     qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
     connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID(),
-    schema: String? = nil, name: String? = nil
+    schema: String? = nil, name: String? = nil, generatedColumns: Set<String> = []
   ) {
     self.qualifiedName = qualifiedName
     self.tableID = tableID
@@ -237,5 +241,6 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.generation = generation
     self.schema = schema
     self.name = name
+    self.generatedColumns = generatedColumns
   }
 }

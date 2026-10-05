@@ -298,6 +298,12 @@ final class TableImportModel {
       data.append(chunk)
       // Without a new line end the delimited candidate is unchanged, so its parse would be too
       if format != .json, !chunk.contains(where: { $0 == 10 || $0 == 13 }) { continue }
+      // A JSON record (array element or NDJSON line) can only complete at `}`, `]` or a new line
+      if format == .json,
+        !chunk.contains(where: { $0 == 0x7D || $0 == 0x5D || $0 == 10 || $0 == 13 })
+      {
+        continue
+      }
       let candidate: Data
       if format == .json {
         // A read may stop inside a UTF-8 codepoint. Parse a valid prefix so the reader

@@ -106,6 +106,80 @@ struct SQLiteWorkspaceTests {
     #expect(directTarget?.primaryKeyColumns == ["id"])
   }
 
+  @Test("A generated column is read-only while the other columns of the row stay editable")
+  func generatedColumnIsReadOnly() async throws {
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute(
+      "CREATE TABLE gen (id INTEGER PRIMARY KEY, g INTEGER AS (id * 2), name TEXT)")
+    try handle.execute("INSERT INTO gen (id, name) VALUES (1, 'a')")
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: sqliteConfig(path: url.path))
+    defer { Task { await manager.disconnect() } }
+    let epoch = await manager.connectionEpoch
+    let viewModel = NotebookViewModel(notebook: .newDocument())
+
+    let sql = "SELECT id, g, name FROM gen"
+    let queried = try await manager.execute(userSQL: sql, policy: open)
+    let target = try #require(
+      await viewModel.editTarget(
+        for: sql, result: queried, connectionManager: manager, epoch: epoch))
+    #expect(target.generatedColumns == ["g"])
+    let result = CellResult(
+      columns: queried.columns, rows: queried.rows, rowCount: queried.rows.count,
+      editTarget: target)
+    #expect(viewModel.canEdit(result))
+    #expect(viewModel.readOnlyColumnIndexes(result) == [1])
+
+    viewModel.cellDetailEditTarget = target
+    let names: Set<String> = ["id", "g", "name"]
+    #expect(
+      !viewModel.canEdit(
+        tableName: "gen", primaryKeyColumns: ["id"], columnNames: names, columnName: "g"))
+    #expect(
+      viewModel.canEdit(
+        tableName: "gen", primaryKeyColumns: ["id"], columnNames: names, columnName: "name"))
+  }
+
+  @Test("Add Row and Duplicate in the data viewer never write a generated column")
+  func stagedRowsOmitGeneratedColumn() async throws {
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute(
+      "CREATE TABLE gen (id INTEGER PRIMARY KEY, g INTEGER AS (id * 2), name TEXT)")
+    try handle.execute("INSERT INTO gen (id, name) VALUES (1, 'a')")
+    let config = sqliteConfig(path: url.path)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionState = .connected
+    viewModel.connectionManager = manager
+    viewModel.dataViewer = DataViewerState(
+      schema: "main", name: "gen", orderColumns: ["id"], databaseType: .sqlite)
+    await viewModel.loadDataViewerPage()
+    #expect(viewModel.editorResult?.editTarget?.generatedColumns == ["g"])
+
+    #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
+    #expect(await viewModel.addStagedRow() == nil)
+    let preview = viewModel.previewStagedSQL()
+    #expect(preview.contains("INSERT"))
+    #expect(!preview.contains("\"g\""))
+
+    await viewModel.commitStaged()
+
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    let stored = try await manager.executeInternal("SELECT id, g, name FROM gen ORDER BY id")
+    #expect(stored.rows.count == 3)
+    #expect(stored.rows.first == [.int(1), .int(2), .string("a")])
+    #expect(stored.rows.dropFirst().first?[2] == .string("a"))
+  }
+
   private func sqliteConfig(path: String) -> ConnectionConfig {
     ConnectionConfig(
       databaseType: .sqlite,
