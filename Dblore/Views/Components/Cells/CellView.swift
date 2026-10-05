@@ -71,6 +71,13 @@ struct CellView: View {
           .padding(.leading, 0)
           .padding(.trailing, Spacing.md)
 
+          // Parameter form (if open for this cell)
+          if viewModel.openParameterFormCellIds.contains(cell.id) {
+            CellParametersFormView(viewModel: viewModel, cell: cell)
+              .padding(.leading, ComponentSize.cellSidebarWidth)
+              .padding(.trailing, Spacing.md)
+          }
+
           // Result area (if exists)
           if let result = cell.result {
             if cell.isResultVisible {

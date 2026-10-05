@@ -44,6 +44,9 @@ enum ComponentSize {
   static let inputHeight: CGFloat = 36
   static let maxResultHeight: CGFloat = 500
   static let minCellHeight: CGFloat = 80
+  /// Cell parameter form: adaptive column bounds for one `ParameterInputBlock`.
+  static let parameterBlockMinWidth: CGFloat = 160
+  static let parameterBlockMaxWidth: CGFloat = 280
 
   // Tab bar and title bar
   static let tabBarHeight: CGFloat = 38

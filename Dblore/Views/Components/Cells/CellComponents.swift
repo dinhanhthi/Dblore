@@ -203,6 +203,24 @@ struct TopRightFloatingPanelView: View {
             }
           )
         }
+
+        // Parameters button (only show if cell uses :name parameters)
+        if !viewModel.parameterNames(in: cell.content).isEmpty {
+          FloatingPanelToggleButton(
+            icon: "curlybraces",
+            helpText: "Parameters",
+            isActive: viewModel.openParameterFormCellIds.contains(cell.id),
+            action: {
+              viewModel.toggleParameterForm(cellId: cell.id)
+            }
+          )
+          .overlay(alignment: .bottomTrailing) {
+            if viewModel.hasStoredParameterValues(cellId: cell.id) {
+              Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
+                .allowsHitTesting(false)
+            }
+          }
+        }
       }
 
       FloatingPanelButton(

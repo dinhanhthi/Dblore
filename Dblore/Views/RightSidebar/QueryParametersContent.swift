@@ -48,79 +48,28 @@ struct QueryParametersContent: View {
   }
 
   private func parameterRow(_ row: ParameterFormRow) -> some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.xs) {
-        Text(row.name)
-          .font(.small)
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-        if row.isUnused {
-          Text("Unused")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-            .fixedSize()
-        }
-        Spacer(minLength: Spacing.xs)
-        Toggle("NULL", isOn: nullBinding(for: row.name))
-          .font(.small)
-          .foregroundColor(.foreground)
-          .controlSize(.small)
+    ParameterInputBlock(
+      name: row.name,
+      stored: storedParameter(named: row.name),
+      // A `.script` tab does not mark the file dirty.
+      onStore: { viewModel.updateParameter($0, for: row.name) }
+    ) {
+      if row.isUnused {
+        Text("Unused")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
           .fixedSize()
-        if row.isUnused {
-          Button(action: { viewModel.removeUnusedParameter(named: row.name) }) {
-            Image(systemName: "trash")
-          }
-          .buttonStyle(GhostButtonStyle(iconOnly: true))
-          .help("Remove parameter")
+        Button(action: { viewModel.removeUnusedParameter(named: row.name) }) {
+          Image(systemName: "trash")
         }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .help("Remove parameter")
       }
-
-      TextField("", text: textBinding(for: row.name))
-        .textFieldStyle(.plain)
-        .inputCapsuleStyle()
-        .disabled(isStoredNull(row.name))
     }
   }
 
   private func storedParameter(named name: String) -> QueryParameter? {
     viewModel.editorParameters.first { $0.name == name }
-  }
-
-  private func isStoredNull(_ name: String) -> Bool {
-    guard let parameter = storedParameter(named: name) else { return false }
-    return parameter.value == nil
-  }
-
-  private func textBinding(for name: String) -> Binding<String> {
-    Binding(
-      get: { storedParameter(named: name)?.value ?? "" },
-      set: { newValue in
-        // Missing until the user types. A disabled NULL field must not write the name back.
-        guard let stored = storedParameter(named: name) else {
-          guard !newValue.isEmpty else { return }
-          store(newValue, for: name)
-          return
-        }
-        guard stored.value != nil else { return }
-        store(newValue, for: name)
-      }
-    )
-  }
-
-  private func nullBinding(for name: String) -> Binding<Bool> {
-    Binding(
-      get: { isStoredNull(name) },
-      set: { isNull in
-        // Off on a name that was never stored is not a user edit.
-        if storedParameter(named: name) == nil && !isNull { return }
-        store(isNull ? nil : "", for: name)
-      }
-    )
-  }
-
-  /// Replaces the stored value. A `.script` tab does not mark the file dirty.
-  private func store(_ value: String?, for name: String) {
-    viewModel.updateParameter(value, for: name)
   }
 }
 
