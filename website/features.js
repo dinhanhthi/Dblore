@@ -79,9 +79,7 @@ if (typeof document !== "undefined") {
   if (table) {
     const body = table.querySelector("tbody");
     const search = document.getElementById("feature-search");
-    const searchPanel = document.getElementById("feature-search-panel");
-    const searchButton = document.getElementById("feature-search-button");
-    const clearButton = document.getElementById("feature-search-clear");
+    const searchForm = document.getElementById("feature-search-form");
     const count = document.getElementById("feature-count");
     let column = "id";
     let direction = "descending";
@@ -122,10 +120,8 @@ if (typeof document !== "undefined") {
         fragment.append(row);
       }
       body.replaceChildren(fragment);
-      count.textContent = search.value.trim()
-        ? `${features.length} of ${FEATURES.length} features`
-        : `${FEATURES.length} features`;
-      clearButton.disabled = !search.value;
+      count.textContent = features.length;
+      count.setAttribute("aria-label", `${features.length} features`);
       for (const header of table.querySelectorAll("th")) {
         const button = header.querySelector("button");
         const active = button.dataset.sort === column;
@@ -142,24 +138,15 @@ if (typeof document !== "undefined") {
         render();
       });
     }
-    searchButton.addEventListener("click", () => {
-      searchPanel.hidden = false;
-      searchButton.setAttribute("aria-expanded", "true");
-      search.focus();
+    searchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      render();
     });
     search.addEventListener("input", render);
-    clearButton.addEventListener("click", () => {
-      search.value = "";
-      render();
-      search.focus();
-    });
     search.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         search.value = "";
         render();
-        searchPanel.hidden = true;
-        searchButton.setAttribute("aria-expanded", "false");
-        searchButton.focus();
       }
     });
     document.getElementById("feature-controls").hidden = false;

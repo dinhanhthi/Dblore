@@ -42,8 +42,8 @@
           >
         </div>
         <nav aria-label="Primary navigation">
-          <a class="nav-link" href="docs.html">Docs</a>
           <a class="nav-link active" href="features.html" aria-current="page">Features</a>
+          <a class="nav-link" href="docs.html">Docs</a>
           <button type="button" class="nav-link" id="theme-toggle" aria-label="Switch theme" title="Switch theme">
             <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
@@ -72,23 +72,17 @@
         <section class="hero">
           <h1>Feature list</h1>
           <p>Every capability, from the big features to the little shortcuts.</p>
-          <p class="note">Version shows the first release with each feature. Unreleased features are coming in a future release; Unknown means availability has not yet been verified.</p>
           <div class="actions">
-            <a class="button button--primary" href="https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md" target="_blank" rel="noopener noreferrer">Suggest a feature</a>
+            <a class="button button--primary" href="https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md&amp;title=New%20feature%3A%20" target="_blank" rel="noopener noreferrer">Suggest a feature</a>
           </div>
         </section>
 
         <div id="feature-controls" class="feature-controls" hidden>
           <div class="feature-toolbar">
-            <button type="button" class="button button--secondary" id="feature-search-button" aria-controls="feature-search-panel" aria-expanded="false">Search features</button>
-            <p id="feature-count" role="status" aria-live="polite" aria-atomic="true"></p>
-          </div>
-          <div id="feature-search-panel" class="feature-search-panel" hidden>
-            <label for="feature-search">Search features</label>
-            <div class="feature-search-input">
-              <input id="feature-search" type="search" placeholder="Try inline edit or favorites" autocomplete="off" aria-controls="feature-rows" />
-              <button type="button" id="feature-search-clear" class="button button--secondary">Clear</button>
-            </div>
+            <form id="feature-search-form" class="feature-search-input" role="search">
+              <input id="feature-search" type="search" aria-label="Search features" placeholder="Try inline edit or favorites" autocomplete="off" aria-controls="feature-rows" />
+              <button type="submit" id="feature-search-button" class="button button--secondary">Search</button>
+            </form>
           </div>
         </div>
         <div id="feature-table-wrap" class="feature-table-wrap" role="region" aria-label="Scrollable feature list" tabindex="0" hidden>
@@ -97,13 +91,14 @@
             <thead>
               <tr>
                 <th scope="col" aria-sort="descending"><button type="button" data-sort="id">ID <span aria-hidden="true">↓</span></button></th>
-                <th scope="col" aria-sort="none"><button type="button" data-sort="feature">Features <span aria-hidden="true">↕</span></button></th>
+                <th scope="col" aria-sort="none"><button type="button" data-sort="feature">Features <span aria-hidden="true">↕</span></button> <span id="feature-count" class="feature-count" role="status" aria-live="polite" aria-atomic="true"></span></th>
                 <th scope="col" aria-sort="none"><button type="button" data-sort="version">Version <span aria-hidden="true">↕</span></button></th>
               </tr>
             </thead>
             <tbody id="feature-rows"></tbody>
           </table>
         </div>
+        <p class="feature-version-note">Version shows the first release with each feature. Unreleased features are coming in a future release; Unknown means availability has not yet been verified.</p>
         <noscript>
           <p>The searchable feature table needs JavaScript. Browse the <a href="https://github.com/dinhanhthi/Dblore/blob/main/website/features-data.js">complete feature catalog</a> or the <a href="docs.html">documentation</a>.</p>
           <p><a href="https://github.com/dinhanhthi/Dblore/issues/new?template=bug_report.md">Report a bug</a></p>

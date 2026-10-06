@@ -1,7 +1,7 @@
 ---
 name: Feature request
 about: Suggest a new feature or improvement for Dblore
-title: "Feature: "
+title: "New feature: "
 labels: enhancement
 assignees: ''
 ---
