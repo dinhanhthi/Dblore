@@ -265,6 +265,7 @@ class AppSettings {
     static let accentColor = "app.settings.accentColor"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
+    static let commitStyle = "app.settings.commitStyle"
     static let inlineEditAutoCommit = "app.settings.inlineEditAutoCommit"
     static let historyEnabled = "app.settings.historyEnabled"
     static let historyRetentionDays = "app.settings.historyRetentionDays"
@@ -500,6 +501,24 @@ class AppSettings {
     }
   }
 
+  /// True until `init` has loaded `commitStyle`. `@Observable` runs `didSet` for that
+  /// assignment, so the observer must not persist until load has finished.
+  @ObservationIgnored
+  private var isLoadingCommitStyle = true
+
+  /// How a connection confirms a write, unless that connection stores its own style.
+  /// Load reads a known `app.settings.commitStyle` string, or migrates from Safe Mode
+  /// (`CommitStyle.migrateGlobal`), and writes neither key. A later assignment writes the
+  /// raw string and copies `legacyProjection.safeMode` into Safe Mode.
+  /// Default: .review (neither key stored)
+  var commitStyle: CommitStyle = .review {
+    didSet {
+      guard !isLoadingCommitStyle else { return }
+      defaults.set(commitStyle.rawValue, forKey: Keys.commitStyle)
+      safeMode = commitStyle.legacyProjection.safeMode
+    }
+  }
+
   /// Inline grid edits are committed at once (no Commit / Rollback bar); off: each edit is
   /// staged in the app transaction. Safe Mode never asks for inline edits either way.
   /// Default: false
@@ -613,6 +632,19 @@ class AppSettings {
       return sharedDefaults.bool(forKey: Keys.includeResultsOnSave)
     }
     return true  // default value
+  }
+
+  /// Known `app.settings.commitStyle` raw value, otherwise `CommitStyle.migrateGlobal`.
+  /// Reads only; the caller must not persist the result during load.
+  private static func loadedCommitStyle(from defaults: UserDefaults) -> CommitStyle {
+    if let raw = defaults.string(forKey: Keys.commitStyle),
+      let style = CommitStyle(rawValue: raw)
+    {
+      return style
+    }
+    let keyPresent = defaults.object(forKey: Keys.safeMode) != nil
+    let stored = keyPresent ? SafeMode(rawValue: defaults.integer(forKey: Keys.safeMode)) : nil
+    return CommitStyle.migrateGlobal(stored: stored, keyPresent: keyPresent)
   }
 
   // MARK: - Initialization
@@ -773,6 +805,10 @@ class AppSettings {
       safeMode = mode
     }
     // The Safe Mode password lives in SafeModeAuthenticator (Keychain), never in UserDefaults
+
+    // `@Observable` runs didSet here. The load flag keeps both keys unchanged.
+    commitStyle = Self.loadedCommitStyle(from: defaults)
+    isLoadingCommitStyle = false
   }
 
   // MARK: - Reset to Defaults
@@ -799,7 +835,10 @@ class AppSettings {
     accentColor = .blue
     hideColumnTypes = false
     resultFontSize = Self.defaultResultFontSize
-    safeMode = .alertRead
+    // Same-value assignment does not run didSet, so write the review projection first.
+    defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
+    safeMode = CommitStyle.review.legacyProjection.safeMode
+    commitStyle = .review
     inlineEditAutoCommit = false
     historyEnabled = true
     historyRetentionDays = Self.defaultHistoryRetentionDays

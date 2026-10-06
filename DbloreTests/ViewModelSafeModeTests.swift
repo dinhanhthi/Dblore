@@ -398,20 +398,19 @@ struct ViewModelSafeModeTests {
     #expect(viewModel.queryConfirmationState.statements.isEmpty)
   }
 
-  @Test("Reset settings resets Safe Mode to alertRead")
+  @Test("Reset settings resets the default commit style to review")
   func resetSettingsResetsSafeMode() {
-    // Arrange
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .silent
-    #expect(AppSettings.shared.safeMode == .silent)
-
-    // Act
-    AppSettings.shared.resetToDefaults()
-
-    // Assert
+    AppSettings.shared.commitStyle = .confirm
     #expect(AppSettings.shared.safeMode == .alertRead)
 
-    // Cleanup (not strictly needed since we reset to defaults)
+    AppSettings.shared.resetToDefaults()
+
+    #expect(AppSettings.shared.commitStyle == .review)
+    #expect(AppSettings.shared.safeMode == .silent)
+
+    AppSettings.shared.commitStyle = previousStyle
     AppSettings.shared.safeMode = previousSafeMode
   }
 

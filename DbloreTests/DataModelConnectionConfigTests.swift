@@ -383,4 +383,160 @@ struct DataModelConnectionConfigTests {
         config: edited
       ) == loaded.id)
   }
+
+  // MARK: - Commit style storage
+
+  @Test("JSON without commitStyle stays legacy and re-encodes without the key")
+  func jsonWithoutCommitStyleStaysLegacy() throws {
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: savedConnectionJSON())
+
+    #expect(decoded.hasStoredCommitStyle == false)
+    #expect(decoded.safeMode == .alertRead)
+    #expect(decoded.protectedMode == false)
+
+    let object = try encodedObject(decoded)
+    #expect(object["commitStyle"] == nil)
+    #expect(object["safeMode"] as? Int == 1)
+    #expect(object["protectedMode"] as? Bool == false)
+  }
+
+  @Test(
+    "Null or unknown commitStyle decodes as if the key were absent",
+    arguments: ["null", "\"not-a-style\""]
+  )
+  func nullOrUnknownCommitStyleDecodesAsAbsent(literal: String) throws {
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: savedConnectionJSON(commitStyleValue: literal))
+
+    #expect(decoded.hasStoredCommitStyle == false)
+    #expect(decoded.safeMode == .alertRead)
+    #expect(decoded.protectedMode == false)
+  }
+
+  @Test(
+    "A known commitStyle string is stored and re-encoded with the saved pair",
+    arguments: [
+      ("immediate", CommitStyle.immediate),
+      ("confirm", CommitStyle.confirm),
+      ("review", CommitStyle.review),
+      ("password", CommitStyle.password),
+    ]
+  )
+  func knownCommitStyleStringIsStored(raw: String, style: CommitStyle) throws {
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: savedConnectionJSON(commitStyleValue: "\"\(raw)\""))
+
+    #expect(decoded.hasStoredCommitStyle == true)
+    #expect(decoded.commitStyle == style)
+    #expect(decoded.safeMode == .alertRead)
+    #expect(decoded.protectedMode == false)
+
+    let object = try encodedObject(decoded)
+    #expect(object["commitStyle"] as? String == raw)
+    #expect(object["safeMode"] as? Int == 1)
+    #expect(object["protectedMode"] as? Bool == false)
+  }
+
+  @Test("A legacy protected connection resolves to review without changing the stored pair")
+  func legacyProtectedResolvesToReview() {
+    let config = ConnectionConfig(safeMode: .safeAll, protectedMode: true)
+
+    #expect(config.resolvedCommitStyle(fallback: .immediate) == .review)
+    #expect(config.hasStoredCommitStyle == false)
+    #expect(config.safeMode == .safeAll)
+    #expect(config.protectedMode == true)
+  }
+
+  @Test("A legacy unprotected connection with no safe mode uses the fallback")
+  func legacyUnprotectedNilSafeModeUsesFallback() {
+    let config = ConnectionConfig(safeMode: nil, protectedMode: false)
+
+    #expect(config.resolvedCommitStyle(fallback: .immediate) == .immediate)
+    #expect(config.resolvedCommitStyle(fallback: .confirm) == .confirm)
+    #expect(config.resolvedCommitStyle(fallback: .password) == .password)
+    #expect(config.resolvedCommitStyle(fallback: .review) == .confirm)
+    #expect(config.hasStoredCommitStyle == false)
+    #expect(config.safeMode == nil)
+    #expect(config.protectedMode == false)
+  }
+
+  @Test("applyCommitStyle projects password onto a legacy protected connection")
+  func applyCommitStyleProjectsPassword() throws {
+    var config = ConnectionConfig(safeMode: .safeAll, protectedMode: true)
+    config.applyCommitStyle(.password)
+
+    #expect(config.hasStoredCommitStyle == true)
+    #expect(config.commitStyle == .password)
+    #expect(config.protectedMode == false)
+    #expect(config.safeMode == .safeRead)
+
+    let object = try encodedObject(config)
+    #expect(object["commitStyle"] as? String == CommitStyle.password.rawValue)
+    #expect(object["safeMode"] as? Int == SafeMode.safeRead.rawValue)
+    #expect(object["protectedMode"] as? Bool == false)
+  }
+
+  @Test("applyCommitStyle projects review onto protected mode and silent safe mode")
+  func applyCommitStyleProjectsReview() {
+    var config = ConnectionConfig(safeMode: .safeAll, protectedMode: false)
+    config.applyCommitStyle(.review)
+
+    #expect(config.commitStyle == .review)
+    #expect(config.protectedMode == true)
+    #expect(config.safeMode == .silent)
+  }
+
+  @Test("Encoding a legacy connection omits commitStyle until applyCommitStyle")
+  func encodingLegacyConnectionOmitsCommitStyle() throws {
+    let config = ConnectionConfig(safeMode: .safeAll, protectedMode: true)
+
+    #expect(config.hasStoredCommitStyle == false)
+    let object = try encodedObject(config)
+    #expect(object["commitStyle"] == nil)
+    #expect(object["safeMode"] as? Int == SafeMode.safeAll.rawValue)
+    #expect(object["protectedMode"] as? Bool == true)
+  }
+
+  @Test("Protected mode is the gate for the resolved style")
+  func protectedModeGatesResolvedStyle() {
+    var storedReview = ConnectionConfig(safeMode: .silent, protectedMode: false)
+    storedReview.commitStyle = .review
+    #expect(storedReview.resolvedCommitStyle(fallback: .password) == .confirm)
+
+    var storedImmediate = ConnectionConfig(safeMode: .silent, protectedMode: true)
+    storedImmediate.commitStyle = .immediate
+    #expect(storedImmediate.resolvedCommitStyle(fallback: .password) == .review)
+
+    var storedPassword = ConnectionConfig(safeMode: .safeRead, protectedMode: true)
+    storedPassword.commitStyle = .password
+    #expect(storedPassword.resolvedCommitStyle(fallback: .immediate) == .review)
+  }
+
+  private func savedConnectionJSON(commitStyleValue: String? = nil) -> Data {
+    let styleField = commitStyleValue.map { ",\n        \"commitStyle\": \($0)" } ?? ""
+    let json = """
+      {
+        "databaseType": "PostgreSQL",
+        "host": "localhost",
+        "port": 5432,
+        "database": "test",
+        "username": "user",
+        "password": "",
+        "sslMode": "prefer",
+        "rememberConnection": true,
+        "timeoutSeconds": 30,
+        "name": "Saved",
+        "protectionLevel": "none",
+        "safeMode": 1,
+        "protectedMode": false\(styleField)
+      }
+      """
+    return Data(json.utf8)
+  }
+
+  private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {
+    let data = try JSONEncoder().encode(config)
+    return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+  }
 }

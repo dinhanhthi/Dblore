@@ -154,6 +154,9 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var name: String  // Optional label for the connection
   var safeMode: SafeMode?  // Per-connection SafeMode override (nil = use global setting)
   var protectedMode: Bool  // Protected mode (ON by default, also for legacy connections)
+  /// Nil only for a legacy, never-edited connection.
+  var commitStyle: CommitStyle?
+  var hasStoredCommitStyle: Bool { commitStyle != nil }
   var statementTimeoutSeconds: Int  // Server-side statement_timeout
   var lockTimeoutSeconds: Int  // Server-side lock_timeout
   var idleInTransactionTimeoutSeconds: Int  // Server-side idle_in_transaction_session_timeout
@@ -167,7 +170,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
     case rememberConnection, timeoutSeconds, name, safeMode
-    case protectedMode, statementTimeoutSeconds, lockTimeoutSeconds
+    case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
     // New key
     case protectionLevel
@@ -194,6 +197,11 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     name = try container.decode(String.self, forKey: .name)
     safeMode = try container.decodeIfPresent(SafeMode.self, forKey: .safeMode)
     protectedMode = try container.decodeIfPresent(Bool.self, forKey: .protectedMode) ?? true
+    if let rawStyle = try container.decodeIfPresent(String.self, forKey: .commitStyle) {
+      commitStyle = CommitStyle(rawValue: rawStyle)
+    } else {
+      commitStyle = nil
+    }
     statementTimeoutSeconds = SessionBrakeLimits.clampStatementTimeout(
       try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60)
     lockTimeoutSeconds = SessionBrakeLimits.clampLockTimeout(
@@ -242,6 +250,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(name, forKey: .name)
     try container.encodeIfPresent(safeMode, forKey: .safeMode)
     try container.encode(protectedMode, forKey: .protectedMode)
+    try container.encodeIfPresent(commitStyle, forKey: .commitStyle)
     try container.encode(statementTimeoutSeconds, forKey: .statementTimeoutSeconds)
     try container.encode(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
     try container.encode(idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
@@ -286,12 +295,39 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.name = name
     self.safeMode = safeMode
     self.protectedMode = protectedMode
+    self.commitStyle = nil
     self.statementTimeoutSeconds = statementTimeoutSeconds
     self.lockTimeoutSeconds = lockTimeoutSeconds
     self.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds
     self.rowCapOverride = rowCapOverride
     self.fileBookmark = fileBookmark
     self.readOnlyFile = readOnlyFile
+  }
+
+  /// Stores `style` and copies its legacy protected-mode and safe-mode pair.
+  /// Not used by init, decode, or encode, so a legacy connection stays unchanged until edited.
+  mutating func applyCommitStyle(_ style: CommitStyle) {
+    commitStyle = style
+    let projection = style.legacyProjection
+    protectedMode = projection.protectedMode
+    safeMode = projection.safeMode
+  }
+
+  func resolvedCommitStyle(fallback: CommitStyle) -> CommitStyle {
+    let candidate: CommitStyle
+    if let commitStyle {
+      candidate = commitStyle
+    } else {
+      candidate = CommitStyle.migrate(protectedMode: protectedMode, safeMode: safeMode) ?? fallback
+    }
+    // protectedMode is the gate's source of truth.
+    if protectedMode {
+      return .review
+    }
+    if candidate == .review {
+      return .confirm
+    }
+    return candidate
   }
 
   // MARK: - Convenience accessors (for easier migration)
