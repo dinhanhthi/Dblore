@@ -39,12 +39,12 @@ extension PostgresSession {
       }
 
       if let hint = serverInfo[.hint] {
-        message += "\n\nHint: \(hint)"
+        message += "\n\n💡 Hint: \(hint)"
       } else if ["42P08", "42P18"].contains(serverInfo[.sqlState]) {
         // Bound :name values are untyped; PostgreSQL types a parameter from its first use,
         // and `:name IS NULL` gives it none (42P08 on Parse, 42P18 from PREPARE).
         message +=
-          "\n\nHint: Cast the parameter where it is first used, e.g. :name::integer IS NULL"
+          "\n\n💡 Hint: Cast the parameter where it is first used, e.g. :name::integer IS NULL"
       }
 
       if let positionStr = serverInfo[.position],

@@ -136,7 +136,7 @@ struct QueryParameterIntegrationTests {
         Issue.record("Expected queryFailed")
       } catch DatabaseError.queryFailed(let message, _) {
         #expect(message.contains("could not determine data type of parameter $1"))
-        #expect(message.contains("Hint: Cast the parameter where it is first used"))
+        #expect(message.contains("💡 Hint: Cast the parameter where it is first used"))
       }
 
       let cast = "SELECT name FROM \(table) WHERE (:id::int IS NULL OR id = :id) ORDER BY id"
