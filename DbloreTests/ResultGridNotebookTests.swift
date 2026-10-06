@@ -28,17 +28,17 @@ struct ResultGridNotebookTests {
   }
 
   @Test(
-    "Height is min(rows, 15) rows plus the header and the legacy horizontal scroller",
-    arguments: [false, true], [NSScroller.Style.overlay, .legacy])
-  func height(hideColumnTypes: Bool, scrollerStyle: NSScroller.Style) {
-    // A legacy (always shown) horizontal scroller sits inside the grid height; overlay floats
+    "Height is min(rows, 15) rows plus the header and a shown legacy horizontal scroller",
+    arguments: [false, true], [false, true])
+  func height(hideColumnTypes: Bool, reservesScroller: Bool) {
+    // A shown legacy horizontal scroller sits inside the grid height; overlay or hidden adds none
     let scroller =
-      scrollerStyle == .legacy
-      ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+      reservesScroller ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
     let header = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes) + scroller
     func height(_ rowCount: Int) -> CGFloat {
       ResultGridView.height(
-        rowCount: rowCount, hideColumnTypes: hideColumnTypes, scrollerStyle: scrollerStyle)
+        rowCount: rowCount, hideColumnTypes: hideColumnTypes,
+        reservesHorizontalScroller: reservesScroller)
     }
     #expect(height(0) == header)
     #expect(height(1) == ResultGridView.rowHeight + header)

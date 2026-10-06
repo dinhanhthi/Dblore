@@ -75,9 +75,15 @@ struct CellView: View {
           if viewModel.openParameterFormCellIds.contains(cell.id)
             && !viewModel.parameterNames(in: cell.content).isEmpty
           {
+            // Rounded box inset like the editor so the form reads apart from it and the result
             CellParametersFormView(viewModel: viewModel, cell: cell)
+              .padding(Spacing.sm)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(Color.cardHeaderBackground)
+              .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
               .padding(.leading, ComponentSize.cellSidebarWidth)
               .padding(.trailing, Spacing.md)
+              .padding(.bottom, Spacing.sm)
           }
 
           // Result area (if exists)

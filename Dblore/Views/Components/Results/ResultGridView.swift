@@ -85,6 +85,9 @@ struct ResultGridView: NSViewRepresentable {
   var lookupDialect: SQLDialect = .postgresql
   var onLookupReferencedRow: ReferencedRowLookup? = nil
   var onJumpToReferencedRow: ReferencedRowJump? = nil
+  /// Receives whether a legacy horizontal scroller is shown inside the grid (it takes height
+  /// from the rows), for a grid sized by `height(rowCount:hideColumnTypes:reservesHorizontalScroller:)`
+  var onHorizontalScrollerChange: ((Bool) -> Void)? = nil
   /// Result cell text size. The default reads Settings so a slider move refreshes the grid.
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
 
@@ -115,13 +118,14 @@ struct ResultGridView: NSViewRepresentable {
   }
 
   /// Fixed height of a grid in a List or LazyVStack: at most `maxVisibleRows` rows plus header,
-  /// plus the horizontal scroller in the legacy style (it takes its height inside the grid and
-  /// would cover the rows; an overlay scroller floats over them)
+  /// plus the horizontal scroller when a legacy one is shown (it takes its height inside the
+  /// grid and would cover the rows; an overlay scroller floats over them, a hidden one leaves
+  /// a blank strip under the last row)
   static func height(
-    rowCount: Int, hideColumnTypes: Bool, scrollerStyle: NSScroller.Style
+    rowCount: Int, hideColumnTypes: Bool, reservesHorizontalScroller: Bool
   ) -> CGFloat {
     let scroller =
-      scrollerStyle == .legacy
+      reservesHorizontalScroller
       ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
     return rowsHeight(rowCount: min(rowCount, maxVisibleRows))
       + headerHeight(hideColumnTypes: hideColumnTypes) + scroller
@@ -161,6 +165,7 @@ struct ResultGridView: NSViewRepresentable {
     scrollView.autohidesScrollers = true
     scrollView.drawsBackground = false
     scrollView.forwardsToParent = forwardsScrollToParent
+    scrollView.onHorizontalScrollerChange = onHorizontalScrollerChange
     configure(context.coordinator, tableView)
     return scrollView
   }
@@ -168,6 +173,7 @@ struct ResultGridView: NSViewRepresentable {
   func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let tableView = scrollView.documentView as? NSTableView else { return }
     (scrollView as? ResultGridScrollView)?.forwardsToParent = forwardsScrollToParent
+    (scrollView as? ResultGridScrollView)?.onHorizontalScrollerChange = onHorizontalScrollerChange
     configure(context.coordinator, tableView)
   }
 
@@ -317,6 +323,18 @@ func assignedSearchMatch(
 final class ResultGridScrollView: NSScrollView {
   var forwardsToParent = true
   private var forwardsGesture: Bool?
+  var onHorizontalScrollerChange: ((Bool) -> Void)?
+  private var reportedHorizontalScroller: Bool?
+
+  /// Reports after layout whether a legacy horizontal scroller is shown (autohidden when the
+  /// columns fit). Deferred: the receiver changes the grid height, which lays out again.
+  override func tile() {
+    super.tile()
+    let shown = scrollerStyle == .legacy && horizontalScroller?.isHidden == false
+    guard shown != reportedHorizontalScroller, let onHorizontalScrollerChange else { return }
+    reportedHorizontalScroller = shown
+    DispatchQueue.main.async { onHorizontalScrollerChange(shown) }
+  }
 
   /// Whether a vertical scroll of `deltaY` (> 0 toward the top) at `offsetY` (0 = top) goes to
   /// the parent: the content fits, or the grid is already at the edge it scrolls toward

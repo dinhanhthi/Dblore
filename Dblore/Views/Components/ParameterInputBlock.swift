@@ -29,25 +29,28 @@ struct ParameterInputBlock<Accessory: View>: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.xs) {
-        Text(name)
-          .font(.small)
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-        Spacer(minLength: Spacing.xs)
-        Toggle("NULL", isOn: nullBinding)
-          .font(.small)
-          .foregroundColor(.foreground)
-          .controlSize(.small)
-          .fixedSize()
-        trailingAccessory
-      }
-
+    HStack(alignment: .center, spacing: Spacing.xs) {
+      Text(name)
+        .font(.small)
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+      // In the notebook List (an NSTableView) the focused field editor paints the system text
+      // background. The capsule uses that same color so the field shows one background.
       TextField("", text: textBinding)
         .textFieldStyle(.plain)
-        .inputCapsuleStyle()
         .disabled(isStoredNull)
+        .padding(.vertical, Spacing.sm)
+        .padding(.horizontal, Spacing.md)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+        .frame(maxWidth: .infinity)
+      Toggle("NULL", isOn: nullBinding)
+        .font(.small)
+        .foregroundColor(.foreground)
+        .controlSize(.small)
+        .fixedSize()
+      trailingAccessory
     }
   }
 

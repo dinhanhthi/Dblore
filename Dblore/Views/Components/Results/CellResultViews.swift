@@ -82,8 +82,11 @@ struct ResultAreaView: View {
           )
         }
       }
+      // One rounded box for the query row and the result, inset like the editor
+      .padding(Spacing.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.top, 0)
+      .background(Color.tableRowAlternate)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       .padding(.bottom, Spacing.sm)
       .padding(.trailing, Spacing.md)
     }
@@ -234,6 +237,8 @@ struct ResultMetadataView: View {
   var selectedStatementIndex: Int? = nil
   var viewModel: NotebookViewModel? = nil
   var cellId: UUID? = nil
+  /// Bar width, measured without a GeometryReader so the bar hugs its text height.
+  @State private var barWidth: CGFloat = 0
 
   /// Determine color for affected rows text based on query type
   /// - Green for INSERT/UPDATE queries with affected rows > 0
@@ -270,110 +275,109 @@ struct ResultMetadataView: View {
         .fill(Color.border)
         .frame(height: 1)
 
-      GeometryReader { geometry in
-        let currentWidth = geometry.size.width
-        let shouldShowTimestamp = currentWidth >= 600
+      HStack(spacing: Spacing.md) {
+        // Dropdown menu for multi-statement queries (at the beginning, only show when > 1 statement)
+        if let statementResults = statementResults,
+          let selectedIndex = selectedStatementIndex,
+          let viewModel = viewModel,
+          let cellId = cellId,
+          statementResults.count > 1
+        {
+          Menu {
+            ForEach(statementResults.indices, id: \.self) { index in
+              let statementResult = statementResults[index]
+              Button(action: {
+                viewModel.selectCellStatement(cellId: cellId, at: index)
+              }) {
+                HStack {
+                  // Combined text: "Result N • query text (truncated)"
+                  let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
+                  let queryLabel = Text(truncateQuery(statementResult.queryText))
+                    .font(.system(size: 11, design: .monospaced))
+                  Text("\(resultLabel)\(queryLabel)")
+                    .lineLimit(1)
 
-        HStack(spacing: Spacing.md) {
-          // Dropdown menu for multi-statement queries (at the beginning, only show when > 1 statement)
-          if let statementResults = statementResults,
-            let selectedIndex = selectedStatementIndex,
-            let viewModel = viewModel,
-            let cellId = cellId,
-            statementResults.count > 1
-          {
-            Menu {
-              ForEach(statementResults.indices, id: \.self) { index in
-                let statementResult = statementResults[index]
-                Button(action: {
-                  viewModel.selectCellStatement(cellId: cellId, at: index)
-                }) {
-                  HStack {
-                    // Combined text: "Result N • query text (truncated)"
-                    let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
-                    let queryLabel = Text(truncateQuery(statementResult.queryText))
-                      .font(.system(size: 11, design: .monospaced))
-                    Text("\(resultLabel)\(queryLabel)")
-                      .lineLimit(1)
+                  Spacer()
 
-                    Spacer()
-
-                    // Checkmark for selected item
-                    if index == selectedIndex {
-                      Image(systemName: "checkmark")
-                        .font(.system(size: 10))
-                        .foregroundColor(.accentColor)
-                    }
+                  // Checkmark for selected item
+                  if index == selectedIndex {
+                    Image(systemName: "checkmark")
+                      .font(.system(size: 10))
+                      .foregroundColor(.accentColor)
                   }
                 }
-                .id(statementResult.id)
               }
-            } label: {
-              HStack {
-                Text("Result \(selectedIndex + 1)")
-                  .font(.system(size: 11))
-                  .foregroundColor(.foreground)
-                Spacer()
-                Image(systemName: "chevron.down")
-                  .font(.system(size: 9))
-                  .foregroundColor(.foregroundMuted)
-              }
-              .padding(.horizontal, Spacing.sm)
-              .padding(.vertical, Spacing.xs)
-              .background(
-                Capsule()
-                  .fill(Color.inputBackground)
-              )
-              .overlay(
-                Capsule()
-                  .stroke(Color.border, lineWidth: 1)
-              )
+              .id(statementResult.id)
             }
-            .id(statementResults.map { $0.id })
-            .buttonStyle(.plain)
-            .linkPointer()
-            .help("Select statement result to view")
-            .fixedSize()
-
-            Text("|")
-              .foregroundColor(.foregroundSubtle)
+          } label: {
+            HStack {
+              Text("Result \(selectedIndex + 1)")
+                .font(.system(size: 11))
+                .foregroundColor(.foreground)
+              Spacer()
+              Image(systemName: "chevron.down")
+                .font(.system(size: 9))
+                .foregroundColor(.foregroundMuted)
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(
+              Capsule()
+                .fill(Color.inputBackground)
+            )
+            .overlay(
+              Capsule()
+                .stroke(Color.border, lineWidth: 1)
+            )
           }
-
-          Text("Rows: \(result.rowCount)")
-
-          // Show warning if the row cap truncated the result
-          if result.wasLimited {
-            Text("showing first \(result.rowCount) rows")
-              .font(.labelText)
-              .foregroundColor(.warning)
-              .padding(.horizontal, Spacing.sm)
-              .padding(.vertical, 2)
-              .tintedCapsuleGlass(.warning, interactive: false)
-          }
+          .id(statementResults.map { $0.id })
+          .buttonStyle(.plain)
+          .linkPointer()
+          .help("Select statement result to view")
+          .fixedSize()
 
           Text("|")
             .foregroundColor(.foregroundSubtle)
-          Text("Affected: \(result.affectedRows ?? 0)")
-            .foregroundColor(affectedRowsColor(for: result))
-
-          Text("|")
-            .foregroundColor(.foregroundSubtle)
-          Text("Execution time: \(CellResultViews.formatExecutionTime(result.executionTime))")
-
-          // Hide timestamp and separator when width < 600px
-          if shouldShowTimestamp {
-            Text("|")
-              .foregroundColor(.foregroundSubtle)
-            Text(CellResultViews.formatTimestamp(result.timestamp))
-          }
         }
-        .font(.labelText)
-        .foregroundColor(.foregroundSubtle)
-        .frame(width: geometry.size.width, alignment: .leading)
+
+        Text("Rows: \(result.rowCount)")
+
+        // Show warning if the row cap truncated the result
+        if result.wasLimited {
+          Text("showing first \(result.rowCount) rows")
+            .font(.labelText)
+            .foregroundColor(.warning)
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, 2)
+            .tintedCapsuleGlass(.warning, interactive: false)
+        }
+
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+        Text("Affected: \(result.affectedRows ?? 0)")
+          .foregroundColor(affectedRowsColor(for: result))
+
+        Text("|")
+          .foregroundColor(.foregroundSubtle)
+        Text("Execution time: \(CellResultViews.formatExecutionTime(result.executionTime))")
+
+        // Hide timestamp and separator when width < 600px
+        if barWidth >= 600 {
+          Text("|")
+            .foregroundColor(.foregroundSubtle)
+          Text(CellResultViews.formatTimestamp(result.timestamp))
+        }
       }
-      .frame(height: 30)
+      .font(.labelText)
+      .foregroundColor(.foregroundSubtle)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        barWidth = $0
+      }
+      // Same gap as the result box's own padding, so top and bottom insets match
       .padding(.top, Spacing.sm)
-      .padding(.bottom, 0)  // Add bottom padding to prevent overlap with floating action panel
       if result.sessionReset, let notice = result.capNotice {  // the row cap reset the session
         Label(notice, systemImage: "exclamationmark.triangle.fill")
           .font(.labelText).foregroundColor(.warning)
@@ -399,29 +403,16 @@ struct ResultQueryFooterView: View {
   var body: some View {
     // Don't show if setting is enabled to hide this section (the query is sent as written)
     if !AppSettings.shared.hideRunWithQuerySection, let query = result.sourceQuery {
-      VStack(alignment: .leading, spacing: 0) {
-        // Horizontal divider line (top)
-        Rectangle()
-          .fill(Color.border)
-          .frame(height: 1)
-
-        QueryCopyBar(
-          query: query,
-          result: result,
-          viewModel: viewModel,
-          cellId: cellId,
-          queryIndex: nil,  // Notebook mode always uses nil
-          displayMode: displayMode,
-          iconOnlyActions: true
-        )
-        .frame(height: ResultDisplayPicker.height)
-        .padding(.vertical, Spacing.sm)
-
-        // Horizontal divider line (bottom)
-        Rectangle()
-          .fill(Color.border)
-          .frame(height: 1)
-      }
+      QueryCopyBar(
+        query: query,
+        result: result,
+        viewModel: viewModel,
+        cellId: cellId,
+        queryIndex: nil,  // Notebook mode always uses nil
+        displayMode: displayMode,
+        iconOnlyActions: true
+      )
+      .frame(height: ResultDisplayPicker.height)
     }
   }
 }
@@ -544,8 +535,8 @@ struct NotebookResultGridView: View {
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in this cell's result data or column names
   @State private var currentMatch: SearchMatch?
-  /// System scroller style ("Show scroll bars"), for the grid height
-  @State private var scrollerStyle = NSScroller.preferredScrollerStyle
+  /// A legacy horizontal scroller is shown inside the grid, for the grid height
+  @State private var showsHorizontalScroller = false
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -608,12 +599,13 @@ struct NotebookResultGridView: View {
             foreignKeys: viewModel.databaseForeignKeys,
             lookupDialect: viewModel.sqlDialect,
             onLookupReferencedRow: referencedRow.lookup,
-            onJumpToReferencedRow: referencedRow.jump
+            onJumpToReferencedRow: referencedRow.jump,
+            onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
           )
           .frame(
             height: ResultGridView.height(
               rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
-              scrollerStyle: scrollerStyle))
+              reservesHorizontalScroller: showsHorizontalScroller))
         }
       }
 
@@ -637,12 +629,6 @@ struct NotebookResultGridView: View {
       currentMatch = gridSearchMatchOnScreen(
         currentMatch, result: result, sortColumn: sortColumn, ascending: sortAscending,
         valueFilter: valueFilter, viewModel: viewModel)
-    }
-    .onReceive(
-      NotificationCenter.default.publisher(
-        for: NSScroller.preferredScrollerStyleDidChangeNotification)
-    ) { _ in
-      scrollerStyle = NSScroller.preferredScrollerStyle
     }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
       guard let notificationViewModelId = notification.userInfo?["viewModelId"] as? UUID,

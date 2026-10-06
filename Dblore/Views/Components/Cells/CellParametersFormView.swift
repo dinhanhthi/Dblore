@@ -36,7 +36,7 @@ struct CellParametersFormView: View {
         }
       }
 
-      VStack(alignment: .leading, spacing: Spacing.xs) {
+      HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
         Toggle("Save values in file", isOn: savesValuesBinding)
           .toggleStyle(.checkbox)
           .font(.small)
@@ -46,9 +46,9 @@ struct CellParametersFormView: View {
         Text(persistenceNote)
           .font(.small)
           .foregroundColor(.foregroundMuted)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
-    .padding(.bottom, Spacing.sm)
   }
 
   /// Reading the flag from `cell` keeps the toggle in step with undo and reloads.
