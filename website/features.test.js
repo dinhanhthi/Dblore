@@ -51,8 +51,8 @@ test('catalog preserves source-verified gestures, protection choices and paramet
   assert.equal(protection.version, '0.1.0');
   for (const [id, description, version] of [
     [272, 'Export a result chart as a PNG image', '0.4.0'],
-    [273, 'Edit and bind named SQL parameters in the SQL editor sidebar', 'Unreleased'],
-    [274, 'Choose whether notebook cell parameter values are saved in the file', 'Unreleased'],
+    [273, 'Edit and bind named SQL parameters in the SQL editor sidebar', '0.5.0'],
+    [274, 'Choose whether notebook cell parameter values are saved in the file', '0.5.0'],
   ]) {
     const entry = features.find(entry => entry.id === id);
     assert.equal(entry?.feature, description, `Missing source-backed capability ${id}`);

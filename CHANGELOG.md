@@ -2,6 +2,40 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.5.0 (2026-10-06)
+
+### Added
+
+- **Command palette.** Find and run commands with `Cmd+K`. The first match is highlighted as results arrive, and Escape closes the palette and restores focus. [#140da3a8](https://github.com/dinhanhthi/Dblore/commit/140da3a8) [#5ab3cbcd](https://github.com/dinhanhthi/Dblore/commit/5ab3cbcd) [#1825db9d](https://github.com/dinhanhthi/Dblore/commit/1825db9d)
+- **Audit history.** Query history can show only writes, and double-clicking a non-replayable entry opens its details. [#9c19abc0](https://github.com/dinhanhthi/Dblore/commit/9c19abc0) [#3d07c372](https://github.com/dinhanhthi/Dblore/commit/3d07c372)
+- **Undo staged grid edits** from the Edit menu. [#f1de6b71](https://github.com/dinhanhthi/Dblore/commit/f1de6b71) [#9c452aba](https://github.com/dinhanhthi/Dblore/commit/9c452aba)
+- **Named SQL parameters.** Bind `:name` values in the SQL editor sidebar and in an inline form on each notebook cell, and choose whether those values are saved in the file. The form hides when the cell no longer has a named parameter, and SQLite `@name` or `$name` mixed with `:name` is refused. [#84a1fef2](https://github.com/dinhanhthi/Dblore/commit/84a1fef2) [#01ef1402](https://github.com/dinhanhthi/Dblore/commit/01ef1402) [#adcb5872](https://github.com/dinhanhthi/Dblore/commit/adcb5872) [#77b0890c](https://github.com/dinhanhthi/Dblore/commit/77b0890c) [#b6606b24](https://github.com/dinhanhthi/Dblore/commit/b6606b24) [#f2d1535d](https://github.com/dinhanhthi/Dblore/commit/f2d1535d) [#9d860244](https://github.com/dinhanhthi/Dblore/commit/9d860244)
+- **Foreign-key lookup.** Look up a referenced row while editing, jump to it, and follow foreign keys on aliased single-table results. Declining the jump keeps the draft, and partition foreign keys are skipped. [#c76c5372](https://github.com/dinhanhthi/Dblore/commit/c76c5372) [#c555f34f](https://github.com/dinhanhthi/Dblore/commit/c555f34f) [#0fb4920b](https://github.com/dinhanhthi/Dblore/commit/0fb4920b)
+- **Import data.** Import CSV, TSV, JSON and newline-delimited JSON from the File menu or a table menu. Preview rows and `NULL` values, map columns, override inferred types, review the generated SQL and cancel a running import. [#a04dce9b](https://github.com/dinhanhthi/Dblore/commit/a04dce9b) [#d216e8fb](https://github.com/dinhanhthi/Dblore/commit/d216e8fb) [#542bb8b8](https://github.com/dinhanhthi/Dblore/commit/542bb8b8) [#fffdcec4](https://github.com/dinhanhthi/Dblore/commit/fffdcec4) [#6d6d247d](https://github.com/dinhanhthi/Dblore/commit/6d6d247d)
+- **PostgreSQL client certificates.** Authenticate with a client certificate, store the private-key passphrase in the Keychain, and choose a custom certificate authority. The connection form shows the certificate in a highlighted box. [#ba1c2bdf](https://github.com/dinhanhthi/Dblore/commit/ba1c2bdf) [#8c73bce0](https://github.com/dinhanhthi/Dblore/commit/8c73bce0) [#538e90cb](https://github.com/dinhanhthi/Dblore/commit/538e90cb) [#6b486b3e](https://github.com/dinhanhthi/Dblore/commit/6b486b3e)
+- **Commit style.** Choose Immediate, Confirm, Review or Password for dialogs, unlock and inline cell edits, from the footer and Settings. View mode uses the same style. [#380ae74a](https://github.com/dinhanhthi/Dblore/commit/380ae74a) [#57cfb4c5](https://github.com/dinhanhthi/Dblore/commit/57cfb4c5) [#c2afa8d8](https://github.com/dinhanhthi/Dblore/commit/c2afa8d8) [#96d25349](https://github.com/dinhanhthi/Dblore/commit/96d25349) [#c895db63](https://github.com/dinhanhthi/Dblore/commit/c895db63) [#b5c73de2](https://github.com/dinhanhthi/Dblore/commit/b5c73de2)
+- **Restore the last session.** General settings choose whether startup shows the welcome screen or reopens the last session. [#d35a3163](https://github.com/dinhanhthi/Dblore/commit/d35a3163) [#3d2cc3b2](https://github.com/dinhanhthi/Dblore/commit/3d2cc3b2)
+- **Session timeouts.** Set global PostgreSQL statement, lock and idle-transaction timeouts, and override them on a connection. [#296985cc](https://github.com/dinhanhthi/Dblore/commit/296985cc)
+- **Edit or retry an AI message.** Try again on a user message, or edit that message and resend it. [#903a2c2b](https://github.com/dinhanhthi/Dblore/commit/903a2c2b) [#1114426b](https://github.com/dinhanhthi/Dblore/commit/1114426b)
+
+### Improved
+
+- **Query errors** show a server hint, or a cast hint when a bound parameter has no PostgreSQL type. [#05d8f0ca](https://github.com/dinhanhthi/Dblore/commit/05d8f0ca) [#538c0779](https://github.com/dinhanhthi/Dblore/commit/538c0779)
+- **Connection status** stays on one short line, and recent connection names stay on one line. [#e5429626](https://github.com/dinhanhthi/Dblore/commit/e5429626) [#2f0b88a2](https://github.com/dinhanhthi/Dblore/commit/2f0b88a2) [#9db8ee4e](https://github.com/dinhanhthi/Dblore/commit/9db8ee4e)
+- **Settings and safety copy.** Settings rows use switches and tabs, Safe Mode actions use filled buttons, and safety help explains the protection level. [#7424b92f](https://github.com/dinhanhthi/Dblore/commit/7424b92f) [#fee89f17](https://github.com/dinhanhthi/Dblore/commit/fee89f17) [#bccbb070](https://github.com/dinhanhthi/Dblore/commit/bccbb070) [#d0a7f2e9](https://github.com/dinhanhthi/Dblore/commit/d0a7f2e9)
+
+### Fixed
+
+- **PostgreSQL arrays** show their values instead of `NULL`. [#50559330](https://github.com/dinhanhthi/Dblore/commit/50559330)
+- **Generated columns** stay read-only, including on PostgreSQL before 12. [#9af38b4e](https://github.com/dinhanhthi/Dblore/commit/9af38b4e) [#721e7933](https://github.com/dinhanhthi/Dblore/commit/721e7933)
+- **Dates** keep microsecond precision for edits and foreign-key lookups. [#6c8b0981](https://github.com/dinhanhthi/Dblore/commit/6c8b0981)
+- **NULL cells** in the right sidebar can be edited with the column type, through the notebook connection. [#ecdb358c](https://github.com/dinhanhthi/Dblore/commit/ecdb358c) [#0f6a6162](https://github.com/dinhanhthi/Dblore/commit/0f6a6162)
+- **Schema** reloads after writes, and the paused notice sits in the sidebar footer. [#b4bdb28c](https://github.com/dinhanhthi/Dblore/commit/b4bdb28c) [#9072550f](https://github.com/dinhanhthi/Dblore/commit/9072550f)
+- **Clearing recent connections** asks before removing saved passwords and certificates. [#d13ab4fd](https://github.com/dinhanhthi/Dblore/commit/d13ab4fd)
+- **AI replies** that are not SQL stay out of SQL code blocks, and requests to `api.openai.com` are not token-capped. [#976ba510](https://github.com/dinhanhthi/Dblore/commit/976ba510) [#b716cc83](https://github.com/dinhanhthi/Dblore/commit/b716cc83)
+- **SQLite result columns** map back to the table with `table_xinfo` ordinals, so edits and foreign keys use the right column. [#5f6f15a6](https://github.com/dinhanhthi/Dblore/commit/5f6f15a6)
+- **Selected NULL text** stays readable, and the collapsed sidebar keeps its top border under the native tab bar. [#8aad8b01](https://github.com/dinhanhthi/Dblore/commit/8aad8b01) [#d901b2f7](https://github.com/dinhanhthi/Dblore/commit/d901b2f7)
+
 ## v0.4.2 (2026-10-03)
 
 ### Added
