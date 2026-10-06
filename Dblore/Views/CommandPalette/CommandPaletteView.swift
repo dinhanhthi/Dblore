@@ -16,6 +16,9 @@ struct CommandPaletteView: View {
 
   @FocusState private var fieldFocused: Bool
   @State private var selectedID: String?
+  /// Where focus was when the palette opened. Restored on Escape or a backdrop click.
+  @State private var previousResponder = WeakResponder()
+  @State private var didPerform = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -33,6 +36,11 @@ struct CommandPaletteView: View {
     .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
     .onAppear {
+      if let responder = NSApp.keyWindow?.firstResponder as? NSView,
+        !((responder as? NSTextView)?.isFieldEditor ?? false)
+      {
+        previousResponder.view = responder
+      }
       selectedID = flatItems.first?.id
       // The overlay is installed on this turn. Focus the field on the next one.
       DispatchQueue.main.async {
@@ -41,6 +49,14 @@ struct CommandPaletteView: View {
     }
     .onChange(of: fieldFocused) { _, focused in
       onFieldFocusChange(focused)
+    }
+    .onDisappear {
+      guard !didPerform, let view = previousResponder.view else { return }
+      // Escape releases the field editor on its own turn. Restore after it.
+      DispatchQueue.main.async {
+        guard let window = view.window, window.isKeyWindow else { return }
+        window.makeFirstResponder(view)
+      }
     }
     .onChange(of: model.ranked) { _, ranked in
       selectedID = ranked.first?.id ?? model.history.first?.id
@@ -108,7 +124,7 @@ struct CommandPaletteView: View {
                 .padding(.bottom, Spacing.xxs)
 
               ForEach(section.items) { item in
-                CommandPaletteRow(item: item, isSelected: item.id == selectedID) {
+                CommandPaletteRow(item: item, isSelected: item.id == activeID) {
                   activate(item)
                 }
                 .id(item.id)
@@ -151,6 +167,14 @@ struct CommandPaletteView: View {
     model.ranked + model.history
   }
 
+  /// The highlighted row. `selectedID` is reset in `onChange`, one render after the rows change,
+  /// so an id that left the list falls back to the first row in the same pass.
+  private var activeID: String? {
+    let items = flatItems
+    if let selectedID, items.contains(where: { $0.id == selectedID }) { return selectedID }
+    return items.first?.id
+  }
+
   /// Up, Down, and Return only. Cmd+K stays with the View menu.
   private func handleKey(_ press: KeyPress) -> KeyPress.Result {
     // Return commits an IME syllable. Do not run the highlighted row.
@@ -177,7 +201,7 @@ struct CommandPaletteView: View {
   private func moveSelection(by delta: Int) {
     let items = flatItems
     guard !items.isEmpty else { return }
-    guard let selectedID, let index = items.firstIndex(where: { $0.id == selectedID }) else {
+    guard let activeID, let index = items.firstIndex(where: { $0.id == activeID }) else {
       self.selectedID = items[0].id
       return
     }
@@ -186,7 +210,7 @@ struct CommandPaletteView: View {
   }
 
   private func activateSelection() {
-    guard let selectedID, let item = flatItems.first(where: { $0.id == selectedID }) else {
+    guard let activeID, let item = flatItems.first(where: { $0.id == activeID }) else {
       return
     }
     activate(item)
@@ -195,8 +219,14 @@ struct CommandPaletteView: View {
   /// Return and click both refuse a row left over from an older query.
   private func activate(_ item: CommandPaletteItem) {
     guard model.canPerform(item), onPerform(item) else { return }
+    didPerform = true
     isPresented = false
   }
+}
+
+/// Weak so a closed tab's editor is not kept alive by the palette.
+private final class WeakResponder {
+  weak var view: NSView?
 }
 
 private struct CommandPaletteSection: Identifiable {
