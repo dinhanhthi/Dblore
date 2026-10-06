@@ -314,6 +314,10 @@ struct WorkspaceLeftSidebar: View {
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
           workspaceManager: workspaceManager, onImportTable: onImportTable)
+
+        if workspaceManager.isSchemaPaused {
+          SchemaPausedFooter()
+        }
       }
       .frame(width: constrainedWidth)
       .chromeGlass()

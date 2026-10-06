@@ -24,18 +24,6 @@ struct WorkspaceSidebarTopArea: View {
 
       Spacer()
 
-      if workspaceManager.isSchemaPaused {
-        Label("Schema is paused until Commit/Rollback", systemImage: "pause.circle")
-          .font(.caption2)
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .help(
-            "Schema is paused until Commit/Rollback: the browser and autocomplete use cached metadata"
-          )
-          .padding(.trailing, Spacing.xs)
-      }
-
       HStack(spacing: Spacing.sm) {
         if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
           // Expand/Collapse all button
@@ -77,6 +65,27 @@ struct WorkspaceSidebarTopArea: View {
     }
     .frame(height: height)
     .background(WindowDragArea())
+  }
+}
+
+/// Footer notice shown while a pending transaction pauses schema refresh
+struct SchemaPausedFooter: View {
+  var body: some View {
+    Label("Schema is paused until Commit/Rollback", systemImage: "pause.circle")
+      .font(.caption2)
+      .foregroundColor(.foreground)
+      .lineLimit(1)
+      .truncationMode(.tail)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xs)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.warning.opacity(0.15))
+      .overlay(alignment: .top) {
+        Rectangle().fill(Color.warning.opacity(0.4)).frame(height: 1)
+      }
+      .help(
+        "Schema is paused until Commit/Rollback: the browser and autocomplete use cached metadata"
+      )
   }
 }
 
