@@ -721,7 +721,7 @@ extension ConnectionFormContent {
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
-    return VStack(alignment: .leading, spacing: Spacing.sm) {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
       brakeField(
         "Statement timeout (seconds)", global: global.statement,
         value: $connectionConfig.statementTimeoutSeconds,
