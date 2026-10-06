@@ -33,6 +33,15 @@ jobs:
 
       - uses: ./.github/actions/select-xcode
 
+      # Reuses the resolved packages and compiled mlx-swift objects. Keyed on Package.resolved and
+      # the Xcode version; the restore key falls back to the latest cache when either changes.
+      - name: Cache DerivedData
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: derived-debug-${{ hashFiles('.xcode-version', 'Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: derived-debug-
+
       # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
       - name: Download Metal toolchain
         run: xcodebuild -downloadComponent MetalToolchain
