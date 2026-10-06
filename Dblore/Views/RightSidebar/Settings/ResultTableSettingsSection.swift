@@ -48,6 +48,8 @@ struct ResultTableSettingsSection: View {
 
         // One row cap for Notebook and Editor
         ResultRowCapSetting(appSettings: appSettings)
+
+        SessionTimeoutSettings(appSettings: appSettings)
       }
     }
   }

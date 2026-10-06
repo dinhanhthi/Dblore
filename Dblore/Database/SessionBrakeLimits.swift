@@ -33,9 +33,22 @@ nonisolated enum SessionBrakeLimits {
     clamp(value, to: idleTimeoutRange, default: defaultIdleTimeout)
   }
 
+  /// `nil` or non-positive → `nil` (follow the global setting); otherwise clamp to `range`.
+  static func clampOverride(_ value: Int?, to range: ClosedRange<Int>) -> Int? {
+    guard let value, value > 0 else { return nil }
+    return min(max(value, range.lowerBound), range.upperBound)
+  }
+
   /// `nil` or non-positive → `nil` (use the global setting); otherwise clamp to `rowCapRange`.
   static func clampRowCap(_ value: Int?) -> Int? {
     guard let value, value > 0 else { return nil }
     return min(max(value, rowCapRange.lowerBound), rowCapRange.upperBound)
   }
+}
+
+/// The global timeouts (Settings) a connection falls back to when it has no override of its own.
+nonisolated struct SessionBrakeDefaults: Equatable, Sendable {
+  var statement = SessionBrakeLimits.defaultStatementTimeout
+  var lock = SessionBrakeLimits.defaultLockTimeout
+  var idle = SessionBrakeLimits.defaultIdleTimeout
 }

@@ -708,21 +708,22 @@ extension ConnectionFormContent {
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
+    let global = AppSettings.shared.sessionBrakeDefaults
+    return VStack(alignment: .leading, spacing: Spacing.sm) {
       brakeField(
-        "Statement timeout (seconds)", placeholder: "60",
+        "Statement timeout (seconds)", global: global.statement,
         value: $connectionConfig.statementTimeoutSeconds,
-        range: SessionBrakeLimits.statementTimeoutRange,
-        clamp: SessionBrakeLimits.clampStatementTimeout)
+        range: SessionBrakeLimits.statementTimeoutRange)
 
       brakeField(
-        "Lock timeout (seconds)", placeholder: "5", value: $connectionConfig.lockTimeoutSeconds,
-        range: SessionBrakeLimits.lockTimeoutRange, clamp: SessionBrakeLimits.clampLockTimeout)
+        "Lock timeout (seconds)", global: global.lock,
+        value: $connectionConfig.lockTimeoutSeconds,
+        range: SessionBrakeLimits.lockTimeoutRange)
 
       brakeField(
-        "Idle in transaction timeout (seconds)", placeholder: "600",
+        "Idle in transaction timeout (seconds)", global: global.idle,
         value: $connectionConfig.idleInTransactionTimeoutSeconds,
-        range: SessionBrakeLimits.idleTimeoutRange, clamp: SessionBrakeLimits.clampIdleTimeout)
+        range: SessionBrakeLimits.idleTimeoutRange)
 
       FormField(label: "Row cap override (empty = global setting)") {
         TextField(
@@ -740,21 +741,29 @@ extension ConnectionFormContent {
   }
 
   /// Number field + stepper for a session brake, clamped to `range` (non-positive → default)
+  /// Empty = follow the global timeout (shown as the placeholder).
   private func brakeField(
-    _ label: String, placeholder: String, value: Binding<Int>, range: ClosedRange<Int>,
-    clamp: @escaping (Int) -> Int
+    _ label: String, global: Int, value: Binding<Int?>, range: ClosedRange<Int>
   ) -> some View {
     FormField(label: label) {
       HStack(spacing: Spacing.sm) {
-        TextField(placeholder, value: value, format: .number.grouping(.never))
+        TextField("Global (\(global))", value: value, format: .number.grouping(.never))
           .textFieldStyle(.plain)
           .numberInputCapsuleStyle()
-          .frame(width: 80)
-        Stepper("", value: value, in: range)
-          .compactStepperStyle()
+          .frame(width: 120)
+        Stepper(
+          "",
+          onIncrement: {
+            value.wrappedValue = min((value.wrappedValue ?? global) + 1, range.upperBound)
+          },
+          onDecrement: {
+            value.wrappedValue = max((value.wrappedValue ?? global) - 1, range.lowerBound)
+          }
+        )
+        .compactStepperStyle()
       }
       .onChange(of: value.wrappedValue) { _, newValue in
-        let clamped = clamp(newValue)
+        let clamped = SessionBrakeLimits.clampOverride(newValue, to: range)
         if clamped != newValue { value.wrappedValue = clamped }
       }
     }

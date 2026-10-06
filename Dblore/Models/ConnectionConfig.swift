@@ -157,9 +157,10 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   /// Nil only for a legacy, never-edited connection.
   var commitStyle: CommitStyle?
   var hasStoredCommitStyle: Bool { commitStyle != nil }
-  var statementTimeoutSeconds: Int  // Server-side statement_timeout
-  var lockTimeoutSeconds: Int  // Server-side lock_timeout
-  var idleInTransactionTimeoutSeconds: Int  // Server-side idle_in_transaction_session_timeout
+  // Per-connection timeout overrides (nil = use the global setting, see `resolvingBrakes`)
+  var statementTimeoutSeconds: Int?  // Server-side statement_timeout
+  var lockTimeoutSeconds: Int?  // Server-side lock_timeout
+  var idleInTransactionTimeoutSeconds: Int?  // Server-side idle_in_transaction_session_timeout
   var rowCapOverride: Int?  // Per-connection row cap (nil = use global setting)
   /// Security-scoped bookmark for a file database. The path itself is `database`. Never a password.
   var fileBookmark: Data?
@@ -172,6 +173,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
+    // Marks timeouts saved as overrides; absent on connections saved before global timeouts
+    case brakeOverrides
     // New key
     case protectionLevel
     // File database (absent on connections saved before SQLite config)
@@ -202,12 +205,26 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     } else {
       commitStyle = nil
     }
-    statementTimeoutSeconds = SessionBrakeLimits.clampStatementTimeout(
-      try container.decodeIfPresent(Int.self, forKey: .statementTimeoutSeconds) ?? 60)
-    lockTimeoutSeconds = SessionBrakeLimits.clampLockTimeout(
-      try container.decodeIfPresent(Int.self, forKey: .lockTimeoutSeconds) ?? 5)
-    idleInTransactionTimeoutSeconds = SessionBrakeLimits.clampIdleTimeout(
-      try container.decodeIfPresent(Int.self, forKey: .idleInTransactionTimeoutSeconds) ?? 600)
+    // Before global timeouts every connection stored concrete values; one equal to the old
+    // default can't be told from a choice, so it follows the global setting.
+    let storedAsOverrides =
+      try container.decodeIfPresent(Bool.self, forKey: .brakeOverrides) ?? false
+    func decodeBrake(
+      _ key: CodingKeys, range: ClosedRange<Int>, legacyDefault: Int
+    ) throws -> Int? {
+      let value = SessionBrakeLimits.clampOverride(
+        try container.decodeIfPresent(Int.self, forKey: key), to: range)
+      return storedAsOverrides || value != legacyDefault ? value : nil
+    }
+    statementTimeoutSeconds = try decodeBrake(
+      .statementTimeoutSeconds, range: SessionBrakeLimits.statementTimeoutRange,
+      legacyDefault: SessionBrakeLimits.defaultStatementTimeout)
+    lockTimeoutSeconds = try decodeBrake(
+      .lockTimeoutSeconds, range: SessionBrakeLimits.lockTimeoutRange,
+      legacyDefault: SessionBrakeLimits.defaultLockTimeout)
+    idleInTransactionTimeoutSeconds = try decodeBrake(
+      .idleInTransactionTimeoutSeconds, range: SessionBrakeLimits.idleTimeoutRange,
+      legacyDefault: SessionBrakeLimits.defaultIdleTimeout)
     rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
     fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
     readOnlyFile = try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? false
@@ -251,9 +268,11 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encodeIfPresent(safeMode, forKey: .safeMode)
     try container.encode(protectedMode, forKey: .protectedMode)
     try container.encodeIfPresent(commitStyle, forKey: .commitStyle)
-    try container.encode(statementTimeoutSeconds, forKey: .statementTimeoutSeconds)
-    try container.encode(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
-    try container.encode(idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
+    try container.encodeIfPresent(statementTimeoutSeconds, forKey: .statementTimeoutSeconds)
+    try container.encodeIfPresent(lockTimeoutSeconds, forKey: .lockTimeoutSeconds)
+    try container.encodeIfPresent(
+      idleInTransactionTimeoutSeconds, forKey: .idleInTransactionTimeoutSeconds)
+    try container.encode(true, forKey: .brakeOverrides)
     try container.encodeIfPresent(rowCapOverride, forKey: .rowCapOverride)
     try container.encodeIfPresent(fileBookmark, forKey: .fileBookmark)
     try container.encode(readOnlyFile, forKey: .readOnlyFile)
@@ -274,9 +293,9 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     name: String = "",
     safeMode: SafeMode? = nil,
     protectedMode: Bool = true,
-    statementTimeoutSeconds: Int = 60,
-    lockTimeoutSeconds: Int = 5,
-    idleInTransactionTimeoutSeconds: Int = 600,
+    statementTimeoutSeconds: Int? = nil,
+    lockTimeoutSeconds: Int? = nil,
+    idleInTransactionTimeoutSeconds: Int? = nil,
     rowCapOverride: Int? = nil,
     fileBookmark: Data? = nil,
     readOnlyFile: Bool = false
@@ -302,6 +321,15 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.rowCapOverride = rowCapOverride
     self.fileBookmark = fileBookmark
     self.readOnlyFile = readOnlyFile
+  }
+
+  /// A copy with every timeout filled in: the connection's own override, else `global`.
+  nonisolated func resolvingBrakes(_ global: SessionBrakeDefaults) -> ConnectionConfig {
+    var resolved = self
+    resolved.statementTimeoutSeconds = statementTimeoutSeconds ?? global.statement
+    resolved.lockTimeoutSeconds = lockTimeoutSeconds ?? global.lock
+    resolved.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds ?? global.idle
+    return resolved
   }
 
   /// Stores `style` and copies its legacy protected-mode and safe-mode pair.

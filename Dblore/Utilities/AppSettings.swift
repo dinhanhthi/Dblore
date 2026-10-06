@@ -343,6 +343,41 @@ class AppSettings {
     }
   }
 
+  /// Global timeouts (seconds) for connections without their own override; read when a
+  /// connection opens. Clamped to the `SessionBrakeLimits` ranges.
+  var statementTimeout: Int = SessionBrakeLimits.defaultStatementTimeout {
+    didSet {
+      let clamped = SessionBrakeLimits.clampStatementTimeout(statementTimeout)
+      if clamped != statementTimeout {
+        statementTimeout = clamped
+        return
+      }
+      defaults.set(statementTimeout, forKey: Self.statementTimeoutKey)
+    }
+  }
+
+  var lockTimeout: Int = SessionBrakeLimits.defaultLockTimeout {
+    didSet {
+      let clamped = SessionBrakeLimits.clampLockTimeout(lockTimeout)
+      if clamped != lockTimeout {
+        lockTimeout = clamped
+        return
+      }
+      defaults.set(lockTimeout, forKey: Self.lockTimeoutKey)
+    }
+  }
+
+  var idleTimeout: Int = SessionBrakeLimits.defaultIdleTimeout {
+    didSet {
+      let clamped = SessionBrakeLimits.clampIdleTimeout(idleTimeout)
+      if clamped != idleTimeout {
+        idleTimeout = clamped
+        return
+      }
+      defaults.set(idleTimeout, forKey: Self.idleTimeoutKey)
+    }
+  }
+
   /// Whether the left sidebar (database schema) is visible
   var isLeftSidebarVisible: Bool = false {
     didSet {
@@ -683,6 +718,10 @@ class AppSettings {
       resultRowCap = savedRowCap
     }
 
+    if !SessionManager.isRunningAsTestHost {
+      loadSessionBrakeDefaults(from: defaults)
+    }
+
     // Load left sidebar visibility state
     if defaults.object(forKey: Keys.isLeftSidebarVisible) != nil {
       isLeftSidebarVisible = defaults.bool(forKey: Keys.isLeftSidebarVisible)
@@ -835,6 +874,9 @@ class AppSettings {
     maxResultHeight = 500.0
     includeResultsOnSave = true
     resultRowCap = Self.defaultResultRowCap
+    statementTimeout = SessionBrakeLimits.defaultStatementTimeout
+    lockTimeout = SessionBrakeLimits.defaultLockTimeout
+    idleTimeout = SessionBrakeLimits.defaultIdleTimeout
     isLeftSidebarVisible = false
     leftSidebarWidth = 250.0
     themePreference = .dark

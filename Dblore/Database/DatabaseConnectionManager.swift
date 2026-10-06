@@ -106,6 +106,8 @@ actor DatabaseConnectionManager {
   /// Connect to PostgreSQL. The session is published only after its brakes are applied, so
   /// no user statement can run before the timeouts are set.
   func connect(config: ConnectionConfig) async throws {
+    let config = config.resolvingBrakes(
+      await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
@@ -132,11 +134,12 @@ actor DatabaseConnectionManager {
     do {
       try await opening.applySessionSettings(
         statementTimeoutSeconds: SessionBrakeLimits.clampStatementTimeout(
-          prepared.config.statementTimeoutSeconds),
+          prepared.config.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout),
         lockTimeoutSeconds: SessionBrakeLimits.clampLockTimeout(
-          prepared.config.lockTimeoutSeconds),
+          prepared.config.lockTimeoutSeconds ?? SessionBrakeLimits.defaultLockTimeout),
         idleTimeoutSeconds: SessionBrakeLimits.clampIdleTimeout(
-          prepared.config.idleInTransactionTimeoutSeconds))
+          prepared.config.idleInTransactionTimeoutSeconds
+            ?? SessionBrakeLimits.defaultIdleTimeout))
       if let postgres = opening as? PostgresSession {
         await postgres.applyDisconnectCheck()
       }

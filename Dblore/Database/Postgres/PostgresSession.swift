@@ -348,7 +348,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// User-facing Postgres error, including the statement-timeout brake text.
   func formatPostgresError(_ error: PSQLError, query: String? = nil) -> String {
     Self.formatPostgresError(
-      error, query: query, statementTimeoutSeconds: config.statementTimeoutSeconds)
+      error, query: query,
+      statementTimeoutSeconds: config.statementTimeoutSeconds
+        ?? SessionBrakeLimits.defaultStatementTimeout)
   }
 
   // MARK: - Brake SQL
@@ -356,8 +358,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// The SQL sent after every connect. Values are clamped with `SessionBrakeLimits`.
   static func brakeStatements(for config: ConnectionConfig) -> [String] {
     brakeStatements(
-      statement: config.statementTimeoutSeconds, lock: config.lockTimeoutSeconds,
-      idle: config.idleInTransactionTimeoutSeconds)
+      statement: config.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout,
+      lock: config.lockTimeoutSeconds ?? SessionBrakeLimits.defaultLockTimeout,
+      idle: config.idleInTransactionTimeoutSeconds ?? SessionBrakeLimits.defaultIdleTimeout)
   }
 
   static func brakeStatements(statement: Int, lock: Int, idle: Int) -> [String] {

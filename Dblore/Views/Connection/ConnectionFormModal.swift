@@ -116,15 +116,19 @@ extension View {
         set: { if !$0 { workspaceManager.cancelPendingWeakeningConnect() } }
       )
     ) {
-      WorkspaceConnectUnlockSheet(workspaceManager: workspaceManager)
+      WorkspaceConnectUnlockSheet(
+        workspaceManager: workspaceManager,
+        onConnected: { workspaceManager.isConnectionFormModalVisible = false })
     }
   }
 }
 
 /// Safe Mode unlock before connecting to the same database with weaker safety settings.
 /// Cancel: nothing connects, the form keeps its values. Unlock: connect, then close the form.
-private struct WorkspaceConnectUnlockSheet: View {
+struct WorkspaceConnectUnlockSheet: View {
   let workspaceManager: WorkspaceManager
+  /// Runs after the held connect succeeds (closes the form that started it).
+  var onConnected: () -> Void
 
   @State private var isConnecting = false
   @State private var connectError: String?
@@ -160,7 +164,7 @@ private struct WorkspaceConnectUnlockSheet: View {
     Task { @MainActor in
       do {
         try await workspaceManager.completePendingWeakeningConnect()
-        workspaceManager.isConnectionFormModalVisible = false
+        onConnected()
       } catch {
         connectError = error.localizedDescription
       }

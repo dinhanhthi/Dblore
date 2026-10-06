@@ -97,18 +97,18 @@ struct DataModelConnectionConfigTests {
 
   // MARK: - Safety / Session Settings
 
-  @Test("New config has safety/session defaults")
+  @Test("New config has no timeout overrides and follows the global timeouts")
   func safetySessionDefaults() {
     let config = ConnectionConfig(host: "localhost", database: "test")
 
     #expect(config.protectedMode == true)
-    #expect(config.statementTimeoutSeconds == 60)
-    #expect(config.lockTimeoutSeconds == 5)
-    #expect(config.idleInTransactionTimeoutSeconds == 600)
+    #expect(config.statementTimeoutSeconds == nil)
+    #expect(config.lockTimeoutSeconds == nil)
+    #expect(config.idleInTransactionTimeoutSeconds == nil)
     #expect(config.rowCapOverride == nil)
   }
 
-  @Test("Legacy JSON without new keys decodes with safety/session defaults")
+  @Test("Legacy JSON without timeout keys decodes with no overrides")
   func legacyJSONDecodesWithDefaults() throws {
     let json = """
       {
@@ -133,9 +133,9 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.protectionLevel == .schemaOnly)
     #expect(decoded.safeMode == nil)
     #expect(decoded.protectedMode == true)
-    #expect(decoded.statementTimeoutSeconds == 60)
-    #expect(decoded.lockTimeoutSeconds == 5)
-    #expect(decoded.idleInTransactionTimeoutSeconds == 600)
+    #expect(decoded.statementTimeoutSeconds == nil)
+    #expect(decoded.lockTimeoutSeconds == nil)
+    #expect(decoded.idleInTransactionTimeoutSeconds == nil)
     #expect(decoded.rowCapOverride == nil)
     #expect(decoded.fileBookmark == nil)
     #expect(decoded.readOnlyFile == false)
@@ -204,7 +204,7 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.rowCapOverride == 5000)
   }
 
-  @Test("Non-positive brake timeouts decode as their defaults; rowCapOverride as-is")
+  @Test("Non-positive brake timeouts decode as no override; rowCapOverride as-is")
   func nonPositiveTimeoutsDecodeAsDefaults() throws {
     let json = """
       {
@@ -229,10 +229,51 @@ struct DataModelConnectionConfigTests {
 
     let decoded = try JSONDecoder().decode(ConnectionConfig.self, from: data)
 
-    #expect(decoded.statementTimeoutSeconds == 60)
-    #expect(decoded.lockTimeoutSeconds == 5)
-    #expect(decoded.idleInTransactionTimeoutSeconds == 600)
+    #expect(decoded.statementTimeoutSeconds == nil)
+    #expect(decoded.lockTimeoutSeconds == nil)
+    #expect(decoded.idleInTransactionTimeoutSeconds == nil)
     #expect(decoded.rowCapOverride == -4)
+  }
+
+  @Test("Legacy timeouts equal to the old defaults follow global; others stay overrides")
+  func legacyDefaultTimeoutsFollowGlobal() throws {
+    let json = """
+      {
+        "databaseType": "PostgreSQL", "host": "h", "port": 5432, "database": "d",
+        "username": "", "password": "", "sslMode": "prefer", "rememberConnection": false,
+        "timeoutSeconds": 30, "name": "", "protectionLevel": "none",
+        "statementTimeoutSeconds": 60, "lockTimeoutSeconds": 9,
+        "idleInTransactionTimeoutSeconds": 600
+      }
+      """
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try #require(json.data(using: .utf8)))
+
+    #expect(decoded.statementTimeoutSeconds == nil)
+    #expect(decoded.lockTimeoutSeconds == 9)
+    #expect(decoded.idleInTransactionTimeoutSeconds == nil)
+  }
+
+  @Test("An override equal to the default survives a round trip")
+  func explicitDefaultOverrideRoundTrips() throws {
+    let config = ConnectionConfig(statementTimeoutSeconds: 60)
+
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+
+    #expect(decoded.statementTimeoutSeconds == 60)
+    #expect(decoded.lockTimeoutSeconds == nil)
+  }
+
+  @Test("resolvingBrakes fills only the missing timeouts from global")
+  func resolvingBrakesUsesGlobalForMissing() {
+    let config = ConnectionConfig(statementTimeoutSeconds: 15)
+    let resolved = config.resolvingBrakes(
+      SessionBrakeDefaults(statement: 90, lock: 7, idle: 300))
+
+    #expect(resolved.statementTimeoutSeconds == 15)
+    #expect(resolved.lockTimeoutSeconds == 7)
+    #expect(resolved.idleInTransactionTimeoutSeconds == 300)
   }
 
   @Test("Recent connections stay on the selected engine")

@@ -58,7 +58,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   init(config: ConnectionConfig) {
     self.config = config
     capabilities = config.databaseType.capabilities
-    statementTimeoutSeconds = config.statementTimeoutSeconds
+    statementTimeoutSeconds =
+      config.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout
     executor = DispatchSerialQueue(label: "dblore.sqlite.session.\(UUID().uuidString)")
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
