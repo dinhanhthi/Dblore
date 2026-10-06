@@ -84,20 +84,36 @@ final class ResultGridRowView: NSTableRowView {
       if isSelected != oldValue {
         needsDisplay = true
         redrawGutterCells()
+        syncCellBackgroundStyles()
       }
     }
   }
 
   override var isEmphasized: Bool {
-    didSet { if isEmphasized != oldValue { redrawGutterCells() } }
+    didSet {
+      if isEmphasized != oldValue {
+        redrawGutterCells()
+        syncCellBackgroundStyles()
+      }
+    }
   }
 
   private func redrawGutterCells() {
     for case let cell as ResultGridRowNumberCell in subviews { cell.needsDisplay = true }
   }
 
+  private func syncCellBackgroundStyles() {
+    let style: NSView.BackgroundStyle = (isSelected && isEmphasized) ? .emphasized : .normal
+    for case let cell as NSTableCellView in subviews {
+      if cell.backgroundStyle != style {
+        cell.backgroundStyle = style
+      }
+    }
+  }
+
   override func viewWillDraw() {
     super.viewWillDraw()
+    syncCellBackgroundStyles()
     syncStrikethrough()
   }
 

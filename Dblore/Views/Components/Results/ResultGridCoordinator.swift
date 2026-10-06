@@ -31,6 +31,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 {
   static let textColor = NSColor(Color.gridForeground)
   static let nullTextColor = NSColor(Color.foregroundSubtle)
+  /// Brighter text color for normal cells on emphasized selection
+  static let selectedTextColor = NSColor.alternateSelectedControlTextColor
+  /// Brighter text color for NULL cells on emphasized selection (distinct from normal values)
+  static let selectedNullTextColor = NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75)
   /// Background of the current search match (the one Enter moved to), as in the result table
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
   /// Faint tint over the cells of the sorted column, read on each cell (the accent can change)
@@ -788,24 +792,32 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       return nil
     }
     let cell =
-      tableView.makeView(withIdentifier: Self.cellIdentifier, owner: nil) as? NSTableCellView
+      tableView.makeView(withIdentifier: Self.cellIdentifier, owner: nil) as? ResultGridCell
       ?? makeCell()
     let value = model.value(row: row, column: column)
     let isNull = value == .null
+    cell.isNull = isNull
+    let isSelected = tableView.isRowSelected(row)
+    let isEmphasized = isSelected && (tableView.window?.isKeyWindow ?? true)
+    cell.backgroundStyle = isEmphasized ? .emphasized : .normal
     let text = model.displayText(row: row, column: column)
-    let textColor = isNull ? Self.nullTextColor : Self.textColor
+    let textColor = cell.desiredTextColor(isEmphasized: isEmphasized)
     cell.textField?.font = Self.font
     if cell.textField?.textColor != textColor { cell.textField?.textColor = textColor }
     let cellID = ObjectIdentifier(cell)
     if let key, !key.searchQuery.isEmpty {
       highlightedCells.insert(cellID)
+      cell.hasSearchHighlight = true
       cell.textField?.attributedStringValue = Self.highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
         textColor: textColor,
         isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
-    } else if highlightedCells.remove(cellID) != nil || cell.textField?.stringValue != text {
-      // A cell that showed search highlights is reset even when the plain text is the same
-      cell.textField?.stringValue = text
+    } else {
+      cell.hasSearchHighlight = false
+      if highlightedCells.remove(cellID) != nil || cell.textField?.stringValue != text {
+        // A cell that showed search highlights is reset even when the plain text is the same
+        cell.textField?.stringValue = text
+      }
     }
     let alignment = Self.alignment(for: value)
     if cell.textField?.alignment != alignment { cell.textField?.alignment = alignment }
@@ -1028,8 +1040,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     }
   }
 
-  private func makeCell() -> NSTableCellView {
-    let cell = NSTableCellView()
+  private func makeCell() -> ResultGridCell {
+    let cell = ResultGridCell()
     cell.wantsLayer = true
     cell.identifier = Self.cellIdentifier
     let textField = NSTextField(labelWithString: "")
@@ -1045,6 +1057,54 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
     ])
     return cell
+  }
+}
+
+/// Standard data cell of the result grid. Updates text color on row selection/emphasis:
+/// normal text uses `selectedTextColor` and NULL values use `selectedNullTextColor`.
+final class ResultGridCell: NSTableCellView {
+  var isNull = false {
+    didSet {
+      if isNull != oldValue {
+        updateTextColor()
+      }
+    }
+  }
+
+  /// Whether the cell is currently showing search match highlights (attributed string)
+  var hasSearchHighlight = false
+
+  override var backgroundStyle: NSView.BackgroundStyle {
+    didSet {
+      guard backgroundStyle != oldValue else { return }
+      updateTextColor()
+      needsDisplay = true
+    }
+  }
+
+  func desiredTextColor(isEmphasized: Bool? = nil) -> NSColor {
+    let emphasized = isEmphasized ?? (
+      backgroundStyle == .emphasized
+        || ((superview as? NSTableRowView)?.isSelected == true
+          && (superview as? NSTableRowView)?.isEmphasized == true)
+    )
+    if isNull {
+      return emphasized
+        ? ResultGridCoordinator.selectedNullTextColor
+        : ResultGridCoordinator.nullTextColor
+    } else {
+      return emphasized
+        ? ResultGridCoordinator.selectedTextColor
+        : ResultGridCoordinator.textColor
+    }
+  }
+
+  func updateTextColor(isEmphasized: Bool? = nil) {
+    guard !hasSearchHighlight else { return }
+    let color = desiredTextColor(isEmphasized: isEmphasized)
+    if textField?.textColor != color {
+      textField?.textColor = color
+    }
   }
 }
 

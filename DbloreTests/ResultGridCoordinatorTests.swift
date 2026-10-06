@@ -60,6 +60,43 @@ struct ResultGridCoordinatorTests {
     #expect(ResultGridCoordinator.nullTextColor != ResultGridCoordinator.textColor)
   }
 
+  @Test("When a row is selected, NULL shows in the brighter selected color")
+  func nullRenderingWhenSelected() {
+    let grid = makeGrid(sortColumn: "id")
+    grid.1.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    let nullCell = cell(grid, row: 1, column: 1)
+    #expect(nullCell?.stringValue == "NULL")
+    #expect(nullCell?.textColor == ResultGridCoordinator.selectedNullTextColor)
+    #expect(ResultGridCoordinator.selectedNullTextColor != ResultGridCoordinator.nullTextColor)
+
+    grid.1.deselectRow(1)
+    let deselectedCell = cell(grid, row: 1, column: 1)
+    #expect(deselectedCell?.textColor == ResultGridCoordinator.nullTextColor)
+  }
+
+  @Test("ResultGridCell updates textColor on backgroundStyle changes")
+  func resultGridCellBackgroundStyle() {
+    let cell = ResultGridCell()
+    let textField = NSTextField(labelWithString: "NULL")
+    cell.addSubview(textField)
+    cell.textField = textField
+
+    cell.isNull = true
+    #expect(textField.textColor == ResultGridCoordinator.nullTextColor)
+
+    cell.backgroundStyle = .emphasized
+    #expect(textField.textColor == ResultGridCoordinator.selectedNullTextColor)
+
+    cell.backgroundStyle = .normal
+    #expect(textField.textColor == ResultGridCoordinator.nullTextColor)
+
+    cell.isNull = false
+    #expect(textField.textColor == ResultGridCoordinator.textColor)
+
+    cell.backgroundStyle = .emphasized
+    #expect(textField.textColor == ResultGridCoordinator.selectedTextColor)
+  }
+
   @Test("Copy of a 2x2 selection is the TSV of the selected displayed rows")
   func tsvCopy() {
     let (coordinator, tableView) = makeGrid(sortColumn: "id")
