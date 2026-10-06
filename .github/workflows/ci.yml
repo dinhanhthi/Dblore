@@ -1,8 +1,9 @@
 name: CI
 
-# Unit tests on pull requests and by hand. Ordinary pushes to main do not run it; /cf-ship
-# dispatches it on the release commit. Integration suites stay off (SKIP_INTEGRATION_TESTS);
-# they need the local PostgreSQL container.
+# Unit tests on pull requests and by hand. Ordinary pushes to main do not run it; only
+# /cf-ship --action dispatches it on the release commit (the default local release runs the unit
+# tests on this Mac). Integration suites stay off (SKIP_INTEGRATION_TESTS); they need the local
+# PostgreSQL container.
 
 on:
   pull_request:

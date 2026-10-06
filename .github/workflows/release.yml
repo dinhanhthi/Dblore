@@ -1,5 +1,8 @@
 name: Release
 
+# Not used by default: /cf-ship releases locally with scripts/release-local.sh.
+# Only /cf-ship --action dispatches this (for example from another machine).
+
 on:
   workflow_dispatch:
     inputs:

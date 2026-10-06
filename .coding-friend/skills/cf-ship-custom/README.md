@@ -14,11 +14,18 @@ the contract the model follows (coding-friend applies its `## Before`,
 writes `CHANGELOG.md`, updates the website Feature list from app-source changes, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
 `Dblore.xcodeproj/project.pbxproj` (only when the file version changes),
 runs build + tests + a lint of the changed Swift files, commits
-`chore(release): bump to <tag version>` on `main`, pushes, runs
-`ci.yml` unit tests for that commit, then dispatches `release.yml` with the
-expected SHA and tag. CI builds, signs and notarizes once, creates the tag,
-publishes the DMG, and updates the Sparkle appcast. The skill waits and verifies
-the published artifacts.
+`chore(release): bump to <tag version>` on `main` and pushes. Then:
+
+- **Default (local):** runs `scripts/release-local.sh` on this Mac, which
+  builds, signs and notarizes, creates the tag, publishes the DMG and pushes the
+  Sparkle appcast. Only the cheap `pages.yml` deploy runs on GitHub (triggered
+  by the appcast push).
+- **`--action`:** runs `ci.yml` unit tests for that commit, then dispatches
+  `release.yml` with the expected SHA and tag. CI builds, signs and notarizes
+  once, creates the tag, publishes the DMG, updates the appcast and dispatches
+  `pages.yml`. Use it to release from another machine.
+
+Either way the skill waits and verifies the published artifacts.
 
 Dblore ships stable releases only: the tag is always `v` +
 `MARKETING_VERSION` (`X.Y.Z`), and the DMG is `Dblore-<version>.dmg`.
@@ -31,10 +38,12 @@ Catalog tests and JavaScript syntax checks run before the release commit; the ca
 
 ## Say it in one line
 
-| You want                          | You say               | Latest tag -> file / tag                           |
-| --------------------------------- | --------------------- | -------------------------------------------------- |
-| A normal release, level auto      | `/cf-ship`            | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
-| Force the level                   | `/cf-ship minor`      | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
+| You want                          | You say                   | Latest tag -> file / tag                           |
+| --------------------------------- | ------------------------- | -------------------------------------------------- |
+| A normal release, level auto      | `/cf-ship`                | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
+| Force the level                   | `/cf-ship minor`          | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
+| Same, released by GitHub Actions  | `/cf-ship --action`       | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
+| Force the level, GitHub Actions   | `/cf-ship minor --action` | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
 
 Auto level: PATCH almost always, including ordinary new features (a setting, a
 menu item, an export format). MINOR only for a milestone (a new database
@@ -47,10 +56,37 @@ never trigger a release.
 `bump-info.sh` computes the version and prints `Next file version` and
 `Next tag` under "Next version".
 
-## What CI does
+## What the local release does
 
-Dispatching `.github/workflows/release.yml` on `main` with `expected_sha` and
-`tag` starts one release build on an `xcode-27` runner:
+`scripts/release-local.sh --expect-version <tag version>` (default path;
+`--dry-run` runs the preflight only):
+
+1. Preflight, machine checks first: Xcode matches `.xcode-version`, the
+   Developer ID certificate is in the keychain, the `DbloreNotary` notary
+   profile (or `NOTARY_KEY_PATH` / `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` env)
+   works, the Sparkle key (account `sqlnotebook`) exists, `gh` is authenticated.
+2. Then repo checks: on `main`, clean tree, `HEAD` == `origin/main`, the tag is
+   absent locally and on origin, `MARKETING_VERSION` equals the version, and
+   `CHANGELOG.md` has a non-empty `## v<tag version>` section (the release notes).
+3. Runs `scripts/build-release.sh --expect-version <tag version>`: archive,
+   sign, DMG, notarize, staple (about 20 minutes).
+4. Re-checks that `HEAD` and the tree did not change during the build.
+5. Runs `generate_appcast` (only from `DerivedData/Dblore-*`) on a temp copy of
+   `appcast.xml` plus the DMG, signing with the keychain key, and checks the new
+   item and its EdDSA signature. Approve the Keychain prompt with "Always Allow".
+6. Only then creates the annotated tag `v<tag version>` on the release SHA and
+   pushes it.
+7. `gh release create` with `Dblore-<tag version>.dmg`, its `.dmg.sha256` and
+   the changelog section as notes.
+8. Commits `chore(release): appcast v<tag version>` and pushes `main`; that
+   push triggers `pages.yml` (nothing is dispatched).
+
+A failure before step 6 publishes nothing.
+
+## What CI does (`--action` only)
+
+With `/cf-ship --action`, dispatching `.github/workflows/release.yml` on `main`
+with `expected_sha` and `tag` starts one release build on an `xcode-27` runner:
 
 1. Verifies the request is for `main` at `expected_sha` and that `ci.yml`
    succeeded for that exact SHA; otherwise stops before building.
@@ -77,25 +113,39 @@ Dispatching `.github/workflows/release.yml` on `main` with `expected_sha` and
 
 ## Prerequisites
 
+Local release (default), on this Mac:
+
+- The Developer ID Application certificate in your login keychain.
+- The `DbloreNotary` notary profile, created once (placeholders; see
+  `docs/release-setup.md`):
+
+  ```bash
+  xcrun notarytool store-credentials DbloreNotary --key docs/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>
+  ```
+
+- The Sparkle EdDSA key in your login keychain under the account `sqlnotebook`.
+- The selected Xcode matching `.xcode-version`.
+- `gh` authenticated.
+
+`--action` only:
+
 - The seven repository secrets listed in `docs/release-setup.md`
   (`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `KEYCHAIN_PASSWORD`,
   `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`,
   `SPARKLE_PRIVATE_KEY`). Check the names with `gh secret list`.
+
+Both modes:
+
 - A **public** repo: Sparkle and users cannot download release assets from a
   private one. The skill stops unless
   `gh api repos/dinhanhthi/Dblore --jq .visibility` prints `public`.
 - GitHub Pages with Source = **GitHub Actions**
   (`gh api repos/dinhanhthi/Dblore/pages --jq .build_type` prints
   `workflow`). The skill stops otherwise.
-- For the local fallback appcast: the Sparkle EdDSA key in your login keychain
-  under the account `sqlnotebook`.
-- For the local fallback only: the Developer ID certificate in your login
-  keychain and the `DbloreNotary` notary profile
-  (`xcrun notarytool store-credentials ...`, see `docs/release-setup.md`).
 - A `CHANGELOG.md` at the repo root with a title and format note; the skill
   inserts each new version below it.
-- `gh` authenticated, and the test DB container `dblore-postgres-test` up
-  if you want the integration suite to run before the release.
+- Optional: the test DB container `dblore-postgres-test` up if you want the
+  integration suite to run before the release.
 
 ## Troubleshooting
 
@@ -118,23 +168,38 @@ other than a plain version. Set it to `X.Y.Z`.
 rewrite) only the Swift files changed since the last tag and stops on any
 finding. Fix them in a normal commit, then release again.
 
-**Release fails before "Create tag".** No tag or release has been published.
-Fix the cause, commit and push if source changes, rerun `ci.yml` for the new
-SHA, then dispatch the release workflow again. This includes a missing Xcode
-or notarization failure.
+**"notary profile DbloreNotary not found".** The local preflight stops before
+building. Create the profile once with the `xcrun notarytool store-credentials`
+command under Prerequisites (or `docs/release-setup.md`), then release again.
 
-**Notarization fails.** Read the step log (`gh run view <id> --log-failed`) and
-the notary log it prints (`xcrun notarytool log <submission-id>`). Common causes:
-a nested binary without hardened runtime or secure timestamp, or wrong
-`NOTARY_*` secrets. If it failed before tag creation, fix the cause and rerun
-the workflow; see `docs/release-setup.md` for post-tag recovery.
+**Local release fails before the tag push** (preflight, build, notarization,
+appcast). Nothing was published. Fix the cause, commit and push if source
+changes, then rerun `/cf-ship` (or `scripts/release-local.sh`).
+
+**Local release failed after the tag push** (`gh release create` or the
+appcast push). Never move or delete the tag, and do not rerun the script (its
+preflight stops on the existing tag). Publish only what is missing: the
+command the script printed, or the recovery steps in `docs/release-setup.md`.
+
+**Release fails before "Create tag"** (`--action`). No tag or release has been
+published. Fix the cause, commit and push if source changes, rerun `ci.yml` for
+the new SHA, then dispatch the release workflow again. This includes a missing
+Xcode or notarization failure.
+
+**Notarization fails.** Read the script output (locally) or the step log
+(`--action`: `gh run view <id> --log-failed`) and the notary log it prints
+(`xcrun notarytool log <submission-id>`). Common causes: a nested binary
+without hardened runtime or secure timestamp, or wrong `NOTARY_*` secrets /
+notary profile credentials. If it failed before tag creation, fix the cause and
+rerun the release; see `docs/release-setup.md` for post-tag recovery.
 
 **Appcast not updated** (the feed lacks the new version). Check the
 `pages.yml` run (`gh run list --workflow=pages.yml --limit 3`,
 then `gh run view <id> --log-failed`) and that the Pages source is GitHub
-Actions. If `release.yml` failed before "Commit appcast to main" (for example
+Actions. If `release-local.sh` failed after `gh release create`, or (with
+`--action`) `release.yml` failed before "Commit appcast to main" (for example
 `SPARKLE_PRIVATE_KEY` not set), the release exists but the feed does not: use
-the fallback appcast steps in `SKILL.md` Rules; do not retag.
+the recovery steps in `docs/release-setup.md`; do not retag.
 
 **Update not offered in the app.** Sparkle compares `sparkle:version`
 (`CURRENT_PROJECT_VERSION`), not the marketing version. If the build number did
@@ -178,7 +243,9 @@ BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts
 | `scripts/bump-info.sh`          | Reads tags and commits, names the state, computes next file version + tag. Writes nothing. |
 | `scripts/bump.sh`               | Writes the version and build number into the Xcode project and verifies them.        |
 | `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Used by CI and locally.            |
-| `.github/workflows/release.yml` | Dispatched release: build, notarize, create tag, publish on GitHub Releases, update appcast. |
-| `.github/workflows/pages.yml`   | Publishes `website/` and `appcast.xml` to GitHub Pages. The site header reads the version from the published `appcast.xml`. |
-| `appcast.xml`                   | (repo root) Sparkle feed. Owned by CI; never edit by hand.                           |
+| `scripts/release-local.sh`      | (repo root) Default release on this Mac: preflight, build, signed appcast, then tag, GitHub release, appcast push. |
+| `.github/workflows/release.yml` | `--action` only. Dispatched release: build, notarize, create tag, publish on GitHub Releases, update appcast. |
+| `.github/workflows/ci.yml`      | `--action` only. Unit tests on the release commit, required by `release.yml`.        |
+| `.github/workflows/pages.yml`   | Publishes `website/` and `appcast.xml` to GitHub Pages (triggered by the appcast push locally, dispatched by `release.yml` with `--action`). The site header reads the version from the published `appcast.xml`. |
+| `appcast.xml`                   | (repo root) Sparkle feed. Owned by the release flow (`release-local.sh` or CI); never edit by hand. |
 | `docs/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |
