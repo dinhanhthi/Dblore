@@ -111,6 +111,12 @@ struct WorkspaceContainerView: View {
               .background {
                 if !workspaceManager.isLeftSidebarVisible {
                   Color.appBackground
+                    // Keep the tab bar's top border (native tab bar above) across this strip
+                    .overlay(alignment: .top) {
+                      if isNativeTabBarVisible {
+                        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+                      }
+                    }
                 }
               }
               .overlay(alignment: .trailing) {
