@@ -14,6 +14,10 @@ struct AIMessageView: View {
   var placeholder = "Thinking…"
   /// Places SQL in the active tab; nil disables Insert. Never executes.
   let onInsert: ((String) -> Void)?
+  /// Restarts the conversation from this entry; nil hides the button
+  var onRetry: (() -> Void)?
+
+  @State private var isHovering = false
 
   private var isUser: Bool { entry.role == .user }
   private var segments: [AIMessageSegment] { AIMessageParser.parse(entry.text) }
@@ -30,9 +34,25 @@ struct AIMessageView: View {
             .stroke(entry.isError ? Color.destructive : Color.border, lineWidth: 1)
             .opacity(isUser && !entry.isError ? 0 : 1)
         )
+        .overlay(alignment: .topTrailing) {
+          if isHovering, let onRetry {
+            Button(action: onRetry) {
+              Image(systemName: "arrow.clockwise")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.foregroundMuted)
+                .frame(width: 18, height: 18)
+                .background(bubbleBackground)
+                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+            }
+            .buttonStyle(.plain)
+            .help("Try again")
+            .padding(Spacing.xs)
+          }
+        }
       if !isUser { Spacer(minLength: Spacing.xl) }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    .onHover { isHovering = $0 }
   }
 
   private var bubbleBackground: Color {

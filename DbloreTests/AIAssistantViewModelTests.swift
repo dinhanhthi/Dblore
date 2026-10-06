@@ -202,6 +202,54 @@ struct AIAssistantViewModelTests {
     #expect(client.requests.count <= 1)
   }
 
+  @Test("retry from a user entry keeps earlier history, drops later ones and uses new settings")
+  func retryFromUserEntry() async {
+    let client = FakeAIChatClient(.events(["r"]))
+    let vm = makeVM(client)
+    for question in ["one", "two", "three"] {
+      vm.draft = question
+      vm.send()
+      await finish(vm)
+    }
+    #expect(vm.messages.count == 6)
+    vm.modelOverride = "m2"
+    vm.draft = "typing"
+    vm.retry(from: vm.messages[2].id)
+    await finish(vm)
+    #expect(vm.messages.map(\.text) == ["one", "r", "two", "r"])
+    #expect(vm.draft == "typing")
+    #expect(client.requests.last?.model == "m2")
+    #expect(client.requests.last?.messages.map(\.text) == ["one", "r", "two"])
+  }
+
+  @Test("retry from an assistant entry resends the question before it")
+  func retryFromAssistantEntry() async {
+    let client = FakeAIChatClient(.events(["r"]))
+    let vm = makeVM(client)
+    vm.draft = "one"
+    vm.send()
+    await finish(vm)
+    vm.draft = "two"
+    vm.send()
+    await finish(vm)
+    vm.retry(from: vm.messages[3].id)
+    await finish(vm)
+    #expect(vm.messages.map(\.text) == ["one", "r", "two", "r"])
+    #expect(client.requests.count == 3)
+  }
+
+  @Test("retry with an unknown id does nothing")
+  func retryUnknownId() async {
+    let client = FakeAIChatClient(.events(["r"]))
+    let vm = makeVM(client)
+    vm.draft = "one"
+    vm.send()
+    await finish(vm)
+    vm.retry(from: UUID())
+    #expect(vm.messages.count == 2)
+    #expect(client.requests.count == 1)
+  }
+
   @Test("empty draft is ignored")
   func emptyDraftIgnored() {
     let vm = makeVM(FakeAIChatClient(.events([])))

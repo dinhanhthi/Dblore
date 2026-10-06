@@ -101,10 +101,28 @@ final class AIAssistantViewModel {
 
   func send() {
     let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !isGenerating, !question.isEmpty, let provider = activeProvider else { return }
-
-    messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
+    guard !isGenerating, !question.isEmpty, activeProvider != nil else { return }
     draft = ""
+    submit(question: question)
+  }
+
+  /// Restarts the conversation from a message: that question and everything after it are
+  /// dropped, then the question is sent again with the current provider, model and tables.
+  /// An assistant entry restarts from the question before it. The draft is left alone.
+  func retry(from id: UUID) {
+    guard let index = messages.firstIndex(where: { $0.id == id }),
+      let userIndex = messages[...index].lastIndex(where: { $0.role == .user }),
+      activeProvider != nil
+    else { return }
+    let question = messages[userIndex].text
+    stop()
+    messages.removeSubrange(userIndex...)
+    submit(question: question)
+  }
+
+  private func submit(question: String) {
+    guard let provider = activeProvider else { return }
+    messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
     saveConversation()
 
     let entryId = UUID()

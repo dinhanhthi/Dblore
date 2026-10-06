@@ -17,6 +17,7 @@ struct AIAssistantPanel: View {
   @State private var composerIsMultiline = false
   @State private var composerTextHeight: CGFloat = 0
   @State private var showHistory = false
+  @State private var retryEntryId: UUID?
 
   private static let examples = [
     "Top 10 customers by order total",
@@ -239,7 +240,8 @@ struct AIAssistantPanel: View {
           ForEach(assistant.messages) { entry in
             AIMessageView(
               entry: entry, placeholder: assistant.isLoadingModel ? "Loading model…" : "Thinking…",
-              onInsert: insertHandler)
+              onInsert: insertHandler,
+              onRetry: assistant.isGenerating ? nil : { retryEntryId = entry.id })
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
@@ -251,6 +253,21 @@ struct AIAssistantPanel: View {
       }
       .onChange(of: assistant.messages.last?.text) { _, _ in
         proxy.scrollTo(Self.bottomID, anchor: .bottom)
+      }
+      .alert(
+        "Try again?",
+        isPresented: Binding(
+          get: { retryEntryId != nil }, set: { if !$0 { retryEntryId = nil } })
+      ) {
+        Button("Try again") {
+          if let id = retryEntryId { assistant.retry(from: id) }
+          retryEntryId = nil
+        }
+        Button("Cancel", role: .cancel) { retryEntryId = nil }
+      } message: {
+        Text(
+          "Messages after this one will be removed and the answer regenerated with your current settings."
+        )
       }
     }
   }
