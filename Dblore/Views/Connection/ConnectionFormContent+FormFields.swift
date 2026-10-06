@@ -224,14 +224,26 @@ extension ConnectionFormContent {
       }
 
       if let info = certificateInfo {
-        Text(info.subject)
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-        if let expiry = info.expiry {
-          Text("Expires \(expiry.formatted(date: .abbreviated, time: .omitted))")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
+        HStack(alignment: .top, spacing: Spacing.sm) {
+          Image(systemName: "checkmark.seal.fill")
+            .foregroundColor(.success)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(info.subject)
+              .foregroundColor(.foreground)
+              .textSelection(.enabled)
+            if let expiry = info.expiry {
+              Text("Expires \(expiry.formatted(date: .abbreviated, time: .omitted))")
+                .foregroundColor(.foregroundMuted)
+            }
+          }
         }
+        .font(.caption)
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+          RoundedRectangle(cornerRadius: CornerRadius.md)
+            .fill(Color.success.opacity(0.1))
+        )
       }
 
       removeClientCertificateButton()
