@@ -118,6 +118,7 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
   ) -> Bool {
+    let config = singleLineName(config)
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
       return true
@@ -155,6 +156,14 @@ class SessionManager {
     return true
   }
 
+  /// A single-line text field still accepts pasted line breaks, which it does not show.
+  /// Saved names keep one line so menus and cards do not grow.
+  private static func singleLineName(_ config: ConnectionConfig) -> ConnectionConfig {
+    var config = config
+    config.name = DropdownTitle.singleLine(config.name).trimmingCharacters(in: .whitespaces)
+    return config
+  }
+
   /// Replace one history row in place. The id, position, and last-used date stay.
   /// A changed host, port, database, or username takes the password with it.
   /// An empty password deletes the stored one. Remember off removes the row.
@@ -166,6 +175,7 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
   ) -> Bool {
+    let config = singleLineName(config)
     var history = loadHistory(defaults: defaults, passwords: passwords)
     let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {

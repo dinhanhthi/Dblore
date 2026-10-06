@@ -37,6 +37,27 @@ struct ConnectionHistoryReplaceTests {
     #expect(certificates.load(account: account) == nil)
   }
 
+  @Test("A pasted line break in the name is saved as one line")
+  func savedNameIsSingleLine() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let config = ConnectionConfig(
+      host: "localhost", port: 5435, database: "dblore_test", username: "dblore_test",
+      rememberConnection: true, name: "dblore-postgres-test\n\n\ndblore-postgres-test\n")
+    SessionManager.saveConnection(config, defaults: harness.defaults, passwords: harness.store)
+    let saved = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+    #expect(saved.config.name == "dblore-postgres-test dblore-postgres-test")
+
+    var renamed = saved.config
+    renamed.name = "a\nb"
+    SessionManager.replaceConnection(
+      id: saved.id, with: renamed, defaults: harness.defaults, passwords: harness.store)
+    #expect(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?
+        .config.name == "a b")
+  }
+
   @Test("Clear history removes its saved certificate")
   func clearCertificate() throws {
     let harness = try Harness()

@@ -31,6 +31,13 @@ struct ConnectionFormContent: View {
   /// Certificate held by the workspace for its unremembered connection (not in the keychain).
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
 
+  /// Config already applied to a live connection. The submit button stays disabled until the
+  /// form differs from it (nil = always enabled).
+  var unchangedFrom: ConnectionConfig?
+
+  /// Extra footer button at the leading edge (e.g. Disconnect).
+  var footerLeading: AnyView?
+
   @State private var isTesting = false
   @State private var testResult: TestResult?
   @State private var isConnecting = false
@@ -86,7 +93,9 @@ struct ConnectionFormContent: View {
     onConnectionSuccess: (() -> Void)? = nil,
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
-    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil
+    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
+    unchangedFrom: ConnectionConfig? = nil,
+    footerLeading: AnyView? = nil
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
@@ -95,6 +104,8 @@ struct ConnectionFormContent: View {
     self.submitTitle = submitTitle
     self.showsRecentHistory = showsRecentHistory
     self.unrememberedCertificate = unrememberedCertificate
+    self.unchangedFrom = unchangedFrom
+    self.footerLeading = footerLeading
   }
 
   // MARK: - Body
@@ -457,6 +468,7 @@ struct ConnectionFormContent: View {
       }
 
       HStack(spacing: Spacing.sm) {
+        if let footerLeading { footerLeading }
         Spacer(minLength: Spacing.sm)
         Button(action: testConnection) {
           HStack(spacing: Spacing.sm) {
@@ -484,7 +496,7 @@ struct ConnectionFormContent: View {
           }
         }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(isConnecting || !isFormValid)
+        .disabled(isConnecting || !isFormValid || isUnchanged)
       }
       .modalBarPadding()
     }
@@ -501,6 +513,11 @@ struct ConnectionFormContent: View {
       return !config.database.isEmpty
     }
     return !config.host.isEmpty && !config.database.isEmpty && !config.username.isEmpty
+  }
+
+  private var isUnchanged: Bool {
+    guard let unchangedFrom else { return false }
+    return connectionConfig == unchangedFrom && !certificateDraftChanged
   }
 
   private var isFormValid: Bool {
@@ -574,8 +591,10 @@ struct ConnectionFormContent: View {
     // Use the active tab: an unparsable connection string would leave stale form values
     guard inputMode == .form || parseError == nil else { return }
 
+    // A pasted name can carry line breaks the one-line field does not show
+    connectionConfig.name = DropdownTitle.singleLine(connectionConfig.name)
     // Validate connection name is not empty
-    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else {
       testResult = .failure("Connection name is required")
       return
@@ -622,8 +641,10 @@ struct ConnectionFormContent: View {
     // Use the active tab: an unparsable connection string would leave stale form values
     guard inputMode == .form || parseError == nil else { return }
 
+    // A pasted name can carry line breaks the one-line field does not show
+    connectionConfig.name = DropdownTitle.singleLine(connectionConfig.name)
     // Validate connection name is not empty
-    guard !connectionConfig.name.trimmingCharacters(in: .whitespaces).isEmpty
+    guard !connectionConfig.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else {
       testResult = .failure("Connection name is required")
       return

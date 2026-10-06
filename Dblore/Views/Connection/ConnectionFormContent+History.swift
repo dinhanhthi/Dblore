@@ -22,7 +22,7 @@ extension ConnectionFormContent {
           }) {
             HStack {
               // Connection name
-              Text(entry.config.name)
+              Text(DropdownTitle.singleLine(entry.config.name))
                 .font(.body)
 
               historyShield(for: entry.config)
@@ -55,7 +55,8 @@ extension ConnectionFormContent {
         }
       } label: {
         HStack {
-          Text(selectedHistoryEntry?.config.name ?? "Select a connection")
+          Text(DropdownTitle.singleLine(selectedHistoryEntry?.config.name ?? "Select a connection"))
+            .lineLimit(1)
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
           Spacer()
           Image(systemName: "chevron.up.chevron.down")

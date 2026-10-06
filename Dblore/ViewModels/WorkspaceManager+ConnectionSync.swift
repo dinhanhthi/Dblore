@@ -57,7 +57,7 @@ extension WorkspaceManager {
 
   /// Rename the active connection (workspace, editing copy, tabs and the recent list).
   func renameConnection(to name: String) {
-    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmed = DropdownTitle.singleLine(name).trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, var current = workspace.connectionConfig, current.name != trimmed
     else { return }
     current.name = trimmed

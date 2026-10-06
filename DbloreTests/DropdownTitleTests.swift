@@ -40,4 +40,11 @@ struct DropdownTitleTests {
       DropdownTitle.singleLine("docker ps):\u{2028}dblore-postgres-test")
         == "docker ps): dblore-postgres-test")
   }
+
+  @Test("A run of line breaks becomes one space")
+  func lineBreakRun() {
+    #expect(
+      DropdownTitle.singleLine("dblore-postgres-test\n\n\n\n\n\ndblore-postgres-test")
+        == "dblore-postgres-test dblore-postgres-test")
+  }
 }
