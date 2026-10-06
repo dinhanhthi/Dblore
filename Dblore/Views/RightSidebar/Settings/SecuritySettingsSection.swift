@@ -224,8 +224,11 @@ struct SafeModeSection: View {
   }
 
   private func handleSafeModeChange(to newMode: SafeMode) {
+    let currentStyle =
+      CommitStyle.migrate(protectedMode: false, safeMode: appSettings.safeMode) ?? .confirm
+    let nextStyle = CommitStyle.migrate(protectedMode: false, safeMode: newMode) ?? .confirm
     if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-      from: appSettings.safeMode, to: newMode, hasPassword: appSettings.hasCustomPasswordSet,
+      from: currentStyle, to: nextStyle, hasPassword: appSettings.hasCustomPasswordSet,
       hasTouchID: appSettings.isBiometricEnabled)
     {
       pendingAction = .changeSafeMode(newMode)

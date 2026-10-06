@@ -9,16 +9,17 @@ import Foundation
 // MARK: - Safe Mode Confirmation (classifier-driven)
 
 extension NotebookViewModel {
-  /// Shows the Safe Mode confirmation dialog for `query` if needed.
+  /// Shows the confirmation dialog for `query` if the connection's commit style asks for one.
   /// Returns true if the dialog was shown (the caller must not run the query).
   func presentConfirmationIfNeeded(for query: String, cellId: UUID?) -> Bool {
-    // Use per-connection SafeMode if set, otherwise fall back to global setting
-    let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
+    let commitStyle =
+      notebook.connectionConfig?.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+      ?? AppSettings.shared.commitStyle
     let classified = classifiedStatements(for: query)
     let parameters = boundParameterValues(for: query, cellId: cellId) ?? [:]
     guard
       let statements = Self.statementsNeedingConfirmation(
-        classified, safeMode: safeMode, parameters: parameters, dialect: sqlDialect)
+        classified, commitStyle: commitStyle, parameters: parameters, dialect: sqlDialect)
     else { return false }
 
     queryConfirmationState.pendingCellId = cellId
@@ -34,7 +35,7 @@ extension NotebookViewModel {
       || statements.contains(where: \.affectsAllRows)
     queryConfirmationState.likePatternAffectsAllRows = Self.scriptMatchesAllRowsByLike(
       classified, parameters: parameters, dialect: sqlDialect)
-    queryConfirmationState.requiresPassword = safeMode.requiresPassword
+    queryConfirmationState.requiresPassword = commitStyle.requiresPassword
     queryConfirmationState.statements = statements
     queryConfirmationState.showDialog = true
     return true
@@ -72,35 +73,29 @@ extension NotebookViewModel {
 
   /// Statements to list in the confirmation dialog, or nil when no confirmation is needed.
   ///
-  /// Every statement of the cell is checked, not only the first:
-  /// - `alertRead` / `safeRead`: confirm when any statement modifies data or schema, runs a
-  ///   utility (DO, CALL, COPY, ...) or an unrecognized statement (fail closed: these may write),
-  ///   changes the session brakes, or changes role/privileges.
-  /// - `alertAll` / `safeAll`: confirm every run and list every statement.
-  /// - `silent`: no dialog, EXCEPT a statement that changes the session brakes
-  ///   (`SET statement_timeout`, `RESET ALL`, ...) or role/privileges (`SET ROLE`, ...) always
-  ///   needs confirmation, because it silently disables the app's safety net for the session.
+  /// Every statement of the cell is checked, not only the first. `confirm` and `password` list
+  /// statements `mayWrite` treats as writes (DML, DDL, utility, unknown, a brake reset, or a
+  /// privilege change). They do not list a plain `SELECT`. `immediate` and `review` list nothing,
+  /// including `SET statement_timeout`, `RESET ALL`, and `SET ROLE`.
   nonisolated static func statementsNeedingConfirmation(
-    _ classified: [ClassifiedStatement], safeMode: SafeMode,
+    _ classified: [ClassifiedStatement], commitStyle: CommitStyle,
     parameters: [String: SQLBindValue] = [:], dialect: SQLDialect = .postgresql
   ) -> [StatementConfirmation]? {
-    let all = classified.enumerated().map {
-      makeConfirmation(
-        index: $0.offset, statement: $0.element, parameters: parameters, dialect: dialect)
+    switch commitStyle {
+    case .immediate, .review:
+      // Immediate drops the old silent brake and privilege exception on purpose.
+      return nil
+    case .confirm, .password:
+      let all = classified.enumerated().map {
+        makeConfirmation(
+          index: $0.offset, statement: $0.element, parameters: parameters, dialect: dialect)
+      }
+      let listed = zip(classified, all).filter { mayWrite($0.0) }.map(\.1)
+      return listed.isEmpty ? nil : listed
     }
-    let listed: [StatementConfirmation]
-    switch safeMode {
-    case .alertAll, .safeAll:
-      return all
-    case .alertRead, .safeRead:
-      listed = zip(classified, all).filter { mayWrite($0.0) }.map(\.1)
-    case .silent:
-      listed = all.filter { $0.touchesBrake || $0.changesPrivileges }
-    }
-    return listed.isEmpty ? nil : listed
   }
 
-  /// True when any statement, including one Silent mode does not list, has a match-all LIKE.
+  /// True when any statement has a match-all LIKE, including one the commit style does not list.
   nonisolated static func scriptMatchesAllRowsByLike(
     _ classified: [ClassifiedStatement], parameters: [String: SQLBindValue], dialect: SQLDialect
   ) -> Bool {

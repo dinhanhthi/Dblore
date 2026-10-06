@@ -104,24 +104,26 @@ extension WorkspaceManager {
     isCommitConfirmationVisible = true
   }
 
-  /// Confirmation accepted: commit the reviewed list now, or first ask for the Safe Mode unlock
-  /// when the effective Safe Mode requires a password. Does nothing without `requestCommit()`.
+  /// Confirmation accepted: commit the reviewed list. Banner commit never asks for a password.
+  /// Does nothing without `requestCommit()`.
   /// - Returns: true if committed (or nothing was pending).
   @discardableResult
-  func confirmCommit(globalSafeMode: SafeMode = AppSettings.shared.safeMode) async -> Bool {
+  func confirmCommit(defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle) async -> Bool {
     isCommitConfirmationVisible = false
     guard let reviewed = commitReviewedGeneration else { return false }
-    if commitRequiresUnlock(globalSafeMode: globalSafeMode) {
+    if commitRequiresUnlock(defaultCommitStyle: defaultCommitStyle) {
       isCommitUnlockVisible = true
       return false
     }
     return await performCommit(expectedGeneration: reviewed)
   }
 
-  func commitRequiresUnlock(globalSafeMode: SafeMode = AppSettings.shared.safeMode) -> Bool {
-    let state = ConnectionSafetyState(
-      config: workspace.connectionConfig, globalSafeMode: globalSafeMode)
-    return WorkspaceTransactionRules.commitRequiresUnlock(safeMode: state.safeMode)
+  /// Banner commit never asks for a password. `defaultCommitStyle` stays on the signature so
+  /// callers that still pass the Default commit style compile; it does not gate Commit.
+  func commitRequiresUnlock(
+    defaultCommitStyle _: CommitStyle = AppSettings.shared.commitStyle
+  ) -> Bool {
+    WorkspaceTransactionRules.commitRequiresUnlock()
   }
 
   /// Safe Mode unlock succeeded (only while the unlock for a confirmed Commit is shown)
@@ -214,17 +216,16 @@ extension WorkspaceManager {
 
   /// The single decision before an action that would end or hide the pending transaction.
   /// Idle (or a tab that did not open it) proceeds. Otherwise `resolution` (or the prompt's
-  /// answer) is applied: Cancel keeps everything; Commit under a password Safe Mode opens the
-  /// unlock and cancels the action (repeat it after committing); Discard (offered while a
-  /// statement is in flight) and Disconnect (offered while COMMIT / ROLLBACK is awaited)
-  /// disconnect, so the server ends the transaction. When the prompted Commit / Rollback fails
-  /// (e.g. refused because a statement started meanwhile), the prompt is shown again with the
-  /// current options (Discard while it runs). Refused while another resolve prompt is open
+  /// answer) is applied: Cancel keeps everything; Commit never asks for a password. Discard
+  /// (offered while a statement is in flight) and Disconnect (offered while COMMIT / ROLLBACK
+  /// is awaited) disconnect, so the server ends the transaction. When the prompted Commit /
+  /// Rollback fails (e.g. refused because a statement started meanwhile), the prompt is shown
+  /// again with the current options (Discard while it runs). Refused while another resolve prompt is open
   /// (also when re-prompting).
   /// - Returns: true if the action may proceed (nothing is pending any more).
   func resolvePendingTransaction(
     action: PendingTransactionAction, resolution: PendingTransactionResolution? = nil,
-    globalSafeMode: SafeMode = AppSettings.shared.safeMode
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
   ) async -> Bool {
     guard !isResolvingPendingTransaction else { return false }
     while true {
@@ -265,7 +266,7 @@ extension WorkspaceManager {
       case .rollback:
         await rollback()
       case .commit:
-        if commitRequiresUnlock(globalSafeMode: globalSafeMode) {
+        if commitRequiresUnlock(defaultCommitStyle: defaultCommitStyle) {
           commitReviewedGeneration = reviewed
           isCommitUnlockVisible = true
           return false

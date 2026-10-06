@@ -201,7 +201,7 @@ struct MTLSIntegrationTests {
     let scoped = ClientCertificateStoreFactory.ScopedMaterial(
       account: account, material: try Self.validMaterial())
     try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-      try await manager.connect(config: config, globalSafeMode: .silent)
+      try await manager.connect(config: config, defaultCommitStyle: .immediate)
     }
     scoped.clear()
     defer { Task { await manager.disconnect() } }

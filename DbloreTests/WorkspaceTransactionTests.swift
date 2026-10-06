@@ -311,13 +311,9 @@ struct WorkspaceTransactionRulesTests {
 
   // MARK: Commit unlock
 
-  @Test("Commit requires the Safe Mode unlock only under safeRead / safeAll")
-  func commitUnlock() {
-    #expect(WorkspaceTransactionRules.commitRequiresUnlock(safeMode: .safeRead))
-    #expect(WorkspaceTransactionRules.commitRequiresUnlock(safeMode: .safeAll))
-    #expect(!WorkspaceTransactionRules.commitRequiresUnlock(safeMode: .silent))
-    #expect(!WorkspaceTransactionRules.commitRequiresUnlock(safeMode: .alertRead))
-    #expect(!WorkspaceTransactionRules.commitRequiresUnlock(safeMode: .alertAll))
+  @Test("Banner commit never requires an unlock")
+  func commitNeverRequiresUnlock() {
+    #expect(!WorkspaceTransactionRules.commitRequiresUnlock())
   }
 }
 
@@ -338,40 +334,50 @@ struct WorkspaceTransactionCommitFlowTests {
     return manager
   }
 
-  @Test("requestCommit shows the confirmation; aborted does not")
+  @Test("requestCommit shows the confirmation and not the unlock sheet")
   func requestCommitShowsConfirmation() {
-    let manager = workspace(safeMode: nil)
-    manager.requestCommit()
-    #expect(manager.isCommitConfirmationVisible)
+    for mode in [SafeMode?.none, .safeRead, .safeAll] {
+      let manager = workspace(safeMode: mode)
+      #expect(
+        manager.workspace.connectionConfig?.resolvedCommitStyle(fallback: .immediate) == .review)
+      manager.requestCommit()
+      #expect(manager.isCommitConfirmationVisible)
+      #expect(!manager.isCommitUnlockVisible)
+      #expect(!manager.commitRequiresUnlock(defaultCommitStyle: .password))
+    }
 
-    let aborted = workspace(safeMode: nil)
+    let aborted = workspace(safeMode: .safeAll)
     aborted.pendingTransaction = .aborted(reason: "x", pending: [])
     aborted.requestCommit()
     #expect(!aborted.isCommitConfirmationVisible)
+    #expect(!aborted.isCommitUnlockVisible)
   }
 
-  @Test("Confirmed Commit under safeAll asks for the unlock and commits nothing yet")
-  func confirmCommitSafeAllNeedsUnlock() async {
+  @Test("Confirmed Commit under stored safeAll does not open the unlock sheet")
+  func confirmCommitSafeAllDoesNotUnlock() async {
     let manager = workspace(safeMode: .safeAll)
+    #expect(manager.workspace.connectionConfig?.resolvedCommitStyle(fallback: .immediate) == .review)
     manager.requestCommit()
-    await manager.confirmCommit(globalSafeMode: .silent)
-    #expect(manager.isCommitUnlockVisible)
-    #expect(!manager.pendingTransaction.isIdle)
+    #expect(!manager.isCommitUnlockVisible)
+    await manager.confirmCommit(defaultCommitStyle: .password)
+    #expect(!manager.isCommitUnlockVisible)
+    #expect(manager.pendingTransaction.isIdle)
   }
 
-  @Test("Global safeRead fallback also asks for the unlock")
-  func confirmCommitGlobalSafeReadNeedsUnlock() async {
+  @Test("A password default style does not open the unlock sheet")
+  func confirmCommitPasswordStyleDoesNotUnlock() async {
     let manager = workspace(safeMode: nil)
     manager.requestCommit()
-    await manager.confirmCommit(globalSafeMode: .safeRead)
-    #expect(manager.isCommitUnlockVisible)
+    await manager.confirmCommit(defaultCommitStyle: .password)
+    #expect(!manager.isCommitUnlockVisible)
+    #expect(manager.pendingTransaction.isIdle)
   }
 
   @Test("Confirmed Commit without a password Safe Mode commits directly (no unlock)")
   func confirmCommitSilentCommits() async {
     let manager = workspace(safeMode: .alertAll)
     manager.requestCommit()
-    await manager.confirmCommit(globalSafeMode: .silent)
+    await manager.confirmCommit(defaultCommitStyle: .immediate)
     #expect(!manager.isCommitUnlockVisible)
     // Disconnected actor: nothing pending there, the mirror is refreshed to idle
     #expect(manager.pendingTransaction.isIdle)
@@ -380,14 +386,14 @@ struct WorkspaceTransactionCommitFlowTests {
   @Test("Commit needs the confirmation (and the unlock) first: direct calls do nothing")
   func commitOnlyThroughConfirmation() async {
     let manager = workspace(safeMode: .alertAll)
-    #expect(!(await manager.confirmCommit(globalSafeMode: .silent)))
+    #expect(!(await manager.confirmCommit(defaultCommitStyle: .immediate)))
     #expect(!manager.pendingTransaction.isIdle)
     #expect(!(await manager.completeCommitUnlock()))
     #expect(!manager.pendingTransaction.isIdle)
     // A cancelled confirmation leaves nothing to confirm
     manager.requestCommit()
     manager.cancelCommitConfirmation()
-    #expect(!(await manager.confirmCommit(globalSafeMode: .silent)))
+    #expect(!(await manager.confirmCommit(defaultCommitStyle: .immediate)))
     #expect(!manager.pendingTransaction.isIdle)
   }
 }
@@ -433,7 +439,7 @@ struct WorkspaceTransactionIntegrationTests {
     // Never show an NSAlert from tests: an unexpected prompt cancels
     workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
     let tabId = workspace.newNotebook()
-    try await workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     await workspace.awaitSchemaLoad()
     guard let viewModel = workspace.viewModel(for: tabId) else {
       throw DatabaseError.notConnected
@@ -465,7 +471,7 @@ struct WorkspaceTransactionIntegrationTests {
   /// The banner path: Commit, then the confirmation accepted (no password Safe Mode)
   private func commit(_ fixture: Fixture) async -> Bool {
     fixture.workspace.requestCommit()
-    return await fixture.workspace.confirmCommit(globalSafeMode: .silent)
+    return await fixture.workspace.confirmCommit(defaultCommitStyle: .immediate)
   }
 
   private func committedValue(_ fixture: Fixture) async throws -> CellValue? {
@@ -592,7 +598,7 @@ struct WorkspaceTransactionIntegrationTests {
     // The origin tab runs another statement while the confirmation is open
     await run("UPDATE \(fixture.table) SET v = 30 WHERE id = 1", in: fixture)
 
-    #expect(!(await fixture.workspace.confirmCommit(globalSafeMode: .silent)))
+    #expect(!(await fixture.workspace.confirmCommit(defaultCommitStyle: .immediate)))
     #expect(fixture.workspace.pendingTransaction.pending.count == 2)
     #expect(try await committedValue(fixture) == .int(10))
 
@@ -748,7 +754,7 @@ struct WorkspaceTransactionIntegrationTests {
       return .cancel
     }
     await #expect(throws: WorkspaceConnectError.pendingTransactionKept) {
-      try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+      try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     }
     #expect(prompted == .disconnect)
     #expect(fixture.workspace.connectionState == .connected)
@@ -758,7 +764,7 @@ struct WorkspaceTransactionIntegrationTests {
     // The prompt answers Roll back: reconnected, row unchanged
     fixture.workspace.pendingTransactionPrompt = { _, _, _ in .rollback }
     do {
-      try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+      try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     } catch {
       Issue.record(error)
     }
@@ -825,7 +831,7 @@ struct WorkspaceTransactionHistoryTests {
       #expect(env.workspace.pendingTransaction.pending.count == 2)
 
       env.workspace.requestCommit()
-      #expect(await env.workspace.confirmCommit(globalSafeMode: .silent))
+      #expect(await env.workspace.confirmCommit(defaultCommitStyle: .immediate))
 
       let commits = await env.transactionRows(in: env.origin.history, verb: "COMMIT")
       #expect(commits.map(\.sql) == ["COMMIT (2 statements)"])
@@ -885,7 +891,7 @@ struct WorkspaceTransactionHistoryTests {
       #expect(env.workspace.activeTabId == env.active.id)
 
       env.workspace.requestCommit()
-      #expect(await env.workspace.confirmCommit(globalSafeMode: .silent))
+      #expect(await env.workspace.confirmCommit(defaultCommitStyle: .immediate))
 
       let commits = await env.transactionRows(in: env.active.history, verb: "COMMIT")
       #expect(commits.map(\.sql) == ["COMMIT (1 statements)"])
@@ -939,7 +945,7 @@ struct WorkspaceTransactionHistoryTests {
       let second = try await env.run("UPDATE notes SET label = 'b' WHERE id = 1", on: env.origin)
       #expect(second.error == nil)
 
-      #expect(!(await env.workspace.confirmCommit(globalSafeMode: .silent)))
+      #expect(!(await env.workspace.confirmCommit(defaultCommitStyle: .immediate)))
       #expect(!env.workspace.pendingTransaction.isIdle)
       #expect(await env.transactionRows(in: env.origin.history, verb: "COMMIT").isEmpty)
     }
@@ -953,7 +959,7 @@ struct WorkspaceTransactionHistoryTests {
       let hold = await holdTransactionEnd(env.workspace.connectionManager)
       defer { hold.release.finish() }
       env.workspace.requestCommit()
-      let committing = Task { await env.workspace.confirmCommit(globalSafeMode: .silent) }
+      let committing = Task { await env.workspace.confirmCommit(defaultCommitStyle: .immediate) }
       var reached = hold.reached.makeAsyncIterator()
       _ = await reached.next()
 
@@ -982,7 +988,7 @@ struct WorkspaceTransactionHistoryTests {
     workspace.pendingTransaction = .appTx(pending: pending)
     workspace.pendingTransactionGeneration = 1
     workspace.requestCommit()
-    #expect(await workspace.confirmCommit(globalSafeMode: .silent))
+    #expect(await workspace.confirmCommit(defaultCommitStyle: .immediate))
     #expect(workspace.pendingTransaction.isIdle)
     #expect(await history.entries.isEmpty)
   }
@@ -1030,7 +1036,7 @@ struct WorkspaceTransactionHistoryTests {
     }
     let env = Env(workspace: workspace, url: url, tabs: tabs)
     do {
-      try await workspace.connect(config: sqliteConfig(path: url.path), globalSafeMode: .silent)
+      try await workspace.connect(config: sqliteConfig(path: url.path), defaultCommitStyle: .immediate)
       await workspace.awaitSchemaLoad()
       try await body(env)
     } catch {

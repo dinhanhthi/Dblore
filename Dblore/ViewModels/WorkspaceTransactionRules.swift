@@ -2,9 +2,9 @@
 //  WorkspaceTransactionRules.swift
 //  Dblore
 //
-//  Pure rules for the workspace-level Protected transaction: banner texts and totals, which
-//  window / tab / connection actions must resolve a pending transaction first, and when
-//  Commit needs the Safe Mode unlock.
+//  Pure rules for the workspace-level Protected transaction: banner texts and totals, and which
+//  window / tab / connection actions must resolve a pending transaction first. Banner Commit
+//  never asks for a password.
 //
 
 import Foundation
@@ -249,12 +249,10 @@ nonisolated enum WorkspaceTransactionRules {
     return "Commit or roll back before \(action.displayName)."
   }
 
-  /// Commit makes the pending changes permanent, so it needs the Safe Mode unlock when the
-  /// effective Safe Mode requires a password. Rollback never does (the safe direction).
-  static func commitRequiresUnlock(safeMode: SafeMode) -> Bool {
-    switch safeMode {
-    case .safeRead, .safeAll: true
-    case .silent, .alertRead, .alertAll: false
-    }
+  /// Banner Commit never asks for a password, for every commit style. A connection whose
+  /// stored safe mode is `.safeRead` or `.safeAll` and whose resolved style is review is
+  /// included: the yellow banner confirms the list, then commits.
+  static func commitRequiresUnlock() -> Bool {
+    false
   }
 }

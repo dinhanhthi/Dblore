@@ -1,7 +1,8 @@
 // ProtectionLoweringGateTests.swift
-// Weakening the effective Safe Mode, the connection protection level or protected mode needs
-// the Safe Mode unlock while the current effective Safe Mode requires a password; strengthening
-// never does. Pure decision plus the ViewModel request/apply flow (no Keychain, no LAContext).
+// Unlock follows commit-style strength: immediate < confirm < review < password.
+// A Safe Mode password or Touch ID is required. Lowering from review or password needs
+// the unlock; confirm → immediate does not. Lowering the protection level needs it only
+// while the current style is password. The unlock check does not project legacy fields.
 
 import Foundation
 import Testing
@@ -12,143 +13,211 @@ import Testing
 @MainActor
 struct ProtectionLoweringGateTests {
   private func state(
-    _ safeMode: SafeMode, _ level: ConnectionProtectionLevel = .none, protectedMode: Bool = true
+    _ style: CommitStyle, _ level: ConnectionProtectionLevel = .none
   ) -> ConnectionSafetyState {
-    ConnectionSafetyState(safeMode: safeMode, protectionLevel: level, protectedMode: protectedMode)
+    ConnectionSafetyState(commitStyle: style, protectionLevel: level)
+  }
+
+  private func needsUnlock(
+    from old: CommitStyle, to new: CommitStyle,
+    hasPassword: Bool = true, hasTouchID: Bool = false
+  ) -> Bool {
+    NotebookViewModel.requiresUnlockForChange(
+      from: state(old), to: state(new), hasPassword: hasPassword, hasTouchID: hasTouchID)
   }
 
   // MARK: - Pure decision
 
-  @Test(
-    "Safe Mode strength ordering is explicit: silent < alertRead < alertAll < safeRead < safeAll")
-  func safeModeStrength() {
-    let ordered: [SafeMode] = [.silent, .alertRead, .alertAll, .safeRead, .safeAll]
-    for (lhs, rhs) in zip(ordered, ordered.dropFirst()) {
-      #expect(lhs.strength < rhs.strength)
-    }
+  @Test("password → review, review → confirm, and review → immediate require unlock")
+  func loweringReviewOrPasswordRequiresUnlock() {
+    #expect(needsUnlock(from: .password, to: .review))
+    #expect(needsUnlock(from: .review, to: .confirm, hasPassword: false, hasTouchID: true))
+    #expect(needsUnlock(from: .review, to: .immediate))
   }
 
-  @Test("safeAll: per-connection silent requires unlock")
-  func safeAllToSilentRequiresUnlock() {
-    #expect(NotebookViewModel.requiresUnlockForChange(from: state(.safeAll), to: state(.silent)))
-    #expect(NotebookViewModel.requiresUnlockForChange(from: state(.safeAll), to: state(.safeRead)))
-    #expect(NotebookViewModel.requiresUnlockForChange(from: state(.safeRead), to: state(.alertAll)))
+  @Test("confirm → immediate does not require unlock")
+  func confirmToImmediateIsFree() {
+    #expect(!needsUnlock(from: .confirm, to: .immediate))
   }
 
-  @Test("safeRead: readOnly -> none or schemaOnly, schemaOnly -> none require unlock")
-  func loweringLevelRequiresUnlock() {
-    #expect(
-      NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeRead, .readOnly), to: state(.safeRead, .none)))
-    #expect(
-      NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeRead, .readOnly), to: state(.safeRead, .schemaOnly)))
-    #expect(
-      NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeAll, .schemaOnly), to: state(.safeAll, .none)))
-  }
-
-  @Test("safeRead: turning protected mode off requires unlock")
-  func protectedModeOffRequiresUnlock() {
-    #expect(
-      NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeRead, protectedMode: true), to: state(.safeRead, protectedMode: false)))
-  }
-
-  @Test("Strengthening never requires unlock")
+  @Test("Raising strength does not require unlock")
   func strengtheningIsFree() {
-    #expect(!NotebookViewModel.requiresUnlockForChange(from: state(.safeRead), to: state(.safeAll)))
-    #expect(
-      !NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeRead, .none), to: state(.safeRead, .readOnly)))
-    #expect(
-      !NotebookViewModel.requiresUnlockForChange(
-        from: state(.safeAll, protectedMode: false), to: state(.safeAll, protectedMode: true)))
-    #expect(!NotebookViewModel.requiresUnlockForChange(from: state(.safeAll), to: state(.safeAll)))
+    #expect(!needsUnlock(from: .immediate, to: .password))
+    #expect(!needsUnlock(from: .confirm, to: .review))
+    #expect(!needsUnlock(from: .review, to: .password))
+    #expect(!needsUnlock(from: .password, to: .password))
   }
 
-  @Test("Non-password Safe Modes never require unlock (current behaviour)")
-  func nonPasswordModesAreFree() {
-    for mode in [SafeMode.silent, .alertRead, .alertAll] {
-      #expect(
-        !NotebookViewModel.requiresUnlockForChange(
-          from: state(mode, .readOnly), to: state(.silent, .none, protectedMode: false)))
-    }
+  @Test("No password and no Touch ID: lowering is not gated")
+  func noUnlockConfiguredIsNotGated() {
+    #expect(
+      !needsUnlock(from: .password, to: .immediate, hasPassword: false, hasTouchID: false))
+    #expect(!needsUnlock(from: .review, to: .confirm, hasPassword: false, hasTouchID: false))
   }
 
-  @Test("Effective Safe Mode: per-connection override, else the global mode")
-  func effectiveSafeMode() {
-    let inherits = ConnectionConfig(protectionLevel: .readOnly, safeMode: nil)
-    #expect(ConnectionSafetyState(config: inherits, globalSafeMode: .safeAll).safeMode == .safeAll)
-    let overrides = ConnectionConfig(protectionLevel: .readOnly, safeMode: .silent)
-    #expect(ConnectionSafetyState(config: overrides, globalSafeMode: .safeAll).safeMode == .silent)
-    // "Use Global" from a safeAll override to a silent global is a weakening
+  @Test("Lowering protection level requires unlock only when the current style is password")
+  func loweringLevelOnlyUnderPassword() {
     #expect(
       NotebookViewModel.requiresUnlockForChange(
-        from: ConnectionSafetyState(
-          config: ConnectionConfig(safeMode: .safeAll), globalSafeMode: .silent),
-        to: ConnectionSafetyState(config: ConnectionConfig(safeMode: nil), globalSafeMode: .silent))
-    )
+        from: state(.password, .readOnly), to: state(.password, .none),
+        hasPassword: true, hasTouchID: false))
+    #expect(
+      NotebookViewModel.requiresUnlockForChange(
+        from: state(.password, .readOnly), to: state(.password, .schemaOnly),
+        hasPassword: false, hasTouchID: true))
+    #expect(
+      NotebookViewModel.requiresUnlockForChange(
+        from: state(.password, .schemaOnly), to: state(.password, .none),
+        hasPassword: true, hasTouchID: false))
+    #expect(
+      !NotebookViewModel.requiresUnlockForChange(
+        from: state(.review, .readOnly), to: state(.review, .none),
+        hasPassword: true, hasTouchID: true))
+    #expect(
+      !NotebookViewModel.requiresUnlockForChange(
+        from: state(.confirm, .readOnly), to: state(.confirm, .none),
+        hasPassword: true, hasTouchID: false))
+    #expect(
+      !NotebookViewModel.requiresUnlockForChange(
+        from: state(.password, .readOnly), to: state(.password, .none),
+        hasPassword: false, hasTouchID: false))
+    #expect(
+      !NotebookViewModel.requiresUnlockForChange(
+        from: state(.password, .none), to: state(.password, .readOnly),
+        hasPassword: true, hasTouchID: false))
+  }
+
+  @Test("Legacy unprotected nil safe mode uses the default commit style")
+  func defaultCommitStyleFallback() {
+    let inherits = ConnectionConfig(protectionLevel: .readOnly, safeMode: nil, protectedMode: false)
+    #expect(
+      ConnectionSafetyState(config: inherits, defaultCommitStyle: .password).commitStyle
+        == .password)
+    let protected = ConnectionConfig(protectionLevel: .readOnly, safeMode: nil, protectedMode: true)
+    #expect(
+      ConnectionSafetyState(config: protected, defaultCommitStyle: .password).commitStyle
+        == .review)
+    var explicit = ConnectionConfig(protectedMode: false)
+    explicit.applyCommitStyle(.immediate)
+    #expect(
+      ConnectionSafetyState(config: explicit, defaultCommitStyle: .password).commitStyle
+        == .immediate)
   }
 
   // MARK: - ViewModel request/apply
 
   private func viewModel(
-    level: ConnectionProtectionLevel, safeMode: SafeMode?
+    style: CommitStyle, level: ConnectionProtectionLevel = .none
   ) -> NotebookViewModel {
+    var config = ConnectionConfig(protectionLevel: level)
+    config.applyCommitStyle(style)
     let viewModel = NotebookViewModel()
-    viewModel.notebook.connectionConfig = ConnectionConfig(
-      protectionLevel: level, safeMode: safeMode)
+    viewModel.notebook.connectionConfig = config
     return viewModel
   }
 
-  @Test("Per-connection silent under safeAll is not applied until unlocked")
-  func safeModeRequestHeldUntilUnlock() {
-    let viewModel = viewModel(level: .none, safeMode: .safeAll)
-    #expect(
-      viewModel.requestConnectionSafeModeChange(to: .silent, globalSafeMode: .silent) == false)
+  private func armUnlock() {
+    AppSettings.shared.setSafeModePassword("gate")
+  }
+
+  @Test("Chosen weaker commit style is not applied until unlock, then only via applyCommitStyle")
+  func commitStyleHeldUntilUnlock() {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = viewModel(style: .password, level: .readOnly)
+    #expect(viewModel.requestConnectionCommitStyle(.review) == false)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .password)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == false)
+    #expect(viewModel.notebook.connectionConfig?.safeMode == .safeRead)
+    #expect(viewModel.notebook.connectionConfig?.protectionLevel == .readOnly)
+
+    viewModel.applyConnectionCommitStyle(.review)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .review)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == true)
+    #expect(viewModel.notebook.connectionConfig?.safeMode == .silent)
+    #expect(viewModel.notebook.connectionConfig?.protectionLevel == .readOnly)
+  }
+
+  @Test("Legacy protected connection stays unchanged until the chosen weaker style is unlocked")
+  func legacyProtectedHeldUntilUnlock() {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = NotebookViewModel()
+    viewModel.notebook.connectionConfig = ConnectionConfig(
+      protectionLevel: .none, safeMode: .safeAll, protectedMode: true)
+    #expect(viewModel.requestConnectionCommitStyle(.immediate) == false)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == true)
     #expect(viewModel.notebook.connectionConfig?.safeMode == .safeAll)
-    viewModel.applyConnectionSafeMode(.silent)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == nil)
+
+    viewModel.applyConnectionCommitStyle(.immediate)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .immediate)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == false)
     #expect(viewModel.notebook.connectionConfig?.safeMode == .silent)
   }
 
-  @Test("readOnly -> none under safeRead is not applied until unlocked")
+  @Test("confirm → immediate applies immediately through applyCommitStyle")
+  func confirmToImmediateApplies() {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = viewModel(style: .confirm)
+    #expect(viewModel.requestConnectionCommitStyle(.immediate))
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .immediate)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == false)
+    #expect(viewModel.notebook.connectionConfig?.safeMode == .silent)
+  }
+
+  @Test("Raising the commit style applies immediately")
+  func strengtheningStyleAppliesImmediately() {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = viewModel(style: .confirm)
+    #expect(viewModel.requestConnectionCommitStyle(.password))
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .password)
+    #expect(viewModel.notebook.connectionConfig?.safeMode == .safeRead)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == false)
+  }
+
+  @Test("readOnly → none under password is not applied until unlocked, and writes only the level")
   func levelRequestHeldUntilUnlock() {
-    let viewModel = viewModel(level: .readOnly, safeMode: .safeRead)
-    #expect(viewModel.requestProtectionLevelChange(to: .none, globalSafeMode: .silent) == false)
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = viewModel(style: .password, level: .readOnly)
+    #expect(viewModel.requestProtectionLevelChange(to: .none) == false)
     #expect(viewModel.notebook.connectionConfig?.protectionLevel == .readOnly)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .password)
     viewModel.applyProtectionLevel(.none)
     #expect(viewModel.notebook.connectionConfig?.protectionLevel == ConnectionProtectionLevel.none)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .password)
+    #expect(viewModel.notebook.connectionConfig?.safeMode == .safeRead)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == false)
   }
 
-  @Test("Strengthening applies immediately")
-  func strengtheningAppliesImmediately() {
-    let viewModel = viewModel(level: .schemaOnly, safeMode: .safeRead)
-    #expect(viewModel.requestProtectionLevelChange(to: .readOnly, globalSafeMode: .silent))
-    #expect(viewModel.notebook.connectionConfig?.protectionLevel == .readOnly)
-    #expect(viewModel.requestConnectionSafeModeChange(to: .safeAll, globalSafeMode: .silent))
-    #expect(viewModel.notebook.connectionConfig?.safeMode == .safeAll)
-  }
-
-  @Test("Non-password Safe Mode: lowering applies immediately (current behaviour)")
-  func nonPasswordLoweringApplies() {
-    let viewModel = viewModel(level: .readOnly, safeMode: .alertAll)
-    #expect(viewModel.requestProtectionLevelChange(to: .none, globalSafeMode: .silent))
+  @Test("Non-password styles apply a protection-level change immediately")
+  func nonPasswordLevelAppliesImmediately() {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    let viewModel = viewModel(style: .review, level: .readOnly)
+    #expect(viewModel.requestProtectionLevelChange(to: .none))
     #expect(viewModel.notebook.connectionConfig?.protectionLevel == ConnectionProtectionLevel.none)
-    #expect(viewModel.requestConnectionSafeModeChange(to: nil, globalSafeMode: .silent))
-    #expect(viewModel.notebook.connectionConfig?.safeMode == nil)
+    #expect(viewModel.notebook.connectionConfig?.commitStyle == .review)
+    #expect(viewModel.notebook.connectionConfig?.protectedMode == true)
   }
 
-  @Test("Workspace tab: a lowering held for unlock does not reach the workspace config")
+  @Test("Workspace tab: a protection lowering under password does not reach the workspace until unlock")
   func workspaceNotUpdatedUntilUnlock() throws {
+    armUnlock()
+    defer { AppSettings.shared.clearSafeModePassword() }
+    var config = ConnectionConfig(protectionLevel: .readOnly)
+    config.applyCommitStyle(.password)
     let manager = WorkspaceManager(
-      workspace: Workspace(
-        connectionConfig: ConnectionConfig(protectionLevel: .readOnly, safeMode: .safeRead)),
-      restoreTabs: false)
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
     let viewModel = try #require(manager.viewModel(for: manager.newNotebook()))
-    #expect(viewModel.requestProtectionLevelChange(to: .none, globalSafeMode: .silent) == false)
+    #expect(viewModel.requestProtectionLevelChange(to: .none) == false)
     #expect(manager.workspace.connectionConfig?.protectionLevel == .readOnly)
+    #expect(manager.workspace.connectionConfig?.commitStyle == .password)
     viewModel.applyProtectionLevel(.none)
     #expect(manager.workspace.connectionConfig?.protectionLevel == ConnectionProtectionLevel.none)
+    #expect(manager.workspace.connectionConfig?.commitStyle == .password)
   }
 }

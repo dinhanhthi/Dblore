@@ -72,7 +72,7 @@ struct WorkspaceSchemaLoadTests {
   @Test("connect returns connected with a load task; awaitSchemaLoad fills the tables")
   func connectDoesNotBlockOnSchema() async throws {
     let fixture = try await setUp()
-    try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     // Deterministic halves: no await ran between connect's return and these reads
     #expect(fixture.workspace.connectionState == .connected)
     #expect(fixture.workspace.schemaLoadTask != nil)
@@ -88,7 +88,7 @@ struct WorkspaceSchemaLoadTests {
   @Test("disconnect during the load leaves the tables empty")
   func disconnectDuringLoad() async throws {
     let fixture = try await setUp()
-    try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     // disconnect drops the task reference: keep it to wait for the cancelled load to finish
     let load = try #require(fixture.workspace.schemaLoadTask)
     await fixture.workspace.disconnect(resolution: .rollback)
@@ -105,7 +105,7 @@ struct WorkspaceSchemaLoadTests {
   func protectedTransactionAfterConnect() async throws {
     let fixture = try await setUp(tableCount: 3)
     try await fixture.workspace.connect(
-      config: Self.config(protectedMode: true), globalSafeMode: .silent)
+      config: Self.config(protectedMode: true), defaultCommitStyle: .immediate)
     // Open the app transaction before the load is awaited
     _ = try await fixture.workspace.connectionManager.execute(
       userSQL: "UPDATE \(fixture.schema).t0 SET v = 1",
@@ -130,7 +130,7 @@ struct WorkspaceSchemaLoadTests {
   @Test("refresh cancels an in-flight background load; the latest data wins")
   func refreshCancelsBackgroundLoad() async throws {
     let fixture = try await setUp()
-    try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     let background = try #require(fixture.workspace.schemaLoadTask)
 
     _ = try await fixture.observer.executeInternal(
@@ -148,7 +148,7 @@ struct WorkspaceSchemaLoadTests {
   @Test("a superseded background load neither clears isLoadingSchema nor assigns its data")
   func supersededLoadKeepsSpinner() async throws {
     let fixture = try await setUp(tableCount: 150)
-    try await fixture.workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await fixture.workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     await fixture.workspace.awaitSchemaLoad()
     _ = try await fixture.observer.executeInternal(
       "CREATE TABLE \(fixture.schema).late (id int)")
@@ -266,7 +266,7 @@ struct WorkspaceSchemaLoadTests {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let manager = try await WorkspaceManager.load(from: url)
-    try await manager.connect(config: Self.config(), globalSafeMode: .silent)
+    try await manager.connect(config: Self.config(), defaultCommitStyle: .immediate)
     await manager.awaitAutoConnect()
     #expect(manager.connectionState == .connected)
     let connected = await manager.connectionManager.isConnected
@@ -288,7 +288,8 @@ struct WorkspaceSchemaLoadTests {
     let manager = try await WorkspaceManager.load(from: url)
     #expect(manager.connectionState == .connecting)
     await #expect(throws: WorkspaceConnectError.unlockRequired) {
-      try await manager.connect(config: Self.config(), globalSafeMode: .silent)
+      try await manager.connect(
+        config: Self.config(), defaultCommitStyle: .immediate, hasPassword: true)
     }
     await manager.awaitAutoConnect()
     #expect(manager.connectionState != .connecting)
@@ -308,7 +309,7 @@ struct WorkspaceSchemaLoadTests {
     }
 
     let manager = try await WorkspaceManager.load(from: url)
-    try await manager.connect(config: Self.config(), globalSafeMode: .silent)
+    try await manager.connect(config: Self.config(), defaultCommitStyle: .immediate)
     await manager.awaitAutoConnect()
     #expect(manager.connectionState == .connected)
     let connected = await manager.connectionManager.isConnected

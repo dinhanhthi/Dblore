@@ -517,10 +517,10 @@ struct ViewModelQueryParameterTests {
 
     let plain = parameterViewModel(value: "%", safeMode: .alertAll)
     #expect(
-      plain.presentConfirmationIfNeeded(
+      !plain.presentConfirmationIfNeeded(
         for: "EXPLAIN DELETE FROM t WHERE name LIKE :pat", cellId: nil))
-    #expect(!plain.queryConfirmationState.likePatternAffectsAllRows)
-    #expect(plain.queryConfirmationState.statements.first?.likePatternAffectsAllRows == false)
+    #expect(!plain.queryConfirmationState.showDialog)
+    #expect(plain.queryConfirmationState.statements.isEmpty)
   }
 
   @Test("A newline in a bind stays on the parameter line")
@@ -541,14 +541,15 @@ struct ViewModelQueryParameterTests {
     #expect(!reasonLines.contains { $0.contains("No WHERE") })
   }
 
-  @Test("Silent mode still warns when a later LIKE delete matches every row")
-  func silentModeKeepsLikePatternFlag() {
+  @Test("immediate does not confirm a brake SET or a later LIKE delete")
+  func immediateSkipsBrakeAndLikeDelete() {
     let viewModel = parameterViewModel(value: "%", safeMode: .silent)
     let sql = "SET statement_timeout = 0; DELETE FROM t WHERE name LIKE :pat"
-    #expect(viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil))
+    #expect(!viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil))
     let state = viewModel.queryConfirmationState
-    #expect(state.likePatternAffectsAllRows)
-    #expect(!state.statements.contains { $0.preview.contains("DELETE") })
+    #expect(!state.showDialog)
+    #expect(!state.likePatternAffectsAllRows)
+    #expect(state.statements.isEmpty)
   }
 
   @Test("A line break in a parameter name stays on the parameter line")

@@ -336,7 +336,7 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Connection Operations
 
-  /// Connect without the weakening check. Only `connect(config:globalSafeMode:)` and
+  /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)` and
   /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) may call this.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false

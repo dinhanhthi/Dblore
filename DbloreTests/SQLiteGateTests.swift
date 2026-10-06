@@ -68,28 +68,87 @@ struct SQLiteGateTests {
     #expect(!plan.rows.isEmpty)
   }
 
-  @Test("Protected mode does not send the write before confirmation")
-  func protectedModeHoldsWriteUntilConfirmation() async throws {
+  @Test("Review holds PRAGMA journal_mode = OFF with no confirm dialog until banner commit")
+  func reviewHoldsJournalModeUntilBannerCommit() async throws {
     let url = try makeDatabase()
     defer { removeDatabase(url) }
     let manager = DatabaseConnectionManager()
-    let config = sqliteConfig(path: url.path, safeMode: .alertRead, protectedMode: true)
+    let config = sqliteConfig(path: url.path, safeMode: .safeAll, protectedMode: true)
+    #expect(config.resolvedCommitStyle(fallback: .immediate) == .review)
     try await manager.connect(config: config)
     defer { Task { await manager.disconnect() } }
 
-    let viewModel = NotebookViewModel(notebook: .newDocument())
-    viewModel.connectionManager = manager
-    viewModel.connectionState = .connected
-    viewModel.notebook.connectionConfig = config
+    let viewModel = makeViewModel(manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
     let cellId = viewModel.notebook.cells[0].id
-    viewModel.notebook.cells[0].content = "PRAGMA journal_mode = OFF"
+    await runWithoutDialog(viewModel, cellId: cellId)
 
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    let held = try await manager.execute(
+      userSQL: "PRAGMA journal_mode",
+      policy: ProtectionPolicy(config: config),
+      caller: viewModel.id)
+    #expect(held.rows == [[.string("wal")]])
+    #expect(viewModel.notebook.cells[0].result?.error == nil)
+
+    let status = await manager.transactionStatus()
+    #expect(!status.state.isIdle)
+    try await manager.commitAppTransaction(expectedGeneration: status.generation)
+    #expect(await manager.transactionSnapshot().isIdle)
+    let committed = try await manager.execute(userSQL: "PRAGMA journal_mode", policy: open)
+    // `journal_mode = OFF` does not leave WAL on the system SQLite, inside a transaction or
+    // after COMMIT. Review's proof is the pending transaction, not a mode flip.
+    #expect(committed.rows == [[.string("wal")]])
+  }
+
+  @Test("Confirm dialogs PRAGMA journal_mode = OFF, then autocommits with no pending transaction")
+  func confirmDialogsJournalModeThenAutocommits() async throws {
+    let url = try makeDatabase()
+    defer { removeDatabase(url) }
+    let manager = DatabaseConnectionManager()
+    var config = sqliteConfig(path: url.path, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    #expect(config.resolvedCommitStyle(fallback: .review) == .confirm)
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+
+    let viewModel = makeViewModel(manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
+    let cellId = viewModel.notebook.cells[0].id
     viewModel.confirmAndRunCell(id: cellId)
     #expect(viewModel.queryConfirmationState.showDialog)
     #expect(viewModel.queryConfirmationState.statements.first?.kindLabel == "Schema change")
 
-    let mode = try await manager.execute(userSQL: "PRAGMA journal_mode", policy: open)
-    #expect(mode.rows == [[.string("wal")]])
+    let before = try await manager.execute(userSQL: "PRAGMA journal_mode", policy: open)
+    #expect(before.rows == [[.string("wal")]])
+
+    await viewModel.executePendingQuery()
+    await viewModel.executionQueue.waitForIdle()
+
+    #expect(viewModel.notebook.cells[0].result?.error == nil)
+    #expect(await manager.transactionSnapshot().isIdle)
+    let after = try await manager.execute(userSQL: "PRAGMA journal_mode", policy: open)
+    // Autocommit does not leave a pending transaction. This SQLite also keeps WAL for
+    // `journal_mode = OFF`, so the mode stays wal after the statement runs.
+    #expect(after.rows == [[.string("wal")]])
+  }
+
+  private func makeViewModel(
+    manager: DatabaseConnectionManager, config: ConnectionConfig, sql: String
+  ) -> NotebookViewModel {
+    let viewModel = NotebookViewModel(notebook: .newDocument())
+    viewModel.connectionManager = manager
+    viewModel.connectionState = .connected
+    viewModel.notebook.connectionConfig = config
+    viewModel.notebook.cells[0].content = sql
+    return viewModel
+  }
+
+  /// Review runs the cell immediately. Wait until that run finishes.
+  private func runWithoutDialog(_ viewModel: NotebookViewModel, cellId: UUID) async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      viewModel.onStatementsExecuted = { continuation.resume() }
+      viewModel.confirmAndRunCell(id: cellId)
+    }
+    await viewModel.executionQueue.waitForIdle()
   }
 
   private func sqliteConfig(

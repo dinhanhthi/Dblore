@@ -134,7 +134,7 @@ struct CellUpdateStatementTests {
       DatabaseConnectionManager.evaluate(
         classified, policy: ProtectionPolicy(protectionLevel: .schemaOnly)) == .allowed)
     #expect(
-      NotebookViewModel.statementsNeedingConfirmation(classified, safeMode: .alertRead) != nil)
+      NotebookViewModel.statementsNeedingConfirmation(classified, commitStyle: .confirm) != nil)
   }
 
   @Test("Edited text: empty or 'null' on a NULL cell binds NULL, other text is kept")

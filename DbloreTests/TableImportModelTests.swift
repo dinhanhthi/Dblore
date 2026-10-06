@@ -223,9 +223,11 @@ struct TableImportModelTests {
   @Test("Safe Mode confirms the import summary before sending bound SQL")
   func safeModeSummary() async {
     var notebook = DbloreNotebook.newDocument()
-    notebook.connectionConfig = ConnectionConfig(
+    var config = ConnectionConfig(
       databaseType: .sqlite, database: "/tmp/unused.sqlite", username: "",
-      protectionLevel: .none, safeMode: .alertAll)
+      protectionLevel: .none, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    notebook.connectionConfig = config
     let viewModel = NotebookViewModel(notebook: notebook)
     let summary = "INSERT INTO \"t\" (\"name\") -- 1 rows from file"
     let batch = PendingStagedBatch(

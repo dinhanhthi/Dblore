@@ -40,13 +40,13 @@ struct WorkspaceProtectionTests {
 
   @Test("Stricter merge ORs protected mode and keeps the caller's Safe Mode")
   func stricterMergeFlags() {
-    let caller = ProtectionPolicy(protectionLevel: .none, safeMode: .alertAll)
+    let caller = ProtectionPolicy(protectionLevel: .none, safeMode: .silent)
     let connected = ProtectionPolicy(
-      protectionLevel: .readOnly, safeMode: .silent, protectedMode: true)
+      protectionLevel: .readOnly, safeMode: .safeAll, protectedMode: true)
     let merged = caller.stricter(connected)
     #expect(merged.protectionLevel == .readOnly)
     #expect(merged.protectedMode)
-    #expect(merged.safeMode == .alertAll)
+    #expect(merged.safeMode == .silent)
   }
 
   @Test("Actor gate blocks DELETE under a .readOnly connected config even with a .none caller")
@@ -107,10 +107,14 @@ struct WorkspaceProtectionTests {
     #expect(second.notebook.cells[0].isRunning == false)
   }
 
-  @Test("Per-connection Safe Mode from the workspace config applies in a tab")
+  @Test("Workspace commit style applies in a tab")
   func workspaceSafeModeApplies() throws {
-    let manager = makeWorkspace(safeMode: .alertAll)
-    let viewModel = try #require(tabViewModel(manager, content: "SELECT 1"))
+    var config = ConnectionConfig(protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
+    let viewModel = try #require(
+      tabViewModel(manager, content: "DELETE FROM users WHERE id = 1"))
 
     viewModel.confirmAndRunCell(id: viewModel.notebook.cells[0].id)
 

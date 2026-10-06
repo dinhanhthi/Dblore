@@ -2,111 +2,117 @@
 //  NotebookViewModel+ProtectionChange.swift
 //  Dblore
 //
-//  Runtime changes of the connection's safety settings (per-connection Safe Mode, protection
-//  level, protected mode). A change that weakens them needs the Safe Mode unlock (Touch ID or
-//  Safe Mode password; database password only when no Safe Mode password exists) while the
-//  current effective Safe Mode requires a password. Strengthening never does.
+//  Runtime changes of a connection's commit style and protection level. Unlock runs only when
+//  a Safe Mode password or Touch ID is configured. Lowering from review or password needs it
+//  (immediate < confirm < review < password). confirm → immediate does not. Lowering the
+//  protection level needs it only while the current style is password. The check compares
+//  resolved commit styles; it does not project legacy fields.
 //
 
 import Foundation
 
-/// The safety settings of a connection that a runtime change can weaken
+/// The safety settings of a connection that a runtime change can weaken.
 nonisolated struct ConnectionSafetyState: Equatable, Sendable {
-  /// Effective Safe Mode: the per-connection override, else the global mode
-  let safeMode: SafeMode
+  let commitStyle: CommitStyle
   let protectionLevel: ConnectionProtectionLevel
-  let protectedMode: Bool
 
-  init(safeMode: SafeMode, protectionLevel: ConnectionProtectionLevel, protectedMode: Bool) {
-    self.safeMode = safeMode
+  init(commitStyle: CommitStyle, protectionLevel: ConnectionProtectionLevel) {
+    self.commitStyle = commitStyle
     self.protectionLevel = protectionLevel
-    self.protectedMode = protectedMode
   }
 
-  /// No config: global Safe Mode, no protection (same as `ProtectionPolicy(config: nil)`)
-  init(config: ConnectionConfig?, globalSafeMode: SafeMode) {
+  /// No config: the default commit style, no protection (same as a missing policy).
+  init(config: ConnectionConfig?, defaultCommitStyle: CommitStyle) {
     self.init(
-      safeMode: config?.safeMode ?? globalSafeMode,
-      protectionLevel: config?.protectionLevel ?? .none,
-      protectedMode: config?.protectedMode ?? false)
-  }
-}
-
-extension SafeMode {
-  /// Explicit strength ordering: silent < alertRead < alertAll < safeRead < safeAll.
-  /// A password level is stronger than every dialog level (safeRead > alertAll: dropping the
-  /// password is a weakening even if more statement kinds get a dialog).
-  nonisolated var strength: Int {
-    switch self {
-    case .silent: 0
-    case .alertRead: 1
-    case .alertAll: 2
-    case .safeRead: 3
-    case .safeAll: 4
-    }
+      commitStyle: config?.resolvedCommitStyle(fallback: defaultCommitStyle) ?? defaultCommitStyle,
+      protectionLevel: config?.protectionLevel ?? .none)
   }
 }
 
 extension NotebookViewModel {
   // MARK: - Decision (pure)
 
-  /// True if changing `old` to `new` needs the Safe Mode unlock: the current effective Safe
-  /// Mode requires a password AND the change weakens the effective Safe Mode, lowers the
-  /// protection level (readOnly -> schemaOnly/none, schemaOnly -> none) or turns protected
-  /// mode off.
+  /// True when a Safe Mode password or Touch ID is configured and the change either lowers
+  /// the commit style from `review` or `password`, or lowers the protection level while the
+  /// current style is `password`.
   nonisolated static func requiresUnlockForChange(
-    from old: ConnectionSafetyState, to new: ConnectionSafetyState
-  ) -> Bool {
-    switch old.safeMode {
-    case .safeRead, .safeAll: break
-    case .silent, .alertRead, .alertAll: return false
-    }
-    return new.safeMode.strength < old.safeMode.strength
-      || new.protectionLevel.strictness < old.protectionLevel.strictness
-      || (old.protectedMode && !new.protectedMode)
-  }
-
-  /// Global Safe Mode picker: the per-connection rule on the Safe Mode alone (weakening away
-  /// from a password mode needs the unlock, strengthening never does). With no unlock
-  /// configured (no password, Touch ID off) nothing gates: there is nothing to verify against.
-  nonisolated static func requiresUnlockForGlobalSafeModeChange(
-    from old: SafeMode, to new: SafeMode, hasPassword: Bool, hasTouchID: Bool
+    from old: ConnectionSafetyState, to new: ConnectionSafetyState,
+    hasPassword: Bool, hasTouchID: Bool
   ) -> Bool {
     guard hasPassword || hasTouchID else { return false }
-    return requiresUnlockForChange(
-      from: ConnectionSafetyState(safeMode: old, protectionLevel: .none, protectedMode: false),
-      to: ConnectionSafetyState(safeMode: new, protectionLevel: .none, protectedMode: false))
+    let styleWeakened =
+      new.commitStyle.strength < old.commitStyle.strength
+      && (old.commitStyle == .review || old.commitStyle == .password)
+    let levelLowered =
+      new.protectionLevel.strictness < old.protectionLevel.strictness
+      && old.commitStyle == .password
+    return styleWeakened || levelLowered
+  }
+
+  /// Default commit-style picker: the same rule, on the style alone. With no unlock
+  /// configured (no password, Touch ID off) nothing gates.
+  nonisolated static func requiresUnlockForGlobalSafeModeChange(
+    from old: CommitStyle, to new: CommitStyle, hasPassword: Bool, hasTouchID: Bool
+  ) -> Bool {
+    requiresUnlockForChange(
+      from: ConnectionSafetyState(commitStyle: old, protectionLevel: .none),
+      to: ConnectionSafetyState(commitStyle: new, protectionLevel: .none),
+      hasPassword: hasPassword, hasTouchID: hasTouchID)
   }
 
   // MARK: - Requests (apply now, or hold for the unlock)
   // Without a connection config there is nothing to change: true, no unlock.
 
-  /// Per-connection Safe Mode (`nil` = use global). Applied now and returns true unless it
-  /// needs the unlock (returns false, nothing changed: apply with `applyConnectionSafeMode`
-  /// after a successful unlock).
-  func requestConnectionSafeModeChange(
-    to safeMode: SafeMode?, globalSafeMode: SafeMode = AppSettings.shared.safeMode
+  /// Commit style the user already chose. Applied now (via `applyCommitStyle`) and returns
+  /// true unless it needs the unlock (returns false, nothing changed: apply with
+  /// `applyConnectionCommitStyle` after a successful unlock).
+  func requestConnectionCommitStyle(
+    _ style: CommitStyle, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
   ) -> Bool {
-    guard var proposed = notebook.connectionConfig else { return true }  // nothing to protect
+    guard let current = notebook.connectionConfig else { return true }
+    let from = ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle)
+    let to = ConnectionSafetyState(commitStyle: style, protectionLevel: current.protectionLevel)
+    guard !needsUnlock(from: from, to: to) else { return false }
+    applyConnectionCommitStyle(style)
+    return true
+  }
+
+  /// Per-connection Safe Mode (`nil` = use global). Kept for the current Safe Mode menus.
+  /// Applied now and returns true unless the resolved commit style needs the unlock.
+  func requestConnectionSafeModeChange(
+    to safeMode: SafeMode?, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
+  ) -> Bool {
+    guard var proposed = notebook.connectionConfig else { return true }
     proposed.safeMode = safeMode
-    guard !requiresUnlock(for: proposed, globalSafeMode: globalSafeMode) else { return false }
+    guard !requiresUnlock(for: proposed, defaultCommitStyle: defaultCommitStyle) else {
+      return false
+    }
     applyConnectionSafeMode(safeMode)
     return true
   }
 
   /// Connection protection level. Applied now and returns true unless it needs the unlock
   /// (returns false, nothing changed: apply with `applyProtectionLevel` after the unlock).
+  /// A protection-level change writes `protectionLevel` only.
   func requestProtectionLevelChange(
-    to level: ConnectionProtectionLevel, globalSafeMode: SafeMode = AppSettings.shared.safeMode
+    to level: ConnectionProtectionLevel,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
   ) -> Bool {
-    guard var proposed = notebook.connectionConfig else { return true }  // nothing to protect
-    proposed.protectionLevel = level
-    guard !requiresUnlock(for: proposed, globalSafeMode: globalSafeMode) else { return false }
+    guard let current = notebook.connectionConfig else { return true }
+    let from = ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle)
+    let to = ConnectionSafetyState(commitStyle: from.commitStyle, protectionLevel: level)
+    guard !needsUnlock(from: from, to: to) else { return false }
     applyProtectionLevel(level)
     return true
   }
 
   // MARK: - Apply (after the request or a successful unlock)
+
+  /// Stores the commit style the user already chose, including its legacy pair.
+  func applyConnectionCommitStyle(_ style: CommitStyle) {
+    notebook.connectionConfig?.applyCommitStyle(style)
+    onDocumentChanged?()
+  }
 
   func applyConnectionSafeMode(_ safeMode: SafeMode?) {
     notebook.connectionConfig?.safeMode = safeMode
@@ -118,10 +124,19 @@ extension NotebookViewModel {
     onDocumentChanged?()
   }
 
-  private func requiresUnlock(for proposed: ConnectionConfig, globalSafeMode: SafeMode) -> Bool {
+  private func needsUnlock(from old: ConnectionSafetyState, to new: ConnectionSafetyState) -> Bool {
     Self.requiresUnlockForChange(
+      from: old, to: new,
+      hasPassword: AppSettings.shared.hasCustomPasswordSet,
+      hasTouchID: AppSettings.shared.isBiometricEnabled)
+  }
+
+  private func requiresUnlock(
+    for proposed: ConnectionConfig, defaultCommitStyle: CommitStyle
+  ) -> Bool {
+    needsUnlock(
       from: ConnectionSafetyState(
-        config: notebook.connectionConfig, globalSafeMode: globalSafeMode),
-      to: ConnectionSafetyState(config: proposed, globalSafeMode: globalSafeMode))
+        config: notebook.connectionConfig, defaultCommitStyle: defaultCommitStyle),
+      to: ConnectionSafetyState(config: proposed, defaultCommitStyle: defaultCommitStyle))
   }
 }

@@ -48,7 +48,7 @@ struct WorkspaceTransactionResolveTests {
     // Never show an NSAlert from tests: an unexpected prompt cancels
     workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
     let tabId = workspace.newNotebook()
-    try await workspace.connect(config: Self.config(), globalSafeMode: .silent)
+    try await workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
     guard let viewModel = workspace.viewModel(for: tabId) else {
       throw DatabaseError.notConnected
     }
@@ -112,7 +112,7 @@ struct WorkspaceTransactionResolveTests {
     await run("UPDATE \(fixture.table) SET v = 20 WHERE id = 1", in: fixture)
     let hold = await holdTransactionEnd(fixture.workspace.connectionManager)
     fixture.workspace.requestCommit()
-    let committing = Task { await fixture.workspace.confirmCommit(globalSafeMode: .silent) }
+    let committing = Task { await fixture.workspace.confirmCommit(defaultCommitStyle: .immediate) }
     var reached = hold.reached.makeAsyncIterator()
     _ = await reached.next()
     #expect(fixture.workspace.pendingTransaction.endingKind == .commit)

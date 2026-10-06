@@ -106,12 +106,10 @@ struct ViewModelReadOnlyTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "SELECT * FROM users"
 
-    // Set connection config with read-only mode enabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
-
-    // Ensure SafeMode is alertRead (only confirms modification queries, not SELECT)
-    let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
+    // confirm does not list SELECT. protectedMode stays off so the style is not forced to review.
+    var config = ConnectionConfig(protectionLevel: .readOnly, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    viewModel.notebook.connectionConfig = config
 
     // Act - reset the process-wide toast so leftovers from other tests can't leak in
     WorkspaceWindowManager.shared.dismissToast()
@@ -124,9 +122,6 @@ struct ViewModelReadOnlyTests {
     if let toast = WorkspaceWindowManager.shared.toastState.currentToast {
       #expect(toast.type != .error)
     }
-
-    // Cleanup
-    AppSettings.shared.safeMode = previousSafeMode
   }
 
   @Test("Read-only mode disabled allows UPDATE query")
@@ -137,16 +132,13 @@ struct ViewModelReadOnlyTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
 
-    // Set connection config with read-only mode disabled
-    viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .none)
+    // Unprotected confirm: a review candidate is not used, so the UPDATE still asks.
+    var config = ConnectionConfig(protectionLevel: .none, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    viewModel.notebook.connectionConfig = config
 
     // Disable bypass confirmation to ensure dialog is shown
     AppSettings.shared.bypassDestructiveQueryConfirmation = false
-
-    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
-    let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
-    defer { AppSettings.shared.safeMode = previousSafeMode }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)

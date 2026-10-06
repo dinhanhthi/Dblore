@@ -336,7 +336,7 @@ struct SchemaLoadPerformanceTests {
     _ = try await admin.executeInternal("CREATE SCHEMA \(schema)")
     let workspace = WorkspaceManager(workspace: Workspace())
     do {
-      try await workspace.connect(config: Self.config(), globalSafeMode: .silent)
+      try await workspace.connect(config: Self.config(), defaultCommitStyle: .immediate)
       let version = try await admin.executeInternal("SELECT current_setting('server_version_num')")
       var versionNum = 0
       if case .string(let text) = version.rows[0][0] { versionNum = Int(text) ?? 0 }

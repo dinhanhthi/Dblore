@@ -1,8 +1,8 @@
 // GlobalSafeModeChangeGateTests.swift
-// The global Safe Mode picker (SafeModeModal, Settings > Security) uses the per-connection
-// rule: weakening away from a password Safe Mode needs the unlock, strengthening never does.
-// Without any unlock (no password, no Touch ID) nothing gates, so the user is not locked out.
-// Touch ID can only be enabled once a Safe Mode password exists.
+// The default commit-style picker uses the same strength rule as a connection: lowering
+// from review or password needs the unlock when a password or Touch ID is configured.
+// confirm → immediate does not. Strengthening never does. With no unlock configured
+// nothing gates, so the user is not locked out.
 
 import Foundation
 import Testing
@@ -12,19 +12,20 @@ import Testing
 @Suite("Global Safe Mode change gate")
 @MainActor
 struct GlobalSafeModeChangeGateTests {
-  private let modes: [SafeMode] = [.silent, .alertRead, .alertAll, .safeRead, .safeAll]
+  private let styles: [CommitStyle] = [.immediate, .confirm, .review, .password]
 
-  /// Expected: from a password mode to a weaker mode, with some unlock configured
-  private func expected(from: SafeMode, to: SafeMode, hasUnlock: Bool) -> Bool {
-    hasUnlock && from.requiresPassword && to.strength < from.strength
+  /// Unlock only when some credential exists, the new style is weaker, and the old style
+  /// is review or password.
+  private func expected(from: CommitStyle, to: CommitStyle, hasUnlock: Bool) -> Bool {
+    hasUnlock && to.strength < from.strength && (from == .review || from == .password)
   }
 
   @Test(
-    "Rule table: every (from, to) pair with and without password and Touch ID",
+    "Rule table: every (from, to) commit style with and without password and Touch ID",
     arguments: [(false, false), (true, false), (false, true), (true, true)])
   func ruleTable(hasPassword: Bool, hasTouchID: Bool) {
-    for from in modes {
-      for to in modes {
+    for from in styles {
+      for to in styles {
         let actual = NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
           from: from, to: to, hasPassword: hasPassword, hasTouchID: hasTouchID)
         #expect(
@@ -34,37 +35,45 @@ struct GlobalSafeModeChangeGateTests {
     }
   }
 
-  @Test("safeAll -> silent with a password requires unlock")
+  @Test("password → review with a password, and review → immediate with Touch ID, require unlock")
   func weakeningWithPassword() {
     #expect(
       NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-        from: .safeAll, to: .silent, hasPassword: true, hasTouchID: false))
+        from: .password, to: .review, hasPassword: true, hasTouchID: false))
     #expect(
       NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-        from: .safeRead, to: .alertAll, hasPassword: false, hasTouchID: true))
+        from: .review, to: .immediate, hasPassword: false, hasTouchID: true))
   }
 
-  @Test("safeRead -> safeAll (strengthening) never requires unlock")
+  @Test("confirm → immediate does not require unlock")
+  func confirmToImmediateIsFree() {
+    #expect(
+      !NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
+        from: .confirm, to: .immediate, hasPassword: true, hasTouchID: true))
+  }
+
+  @Test("Raising strength never requires unlock")
   func strengtheningIsFree() {
     #expect(
       !NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-        from: .safeRead, to: .safeAll, hasPassword: true, hasTouchID: true))
+        from: .confirm, to: .password, hasPassword: true, hasTouchID: true))
   }
 
   @Test("No password and no Touch ID: weakening is not gated (no lockout)")
   func noUnlockConfiguredIsNotGated() {
     #expect(
       !NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-        from: .safeAll, to: .silent, hasPassword: false, hasTouchID: false))
+        from: .password, to: .immediate, hasPassword: false, hasTouchID: false))
   }
 
   @Test("Same semantics as the per-connection rule when an unlock is configured")
   func matchesPerConnectionRule() {
-    for from in modes {
-      for to in modes {
+    for from in styles {
+      for to in styles {
         let perConnection = NotebookViewModel.requiresUnlockForChange(
-          from: ConnectionSafetyState(safeMode: from, protectionLevel: .none, protectedMode: false),
-          to: ConnectionSafetyState(safeMode: to, protectionLevel: .none, protectedMode: false))
+          from: ConnectionSafetyState(commitStyle: from, protectionLevel: .none),
+          to: ConnectionSafetyState(commitStyle: to, protectionLevel: .none),
+          hasPassword: true, hasTouchID: false)
         #expect(
           NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
             from: from, to: to, hasPassword: true, hasTouchID: false) == perConnection)

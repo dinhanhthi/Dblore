@@ -330,7 +330,7 @@ struct ClosedConnectionTests {
     workspace.pendingTransactionPrompt = { _, _, _ in .cancel }
     _ = workspace.newNotebook()
     do {
-      try await workspace.connect(config: Self.config(protectedMode: true), globalSafeMode: .silent)
+      try await workspace.connect(config: Self.config(protectedMode: true), defaultCommitStyle: .immediate)
       let pid = try await backendPid(workspace.connectionManager)
       _ = try await workspace.connectionManager.execute(
         userSQL: "UPDATE \(table) SET v = 20 WHERE id = 1", policy: open)

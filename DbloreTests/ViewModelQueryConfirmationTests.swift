@@ -112,16 +112,21 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "UPDATE users SET name = 'John'"
 
-    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    // Pin the global commit style (loaded from UserDefaults; other tests persist different values)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
-    defer { AppSettings.shared.safeMode = previousSafeMode }
+    AppSettings.shared.commitStyle = .confirm
+    defer {
+      AppSettings.shared.commitStyle = previousStyle
+      AppSettings.shared.safeMode = previousSafeMode
+    }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
     #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.requiresPassword == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
     #expect(viewModel.queryConfirmationState.pendingQuery == "UPDATE users SET name = 'John'")
   }
@@ -134,16 +139,21 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "DELETE FROM users WHERE id = 1"
 
-    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    // Pin the global commit style (loaded from UserDefaults; other tests persist different values)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
-    defer { AppSettings.shared.safeMode = previousSafeMode }
+    AppSettings.shared.commitStyle = .confirm
+    defer {
+      AppSettings.shared.commitStyle = previousStyle
+      AppSettings.shared.safeMode = previousSafeMode
+    }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
     #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.requiresPassword == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
     #expect(viewModel.queryConfirmationState.pendingQuery == "DELETE FROM users WHERE id = 1")
   }
@@ -156,16 +166,21 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "INSERT INTO users (name) VALUES ('John')"
 
-    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    // Pin the global commit style (loaded from UserDefaults; other tests persist different values)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
-    defer { AppSettings.shared.safeMode = previousSafeMode }
+    AppSettings.shared.commitStyle = .confirm
+    defer {
+      AppSettings.shared.commitStyle = previousStyle
+      AppSettings.shared.safeMode = previousSafeMode
+    }
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
 
     // Assert
     #expect(viewModel.queryConfirmationState.showDialog == true)
+    #expect(viewModel.queryConfirmationState.requiresPassword == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == cellId)
     #expect(
       viewModel.queryConfirmationState.pendingQuery == "INSERT INTO users (name) VALUES ('John')")
@@ -179,19 +194,20 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "SELECT * FROM users"
 
-    // Ensure SafeMode is alertRead (only confirms modification queries, not SELECT)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
+    AppSettings.shared.commitStyle = .confirm
 
     // Act
     viewModel.confirmAndRunCell(id: cellId)
 
-    // Assert - No dialog should be shown for SELECT in alertRead mode
+    // Assert - confirm does not list a plain SELECT
     #expect(viewModel.queryConfirmationState.showDialog == false)
     #expect(viewModel.queryConfirmationState.pendingCellId == nil)
     #expect(viewModel.queryConfirmationState.pendingQuery == "")
 
     // Cleanup
+    AppSettings.shared.commitStyle = previousStyle
     AppSettings.shared.safeMode = previousSafeMode
   }
 
@@ -202,10 +218,13 @@ struct ViewModelQueryConfirmationTests {
     let viewModel = NotebookViewModel(notebook: notebook)
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "DELETE FROM users"
-    // Pin global SafeMode (loaded from UserDefaults; other tests persist different values)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .alertRead
-    defer { AppSettings.shared.safeMode = previousSafeMode }
+    AppSettings.shared.commitStyle = .confirm
+    defer {
+      AppSettings.shared.commitStyle = previousStyle
+      AppSettings.shared.safeMode = previousSafeMode
+    }
     viewModel.confirmAndRunCell(id: cellId)
     #expect(viewModel.queryConfirmationState.showDialog == true)
 
@@ -224,9 +243,13 @@ struct ViewModelQueryConfirmationTests {
     let cellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].content = "SELECT 1; SET statement_timeout = 0"
     viewModel.notebook.connectionConfig = ConnectionConfig(protectionLevel: .readOnly)
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
-    AppSettings.shared.safeMode = .silent
-    defer { AppSettings.shared.safeMode = previousSafeMode }
+    AppSettings.shared.commitStyle = .immediate
+    defer {
+      AppSettings.shared.commitStyle = previousStyle
+      AppSettings.shared.safeMode = previousSafeMode
+    }
 
     // Reset the process-wide toast so leftovers from other tests can't leak in
     WorkspaceWindowManager.shared.dismissToast()
@@ -239,16 +262,18 @@ struct ViewModelQueryConfirmationTests {
 
   // MARK: - Editor mode
 
-  /// Runs `runEditorQuery` on the whole editor content with SafeMode and Simple Mode pinned.
-  private func runEditor(_ sql: String, safeMode: SafeMode) async -> NotebookViewModel {
+  /// Runs `runEditorQuery` on the whole editor content with the commit style and Simple Mode pinned.
+  private func runEditor(_ sql: String, style: CommitStyle) async -> NotebookViewModel {
     let viewModel = NotebookViewModel(notebook: createTestNotebook())
     viewModel.connectionState = .connected
     viewModel.editorContent = sql
+    let previousStyle = AppSettings.shared.commitStyle
     let previousSafeMode = AppSettings.shared.safeMode
     let previousSimpleMode = AppSettings.shared.editorSimpleMode
-    AppSettings.shared.safeMode = safeMode
+    AppSettings.shared.commitStyle = style
     AppSettings.shared.editorSimpleMode = false
     defer {
+      AppSettings.shared.commitStyle = previousStyle
       AppSettings.shared.safeMode = previousSafeMode
       AppSettings.shared.editorSimpleMode = previousSimpleMode
     }
@@ -256,28 +281,29 @@ struct ViewModelQueryConfirmationTests {
     return viewModel
   }
 
-  @Test("Editor alertRead confirms a DELETE without WHERE after a SELECT")
-  func editorAlertReadConfirmsLaterDelete() async {
-    let state = await runEditor("SELECT 1; DELETE FROM t", safeMode: .alertRead)
+  @Test("Editor confirm lists a DELETE without WHERE after a SELECT")
+  func editorConfirmListsLaterDelete() async {
+    let state = await runEditor("SELECT 1; DELETE FROM t", style: .confirm)
       .queryConfirmationState
 
     #expect(state.showDialog)
+    #expect(!state.requiresPassword)
     #expect(state.pendingCellId == nil)
     #expect(state.affectsAllRows)
     #expect(state.statements.map(\.index) == [1])
   }
 
-  @Test("Editor silent confirms a SET of a brake GUC")
-  func editorSilentConfirmsBrakeSet() async {
-    let state = await runEditor("SET lock_timeout = 0", safeMode: .silent).queryConfirmationState
+  @Test("Editor immediate does not confirm a brake SET")
+  func editorImmediateSkipsBrakeSet() async {
+    let state = await runEditor("SET lock_timeout = 0", style: .immediate).queryConfirmationState
 
-    #expect(state.showDialog)
-    #expect(state.statements.first?.touchesBrake == true)
+    #expect(!state.showDialog)
+    #expect(state.statements.isEmpty)
   }
 
-  @Test("Editor alertRead confirms CALL (fail closed)")
-  func editorAlertReadConfirmsCall() async {
-    let state = await runEditor("CALL do_things()", safeMode: .alertRead).queryConfirmationState
+  @Test("Editor confirm lists CALL (fail closed)")
+  func editorConfirmListsCall() async {
+    let state = await runEditor("CALL do_things()", style: .confirm).queryConfirmationState
 
     #expect(state.showDialog)
     #expect(state.statements.map(\.index) == [0])
@@ -285,31 +311,33 @@ struct ViewModelQueryConfirmationTests {
 
   // MARK: - Run All
 
-  /// Runs `runAllCells` on one SQL cell per entry with the given bypass setting.
+  /// Runs `runAllCells` on one SQL cell per entry. Commit style defaults to confirm so the
+  /// destructive bypass applies; parallel tests mutate the global setting.
   private func runAll(
-    _ contents: [String], bypass: Bool, protection: ConnectionProtectionLevel = .none
+    _ contents: [String], bypass: Bool, protection: ConnectionProtectionLevel = .none,
+    style: CommitStyle = .confirm
   ) async -> NotebookViewModel {
     let viewModel = NotebookViewModel(notebook: createTestNotebook())
     viewModel.notebook.cells = contents.map {
       NotebookCell(id: UUID(), cellType: .sql, content: $0, executionCount: 0, result: nil)
     }
-    // Pin Safe Mode per connection: Run All asks for the unlock under safeRead/safeAll, and the
-    // global setting comes from the host's UserDefaults
-    viewModel.notebook.connectionConfig = ConnectionConfig(
-      protectionLevel: protection, safeMode: .alertRead)
-    // Pass the bypass explicitly: parallel tests mutate the global setting
+    var config = ConnectionConfig(protectionLevel: protection, protectedMode: false)
+    config.applyCommitStyle(style)
+    viewModel.notebook.connectionConfig = config
     await viewModel.runAllCells(bypass: bypass)
     return viewModel
   }
 
-  @Test("Run All confirms a brake SET even when the destructive bypass is on")
+  @Test("Run All confirms a brake or privilege change even when the destructive bypass is on")
   func runAllConfirmsBrakeSetDespiteBypass() async {
-    let state = await runAll(["SELECT 1", "SET statement_timeout = 0"], bypass: true)
-      .queryConfirmationState
+    for sql in ["SET statement_timeout = 0", "SET ROLE admin"] {
+      let state = await runAll(["SELECT 1", sql], bypass: true).queryConfirmationState
 
-    #expect(state.showRunAllConfirmation)
-    #expect(state.runAllConfirmCells.map(\.number) == [2])
-    #expect(state.runAllConfirmCells.first?.isSafetyCritical == true)
+      #expect(state.showRunAllConfirmation, "\(sql)")
+      #expect(!state.runAllAwaitingUnlock, "\(sql)")
+      #expect(state.runAllConfirmCells.map(\.number) == [2], "\(sql)")
+      #expect(state.runAllConfirmCells.first?.isSafetyCritical == true, "\(sql)")
+    }
   }
 
   @Test("Run All with the bypass on runs plain DML without a dialog")
@@ -360,23 +388,23 @@ struct ViewModelQueryConfirmationTests {
   func previewSkipsLeadingComments() {
     let classified = SQLStatementClassifier.classify("-- note\n/* block */ DELETE FROM t")
     let statements = NotebookViewModel.statementsNeedingConfirmation(
-      classified, safeMode: .alertRead)
+      classified, commitStyle: .confirm)
 
     #expect(statements?.first?.preview == "DELETE FROM t")
   }
 
   @Test("Confirmation summary lists the first 8 statements, then how many more")
   func confirmationSummaryIsCapped() throws {
-    let sql = (1...10).map { "SELECT \($0)" }.joined(separator: "; ")
+    let sql = (1...10).map { "INSERT INTO t\($0) VALUES (1)" }.joined(separator: "; ")
     let statements = try #require(
       NotebookViewModel.statementsNeedingConfirmation(
-        SQLStatementClassifier.classify(sql), safeMode: .alertAll))
+        SQLStatementClassifier.classify(sql), commitStyle: .confirm))
 
     let lines = NotebookViewModel.confirmationSummary(statements).split(separator: "\n")
 
     #expect(lines.count == 9)
-    #expect(lines.first == "1. SELECT 1")
-    #expect(lines[7] == "8. SELECT 8")
+    #expect(lines.first == "1. INSERT INTO t1 VALUES (1)")
+    #expect(lines[7] == "8. INSERT INTO t8 VALUES (1)")
     #expect(lines.last == "…and 2 more")
   }
 
@@ -384,7 +412,7 @@ struct ViewModelQueryConfirmationTests {
   func runAllSummaryNamesCells() throws {
     let statements = try #require(
       NotebookViewModel.statementsNeedingConfirmation(
-        SQLStatementClassifier.classify("SET statement_timeout = 0"), safeMode: .silent))
+        SQLStatementClassifier.classify("SET statement_timeout = 0"), commitStyle: .confirm))
     let cell = RunAllCell(id: UUID(), number: 3, query: "", statements: statements)
 
     let summary = NotebookViewModel.runAllSummary([cell])

@@ -13,7 +13,7 @@ enum CommitStyle: String, Codable, Sendable {
   case password
 
   /// immediate < confirm < review < password.
-  var strength: Int {
+  nonisolated var strength: Int {
     switch self {
     case .immediate: 0
     case .confirm: 1
@@ -44,7 +44,7 @@ enum CommitStyle: String, Codable, Sendable {
   }
 
   /// Protected plus password becomes review, and that mapping is accepted.
-  static func migrate(protectedMode: Bool, safeMode: SafeMode?) -> CommitStyle? {
+  nonisolated static func migrate(protectedMode: Bool, safeMode: SafeMode?) -> CommitStyle? {
     if protectedMode {
       return .review
     }

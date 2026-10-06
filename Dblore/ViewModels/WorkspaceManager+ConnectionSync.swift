@@ -9,7 +9,7 @@
 
 import Foundation
 
-/// A connect held by `WorkspaceManager.connect(config:globalSafeMode:)`
+/// A connect held by `WorkspaceManager.connect(config:defaultCommitStyle:)`
 enum WorkspaceConnectError: Error, Equatable {
   /// Same database with weaker safety settings: waiting for the Safe Mode unlock
   case unlockRequired
@@ -65,16 +65,19 @@ extension WorkspaceManager {
 
   /// True if connecting with `new` needs the Safe Mode unlock: `new` targets the same database
   /// as `current` (host, port, database, username; strings trimmed and compared
-  /// case-insensitively, so a case variant cannot dodge the check) and the change weakens the
-  /// safety settings while the current effective Safe Mode requires a password
+  /// case-insensitively, so a case variant cannot dodge the check) and the resolved commit
+  /// style weakens under the same rule as a runtime change
   /// (`NotebookViewModel.requiresUnlockForChange`). A different target is a new connection.
+  /// `defaultCommitStyle` is the fallback for a legacy unprotected connection with a nil safe mode.
   nonisolated static func connectRequiresUnlock(
-    current: ConnectionConfig?, new: ConnectionConfig, globalSafeMode: SafeMode
+    current: ConnectionConfig?, new: ConnectionConfig, defaultCommitStyle: CommitStyle,
+    hasPassword: Bool, hasTouchID: Bool
   ) -> Bool {
     guard let current, isSameTarget(current, new) else { return false }
     return NotebookViewModel.requiresUnlockForChange(
-      from: ConnectionSafetyState(config: current, globalSafeMode: globalSafeMode),
-      to: ConnectionSafetyState(config: new, globalSafeMode: globalSafeMode))
+      from: ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle),
+      to: ConnectionSafetyState(config: new, defaultCommitStyle: defaultCommitStyle),
+      hasPassword: hasPassword, hasTouchID: hasTouchID)
   }
 
   nonisolated private static func isSameTarget(
@@ -104,16 +107,19 @@ extension WorkspaceManager {
   ///   when the connect is held in `pendingWeakeningConnect` (nothing changed); connect with
   ///   `completePendingWeakeningConnect()` after the unlock.
   func connect(
-    config: ConnectionConfig, globalSafeMode: SafeMode = AppSettings.shared.safeMode,
-    isAutoConnect: Bool = false
+    config: ConnectionConfig, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    isAutoConnect: Bool = false,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async throws {
     if !isAutoConnect { await supersedeAutoConnect() }
-    guard await resolvePendingTransaction(action: .disconnect, globalSafeMode: globalSafeMode)
+    guard await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
     else {
       throw WorkspaceConnectError.pendingTransactionKept
     }
     if Self.connectRequiresUnlock(
-      current: workspace.connectionConfig, new: config, globalSafeMode: globalSafeMode)
+      current: workspace.connectionConfig, new: config, defaultCommitStyle: defaultCommitStyle,
+      hasPassword: hasPassword, hasTouchID: hasTouchID)
     {
       pendingWeakeningConnect = config
       pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material

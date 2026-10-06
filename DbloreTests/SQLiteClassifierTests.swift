@@ -75,8 +75,8 @@ struct SQLiteClassifierTests {
     #expect(!statement.isReadOnlySafe)
     #expect(blocked(statements, readOnly))
     #expect(blocked(statements, schemaOnly))
-    let alert = NotebookViewModel.statementsNeedingConfirmation(statements, safeMode: .alertRead)
-    let safe = NotebookViewModel.statementsNeedingConfirmation(statements, safeMode: .safeRead)
+    let alert = NotebookViewModel.statementsNeedingConfirmation(statements, commitStyle: .confirm)
+    let safe = NotebookViewModel.statementsNeedingConfirmation(statements, commitStyle: .password)
     #expect(alert?.isEmpty == false)
     #expect(safe?.isEmpty == false)
   }

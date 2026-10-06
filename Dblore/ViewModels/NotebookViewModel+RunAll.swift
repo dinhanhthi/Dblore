@@ -12,15 +12,14 @@ extension NotebookViewModel {
   ///
   /// 1. Every cell is checked with the protection gate first: if any cell is blocked, Run All
   ///    stops with the gate's error toast and nothing runs.
-  /// 2. A cell needs confirmation if any statement modifies data or schema, is a utility
-  ///    (DO, CALL, COPY, ...) or unrecognized statement, changes the session brakes or changes
-  ///    role/privileges (same rules as Safe Mode `alertRead`).
-  /// 3. The dialog is shown if a cell changes the session brakes or privileges (ALWAYS, even
-  ///    when `bypassDestructiveQueryConfirmation` is on), or if any cell needs confirmation and
-  ///    the bypass is off. With the bypass on, only the safety-critical cells are listed/skippable.
-  /// 4. Safe Mode `safeRead` (any cell needs confirmation) or `safeAll` (always): Run All first
-  ///    asks for the Safe Mode unlock (Touch ID or password sheet) instead of the dialog, even
-  ///    with the bypass on; after the unlock every cell runs.
+  /// 2. The write list is the same as statement confirmation: the connection's resolved commit
+  ///    style. `confirm` and `password` list statements `mayWrite` treats as writes. `immediate`
+  ///    and `review` list nothing, including a brake `SET`.
+  /// 3. `password` shows the unlock sheet instead of the dialog when that list is non-empty.
+  ///    The destructive bypass does not apply. After the unlock every cell runs.
+  /// 4. `confirm` shows the Run All dialog when the list is non-empty. With
+  ///    `bypassDestructiveQueryConfirmation` on, only safety-critical cells (a brake or a
+  ///    privilege change) stay listed.
   /// - Parameter bypass: snapshot of the setting, taken when Run All is requested.
   func runAllCells(
     bypass: Bool = AppSettings.shared.bypassDestructiveQueryConfirmation
@@ -47,28 +46,29 @@ extension NotebookViewModel {
       }
     }
 
+    let commitStyle =
+      notebook.connectionConfig?.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+      ?? AppSettings.shared.commitStyle
     let allCells = candidates.map { offset, cell in
       let parameters = boundParameterValues(for: cell.content, cellId: cell.id) ?? [:]
       return RunAllCell(
         id: cell.id, number: offset + 1, query: cell.content,
         statements: Self.statementsNeedingConfirmation(
-          classifiedStatements(for: cell.content), safeMode: .alertRead,
+          classifiedStatements(for: cell.content), commitStyle: commitStyle,
           parameters: parameters, dialect: sqlDialect) ?? [],
         parameterValues: parameters)
     }
 
-    // Safe Mode password levels: unlock before anything runs (the bypass does not apply)
-    let safeMode = notebook.connectionConfig?.safeMode ?? AppSettings.shared.safeMode
-    if safeMode.requiresPassword,
-      safeMode == .safeAll || allCells.contains(where: \.needsConfirmation)
-    {
-      presentRunAllUnlock(allCells, safeMode: safeMode)
+    // password replaces the dialog with the unlock sheet only when the write list is non-empty.
+    // The destructive bypass does not apply on this path.
+    if commitStyle == .password, allCells.contains(where: \.needsConfirmation) {
+      presentRunAllUnlock(allCells)
       return
     }
 
-    // With the bypass on, only safety-critical cells still need confirmation
+    // Bypass applies to confirm only. A brake or privilege cell stays listed.
     let pendingCells = allCells.map { cell in
-      guard bypass, !cell.isSafetyCritical else { return cell }
+      guard commitStyle == .confirm, bypass, !cell.isSafetyCritical else { return cell }
       return RunAllCell(
         id: cell.id, number: cell.number, query: cell.query, statements: [],
         parameterValues: cell.parameterValues)
@@ -113,14 +113,12 @@ extension NotebookViewModel {
     queryConfirmationState.clearRunAll()
   }
 
-  /// Shows the Safe Mode unlock sheet for Run All, listing the statements `safeMode` confirms,
-  /// numbered across cells ("Cell N: ...") so every row has a unique id.
-  private func presentRunAllUnlock(_ cells: [RunAllCell], safeMode: SafeMode) {
+  /// Shows the unlock sheet for a password Run All. The sheet lists the write statements
+  /// already attached to each cell, numbered across cells ("Cell N: ...") so every row has a
+  /// unique id.
+  private func presentRunAllUnlock(_ cells: [RunAllCell]) {
     let listed = cells.flatMap { cell in
-      (Self.statementsNeedingConfirmation(
-        classifiedStatements(for: cell.query), safeMode: safeMode,
-        parameters: cell.parameterValues, dialect: sqlDialect) ?? [])
-        .map { (cell.number, $0) }
+      cell.statements.map { (cell.number, $0) }
     }
     queryConfirmationState.clear()
     queryConfirmationState.statements = listed.enumerated().map { offset, entry in

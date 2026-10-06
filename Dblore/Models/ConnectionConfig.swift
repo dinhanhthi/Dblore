@@ -313,7 +313,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     safeMode = projection.safeMode
   }
 
-  func resolvedCommitStyle(fallback: CommitStyle) -> CommitStyle {
+  nonisolated func resolvedCommitStyle(fallback: CommitStyle) -> CommitStyle {
     let candidate: CommitStyle
     if let commitStyle {
       candidate = commitStyle
