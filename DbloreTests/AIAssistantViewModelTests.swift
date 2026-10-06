@@ -222,20 +222,33 @@ struct AIAssistantViewModelTests {
     #expect(client.requests.last?.messages.map(\.text) == ["one", "r", "two"])
   }
 
-  @Test("retry from an assistant entry resends the question before it")
-  func retryFromAssistantEntry() async {
+  @Test("retry from an assistant entry does nothing")
+  func retryFromAssistantEntryIgnored() async {
     let client = FakeAIChatClient(.events(["r"]))
     let vm = makeVM(client)
     vm.draft = "one"
     vm.send()
     await finish(vm)
-    vm.draft = "two"
-    vm.send()
+    vm.retry(from: vm.messages[1].id)
+    #expect(vm.messages.map(\.text) == ["one", "r"])
+    #expect(client.requests.count == 1)
+  }
+
+  @Test("retry with edited text replaces the question and drops later entries")
+  func retryWithEditedText() async {
+    let client = FakeAIChatClient(.events(["r"]))
+    let vm = makeVM(client)
+    for question in ["one", "two"] {
+      vm.draft = question
+      vm.send()
+      await finish(vm)
+    }
+    vm.retry(from: vm.messages[0].id, editedText: "  uno  ")
     await finish(vm)
-    vm.retry(from: vm.messages[3].id)
-    await finish(vm)
-    #expect(vm.messages.map(\.text) == ["one", "r", "two", "r"])
-    #expect(client.requests.count == 3)
+    #expect(vm.messages.map(\.text) == ["uno", "r"])
+    #expect(client.requests.last?.messages.map(\.text) == ["uno"])
+    vm.retry(from: vm.messages[0].id, editedText: "   ")
+    #expect(vm.messages.map(\.text) == ["uno", "r"])
   }
 
   @Test("retry with an unknown id does nothing")

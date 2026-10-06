@@ -241,7 +241,9 @@ struct AIAssistantPanel: View {
             AIMessageView(
               entry: entry, placeholder: assistant.isLoadingModel ? "Loading model…" : "Thinking…",
               onInsert: insertHandler,
-              onRetry: assistant.isGenerating ? nil : { retryEntryId = entry.id })
+              onRetry: canRetry(entry) ? { retryEntryId = entry.id } : nil,
+              onEdit: canRetry(entry)
+                ? { assistant.retry(from: entry.id, editedText: $0) } : nil)
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
@@ -273,6 +275,11 @@ struct AIAssistantPanel: View {
   }
 
   private static let bottomID = "ai-bottom"
+
+  /// Only the user's own messages can be restarted from, and not while a reply is streaming
+  private func canRetry(_ entry: AIChatEntry) -> Bool {
+    entry.role == .user && !assistant.isGenerating
+  }
 
   private var insertHandler: ((String) -> Void)? {
     guard let activeTab else { return nil }

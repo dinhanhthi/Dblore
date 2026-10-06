@@ -106,17 +106,18 @@ final class AIAssistantViewModel {
     submit(question: question)
   }
 
-  /// Restarts the conversation from a message: that question and everything after it are
-  /// dropped, then the question is sent again with the current provider, model and tables.
-  /// An assistant entry restarts from the question before it. The draft is left alone.
-  func retry(from id: UUID) {
+  /// Restarts the conversation from a user message: that question and everything after it
+  /// are dropped, then the question (or `editedText` when given) is sent with the current
+  /// provider, model and tables. The draft is left alone.
+  func retry(from id: UUID, editedText: String? = nil) {
     guard let index = messages.firstIndex(where: { $0.id == id }),
-      let userIndex = messages[...index].lastIndex(where: { $0.role == .user }),
-      activeProvider != nil
+      messages[index].role == .user, activeProvider != nil
     else { return }
-    let question = messages[userIndex].text
+    let question = (editedText ?? messages[index].text)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !question.isEmpty else { return }
     stop()
-    messages.removeSubrange(userIndex...)
+    messages.removeSubrange(index...)
     submit(question: question)
   }
 

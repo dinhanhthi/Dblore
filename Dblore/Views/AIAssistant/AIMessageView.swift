@@ -16,8 +16,12 @@ struct AIMessageView: View {
   let onInsert: ((String) -> Void)?
   /// Restarts the conversation from this entry; nil hides the button
   var onRetry: (() -> Void)?
+  /// Restarts the conversation from this entry with edited text; nil hides the button
+  var onEdit: ((String) -> Void)?
 
   @State private var isHovering = false
+  @State private var isEditing = false
+  @State private var editText = ""
 
   private var isUser: Bool { entry.role == .user }
   private var segments: [AIMessageSegment] { AIMessageParser.parse(entry.text) }
@@ -25,7 +29,7 @@ struct AIMessageView: View {
   var body: some View {
     HStack(spacing: 0) {
       if isUser { Spacer(minLength: Spacing.xl) }
-      content
+      bubbleContent
         .padding(Spacing.sm)
         .background(bubbleBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
@@ -35,24 +39,74 @@ struct AIMessageView: View {
             .opacity(isUser && !entry.isError ? 0 : 1)
         )
         .overlay(alignment: .topTrailing) {
-          if isHovering, let onRetry {
-            Button(action: onRetry) {
-              Image(systemName: "arrow.clockwise")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.foregroundMuted)
-                .frame(width: 18, height: 18)
-                .background(bubbleBackground)
-                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+          if isHovering, !isEditing, onRetry != nil || onEdit != nil {
+            HStack(spacing: Spacing.xs) {
+              if onEdit != nil {
+                actionButton("pencil", help: "Edit") {
+                  editText = entry.text
+                  isEditing = true
+                }
+              }
+              if let onRetry {
+                actionButton("arrow.clockwise", help: "Try again", action: onRetry)
+              }
             }
-            .buttonStyle(.plain)
-            .help("Try again")
             .padding(Spacing.xs)
           }
         }
+        .onHover { isHovering = $0 }
       if !isUser { Spacer(minLength: Spacing.xl) }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-    .onHover { isHovering = $0 }
+  }
+
+  private func actionButton(
+    _ symbol: String, help: String, action: @escaping () -> Void
+  )
+    -> some View
+  {
+    Button(action: action) {
+      Image(systemName: symbol)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(.foregroundMuted)
+        .frame(width: 18, height: 18)
+        .background(bubbleBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+    }
+    .buttonStyle(.plain)
+    .help(help)
+  }
+
+  @ViewBuilder
+  private var bubbleContent: some View {
+    if isEditing {
+      editor
+    } else {
+      content
+    }
+  }
+
+  private var canSendEdit: Bool {
+    !editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
+  private var editor: some View {
+    VStack(alignment: .trailing, spacing: Spacing.sm) {
+      TextField("Edit message", text: $editText, axis: .vertical)
+        .textFieldStyle(.plain)
+        .font(.labelText)
+        .lineLimit(1...8)
+      HStack(spacing: Spacing.sm) {
+        Button("Cancel") { isEditing = false }
+        Button("Send") {
+          isEditing = false
+          onEdit?(editText)
+        }
+        .disabled(!canSendEdit)
+      }
+      .font(.labelText)
+    }
+    .frame(minWidth: 200, maxWidth: .infinity, alignment: .trailing)
   }
 
   private var bubbleBackground: Color {
