@@ -365,7 +365,8 @@ struct InlineEditTransactionIntegrationTests {
     }
   }
 
-  @Test("Immediate on an unprotected connection: the grid edit commits and leaves the transaction idle")
+  @Test(
+    "Immediate on an unprotected connection: the grid edit commits and leaves the transaction idle")
   func gridEditCommittedImmediately() async throws {
     let table = "p6_grid_commit"
     try await withTable(table, protectedMode: false) { manager, observer in

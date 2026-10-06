@@ -52,20 +52,21 @@ struct QueryParametersContent: View {
       name: row.name,
       stored: storedParameter(named: row.name),
       // A `.script` tab does not mark the file dirty.
-      onStore: { viewModel.updateParameter($0, for: row.name) }
-    ) {
-      if row.isUnused {
-        Text("Unused")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-          .fixedSize()
-        Button(action: { viewModel.removeUnusedParameter(named: row.name) }) {
-          Image(systemName: "trash")
+      onStore: { viewModel.updateParameter($0, for: row.name) },
+      trailingAccessory: {
+        if row.isUnused {
+          Text("Unused")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+            .fixedSize()
+          Button(action: { viewModel.removeUnusedParameter(named: row.name) }) {
+            Image(systemName: "trash")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .help("Remove parameter")
         }
-        .buttonStyle(GhostButtonStyle(iconOnly: true))
-        .help("Remove parameter")
       }
-    }
+    )
   }
 
   private func storedParameter(named name: String) -> QueryParameter? {

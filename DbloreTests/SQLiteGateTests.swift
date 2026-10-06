@@ -78,7 +78,8 @@ struct SQLiteGateTests {
     try await manager.connect(config: config)
     defer { Task { await manager.disconnect() } }
 
-    let viewModel = makeViewModel(manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
+    let viewModel = makeViewModel(
+      manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
     let cellId = viewModel.notebook.cells[0].id
     await runWithoutDialog(viewModel, cellId: cellId)
 
@@ -111,7 +112,8 @@ struct SQLiteGateTests {
     try await manager.connect(config: config)
     defer { Task { await manager.disconnect() } }
 
-    let viewModel = makeViewModel(manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
+    let viewModel = makeViewModel(
+      manager: manager, config: config, sql: "PRAGMA journal_mode = OFF")
     let cellId = viewModel.notebook.cells[0].id
     viewModel.confirmAndRunCell(id: cellId)
     #expect(viewModel.queryConfirmationState.showDialog)

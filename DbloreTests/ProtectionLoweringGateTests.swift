@@ -204,7 +204,8 @@ struct ProtectionLoweringGateTests {
     #expect(viewModel.notebook.connectionConfig?.protectedMode == true)
   }
 
-  @Test("Workspace tab: a protection lowering under password does not reach the workspace until unlock")
+  @Test(
+    "Workspace tab: a protection lowering under password does not reach the workspace until unlock")
   func workspaceNotUpdatedUntilUnlock() throws {
     armUnlock()
     defer { AppSettings.shared.clearSafeModePassword() }

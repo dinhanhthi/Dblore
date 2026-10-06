@@ -120,7 +120,8 @@ extension WorkspaceManager {
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async throws {
     if !isAutoConnect { await supersedeAutoConnect() }
-    guard await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
+    guard
+      await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
     else {
       throw WorkspaceConnectError.pendingTransactionKept
     }

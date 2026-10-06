@@ -246,7 +246,8 @@ struct ViewModelSafeModeTests {
     #expect(
       NotebookViewModel.statementsNeedingConfirmation(classified, commitStyle: .review) == nil)
     #expect(
-      NotebookViewModel.statementsNeedingConfirmation(classified, commitStyle: .confirm)?.map(\.index)
+      NotebookViewModel.statementsNeedingConfirmation(classified, commitStyle: .confirm)?.map(
+        \.index)
         == [1])
   }
 

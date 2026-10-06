@@ -314,13 +314,15 @@ extension NotebookViewModel {
       } else if dataViewer != nil {
         if hasPendingStagedChanges {
           // Refresh stored values without replacing the batch's generation or drafts.
-          if isLiveEditTarget(target, cellId: nil), let result = editorResult, let state = dataViewer,
+          if isLiveEditTarget(target, cellId: nil), let result = editorResult,
+            let state = dataViewer,
             let column = result.columns.firstIndex(where: { $0.name == edit.columnName }),
             let row = result.rows.firstIndex(where: { values in
-              guard let statement = try? CellUpdateStatement.make(
-                qualifiedName: target.qualifiedName, columnName: edit.columnName,
-                newValue: edit.statement.values[0], primaryKeyColumns: target.primaryKeyColumns,
-                rowData: CellResult.rowData(columns: result.columns, row: values))
+              guard
+                let statement = try? CellUpdateStatement.make(
+                  qualifiedName: target.qualifiedName, columnName: edit.columnName,
+                  newValue: edit.statement.values[0], primaryKeyColumns: target.primaryKeyColumns,
+                  rowData: CellResult.rowData(columns: result.columns, row: values))
               else { return false }
               return statement.values.dropFirst() == edit.statement.values.dropFirst()
             })

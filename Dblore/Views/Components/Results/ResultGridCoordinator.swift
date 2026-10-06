@@ -34,7 +34,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Brighter text color for normal cells on emphasized selection
   static let selectedTextColor = NSColor.alternateSelectedControlTextColor
   /// Brighter text color for NULL cells on emphasized selection (distinct from normal values)
-  static let selectedNullTextColor = NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75)
+  static let selectedNullTextColor = NSColor.alternateSelectedControlTextColor.withAlphaComponent(
+    0.75)
   /// Background of the current search match (the one Enter moved to), as in the result table
   static let currentMatchColor = NSColor(SearchHighlighter.currentMatchColor)
   /// Faint tint over the cells of the sorted column, read on each cell (the accent can change)
@@ -1083,11 +1084,11 @@ final class ResultGridCell: NSTableCellView {
   }
 
   func desiredTextColor(isEmphasized: Bool? = nil) -> NSColor {
-    let emphasized = isEmphasized ?? (
-      backgroundStyle == .emphasized
+    let emphasized =
+      isEmphasized
+      ?? (backgroundStyle == .emphasized
         || ((superview as? NSTableRowView)?.isSelected == true
-          && (superview as? NSTableRowView)?.isEmphasized == true)
-    )
+          && (superview as? NSTableRowView)?.isEmphasized == true))
     if isNull {
       return emphasized
         ? ResultGridCoordinator.selectedNullTextColor

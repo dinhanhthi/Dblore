@@ -39,7 +39,9 @@ struct CommitStyleHelpView: View {
         Text(
           "Review keeps changes in a pending transaction. The yellow bar shows them. Commit saves, Roll Back discards."
         )
-        Text("SELECT is never confirmed. The Default commit style in Settings is used for new connections.")
+        Text(
+          "SELECT is never confirmed. The Default commit style in Settings is used for new connections."
+        )
         Text(
           "Lowering the style from Review or Password asks for your Safe Mode password, if one is set."
         )

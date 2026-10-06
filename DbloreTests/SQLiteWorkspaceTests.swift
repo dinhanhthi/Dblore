@@ -235,8 +235,7 @@ struct SQLiteWorkspaceTests {
     .serialized,
     .timeLimit(.minutes(1)),
     arguments: [CommitStyle.immediate, .review], [false, true])
-  func viewerInlineEditCommitsImmediately(style: CommitStyle, withStagedInsert: Bool) async throws
-  {
+  func viewerInlineEditCommitsImmediately(style: CommitStyle, withStagedInsert: Bool) async throws {
     let url = try makeDatabase()
     defer { removeDatabase(url) }
     let handle = try SQLiteHandle(url: url)

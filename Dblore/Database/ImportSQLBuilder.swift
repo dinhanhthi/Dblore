@@ -11,11 +11,6 @@ nonisolated enum ImportSQLBuilder {
   struct Column: Sendable, Equatable {
     var name: String
     var kind: ImportTypeInference.Kind
-
-    init(name: String, kind: ImportTypeInference.Kind) {
-      self.name = name
-      self.kind = kind
-    }
   }
 
   static func createTable(

@@ -121,7 +121,8 @@ extension WorkspaceManager {
   /// Does nothing without `requestCommit()`.
   /// - Returns: true if committed (or nothing was pending).
   @discardableResult
-  func confirmCommit(defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle) async -> Bool {
+  func confirmCommit(defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle) async -> Bool
+  {
     isCommitConfirmationVisible = false
     guard let reviewed = commitReviewedGeneration else { return false }
     if commitRequiresUnlock(defaultCommitStyle: defaultCommitStyle) {

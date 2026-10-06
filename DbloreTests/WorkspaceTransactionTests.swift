@@ -356,7 +356,8 @@ struct WorkspaceTransactionCommitFlowTests {
   @Test("Confirmed Commit under stored safeAll does not open the unlock sheet")
   func confirmCommitSafeAllDoesNotUnlock() async {
     let manager = workspace(safeMode: .safeAll)
-    #expect(manager.workspace.connectionConfig?.resolvedCommitStyle(fallback: .immediate) == .review)
+    #expect(
+      manager.workspace.connectionConfig?.resolvedCommitStyle(fallback: .immediate) == .review)
     manager.requestCommit()
     #expect(!manager.isCommitUnlockVisible)
     await manager.confirmCommit(defaultCommitStyle: .password)
@@ -1036,7 +1037,8 @@ struct WorkspaceTransactionHistoryTests {
     }
     let env = Env(workspace: workspace, url: url, tabs: tabs)
     do {
-      try await workspace.connect(config: sqliteConfig(path: url.path), defaultCommitStyle: .immediate)
+      try await workspace.connect(
+        config: sqliteConfig(path: url.path), defaultCommitStyle: .immediate)
       await workspace.awaitSchemaLoad()
       try await body(env)
     } catch {

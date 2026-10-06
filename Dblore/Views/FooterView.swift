@@ -141,7 +141,9 @@ struct FooterView: View {
   /// Short connection state. A saved name or a server error stays out of this
   /// label so a line break cannot stretch the footer, the details row, or the
   /// welcome screen.
-  static func connectionStatusText(for state: ConnectionState, config _: ConnectionConfig?)
+  static func connectionStatusText(
+    for state: ConnectionState, config _: ConnectionConfig?
+  )
     -> String
   {
     switch state {

@@ -58,7 +58,8 @@ struct OpenAICompatibleClientTests {
   @Test("api.openai.com requests omit the token cap")
   func openAINoTokenCap() throws {
     let openAIBase = URL(string: "https://api.openai.com/v1")!
-    let urlRequest = OpenAICompatibleClient.makeRequest(request(), baseURL: openAIBase, apiKey: "sk-x")
+    let urlRequest = OpenAICompatibleClient.makeRequest(
+      request(), baseURL: openAIBase, apiKey: "sk-x")
     let body = try #require(urlRequest.httpBody)
     let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
     #expect(json["max_tokens"] == nil)
