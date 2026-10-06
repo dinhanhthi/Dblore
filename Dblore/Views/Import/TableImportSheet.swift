@@ -11,7 +11,11 @@ struct TableImportSheet: View {
   /// Loaded schema tables. Existing-table column types decide SQLite boolean casts.
   var tables: [DatabaseTable] = []
 
+  private static let errorAnchor = "import-content-end"
+
   @State private var model = TableImportModel()
+  @State private var previewWidth: CGFloat = 0
+  @State private var previewContentHeight: CGFloat = 0
   @State private var createsNewTable = true
   @State private var didSubmit = false
   @State private var importTask: Task<Void, Never>?
@@ -35,29 +39,47 @@ struct TableImportSheet: View {
         set: { if $0 || !isBusy { isPresented = $0 } }
       )
     ) {
-      ScrollView {
-        VStack(alignment: .leading, spacing: Spacing.lg) {
-          fileSection
-          if model.fileURL != nil {
-            formatSection
-            previewSection
-            mappingSection
-            destinationSection
-            sqlSection
+      ScrollViewReader { proxy in
+        ScrollView {
+          VStack(alignment: .leading, spacing: Spacing.lg) {
+            fileSection
+            if model.fileURL != nil {
+              formatSection
+              previewSection
+              mappingSection
+              destinationSection
+              sqlSection
+            }
+            if model.isLoading || model.isImporting {
+              ProgressView(value: model.progress)
+                .accessibilityLabel("Import progress")
+            }
+            if let error = model.errorMessage {
+              Text(error)
+                .font(.small)
+                .foregroundColor(.destructive)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Spacing.md)
+                .background(
+                  Color.destructive.opacity(0.1),
+                  in: RoundedRectangle(cornerRadius: CornerRadius.lg)
+                )
+                .overlay(
+                  RoundedRectangle(cornerRadius: CornerRadius.lg)
+                    .stroke(Color.destructive.opacity(0.4), lineWidth: 1)
+                )
+            }
           }
-          if model.isLoading || model.isImporting {
-            ProgressView(value: model.progress)
-              .accessibilityLabel("Import progress")
-          }
-          if let error = model.errorMessage {
-            Text(error)
-              .font(.small)
-              .foregroundColor(.destructive)
-              .textSelection(.enabled)
-          }
+          .padding(Spacing.md)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          // Anchor on the padded content so the scroll ends below the bottom padding
+          .id(Self.errorAnchor)
         }
-        .padding(Spacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: model.errorMessage) { _, message in
+          guard message != nil else { return }
+          withAnimation { proxy.scrollTo(Self.errorAnchor, anchor: .bottom) }
+        }
       }
     } footer: {
       GenericModalFooter {
@@ -83,69 +105,69 @@ struct TableImportSheet: View {
   }
 
   private var fileSection: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      sectionTitle("File")
-      HStack(spacing: Spacing.sm) {
-        Text(model.fileURL?.lastPathComponent ?? "No file selected")
-          .font(.bodyText)
-          .foregroundColor(model.fileURL == nil ? .foregroundMuted : .foreground)
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        Button("Choose File") { Task { await model.pickFile() } }
-          .buttonStyle(SecondaryButtonStyle())
-          .disabled(model.isLoading || model.isImporting)
-      }
-      if let size = fileSize {
-        Text(DataByteCount.text(Int64(size)))
-          .font(.monoSmall)
-          .foregroundColor(.foregroundMuted)
-        if size > 200 * 1_024 * 1_024 {
-          Label(
-            "Large files may take longer to import (over 200 MB)",
-            systemImage: "exclamationmark.triangle"
+    SettingsGroupCard(title: "File") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        HStack(spacing: Spacing.sm) {
+          Text(model.fileURL?.lastPathComponent ?? "No file selected")
+            .font(.bodyText)
+            .foregroundColor(model.fileURL == nil ? .foregroundMuted : .foreground)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button("Choose File") { Task { await model.pickFile() } }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.isLoading || model.isImporting)
+        }
+        if let size = fileSize {
+          Text(DataByteCount.text(Int64(size)))
+            .font(.monoSmall)
+            .foregroundColor(.foregroundMuted)
+          if size > 200 * 1_024 * 1_024 {
+            Label(
+              "Large files may take longer to import (over 200 MB)",
+              systemImage: "exclamationmark.triangle"
+            )
+            .font(.small)
+            .foregroundColor(.warning)
+          }
+          Text("Maximum import file size: 256 MB. Split larger files before importing.")
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+          Text(
+            "Up to \(limits.maxRows.formatted()) rows and \(limits.maxCells.formatted()) cells. "
+              + "Column types are inferred from the first 100 rows."
           )
           .font(.small)
-          .foregroundColor(.warning)
-        }
-        Text("Maximum import file size: 256 MB. Split larger files before importing.")
-          .font(.small)
           .foregroundColor(.foregroundMuted)
-        Text(
-          "Up to \(limits.maxRows.formatted()) rows and \(limits.maxCells.formatted()) cells. "
-            + "Column types are inferred from the first 100 rows."
-        )
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
+        }
       }
     }
   }
 
   private var formatSection: some View {
-    HStack(spacing: Spacing.lg) {
-      VStack(alignment: .leading, spacing: Spacing.xs) {
-        sectionTitle("Format")
-        Picker("Format", selection: formatSelection) {
-          Text("CSV").tag(0)
-          Text("TSV").tag(1)
-          Text("JSON / NDJSON").tag(2)
+    SettingsGroupCard(title: "Format") {
+      HStack(spacing: Spacing.lg) {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          Picker("Format", selection: formatSelection) {
+            Text("CSV").tag(0)
+            Text("TSV").tag(1)
+            Text("JSON / NDJSON").tag(2)
+          }
+          .labelsHidden()
+          .frame(width: 170)
         }
-        .labelsHidden()
-        .frame(width: 170)
+        if model.format != .json {
+          Toggle("First row is a header", isOn: headerSelection)
+            .toggleStyle(.checkbox)
+            .font(.small)
+        }
+        Spacer()
       }
-      if model.format != .json {
-        Toggle("First row is a header", isOn: headerSelection)
-          .toggleStyle(.checkbox)
-          .font(.small)
-          .padding(.top, Spacing.lg)
-      }
-      Spacer()
     }
   }
 
   private var previewSection: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      sectionTitle("Preview (first 100 rows)")
+    SettingsGroupCard(title: "Preview (first 100 rows)") {
       if model.mappings.isEmpty {
         Text(model.isLoading ? "Reading file..." : "No rows to preview")
           .font(.small)
@@ -155,16 +177,37 @@ struct TableImportSheet: View {
           VStack(alignment: .leading, spacing: 0) {
             previewRow(model.mappings.map(\.sourceName), header: true)
             ForEach(model.previewRows.indices, id: \.self) { index in
-              previewRow(model.previewRows[index].map { $0 ?? "NULL" }, header: false)
+              previewRow(
+                model.previewRows[index].map { previewText($0) }, header: false)
             }
           }
+          .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+          } action: {
+            previewContentHeight = $0
+          }
+          // A scroll view centers content narrower than itself; pin it to the leading edge
+          .frame(minWidth: previewWidth, alignment: .topLeading)
         }
-        .frame(height: 172)
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.width
+        } action: {
+          previewWidth = $0
+        }
+        .frame(height: min(max(previewContentHeight, 1), 172))
         .background(Color.appBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         .overlay(RoundedRectangle(cornerRadius: CornerRadius.md).stroke(Color.border))
       }
     }
+  }
+
+  /// Blank cells are bound as NULL on import, so the preview shows them as NULL.
+  private func previewText(_ value: String?) -> String {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return "NULL"
+    }
+    return value
   }
 
   private func previewRow(_ values: [String], header: Bool) -> some View {
@@ -186,62 +229,68 @@ struct TableImportSheet: View {
   }
 
   private var mappingSection: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      sectionTitle("Columns")
-      ForEach(model.mappings.indices, id: \.self) { index in
-        HStack(spacing: Spacing.sm) {
-          Toggle("", isOn: mappingIncluded(index))
-            .labelsHidden()
-            .toggleStyle(.checkbox)
-            .help("Include this column")
-          Text(model.mappings[index].sourceName)
-            .font(.small)
-            .foregroundColor(.foregroundMuted)
-            .lineLimit(1)
-            .frame(width: 160, alignment: .leading)
-          Image(systemName: "arrow.right")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
-          TextField("Destination column", text: mappingName(index))
-            .textFieldStyle(.plain)
-            .inputCapsuleStyle()
-            .disabled(!model.mappings[index].included)
-          Picker("Type", selection: mappingKind(index)) {
-            ForEach(kinds.indices, id: \.self) { kindIndex in
-              Text(kindLabel(kinds[kindIndex])).tag(kindIndex)
+    SettingsGroupCard(title: "Columns") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        ForEach(model.mappings.indices, id: \.self) { index in
+          HStack(spacing: Spacing.sm) {
+            Toggle("", isOn: mappingIncluded(index))
+              .labelsHidden()
+              .toggleStyle(.checkbox)
+              .help("Include this column")
+            Text(model.mappings[index].sourceName)
+              .font(.small)
+              .foregroundColor(.foregroundMuted)
+              .lineLimit(1)
+              .frame(width: 160, alignment: .leading)
+            Image(systemName: "arrow.right")
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+            TextField("Destination column", text: mappingName(index))
+              .textFieldStyle(.plain)
+              .inputCapsuleStyle()
+              .disabled(!model.mappings[index].included)
+            Picker("Type", selection: mappingKind(index)) {
+              ForEach(kinds.indices, id: \.self) { kindIndex in
+                Text(kindLabel(kinds[kindIndex])).tag(kindIndex)
+              }
             }
+            .labelsHidden()
+            .frame(width: 125)
+            .disabled(!model.mappings[index].included)
           }
-          .labelsHidden()
-          .frame(width: 125)
-          .disabled(!model.mappings[index].included)
+          if missingColumns.contains(index) {
+            Text("Column \"\(model.mappings[index].targetName)\" does not exist in the table")
+              .font(.small)
+              .foregroundColor(.destructive)
+          }
         }
       }
     }
   }
 
   private var destinationSection: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      sectionTitle("Destination")
-      Picker("Destination", selection: $createsNewTable) {
-        Text("New table").tag(true)
-        Text("Existing table").tag(false)
-      }
-      .pickerStyle(.segmented)
-      .onChange(of: createsNewTable) { _, _ in updateDestination() }
-      HStack(spacing: Spacing.sm) {
-        TextField("Schema", text: schemaName)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
-        TextField("Table name", text: tableName)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+    SettingsGroupCard(title: "Destination") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Picker("Destination", selection: $createsNewTable) {
+          Text("New table").tag(true)
+          Text("Existing table").tag(false)
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: createsNewTable) { _, _ in updateDestination() }
+        HStack(spacing: Spacing.sm) {
+          TextField("Schema", text: schemaName)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
+          TextField("Table name", text: tableName)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
+        }
       }
     }
   }
 
   private var sqlSection: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      sectionTitle("SQL preview")
+    SettingsGroupCard(title: "SQL preview") {
       Text(createTableSQL)
         .font(.monoSmall)
         .foregroundColor(.foregroundMuted)
@@ -253,6 +302,25 @@ struct TableImportSheet: View {
     }
   }
 
+  /// Indexes of included columns whose target is missing from a loaded existing table.
+  private var missingColumns: Set<Int> {
+    guard !createsNewTable else { return [] }
+    let name = model.destination.table.lowercased()
+    let schema = model.destination.schema
+    guard
+      let table = tables.first(where: { candidate in
+        candidate.name.lowercased() == name && (schema.map { $0 == candidate.schema } ?? true)
+      })
+    else { return [] }
+    let known = Set(table.columns.map { $0.name.lowercased() })
+    return Set(
+      model.mappings.indices.filter {
+        model.mappings[$0].included
+          && !known.contains(
+            model.mappings[$0].targetName.trimmingCharacters(in: .whitespaces).lowercased())
+      })
+  }
+
   private var canImport: Bool {
     model.fileURL != nil && !model.isLoading && !model.isImporting
       && !model.mappings.isEmpty
@@ -261,6 +329,7 @@ struct TableImportSheet: View {
         !$0.targetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       }
       && !model.destination.table.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && missingColumns.isEmpty
   }
 
   private var fileSize: Int? {
@@ -288,12 +357,6 @@ struct TableImportSheet: View {
 
   private var sqlDialect: SQLDialect {
     viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql
-  }
-
-  private func sectionTitle(_ title: String) -> some View {
-    Text(title)
-      .font(.subheading)
-      .foregroundColor(.foreground)
   }
 
   private func kindLabel(_ kind: ImportTypeInference.Kind) -> String {
