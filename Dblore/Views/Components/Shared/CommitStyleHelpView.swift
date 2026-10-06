@@ -10,7 +10,7 @@ struct CommitStyleHelpView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       Text("How writes are handled")
-        .font(.small)
+        .font(.bodyText)
         .fontWeight(.semibold)
         .foregroundColor(.foreground)
 
@@ -18,18 +18,18 @@ struct CommitStyleHelpView: View {
         Text("Protection level decides what is allowed (None, Schema Protected, Read-Only).")
         Text("Commit style decides how an allowed write is applied.")
       }
-      .font(.smallest)
+      .font(.labelText)
       .foregroundColor(.foreground)
 
       VStack(alignment: .leading, spacing: Spacing.xs) {
         ForEach(CommitStyle.allCases, id: \.self) { style in
           VStack(alignment: .leading, spacing: Spacing.xxs) {
             Text(style.title)
-              .font(.smallest)
+              .font(.labelText)
               .fontWeight(.medium)
               .foregroundColor(.foreground)
             Text(style.summary)
-              .font(.smallest)
+              .font(.small)
               .foregroundColor(.foregroundSubtle)
           }
         }
@@ -44,11 +44,11 @@ struct CommitStyleHelpView: View {
           "Lowering the style from Review or Password asks for your Safe Mode password, if one is set."
         )
       }
-      .font(.smallest)
+      .font(.labelText)
       .foregroundColor(.foreground)
     }
     .padding(Spacing.md)
-    .frame(width: 300, alignment: .leading)
+    .frame(width: 320, alignment: .leading)
     .fixedSize(horizontal: false, vertical: true)
   }
 }
@@ -58,25 +58,25 @@ struct ProtectionLevelHelpView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       Text("What queries are allowed")
-        .font(.small)
+        .font(.bodyText)
         .fontWeight(.semibold)
         .foregroundColor(.foreground)
 
       Text(
         "Protection level decides which statements can run. Commit style decides how an allowed write is applied."
       )
-      .font(.smallest)
+      .font(.labelText)
       .foregroundColor(.foreground)
 
       VStack(alignment: .leading, spacing: Spacing.xs) {
         ForEach(ConnectionProtectionLevel.allCases, id: \.self) { level in
           VStack(alignment: .leading, spacing: Spacing.xxs) {
             Text(level.displayName)
-              .font(.smallest)
+              .font(.labelText)
               .fontWeight(.medium)
               .foregroundColor(.foreground)
             Text(Self.detail(for: level))
-              .font(.smallest)
+              .font(.small)
               .foregroundColor(.foregroundSubtle)
           }
         }
@@ -85,11 +85,11 @@ struct ProtectionLevelHelpView: View {
       Text(
         "Lowering the level while the commit style is Password asks for your Safe Mode password, if one is set."
       )
-      .font(.smallest)
+      .font(.labelText)
       .foregroundColor(.foreground)
     }
     .padding(Spacing.md)
-    .frame(width: 300, alignment: .leading)
+    .frame(width: 320, alignment: .leading)
     .fixedSize(horizontal: false, vertical: true)
   }
 
