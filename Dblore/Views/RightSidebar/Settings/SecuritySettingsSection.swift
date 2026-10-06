@@ -227,7 +227,7 @@ struct SafeModeSection: View {
           .foregroundColor(.foregroundSubtle)
       }
 
-      HStack(spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
         Button(action: {
           if appSettings.isBiometricEnabled {
             pendingAction = .switchToPassword
@@ -244,13 +244,10 @@ struct SafeModeSection: View {
         }) {
           HStack(spacing: Spacing.xs) {
             Image(systemName: "key.fill")
-              .font(.system(size: 10))
             Text(appSettings.hasCustomPasswordSet ? "Change" : "Set Password")
           }
-          .font(.bodyText)
-          .foregroundColor(.accent)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FilledSecondaryButtonStyle())
         .linkPointer()
 
         if !appSettings.isBiometricEnabled {
@@ -265,13 +262,10 @@ struct SafeModeSection: View {
           }) {
             HStack(spacing: Spacing.xs) {
               Image(systemName: "touchid")
-                .font(.system(size: 10))
               Text("Use Touch ID")
             }
-            .font(.bodyText)
-            .foregroundColor(.accent)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(FilledSecondaryButtonStyle())
           .linkPointer()
           // Touch ID needs a Safe Mode password as its fallback
           .disabled(!appSettings.hasCustomPasswordSet)
@@ -286,10 +280,8 @@ struct SafeModeSection: View {
             showAuthSheet = true
           }) {
             Text("Remove")
-              .font(.bodyText)
-              .foregroundColor(.destructive)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(DangerButtonStyle())
           .linkPointer()
         }
       }
