@@ -170,9 +170,9 @@ struct SafeModeSection: View {
         }
       }
 
-      if appSettings.commitStyle.requiresPassword {
-        passwordManagementPanel
-      }
+      // Always shown: the password also guards lowering a connection from Review or Password,
+      // whatever the default style is (same as SafeModeModal).
+      passwordManagementPanel
     }
   }
 

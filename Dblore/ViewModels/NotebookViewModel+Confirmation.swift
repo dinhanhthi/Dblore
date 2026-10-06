@@ -37,6 +37,11 @@ extension NotebookViewModel {
       classified, parameters: parameters, dialect: sqlDialect)
     queryConfirmationState.requiresPassword = commitStyle.requiresPassword
     queryConfirmationState.statements = statements
+    // A dialog dismissed without Cancel (Escape, click outside) leaves its pending action armed.
+    // Drop it so Execute Query runs what this dialog shows; the caller re-arms its own after.
+    pendingExplainSQL = nil
+    pendingStagedBatch = nil
+    pendingInlineEdit = nil
     queryConfirmationState.showDialog = true
     return true
   }

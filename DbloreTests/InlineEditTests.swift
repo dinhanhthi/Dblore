@@ -348,6 +348,23 @@ struct InlineEditViewModelTests {
     #expect(toasts.contains { $0.0.contains("Failed to update") && $0.1 == .error })
   }
 
+  @Test("Confirm: a new confirmation drops an inline edit whose dialog was dismissed")
+  func newConfirmationDropsStaleInlineEdit() {
+    var config = ConnectionConfig(protectionLevel: .none)
+    config.applyCommitStyle(.confirm)
+    let viewModel = makeViewModel(config: config)
+    edit(viewModel)
+    #expect(viewModel.pendingInlineEdit != nil)
+
+    // Escape or a click outside closes the dialog without cancelPendingQuery
+    viewModel.queryConfirmationState.showDialog = false
+    let deleteSQL = "DELETE FROM users WHERE id = 1"
+    #expect(viewModel.presentConfirmationIfNeeded(for: deleteSQL, cellId: nil))
+    #expect(viewModel.pendingInlineEdit == nil)
+    #expect(viewModel.pendingStagedBatch == nil)
+    #expect(viewModel.queryConfirmationState.pendingQuery == deleteSQL)
+  }
+
   // MARK: Set NULL
 
   @Test("A nil edit binds NULL and the sidebar shows .null")
