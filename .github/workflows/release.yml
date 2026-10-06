@@ -79,8 +79,9 @@ jobs:
             echo "::error::No successful ci.yml run found for $GITHUB_SHA"
             exit 1
           fi
-          project_version=$(xcodebuild -project Dblore.xcodeproj -scheme Dblore -configuration Release \
-            -showBuildSettings 2>/dev/null | awk -F' = ' '/^ *MARKETING_VERSION = / { print $2; exit }')
+          # Read the pbxproj directly: xcodebuild here (before the Metal toolchain download) hung.
+          project_version=$(awk -F' = ' '/^[[:space:]]*MARKETING_VERSION = / { gsub(/[;"]/, "", $2); print $2 }' \
+            Dblore.xcodeproj/project.pbxproj | sort -u | paste -sd ' ' -)
           if [[ "$project_version" != "$VERSION" ]]; then
             echo "::error::MARKETING_VERSION is ${project_version:-missing}, expected $VERSION"
             exit 1
