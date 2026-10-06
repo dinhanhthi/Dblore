@@ -181,7 +181,10 @@ struct HeaderView: View {
       if viewModel.connectionState.isConnected,
         let config = workspaceManager?.workspace.connectionConfig
       {
-        safetyBadge(ConnectionSafetyBadge(config: config))
+        safetyBadge(
+          ConnectionSafetyBadge(
+            config: config,
+            commitStyle: config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)))
       }
 
       // Refresh and Search sit close together, tighter than the header's spacing

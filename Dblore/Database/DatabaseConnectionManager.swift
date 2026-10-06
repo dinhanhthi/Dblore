@@ -322,12 +322,14 @@ actor DatabaseConnectionManager {
   }
 
   /// Apply a runtime change of the connection's protection settings (protection level,
-  /// Safe Mode, protected mode) to the connected config. No-op when not connected.
+  /// commit style, Safe Mode, protected mode) to the connected config. No-op when not
+  /// connected. `connectedPolicy` still reads only `protectedMode` from that config.
   func updateConnectedProtection(from newConfig: ConnectionConfig) {
     guard config != nil else { return }
     config?.protectionLevel = newConfig.protectionLevel
     config?.safeMode = newConfig.safeMode
     config?.protectedMode = newConfig.protectedMode
+    config?.commitStyle = newConfig.commitStyle
   }
 
   // MARK: - Internal Access

@@ -195,7 +195,7 @@ struct ConnectionFormContent: View {
               hasKey: privateKeyPEM != nil, keyPicked: privateKeyFilePicked),
             isHistoryLoad: retained != nil,
             engineChanged: Self.engineChanged(oldKey: oldKey, newKey: newKey),
-            isBlankForm: connectionConfig == ConnectionConfig()))
+            isBlankForm: Self.isBlankForm(connectionConfig)))
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
         guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
@@ -267,7 +267,21 @@ struct ConnectionFormContent: View {
     fieldsEngine: DatabaseType?, newType: DatabaseType
   ) -> ConnectionConfig? {
     guard fieldsEngine != newType else { return nil }
-    return ConnectionConfig(databaseType: newType)
+    return newFormDraft(databaseType: newType)
+  }
+
+  /// Blank connection form. Stores the Default commit style explicitly.
+  /// `ConnectionConfig()` stays the unstyled default tests use.
+  static func newFormDraft(databaseType: DatabaseType = .postgresql) -> ConnectionConfig {
+    var config = ConnectionConfig(databaseType: databaseType)
+    config.applyCommitStyle(AppSettings.shared.commitStyle)
+    return config
+  }
+
+  /// A form the user has not filled in. Includes the unstyled `ConnectionConfig()` and a draft
+  /// that already copied the Default commit style.
+  static func isBlankForm(_ config: ConnectionConfig) -> Bool {
+    config == ConnectionConfig() || config == newFormDraft()
   }
 
   /// Host, port, database, and username. Recent connections compares this, not the display name.

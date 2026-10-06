@@ -17,7 +17,7 @@ struct AppWelcomeView: View {
 
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
-  @State private var editingConnectionConfig = ConnectionConfig()
+  @State private var editingConnectionConfig = ConnectionFormContent.newFormDraft()
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
   /// Recent workspace whose name and file path are being edited.
@@ -210,7 +210,7 @@ struct AppWelcomeView: View {
   private func showConnectionForm() {
     // Reset config and show sidebar
     editingConnectionId = nil
-    editingConnectionConfig = ConnectionConfig()
+    editingConnectionConfig = ConnectionFormContent.newFormDraft()
     isShowingConnectionSidebar = true
   }
 

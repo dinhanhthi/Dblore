@@ -11,7 +11,7 @@ import SwiftUI
 /// What the unlock sheet is holding. Applied only after verification succeeds.
 private enum PendingSafetyChange: Equatable {
   case protection(ConnectionProtectionLevel)
-  case security(SafeMode?)
+  case commitStyle(CommitStyle)
 }
 
 /// Protection and security menus for the connected database.
@@ -28,8 +28,10 @@ struct ConnectionSafetyMenus: View {
     viewModel.notebook.connectionConfig?.protectionLevel ?? .none
   }
 
-  private var security: SafeMode? {
-    viewModel.notebook.connectionConfig?.safeMode
+  /// Checkmark follows the resolved style. Opening the menu does not apply it.
+  private var resolvedStyle: CommitStyle {
+    let fallback = AppSettings.shared.commitStyle
+    return viewModel.notebook.connectionConfig?.resolvedCommitStyle(fallback: fallback) ?? fallback
   }
 
   var body: some View {
@@ -77,7 +79,7 @@ struct ConnectionSafetyMenus: View {
   }
 
   private var securityRow: some View {
-    labeledRow(title: "Security level", detail: securityDetail) {
+    labeledRow(title: "Commit style", detail: resolvedStyle.summary) {
       securityMenu
     }
   }
@@ -122,38 +124,21 @@ struct ConnectionSafetyMenus: View {
   }
 
   private var securityMenu: some View {
-    SafetyOptionMenu(arrowEdge: prominent ? .top : .bottom, rows: securityRows) {
+    SafetyOptionMenu(
+      arrowEdge: prominent ? .top : .bottom, rows: securityRows, showsCommitStyleHelp: true
+    ) {
       menuLabel(
-        security?.displayName ?? "Global", icon: "shield",
-        iconColor: SafetyOptionStyle.color(for: security))
+        resolvedStyle.title,
+        icon: SafetyOptionStyle.iconName(for: resolvedStyle),
+        iconColor: SafetyOptionStyle.color(for: resolvedStyle))
     }
-    .help(securityDetail)
+    .help(resolvedStyle.summary)
   }
 
   private var securityRows: [SafetyOptionRow] {
-    var rows = [
-      SafetyOptionRow(
-        id: "global",
-        title: "Use Global",
-        systemImage: "shield",
-        color: SafetyOptionStyle.color(for: nil),
-        selected: security == nil
-      ) {
-        selectSecurity(nil)
-      }
-    ]
-    rows += SafeMode.allCases.map { mode in
-      SafetyOptionRow(
-        id: "mode-\(mode.rawValue)",
-        title: mode.displayName,
-        systemImage: SafetyOptionStyle.iconName(for: mode),
-        color: SafetyOptionStyle.color(for: mode),
-        selected: security == mode
-      ) {
-        selectSecurity(mode)
-      }
+    SafetyOptionRow.commitStyles(idPrefix: "footer", selected: resolvedStyle) { style in
+      selectCommitStyle(style)
     }
-    return rows
   }
 
   private func menuLabel(_ title: String, icon: String, iconColor: Color) -> some View {
@@ -173,31 +158,25 @@ struct ConnectionSafetyMenus: View {
     .modifier(SafetyMenuSurface(prominent: prominent))
   }
 
-  private var securityDetail: String {
-    if let security {
-      return security.shortDescription
-    }
-    return "Use global setting (\(AppSettings.shared.safeMode.displayName))"
-  }
-
   private func selectProtection(_ level: ConnectionProtectionLevel) {
     guard level != protection else { return }
     if viewModel.requestProtectionLevelChange(to: level) { return }
     pending = .protection(level)
   }
 
-  private func selectSecurity(_ mode: SafeMode?) {
-    guard mode != security else { return }
-    if viewModel.requestConnectionSafeModeChange(to: mode) { return }
-    pending = .security(mode)
+  /// A click always asks, including a click on the style that is already resolved.
+  /// Building the menu does not.
+  private func selectCommitStyle(_ style: CommitStyle) {
+    if viewModel.requestConnectionCommitStyle(style) { return }
+    pending = .commitStyle(style)
   }
 
   private func applyPending() {
     switch pending {
     case .protection(let level):
       viewModel.applyProtectionLevel(level)
-    case .security(let mode):
-      viewModel.applyConnectionSafeMode(mode)
+    case .commitStyle(let style):
+      viewModel.applyConnectionCommitStyle(style)
     case nil:
       break
     }
@@ -209,12 +188,9 @@ struct ConnectionSafetyMenus: View {
     case .protection(let level):
       return
         "Safe Mode requires verification to lower this connection's protection to \"\(level.displayName)\"."
-    case .security(nil):
+    case .commitStyle(let style):
       return
-        "Safe Mode requires verification to use the global security level for this connection."
-    case .security(.some(let mode)):
-      return
-        "Safe Mode requires verification to lower this connection's security level to \"\(mode.displayName)\"."
+        "Safe Mode requires verification to lower this connection's commit style to \"\(style.title)\"."
     case nil:
       return ""
     }
@@ -224,8 +200,8 @@ struct ConnectionSafetyMenus: View {
     switch pending {
     case .protection:
       return "Lower the connection protection level"
-    case .security:
-      return "Lower this connection's security level"
+    case .commitStyle:
+      return "Lower this connection's commit style"
     case nil:
       return "Change connection safety"
     }
@@ -236,10 +212,48 @@ struct ConnectionSafetyMenus: View {
 struct SafetyOptionRow: Identifiable {
   let id: String
   let title: String
+  let subtitle: String?
   let systemImage: String
   let color: Color
   let selected: Bool
   let action: () -> Void
+
+  init(
+    id: String,
+    title: String,
+    subtitle: String? = nil,
+    systemImage: String,
+    color: Color,
+    selected: Bool,
+    action: @escaping () -> Void
+  ) {
+    self.id = id
+    self.title = title
+    self.subtitle = subtitle
+    self.systemImage = systemImage
+    self.color = color
+    self.selected = selected
+    self.action = action
+  }
+
+  /// Immediate, Confirm, Review, Password. No Use Global row.
+  static func commitStyles(
+    idPrefix: String,
+    selected: CommitStyle,
+    onSelect: @escaping (CommitStyle) -> Void
+  ) -> [SafetyOptionRow] {
+    CommitStyle.allCases.map { style in
+      SafetyOptionRow(
+        id: "\(idPrefix)-\(style.rawValue)",
+        title: style.title,
+        subtitle: style.summary,
+        systemImage: SafetyOptionStyle.iconName(for: style),
+        color: SafetyOptionStyle.color(for: style),
+        selected: style == selected,
+        action: { onSelect(style) }
+      )
+    }
+  }
 }
 
 enum SafetyOptionStyle {
@@ -251,27 +265,26 @@ enum SafetyOptionStyle {
     }
   }
 
-  static func color(for mode: SafeMode?) -> Color {
-    switch mode {
-    case nil: return .foregroundMuted
-    case .silent: return silentTint
-    case .alertRead: return .warning
-    case .alertAll: return .destructive
-    case .safeRead: return .syntaxFunction
-    case .safeAll: return .success
+  static func color(for style: CommitStyle) -> Color {
+    switch style {
+    case .immediate: return immediateTint
+    case .confirm: return .warning
+    case .review: return .syntaxFunction
+    case .password: return .success
     }
   }
 
-  static func iconName(for mode: SafeMode) -> String {
-    switch mode {
-    case .silent: return "bolt.fill"
-    case .alertRead, .alertAll: return "exclamationmark.triangle.fill"
-    case .safeRead, .safeAll: return "lock.shield.fill"
+  static func iconName(for style: CommitStyle) -> String {
+    switch style {
+    case .immediate: return "bolt.fill"
+    case .confirm: return "exclamationmark.triangle.fill"
+    case .review: return "clock.badge.checkmark"
+    case .password: return "lock.shield.fill"
     }
   }
 
-  /// Violet, so Silent stays distinct from the gray Global row and from the sky Safe (Read) row.
-  private static let silentTint = Color(
+  /// Violet, so Immediate stays distinct from the muted None row and from Review.
+  private static let immediateTint = Color(
     light: Color(hex: "7c3aed"),
     dark: Color(hex: "a78bfa"))
 }
@@ -279,6 +292,8 @@ enum SafetyOptionStyle {
 struct SafetyOptionMenu<Label: View>: View {
   var arrowEdge: Edge = .bottom
   let rows: [SafetyOptionRow]
+  /// Header "?" on the commit-style popover. Opening it does not select a style.
+  var showsCommitStyleHelp = false
   @ViewBuilder var label: () -> Label
   @State private var isOpen = false
 
@@ -292,23 +307,63 @@ struct SafetyOptionMenu<Label: View>: View {
     .fixedSize(horizontal: true, vertical: true)
     .linkPointer()
     .popover(isPresented: $isOpen, arrowEdge: arrowEdge) {
-      SafetyOptionList(rows: rows) { isOpen = false }
+      SafetyOptionList(rows: rows, showsCommitStyleHelp: showsCommitStyleHelp) {
+        isOpen = false
+      }
     }
   }
 }
 
 private struct SafetyOptionList: View {
   let rows: [SafetyOptionRow]
+  var showsCommitStyleHelp = false
   let dismiss: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
+      if showsCommitStyleHelp {
+        CommitStyleMenuHeader()
+      }
       ForEach(rows) { row in
         SafetyOptionListRow(row: row, dismiss: dismiss)
       }
     }
     .padding(Spacing.xs)
-    .frame(minWidth: 188)
+    .frame(minWidth: rows.contains { $0.subtitle != nil } ? 320 : 188)
+  }
+}
+
+/// Header of the commit-style popover. The "?" only opens help.
+private struct CommitStyleMenuHeader: View {
+  @State private var showsHelp = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
+        Text("Commit style")
+          .font(.small)
+          .foregroundStyle(Color.foregroundSubtle)
+        Spacer(minLength: Spacing.sm)
+        Button {
+          showsHelp = true
+        } label: {
+          Image(systemName: "questionmark.circle")
+            .font(.body)
+            .foregroundStyle(Color.foregroundMuted)
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
+        .help("How writes are handled")
+        .popover(isPresented: $showsHelp, arrowEdge: .trailing) {
+          CommitStyleHelpView()
+        }
+      }
+      Rectangle()
+        .fill(Color.border)
+        .frame(height: 1)
+    }
+    .padding(.horizontal, Spacing.sm)
+    .padding(.top, Spacing.xxs)
   }
 }
 
@@ -322,15 +377,24 @@ private struct SafetyOptionListRow: View {
       dismiss()
       row.action()
     } label: {
-      HStack(spacing: Spacing.sm) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
         Image(systemName: row.selected ? "checkmark" : row.systemImage)
           .font(.system(size: 12, weight: .semibold))
           .symbolRenderingMode(.monochrome)
           .foregroundStyle(row.color)
-          .frame(width: 16)
-        Text(row.title)
-          .font(.body)
-          .foregroundStyle(row.color)
+          .frame(width: 16, height: 16)
+          .padding(.top, 2)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(row.title)
+            .font(.body)
+            .foregroundStyle(row.color)
+          if let subtitle = row.subtitle {
+            Text(subtitle)
+              .font(.small)
+              .foregroundStyle(Color.foregroundSubtle)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
         Spacer(minLength: 0)
       }
       .padding(.horizontal, Spacing.sm)

@@ -208,7 +208,7 @@ class WorkspaceManager: Identifiable {
   init(workspace: Workspace, restoreTabs: Bool = true) {
     self.id = workspace.id
     self.workspace = workspace
-    editingConnectionConfig = workspace.connectionConfig ?? ConnectionConfig()
+    editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
     isLeftSidebarVisible = settingsResolver.isLeftSidebarVisible
 

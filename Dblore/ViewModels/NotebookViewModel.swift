@@ -80,10 +80,13 @@ class NotebookViewModel {
   /// `WorkspaceManager`.
   var isTransactionPendingElsewhere = false
 
-  /// Workspace mode: called when the connection's protection level, Safe Mode or protected mode
-  /// is changed in this tab (sidebar/footer dialogs), so the workspace, the actor and the other
-  /// tabs follow. Set by `WorkspaceManager`.
+  /// Workspace mode: called when the connection's protection level, Safe Mode, protected mode,
+  /// or commit style is changed in this tab (sidebar/footer dialogs), so the workspace, the
+  /// actor and the other tabs follow. Set by `WorkspaceManager`.
   @ObservationIgnored var onConnectionProtectionChanged: ((ConnectionConfig) -> Void)?
+  /// Workspace mode: true while a transaction is pending. A commit-style change is refused
+  /// until Commit or Rollback; the transaction is not committed automatically.
+  @ObservationIgnored var isCommitStyleChangeBlocked: @MainActor () -> Bool = { false }
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
@@ -320,6 +323,7 @@ class NotebookViewModel {
       current.protectionLevel != previous.protectionLevel
         || current.safeMode != previous.safeMode
         || current.protectedMode != previous.protectedMode
+        || current.commitStyle != previous.commitStyle
     else { return }
     onConnectionProtectionChanged?(current)
   }

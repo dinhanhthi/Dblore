@@ -97,4 +97,18 @@ struct CommitStyleMigrationTests {
     #expect(CommitStyle.review.opensReviewTransaction == true)
     #expect(CommitStyle.password.opensReviewTransaction == false)
   }
+
+  @Test("Each style has a title and the exact summary")
+  func titlesAndSummaries() {
+    let expected: [(CommitStyle, String)] = [
+      (.immediate, "Write immediately, no dialog."),
+      (.confirm, "Ask before a write, then write."),
+      (.review, "Hold writes in a transaction until you Commit or Roll Back."),
+      (.password, "Ask for the password before a write, then write."),
+    ]
+    for (style, summary) in expected {
+      #expect(!style.title.isEmpty)
+      #expect(style.summary == summary)
+    }
+  }
 }

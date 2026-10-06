@@ -169,10 +169,13 @@ struct WorkspaceInfoModal: View {
             }
             band(3) {
               if let config = workspace.connectionConfig {
+                let commitStyle = config.resolvedCommitStyle(
+                  fallback: AppSettings.shared.commitStyle)
                 infoRow(
                   label: "Protection",
-                  value: ConnectionSafetyBadge(config: config).protectionLabel)
-                infoRow(label: "Safe Mode", value: effectiveSafeMode(config).displayName)
+                  value: ConnectionSafetyBadge(config: config, commitStyle: commitStyle)
+                    .protectionLabel)
+                infoRow(label: "Commit style", value: commitStyle.title)
               }
               if workspaceManager.connectionState.isConnected {
                 if workspaceManager.isLoadingSchema && workspaceManager.databaseTables.isEmpty {
@@ -213,10 +216,6 @@ struct WorkspaceInfoModal: View {
     let unsaved = tabs.filter(\.isDirty).count
     if unsaved == 0 { return "\(tabs.count)" }
     return "\(tabs.count) (\(unsaved) unsaved)"
-  }
-
-  private func effectiveSafeMode(_ config: ConnectionConfig) -> SafeMode {
-    config.safeMode ?? AppSettings.shared.safeMode
   }
 
   private func display(_ value: String) -> String {
@@ -339,7 +338,8 @@ extension View {
         sslMode: .require,
         protectionLevel: .readOnly,
         name: "Analytics reader",
-        safeMode: .alertRead
+        safeMode: .alertRead,
+        protectedMode: false
       )
       workspaceManager.connectionState = .connected
     }

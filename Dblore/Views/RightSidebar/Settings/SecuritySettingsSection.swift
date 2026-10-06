@@ -30,7 +30,6 @@ struct SecuritySettingsSection: View {
 struct SafeModeSection: View {
   var appSettings: AppSettings
   var viewModel: NotebookViewModel
-  @State private var selectedConnectionMode: SafeMode?
 
   // Password management states
   @State private var showPasswordSetup: Bool = false
@@ -72,85 +71,58 @@ struct SafeModeSection: View {
           isAuthenticating = false
         }
     }
-    .onAppear {
-      selectedConnectionMode = viewModel.notebook.connectionConfig?.safeMode
-    }
   }
 
   // MARK: - Current Connection Row
 
   private var currentConnectionRow: some View {
     HStack(alignment: .center) {
-      // Label
       VStack(alignment: .leading, spacing: 2) {
-        Text("Security level")
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-        Text(securityCaption)
-          .font(.bodyText)
+        HStack(spacing: Spacing.xs) {
+          Text("Commit style")
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+          commitStyleHelpButton
+        }
+        Text(resolvedConnectionStyle.summary)
+          .font(.small)
           .foregroundColor(.foregroundSubtle)
       }
 
       Spacer()
 
-      SafetyOptionMenu(arrowEdge: .top, rows: connectionSecurityRows) {
+      SafetyOptionMenu(arrowEdge: .top, rows: connectionCommitStyleRows) {
         settingsChoiceLabel(
-          title: connectionSafeMode?.displayName ?? "Use Global",
-          systemImage: connectionSafeMode.map(SafetyOptionStyle.iconName(for:)) ?? "shield",
-          color: SafetyOptionStyle.color(for: connectionSafeMode))
+          title: resolvedConnectionStyle.title,
+          systemImage: SafetyOptionStyle.iconName(for: resolvedConnectionStyle),
+          color: SafetyOptionStyle.color(for: resolvedConnectionStyle))
       }
     }
   }
 
-  private var connectionSafeMode: SafeMode? {
-    viewModel.notebook.connectionConfig?.safeMode
+  private var resolvedConnectionStyle: CommitStyle {
+    let fallback = appSettings.commitStyle
+    return viewModel.notebook.connectionConfig?.resolvedCommitStyle(fallback: fallback) ?? fallback
   }
 
-  private var securityCaption: String {
-    if let mode = connectionSafeMode {
-      return mode.shortDescription
+  private var connectionCommitStyleRows: [SafetyOptionRow] {
+    SafetyOptionRow.commitStyles(
+      idPrefix: "connection", selected: resolvedConnectionStyle
+    ) { style in
+      handleConnectionCommitStyleChange(to: style)
     }
-    return "Use global setting (\(appSettings.safeMode.displayName))"
   }
 
-  private var connectionSecurityRows: [SafetyOptionRow] {
-    var rows = [
-      SafetyOptionRow(
-        id: "global",
-        title: "Use Global",
-        systemImage: "shield",
-        color: SafetyOptionStyle.color(for: nil),
-        selected: connectionSafeMode == nil
-      ) {
-        handleConnectionSafeModeChange(to: nil)
-      }
-    ]
-    rows += SafeMode.allCases.map { mode in
-      SafetyOptionRow(
-        id: "mode-\(mode.rawValue)",
-        title: mode.displayName,
-        systemImage: SafetyOptionStyle.iconName(for: mode),
-        color: SafetyOptionStyle.color(for: mode),
-        selected: connectionSafeMode == mode
-      ) {
-        handleConnectionSafeModeChange(to: mode)
-      }
+  private var defaultCommitStyleRows: [SafetyOptionRow] {
+    SafetyOptionRow.commitStyles(idPrefix: "default", selected: appSettings.commitStyle) { style in
+      handleDefaultCommitStyleChange(to: style)
     }
-    return rows
   }
 
-  private var globalSecurityRows: [SafetyOptionRow] {
-    SafeMode.allCases.map { mode in
-      SafetyOptionRow(
-        id: "global-mode-\(mode.rawValue)",
-        title: mode.displayName,
-        systemImage: SafetyOptionStyle.iconName(for: mode),
-        color: SafetyOptionStyle.color(for: mode),
-        selected: appSettings.safeMode == mode
-      ) {
-        handleSafeModeChange(to: mode)
-      }
-    }
+  /// Same help as the footer. Shown on the connection row and the default row,
+  /// so it stays available when nothing is connected.
+  private var commitStyleHelpButton: some View {
+    CommitStyleSettingsHelpButton()
   }
 
   private func settingsChoiceLabel(title: String, systemImage: String, color: Color) -> some View {
@@ -176,28 +148,29 @@ struct SafeModeSection: View {
   private var globalRow: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack(alignment: .center) {
-        // Label
-        Text(viewModel.connectionState.isConnected ? "Global" : "Default")
-          .font(.bodyText)
-          .foregroundColor(.foreground)
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(spacing: Spacing.xs) {
+            Text("Default commit style")
+              .font(.bodyText)
+              .foregroundColor(.foreground)
+            commitStyleHelpButton
+          }
+          Text("Used for new connections.")
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+        }
 
         Spacer()
 
-        SafetyOptionMenu(arrowEdge: .top, rows: globalSecurityRows) {
+        SafetyOptionMenu(arrowEdge: .top, rows: defaultCommitStyleRows) {
           settingsChoiceLabel(
-            title: appSettings.safeMode.displayName,
-            systemImage: SafetyOptionStyle.iconName(for: appSettings.safeMode),
-            color: SafetyOptionStyle.color(for: appSettings.safeMode))
+            title: appSettings.commitStyle.title,
+            systemImage: SafetyOptionStyle.iconName(for: appSettings.commitStyle),
+            color: SafetyOptionStyle.color(for: appSettings.commitStyle))
         }
       }
 
-      // Description of selected global mode
-      Text(appSettings.safeMode.shortDescription)
-        .font(.bodyText)
-        .foregroundColor(.foregroundSubtle)
-
-      // Password panel - shown when Safe mode (requires password) is selected
-      if appSettings.safeMode.requiresPassword {
+      if appSettings.commitStyle.requiresPassword {
         passwordManagementPanel
       }
     }
@@ -211,31 +184,24 @@ struct SafeModeSection: View {
 
   // MARK: - Safe Mode Change Handler
 
-  /// Per-connection Safe Mode: a weakening under a password Safe Mode is applied only after the
-  /// unlock (the picker snaps back until then); anything else applies now.
-  private func handleConnectionSafeModeChange(to newMode: SafeMode?) {
-    let current = viewModel.notebook.connectionConfig?.safeMode
-    guard newMode != current, !viewModel.requestConnectionSafeModeChange(to: newMode) else {
-      return
-    }
-    selectedConnectionMode = current
-    pendingAction = .changeConnectionSafeMode(newMode)
+  /// A click always requests the style, including a click on the style already resolved.
+  /// The default picker writes `AppSettings.commitStyle` only, never this connection.
+  private func handleConnectionCommitStyleChange(to style: CommitStyle) {
+    if viewModel.requestConnectionCommitStyle(style) { return }
+    pendingAction = .changeConnectionCommitStyle(style)
     showAuthSheet = true
   }
 
-  private func handleSafeModeChange(to newMode: SafeMode) {
-    let currentStyle =
-      CommitStyle.migrate(protectedMode: false, safeMode: appSettings.safeMode) ?? .confirm
-    let nextStyle = CommitStyle.migrate(protectedMode: false, safeMode: newMode) ?? .confirm
+  private func handleDefaultCommitStyleChange(to newStyle: CommitStyle) {
     if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-      from: currentStyle, to: nextStyle, hasPassword: appSettings.hasCustomPasswordSet,
+      from: appSettings.commitStyle, to: newStyle, hasPassword: appSettings.hasCustomPasswordSet,
       hasTouchID: appSettings.isBiometricEnabled)
     {
-      pendingAction = .changeSafeMode(newMode)
+      pendingAction = .changeDefaultCommitStyle(newStyle)
       showAuthSheet = true
     } else {
       withAnimation(.snappy(duration: 0.2)) {
-        appSettings.safeMode = newMode
+        appSettings.commitStyle = newStyle
       }
     }
   }
@@ -505,10 +471,10 @@ struct SafeModeSection: View {
 
   private var authenticationMessage: String {
     switch pendingAction {
-    case .changeSafeMode:
-      return "Verify your identity to change Safe Mode level"
-    case .changeConnectionSafeMode:
-      return "Verify your identity to lower this connection's Safe Mode"
+    case .changeDefaultCommitStyle:
+      return "Verify your identity to change the default commit style"
+    case .changeConnectionCommitStyle:
+      return "Verify your identity to lower this connection's commit style"
     case .removeProtection:
       return "Verify your identity to remove password protection"
     case .switchToPassword:
@@ -635,15 +601,14 @@ struct SafeModeSection: View {
     }
 
     switch action {
-    case .changeSafeMode(let newMode):
+    case .changeDefaultCommitStyle(let newStyle):
       withAnimation(.snappy(duration: 0.2)) {
-        appSettings.safeMode = newMode
+        appSettings.commitStyle = newStyle
       }
       cleanup()
 
-    case .changeConnectionSafeMode(let newMode):
-      viewModel.applyConnectionSafeMode(newMode)
-      selectedConnectionMode = newMode
+    case .changeConnectionCommitStyle(let style):
+      viewModel.applyConnectionCommitStyle(style)
       cleanup()
 
     case .removeProtection:
@@ -671,10 +636,31 @@ struct SafeModeSection: View {
 
 // MARK: - Dialog Enums
 
+/// "?" next to a commit-style label. Opening help does not change the style.
+private struct CommitStyleSettingsHelpButton: View {
+  @State private var showsHelp = false
+
+  var body: some View {
+    Button {
+      showsHelp = true
+    } label: {
+      Image(systemName: "questionmark.circle")
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .help("How writes are handled")
+    .popover(isPresented: $showsHelp) {
+      CommitStyleHelpView()
+    }
+  }
+}
+
 /// Action that requires authentication
 private enum ProtectedAction {
-  case changeSafeMode(SafeMode)
-  case changeConnectionSafeMode(SafeMode?)  // Per-connection weakening (nil = use global)
+  case changeDefaultCommitStyle(CommitStyle)
+  case changeConnectionCommitStyle(CommitStyle)
   case removeProtection
   case switchToPassword  // Switch from Touch ID to password
   case switchToBiometric  // Switch from password to Touch ID

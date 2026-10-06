@@ -8,12 +8,23 @@ import Testing
 
 @MainActor
 private func badge(
-  _ level: ConnectionProtectionLevel = .none, protectedMode: Bool = false,
-  ssl: SSLMode = .verifyFull, type: DatabaseType = .postgresql
+  _ level: ConnectionProtectionLevel = .none,
+  protectedMode: Bool = false,
+  safeMode: SafeMode? = nil,
+  style: CommitStyle? = nil,
+  ssl: SSLMode = .verifyFull,
+  type: DatabaseType = .postgresql,
+  fallback: CommitStyle = .confirm
 ) -> ConnectionSafetyBadge {
-  ConnectionSafetyBadge(
-    config: ConnectionConfig(
-      databaseType: type, sslMode: ssl, protectionLevel: level, protectedMode: protectedMode))
+  var config = ConnectionConfig(
+    databaseType: type, sslMode: ssl, protectionLevel: level, safeMode: safeMode,
+    protectedMode: protectedMode)
+  if let style {
+    config.applyCommitStyle(style)
+  }
+  return ConnectionSafetyBadge(
+    config: config,
+    commitStyle: config.resolvedCommitStyle(fallback: fallback))
 }
 
 @MainActor
@@ -32,14 +43,26 @@ struct ConnectionSafetyBadgeTests {
     #expect(badge(.schemaOnly).protectionIcon == "tablecells.badge.ellipsis")
   }
 
-  @Test func protectedModeLabel() {
-    #expect(badge(.none, protectedMode: true).protectionLabel == "Protected")
-    #expect(badge(.none, protectedMode: true).protectionIcon == "shield.lefthalf.filled")
+  @Test func legacyProtectedReadsReview() {
+    let item = badge(.none, protectedMode: true)
+    #expect(item.protectionLabel == "Review")
+    #expect(item.protectionIcon == "shield.lefthalf.filled")
+    #expect(item.protectionLabel != "Protected")
   }
 
-  @Test func unprotectedLabel() {
-    #expect(badge(.none, protectedMode: false).protectionLabel == "Unprotected")
-    #expect(badge(.none, protectedMode: false).protectionIcon == "lock.open")
+  @Test func unprotectedSilentReadsImmediate() {
+    let item = badge(.none, protectedMode: false, safeMode: .silent)
+    #expect(item.protectionLabel == "Immediate")
+    #expect(item.protectionIcon == "lock.open")
+    #expect(item.protectionLabel != "Unprotected")
+  }
+
+  @Test(arguments: CommitStyle.allCases)
+  func noneLevelUsesCommitStyleTitle(_ style: CommitStyle) {
+    let item = badge(.none, style: style)
+    #expect(item.protectionLabel == style.title)
+    #expect(item.protectionLabel != "Protected")
+    #expect(item.protectionLabel != "Unprotected")
   }
 
   @Test func stricterLevelWinsOverProtectedMode() {
@@ -47,15 +70,18 @@ struct ConnectionSafetyBadgeTests {
     #expect(badge(.schemaOnly, protectedMode: true).protectionLabel == "Schema Protected")
   }
 
-  @Test func tooltipMentionsProtectedModeAlongsideLevel() {
-    #expect(badge(.schemaOnly, protectedMode: true).tooltip.contains("Protected mode"))
-    #expect(!badge(.schemaOnly, protectedMode: false).tooltip.contains("Protected mode"))
+  @Test func tooltipMentionsReviewAlongsideLevel() {
+    let reviewLine = "Review: changes stay pending until you Commit or Roll Back."
+    #expect(badge(.schemaOnly, protectedMode: true).tooltip.contains(reviewLine))
+    #expect(!badge(.schemaOnly, protectedMode: false).tooltip.contains(reviewLine))
   }
 
-  @Test func protectedOnlyTooltipDoesNotSayAllQueriesAllowed() {
+  @Test func reviewOnlyTooltipNamesReview() {
     let tooltip = badge(.none, protectedMode: true).tooltip
     #expect(!tooltip.contains("All queries allowed"))
-    #expect(tooltip.hasPrefix("Protected mode"))
+    #expect(tooltip.contains("Review: changes stay pending until you Commit or Roll Back."))
+    #expect(!tooltip.contains("Protected"))
+    #expect(!tooltip.contains("Unprotected"))
   }
 
   // MARK: SSL

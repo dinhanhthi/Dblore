@@ -6,11 +6,30 @@
 import Foundation
 
 /// How a connection confirms a write. Stronger styles have a higher `strength`.
-enum CommitStyle: String, Codable, Sendable {
+enum CommitStyle: String, Codable, CaseIterable, Sendable {
   case immediate
   case confirm
   case review
   case password
+
+  var title: String {
+    switch self {
+    case .immediate: "Immediate"
+    case .confirm: "Confirm"
+    case .review: "Review"
+    case .password: "Password"
+    }
+  }
+
+  /// Shown under the title. The four strings live only here.
+  var summary: String {
+    switch self {
+    case .immediate: "Write immediately, no dialog."
+    case .confirm: "Ask before a write, then write."
+    case .review: "Hold writes in a transaction until you Commit or Roll Back."
+    case .password: "Ask for the password before a write, then write."
+    }
+  }
 
   /// immediate < confirm < review < password.
   nonisolated var strength: Int {

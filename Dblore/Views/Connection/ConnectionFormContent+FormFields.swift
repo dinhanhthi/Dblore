@@ -601,6 +601,19 @@ extension ConnectionFormContent {
     }
   }
 
+  /// Resolved style shown in the picker. A legacy draft with no stored style still displays
+  /// the style `resolvedCommitStyle` would use.
+  var formCommitStyle: CommitStyle {
+    connectionConfig.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+  }
+
+  /// Writes the chosen style onto this draft. Not a live connection, so there is no unlock.
+  func applyFormCommitStyle(_ style: CommitStyle) {
+    var updated = connectionConfig
+    updated.applyCommitStyle(style)
+    connectionConfig = updated
+  }
+
   /// Common toggles and pickers used in both form and connection string modes
   @ViewBuilder
   func connectionTogglesAndPickers() -> some View {
@@ -658,73 +671,44 @@ extension ConnectionFormContent {
         .linkPointer()
       }
 
-      // Security Level (Safe Mode) Picker
+      // Security level. The form is a draft, so a choice writes the style directly.
       HStack(alignment: .top) {
         VStack(alignment: .leading, spacing: 2) {
           Text("Security level")
             .font(.body)
-          if let mode = connectionConfig.safeMode {
-            Text(mode.shortDescription)
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          } else {
-            Text("Use global setting (\(AppSettings.shared.safeMode.displayName))")
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          }
-        }
-
-        Spacer()
-
-        Menu {
-          Button("Use Global") {
-            connectionConfig.safeMode = nil
-          }
-          ForEach(SafeMode.allCases, id: \.self) { mode in
-            Button(mode.displayName) {
-              connectionConfig.safeMode = mode
-            }
-          }
-        } label: {
-          HStack(spacing: Spacing.xs) {
-            Text(connectionConfig.safeMode?.displayName ?? "Use Global")
-            Image(systemName: "chevron.up.chevron.down")
-              .font(.caption)
-              .foregroundColor(.foregroundMuted)
-          }
-          .dropdownCapsuleStyle()
-        }
-        .buttonStyle(.plain)
-        .linkPointer()
-      }
-    }
-  }
-
-  // MARK: - Safety
-
-  /// Protected mode, server-side session brakes and row cap override.
-  /// The section card supplies the "Safety" title.
-  @ViewBuilder
-  func safetySection() -> some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Protected mode")
-            .font(.body)
-          Text("Review data changes before they are committed")
+          Text(formCommitStyle.summary)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
         }
 
         Spacer()
 
-        Toggle("", isOn: $connectionConfig.protectedMode)
-          .labelsHidden()
-          .toggleStyle(.switch)
-          .tint(.accent)
-          .scaleEffect(0.8)
+        SafetyOptionMenu(
+          rows: SafetyOptionRow.commitStyles(idPrefix: "form", selected: formCommitStyle) {
+            applyFormCommitStyle($0)
+          }
+        ) {
+          HStack(spacing: Spacing.xs) {
+            Image(systemName: SafetyOptionStyle.iconName(for: formCommitStyle))
+              .font(.caption)
+            Text(formCommitStyle.title)
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+          }
+          .dropdownCapsuleStyle()
+        }
       }
+    }
+  }
 
+  // MARK: - Safety
+
+  /// Server-side session brakes and row cap override.
+  /// The section card supplies the "Safety" title.
+  @ViewBuilder
+  func safetySection() -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
       brakeField(
         "Statement timeout (seconds)", placeholder: "60",
         value: $connectionConfig.statementTimeoutSeconds,

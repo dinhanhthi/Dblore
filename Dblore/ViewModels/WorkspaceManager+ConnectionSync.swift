@@ -2,9 +2,10 @@
 //  WorkspaceManager+ConnectionSync.swift
 //  Dblore
 //
-//  The workspace connection config is the single source of protection level, per-connection
-//  Safe Mode and protected mode for every tab and for the connection actor. Connecting to the
-//  same database with weaker settings goes through the same Safe Mode unlock as a runtime change.
+//  The workspace connection config is the single source of protection level, commit style,
+//  per-connection Safe Mode and protected mode for every tab and for the connection actor.
+//  Connecting to the same database with weaker settings goes through the same Safe Mode unlock
+//  as a runtime change.
 //
 
 import Foundation
@@ -26,20 +27,26 @@ extension WorkspaceManager {
     viewModel.onConnectionProtectionChanged = { [weak self] config in
       self?.updateConnectionProtection(from: config)
     }
+    viewModel.isCommitStyleChangeBlocked = { [weak self] in
+      guard let self else { return false }
+      return !self.pendingTransaction.isIdle
+    }
   }
 
-  /// A tab changed the protection level, Safe Mode or protected mode of the connection:
-  /// update the workspace config, every tab and the actor's connected config.
+  /// A tab changed the protection level, commit style, Safe Mode or protected mode of the
+  /// connection: update the workspace config, every tab and the actor's connected config.
   func updateConnectionProtection(from config: ConnectionConfig) {
     guard var current = workspace.connectionConfig else { return }
     current.protectionLevel = config.protectionLevel
     current.safeMode = config.safeMode
     current.protectedMode = config.protectedMode
+    current.commitStyle = config.commitStyle
     guard current != workspace.connectionConfig else { return }
     workspace.connectionConfig = current
     editingConnectionConfig.protectionLevel = current.protectionLevel
     editingConnectionConfig.safeMode = current.safeMode
     editingConnectionConfig.protectedMode = current.protectedMode
+    editingConnectionConfig.commitStyle = current.commitStyle
     markDirtyAndScheduleAutoSave()
     syncConnectionStateToTabs()
     let connectionManager = connectionManager

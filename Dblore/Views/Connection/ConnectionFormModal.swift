@@ -173,7 +173,7 @@ private struct WorkspaceConnectUnlockSheet: View {
 
 #Preview("Connection Form Modal") {
   @Previewable @State var isPresented = true
-  @Previewable @State var config = ConnectionConfig()
+  @Previewable @State var config = ConnectionFormContent.newFormDraft()
 
   Color.appBackground
     .frame(width: 800, height: 700)

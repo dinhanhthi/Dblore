@@ -65,11 +65,17 @@ extension NotebookViewModel {
 
   /// Commit style the user already chose. Applied now (via `applyCommitStyle`) and returns
   /// true unless it needs the unlock (returns false, nothing changed: apply with
-  /// `applyConnectionCommitStyle` after a successful unlock).
+  /// `applyConnectionCommitStyle` after a successful unlock). While a transaction is pending,
+  /// the change is refused with the Commit/Rollback toast, nothing is stored, and this returns
+  /// true so the caller does not open the unlock sheet. The transaction is not committed.
   func requestConnectionCommitStyle(
     _ style: CommitStyle, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
   ) -> Bool {
     guard let current = notebook.connectionConfig else { return true }
+    if isCommitStyleChangeBlocked() {
+      showToast(Self.transactionPendingElsewhereMessage, type: .warning)
+      return true
+    }
     let from = ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle)
     let to = ConnectionSafetyState(commitStyle: style, protectionLevel: current.protectionLevel)
     guard !needsUnlock(from: from, to: to) else { return false }

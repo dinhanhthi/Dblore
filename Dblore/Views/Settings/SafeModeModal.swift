@@ -43,14 +43,11 @@ struct SafeModeModal: View {
 
       // Content
       VStack(alignment: .leading, spacing: 0) {
-        // Mode selector with descriptions
-        ForEach(SafeMode.allCases, id: \.self) { mode in
+        ForEach(CommitStyle.allCases, id: \.self) { style in
           VStack(alignment: .leading, spacing: 0) {
-            // Mode row
-            modeRow(for: mode)
+            styleRow(for: style)
 
-            // Password panel - indented under selected Safe modes
-            if mode.requiresPassword && appSettings.safeMode == mode {
+            if appSettings.commitStyle == style {
               passwordPanel
                 .padding(.leading, 32)
                 .padding(.trailing, Spacing.sm)
@@ -88,27 +85,24 @@ struct SafeModeModal: View {
 
   // MARK: - Mode Row
 
-  private func modeRow(for mode: SafeMode) -> some View {
-    ModeRowView(
-      mode: mode,
-      isSelected: appSettings.safeMode == mode,
-      onTap: { handleSafeModeChange(to: mode) }
+  private func styleRow(for style: CommitStyle) -> some View {
+    StyleRowView(
+      style: style,
+      isSelected: appSettings.commitStyle == style,
+      onTap: { handleCommitStyleChange(to: style) }
     )
   }
 
-  // MARK: - Mode Row View
+  // MARK: - Style Row View
 
-  private struct ModeRowView: View {
-    let mode: SafeMode
+  private struct StyleRowView: View {
+    let style: CommitStyle
     let isSelected: Bool
     let onTap: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
       Button(action: onTap) {
-        HStack(spacing: Spacing.md) {
-          // Selection indicator (at the beginning)
+        HStack(alignment: .top, spacing: Spacing.md) {
           if isSelected {
             Image(systemName: "checkmark.circle.fill")
               .font(.system(size: 14))
@@ -119,31 +113,29 @@ struct SafeModeModal: View {
               .frame(width: 14, height: 14)
           }
 
-          // Icon
-          Image(systemName: modeIcon(for: mode))
+          Image(systemName: SafetyOptionStyle.iconName(for: style))
             .font(.system(size: 15))
-            .foregroundColor(modeColor(for: mode))
+            .foregroundColor(SafetyOptionStyle.color(for: style))
             .frame(width: 18)
 
-          // Text content
           VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
-              Text(mode.displayName)
+              Text(style.title)
                 .font(.bodyText)
                 .fontWeight(.medium)
-                .foregroundColor(modeColor(for: mode))
+                .foregroundColor(SafetyOptionStyle.color(for: style))
 
-              if mode.requiresPassword {
+              if style.requiresPassword {
                 Image(systemName: "lock.fill")
                   .font(.system(size: 12))
                   .foregroundColor(.foregroundMuted)
               }
             }
 
-            Text(mode.shortDescription)
-              .font(.labelText)
-              .foregroundColor(.foregroundMuted)
-              .lineLimit(1)
+            Text(style.summary)
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+              .fixedSize(horizontal: false, vertical: true)
           }
 
           Spacer()
@@ -156,21 +148,12 @@ struct SafeModeModal: View {
       .buttonStyle(.plain)
       .linkPointer()
       .onHover { hovering in
-        isHovering = hovering
         if hovering {
           NSCursor.pointingHand.push()
         } else {
           NSCursor.pop()
         }
       }
-    }
-
-    private func modeIcon(for mode: SafeMode) -> String {
-      SafetyOptionStyle.iconName(for: mode)
-    }
-
-    private func modeColor(for mode: SafeMode) -> Color {
-      SafetyOptionStyle.color(for: mode)
     }
   }
 
@@ -395,8 +378,8 @@ struct SafeModeModal: View {
 
   private var authenticationMessage: String {
     switch pendingAction {
-    case .changeSafeMode:
-      return "Verify your identity to change Safe Mode level"
+    case .changeDefaultCommitStyle:
+      return "Verify your identity to change the default commit style"
     case .removeProtection:
       return "Verify your identity to remove password protection"
     case .switchToPassword:
@@ -410,19 +393,16 @@ struct SafeModeModal: View {
 
   // MARK: - Safe Mode Change Handler
 
-  private func handleSafeModeChange(to newMode: SafeMode) {
-    let currentStyle =
-      CommitStyle.migrate(protectedMode: false, safeMode: appSettings.safeMode) ?? .confirm
-    let nextStyle = CommitStyle.migrate(protectedMode: false, safeMode: newMode) ?? .confirm
+  private func handleCommitStyleChange(to newStyle: CommitStyle) {
     if NotebookViewModel.requiresUnlockForGlobalSafeModeChange(
-      from: currentStyle, to: nextStyle, hasPassword: appSettings.hasCustomPasswordSet,
+      from: appSettings.commitStyle, to: newStyle, hasPassword: appSettings.hasCustomPasswordSet,
       hasTouchID: appSettings.isBiometricEnabled)
     {
-      pendingAction = .changeSafeMode(newMode)
+      pendingAction = .changeDefaultCommitStyle(newStyle)
       showAuthSheet = true
     } else {
       withAnimation(.snappy(duration: 0.2)) {
-        appSettings.safeMode = newMode
+        appSettings.commitStyle = newStyle
       }
     }
   }
@@ -522,9 +502,9 @@ struct SafeModeModal: View {
     }
 
     switch action {
-    case .changeSafeMode(let newMode):
+    case .changeDefaultCommitStyle(let newStyle):
       withAnimation(.snappy(duration: 0.2)) {
-        appSettings.safeMode = newMode
+        appSettings.commitStyle = newStyle
       }
       cleanup()
 
@@ -551,7 +531,7 @@ struct SafeModeModal: View {
   // MARK: - Protected Action Enum
 
   private enum ProtectedAction {
-    case changeSafeMode(SafeMode)
+    case changeDefaultCommitStyle(CommitStyle)
     case removeProtection
     case switchToPassword
     case switchToBiometric

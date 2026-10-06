@@ -220,4 +220,113 @@ struct ProtectionLoweringGateTests {
     #expect(manager.workspace.connectionConfig?.protectionLevel == ConnectionProtectionLevel.none)
     #expect(manager.workspace.connectionConfig?.commitStyle == .password)
   }
+
+  @Test("connectionConfigDidChange notifies when only commitStyle changes")
+  func commitStyleOnlyChangeNotifies() {
+    let viewModel = NotebookViewModel()
+    viewModel.notebook.connectionConfig = ConnectionConfig(
+      protectionLevel: .none, safeMode: .silent, protectedMode: true)
+    var notified: ConnectionConfig?
+    viewModel.onConnectionProtectionChanged = { notified = $0 }
+
+    viewModel.applyConnectionCommitStyle(.review)
+
+    let projection = CommitStyle.review.legacyProjection
+    #expect(notified?.commitStyle == .review)
+    #expect(notified?.hasStoredCommitStyle == true)
+    #expect(notified?.protectedMode == projection.protectedMode)
+    #expect(notified?.safeMode == projection.safeMode)
+    #expect(notified?.protectionLevel == ConnectionProtectionLevel.none)
+  }
+
+  @Test(
+    "Review on a legacy protected silent connection stores commitStyle on the workspace, draft, tabs, and actor"
+  )
+  func legacyReviewReachesWorkspace() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-commit-style-\(UUID().uuidString).sqlite")
+    defer { removeDatabase(url) }
+    let legacy = ConnectionConfig(
+      databaseType: .sqlite, host: "db.example.com", port: 0, database: url.path, username: "",
+      rememberConnection: false, protectionLevel: .none, safeMode: .silent, protectedMode: true)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: legacy), restoreTabs: false)
+    try await manager.connectionManager.connect(config: legacy)
+    defer { Task { await manager.connectionManager.disconnect() } }
+    manager.editingConnectionConfig.name = "Draft"
+    manager.editingConnectionConfig.host = "draft-host"
+    let origin = manager.newNotebook()
+    let other = manager.newNotebook()
+    let viewModel = try #require(manager.viewModel(for: origin))
+
+    #expect(viewModel.requestConnectionCommitStyle(.review))
+
+    let projection = CommitStyle.review.legacyProjection
+    let workspace = try #require(manager.workspace.connectionConfig)
+    #expect(workspace.hasStoredCommitStyle == true)
+    #expect(workspace.commitStyle == .review)
+    #expect(workspace.protectedMode == projection.protectedMode)
+    #expect(workspace.safeMode == projection.safeMode)
+    #expect(manager.editingConnectionConfig.hasStoredCommitStyle == true)
+    #expect(manager.editingConnectionConfig.commitStyle == .review)
+    #expect(manager.editingConnectionConfig.protectedMode == projection.protectedMode)
+    #expect(manager.editingConnectionConfig.safeMode == projection.safeMode)
+    #expect(manager.editingConnectionConfig.name == "Draft")
+    #expect(manager.editingConnectionConfig.host == "draft-host")
+    for tab in [origin, other] {
+      let config = try #require(manager.viewModel(for: tab)?.notebook.connectionConfig)
+      #expect(config.hasStoredCommitStyle == true)
+      #expect(config.commitStyle == .review)
+      #expect(config.protectedMode == projection.protectedMode)
+      #expect(config.safeMode == projection.safeMode)
+    }
+    #expect(await actorStoredCommitStyle(manager) == .review)
+    let connected = await manager.connectionManager.config
+    #expect(connected?.protectedMode == projection.protectedMode)
+    #expect(connected?.safeMode == projection.safeMode)
+    #expect(
+      await manager.connectionManager.connectedPolicy.protectedMode == projection.protectedMode)
+  }
+
+  @Test("A pending transaction refuses a commit-style change and leaves the pair unchanged")
+  func pendingTransactionRefusesCommitStyleChange() throws {
+    var config = ConnectionConfig(protectionLevel: .none, safeMode: nil, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
+    manager.pendingTransaction = .appTx(pending: [])
+    let viewModel = try #require(manager.viewModel(for: manager.newNotebook()))
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+
+    // True: the caller must not open the unlock sheet. Nothing is stored.
+    #expect(viewModel.requestConnectionCommitStyle(.immediate))
+
+    let projection = CommitStyle.confirm.legacyProjection
+    let stored = try #require(viewModel.notebook.connectionConfig)
+    #expect(stored.commitStyle == .confirm)
+    #expect(stored.protectedMode == projection.protectedMode)
+    #expect(stored.safeMode == projection.safeMode)
+    #expect(manager.workspace.connectionConfig?.commitStyle == .confirm)
+    #expect(manager.workspace.connectionConfig?.safeMode == projection.safeMode)
+    #expect(manager.pendingTransaction == .appTx(pending: []))
+    #expect(toasts == [NotebookViewModel.transactionPendingElsewhereMessage])
+  }
+
+  /// The actor copy is an unstructured task. It never appears when `commitStyle` is not copied.
+  private func actorStoredCommitStyle(_ manager: WorkspaceManager) async -> CommitStyle? {
+    for _ in 0..<50 {
+      if let style = await manager.connectionManager.config?.commitStyle { return style }
+      await Task.yield()
+    }
+    return await manager.connectionManager.config?.commitStyle
+  }
+
+  private func removeDatabase(_ url: URL) {
+    let fileManager = FileManager.default
+    try? fileManager.removeItem(at: url)
+    for suffix in ["-wal", "-shm", "-journal"] {
+      try? fileManager.removeItem(at: URL(fileURLWithPath: url.path + suffix))
+    }
+  }
 }

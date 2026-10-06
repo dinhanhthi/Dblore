@@ -2,8 +2,8 @@
 //  ConnectionSafetyBadge.swift
 //  Dblore
 //
-//  Header safety badge: protection state (Read-Only / Schema Protected / Protected /
-//  Unprotected) and SSL state from the connection config. Pure mapping; the view picks colors.
+//  Header safety badge: protection level, or the resolved commit style when the level is
+//  None, plus SSL state from the connection config. Pure mapping; the view picks colors.
 //
 
 import Foundation
@@ -25,27 +25,22 @@ struct ConnectionSafetyBadge: Equatable, Sendable {
   let ssl: SSLStatus?
   let tooltip: String
 
-  init(config: ConnectionConfig) {
+  init(config: ConnectionConfig, commitStyle: CommitStyle) {
     let level = config.protectionLevel
     if level != .none {
       protectionLabel = level.displayName
       protectionIcon = level.iconName
-    } else if config.protectedMode {
-      protectionLabel = "Protected"
-      protectionIcon = "shield.lefthalf.filled"
     } else {
-      protectionLabel = "Unprotected"
-      protectionIcon = level.iconName
+      protectionLabel = commitStyle.title
+      protectionIcon = commitStyle == .review ? "shield.lefthalf.filled" : level.iconName
     }
 
     var lines: [String] = []
     if level != .none {
       lines.append("\(protectionLabel): \(level.description)")
-    } else if !config.protectedMode {
-      lines.append("Unprotected: all queries run directly")
     }
-    if config.protectedMode {
-      lines.append("Protected mode: changes stay pending until you Commit or Roll Back")
+    if commitStyle == .review {
+      lines.append("Review: changes stay pending until you Commit or Roll Back.")
     }
 
     if config.databaseType.capabilities.supportsSSL {

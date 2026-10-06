@@ -25,15 +25,7 @@ extension ConnectionFormContent {
               Text(entry.config.name)
                 .font(.body)
 
-              // Security indicators
-              if let mode = entry.config.safeMode, mode != .silent {
-                Image(
-                  systemName: mode.requiresPassword
-                    ? "lock.shield.fill" : "exclamationmark.triangle.fill"
-                )
-                .foregroundColor(mode.requiresPassword ? .accent : .warning)
-                .font(.caption)
-              }
+              historyShield(for: entry.config)
               if entry.config.protectionLevel != .none {
                 Image(systemName: entry.config.protectionLevel.iconName)
                   .foregroundColor(
@@ -125,7 +117,7 @@ extension ConnectionFormContent {
 
     if getSelectedHistoryId() == id {
       setSelectedHistoryId(nil)
-      connectionConfig = ConnectionConfig()
+      connectionConfig = Self.newFormDraft()
       resetCertificateDraft()
     }
   }
@@ -134,7 +126,18 @@ extension ConnectionFormContent {
     SessionManager.clearAllHistory()
     loadConnectionHistory()
     setSelectedHistoryId(nil)
-    connectionConfig = ConnectionConfig()
+    connectionConfig = Self.newFormDraft()
     resetCertificateDraft()
+  }
+
+  /// Shield for any resolved style other than Immediate. Password tint only for Password.
+  @ViewBuilder
+  func historyShield(for config: ConnectionConfig) -> some View {
+    let style = config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+    if style != .immediate {
+      Image(systemName: style == .password ? "lock.shield.fill" : "exclamationmark.triangle.fill")
+        .foregroundColor(style == .password ? .accent : .warning)
+        .font(.caption)
+    }
   }
 }
