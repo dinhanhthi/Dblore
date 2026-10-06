@@ -501,6 +501,7 @@ private final class CellUndoMenuRefresh: ObservableObject {
 struct TabCommands: Commands {
   // Note: All tab operations now go through WorkspaceManager
   // No fallback to legacy TabStateManager.shared
+  @FocusedValue(\.openTableImportAction) private var openTableImportAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -585,6 +586,13 @@ struct TabCommands: Commands {
         Label("Open", systemImage: "folder")
       }
       .keyboardShortcut("o", modifiers: .command)
+
+      // Lives here: a separate CommandGroup(after: .newItem) is dropped by SwiftUI
+      // because this group replaces .newItem
+      Divider()
+
+      Button("Import Data...") { openTableImportAction?() }
+        .disabled(openTableImportAction == nil)
     }
 
     // File menu - Save

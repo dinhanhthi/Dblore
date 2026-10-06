@@ -14,14 +14,8 @@ struct WorkspaceCommands: Commands {
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
   @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
-  @FocusedValue(\.openTableImportAction) private var openTableImportAction
 
   var body: some Commands {
-    CommandGroup(after: .newItem) {
-      Button("Import Data...") { openTableImportAction?() }
-        .disabled(openTableImportAction == nil)
-    }
-
     // Sidebar toggle commands - only show when no document is open
     // (NotebookCommands and EditorCommands handle their own modes)
     if documentMode == nil {
