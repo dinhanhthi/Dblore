@@ -126,22 +126,23 @@ struct CellValueValidatorTests {
     }
   }
 
-  @Test("NULL validation with invalid inputs")
-  func nullInvalidInputs() {
-    let invalidNulls = [
-      "nil",
-      "none",
-      "undefined",
-      "null ",  // Extra space
-      " null",  // Leading space
-      "null1",  // Extra characters
-      "1null",
-    ]
+  @Test(
+    "A new value for a NULL cell is checked as the column's type",
+    arguments: [
+      ("2", "INTEGER", true), ("2.5", "INTEGER", false), ("-3.5", "DOUBLE PRECISION", true),
+      ("abc", "NUMERIC", false), ("true", "BOOLEAN", true), ("maybe", "BOOLEAN", false),
+      ("{\"a\": 1}", "JSONB", true), ("{bad", "JSON", false), ("hello", "TEXT", true),
+      ("anything", "UUID", true), ("null1", "VARCHAR", true),
+    ])
+  func nullCellTakesColumnType(input: String, columnType: String, isValid: Bool) {
+    let result = CellValueValidator.validate(input, for: .null, columnType: columnType)
+    #expect(result.isValid == isValid, "'\(input)' as \(columnType)")
+  }
 
-    for input in invalidNulls {
-      let result = CellValueValidator.validate(input, for: .null)
-      #expect(!result.isValid, "'\(input)' should be invalid NULL")
-      #expect(result.errorMessage == "Use empty or 'null' for NULL values")
+  @Test("Empty or 'null' keeps a NULL cell NULL whatever the column type")
+  func nullCellKeepsNull() {
+    for input in ["", "null", "NULL"] {
+      #expect(CellValueValidator.validate(input, for: .null, columnType: "INTEGER").isValid)
     }
   }
 
@@ -416,10 +417,10 @@ struct CellValueValidatorTests {
       #expect(!result.isValid, "Double should reject whitespace-only: '\(input)'")
     }
 
-    // NULL should reject whitespace (only empty or "null" allowed)
+    // A NULL integer cell should reject whitespace (checked as the column's type)
     for input in whitespaceInputs {
-      let result = CellValueValidator.validate(input, for: .null)
-      #expect(!result.isValid, "NULL should reject whitespace-only: '\(input)'")
+      let result = CellValueValidator.validate(input, for: .null, columnType: "INTEGER")
+      #expect(!result.isValid, "NULL integer should reject whitespace-only: '\(input)'")
     }
   }
 

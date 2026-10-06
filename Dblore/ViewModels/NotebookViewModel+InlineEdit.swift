@@ -203,7 +203,7 @@ extension NotebookViewModel {
     rightSidebarContent = .cellInfo(
       columnName: columnName,
       columnType: columnType,
-      value: Self.editedCellValue(newValue, original: originalValue),
+      value: Self.editedCellValue(newValue, original: originalValue, columnType: columnType),
       tableName: tableName,
       rowData: rowData,
       primaryKeyColumns: primaryKeyColumns,
@@ -381,8 +381,10 @@ extension NotebookViewModel {
   }
 
   /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).
-  /// Nil is NULL, whatever the original type.
-  static func editedCellValue(_ newValue: String?, original: CellValue) -> CellValue {
+  /// Nil is NULL, whatever the original type. A NULL original takes `columnType`'s type.
+  static func editedCellValue(
+    _ newValue: String?, original: CellValue, columnType: String = ""
+  ) -> CellValue {
     guard let newValue else { return .null }
     switch original {
     case .string:
@@ -394,7 +396,8 @@ extension NotebookViewModel {
     case .bool:
       return Bool(newValue).map(CellValue.bool) ?? .string(newValue)
     case .null:
-      return bindText(for: newValue, original: original) == nil ? .null : .string(newValue)
+      return bindText(for: newValue, original: original) == nil
+        ? .null : editedCellValue(newValue, original: .placeholder(forColumnType: columnType))
     case .json:
       return .json(newValue)
     case .date:

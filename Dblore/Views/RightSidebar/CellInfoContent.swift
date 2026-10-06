@@ -68,7 +68,7 @@ struct CellInfoContent: View {
 
           if canSetNull {
             Button("Set NULL", action: setNull)
-              .buttonStyle(GhostButtonStyle())
+              .buttonStyle(SecondaryButtonStyle())
           }
 
           if isEditing {
@@ -383,7 +383,7 @@ struct CellInfoContent: View {
 
   private func validateInput(_ input: String) {
     // Use CellValueValidator helper
-    let result = CellValueValidator.validate(input, for: value)
+    let result = CellValueValidator.validate(input, for: value, columnType: columnType)
     validationError = result.errorMessage
   }
 

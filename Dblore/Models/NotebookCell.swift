@@ -304,6 +304,21 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
   case date(Date)
   case data(Data)
 
+  /// Empty value of the case a `columnType` value decodes to (`postgresDataTypeName` names):
+  /// the type a NULL cell of that column takes once it gets a value. Other types (arrays, uuid,
+  /// user-defined) are text.
+  nonisolated static func placeholder(forColumnType columnType: String) -> CellValue {
+    switch columnType.uppercased() {
+    case "BOOLEAN": return .bool(false)
+    case "SMALLINT", "INTEGER", "BIGINT": return .int(0)
+    case "REAL", "DOUBLE PRECISION", "NUMERIC": return .double(0)
+    case "DATE", "TIMESTAMP", "TIMESTAMPTZ": return .date(Date(timeIntervalSince1970: 0))
+    case "JSON", "JSONB": return .json("")
+    case "BYTEA": return .data(Data())
+    default: return .string("")
+    }
+  }
+
   // Cached date formatters for performance
   // Note: DateFormatter is thread-safe for reading after initialization
   private static let displayDateFormatter: DateFormatter = {

@@ -35,8 +35,11 @@ struct CellValueValidator: Sendable {
   /// - Parameters:
   ///   - input: The input string to validate
   ///   - valueType: The target CellValue type
+  ///   - columnType: The column's type, checked instead when `valueType` is NULL
   /// - Returns: ValidationResult indicating if input is valid or error message
-  nonisolated static func validate(_ input: String, for valueType: CellValue) -> ValidationResult {
+  nonisolated static func validate(
+    _ input: String, for valueType: CellValue, columnType: String = ""
+  ) -> ValidationResult {
     // String type accepts anything
     if case .string = valueType {
       return .valid
@@ -51,7 +54,9 @@ struct CellValueValidator: Sendable {
       return validateDouble(input)
 
     case .null:
-      return validateNull(input)
+      // Empty or "null" keeps NULL; any other value is checked as the column's type
+      if input.isEmpty || input.lowercased() == "null" { return .valid }
+      return validate(input, for: .placeholder(forColumnType: columnType))
 
     case .json:
       return validateJSON(input)
@@ -91,15 +96,6 @@ struct CellValueValidator: Sendable {
 
     if Double(input) == nil {
       return .invalid("Invalid number format")
-    }
-
-    return .valid
-  }
-
-  nonisolated private static func validateNull(_ input: String) -> ValidationResult {
-    // NULL accepts empty string or "null"
-    if !input.isEmpty && input.lowercased() != "null" {
-      return .invalid("Use empty or 'null' for NULL values")
     }
 
     return .valid

@@ -384,6 +384,18 @@ struct InlineEditViewModelTests {
     #expect(value == .null)
   }
 
+  @Test("A value for a NULL cell takes the column's type")
+  func nullCellEditTakesColumnType() {
+    #expect(
+      NotebookViewModel.editedCellValue("2", original: .null, columnType: "INTEGER") == .int(2))
+    #expect(
+      NotebookViewModel.editedCellValue("true", original: .null, columnType: "BOOLEAN")
+        == .bool(true))
+    #expect(
+      NotebookViewModel.editedCellValue("hi", original: .null, columnType: "TEXT") == .string("hi"))
+    #expect(NotebookViewModel.editedCellValue("", original: .null, columnType: "INTEGER") == .null)
+  }
+
   @Test("A string edit still binds and displays the typed text")
   func stringEditStaysText() {
     #expect(NotebookViewModel.bindText(for: "new", original: .string("old")) == "new")
