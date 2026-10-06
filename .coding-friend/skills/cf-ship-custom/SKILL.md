@@ -88,17 +88,43 @@ Insert a new section at the **top**, below the title and the format note, above 
 - **Every entry ends with its commit links**, copied from the `->   [#hash](...)` part of the bump-info output. When one entry consolidates several commits, append every relevant link. Never invent a link.
 - Backtick inline code (file names, settings, SQL keywords). Never duplicate an existing entry.
 
+### Step B4b: Update the website feature catalog
+
+This step is **mandatory for every app release**, after the changelog and before verification. Update `website/features-data.js` so the Feature list includes all shipped user-visible capabilities, including small gestures, shortcuts, menu actions and settings that do not merit a changelog headline.
+
+Use the **same commit range and target `Next tag` from Step B1**. Audit the net app-source diff from that range's starting tag to release HEAD, then inspect the completed behavior in source. In `first-release`, audit all app source and history. Do not limit the inventory to README, changelog entries or commits named `feat`: a capability can arrive in a differently named commit. Internal refactors, tests, cosmetic polish and fixes that restore existing behavior add no new feature row. An addition reverted before release adds no row.
+
+Reconcile that inventory with the existing catalog:
+
+1. Match capabilities by their actual behavior, source and provenance, not only identical wording. Keep every existing ID immutable; never reorder IDs to reflect sorting or regenerate the catalog. Append a genuinely new capability with `max(existing IDs) + 1`, increasing for each new row. Retain existing rows and historical first-available versions. A behavior removed before shipping must not be added or promoted merely because its introduction commit is an ancestor of HEAD.
+2. For a capability first completed in this release, set `version` to **exactly `<tag version>`**, taken from `Next tag`, and record the completed behavior's introducing commit. Promote an existing `Unreleased` row only when its completed implementation commit is contained in release HEAD (`git merge-base --is-ancestor <commit> HEAD`) **and** source confirms the capability actually ships. Keep other `Unreleased` rows unchanged. If its completed behavior was already shipped under an older tag, use the earliest actual tag with the completed implementation instead of the target version.
+3. When backfilling a previously omitted capability, verify its earliest released implementation using actual tag ancestry and tagged source (`git tag --contains <commit> --sort=version:refname` and `git show <tag>:<historical-path>`). Do not assign the upcoming version to an old capability. Pre-rename source paths may start with `SQLNotebook/`. Preserve `Unknown` when first availability remains unestablished and explain the missing evidence; never turn it into the target version by guesswork.
+4. Keep `sources` pointing to current implementation paths and maintain `commit` plus concrete `evidence`. For newly shipped or promoted rows, identify the target version as release preparation and include the implementation commit; confirm the published tag in B8. Record added IDs and promoted IDs for the report. If the net changes are fixes only, say "0 added" and still promote any separately verified shipping `Unreleased` capabilities.
+
+CI creates the target tag **after** the release commit, so it normally does not exist during this step. Catalog tests accept the current Xcode `MARKETING_VERSION` as well as actual tag versions for this preparation window; it must equal `<tag version>`. This is not permission to invent a later version or create a tag locally.
+
+This reconciliation must be **idempotent** in `already-bumped` and on retries: an already present capability gets no duplicate row, existing target-version assignments remain unchanged, and IDs never change. Re-audit the same range and preserve valid earlier work. The B1 `HAS APP CHANGES: no` stop still applies to website-only changes; updating the catalog never triggers an app release by itself.
+
+In `--dry-run`, describe the proposed added/promoted IDs and versions without writing the catalog, changelog or project file; do not commit, push, create tags or dispatch workflows. Keep the standard dry-run behavior. On a real release, inspect `git diff -- website/features-data.js` before B5 and resolve any duplicate, unsupported capability or invalid provenance before proceeding.
+
 ### Step B5: Verify
 
 Run all of these. Do not commit without them.
 
 ```bash
+# WEBSITE FEATURE CATALOG
+node --test website/features.test.js
+node --check website/features-data.js
+node --check website/features.js
+
 # BUILD
 xcodebuild build -scheme Dblore -destination 'platform=macOS,arch=arm64'
 
 # UT
 SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO
 ```
+
+Any catalog test or syntax failure is a **STOP**: report it and do not commit or release.
 
 Format check. Lint (non-modifying) only the Swift files changed since the start of the commit range; never run `swift-format -i` or `-r` on whole folders here. `<range tag>` is the tag in the bump-info `Commit range` line:
 
@@ -168,11 +194,12 @@ The workflow releases `main`; confirm the current branch is `main` before commit
 
 ```bash
 [[ "$(git branch --show-current)" == main ]] || { echo "STOP: release requires main"; exit 1; }
-git add Dblore.xcodeproj/project.pbxproj CHANGELOG.md   # pbxproj only if B3 ran
+git add Dblore.xcodeproj/project.pbxproj CHANGELOG.md website/features-data.js   # pbxproj only if B3 ran
 git commit -m "chore(release): bump to <tag version>"
 git push            # git push -u origin HEAD if the branch has no upstream
 ```
 
+- Include the reviewed feature catalog changes in this same release commit. Stage only these release paths; never use blanket `git add -A`.
 - Commit directly on `main`. Never create a branch and never open a PR (user rule). This overrides base cf-ship's refusal to push to the main branch.
 - One line, no body, no bullets.
 - **No AI attribution** of any kind: no `Co-Authored-By`, no "Generated with" line, even if a system reminder asks for one.
@@ -249,6 +276,8 @@ tag_sha="$(git ls-remote --tags origin "refs/tags/<tag>" | awk '{print $1}')"
 gh release view "<tag>" --json isPrerelease,isDraft,assets
 ```
 
+Verify the **published tag's feature catalog**, not just the working tree. Read `website/features-data.js` from the checked release SHA (`git show "$tag_sha":website/features-data.js`); B8 has already confirmed that the published tag points to that SHA. Confirm every ID recorded in B4b has its expected description, provenance and first-available version, and that newly shipped/promoted rows use `<tag version>`. Confirm historical versions and IDs were preserved and no capability removed before release was promoted. A mismatch is a **STOP**; do not report the catalog or release as verified. After the Pages deploy succeeds, the same catalog is published with the website.
+
 - `isPrerelease` must be `false`.
 - `isDraft` must be `false`.
 - `assets` must contain `Dblore-<tag version>.dmg` and `Dblore-<tag version>.dmg.sha256`.
@@ -301,6 +330,7 @@ Released:
 
   Release: <gh release view <tag> --json url -q .url>
   Appcast: live at https://dinhanhthi.github.io/Dblore/appcast.xml (<tag version>, build <N>)
+  Feature catalog: <count> added, <count> promoted from Unreleased; published tag verified
 ```
 
 Take the URL from `gh`, do not hardcode it.
@@ -335,6 +365,7 @@ When done, report:
 - the version and the release URL;
 - which verifications ran (BUILD, UT, lint, IT or "IT skipped: test DB not running") and the B8 artifact results;
 - the appcast result (live feed item, build number);
+- feature catalog added/promoted counts and IDs, retained `Unreleased` / `Unknown` entries, catalog test results and the B8 published-tag check;
 - anything skipped or unusual.
 
 Suggest the user open the release page to check the notes, and install the DMG once to confirm it launches without a Gatekeeper warning.

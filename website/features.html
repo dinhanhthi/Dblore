@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Privacy · Dblore</title>
+    <title>Feature list · Dblore</title>
     <meta
       name="description"
-      content="What Dblore collects, stores and sends: no analytics, no accounts, no servers of its own."
+      content="Browse every Dblore feature, its first available version and report a bug or suggest an improvement."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Privacy · Dblore" />
-    <meta property="og:description" content="What Dblore collects, stores and sends." />
+    <meta property="og:title" content="Feature list · Dblore" />
+    <meta property="og:description" content="Explore the complete Dblore feature list and find when each feature became available." />
     <meta property="og:image" content="https://dblore.dinhanhthi.com/poster.jpg" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="logo.png" type="image/png" />
@@ -25,7 +25,7 @@
     </script>
   </head>
   <body>
-    <div class="page">
+    <div class="page features-page">
       <header class="site-header">
         <div class="brand-group">
           <a class="brand" href="./">
@@ -42,8 +42,8 @@
           >
         </div>
         <nav aria-label="Primary navigation">
-          <a class="nav-link" href="features.html">Features</a>
           <a class="nav-link" href="docs.html">Docs</a>
+          <a class="nav-link active" href="features.html" aria-current="page">Features</a>
           <button type="button" class="nav-link" id="theme-toggle" aria-label="Switch theme" title="Switch theme">
             <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
@@ -70,45 +70,44 @@
 
       <main>
         <section class="hero">
-          <h1>Privacy</h1>
-          <p>No analytics, telemetry or accounts. Dblore has no servers of its own.</p>
+          <h1>Feature list</h1>
+          <p>Every capability, from the big features to the little shortcuts.</p>
+          <p class="note">Version shows the first release with each feature. Unreleased features are coming in a future release; Unknown means availability has not yet been verified.</p>
+          <div class="actions">
+            <a class="button button--primary" href="https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md" target="_blank" rel="noopener noreferrer">Suggest a feature</a>
+          </div>
         </section>
 
-        <section>
-          <h2>What the app sends over the network</h2>
-          <ul class="list">
-            <li><strong>Update checks.</strong> Dblore fetches the update feed (<code>appcast.xml</code>) from GitHub Pages and downloads updates from GitHub Releases. You can turn background checks off in Settings.</li>
-            <li><strong>Your databases.</strong> Connections go to the servers you configure, nowhere else.</li>
-            <li><strong>AI assistant.</strong> Only when you use it, and only to the provider you chose with your own key or sign-in. Table and column names, types and keys are sent automatically. Query text and error messages are sent only after you review and press Send. Dblore does not send row data on its own.</li>
-            <li><strong>Local AI.</strong> Ollama, LM Studio, <code>mlx_lm.server</code> and on-device MLX models keep your prompts on your machine. Downloading an MLX model fetches it from huggingface.co.</li>
-            <li><strong>Nothing else.</strong> No usage, crash or install reporting.</li>
-          </ul>
-        </section>
-
-        <section>
-          <h2>What stays on your Mac</h2>
-          <ul class="list">
-            <li>Passwords and AI keys are stored in the Keychain.</li>
-            <li>Query history, saved chats, settings and your notebooks stay on your Mac.</li>
-            <li>Local data backups (<code>.dblorebackup</code>) exclude secrets: an export is scanned for them and refused if one is found.</li>
-            <li>Settings &gt; Data lets you export, import or clear local data.</li>
-          </ul>
-        </section>
-
-        <section>
-          <h2>This website</h2>
-          <ul class="list">
-            <li>Hosted on GitHub Pages, which may log IP addresses.</li>
-            <li>No analytics and no cookies. Your theme choice is kept in local storage.</li>
-            <li>The version in the header is read from this site's own <code>appcast.xml</code>, a same-origin request with no third party involved.</li>
-            <li>The Geist font is loaded from Google Fonts.</li>
-          </ul>
-        </section>
-
-        <section>
-          <h2>Questions</h2>
-          <p>Dblore is open source, so every claim here can be checked in the code. Questions? Open an issue on <a href="https://github.com/dinhanhthi/Dblore/issues" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
-        </section>
+        <div id="feature-controls" class="feature-controls" hidden>
+          <div class="feature-toolbar">
+            <button type="button" class="button button--secondary" id="feature-search-button" aria-controls="feature-search-panel" aria-expanded="false">Search features</button>
+            <p id="feature-count" role="status" aria-live="polite" aria-atomic="true"></p>
+          </div>
+          <div id="feature-search-panel" class="feature-search-panel" hidden>
+            <label for="feature-search">Search features</label>
+            <div class="feature-search-input">
+              <input id="feature-search" type="search" placeholder="Try inline edit or favorites" autocomplete="off" aria-controls="feature-rows" />
+              <button type="button" id="feature-search-clear" class="button button--secondary">Clear</button>
+            </div>
+          </div>
+        </div>
+        <div id="feature-table-wrap" class="feature-table-wrap" role="region" aria-label="Scrollable feature list" tabindex="0" hidden>
+          <table id="features-table">
+            <caption class="feature-visually-hidden">Dblore features and their first available versions. Select a column heading to sort.</caption>
+            <thead>
+              <tr>
+                <th scope="col" aria-sort="descending"><button type="button" data-sort="id">ID <span aria-hidden="true">↓</span></button></th>
+                <th scope="col" aria-sort="none"><button type="button" data-sort="feature">Features <span aria-hidden="true">↕</span></button></th>
+                <th scope="col" aria-sort="none"><button type="button" data-sort="version">Version <span aria-hidden="true">↕</span></button></th>
+              </tr>
+            </thead>
+            <tbody id="feature-rows"></tbody>
+          </table>
+        </div>
+        <noscript>
+          <p>The searchable feature table needs JavaScript. Browse the <a href="https://github.com/dinhanhthi/Dblore/blob/main/website/features-data.js">complete feature catalog</a> or the <a href="docs.html">documentation</a>.</p>
+          <p><a href="https://github.com/dinhanhthi/Dblore/issues/new?template=bug_report.md">Report a bug</a></p>
+        </noscript>
       </main>
 
       <footer class="site-footer">
@@ -121,5 +120,7 @@
       </footer>
     </div>
     <script src="site.js"></script>
+    <script src="features-data.js"></script>
+    <script src="features.js"></script>
   </body>
 </html>

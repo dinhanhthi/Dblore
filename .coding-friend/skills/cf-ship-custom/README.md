@@ -11,7 +11,7 @@ the contract the model follows (coding-friend applies its `## Before`,
 ## What one release does
 
 `/cf-ship` reads the app commits since the last published tag, picks a version,
-writes `CHANGELOG.md`, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
+writes `CHANGELOG.md`, updates the website Feature list from app-source changes, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
 `Dblore.xcodeproj/project.pbxproj` (only when the file version changes),
 runs build + tests + a lint of the changed Swift files, commits
 `chore(release): bump to <tag version>` on `main`, pushes, runs
@@ -22,6 +22,12 @@ the published artifacts.
 
 Dblore ships stable releases only: the tag is always `v` +
 `MARKETING_VERSION` (`X.Y.Z`), and the DMG is `Dblore-<version>.dmg`.
+
+## Feature list updates
+
+Every app release audits the net source changes for user-visible capabilities, including gestures, shortcuts, settings and menu actions, then updates `website/features-data.js`. New capabilities receive new IDs; existing IDs and historical first versions stay fixed. Shipping `Unreleased` rows are promoted to the exact release version, while backfilled older features use their verified first release. Fixes and reverted additions do not create rows.
+
+Catalog tests and JavaScript syntax checks run before the release commit; the catalog is staged with the changelog and version file. The published tag is checked afterward, and the release report includes added/promoted counts. Retries preserve IDs and avoid duplicate rows. `--dry-run` reports proposed updates without changing files or publishing anything; website-only changes still stop with "nothing to release".
 
 ## Say it in one line
 
