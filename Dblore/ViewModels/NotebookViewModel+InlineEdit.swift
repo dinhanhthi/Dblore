@@ -2,8 +2,9 @@
 //  NotebookViewModel+InlineEdit.swift
 //  Dblore
 //
-//  Inline grid edit: primary-key-only UPDATE, checked by the protection gate (never Safe Mode)
-//  and staged in the app transaction or committed at once (`inlineEditAutoCommit`).
+//  Inline grid edit: primary-key-only UPDATE, checked by the protection gate.
+//  Confirm and password ask before the edit is sent. Review holds it in the app
+//  transaction. Immediate, confirm, and password commit at once.
 //
 
 import AppKit
@@ -243,11 +244,25 @@ extension NotebookViewModel {
       statement: statement, columnName: columnName, tableName: target.qualifiedName,
       cellId: cellId, connectionManager: connectionManager)
 
-    // No Safe Mode confirmation: the edit is staged (Commit / Rollback) unless committed at once
-    let autoCommit = AppSettings.shared.inlineEditAutoCommit
-    Task { [weak self] in
-      await self?.sendInlineEdit(edit, target: target, autoCommit: autoCommit)
+    // Confirm and password ask before anything is sent. Review and immediate do not.
+    if resolvedCommitStyle().confirmsWrites,
+      presentConfirmationIfNeeded(for: statement.sql, cellId: cellId)
+    {
+      pendingExplainSQL = nil
+      pendingStagedBatch = nil
+      pendingInlineEdit = edit
+      return
     }
+
+    Task { [weak self] in
+      await self?.sendInlineEdit(edit, target: target)
+    }
+  }
+
+  /// Commit style of this notebook's connection, or the app default when it has none.
+  private func resolvedCommitStyle() -> CommitStyle {
+    notebook.connectionConfig?.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+      ?? AppSettings.shared.commitStyle
   }
 
   /// Shown when an edit targets a generated column
@@ -259,13 +274,13 @@ extension NotebookViewModel {
   nonisolated static let notEditableMessage =
     "This result is read-only: run the cell again to edit a single table with a primary key"
 
-  /// Send an inline edit through the actor gate and refresh the cell. `autoCommit` false stages
-  /// it in the app transaction (Protected mode forced, whatever the connection's toggle); true
-  /// commits it at once unless a transaction is pending (see `executeGatedUpdate`).
-  /// `target` must still be the live edit target of the edited result (same generation).
-  /// Anything but exactly one updated row is reported as an error (the actor undoes it, see
-  /// `DatabaseConnectionManager.executeGatedUpdate`).
-  func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?, autoCommit: Bool) async {
+  /// Send an inline edit through the actor gate and refresh the cell. Review keeps the
+  /// connection's policy and leaves the edit pending (`commitImmediately` false). Immediate,
+  /// confirm, and password commit at once unless an app transaction is already open
+  /// (`executeGatedUpdate` joins it). `target` must still be the live edit target of the
+  /// edited result (same generation). Anything but exactly one updated row is reported as an
+  /// error (the actor undoes it, see `DatabaseConnectionManager.executeGatedUpdate`).
+  func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?) async {
     guard !refuseWhileTransactionPendingElsewhere() else { return }
     guard let target, target.qualifiedName == edit.tableName,
       isLiveEditTarget(target, cellId: edit.cellId)
@@ -275,15 +290,11 @@ extension NotebookViewModel {
     }
     let started = Date()
     do {
-      let policy = protectionPolicy
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
         edit.statement,
-        policy: autoCommit
-          ? policy
-          : ProtectionPolicy(
-            protectionLevel: policy.protectionLevel, safeMode: policy.safeMode,
-            protectedMode: true),
-        connectionEpoch: target.connectionEpoch, caller: id, commitImmediately: autoCommit)
+        policy: protectionPolicy,
+        connectionEpoch: target.connectionEpoch, caller: id,
+        commitImmediately: resolvedCommitStyle() != .review)
       scheduleHistory(
         [
           QueryHistoryOutcome(

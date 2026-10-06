@@ -79,23 +79,6 @@ struct PendingTransactionBanner: View {
       slowEndingDisconnect
 
       Button {
-        NotificationCenter.default.post(
-          name: .openSettings, object: nil,
-          userInfo: [
-            SettingsPage.userInfoKey: SettingsPage.results.rawValue,
-            SettingsOption.userInfoKey: SettingsOption.inlineEditAutoCommit.rawValue,
-          ])
-      } label: {
-        Image(systemName: "gearshape")
-          .foregroundColor(.foregroundMuted)
-      }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .linkPointer()
-      .controlSize(.small)
-      .help("Settings: Commit Inline Edits Immediately")
-      .accessibilityLabel("Open settings for committing inline edits")
-
-      Button {
         run { await workspaceManager.rollback() }
       } label: {
         Text("Roll Back")

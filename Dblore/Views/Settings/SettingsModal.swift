@@ -18,13 +18,6 @@ enum SettingsPage: String {
   static let userInfoKey = "settingsSection"
 }
 
-/// A single option another screen can ask Settings to highlight briefly.
-enum SettingsOption: String {
-  case inlineEditAutoCommit
-
-  static let userInfoKey = "settingsHighlight"
-}
-
 // MARK: - Settings Modal
 
 /// Main settings modal for workspace level
@@ -34,27 +27,23 @@ struct SettingsModal: View {
   let viewMode: ViewMode?
   var viewModel: NotebookViewModel?
   let section: SettingsPage?
-  let highlight: SettingsOption?
   let openToken: UUID
 
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
   @State private var selectedTab: SettingsTab
-  @State private var highlightedOption: SettingsOption?
 
   init(
     isPresented: Binding<Bool>,
     viewMode: ViewMode?,
     viewModel: NotebookViewModel? = nil,
     section: SettingsPage? = nil,
-    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) {
     _isPresented = isPresented
     self.viewMode = viewMode
     self.viewModel = viewModel
     self.section = section
-    self.highlight = highlight
     self.openToken = openToken
     _selectedTab = State(initialValue: SettingsTab.tab(for: section))
   }
@@ -154,13 +143,6 @@ struct SettingsModal: View {
       guard let section else { return }
       selectedTab = SettingsTab.tab(for: section)
     }
-    // Highlight the requested option for a moment, then fade it out
-    .task(id: openToken) {
-      withAnimation(.easeIn(duration: 0.2)) { highlightedOption = highlight }
-      guard highlight != nil else { return }
-      try? await Task.sleep(for: .seconds(2.5))
-      withAnimation(.easeOut(duration: 0.6)) { highlightedOption = nil }
-    }
   }
 
   /// Section view for the selected tab
@@ -181,8 +163,7 @@ struct SettingsModal: View {
     case .results:
       SettingsModalResultTableSection(
         appSettings: appSettings,
-        viewMode: effectiveViewMode,
-        highlightedOption: highlightedOption
+        viewMode: effectiveViewMode
       )
     case .save:
       // Save Options (Notebook Mode Only)
@@ -329,7 +310,6 @@ struct SettingsModalEditorSection: View {
 struct SettingsModalResultTableSection: View {
   @Bindable var appSettings: AppSettings
   let viewMode: ViewMode
-  var highlightedOption: SettingsOption?
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -345,21 +325,6 @@ struct SettingsModalResultTableSection: View {
           step: 1,
           description: "Size of the text in result tables. Column headers stay the same."
         )
-      }
-
-      SettingsGroupCard(title: "Editing") {
-        SettingsToggle(
-          title: "Commit Inline Edits Immediately",
-          description:
-            "When enabled, a cell edited in the result table, including View mode, is saved as soon as you press Enter. Otherwise, the edit waits in the pending transaction bar for Commit or Rollback.",
-          isOn: $appSettings.inlineEditAutoCommit
-        )
-        .padding(Spacing.sm)
-        .background(
-          RoundedRectangle(cornerRadius: CornerRadius.lg)
-            .fill(Color.accent.opacity(highlightedOption == .inlineEditAutoCommit ? 0.15 : 0))
-        )
-        .padding(-Spacing.sm)
       }
 
       SettingsGroupCard(title: "Table") {
@@ -601,7 +566,6 @@ extension View {
     viewMode: ViewMode?,
     viewModel: NotebookViewModel? = nil,
     section: SettingsPage? = nil,
-    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
@@ -610,7 +574,6 @@ extension View {
         viewMode: viewMode,
         viewModel: viewModel,
         section: section,
-        highlight: highlight,
         openToken: openToken
       )
     }
@@ -624,7 +587,6 @@ extension View {
   func settingsModal(
     workspaceManager: WorkspaceManager,
     section: SettingsPage? = nil,
-    highlight: SettingsOption? = nil,
     openToken: UUID = UUID()
   ) -> some View {
     self.settingsModal(
@@ -635,7 +597,6 @@ extension View {
       viewMode: workspaceManager.activeViewModel?.viewMode,
       viewModel: workspaceManager.activeViewModel,
       section: section,
-      highlight: highlight,
       openToken: openToken
     )
   }

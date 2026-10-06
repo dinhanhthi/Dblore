@@ -266,7 +266,6 @@ class AppSettings {
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
     static let commitStyle = "app.settings.commitStyle"
-    static let inlineEditAutoCommit = "app.settings.inlineEditAutoCommit"
     static let historyEnabled = "app.settings.historyEnabled"
     static let historyRetentionDays = "app.settings.historyRetentionDays"
     static let historyMaxEntries = "app.settings.historyMaxEntries"
@@ -519,15 +518,6 @@ class AppSettings {
     }
   }
 
-  /// Inline grid edits are committed at once (no Commit / Rollback bar); off: each edit is
-  /// staged in the app transaction. Safe Mode never asks for inline edits either way.
-  /// Default: false
-  var inlineEditAutoCommit: Bool = false {
-    didSet {
-      defaults.set(inlineEditAutoCommit, forKey: Keys.inlineEditAutoCommit)
-    }
-  }
-
   /// Record executed statements in query history.
   /// Default: true
   var historyEnabled: Bool = true {
@@ -767,10 +757,6 @@ class AppSettings {
       resultFontSize = clamped
     }
 
-    if defaults.object(forKey: Keys.inlineEditAutoCommit) != nil {
-      inlineEditAutoCommit = defaults.bool(forKey: Keys.inlineEditAutoCommit)
-    }
-
     if defaults.object(forKey: Keys.historyEnabled) != nil {
       historyEnabled = defaults.bool(forKey: Keys.historyEnabled)
     }
@@ -839,7 +825,6 @@ class AppSettings {
     defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
     safeMode = CommitStyle.review.legacyProjection.safeMode
     commitStyle = .review
-    inlineEditAutoCommit = false
     historyEnabled = true
     historyRetentionDays = Self.defaultHistoryRetentionDays
     historyMaxEntries = Self.defaultHistoryMaxEntries

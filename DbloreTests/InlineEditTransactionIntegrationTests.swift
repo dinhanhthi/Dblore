@@ -316,20 +316,22 @@ struct InlineEditTransactionIntegrationTests {
     }
   }
 
-  // MARK: - Grid edit: commit immediately setting
+  // MARK: - Grid edit: commit style
 
-  /// View model on a connection with Protected mode `protectedMode`
-  private func gridViewModel(protectedMode: Bool) -> NotebookViewModel {
+  /// View model whose resolved commit style is `style`.
+  private func gridViewModel(style: CommitStyle) -> NotebookViewModel {
+    var config = Self.config(protectedMode: style.legacyProjection.protectedMode)
+    config.applyCommitStyle(style)
     let viewModel = NotebookViewModel()
-    viewModel.notebook.connectionConfig = Self.config(protectedMode: protectedMode)
+    viewModel.notebook.connectionConfig = config
     return viewModel
   }
 
-  /// Sends a grid edit of row `id` (`v` = `newValue`) of `target` through `viewModel` with the
-  /// "commit inline edits immediately" setting `autoCommit`
+  /// Sends a grid edit of row `id` (`v` = `newValue`) of `target` through `viewModel`.
+  /// Commit-or-stage follows the view model's resolved commit style.
   private func gridEdit(
     _ viewModel: NotebookViewModel, _ manager: DatabaseConnectionManager, _ target: EditTarget,
-    id: Int = 1, to newValue: String, autoCommit: Bool
+    id: Int = 1, to newValue: String
   ) async throws {
     var result = CellResult(
       columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "v", type: "int4")],
@@ -343,19 +345,19 @@ struct InlineEditTransactionIntegrationTests {
     let edit = PendingInlineEdit(
       statement: statement, columnName: "v", tableName: target.qualifiedName, cellId: nil,
       connectionManager: manager)
-    await viewModel.sendInlineEdit(edit, target: target, autoCommit: autoCommit)
+    await viewModel.sendInlineEdit(edit, target: target)
   }
 
-  @Test("Setting off, Protected OFF: the grid edit is pending (Commit / Rollback bar)")
-  func gridEditStagedWithoutProtectedMode() async throws {
-    let table = "p6_grid_staged"
-    try await withTable(table, protectedMode: false) { manager, observer in
-      let viewModel = gridViewModel(protectedMode: false)
+  @Test("Review on a protected connection: the grid edit stays pending")
+  func gridEditReviewStaysPending() async throws {
+    let table = "p6_grid_review"
+    try await withTable(table, protectedMode: true) { manager, observer in
+      let viewModel = gridViewModel(style: .review)
       var toasts: [(String, ToastMessage.ToastType)] = []
       viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
-      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: false)
-      // No toast either way: the pending banner shows it, the user still has to Commit
+      try await gridEdit(viewModel, manager, resolved, to: "11")
+      // No toast: the pending banner shows it, the user still has to Commit
       #expect(toasts.isEmpty)
       #expect(await isAppTx(manager))
       #expect(await manager.transactionSnapshot().pending.count == 1)
@@ -363,15 +365,15 @@ struct InlineEditTransactionIntegrationTests {
     }
   }
 
-  @Test("Setting on, Protected ON: the grid edit is committed at once, nothing pending")
+  @Test("Immediate on an unprotected connection: the grid edit commits and leaves the transaction idle")
   func gridEditCommittedImmediately() async throws {
     let table = "p6_grid_commit"
-    try await withTable(table, protectedMode: true) { manager, observer in
-      let viewModel = gridViewModel(protectedMode: true)
+    try await withTable(table, protectedMode: false) { manager, observer in
+      let viewModel = gridViewModel(style: .immediate)
       var toasts: [(String, ToastMessage.ToastType)] = []
       viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
-      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
+      try await gridEdit(viewModel, manager, resolved, to: "11")
       // No toast: the refreshed cell shows the committed value
       #expect(toasts.isEmpty)
       #expect(await manager.transactionSnapshot().isIdle)
@@ -379,17 +381,21 @@ struct InlineEditTransactionIntegrationTests {
     }
   }
 
-  @Test("Setting on with a pending transaction: the grid edit joins it")
+  @Test("An immediate edit joins an already-open app transaction")
   func gridEditJoinsPendingTransaction() async throws {
     let table = "p6_grid_join"
     try await withTable(table, protectedMode: false) { manager, observer in
-      let viewModel = gridViewModel(protectedMode: false)
+      let viewModel = gridViewModel(style: .review)
       // Resolved before the transaction: the app then owns the session
       let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
-      try await gridEdit(viewModel, manager, resolved, id: 2, to: "21", autoCommit: false)
-      try await gridEdit(viewModel, manager, resolved, to: "11", autoCommit: true)
+      try await gridEdit(viewModel, manager, resolved, id: 2, to: "21")
+      var config = try #require(viewModel.notebook.connectionConfig)
+      config.applyCommitStyle(.immediate)
+      viewModel.notebook.connectionConfig = config
+      try await gridEdit(viewModel, manager, resolved, to: "11")
       #expect(await manager.transactionSnapshot().pending.count == 2)
       #expect(try await value(observer, table) == .int(10))
+      #expect(try await value(observer, table, id: 2) == .int(20))
     }
   }
 }

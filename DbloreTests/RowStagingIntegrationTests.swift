@@ -136,6 +136,63 @@ struct RowStagingIntegrationTests {
   }
 
   @Test(
+    "A loaded row follows commit style; an appended insert stays in the batch",
+    .timeLimit(.minutes(1)),
+    arguments: [CommitStyle.immediate, .review])
+  func loadedRowFollowsCommitStyle(_ style: CommitStyle) async throws {
+    try await withViewer(
+      table: "p74_view_row", style: style,
+      ddl: "CREATE TABLE p74_view_row (id int PRIMARY KEY, name text)",
+      seed: "INSERT INTO p74_view_row VALUES (1, 'a')"
+    ) { viewModel, manager, observer in
+      let result = try #require(viewModel.editorResult)
+      let column = try #require(result.columns.firstIndex { $0.name == "name" })
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        viewModel.onStatementsExecuted = {
+          viewModel.onStatementsExecuted = nil
+          continuation.resume()
+        }
+        viewModel.handleStagedGridCellEdit(
+          row: 0, column: column, newValue: "edited", result: result)
+        if viewModel.dataViewer?.changeSet != nil {
+          viewModel.onStatementsExecuted = nil
+          continuation.resume()
+        }
+      }
+
+      let snapshot = await manager.transactionSnapshot()
+      let stored = try await rows(observer, "SELECT name FROM p74_view_row WHERE id = 1")
+      if style.opensReviewTransaction {
+        #expect(stored == [[.string("a")]])
+        #expect(snapshot.pending.count == 1)
+        #expect(snapshot.pending.first?.kindLabel == "UPDATE")
+      } else {
+        #expect(stored == [[.string("edited")]])
+        #expect(snapshot.isIdle)
+      }
+      try #require(viewModel.dataViewer?.changeSet == nil)
+
+      #expect(viewModel.stageInsert(values: ["id": .int(2), "name": .string("c")]) == nil)
+      let preview = viewModel.previewStagedSQL()
+      #expect(preview.contains("INSERT"))
+      #expect(!preview.contains("UPDATE"))
+      await viewModel.commitStaged()
+
+      let after = await manager.transactionSnapshot()
+      let storedRows = try await rows(observer, "SELECT id, name FROM p74_view_row ORDER BY id")
+      #expect(viewModel.dataViewer?.changeSet == nil)
+      if style.opensReviewTransaction {
+        #expect(storedRows == [[.int(1), .string("a")]])
+        #expect(after.pending.count == 2)
+        #expect(!after.isIdle)
+      } else {
+        #expect(storedRows == [[.int(1), .string("edited")], [.int(2), .string("c")]])
+        #expect(after.isIdle)
+      }
+    }
+  }
+
+  @Test(
     "A timestamptz primary key with microseconds targets exactly its row",
     .timeLimit(.minutes(1)))
   func microsecondTimestampKey() async throws {
@@ -172,8 +229,32 @@ struct RowStagingIntegrationTests {
       timeoutSeconds: 30, protectionLevel: .none, safeMode: .silent, protectedMode: protectedMode)
   }
 
+  private func config(style: CommitStyle) -> ConnectionConfig {
+    var config = config(protectedMode: false)
+    config.applyCommitStyle(style)
+    return config
+  }
+
   private func withViewer(
     table: String, protectedMode: Bool, ddl: String, seed: String,
+    _ body: (NotebookViewModel, DatabaseConnectionManager, DatabaseConnectionManager) async throws
+      -> Void
+  ) async throws {
+    try await withViewer(
+      table: table, connection: config(protectedMode: protectedMode), ddl: ddl, seed: seed, body)
+  }
+
+  private func withViewer(
+    table: String, style: CommitStyle, ddl: String, seed: String,
+    _ body: (NotebookViewModel, DatabaseConnectionManager, DatabaseConnectionManager) async throws
+      -> Void
+  ) async throws {
+    try await withViewer(
+      table: table, connection: config(style: style), ddl: ddl, seed: seed, body)
+  }
+
+  private func withViewer(
+    table: String, connection: ConnectionConfig, ddl: String, seed: String,
     _ body: (NotebookViewModel, DatabaseConnectionManager, DatabaseConnectionManager) async throws
       -> Void
   ) async throws {
@@ -184,9 +265,9 @@ struct RowStagingIntegrationTests {
     _ = try await observer.executeInternal(seed)
 
     let manager = DatabaseConnectionManager()
-    try await manager.connect(config: config(protectedMode: protectedMode))
+    try await manager.connect(config: connection)
     let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(cells: [], connectionConfig: config(protectedMode: protectedMode)))
+      notebook: DbloreNotebook(cells: [], connectionConfig: connection))
     viewModel.viewMode = .editor
     viewModel.connectionState = .connected
     viewModel.connectionManager = manager

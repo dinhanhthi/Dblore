@@ -273,8 +273,9 @@ extension NotebookViewModel {
 
   /// Inline edit committed in the result grid at result column `index`: `row` is the displayed
   /// row's values, so the primary key is that row's. A data viewer with a primary-key edit
-  /// target applies its inline auto-commit setting. A notebook grid goes through `handleCellValueEdit`
-  /// (live target, protection gate) and sends one UPDATE, without opening the sidebar.
+  /// target sends a loaded row through `handleCellValueEdit` and keeps an appended insert staged.
+  /// A notebook grid goes through `handleCellValueEdit` (live target, protection gate) and sends
+  /// one UPDATE, without opening the sidebar.
   func handleGridCellEdit(
     row: [CellValue], column index: Int, newValue: String, result: CellResult, cellId: UUID?,
     connectionManager: DatabaseConnectionManager?
@@ -304,15 +305,16 @@ extension NotebookViewModel {
     )
   }
 
-  /// Cell edit from the data-viewer grid. Loaded rows follow the inline auto-commit setting;
-  /// inserts appended after those rows remain staged until their batch is committed.
+  /// Cell edit from the data-viewer grid. A loaded row is sent through `handleCellValueEdit`
+  /// for every commit style. An insert appended after the loaded page stays staged until its
+  /// batch is committed.
   func handleStagedGridCellEdit(
     row: Int, column index: Int, newValue: String, result: CellResult
   ) {
     guard result.columns.indices.contains(index) else { return }
     let name = result.columns[index].name
     let original = originalStagedCell(row: row, column: name, index: index, result: result)
-    if AppSettings.shared.inlineEditAutoCommit, result.rows.indices.contains(row) {
+    if result.rows.indices.contains(row) {
       if result.primaryKeyColumns.contains(name) {
         showToast(RowChangeError.primaryKeyColumn(name).message, type: .error)
         return

@@ -146,6 +146,9 @@ class NotebookViewModel {
   /// Staged data-viewer batch waiting on the Safe Mode dialog. Confirmation runs this
   /// through `executeGatedBatch`, not the preview text as user SQL.
   @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
+  /// Inline grid edit waiting on Confirm or Password. Acceptance sends it through
+  /// `sendInlineEdit`, not as user SQL.
+  @ObservationIgnored var pendingInlineEdit: PendingInlineEdit?
   /// Live edit target of the result the sidebar cell was opened from (session-only)
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
@@ -389,20 +392,30 @@ class NotebookViewModel {
     if queryConfirmationState.runAllAwaitingUnlock {
       pendingExplainSQL = nil
       pendingStagedBatch = nil
+      pendingInlineEdit = nil
       executeUnlockedRunAll()
       return
     }
     if let sql = pendingExplainSQL {
       let cellId = queryConfirmationState.pendingCellId
       pendingExplainSQL = nil
+      pendingInlineEdit = nil
       queryConfirmationState.clear()
       await runExplained(sql, cellId: cellId)
       return
     }
     if let batch = pendingStagedBatch {
       pendingStagedBatch = nil
+      pendingInlineEdit = nil
       queryConfirmationState.clear()
       await runConfirmedStagedBatch(batch)
+      return
+    }
+    if let edit = pendingInlineEdit {
+      let target = cellDetailEditTarget
+      pendingInlineEdit = nil
+      queryConfirmationState.clear()
+      await sendInlineEdit(edit, target: target)
       return
     }
     // Check if it's editor mode or notebook mode
@@ -421,6 +434,7 @@ class NotebookViewModel {
   func cancelPendingQuery() {
     pendingExplainSQL = nil
     pendingStagedBatch = nil
+    pendingInlineEdit = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()
     }

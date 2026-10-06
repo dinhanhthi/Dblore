@@ -231,19 +231,19 @@ struct SQLiteWorkspaceTests {
   }
 
   @Test(
-    "View mode auto-commits loaded cells and preserves staged inserts", .serialized,
+    "View mode sends a loaded row by commit style and keeps a staged insert",
+    .serialized,
     .timeLimit(.minutes(1)),
-    arguments: [false, true])
-  func viewerInlineEditCommitsImmediately(withStagedInsert: Bool) async throws {
-    let previous = AppSettings.shared.inlineEditAutoCommit
-    defer { AppSettings.shared.inlineEditAutoCommit = previous }
+    arguments: [CommitStyle.immediate, .review], [false, true])
+  func viewerInlineEditCommitsImmediately(style: CommitStyle, withStagedInsert: Bool) async throws
+  {
     let url = try makeDatabase()
     defer { removeDatabase(url) }
     let handle = try SQLiteHandle(url: url)
     try handle.execute(
       "ALTER TABLE items ADD COLUMN label_length INTEGER GENERATED ALWAYS AS (length(label))")
     var config = sqliteConfig(path: url.path)
-    config.protectedMode = true
+    config.applyCommitStyle(style)
     let manager = DatabaseConnectionManager()
     let observer = DatabaseConnectionManager()
     try await manager.connect(config: config)
@@ -268,19 +268,31 @@ struct SQLiteWorkspaceTests {
       #expect(viewModel.stageInsert(values: ["label": .string("draft")]) == nil)
       #expect(viewModel.undoManager.canUndo)
     }
+    let editsBefore = viewModel.dataViewer?.changeSet?.edits
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       viewModel.onStatementsExecuted = {
         viewModel.onStatementsExecuted = nil
         continuation.resume()
       }
-      // Other suites reset shared settings while this test loads its page asynchronously.
-      AppSettings.shared.inlineEditAutoCommit = true
-      viewModel.handleStagedGridCellEdit(row: 0, column: column, newValue: "edited", result: result)
+      viewModel.handleStagedGridCellEdit(
+        row: 0, column: column, newValue: "edited", result: result)
+      // A staged loaded row returns here. Waiting would hang: nothing was sent.
+      if viewModel.dataViewer?.changeSet?.edits != editsBefore {
+        viewModel.onStatementsExecuted = nil
+        continuation.resume()
+      }
     }
 
     let stored = try await observer.executeInternal("SELECT label FROM items WHERE id = 1")
-    #expect(stored.rows == [[.string("edited")]])
-    #expect(await manager.transactionSnapshot() == .idle)
+    let snapshot = await manager.transactionSnapshot()
+    if style.opensReviewTransaction {
+      #expect(stored.rows == [[.string("a")]])
+      #expect(snapshot.pending.count == 1)
+      #expect(snapshot.pending.first?.kindLabel == "UPDATE")
+    } else {
+      #expect(stored.rows == [[.string("edited")]])
+      #expect(snapshot == .idle)
+    }
     if withStagedInsert {
       let refreshed = try #require(viewModel.editorResult)
       #expect(refreshed.editTarget?.generation == result.editTarget?.generation)
@@ -289,6 +301,7 @@ struct SQLiteWorkspaceTests {
       #expect(refreshed.rows[0][generated] == .int(6))
       #expect(viewModel.dataViewer?.changeSet?.inserts.first?.values["label"] == .string("draft"))
       #expect(viewModel.dataViewer?.changeSet?.edits.isEmpty == true)
+      try #require(viewModel.dataViewer?.changeSet?.edits.isEmpty == true)
       #expect(!viewModel.undoManager.canUndo)
       viewModel.handleStagedGridCellEdit(
         row: refreshed.rows.count, column: column, newValue: "updated draft", result: refreshed)
@@ -298,6 +311,7 @@ struct SQLiteWorkspaceTests {
       #expect(count.rows == [[.int(3)]])
     } else {
       #expect(viewModel.dataViewer?.changeSet == nil)
+      try #require(viewModel.dataViewer?.changeSet == nil)
     }
   }
 

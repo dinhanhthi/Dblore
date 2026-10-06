@@ -1,6 +1,6 @@
 // InlineEditTests.swift
 // Inline grid edit (S6): primary-key-only UPDATE with bind parameters, routed through the
-// protection gate and the Safe Mode confirmation flow.
+// protection gate and the connection's commit style.
 
 import Foundation
 import Testing
@@ -294,15 +294,58 @@ struct InlineEditViewModelTests {
   }
 
   @Test(
-    "Safe Mode never asks before an inline edit (no dialog, no password)",
-    arguments: [SafeMode.alertRead, .alertAll, .safeRead, .safeAll])
-  func safeModeSkippedForInlineEdit(safeMode: SafeMode) {
-    let viewModel = makeViewModel(
-      config: ConnectionConfig(protectionLevel: .none, safeMode: safeMode))
+    "Confirm and password ask before an inline edit; immediate and review do not",
+    arguments: [CommitStyle.immediate, .confirm, .review, .password])
+  func inlineEditFollowsCommitStyle(_ style: CommitStyle) {
+    var config = ConnectionConfig(protectionLevel: .none)
+    config.applyCommitStyle(style)
+    let viewModel = makeViewModel(config: config)
     edit(viewModel)
+    let asks = style.confirmsWrites
+    #expect(viewModel.queryConfirmationState.showDialog == asks)
+    #expect(viewModel.queryConfirmationState.requiresPassword == style.requiresPassword)
+    #expect((viewModel.pendingInlineEdit != nil) == asks)
+    if asks {
+      #expect(viewModel.queryConfirmationState.pendingQuery.contains("UPDATE"))
+      #expect(viewModel.notebook.cells[0].result?.rows.first?[1] == .string("old"))
+    }
+  }
+
+  @Test("Confirm: cancelling the dialog sends no update and keeps the old cell value")
+  func confirmCancelSendsNoUpdate() async {
+    var config = ConnectionConfig(protectionLevel: .none)
+    config.applyCommitStyle(.confirm)
+    let viewModel = makeViewModel(config: config)
+    var toasts: [(String, ToastMessage.ToastType)] = []
+    viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
+    edit(viewModel)
+    #expect(viewModel.pendingInlineEdit != nil)
+    #expect(viewModel.queryConfirmationState.showDialog)
+    #expect(viewModel.notebook.cells[0].result?.rows.first?[1] == .string("old"))
+
+    viewModel.cancelPendingQuery()
+    #expect(viewModel.pendingInlineEdit == nil)
     #expect(viewModel.queryConfirmationState.showDialog == false)
-    #expect(viewModel.queryConfirmationState.requiresPassword == false)
-    #expect(viewModel.queryConfirmationState.pendingQuery.isEmpty)
+    #expect(viewModel.notebook.cells[0].result?.rows.first?[1] == .string("old"))
+
+    await viewModel.executePendingQuery()
+    #expect(toasts.isEmpty)
+  }
+
+  @Test("Confirm: accepting the dialog sends the inline edit")
+  func confirmAcceptSendsInlineEdit() async {
+    var config = ConnectionConfig(protectionLevel: .none)
+    config.applyCommitStyle(.confirm)
+    let viewModel = makeViewModel(config: config)
+    var toasts: [(String, ToastMessage.ToastType)] = []
+    viewModel.toastPresenter = { message, type in toasts.append((message, type)) }
+    edit(viewModel)
+    #expect(viewModel.pendingInlineEdit != nil)
+
+    await viewModel.executePendingQuery()
+    #expect(viewModel.pendingInlineEdit == nil)
+    #expect(viewModel.queryConfirmationState.showDialog == false)
+    #expect(toasts.contains { $0.0.contains("Failed to update") && $0.1 == .error })
   }
 
   // MARK: Set NULL

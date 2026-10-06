@@ -166,7 +166,9 @@ extension NotebookViewModel {
   func discardStaged() {
     dataViewer?.changeSet = nil
     undoManager.removeAllActions()
-    guard pendingStagedBatch != nil else { return }
+    let hadInlineEdit = pendingInlineEdit != nil
+    pendingInlineEdit = nil
+    guard pendingStagedBatch != nil || hadInlineEdit else { return }
     pendingStagedBatch = nil
     queryConfirmationState.clear()
   }
@@ -466,8 +468,9 @@ extension NotebookViewModel {
   /// A Safe Mode dialog still holding the previous batch is closed first: Execute Query would
   /// otherwise send that captured SQL, then clear this undo.
   private func restoreStagedChangeSet(_ snapshot: RowChangeSet?, actionName: String) {
-    if pendingStagedBatch != nil {
+    if pendingStagedBatch != nil || pendingInlineEdit != nil {
       pendingStagedBatch = nil
+      pendingInlineEdit = nil
       queryConfirmationState.clear()
     }
     let current = dataViewer?.changeSet

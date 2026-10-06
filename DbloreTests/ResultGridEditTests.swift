@@ -104,11 +104,8 @@ struct ResultGridEditTests {
     #expect(delivered == false)
   }
 
-  @Test("A data-viewer commit stages the edit and skips the immediate update")
-  func dataViewerCommitStagesInsteadOfImmediateUpdate() {
-    let previous = AppSettings.shared.inlineEditAutoCommit
-    AppSettings.shared.inlineEditAutoCommit = false
-    defer { AppSettings.shared.inlineEditAutoCommit = previous }
+  @Test("A loaded data-viewer row goes through the cell edit and is not staged")
+  func dataViewerLoadedRowIsNotStaged() {
     let result = makeResult(primaryKeyColumns: ["id"])
     let viewModel = makeViewModel(
       result: result, config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
@@ -120,8 +117,13 @@ struct ResultGridEditTests {
       row: [.int(1), .string("a")], column: 1, newValue: "neo", result: result, cellId: nil,
       connectionManager: DatabaseConnectionManager())
 
-    let key = RowChangeSet.RowKey(values: [.int(1)])
-    #expect(viewModel.dataViewer?.changeSet?.edits[key]?["name"] == .string("neo"))
-    #expect(viewModel.rightSidebarContent == nil)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    guard case .cellInfo(_, _, let value, _, let rowData, _, _) = viewModel.rightSidebarContent
+    else {
+      Issue.record("the edit did not reach handleCellValueEdit")
+      return
+    }
+    #expect(value == .string("neo"))
+    #expect(rowData?["id"] == .int(1))
   }
 }

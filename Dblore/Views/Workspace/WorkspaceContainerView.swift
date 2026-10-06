@@ -10,7 +10,6 @@ import SwiftUI
 struct WorkspaceContainerView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @State private var settingsSection: SettingsPage?
-  @State private var settingsHighlight: SettingsOption?
   @State private var settingsOpenToken = UUID()
   @State private var isNativeTabBarVisible = false
   @State private var hostWindow = HostWindowReference()
@@ -231,7 +230,6 @@ struct WorkspaceContainerView: View {
     .settingsModal(
       workspaceManager: workspaceManager,
       section: settingsSection,
-      highlight: settingsHighlight,
       openToken: settingsOpenToken
     )
     .favoriteModals(workspaceManager: workspaceManager)
@@ -260,13 +258,10 @@ struct WorkspaceContainerView: View {
         let section = SettingsPage(rawValue: raw)
       {
         settingsSection = section
-        settingsHighlight = (notification.userInfo?[SettingsOption.userInfoKey] as? String)
-          .flatMap(SettingsOption.init(rawValue:))
         settingsOpenToken = UUID()
         workspaceManager.isSettingsModalVisible = true
       } else {
         settingsSection = nil
-        settingsHighlight = nil
         workspaceManager.isSettingsModalVisible.toggle()
       }
     }
