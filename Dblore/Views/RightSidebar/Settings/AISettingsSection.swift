@@ -5,6 +5,7 @@
 //  AI settings: provider, base URL, API key, model and connection test
 //
 
+import AppKit
 import SwiftUI
 
 struct AISettingsSection: View {
@@ -41,8 +42,9 @@ struct AISettingsSection: View {
   private var canRun: Bool { kind != .chatGPT || isSignedIn }
   private var isActive: Bool { settings.configuration.activeProvider == kind }
 
-  private var availableModels: [String] {
-    fetchedModels[kind] ?? kind.fallbackModels
+  /// Names returned by the last successful fetch for the selected provider.
+  private var fetchedModelNames: [String] {
+    fetchedModels[kind] ?? []
   }
 
   private var resolvedURL: Result<URL, AIEndpointError> {
@@ -150,9 +152,6 @@ struct AISettingsSection: View {
       } else {
         VStack(alignment: .leading, spacing: Spacing.md) {
           modelEditor
-          if !availableModels.isEmpty {
-            modelCards
-          }
           testRow
         }
       }
@@ -280,70 +279,12 @@ struct AISettingsSection: View {
 
   private var modelEditor: some View {
     HStack(alignment: .center, spacing: Spacing.sm) {
-      TextField("Model name", text: $model)
-        .textFieldStyle(.plain)
-        .font(.bodyText)
-        .autocorrectionDisabled()
-        .inputStyle()
-
-      if availableModels.count > Self.modelCardLimit {
-        modelMenu
-      }
+      ModelNameComboBox(text: $model, options: fetchedModelNames)
 
       Button("Refresh") { run(reportSuccess: false) }
         .buttonStyle(SecondaryButtonStyle())
         .disabled(isRunning || !canRun)
         .linkPointer()
-    }
-  }
-
-  private static let modelCardLimit = 12
-
-  private var modelMenu: some View {
-    CapsuleDropdown(
-      title: "Models",
-      options: availableModels,
-      optionTitle: { $0 },
-      isSelected: { $0 == model },
-      onSelect: { model = $0 }
-    )
-  }
-
-  @ViewBuilder
-  private var modelCards: some View {
-    if availableModels.count > Self.modelCardLimit {
-      currentModelCard
-    } else {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        modelCardRows(availableModels)
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var currentModelCard: some View {
-    let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !name.isEmpty {
-      AIRemoteModelButton(
-        name: name,
-        isCurrent: true,
-        showsInUse: isActive
-      ) {
-        model = name
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func modelCardRows(_ names: [String]) -> some View {
-    ForEach(names, id: \.self) { name in
-      AIRemoteModelButton(
-        name: name,
-        isCurrent: model == name,
-        showsInUse: isActive && model == name
-      ) {
-        model = name
-      }
     }
   }
 
@@ -554,7 +495,9 @@ struct AISettingsSection: View {
     // Write the configuration so observers refresh; activeProvider stays unchanged
     var config = settings.config(for: .chatGPT)
     if config.baseURL.isEmpty { config.baseURL = AIProviderKind.chatGPT.defaultBaseURL }
-    if config.model.isEmpty { config.model = availableModels.first ?? "" }
+    if config.model.isEmpty {
+      config.model = fetchedModelNames.first ?? kind.fallbackModels.first ?? ""
+    }
     settings.configuration.configs[.chatGPT] = config
     loadFields()
   }
@@ -591,5 +534,126 @@ struct AISettingsSection: View {
     } else {
       kind = .ollama
     }
+  }
+}
+
+/// Editable model name with a menu of names from the last fetch.
+private struct ModelNameComboBox: View {
+  @Binding var text: String
+  let options: [String]
+
+  var body: some View {
+    HStack(spacing: Spacing.xs) {
+      TextField("Model name", text: $text)
+        .textFieldStyle(.plain)
+        .font(.bodyText)
+        .autocorrectionDisabled()
+
+      Image(systemName: "chevron.down")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundColor(.foregroundMuted)
+        .frame(width: 16)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .overlay {
+          ModelMenuButton(options: options, selected: text) { text = $0 }
+        }
+        .accessibilityLabel("Models")
+    }
+    .padding(.leading, Spacing.md)
+    .padding(.trailing, Spacing.sm)
+    .frame(height: ButtonMetrics.regularHeight)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.inputBackground, in: Capsule())
+    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .accessibilityLabel("Model")
+  }
+}
+
+/// Chevron that opens the model list with its right edge on the trigger.
+private struct ModelMenuButton: NSViewRepresentable {
+  var options: [String]
+  var selected: String
+  var onSelect: (String) -> Void
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator(onSelect: onSelect)
+  }
+
+  func makeNSView(context: Context) -> MenuClickView {
+    let view = MenuClickView()
+    view.coordinator = context.coordinator
+    return view
+  }
+
+  func updateNSView(_ nsView: MenuClickView, context: Context) {
+    context.coordinator.options = options
+    context.coordinator.selected = selected
+    context.coordinator.onSelect = onSelect
+    nsView.coordinator = context.coordinator
+  }
+
+  final class Coordinator: NSObject {
+    var options: [String]
+    var selected = ""
+    var onSelect: (String) -> Void
+
+    init(onSelect: @escaping (String) -> Void) {
+      self.options = []
+      self.onSelect = onSelect
+    }
+
+    @objc func pick(_ sender: NSMenuItem) {
+      guard let name = sender.representedObject as? String else { return }
+      onSelect(name)
+    }
+
+    func pop(from view: NSView) {
+      let menu = NSMenu()
+      menu.autoenablesItems = false
+      if options.isEmpty {
+        let item = NSMenuItem(title: "Refresh to load models", action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        menu.addItem(item)
+      } else {
+        for name in options {
+          let item = NSMenuItem(title: name, action: #selector(pick(_:)), keyEquivalent: "")
+          item.target = self
+          item.representedObject = name
+          item.state = name == selected ? .on : .off
+          menu.addItem(item)
+        }
+      }
+      // LTR places the menu's top-left at `at`. Shift left by the menu width so the
+      // top-right sits on the trigger, just below the field.
+      let width = menuWidth(menu)
+      let origin = NSPoint(x: view.bounds.maxX - width, y: -2)
+      menu.popUp(positioning: nil, at: origin, in: view)
+    }
+
+    private func menuWidth(_ menu: NSMenu) -> CGFloat {
+      let measured = menu.size.width
+      if measured > 1 { return measured }
+      let font = NSFont.menuFont(ofSize: 0)
+      let longest = menu.items.map(\.title).max { $0.count < $1.count } ?? ""
+      return (longest as NSString).size(withAttributes: [.font: font]).width + 56
+    }
+  }
+}
+
+private final class MenuClickView: NSView {
+  weak var coordinator: ModelMenuButton.Coordinator?
+
+  override var intrinsicContentSize: NSSize {
+    NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+  }
+
+  override func resetCursorRects() {
+    discardCursorRects()
+    addCursorRect(bounds, cursor: .pointingHand)
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    coordinator?.pop(from: self)
   }
 }

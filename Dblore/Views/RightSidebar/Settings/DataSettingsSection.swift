@@ -31,8 +31,8 @@ struct DataSettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      SettingsGroupCard(title: "On this Mac") {
-        header
+      SettingsGroupCard(title: "On this Mac", accessory: { totalSize }) {
+        headerActions
       }
       ForEach(DataSettingsGroup.allCases, id: \.self) { group in
         groupCard(group)
@@ -144,24 +144,25 @@ struct DataSettingsSection: View {
     model.rows.first { $0.category == category }
   }
 
-  private var header: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
-        VStack(alignment: .leading, spacing: Spacing.xxs) {
-          Text("Total size")
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-          Text(DataByteCount.text(model.totalBytes))
-            .font(.mono)
-            .foregroundColor(.foreground)
-            .monospacedDigit()
-        }
-        if model.rows.contains(where: \.loading) {
-          ProgressView()
-            .controlSize(.small)
-        }
-        Spacer(minLength: Spacing.sm)
+  /// Sits on the "On this Mac" title row, to the right of the title.
+  private var totalSize: some View {
+    HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+      Text("Total size")
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+      if model.rows.contains(where: \.loading) {
+        ProgressView()
+          .controlSize(.small)
       }
+      Text(DataByteCount.text(model.totalBytes))
+        .font(.mono)
+        .foregroundColor(.foreground)
+        .monospacedDigit()
+    }
+  }
+
+  private var headerActions: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack(spacing: Spacing.sm) {
         Button("Export All") { exportSheet = SheetToken() }
           .buttonStyle(PrimaryButtonStyle())

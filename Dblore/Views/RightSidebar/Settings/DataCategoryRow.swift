@@ -52,35 +52,45 @@ struct DataCategoryRow: View {
         sizeLabel
       }
 
-      if row.category == .queryHistory {
-        HistoryRetentionControls(isBusy: isBusy || row.loading, onClear: onClear)
-      }
-
       if let error = row.error {
         Text(error)
           .font(.bodyText)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
+          .padding(.leading, Self.descriptionIndent)
       }
 
-      HStack(spacing: Spacing.sm) {
-        if row.summary?.location != nil {
-          Button("Reveal in Finder", action: reveal)
-            .buttonStyle(FilledSecondaryButtonStyle())
-            .linkPointer()
-        }
-        Button("Export", action: onExport)
-          .buttonStyle(FilledSecondaryButtonStyle())
-          .disabled(isBusy || row.loading)
-          .linkPointer()
-        if row.category != .queryHistory {
-          Button("Clear", action: onClear)
-            .buttonStyle(DangerButtonStyle())
-            .disabled(isBusy || row.loading)
-            .linkPointer()
-        }
+      actionButtons
+
+      if row.category == .queryHistory {
+        HistoryRetentionControls(isBusy: isBusy || row.loading, onClear: onClear)
+          .padding(.leading, Self.descriptionIndent)
       }
     }
+  }
+
+  /// Lines up with the description, which starts after the category icon.
+  private static let descriptionIndent: CGFloat = 16 + Spacing.sm
+
+  private var actionButtons: some View {
+    HStack(spacing: Spacing.sm) {
+      if row.summary?.location != nil {
+        Button("Reveal in Finder", action: reveal)
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .linkPointer()
+      }
+      Button("Export", action: onExport)
+        .buttonStyle(FilledSecondaryButtonStyle())
+        .disabled(isBusy || row.loading)
+        .linkPointer()
+      if row.category != .queryHistory {
+        Button("Clear", action: onClear)
+          .buttonStyle(DangerButtonStyle())
+          .disabled(isBusy || row.loading)
+          .linkPointer()
+      }
+    }
+    .padding(.leading, Self.descriptionIndent)
   }
 
   @ViewBuilder

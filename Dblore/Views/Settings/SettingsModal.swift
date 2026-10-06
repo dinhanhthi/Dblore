@@ -357,6 +357,8 @@ struct SettingsModalResultTableSection: View {
           )
           Divider()
           ResultRowCapSetting(appSettings: appSettings)
+          Divider()
+          SessionTimeoutSettings(appSettings: appSettings)
         }
       }
     }
@@ -397,25 +399,26 @@ struct SettingsModalDeveloperSection: View {
         )
       }
 
-      SettingsGroupCard(title: "Logs") {
-        VStack(alignment: .leading, spacing: Spacing.md) {
+      SettingsGroupCard(
+        title: "Logs",
+        accessory: {
           Button(action: {
             isExportingLogs = true
           }) {
             HStack(spacing: Spacing.xs) {
               Image(systemName: "square.and.arrow.up")
-              Text("Export Application Logs")
+              Text("Export Logs")
             }
           }
           .buttonStyle(FilledSecondaryButtonStyle())
           .linkPointer()
-
-          Text(
-            "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
-          )
-          .font(.bodyText)
-          .foregroundColor(.foregroundSubtle)
         }
+      ) {
+        Text(
+          "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
+        )
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
       }
     }
   }

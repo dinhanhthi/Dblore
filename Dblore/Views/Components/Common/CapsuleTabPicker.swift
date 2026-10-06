@@ -36,6 +36,15 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
   /// Top and bottom inset of the selected chip.
   var verticalInset: CGFloat = 3
 
+  /// When set, the track hugs its labels instead of filling the parent width.
+  var fitsContent: Bool = false
+
+  /// Fill of the selected chip. The expanding track uses the accent color.
+  var selectedFill: Color = .accent
+
+  /// Extra inset of the selected chip inside its tab. Tightens a wide label such as a color dot.
+  var selectedInset: CGFloat = 0
+
   init(
     selection: Binding<Tab>,
     tabs: [Tab],
@@ -52,10 +61,41 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
     self.label = label
   }
 
+  /// Horizontal padding inside each content-sized tab.
+  var contentTabPadding: CGFloat = 12
+
+  @State private var tabWidths: [Int: CGFloat] = [:]
+
+  func fitsContent(
+    _ fits: Bool = true,
+    selectedFill: Color? = nil,
+    selectedInset: CGFloat = 0,
+    tabPadding: CGFloat? = nil
+  ) -> Self {
+    var copy = self
+    copy.fitsContent = fits
+    copy.selectedInset = selectedInset
+    if let selectedFill {
+      copy.selectedFill = selectedFill
+    }
+    if let tabPadding {
+      copy.contentTabPadding = tabPadding
+    }
+    return copy
+  }
+
   var body: some View {
+    if fitsContent {
+      contentFitPicker
+    } else {
+      expandingPicker
+    }
+  }
+
+  private var expandingPicker: some View {
     let selectedIndex = tabs.firstIndex(of: selection) ?? 0
 
-    ZStack {
+    return ZStack {
       // Background
       Capsule()
         .fill(Color.inputBackground)
@@ -104,6 +144,61 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
       }
     }
     .frame(height: height)
+  }
+
+  private var contentFitPicker: some View {
+    let selectedIndex = tabs.firstIndex(of: selection) ?? 0
+    let selectedWidth = tabWidths[selectedIndex] ?? 0
+    let chipWidth = max(0, selectedWidth - selectedInset * 2)
+    let chipX =
+      inset + selectedInset + (0..<selectedIndex).reduce(CGFloat(0)) { $0 + (tabWidths[$1] ?? 0) }
+
+    return HStack(spacing: 0) {
+      ForEach(Array(tabs.enumerated()), id: \.offset) { index, tab in
+        Button {
+          withAnimation {
+            selection = tab
+          }
+        } label: {
+          label(tab)
+            .padding(.horizontal, contentTabPadding)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .linkPointer()
+        .background {
+          GeometryReader { proxy in
+            Color.clear.preference(key: TabWidthKey.self, value: [index: proxy.size.width])
+          }
+        }
+      }
+    }
+    .onPreferenceChange(TabWidthKey.self) { tabWidths = $0 }
+    .padding(.horizontal, inset)
+    .frame(height: height)
+    .fixedSize(horizontal: true, vertical: false)
+    .background(alignment: .leading) {
+      ZStack(alignment: .leading) {
+        Capsule()
+          .fill(Color.inputBackground)
+          .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+
+        Capsule()
+          .fill(selectedFill)
+          .frame(width: chipWidth, height: height - (verticalInset * 2))
+          .offset(x: chipX)
+          .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selection)
+          .allowsHitTesting(false)
+      }
+    }
+  }
+}
+
+private struct TabWidthKey: PreferenceKey {
+  static var defaultValue: [Int: CGFloat] = [:]
+  static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+    value.merge(nextValue(), uniquingKeysWith: { $1 })
   }
 }
 

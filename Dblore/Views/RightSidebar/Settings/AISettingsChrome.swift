@@ -23,34 +23,6 @@ struct AIModelCard<Content: View>: View {
   }
 }
 
-struct AIRemoteModelButton: View {
-  let name: String
-  var isCurrent: Bool
-  var showsInUse: Bool
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      AIModelCard(isCurrent: isCurrent) {
-        HStack(spacing: Spacing.sm) {
-          Text(name)
-            .font(.bodyText)
-            .foregroundColor(.foreground)
-            .lineLimit(1)
-            .truncationMode(.middle)
-          Spacer(minLength: Spacing.sm)
-          if showsInUse {
-            AIInUseBadge()
-          }
-        }
-      }
-    }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .accessibilityAddTraits(isCurrent ? .isSelected : [])
-  }
-}
-
 /// Tier label. Same neutral capsule for Fast, Balanced and Best.
 struct AITierBadge: View {
   let text: String

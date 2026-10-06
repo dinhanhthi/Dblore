@@ -10,26 +10,48 @@ import UniformTypeIdentifiers
 
 // MARK: - Settings group card
 
-/// The settings-page card. Every Settings tab uses this, matching the Data tab.
-struct SettingsGroupCard<Content: View>: View {
+/// The settings-page card. The title sits on its own row, separated from the body by a rule.
+struct SettingsGroupCard<Content: View, Accessory: View>: View {
   let title: String
+  @ViewBuilder var accessory: () -> Accessory
   @ViewBuilder var content: () -> Content
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text(title)
-        .font(.bodyText)
-        .fontWeight(.medium)
-        .foregroundColor(.foreground)
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .center, spacing: Spacing.sm) {
+        Text(title)
+          .font(.bodyText)
+          .fontWeight(.medium)
+          .foregroundColor(.foreground)
+        Spacer(minLength: Spacing.sm)
+        accessory()
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+
+      Rectangle()
+        .fill(Color.border)
+        .frame(height: 1)
+
       content()
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.cardHeaderBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
     .overlay(
       RoundedRectangle(cornerRadius: CornerRadius.lg)
         .stroke(Color.border, lineWidth: 1)
     )
+  }
+}
+
+extension SettingsGroupCard where Accessory == EmptyView {
+  init(title: String, @ViewBuilder content: @escaping () -> Content) {
+    self.title = title
+    self.accessory = { EmptyView() }
+    self.content = content
   }
 }
 
@@ -60,27 +82,72 @@ struct SettingsSection<Content: View>: View {
 
 // MARK: - Settings Toggle Component
 
-/// A reusable toggle component for settings with title and description
+/// On/off setting. The switch sits on the label row; the description is the line below.
 struct SettingsToggle<DescriptionContent: View>: View {
   let title: String
   @Binding var isOn: Bool
   var isDisabled: Bool = false
   @ViewBuilder let descriptionContent: () -> DescriptionContent
 
-  // Checkbox width + spacing to align description with label text
-  private let checkboxIndent: CGFloat = 20
-
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
-      Toggle(title, isOn: $isOn)
-        .font(.bodyText)
-        .foregroundColor(.foreground)
-        .tint(.accent)
-        .disabled(isDisabled)
+      HStack(alignment: .center, spacing: Spacing.sm) {
+        Text(title)
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+          .accessibilityHidden(true)
+
+        Spacer(minLength: Spacing.sm)
+
+        CompactSwitch(title: title, isOn: $isOn)
+      }
 
       descriptionContent()
-        .padding(.leading, checkboxIndent)
     }
+    .disabled(isDisabled)
+  }
+}
+
+/// The system switch, drawn smaller than the default without going down to half size.
+/// `scaleEffect` does not change layout, so the slot uses the measured native size.
+private struct CompactSwitch: View {
+  let title: String
+  @Binding var isOn: Bool
+  @State private var nativeSize = CGSize(width: 38, height: 22)
+
+  private let scale: CGFloat = 0.75
+
+  var body: some View {
+    Color.clear
+      .frame(width: nativeSize.width * scale, height: nativeSize.height * scale)
+      .overlay {
+        Toggle(title, isOn: $isOn)
+          .toggleStyle(.switch)
+          .labelsHidden()
+          .tint(.accent)
+          .fixedSize()
+          .background {
+            GeometryReader { geo in
+              Color.clear.preference(key: SwitchSizeKey.self, value: geo.size)
+            }
+          }
+          .scaleEffect(scale)
+      }
+      .clipped()
+      .onPreferenceChange(SwitchSizeKey.self) { size in
+        guard size.width > 1, size.height > 1 else { return }
+        guard abs(size.width - nativeSize.width) > 0.5 || abs(size.height - nativeSize.height) > 0.5
+        else { return }
+        nativeSize = size
+      }
+  }
+}
+
+private struct SwitchSizeKey: PreferenceKey {
+  static var defaultValue: CGSize = .zero
+  static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+    let next = nextValue()
+    if next != .zero { value = next }
   }
 }
 

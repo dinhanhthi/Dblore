@@ -172,6 +172,7 @@ struct SafeModeSection: View {
 
       // Always shown: the password also guards lowering a connection from Review or Password,
       // whatever the default style is (same as SafeModeModal).
+      Divider()
       passwordManagementPanel
     }
   }
@@ -293,9 +294,6 @@ struct SafeModeSection: View {
         }
       }
     }
-    .padding(Spacing.sm)
-    .background(Color.inputBackground.opacity(0.5))
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
   }
 
   // MARK: - Password Setup Sheet
