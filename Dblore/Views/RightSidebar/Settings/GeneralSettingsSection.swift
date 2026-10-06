@@ -2,7 +2,7 @@
 //  GeneralSettingsSection.swift
 //  Dblore
 //
-//  General settings: Windows, New tab and Automatic updates
+//  General settings: Startup, Windows, New tab and Automatic updates
 //
 
 import SwiftUI
@@ -13,6 +13,10 @@ struct GeneralSettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      SettingsGroupCard(title: "Startup") {
+        launchBehaviorPicker
+      }
+
       SettingsGroupCard(title: "Windows") {
         SettingsToggle(
           title: "Open new windows as tabs",
@@ -34,6 +38,24 @@ struct GeneralSettingsSection: View {
           isOn: $updater.automaticallyChecksForUpdates
         )
       }
+    }
+  }
+
+  private var launchBehaviorPicker: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text("When Dblore starts")
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+
+      CapsuleDropdown(
+        title: appSettings.launchBehavior.title,
+        width: 200,
+        accessibilityLabel: "When Dblore starts",
+        options: Array(LaunchBehavior.allCases),
+        optionTitle: \.title,
+        isSelected: { $0 == appSettings.launchBehavior },
+        onSelect: { appSettings.launchBehavior = $0 }
+      )
     }
   }
 

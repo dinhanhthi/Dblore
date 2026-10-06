@@ -109,13 +109,19 @@ class WorkspaceWindowManager {
     let manager = WorkspaceManager.createNew(connection: connection)
     workspaces[manager.id] = manager
     activeWorkspaceId = manager.id
+    LaunchSessionCapture.schedule()
     return manager
   }
 
-  /// Open workspace from file URL
+  /// Open workspace from file URL.
+  /// `bookmark` and `folderBookmark` default to nil so callers that only have a URL still
+  /// resolve access through the recent entry. A non-nil argument wins over that entry, so
+  /// launch restore does not depend on the recent list.
   /// Note: Caller should open window using openWindow(value: manager.id)
   @discardableResult
-  func openWorkspace(url: URL) async throws -> WorkspaceManager {
+  func openWorkspace(
+    url: URL, bookmark: Data? = nil, folderBookmark: Data? = nil
+  ) async throws -> WorkspaceManager {
     // Check if already open - just return existing, caller will handle window activation
     if let existing = workspaces.values.first(where: { $0.workspace.fileURL == url }) {
       activeWorkspaceId = existing.id
@@ -125,9 +131,12 @@ class WorkspaceWindowManager {
 
     let stored = RecentManager.shared.recentWorkspaces.first { $0.fileURL == url }
     let manager = try await WorkspaceManager.load(
-      from: url, bookmark: stored?.bookmark, folderBookmark: stored?.folderBookmark)
+      from: url,
+      bookmark: bookmark ?? stored?.bookmark,
+      folderBookmark: folderBookmark ?? stored?.folderBookmark)
     workspaces[manager.id] = manager
     activeWorkspaceId = manager.id
+    LaunchSessionCapture.schedule()
 
     // Add to recent (with refreshed bookmarks); a moved file replaces its old entry
     if let entry = manager.recentEntry {

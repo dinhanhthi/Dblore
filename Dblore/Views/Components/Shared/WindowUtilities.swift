@@ -305,6 +305,7 @@ class DocumentWindowConfiguratorView: NSView {
         Task { @MainActor in
           self?.observeTabBar()
           self?.reportTabBarVisibility()
+          LaunchSessionCapture.schedule()
         }
       },
     ]

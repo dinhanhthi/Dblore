@@ -23,8 +23,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       guard let window = note.object as? NSWindow else { return }
       // Read now, on this main-queue callback: the content view is still attached
       // while the window closes. A later hop would miss the marker.
-      let wasWelcome = MainActor.assumeIsolated { WelcomeWindowMarker.isWelcome(window) }
-      Task { @MainActor in self?.reopenWelcomeIfLastWindowClosed(window, wasWelcome: wasWelcome) }
+      let (wasWelcome, isDocument) = MainActor.assumeIsolated {
+        (WelcomeWindowMarker.isWelcome(window), window.isDbloreDocumentWindow)
+      }
+      Task { @MainActor in
+        self?.reopenWelcomeIfLastWindowClosed(window, wasWelcome: wasWelcome)
+        // Quit writes its own snapshot while the windows are still open, then closes them.
+        guard let self, isDocument, !self.isTerminating else { return }
+        LaunchSessionCapture.schedule()
+      }
     }
     // Start Sparkle (no-op under tests)
     UpdaterController.shared.start()
@@ -87,13 +94,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   /// About and other small windows are not resizable, so they never trigger this.
   @MainActor
   private func reopenWelcomeIfLastWindowClosed(_ closed: NSWindow, wasWelcome: Bool) {
-    guard !wasWelcome, !isTerminating, !SessionManager.isRunningAsTestHost,
+    guard !wasWelcome, !isTerminating, !LaunchRestorer.isRestoring,
+      !SessionManager.isRunningAsTestHost,
       closed.isDbloreDocumentWindow
     else { return }
     let frame = closed.frame
     // Let a quit in progress (which closes the windows too) win over the reopen
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-      guard let self, !self.isTerminating else { return }
+      guard let self, !self.isTerminating, !LaunchRestorer.isRestoring else { return }
       let hasOtherDocumentWindow = NSWindow.hasOtherOpenDocumentWindow(
         in: NSApp.windows, excluding: closed)
       guard !hasOtherDocumentWindow else { return }
@@ -110,6 +118,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
     else {
       isTerminating = true
+      recordLaunchSession()
       return .terminateNow
     }
     Task { @MainActor in
@@ -120,19 +129,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
       }
       isTerminating = true
+      recordLaunchSession()
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
   }
 
-  func applicationWillTerminate(_ notification: Notification) {
-    // Save all workspace states
-    Task { @MainActor in
-      for manager in WorkspaceWindowManager.shared.workspaceManagers {
-        try? await manager.saveWorkspace()
-      }
+  /// Writes the launch snapshot, and flushes workspaces that already have a file, before the
+  /// process exits. Untitled workspaces stay in the snapshot only — this does not show a save panel.
+  private func recordLaunchSession() {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    LaunchSessionCapture.prepareForQuit()
+    for manager in WorkspaceWindowManager.shared.allWorkspaces {
+      manager.flushToExistingFile()
     }
-    // Note: Tab state is now saved per-workspace in saveWorkspace() above
+    LaunchSessionCapture.saveNow()
   }
 }
 
@@ -185,6 +196,7 @@ struct DbloreApp: App {
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()
       pruneQueryHistoryOnLaunch()
+      LaunchSessionRestore.prepare()
     }
 
     // Configure SQLite temp directory to use app's temp directory

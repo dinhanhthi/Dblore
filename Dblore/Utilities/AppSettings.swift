@@ -37,6 +37,19 @@ enum NewTabType: String, CaseIterable {
   }
 }
 
+/// What Dblore opens when it starts
+enum LaunchBehavior: String, CaseIterable {
+  case welcome
+  case restoreLastSession
+
+  var title: String {
+    switch self {
+    case .welcome: return "Show Welcome screen"
+    case .restoreLastSession: return "Restore last sessions"
+    }
+  }
+}
+
 /// Safe Mode levels for query protection (similar to TablePlus)
 /// Higher levels provide more protection against accidental data modification
 enum SafeMode: Int, Codable, CaseIterable, Sendable {
@@ -258,6 +271,7 @@ class AppSettings {
     static let wordWrapEnabled = "app.settings.wordWrapEnabled"
     static let openWindowsAsTabs = "app.settings.openWindowsAsTabs"
     static let defaultNewTabType = "app.settings.defaultNewTabType"
+    static let launchBehavior = "app.settings.launchBehavior"
     static let editorSideBySideDefault = "app.settings.editorSideBySideDefault"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
@@ -415,6 +429,14 @@ class AppSettings {
   var defaultNewTabType: NewTabType = .notebook {
     didSet {
       defaults.set(defaultNewTabType.rawValue, forKey: Keys.defaultNewTabType)
+    }
+  }
+
+  /// What opens when Dblore starts
+  /// Default: welcome
+  var launchBehavior: LaunchBehavior = .welcome {
+    didSet {
+      defaults.set(launchBehavior.rawValue, forKey: Keys.launchBehavior)
     }
   }
 
@@ -712,6 +734,12 @@ class AppSettings {
       defaultNewTabType = type
     }
 
+    if let raw = defaults.string(forKey: Keys.launchBehavior),
+      let behavior = LaunchBehavior(rawValue: raw)
+    {
+      launchBehavior = behavior
+    }
+
     if defaults.object(forKey: Keys.editorFontSize) != nil {
       let stored = CGFloat(defaults.double(forKey: Keys.editorFontSize))
       let clamped = Self.clampFontSize(stored)
@@ -813,6 +841,7 @@ class AppSettings {
     wordWrapEnabled = true
     openWindowsAsTabs = false
     defaultNewTabType = .notebook
+    launchBehavior = .welcome
     editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false

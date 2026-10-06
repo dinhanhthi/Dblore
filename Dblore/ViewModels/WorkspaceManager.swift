@@ -226,14 +226,16 @@ class WorkspaceManager: Identifiable {
     historyList.connectionKey = { [weak self] in self?.activeHistoryConnectionKey }
     historyList.workspaceID = { [weak self] in self?.workspace.id }
 
-    // Only restore tabs for new workspaces (not loading from disk)
-    // When loading from disk, load() will handle tab restoration with proper viewModels
+    // Tab shells only: no view models. File-less tabs are skipped; launch restore rebuilds
+    // those from text overlays. Loading from disk uses restoreTabs: false and restoreTabs(_:).
     if restoreTabs {
-      for tabRef in workspace.tabs {
+      for tabRef in workspace.tabs where tabRef.fileURL != nil {
         tabs.append(tabRef.toTabItem())
         tabBookmarks[tabRef.id] = tabRef.bookmark
       }
-      activeTabId = workspace.activeTabId
+      if let activeId = workspace.activeTabId, tabs.contains(where: { $0.id == activeId }) {
+        activeTabId = activeId
+      }
     }
   }
 
@@ -947,6 +949,118 @@ class WorkspaceManager: Identifiable {
     workspaceAccess = nil
     folderAccess?.release()
     folderAccess = nil
+  }
+
+  /// Reapplies snapshot text onto a tab `load` already restored, or creates the tab when it
+  /// was file-less and therefore skipped. Uses the overlay's tab id. `newNotebook()` and
+  /// `newSQLFile()` are not used: they mint new ids.
+  func restoreOverlayTab(_ overlay: LaunchTextOverlay) {
+    switch overlay.text {
+    case .notebook(let cells):
+      restoreNotebookOverlay(tabId: overlay.tabId, cells: cells)
+    case .script(let script):
+      restoreScriptOverlay(tabId: overlay.tabId, script: script)
+    }
+    markDirty(tabId: overlay.tabId)
+  }
+
+  /// After `load`, reapplies every overlay and selects the saved active tab once it exists.
+  func applyLaunchOverlays(_ overlays: [LaunchTextOverlay]) {
+    for overlay in overlays {
+      restoreOverlayTab(overlay)
+    }
+    restoreLaunchActiveTab()
+  }
+
+  /// Untitled launch window: file tabs go through the saved-file restore, then every overlay
+  /// replaces or creates its tab. `activeTabId` is set after that. Auto-connect runs when the
+  /// embedded workspace has a connection.
+  func restoreLaunchTabs(overlays: [LaunchTextOverlay]) async {
+    _ = await restoreTabs(workspace.tabs)
+    applyLaunchOverlays(overlays)
+    guard workspace.connectionConfig != nil else { return }
+    connectionState = .connecting
+    autoConnectTask = Task { await autoConnectIfNeeded() }
+  }
+
+  private func restoreLaunchActiveTab() {
+    if let activeId = workspace.activeTabId, tabs.contains(where: { $0.id == activeId }) {
+      activeTabId = activeId
+    } else if activeTabId == nil {
+      activeTabId = tabs.first?.id
+    }
+    workspace.activeTabId = activeTabId
+  }
+
+  private func restoreNotebookOverlay(tabId: UUID, cells: [LaunchNotebookCell]) {
+    let notebookCells = cells.map {
+      NotebookCell(id: $0.id, cellType: $0.cellType, content: $0.content)
+    }
+    let document: DbloreDocument
+    if let existing = notebookDocuments[tabId] {
+      var notebook = existing.notebook
+      notebook.cells = notebookCells
+      notebook.documentType = .notebook
+      existing.notebook = notebook
+      document = existing
+    } else {
+      let notebook = DbloreNotebook(cells: notebookCells, documentType: .notebook)
+      document = DbloreDocument(notebook: notebook)
+      if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
+        document.setFileURL(url)
+      }
+      notebookDocuments[tabId] = document
+    }
+    editorDocuments.removeValue(forKey: tabId)
+
+    let viewModel = createViewModel(for: document.notebook)
+    viewModel.viewMode = .notebook
+    viewModels[tabId] = viewModel
+    ensureOverlayTab(id: tabId, documentType: .notebook, title: "Untitled.dblore")
+  }
+
+  private func restoreScriptOverlay(tabId: UUID, script: String) {
+    let document: SQLEditorDocument
+    if let existing = editorDocuments[tabId] {
+      existing.content = script
+      document = existing
+    } else {
+      document = SQLEditorDocument(content: script)
+      if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
+        document.setFileURL(url)
+      }
+      editorDocuments[tabId] = document
+    }
+    notebookDocuments.removeValue(forKey: tabId)
+
+    let notebook = DbloreNotebook(
+      cells: [NotebookCell(cellType: .sql, content: script)], documentType: .script)
+    let viewModel = createViewModel(for: notebook)
+    viewModel.viewMode = .editor
+    viewModel.editorContent = script
+    viewModels[tabId] = viewModel
+    ensureOverlayTab(id: tabId, documentType: .sqlFile, title: "Untitled.sql")
+  }
+
+  private func ensureOverlayTab(id: UUID, documentType: TabDocumentType, title: String) {
+    if let index = tabs.firstIndex(where: { $0.id == id }) {
+      if tabs[index].documentType != documentType {
+        tabs[index].documentType = documentType
+      }
+      return
+    }
+    let stored = workspace.tabs.first { $0.id == id }
+    tabs.append(
+      TabItem(
+        id: id,
+        fileURL: stored?.fileURL,
+        documentType: stored?.documentType ?? documentType,
+        title: stored?.title ?? title,
+        isPinned: stored?.isPinned ?? false
+      ))
+    if let bookmark = stored?.bookmark {
+      tabBookmarks[id] = bookmark
+    }
   }
 
   func markDirty(tabId: UUID) {

@@ -17,15 +17,23 @@ final class HostWindowReference {
 /// Fills a `HostWindowReference` with the window the view lives in.
 struct HostWindowReader: NSViewRepresentable {
   let reference: HostWindowReference
+  var onMoveToWindow: () -> Void = {}
 
-  func makeNSView(context: Context) -> NSView { ReaderView(reference: reference) }
-  func updateNSView(_ nsView: NSView, context: Context) {}
+  func makeNSView(context: Context) -> NSView {
+    ReaderView(reference: reference, onMoveToWindow: onMoveToWindow)
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    (nsView as? ReaderView)?.onMoveToWindow = onMoveToWindow
+  }
 
   private final class ReaderView: NSView {
     let reference: HostWindowReference
+    var onMoveToWindow: () -> Void
 
-    init(reference: HostWindowReference) {
+    init(reference: HostWindowReference, onMoveToWindow: @escaping () -> Void) {
       self.reference = reference
+      self.onMoveToWindow = onMoveToWindow
       super.init(frame: .zero)
     }
 
@@ -34,6 +42,7 @@ struct HostWindowReader: NSViewRepresentable {
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
       reference.window = window
+      onMoveToWindow()
     }
   }
 }
@@ -51,6 +60,8 @@ struct AppWindowView: View {
   @Bindable private var windowManager = WorkspaceWindowManager.shared
   @Bindable private var pendingFileOpen = PendingFileOpen.shared
   @State private var hostWindow = HostWindowReference()
+  /// The system window claims the front restored window once. Later registrations must not take it again.
+  @State private var didClaimLaunchWindow = false
 
   var body: some View {
     Group {
@@ -94,11 +105,45 @@ struct AppWindowView: View {
     }
     // System bordered and glass buttons match the capsule design-system buttons.
     .buttonBorderShape(.capsule)
-    .background(HostWindowReader(reference: hostWindow))
+    .background(
+      HostWindowReader(reference: hostWindow) {
+        registerHostWindow()
+      })
     // Observe pendingWorkspaceId changes from menu commands
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
       guard let newId else { return }
       handlePendingWorkspace(newId)
+    }
+    .onAppear(perform: registerHostWindow)
+    .onChange(of: workspaceId) { _, _ in
+      registerHostWindow()
+    }
+  }
+
+  /// The system window and a Welcome window that later opens a workspace keep the id here.
+  /// Capture reads `NewWindowStore`, not this view's state.
+  private func registerHostWindow() {
+    guard let window = hostWindow.window else { return }
+    NewWindowStore.shared.register(window, workspaceId: workspaceId)
+    claimLaunchWindowIfNeeded(window)
+  }
+
+  /// Only the first document window with a staged claim applies it. `openWelcomeWindow` and
+  /// Cmd+N create this view too; by then the claim is gone, so they get nil and stay Welcome.
+  private func claimLaunchWindowIfNeeded(_ window: NSWindow) {
+    guard !didClaimLaunchWindow else { return }
+    guard let claim = LaunchRestorer.takeFrontWindowClaim() else { return }
+    didClaimLaunchWindow = true
+    window.tabbingIdentifier = .dbloreDocument
+    window.tabbingMode = .automatic
+    window.setFrame(claim.frame.rect, display: true)
+    Task {
+      await LaunchSessionRestore.finish(claim: claim, host: window) { id in
+        workspaceId = id
+      }
+      if claim.isMiniaturized {
+        window.miniaturize(nil)
+      }
     }
   }
 
@@ -187,64 +232,7 @@ struct AppWindowView: View {
   }
 
   private func openNewWindow(for newWorkspaceId: UUID) {
-    let detachDropPoint = NewWindowStore.shared.takePendingDetach(workspaceId: newWorkspaceId)
-    // Create a new NSWindow programmatically with SwiftUI content
-    let newWindowView = NewWorkspaceWindowView(workspaceId: newWorkspaceId)
-      // Disable all SwiftUI animations, same as the main WindowGroup
-      .transaction {
-        guard !$0.isSidebarAnimation else { return }
-        $0.disablesAnimations = true
-        $0.animation = nil
-      }
-    let hostingController = NSHostingController(rootView: newWindowView)
-
-    let newWindow = NSWindow(contentViewController: hostingController)
-    newWindow.title = "Dblore"
-    newWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-    newWindow.titlebarAppearsTransparent = true
-    newWindow.titleVisibility = .hidden
-    newWindow.minSize = NSSize(width: 800, height: 600)
-    newWindow.tabbingIdentifier = .dbloreDocument
-    newWindow.tabbingMode = .automatic
-
-    if let dropPoint = detachDropPoint {
-      // Dragged out of its window: always a separate window, even when new windows open as tabs
-      let size = NSApp.keyWindow?.frame.size ?? NSSize(width: 1200, height: 800)
-      newWindow.setContentSize(size)
-      let screen =
-        NSScreen.screens.first { NSMouseInRect(dropPoint, $0.frame, false) } ?? NSScreen.main
-      let origin = TabDragOut.detachedWindowOrigin(
-        dropPoint: dropPoint, windowSize: newWindow.frame.size)
-      newWindow.setFrameOrigin(
-        screen.map {
-          TabDragOut.clampedOrigin(
-            origin, windowSize: newWindow.frame.size, visibleFrame: $0.visibleFrame)
-        } ?? origin)
-    } else if let parent = NewWindowStore.tabParent(
-      openAsTab: AppSettings.shared.openWindowsAsTabs, keyWindow: NSApp.keyWindow)
-    {
-      parent.addTabbedWindow(newWindow, ordered: .above)
-    } else if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
-      // Use the current key window's size and cascade position
-      newWindow.setContentSize(currentWindow.frame.size)
-      // Offset down-right from the current window (standard macOS cascade)
-      let offset: CGFloat = 22
-      let newOrigin = CGPoint(
-        x: currentWindow.frame.origin.x + offset,
-        y: currentWindow.frame.origin.y - offset
-      )
-      newWindow.setFrameOrigin(newOrigin)
-    } else {
-      newWindow.setContentSize(NSSize(width: 1200, height: 800))
-      newWindow.center()
-    }
-
-    // Use NSWindowController to manage the window lifecycle
-    let windowController = NSWindowController(window: newWindow)
-    windowController.showWindow(nil)
-
-    // Keep a reference to prevent deallocation
-    NewWindowStore.shared.addWindow(windowController, workspaceId: newWorkspaceId)
+    NewWindowStore.shared.openWorkspaceWindow(workspaceId: newWorkspaceId)
   }
 }
 
@@ -310,6 +298,14 @@ class NewWindowStore {
   }
 
   private var windowControllers: [(controller: NSWindowController, workspaceId: UUID?)] = []
+  /// Document windows capture can see, including the system `WindowGroup` window.
+  /// A nil workspace id is Welcome. A missing entry means the window is not registered.
+  private var registrations: [Int: Registration] = [:]
+
+  enum Registration: Equatable {
+    case welcome
+    case workspace(UUID)
+  }
 
   private init() {
     // Listen for window close to clean up
@@ -319,15 +315,98 @@ class NewWindowStore {
       queue: .main
     ) { [weak self] notification in
       guard let window = notification.object as? NSWindow else { return }
+      // Read before the hop: a closed window's number is no longer usable
+      let number = MainActor.assumeIsolated { window.windowNumber }
       // Dispatch to MainActor to safely access @MainActor properties
       Task { @MainActor in
         self?.windowControllers.removeAll { $0.controller.window == window }
+        self?.registrations.removeValue(forKey: number)
       }
     }
   }
 
+  /// Records which workspace this document window is showing. Pass nil for Welcome.
+  func register(_ window: NSWindow, workspaceId: UUID?) {
+    let number = window.windowNumber
+    guard number > 0 else { return }
+    registrations[number] = workspaceId.map { .workspace($0) } ?? .welcome
+  }
+
+  func registration(for window: NSWindow) -> Registration? {
+    registrations[window.windowNumber]
+  }
+
+  /// A document window for `workspaceId`. `frame` and `parent` are the restore placement:
+  /// a tab parent joins that group, a frame is applied as saved. Neither cascades nor follows
+  /// `openWindowsAsTabs`. With both nil, this is the Cmd+N / menu path (detach, tabs, or cascade).
+  @discardableResult
+  func openWorkspaceWindow(
+    workspaceId: UUID, frame: NSRect? = nil, asTabOf parent: NSWindow? = nil
+  ) -> NSWindow {
+    let newWindowView = NewWorkspaceWindowView(workspaceId: workspaceId)
+      .transaction {
+        guard !$0.isSidebarAnimation else { return }
+        $0.disablesAnimations = true
+        $0.animation = nil
+      }
+    let hostingController = NSHostingController(rootView: newWindowView)
+
+    let newWindow = NSWindow(contentViewController: hostingController)
+    newWindow.title = "Dblore"
+    newWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+    newWindow.titlebarAppearsTransparent = true
+    newWindow.titleVisibility = .hidden
+    newWindow.minSize = NSSize(width: 800, height: 600)
+    newWindow.tabbingIdentifier = .dbloreDocument
+    newWindow.tabbingMode = .automatic
+
+    if let parent {
+      parent.addTabbedWindow(newWindow, ordered: .above)
+    } else if let frame {
+      newWindow.setFrame(frame, display: false)
+    } else if let dropPoint = takePendingDetach(workspaceId: workspaceId) {
+      // Dragged out of its window: always a separate window, even when new windows open as tabs
+      let size = NSApp.keyWindow?.frame.size ?? NSSize(width: 1200, height: 800)
+      newWindow.setContentSize(size)
+      let screen =
+        NSScreen.screens.first { NSMouseInRect(dropPoint, $0.frame, false) } ?? NSScreen.main
+      let origin = TabDragOut.detachedWindowOrigin(
+        dropPoint: dropPoint, windowSize: newWindow.frame.size)
+      newWindow.setFrameOrigin(
+        screen.map {
+          TabDragOut.clampedOrigin(
+            origin, windowSize: newWindow.frame.size, visibleFrame: $0.visibleFrame)
+        } ?? origin)
+    } else if let tabParent = Self.tabParent(
+      openAsTab: AppSettings.shared.openWindowsAsTabs, keyWindow: NSApp.keyWindow)
+    {
+      tabParent.addTabbedWindow(newWindow, ordered: .above)
+    } else if let currentWindow = NSApp.keyWindow, currentWindow.isVisible {
+      // Use the current key window's size and cascade position
+      newWindow.setContentSize(currentWindow.frame.size)
+      // Offset down-right from the current window (standard macOS cascade)
+      let offset: CGFloat = 22
+      let newOrigin = CGPoint(
+        x: currentWindow.frame.origin.x + offset,
+        y: currentWindow.frame.origin.y - offset
+      )
+      newWindow.setFrameOrigin(newOrigin)
+    } else {
+      newWindow.setContentSize(NSSize(width: 1200, height: 800))
+      newWindow.center()
+    }
+
+    let windowController = NSWindowController(window: newWindow)
+    windowController.showWindow(nil)
+    addWindow(windowController, workspaceId: workspaceId)
+    return newWindow
+  }
+
   func addWindow(_ controller: NSWindowController, workspaceId: UUID) {
     windowControllers.append((controller: controller, workspaceId: workspaceId))
+    if let window = controller.window {
+      register(window, workspaceId: workspaceId)
+    }
   }
 
   /// Find the NSWindow displaying a specific workspace
@@ -350,19 +429,23 @@ class NewWindowStore {
   func openWelcomeWindowTab() {
     let key = NSApp.keyWindow
     openWelcomeWindow(
-      frame: key?.frame ?? .zero, asTabOf: key?.isDbloreDocumentWindow == true ? key : nil)
+      frame: key?.frame ?? .zero, parent: key?.isDbloreDocumentWindow == true ? key : nil)
   }
 
   /// A fresh document window showing the welcome screen, kept alive until it closes.
   /// With `parent`, it joins that window's tab group instead of reusing a Welcome window.
-  func openWelcomeWindow(frame: NSRect, asTabOf parent: NSWindow? = nil) {
-    if parent == nil,
+  /// Restore passes `reuseExisting: false` so a second Welcome group keeps its own frame.
+  @discardableResult
+  func openWelcomeWindow(
+    frame: NSRect, parent: NSWindow? = nil, reuseExisting: Bool = true
+  ) -> NSWindow? {
+    if reuseExisting, parent == nil,
       let existing = windowControllers.first(where: { $0.workspaceId == nil })?.controller.window,
       existing.isVisible || existing.isMiniaturized
     {
       existing.makeKeyAndOrderFront(nil)
       NSApp.activate()
-      return
+      return existing
     }
 
     let welcome = AppWindowView()
@@ -396,7 +479,9 @@ class NewWindowStore {
     let windowController = NSWindowController(window: window)
     windowController.showWindow(nil)
     windowControllers.append((controller: windowController, workspaceId: nil))
+    register(window, workspaceId: nil)
     NSApp.activate()
+    return window
   }
 }
 

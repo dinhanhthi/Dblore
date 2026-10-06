@@ -97,8 +97,7 @@ extension WorkspaceManager {
     }
     workspace.fileURL = url
 
-    let data = try encodedWorkspaceData()
-    try SecurityScopedAccess.write(data, to: url)
+    try writeEncodedWorkspace(to: url)
 
     isDirty = false
     // Once per location: a failed bookmark is not retried on every auto-save
@@ -111,6 +110,23 @@ extension WorkspaceManager {
     if let entry = recentEntry {
       recents.addWorkspace(entry)
     }
+  }
+
+  /// Writes the open workspace over `workspace.fileURL`. No save panel: an untitled workspace
+  /// (nil `fileURL`) is left in memory for the launch snapshot.
+  func flushToExistingFile() {
+    guard let url = workspace.fileURL else { return }
+    do {
+      try writeEncodedWorkspace(to: url)
+      isDirty = false
+    } catch {
+      // Quit must keep going. A panel here would ask the user to save on the way out.
+    }
+  }
+
+  private func writeEncodedWorkspace(to url: URL) throws {
+    let data = try encodedWorkspaceData()
+    try SecurityScopedAccess.write(data, to: url)
   }
 
   /// Recent workspaces entry with the current file and folder bookmarks (nil while unsaved)
