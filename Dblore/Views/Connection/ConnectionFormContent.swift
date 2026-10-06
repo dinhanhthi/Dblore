@@ -69,6 +69,7 @@ struct ConnectionFormContent: View {
   /// `databaseType` without clearing those fields; loading a history row sets both.
   @State private var fieldsEngine: DatabaseType?
   @State private var showDeleteConfirmation = false
+  @State private var showClearAllConfirmation = false
   @State private var entryToDelete: UUID?
 
   // MARK: - Types
@@ -256,6 +257,10 @@ struct ConnectionFormContent: View {
     $showDeleteConfirmation
   }
 
+  var showClearAllConfirmationBinding: Binding<Bool> {
+    $showClearAllConfirmation
+  }
+
   func getConnectionHistory() -> [ConnectionHistoryEntry] {
     connectionHistory
   }
@@ -417,6 +422,10 @@ struct ConnectionFormContent: View {
   func prepareDeleteConnection(_ id: UUID) {
     entryToDelete = id
     showDeleteConfirmation = true
+  }
+
+  func prepareClearAllHistory() {
+    showClearAllConfirmation = true
   }
 
   func getInputMode() -> ConnectionInputMode {

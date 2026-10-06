@@ -51,7 +51,7 @@ extension ConnectionFormContent {
         Divider()
 
         Button("Clear All History", role: .destructive) {
-          clearAllHistory()
+          prepareClearAllHistory()
         }
       } label: {
         HStack {
@@ -82,6 +82,20 @@ extension ConnectionFormContent {
     } message: {
       Text(
         "This removes the connection from Recent connections. Its saved certificate is removed when no other Recent connection uses it."
+      )
+    }
+    .confirmationDialog(
+      "Clear All History?",
+      isPresented: showClearAllConfirmationBinding,
+      titleVisibility: .visible
+    ) {
+      Button("Clear All History", role: .destructive) {
+        clearAllHistory()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "This removes every connection from Recent connections. Saved passwords and certificates for those connections are removed too."
       )
     }
   }
