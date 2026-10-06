@@ -114,6 +114,11 @@ extension DatabaseConnectionManager {
       // identify them by their name
       let typeName = "\(dataType)"
 
+      // PostgresNIO names known array types "INTEGER[]", "TEXT[]", ...
+      if typeName.hasSuffix("[]") {
+        return typeName
+      }
+
       // Handle pgvector extension types (case-insensitive check)
       if typeName.lowercased().contains("vector") {
         return "VECTOR"
@@ -225,6 +230,30 @@ extension DatabaseConnectionManager {
         return .data(Data(buffer: value))
       }
 
+    case .boolArray:
+      if let value = arrayLiteral(cell, Bool.self, { $0 ? "t" : "f" }) { return value }
+
+    case .int2Array:
+      if let value = arrayLiteral(cell, Int16.self, { String($0) }) { return value }
+
+    case .int4Array:
+      if let value = arrayLiteral(cell, Int32.self, { String($0) }) { return value }
+
+    case .int8Array:
+      if let value = arrayLiteral(cell, Int64.self, { String($0) }) { return value }
+
+    case .float4Array:
+      if let value = arrayLiteral(cell, Float.self, { String($0) }) { return value }
+
+    case .float8Array:
+      if let value = arrayLiteral(cell, Double.self, { String($0) }) { return value }
+
+    case .uuidArray:
+      if let value = arrayLiteral(cell, UUID.self, { $0.uuidString }) { return value }
+
+    case .textArray, .varcharArray:
+      if let value = arrayLiteral(cell, String.self, quoteArrayElement) { return value }
+
     default:
       // Check if this is a user-defined type (e.g., pgvector's vector type)
       let typeName = "\(cell.dataType)"
@@ -270,6 +299,29 @@ extension DatabaseConnectionManager {
     }
 
     return .null
+  }
+
+  /// Decode a one-dimensional array cell and render it as a PostgreSQL array literal, `{1,2}`.
+  /// nil when the cell has NULL elements or more dimensions, which PostgresNIO cannot decode.
+  private nonisolated static func arrayLiteral<Element: PostgresArrayDecodable>(
+    _ cell: PostgresCell, _ element: Element.Type, _ format: (Element) -> String
+  ) -> CellValue?
+  where Element == Element._DecodableType {
+    guard let values = try? cell.decode([Element].self, context: .default) else { return nil }
+    return .string("{" + values.map(format).joined(separator: ",") + "}")
+  }
+
+  /// Quote a text element the way array output does: only when it would be ambiguous.
+  private nonisolated static func quoteArrayElement(_ text: String) -> String {
+    let needsQuotes =
+      text.isEmpty || text.caseInsensitiveCompare("NULL") == .orderedSame
+      || text.contains(where: {
+        $0 == "," || $0 == "\"" || $0 == "\\" || $0 == "{" || $0 == "}" || $0.isWhitespace
+      })
+    guard needsQuotes else { return text }
+    let escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    return "\"" + escaped + "\""
   }
 
   /// Parse pgvector binary format into readable string representation.
