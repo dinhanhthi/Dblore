@@ -101,7 +101,9 @@ struct ConnectionSafetyMenus: View {
   }
 
   private var protectionMenu: some View {
-    SafetyOptionMenu(arrowEdge: prominent ? .top : .bottom, rows: protectionRows) {
+    SafetyOptionMenu(
+      arrowEdge: prominent ? .top : .bottom, rows: protectionRows, help: .protectionLevel
+    ) {
       menuLabel(
         protection.displayName, icon: protection.iconName,
         iconColor: SafetyOptionStyle.color(for: protection))
@@ -125,7 +127,7 @@ struct ConnectionSafetyMenus: View {
 
   private var securityMenu: some View {
     SafetyOptionMenu(
-      arrowEdge: prominent ? .top : .bottom, rows: securityRows, showsCommitStyleHelp: true
+      arrowEdge: prominent ? .top : .bottom, rows: securityRows, help: .commitStyle
     ) {
       menuLabel(
         resolvedStyle.title,
@@ -289,11 +291,31 @@ enum SafetyOptionStyle {
     dark: Color(hex: "a78bfa"))
 }
 
+/// Header "?" on a safety menu. Opening it does not select a row.
+enum SafetyMenuHelp {
+  case commitStyle
+  case protectionLevel
+
+  var title: String {
+    switch self {
+    case .commitStyle: "Commit style"
+    case .protectionLevel: "Protection level"
+    }
+  }
+
+  var tip: String {
+    switch self {
+    case .commitStyle: "How writes are handled"
+    case .protectionLevel: "What queries are allowed"
+    }
+  }
+}
+
 struct SafetyOptionMenu<Label: View>: View {
   var arrowEdge: Edge = .bottom
   let rows: [SafetyOptionRow]
-  /// Header "?" on the commit-style popover. Opening it does not select a style.
-  var showsCommitStyleHelp = false
+  /// Header "?". Opening it does not select a row.
+  var help: SafetyMenuHelp? = nil
   @ViewBuilder var label: () -> Label
   @State private var isOpen = false
 
@@ -307,7 +329,7 @@ struct SafetyOptionMenu<Label: View>: View {
     .fixedSize(horizontal: true, vertical: true)
     .linkPointer()
     .popover(isPresented: $isOpen, arrowEdge: arrowEdge) {
-      SafetyOptionList(rows: rows, showsCommitStyleHelp: showsCommitStyleHelp) {
+      SafetyOptionList(rows: rows, help: help) {
         isOpen = false
       }
     }
@@ -316,31 +338,32 @@ struct SafetyOptionMenu<Label: View>: View {
 
 private struct SafetyOptionList: View {
   let rows: [SafetyOptionRow]
-  var showsCommitStyleHelp = false
+  var help: SafetyMenuHelp?
   let dismiss: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) {
-      if showsCommitStyleHelp {
-        CommitStyleMenuHeader()
+      if let help {
+        SafetyHelpHeader(help: help)
       }
       ForEach(rows) { row in
         SafetyOptionListRow(row: row, dismiss: dismiss)
       }
     }
     .padding(Spacing.xs)
-    .frame(minWidth: rows.contains { $0.subtitle != nil } ? 320 : 188)
+    .frame(minWidth: rows.contains { $0.subtitle != nil } ? 320 : (help == nil ? 188 : 220))
   }
 }
 
-/// Header of the commit-style popover. The "?" only opens help.
-private struct CommitStyleMenuHeader: View {
+/// Header of a safety menu. The "?" only opens help.
+private struct SafetyHelpHeader: View {
+  let help: SafetyMenuHelp
   @State private var showsHelp = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       HStack(spacing: Spacing.sm) {
-        Text("Commit style")
+        Text(help.title)
           .font(.small)
           .foregroundStyle(Color.foregroundSubtle)
         Spacer(minLength: Spacing.sm)
@@ -353,9 +376,14 @@ private struct CommitStyleMenuHeader: View {
         }
         .buttonStyle(.plain)
         .linkPointer()
-        .help("How writes are handled")
+        .help(help.tip)
         .popover(isPresented: $showsHelp, arrowEdge: .trailing) {
-          CommitStyleHelpView()
+          switch help {
+          case .commitStyle:
+            CommitStyleHelpView()
+          case .protectionLevel:
+            ProtectionLevelHelpView()
+          }
         }
       }
       Rectangle()
