@@ -126,6 +126,26 @@ struct QueryParameterIntegrationTests {
     }
   }
 
+  @Test("A name first used in IS NULL fails with a cast hint", .timeLimit(.minutes(1)))
+  func untypedFirstUseHintsACast() async throws {
+    try await withTable("untyped") { manager, table in
+      let sql = "SELECT name FROM \(table) WHERE (:id IS NULL OR id = :id)"
+      do {
+        _ = try await manager.execute(
+          userSQL: sql, parameters: ["id": .text("2")], policy: open)
+        Issue.record("Expected queryFailed")
+      } catch DatabaseError.queryFailed(let message, _) {
+        #expect(message.contains("could not determine data type of parameter $1"))
+        #expect(message.contains("Hint: Cast the parameter where it is first used"))
+      }
+
+      let cast = "SELECT name FROM \(table) WHERE (:id::int IS NULL OR id = :id) ORDER BY id"
+      let result = try await manager.execute(
+        userSQL: cast, parameters: ["id": .text("2")], policy: open)
+      #expect(result.rows == [[.string("b")]])
+    }
+  }
+
   @Test("A repeated name returns one row of two equal strings", .timeLimit(.minutes(1)))
   func repeatedNameReturnsTwoEqualStrings() async throws {
     try await withTable("reuse") { manager, _ in
