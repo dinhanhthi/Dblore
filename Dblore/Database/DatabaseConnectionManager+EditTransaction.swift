@@ -134,6 +134,7 @@ extension DatabaseConnectionManager {
       throw await transactionFailure(error, openedHere: opens)
     }
     recordBatch(statements, counts: counts)
+    noteSchemaSQL(statements)
     return counts
   }
 
@@ -151,6 +152,7 @@ extension DatabaseConnectionManager {
         throw await undoBatch(error, openedHere: false)
       }
       _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+      noteSchemaSQL(statements)
       return counts
     }
     _ = try await sendTransactionControl(appOwnedBeginSQL)
@@ -168,6 +170,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
+    noteSchemaSQL(statements)
     return counts
   }
 

@@ -508,6 +508,7 @@ class WorkspaceManager: Identifiable {
   /// Show a table/view in a data viewer tab: select the tab already showing it, else reuse the
   /// preview tab, else open a new preview tab. The preview tab that opened a pending Protected
   /// transaction, or that still has staged edits, is pinned instead of replaced.
+  /// Selecting an existing tab reloads its page, so rows committed since the last view show up.
   /// `filter` nil leaves an existing viewer's filter unchanged. An existing tab applies `filter`
   /// after the staged-leave prompt. A new tab opens with `filter` already applied.
   func openDataViewer(
@@ -518,9 +519,13 @@ class WorkspaceManager: Identifiable {
       return state?.schema == schema && state?.name == name
     })?.id {
       selectTab(id: id)
-      if let filter, let viewModel = viewModels[id] {
+      if let viewModel = viewModels[id] {
         Task {
-          await viewModel.applyFilter(filter)
+          if let filter {
+            await viewModel.applyFilter(filter)
+          } else if !viewModel.isEditorQueryRunning {
+            await viewModel.refreshDataViewer()
+          }
         }
       }
       return

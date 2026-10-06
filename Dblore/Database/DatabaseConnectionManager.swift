@@ -60,6 +60,12 @@ actor DatabaseConnectionManager {
   var txOwner: UUID?
   /// A transaction the user opened with BEGIN while Protected mode was off
   var userTxOpen = false
+  /// Committed schema change the sidebar has not reloaded yet
+  var schemaRefreshPending = false
+  /// Schema change inside the open app transaction. Commit makes it `schemaRefreshPending`.
+  var schemaDirtyInAppTx = false
+  /// Schema change inside a user-opened transaction. COMMIT makes it `schemaRefreshPending`.
+  var schemaDirtyInUserTx = false
   /// Inline edit tables resolved outside any app transaction, by table identity
   /// (see `cachedEditTable`)
   var editTableCache: [TableRef: EditTable] = [:]
@@ -259,6 +265,9 @@ actor DatabaseConnectionManager {
     if session == nil {
       txState = .idle
       userTxOpen = false
+      schemaRefreshPending = false
+      schemaDirtyInAppTx = false
+      schemaDirtyInUserTx = false
     }
 
     // After the session is closed, so a SQLite file is not yanked while it is still open.
@@ -279,6 +288,9 @@ actor DatabaseConnectionManager {
     sqliteReadOnlyReason = nil
     txState = .idle
     userTxOpen = false
+    schemaRefreshPending = false
+    schemaDirtyInAppTx = false
+    schemaDirtyInUserTx = false
     editTableCache.removeAll()
     return ForgottenSession(
       session: forgotten, connection: resources.0, group: resources.1)

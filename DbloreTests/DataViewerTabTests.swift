@@ -47,8 +47,8 @@ struct DataViewerTabTests {
     #expect(manager.activeTabId == id)
   }
 
-  @Test("Opening a table already shown selects its tab")
-  func reopenSelectsExisting() throws {
+  @Test("Opening a table already shown selects its tab and reloads the page")
+  func reopenSelectsExisting() async throws {
     let manager = Self.manager()
     manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
     let viewerId = try #require(manager.tabs.first?.id)
@@ -58,6 +58,16 @@ struct DataViewerTabTests {
     manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
     #expect(manager.tabs.count == 2)
     #expect(manager.activeTabId == viewerId)
+
+    let viewModel = try #require(manager.viewModel(for: viewerId))
+    viewModel.connectionManager = nil
+    viewModel.dataViewer?.totalRows = 40
+    manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
+    for _ in 0..<50 {
+      if viewModel.dataViewer?.totalRows == nil { break }
+      await Task.yield()
+    }
+    #expect(viewModel.dataViewer?.totalRows == nil)
   }
 
   @Test("A pinned tab is kept and the next table opens a new preview")

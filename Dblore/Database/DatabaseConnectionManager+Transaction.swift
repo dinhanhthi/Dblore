@@ -106,8 +106,7 @@ extension DatabaseConnectionManager {
         // The session is gone: nothing of the old transaction state applies any more
         if let cancelled = cancelError(since: epoch) { throw cancelled }
         if !protectedMode {
-          userTxOpen = ProtectedTransactionRules.userTxOpen(
-            after: statement, current: userTxOpen, succeeded: false)
+          noteUserTransaction(after: statement, succeeded: false)
         }
         throw await transactionFailure(error, openedHere: openedHere)
       }
@@ -125,9 +124,9 @@ extension DatabaseConnectionManager {
             affectedRows: statement.kind == .dml ? result.affectedRows : nil))
       }
       if !protectedMode {
-        userTxOpen = ProtectedTransactionRules.userTxOpen(
-          after: statement, current: userTxOpen, succeeded: true)
+        noteUserTransaction(after: statement, succeeded: true)
       }
+      noteSchemaChange(statement)
       result = await resetSessionIfCapped(result, statement: statement)
       if result.sessionReset {
         // The rest would run outside the user's session state (temp tables, SET, BEGIN)
@@ -178,6 +177,7 @@ extension DatabaseConnectionManager {
         metadata = try await sendTransactionControl("COMMIT")
       } catch {
         txState = .idle
+        discardAppSchemaChange()
         if isConnectionLost {
           throw DatabaseError.transactionAborted(
             "The connection was lost during Commit; it is unknown whether the "
@@ -190,10 +190,12 @@ extension DatabaseConnectionManager {
       txState = .idle
       // COMMIT of a transaction the server already aborted answers with a ROLLBACK tag
       guard metadata.tag == "COMMIT" else {
+        discardAppSchemaChange()
         throw DatabaseError.transactionAborted(
           "The server rolled back the transaction instead of committing it (a statement had "
             + "failed); the \(pending.count) pending statement(s) were discarded.")
       }
+      promoteAppSchemaChange()
     }
   }
 
@@ -220,9 +222,11 @@ extension DatabaseConnectionManager {
         throw error
       }
       txState = .idle
+      discardAppSchemaChange()
       throw lostConnectionError(pendingCount: previous.pending.count, error)
     }
     txState = .idle
+    discardAppSchemaChange()
   }
 
   /// Test hook (see `transactionEndHook`): lets a test hold Commit / Rollback in the `.ending`
@@ -298,6 +302,64 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// Update `userTxOpen`, and when a user `COMMIT` / `END` persisted schema changes, ask the
+  /// sidebar to reload. `ROLLBACK` drops those changes instead.
+  func noteUserTransaction(after statement: ClassifiedStatement, succeeded: Bool) {
+    let wasOpen = userTxOpen
+    userTxOpen = ProtectedTransactionRules.userTxOpen(
+      after: statement, current: userTxOpen, succeeded: succeeded)
+    guard wasOpen else { return }
+    if succeeded && ProtectedTransactionRules.committedUserTransaction(statement) {
+      if schemaDirtyInUserTx { schemaRefreshPending = true }
+      schemaDirtyInUserTx = false
+    } else if !userTxOpen {
+      schemaDirtyInUserTx = false
+    }
+  }
+
+  /// Remember a successful statement that changes tables, views, or routines.
+  /// Uncommitted work waits for Commit; autocommit asks the sidebar to reload now.
+  func noteSchemaChange(_ statement: ClassifiedStatement) {
+    guard ProtectedTransactionRules.changesVisibleSchema(statement) else { return }
+    if !txState.isIdle {
+      schemaDirtyInAppTx = true
+    } else if userTxOpen {
+      schemaDirtyInUserTx = true
+    } else {
+      schemaRefreshPending = true
+    }
+  }
+
+  func noteSchemaSQL(_ statements: [BoundStatement]) {
+    let dialect = Self.dialect(of: config)
+    for statement in statements {
+      guard let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect).first
+      else { continue }
+      noteSchemaChange(classified)
+    }
+  }
+
+  /// Hands a committed schema change to the sidebar. Nothing is taken while an app
+  /// transaction could still roll it back.
+  func takeSchemaRefresh() -> Bool {
+    guard schemaRefreshPending, txState.isIdle else { return false }
+    schemaRefreshPending = false
+    return true
+  }
+
+  func restoreSchemaRefresh() {
+    schemaRefreshPending = true
+  }
+
+  func promoteAppSchemaChange() {
+    if schemaDirtyInAppTx { schemaRefreshPending = true }
+    schemaDirtyInAppTx = false
+  }
+
+  func discardAppSchemaChange() {
+    schemaDirtyInAppTx = false
+  }
+
   /// Update the state after a statement failed and return the error to throw.
   /// Inside the app transaction: connection lost → `.idle` (pending lost); the transaction was
   /// opened by this run and nothing is pending → rolled back automatically (nothing to lose);
@@ -306,13 +368,17 @@ extension DatabaseConnectionManager {
     guard case .appTx(let pending) = txState else { return error }
     if isConnectionLost {
       txState = .idle
+      discardAppSchemaChange()
       return lostConnectionError(pendingCount: pending.count, error)
     }
     if openedHere && pending.isEmpty, (try? await sendTransactionControl("ROLLBACK")) != nil {
       txState = .idle
+      discardAppSchemaChange()
       return error
     }
     txState = .aborted(reason: error.localizedDescription, pending: pending)
+    // The server undid the statements. Rollback does not put them back.
+    discardAppSchemaChange()
     return error
   }
 
@@ -337,6 +403,9 @@ extension DatabaseConnectionManager {
     txState = .appTx(pending: [.earlierChanges()])
     txOwner = caller
     userTxOpen = false
+    // What already ran was not classified here, so Commit reloads the sidebar.
+    schemaDirtyInAppTx = true
+    schemaDirtyInUserTx = false
     do {
       try await suspendIdleTimeoutIfSupported()
     } catch {

@@ -33,7 +33,20 @@ extension WorkspaceManager {
     viewModel.isTransactionPendingElsewhere = !pendingTransaction.isIdle
     viewModel.onStatementsExecuted = { [weak self] in
       await self?.refreshPendingTransaction()
+      await self?.refreshSchemaAfterStatements()
     }
+  }
+
+  /// Reload the Public sidebar after a committed schema command (CREATE, ALTER, DROP, …).
+  /// While a Review transaction is open the catalog stays paused, so the reload waits for Commit.
+  func refreshSchemaAfterStatements() async {
+    guard connectionState == .connected, !isSchemaPaused else { return }
+    guard await connectionManager.takeSchemaRefresh() else { return }
+    guard connectionState == .connected, !isSchemaPaused else {
+      await connectionManager.restoreSchemaRefresh()
+      return
+    }
+    startSchemaLoad()
   }
 
   /// Read the actor's transaction state into `pendingTransaction`. The origin tab is the tab
@@ -164,6 +177,7 @@ extension WorkspaceManager {
     do {
       try await connectionManager.commitAppTransaction(expectedGeneration: expectedGeneration)
       await refreshPendingTransaction()
+      await refreshSchemaAfterStatements()
       showTransactionToast(
         "Committed \(Self.statements(summary.statementCount))", type: .success)
       for viewModel in viewModels.values { viewModel.cellsEditedInTransaction = [] }

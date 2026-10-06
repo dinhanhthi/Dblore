@@ -148,6 +148,21 @@ nonisolated enum ProtectedTransactionRules {
     return .run
   }
 
+  /// DDL (including under `EXPLAIN ANALYZE`) and `SELECT INTO` / `CREATE TABLE AS`.
+  /// Once one of these commits, the sidebar schema is stale.
+  static func changesVisibleSchema(_ statement: ClassifiedStatement) -> Bool {
+    statement.createsTable || SQLStatementClassifier.effectiveKind(statement.kind) == .ddl
+  }
+
+  /// `COMMIT` / `END` that persisted the user transaction. `ROLLBACK`, `ABORT`, and `PREPARE`
+  /// do not. The caller already saw the transaction close, or a `COMMIT AND CHAIN` that
+  /// committed and opened the next one.
+  static func committedUserTransaction(_ statement: ClassifiedStatement) -> Bool {
+    guard statement.kind == .tcl else { return false }
+    let first = SQLTokenizer.tokens(statement.text).first { $0.kind == .word }?.keyword ?? ""
+    return first == "COMMIT" || first == "END"
+  }
+
   /// Statements that may change the schema (fail closed: DDL, also under EXPLAIN ANALYZE,
   /// utility and unrecognized statements) invalidate the cached inline edit tables.
   static func invalidatesEditTables(_ statement: ClassifiedStatement) -> Bool {
