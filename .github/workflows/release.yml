@@ -31,7 +31,9 @@ jobs:
             echo "::error::Release must run from main, got $REF"
             exit 1
           fi
-          if ! [[ "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || [[ "${EXPECTED_SHA,,}" != "$GITHUB_SHA" ]]; then
+          # macOS runners ship Bash 3.2, which has no ${var,,}.
+          expected="$(printf '%s' "$EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+          if ! [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || [[ "$expected" != "$GITHUB_SHA" ]]; then
             echo "::error::expected_sha must match the dispatched commit $GITHUB_SHA"
             exit 1
           fi
@@ -46,6 +48,15 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/select-xcode
+
+      # Reuses the resolved packages and compiled mlx-swift objects (Release config, separate from
+      # the CI cache). The Sparkle tools step below reads from this same DerivedData.
+      - name: Cache DerivedData
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: derived-release-${{ hashFiles('.xcode-version', 'Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: derived-release-
 
       - name: Preflight release
         env:
