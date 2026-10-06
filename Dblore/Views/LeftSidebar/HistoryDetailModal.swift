@@ -2,8 +2,9 @@
 //  HistoryDetailModal.swift
 //  Dblore
 //
-//  Small modal with the full recorded SQL, the recorded error of a failed run, and Copy / Cancel.
-//  The SQL well matches every other read-only code modal.
+//  Small modal with the full recorded SQL and Copy / Cancel.
+//  A failed run shows its error under the SQL well, with the same wash as the
+//  result panel after a statement fails.
 //
 
 import SwiftUI
@@ -21,17 +22,17 @@ struct HistoryDetailModal: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      if let errorMessage {
-        Text(errorMessage)
-          .font(.small)
-          .foregroundColor(.destructive)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding([.horizontal, .top], Spacing.md)
-      }
       SQLCodeWell(sql: sql, allowsTextSelection: canCopy)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(Spacing.md)
+        .padding(.horizontal, Spacing.md)
+        .padding(.top, Spacing.md)
+        .padding(.bottom, errorMessage == nil ? Spacing.md : Spacing.sm)
+
+      if let errorMessage {
+        historyErrorResult(errorMessage)
+          .padding(.horizontal, Spacing.md)
+          .padding(.bottom, Spacing.md)
+      }
 
       GenericModalFooter {
         Spacer()
@@ -44,7 +45,7 @@ struct HistoryDetailModal: View {
           .keyboardShortcut(.cancelAction)
       }
     }
-    .frame(width: 440, height: 260)
+    .frame(width: 440, height: errorMessage == nil ? 260 : 340)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
@@ -53,6 +54,21 @@ struct HistoryDetailModal: View {
     )
     .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
+  }
+
+  /// Same wash and type as the editor result panel after a failed statement.
+  private func historyErrorResult(_ message: String) -> some View {
+    ScrollView {
+      Text(message)
+        .font(.system(size: 12, design: .monospaced))
+        .foregroundStyle(Color.destructive)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.md)
+    }
+    .frame(maxWidth: .infinity, maxHeight: 120)
+    .background(Color.red.opacity(0.05))
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 
   private func copy() {
