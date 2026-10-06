@@ -165,7 +165,9 @@ struct LaunchSessionTests {
     let full = LaunchSession(windows: [
       savedWindow(url: URL(fileURLWithPath: "/tmp/kept.sqlws"), group: 0, tab: 0)
     ])
-    guard case .welcome = LaunchRestorer.plan(behavior: .welcome, session: full, readable: { _ in true })
+    guard
+      case .welcome = LaunchRestorer.plan(
+        behavior: .welcome, session: full, readable: { _ in true })
     else {
       Issue.record("Show Welcome screen ignores a full snapshot")
       return
@@ -269,7 +271,8 @@ struct LaunchSessionTests {
     }
     #expect(workspace.fileURL == nil)
     #expect(workspace.workspace?.name == "Scratch")
-    #expect(workspace.textOverlays == [LaunchTextOverlay(tabId: tabID, text: .script("select draft"))])
+    #expect(
+      workspace.textOverlays == [LaunchTextOverlay(tabId: tabID, text: .script("select draft"))])
   }
 
   @Test("Two windows in one group and a lone window keep tab order and front-to-back groups")
@@ -429,6 +432,46 @@ struct LaunchSessionTests {
     #expect(manager.tabs.count == 1)
   }
 
+  @Test("Notebook overlay keeps saved cell metadata, updates content, and follows overlay order")
+  func notebookOverlayKeepsCellMetadata() throws {
+    defer { LaunchRestorer.resetLaunchState() }
+    let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
+    let tabID = manager.newNotebook()
+    let document = try #require(manager.notebookDocument(for: tabID))
+    let savedID = UUID()
+    let spec = ChartSpec(kind: .bar, xColumn: nil, yColumns: ["y"], seriesColumn: nil)
+    let parameters = [QueryParameter(name: "id", value: "4")]
+    var notebook = document.notebook
+    notebook.cells = [
+      NotebookCell(
+        id: savedID, content: "select saved", isResultVisible: false, chartSpec: spec,
+        parameters: parameters, savesParameterValues: true)
+    ]
+    document.notebook = notebook
+    let freshID = UUID()
+
+    manager.restoreOverlayTab(
+      LaunchTextOverlay(
+        tabId: tabID,
+        text: .notebook([
+          LaunchNotebookCell(id: freshID, cellType: .sql, content: "select fresh"),
+          LaunchNotebookCell(id: savedID, cellType: .sql, content: "select edited"),
+        ])))
+
+    let viewModel = try #require(manager.viewModel(for: tabID))
+    let restored = try #require(manager.notebookDocument(for: tabID)).notebook.cells
+    for cells in [restored, viewModel.notebook.cells] {
+      #expect(cells.map(\.id) == [freshID, savedID])
+      #expect(cells.map(\.content) == ["select fresh", "select edited"])
+      #expect(cells[1].chartSpec == spec)
+      #expect(cells[1].parameters == parameters)
+      #expect(cells[1].savesParameterValues == true)
+      #expect(cells[1].isResultVisible == false)
+      #expect(cells[0].chartSpec == nil)
+      #expect(cells[0].parameters.isEmpty)
+    }
+  }
+
   @Test("restoreOverlayTab creates a missing tab with the overlay id and text")
   func restoreOverlayTabCreatesMissingTab() throws {
     defer { LaunchRestorer.resetLaunchState() }
@@ -512,7 +555,8 @@ struct LaunchSessionTests {
   }
 
   private func editTab(
-    _ id: UUID, in manager: WorkspaceManager, fileURL: URL? = nil, dirty: Bool, preview: Bool = false
+    _ id: UUID, in manager: WorkspaceManager, fileURL: URL? = nil, dirty: Bool,
+    preview: Bool = false
   ) {
     guard let index = manager.tabs.firstIndex(where: { $0.id == id }) else { return }
     manager.tabs[index].fileURL = fileURL

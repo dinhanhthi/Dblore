@@ -49,6 +49,28 @@ struct GeneralSettingsTests {
     }
   }
 
+  @Test("Choosing Welcome removes the saved launch snapshot; Restore keeps it")
+  func welcomeClearsSnapshot() throws {
+    try withIsolatedDefaults { suite in
+      let settings = AppSettings(defaults: suite)
+      suite.set(Data("snapshot".utf8), forKey: LaunchSessionStore.key)
+      settings.launchBehavior = .restoreLastSession
+      #expect(suite.data(forKey: LaunchSessionStore.key) != nil)
+      settings.launchBehavior = .welcome
+      #expect(suite.data(forKey: LaunchSessionStore.key) == nil)
+    }
+  }
+
+  @Test("resetToDefaults removes the saved launch snapshot")
+  func resetClearsSnapshot() throws {
+    try withIsolatedDefaults { suite in
+      let settings = AppSettings(defaults: suite)
+      suite.set(Data("snapshot".utf8), forKey: LaunchSessionStore.key)
+      settings.resetToDefaults()
+      #expect(suite.data(forKey: LaunchSessionStore.key) == nil)
+    }
+  }
+
   @Test("resetToDefaults restores windows, new tab type, and welcome at launch")
   func resets() throws {
     try withIsolatedDefaults { suite in

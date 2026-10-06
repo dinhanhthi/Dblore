@@ -992,9 +992,19 @@ class WorkspaceManager: Identifiable {
     workspace.activeTabId = activeTabId
   }
 
+  /// Merges by cell id: a cell already loaded from disk keeps its metadata (chart, parameters,
+  /// result visibility) and takes only the overlay text and type. Order follows the overlay.
   private func restoreNotebookOverlay(tabId: UUID, cells: [LaunchNotebookCell]) {
-    let notebookCells = cells.map {
-      NotebookCell(id: $0.id, cellType: $0.cellType, content: $0.content)
+    let saved = Dictionary(
+      (notebookDocuments[tabId]?.notebook.cells ?? []).map { ($0.id, $0) },
+      uniquingKeysWith: { first, _ in first })
+    let notebookCells = cells.map { overlay in
+      guard var cell = saved[overlay.id] else {
+        return NotebookCell(id: overlay.id, cellType: overlay.cellType, content: overlay.content)
+      }
+      cell.cellType = overlay.cellType
+      cell.content = overlay.content
+      return cell
     }
     let document: DbloreDocument
     if let existing = notebookDocuments[tabId] {

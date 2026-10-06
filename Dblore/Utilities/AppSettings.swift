@@ -432,11 +432,14 @@ class AppSettings {
     }
   }
 
-  /// What opens when Dblore starts
+  /// What opens when Dblore starts. Welcome removes the saved launch snapshot.
   /// Default: welcome
   var launchBehavior: LaunchBehavior = .welcome {
     didSet {
       defaults.set(launchBehavior.rawValue, forKey: Keys.launchBehavior)
+      if launchBehavior == .welcome {
+        LaunchSessionStore(defaults: defaults).clear()
+      }
     }
   }
 
@@ -842,6 +845,8 @@ class AppSettings {
     openWindowsAsTabs = false
     defaultNewTabType = .notebook
     launchBehavior = .welcome
+    // Same-value assignment may not run didSet, so remove the snapshot here too.
+    LaunchSessionStore(defaults: defaults).clear()
     editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false

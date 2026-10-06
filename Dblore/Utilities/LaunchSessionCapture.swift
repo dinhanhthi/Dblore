@@ -36,9 +36,12 @@ enum LaunchSessionCapture {
   private static var isQuitting = false
 
   /// Debounced snapshot so a force-quit still has a recent session.
-  /// Does nothing under the test host, while a launch restore is in progress, or once quit has started.
+  /// Does nothing under the test host, when launch shows Welcome, while a launch restore is in
+  /// progress, or once quit has started.
   static func schedule() {
-    guard !SessionManager.isRunningAsTestHost, !isQuitting, !LaunchRestorer.isRestoring else {
+    guard !SessionManager.isRunningAsTestHost, isEnabled, !isQuitting,
+      !LaunchRestorer.isRestoring
+    else {
       return
     }
     pending?.cancel()
@@ -53,6 +56,11 @@ enum LaunchSessionCapture {
     }
   }
 
+  /// Only "Restore last sessions" keeps a snapshot.
+  private static var isEnabled: Bool {
+    AppSettings.shared.launchBehavior == .restoreLastSession
+  }
+
   /// Stops the debounced writer. Called once quit will proceed, before the synchronous snapshot.
   static func prepareForQuit() {
     isQuitting = true
@@ -60,9 +68,10 @@ enum LaunchSessionCapture {
     pending = nil
   }
 
-  /// Reads the open document windows and stores the snapshot. The test host writes nothing.
+  /// Reads the open document windows and stores the snapshot. The test host writes nothing,
+  /// and nothing is written when launch shows Welcome.
   static func saveNow() {
-    guard !SessionManager.isRunningAsTestHost else { return }
+    guard !SessionManager.isRunningAsTestHost, isEnabled else { return }
     let captured = descriptors(windows: NSApp.windows, orderedWindows: NSApp.orderedWindows)
     let session = session(
       windows: captured, workspaces: WorkspaceWindowManager.shared.workspaces)

@@ -81,23 +81,28 @@ enum LaunchSessionRestore {
   }
 
   /// Opens the claimed window's workspace, then every other window. `assign` receives the
-  /// claimed workspace id so the system window shows it and does not open a second copy.
-  /// `isRestoring` stays set until this returns, including when a window is skipped.
+  /// claimed workspace id so the system window shows it and does not open a second copy, and
+  /// whether the claimed window shares its tab group with other restored windows.
+  /// `isRestoring` stays set until this returns, including when a window is skipped. Then a
+  /// fresh snapshot is scheduled so the one just restored does not linger.
   static func finish(
-    claim: LaunchWindow, host: NSWindow, assign: @escaping (UUID) -> Void
+    claim: LaunchWindow, host: NSWindow, assign: @escaping (UUID, _ isTabbed: Bool) -> Void
   ) async {
     guard !didFinish else { return }
     didFinish = true
     let groups = pendingGroups
     pendingGroups = nil
-    defer { LaunchRestorer.isRestoring = false }
+    defer {
+      LaunchRestorer.isRestoring = false
+      LaunchSessionCapture.schedule()
+    }
     guard let groups else { return }
 
     var claimedID: UUID?
     if case .workspace(let launch) = claim.content {
       claimedID = await openContent(launch)
       if let claimedID {
-        assign(claimedID)
+        assign(claimedID, (groups.first?.count ?? 0) > 1)
       }
     }
     await openRemaining(groups, host: host, claim: claim, claimedID: claimedID)

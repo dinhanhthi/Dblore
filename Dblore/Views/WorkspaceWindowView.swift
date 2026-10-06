@@ -108,7 +108,8 @@ struct AppWindowView: View {
     .background(
       HostWindowReader(reference: hostWindow) {
         registerHostWindow()
-      })
+      }
+    )
     // Observe pendingWorkspaceId changes from menu commands
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
       guard let newId else { return }
@@ -138,11 +139,18 @@ struct AppWindowView: View {
     window.tabbingMode = .automatic
     window.setFrame(claim.frame.rect, display: true)
     Task {
-      await LaunchSessionRestore.finish(claim: claim, host: window) { id in
-        workspaceId = id
+      var restoredWindow = window
+      await LaunchSessionRestore.finish(claim: claim, host: window) { id, isTabbed in
+        // A double-clicked file may already own this window: give the restored one its own.
+        if let current = workspaceId, current != id {
+          restoredWindow = NewWindowStore.shared.openWorkspaceWindow(
+            workspaceId: id, frame: claim.frame.rect, asTabOf: isTabbed ? window : nil)
+        } else {
+          workspaceId = id
+        }
       }
       if claim.isMiniaturized {
-        window.miniaturize(nil)
+        restoredWindow.miniaturize(nil)
       }
     }
   }

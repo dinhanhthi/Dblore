@@ -22,6 +22,11 @@ struct LaunchSessionStore {
     defaults.set(data, forKey: Self.key)
   }
 
+  /// Removes the saved snapshot.
+  func clear() {
+    defaults.removeObject(forKey: Self.key)
+  }
+
   /// The saved snapshot, or nil when the key is missing or the data is corrupt.
   func load() -> LaunchSession? {
     guard let data = defaults.data(forKey: Self.key) else { return nil }
