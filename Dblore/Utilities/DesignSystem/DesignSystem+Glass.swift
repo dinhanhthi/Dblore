@@ -2,101 +2,37 @@
 //  DesignSystem+Glass.swift
 //  Dblore
 //
-//  Liquid Glass building blocks for the navigation/chrome layer.
-//  Views call these instead of raw `glassEffect` or glass button styles.
-//  Never use glass on the result grid or editor text. Below macOS 26 (no
-//  Liquid Glass) they fall back to `.regularMaterial` on the same shape,
-//  tinted where glass is tinted, and to the bordered button styles.
+//  Surfaces for the navigation/chrome layer. The names are historic: these used Liquid
+//  Glass, whose look is defined by macOS and changed between releases (macOS 27 renders
+//  `.regular` glass much lighter). They now paint fixed design-system tokens only, so the
+//  app looks the same on every macOS version. Never use system materials or glass here.
 //
 
 import SwiftUI
 
-// MARK: - Glass Modifiers
+// MARK: - Chrome Surfaces
 
 extension View {
-  /// Glass for edge-to-edge chrome surfaces (tab bar, header, sidebars).
+  /// Edge-to-edge chrome surfaces (sidebars, header strips).
   /// Rectangular because these surfaces butt against the window edges.
-  @ViewBuilder
   func chromeGlass() -> some View {
-    if #available(macOS 26, *) {
-      glassEffect(.regular, in: Rectangle())
-    } else {
-      background(.regularMaterial, in: Rectangle())
-    }
+    background(Color.appBackground, in: Rectangle())
   }
 
-  /// Glass for floating bars and capsules, matching the existing capsule floating bars.
-  @ViewBuilder
+  /// Floating bars and capsules.
   func floatingBarGlass() -> some View {
-    if #available(macOS 26, *) {
-      glassEffect(.regular, in: Capsule())
-    } else {
-      background(.regularMaterial, in: Capsule())
-    }
+    background(Color.cardBackground, in: Capsule())
   }
 
-  /// Tinted capsule glass for small status badges (e.g. Safe Mode indicator).
-  /// The tint keeps the badge's color meaning on glass. Pass `interactive: false` for
-  /// passive notices that cannot be clicked.
-  @ViewBuilder
-  func tintedCapsuleGlass(_ color: Color, interactive: Bool = true) -> some View {
-    if #available(macOS 26, *) {
-      glassEffect(.regular.tint(color.opacity(0.25)).interactive(interactive), in: Capsule())
-    } else {
-      background(color.opacity(0.25), in: Capsule())
-        .background(.regularMaterial, in: Capsule())
-    }
+  /// Tinted capsule for small status badges (e.g. Safe Mode indicator).
+  /// The tint keeps the badge's color meaning on any surface.
+  func tintedCapsuleGlass(_ color: Color) -> some View {
+    background(color.opacity(0.25), in: Capsule())
   }
 
-  /// Tinted edge-to-edge glass for workspace banners (pending transaction, connection lost).
-  @ViewBuilder
+  /// Tinted edge-to-edge surface for workspace banners (pending transaction, connection lost).
   func tintedChromeGlass(_ color: Color) -> some View {
-    if #available(macOS 26, *) {
-      glassEffect(.regular.tint(color.opacity(0.25)), in: Rectangle())
-    } else {
-      background(color.opacity(0.25), in: Rectangle())
-        .background(.regularMaterial, in: Rectangle())
-    }
-  }
-}
-
-// MARK: - Glass Button Styles
-
-extension View {
-  /// Glass button style (prominent for the primary action). The border is a capsule, same as
-  /// `PrimaryButtonStyle`. Below macOS 26 it falls back to the bordered styles.
-  func glassButtonStyle(prominent: Bool = false) -> some View {
-    glassChrome(prominent: prominent)
-      .buttonBorderShape(.capsule)
-  }
-
-  @ViewBuilder
-  private func glassChrome(prominent: Bool) -> some View {
-    if #available(macOS 26, *) {
-      if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
-    } else {
-      if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
-    }
-  }
-}
-
-// MARK: - Glass Toolbar Group
-
-/// Groups glass controls so their shapes blend and morph together.
-struct GlassToolbarGroup<Content: View>: View {
-  @ViewBuilder let content: Content
-
-  var body: some View {
-    if #available(macOS 26, *) {
-      GlassEffectContainer(spacing: Spacing.sm) {
-        HStack(spacing: Spacing.sm) {
-          content
-        }
-      }
-    } else {
-      HStack(spacing: Spacing.sm) {
-        content
-      }
-    }
+    background(color.opacity(0.25), in: Rectangle())
+      .background(Color.appBackground, in: Rectangle())
   }
 }

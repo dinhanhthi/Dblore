@@ -221,20 +221,20 @@ private struct GlassPreview: View {
       .padding(.horizontal, Spacing.md)
       .floatingBarGlass()
 
-      Text("Glass Toolbar Group").font(.headline)
-      GlassToolbarGroup {
+      Text("Toolbar Group").font(.headline)
+      HStack(spacing: Spacing.sm) {
         Button {
         } label: {
           Image(systemName: "play.fill")
-        }.glassButtonStyle(prominent: true)
+        }.buttonStyle(PrimaryButtonStyle(iconOnly: true))
         Button {
         } label: {
           Image(systemName: "stop.fill")
-        }.glassButtonStyle()
+        }.buttonStyle(FilledSecondaryButtonStyle(iconOnly: true))
         Button {
         } label: {
           Image(systemName: "gear")
-        }.glassButtonStyle()
+        }.buttonStyle(FilledSecondaryButtonStyle(iconOnly: true))
       }
     }
     .padding(Spacing.lg)

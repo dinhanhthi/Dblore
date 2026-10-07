@@ -454,7 +454,7 @@ private struct SafetyMenuSurface: ViewModifier {
         .padding(.vertical, 2)
         .frame(height: 18)
         .fixedSize(horizontal: true, vertical: true)
-        .tintedCapsuleGlass(.secondary)
+        .tintedCapsuleGlass(.foregroundMuted)
     }
   }
 }

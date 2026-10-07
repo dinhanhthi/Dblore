@@ -3,7 +3,7 @@
 //  Dblore
 //
 //  Workspace-level banner for the pending Protected transaction: summary, open timer, the
-//  pending statements, Commit (prominent) and Rollback. Aborted: warning style, reason, only
+//  pending statements, Commit (danger) and Rollback. Aborted: warning style, reason, only
 //  Rollback. Also hosts the Commit confirmation and the Safe Mode unlock for Commit.
 //
 
@@ -84,7 +84,7 @@ struct PendingTransactionBanner: View {
         Text("Roll Back")
           .transactionActionLabel()
       }
-      .glassButtonStyle()
+      .buttonStyle(FilledSecondaryButtonStyle())
       .linkPointer()
       .controlSize(.small)
       .disabled(isWorking || isBusy)
@@ -96,9 +96,8 @@ struct PendingTransactionBanner: View {
         Text("Commit")
           .transactionActionLabel()
       }
-      .glassButtonStyle(prominent: true)
+      .buttonStyle(DangerButtonStyle())
       .linkPointer()
-      .tint(tint)
       .controlSize(.small)
       .disabled(summary.isAborted || isWorking || isBusy)
       .help(commitHelp)
@@ -135,9 +134,8 @@ struct PendingTransactionBanner: View {
             Text(title)
               .transactionActionLabel()
           }
-          .glassButtonStyle(prominent: true)
+          .buttonStyle(DangerButtonStyle())
           .linkPointer()
-          .tint(.destructive)
           .controlSize(.small)
           .accessibilityHint("Closes the connection; asks first")
         }
@@ -189,8 +187,8 @@ private enum TransactionActionMetrics {
   /// `GhostButtonStyle` icon-only at `.small`: an 11pt symbol lays out at 14pt,
   /// and vertical padding is `Spacing.sm - 2` on each side.
   static let iconButtonHeight: CGFloat = 14 + (Spacing.sm - 2) * 2
-  /// A `.small` glass or bordered button draws 6pt taller than its label.
-  static let labelChrome: CGFloat = 6
+  /// A `.small` text button in `BaseButtonStyleView` pads its label by `Spacing.xs` per side.
+  static let labelChrome: CGFloat = Spacing.xs * 2
   static var labelHeight: CGFloat { iconButtonHeight - labelChrome }
 }
 

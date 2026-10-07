@@ -28,7 +28,7 @@ struct ReadOnlyFileBanner: View {
       Button("Dismiss") {
         workspaceManager.readOnlyFileNotice = nil
       }
-      .glassButtonStyle()
+      .buttonStyle(FilledSecondaryButtonStyle())
       .linkPointer()
       .controlSize(.small)
     }

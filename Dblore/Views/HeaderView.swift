@@ -17,7 +17,7 @@ struct HeaderView: View {
   var body: some View {
     HStack(spacing: Spacing.sm) {
       // Leading group - Sidebars and Cell actions
-      GlassToolbarGroup {
+      HStack(spacing: Spacing.sm) {
         if viewModel.viewMode == .notebook {
           // Notebook mode buttons
           Button(action: {
@@ -113,12 +113,19 @@ struct HeaderView: View {
               Label("Show All Results", systemImage: "eye")
             }
           } label: {
+            // Same size and border as `SecondaryButtonStyle` beside it (a custom ButtonStyle is
+            // ignored on a Menu), without its hover fill.
             Label("Results", systemImage: "eye")
+              .font(ButtonMetrics.regularFont)
+              .foregroundColor(.foreground)
+              .padding(.horizontal, ButtonMetrics.regularHorizontalPadding)
+              .padding(.vertical, Self.notebookToolbarVerticalPadding)
+              .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+              .contentShape(Capsule())
           }
-          .glassButtonStyle()
-          // A Menu bezel ignores label padding and stays 24pt. `.large` is 28pt,
-          // in line with the secondary buttons beside it, and it keeps the 13pt label.
-          .controlSize(.large)
+          .menuStyle(.button)
+          .buttonStyle(.plain)
+          .menuIndicator(.hidden)
           .linkPointer()
           .help("Show/Hide Results")
         } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
@@ -166,8 +173,6 @@ struct HeaderView: View {
           }
         }
       }
-      // Capsule shape for every header button (notebook and editor modes)
-      .buttonBorderShape(.capsule)
 
       if viewModel.dataViewer != nil {
         DataViewerControls(viewModel: viewModel)
@@ -177,7 +182,6 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (Dblore > Settings) or Cmd+,
-      // Safety badge sits outside the glass group so it does not merge with the Search button
       if viewModel.connectionState.isConnected,
         let config = workspaceManager?.workspace.connectionConfig
       {
@@ -345,9 +349,9 @@ struct HeaderView: View {
     return ComponentSize.headerHeight - shrink
   }
 
-  /// New, Run All, and Clear All Outputs match the Results menu's outer edge.
-  /// A `.large` glass menu is 28pt. Regular secondary lays out at 29pt, and its
-  /// 1pt border sits outside the capsule, so each side loses 1pt.
+  /// New, Run All, Clear All Outputs and the Results menu share this padding.
+  /// Regular secondary lays out at 29pt and its 1pt border sits outside the capsule,
+  /// so each side loses 1pt to keep the 28pt outer edge.
   private static let notebookToolbarVerticalPadding: CGFloat =
     ButtonMetrics.regularVerticalPadding - 1
 
@@ -371,7 +375,7 @@ struct HeaderView: View {
     .foregroundColor(.foreground)
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, Spacing.xs)
-    .tintedCapsuleGlass(sslColor, interactive: false)
+    .tintedCapsuleGlass(sslColor)
     .help(badge.tooltip)
     .accessibilityElement(children: .combine)
   }

@@ -349,7 +349,7 @@ struct ResultMetadataView: View {
             .foregroundColor(.warning)
             .padding(.horizontal, Spacing.sm)
             .padding(.vertical, 2)
-            .tintedCapsuleGlass(.warning, interactive: false)
+            .tintedCapsuleGlass(.warning)
         }
 
         Text("|")
@@ -382,7 +382,7 @@ struct ResultMetadataView: View {
         Label(notice, systemImage: "exclamationmark.triangle.fill")
           .font(.labelText).foregroundColor(.warning)
           .padding(.horizontal, Spacing.sm).padding(.vertical, 2)
-          .tintedCapsuleGlass(.warning, interactive: false)
+          .tintedCapsuleGlass(.warning)
           .padding(.bottom, Spacing.xs)
       }
     }
