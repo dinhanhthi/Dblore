@@ -14,18 +14,13 @@ the contract the model follows (coding-friend applies its `## Before`,
 writes `CHANGELOG.md`, updates the website Feature list from app-source changes, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
 `Dblore.xcodeproj/project.pbxproj` (only when the file version changes),
 runs build + tests + a lint of the changed Swift files, commits
-`chore(release): bump to <tag version>` on `main` and pushes. Then:
+`chore(release): bump to <tag version>` on `main` and pushes. Then it runs
+`scripts/release-local.sh` on this Mac, which builds, signs and notarizes,
+creates the tag, publishes the DMG and pushes the Sparkle appcast. Only the
+cheap `pages.yml` deploy runs on GitHub (triggered by the appcast push).
+Finally the skill verifies the published artifacts.
 
-- **Default (local):** runs `scripts/release-local.sh` on this Mac, which
-  builds, signs and notarizes, creates the tag, publishes the DMG and pushes the
-  Sparkle appcast. Only the cheap `pages.yml` deploy runs on GitHub (triggered
-  by the appcast push).
-- **`--action`:** runs `ci.yml` unit tests for that commit, then dispatches
-  `release.yml` with the expected SHA and tag. CI builds, signs and notarizes
-  once, creates the tag, publishes the DMG, updates the appcast and dispatches
-  `pages.yml`. Use it to release from another machine.
-
-Either way the skill waits and verifies the published artifacts.
+On a new Mac, do the one-time setup in `docs/release-setup.md` first.
 
 Dblore ships stable releases only: the tag is always `v` +
 `MARKETING_VERSION` (`X.Y.Z`), and the DMG is `Dblore-<version>.dmg`.
@@ -42,8 +37,6 @@ Catalog tests and JavaScript syntax checks run before the release commit; the ca
 | --------------------------------- | ------------------------- | -------------------------------------------------- |
 | A normal release, level auto      | `/cf-ship`                | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
 | Force the level                   | `/cf-ship minor`          | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
-| Same, released by GitHub Actions  | `/cf-ship --action`       | `v0.1.0` -> `0.1.1` / `v0.1.1` (or minor)          |
-| Force the level, GitHub Actions   | `/cf-ship minor --action` | `v0.1.0` -> `0.2.0` / `v0.2.0`                     |
 
 Auto level: PATCH almost always, including ordinary new features (a setting, a
 menu item, an export format). MINOR only for a milestone (a new database
@@ -58,8 +51,8 @@ never trigger a release.
 
 ## What the local release does
 
-`scripts/release-local.sh --expect-version <tag version>` (default path;
-`--dry-run` runs the preflight only):
+`scripts/release-local.sh --expect-version <tag version>` (`--dry-run` runs
+the preflight only):
 
 1. Preflight, machine checks first: Xcode matches `.xcode-version`, the
    Developer ID certificate is in the keychain, the `DbloreNotary` notary
@@ -81,39 +74,13 @@ never trigger a release.
 8. Commits `chore(release): appcast v<tag version>` and pushes `main`; that
    push triggers `pages.yml` (nothing is dispatched).
 
-A failure before step 6 publishes nothing.
-
-## What CI does (`--action` only)
-
-With `/cf-ship --action`, dispatching `.github/workflows/release.yml` on `main`
-with `expected_sha` and `tag` starts one release build on an `xcode-27` runner:
-
-1. Verifies the request is for `main` at `expected_sha` and that `ci.yml`
-   succeeded for that exact SHA; otherwise stops before building.
-2. Selects the pinned Xcode from `.xcode-version` with a macOS SDK >= 26.
-3. Extracts the `## v<tag version>` section of `CHANGELOG.md` as release notes
-   (fails if the file or the section is missing or empty).
-4. Imports the Developer ID certificate into a temporary keychain.
-5. Checks the requested tag against `MARKETING_VERSION`,
-   then runs `scripts/build-release.sh --expect-version <tag version>` to archive,
-   export, sign, create the DMG, notarize, staple and check Gatekeeper.
-6. Locates `generate_appcast` in the Sparkle SPM artifact the build resolved
-   (checksum-verified by SPM, same version as the app).
-7. Runs `generate_appcast` on the DMG plus the current `appcast.xml` from
-   `main`, signing with the `SPARKLE_PRIVATE_KEY` secret (passed on stdin).
-   The feed keeps the latest 3 versions (the `generate_appcast` default).
-8. Creates `v<tag version>` on the built commit only after the build and
-   appcast generation succeed, then publishes `Dblore-<tag version>.dmg` and
-   `.dmg.sha256` on GitHub Releases as a normal (latest) release.
-9. Commits the new `appcast.xml` to `main` as `github-actions[bot]`
-   (`chore(release): appcast v<tag version>`; never counts toward a bump).
-10. Dispatches `pages.yml`, which publishes `website/` and `appcast.xml` together to
-   GitHub Pages (the feed stays at <https://dinhanhthi.github.io/Dblore/appcast.xml>).
-11. Deletes the keychain, key files and the appcast work folder.
+A failure before step 6 publishes nothing. The feed keeps the latest 3 versions
+(the `generate_appcast` default) at <https://dinhanhthi.github.io/Dblore/appcast.xml>.
 
 ## Prerequisites
 
-Local release (default), on this Mac:
+On this Mac (how to set each one up, or recover it on a new Mac:
+`docs/release-setup.md`):
 
 - The Developer ID Application certificate in your login keychain.
 - The `DbloreNotary` notary profile, created once (placeholders; see
@@ -127,14 +94,7 @@ Local release (default), on this Mac:
 - The selected Xcode matching `.xcode-version`.
 - `gh` authenticated.
 
-`--action` only:
-
-- The seven repository secrets listed in `docs/release-setup.md`
-  (`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `KEYCHAIN_PASSWORD`,
-  `NOTARY_KEY_P8_BASE64`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`,
-  `SPARKLE_PRIVATE_KEY`). Check the names with `gh secret list`.
-
-Both modes:
+On GitHub and in the repo:
 
 - A **public** repo: Sparkle and users cannot download release assets from a
   private one. The skill stops unless
@@ -181,25 +141,18 @@ appcast push). Never move or delete the tag, and do not rerun the script (its
 preflight stops on the existing tag). Publish only what is missing: the
 command the script printed, or the recovery steps in `docs/release-setup.md`.
 
-**Release fails before "Create tag"** (`--action`). No tag or release has been
-published. Fix the cause, commit and push if source changes, rerun `ci.yml` for
-the new SHA, then dispatch the release workflow again. This includes a missing
-Xcode or notarization failure.
-
-**Notarization fails.** Read the script output (locally) or the step log
-(`--action`: `gh run view <id> --log-failed`) and the notary log it prints
+**Notarization fails.** Read the script output and the notary log it prints
 (`xcrun notarytool log <submission-id>`). Common causes: a nested binary
-without hardened runtime or secure timestamp, or wrong `NOTARY_*` secrets /
-notary profile credentials. If it failed before tag creation, fix the cause and
+without hardened runtime or secure timestamp, or wrong notary profile
+credentials. If it failed before tag creation, fix the cause and
 rerun the release; see `docs/release-setup.md` for post-tag recovery.
 
 **Appcast not updated** (the feed lacks the new version). Check the
 `pages.yml` run (`gh run list --workflow=pages.yml --limit 3`,
 then `gh run view <id> --log-failed`) and that the Pages source is GitHub
-Actions. If `release-local.sh` failed after `gh release create`, or (with
-`--action`) `release.yml` failed before "Commit appcast to main" (for example
-`SPARKLE_PRIVATE_KEY` not set), the release exists but the feed does not: use
-the recovery steps in `docs/release-setup.md`; do not retag.
+Actions. If `release-local.sh` failed after `gh release create`, the release exists but
+the feed does not: use the recovery steps in `docs/release-setup.md`; do not
+retag.
 
 **Update not offered in the app.** Sparkle compares `sparkle:version`
 (`CURRENT_PROJECT_VERSION`), not the marketing version. If the build number did
@@ -242,10 +195,9 @@ BUMP_PBXPROJ=/tmp/copy.pbxproj bash .coding-friend/skills/cf-ship-custom/scripts
 | `SKILL.md`                      | The contract the model follows (loaded by coding-friend's `load-custom-guide.sh`).   |
 | `scripts/bump-info.sh`          | Reads tags and commits, names the state, computes next file version + tag. Writes nothing. |
 | `scripts/bump.sh`               | Writes the version and build number into the Xcode project and verifies them.        |
-| `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Used by CI and locally.            |
-| `scripts/release-local.sh`      | (repo root) Default release on this Mac: preflight, build, signed appcast, then tag, GitHub release, appcast push. |
-| `.github/workflows/release.yml` | `--action` only. Dispatched release: build, notarize, create tag, publish on GitHub Releases, update appcast. |
-| `.github/workflows/ci.yml`      | `--action` only. Unit tests on the release commit, required by `release.yml`.        |
-| `.github/workflows/pages.yml`   | Publishes `website/` and `appcast.xml` to GitHub Pages (triggered by the appcast push locally, dispatched by `release.yml` with `--action`). The site header reads the version from the published `appcast.xml`. |
-| `appcast.xml`                   | (repo root) Sparkle feed. Owned by the release flow (`release-local.sh` or CI); never edit by hand. |
-| `docs/release-setup.md`      | Secrets, local notary profile, local fallback.                                       |
+| `scripts/build-release.sh`      | (repo root) Archive, sign, DMG, notarize, staple. Called by `release-local.sh`.      |
+| `scripts/release-local.sh`      | (repo root) The release on this Mac: preflight, build, signed appcast, then tag, GitHub release, appcast push. |
+| `.github/workflows/ci.yml`      | Unit tests on pull requests (and by hand). Not part of the release.                  |
+| `.github/workflows/pages.yml`   | Publishes `website/` and `appcast.xml` to GitHub Pages (triggered by the appcast push). The site header reads the version from the published `appcast.xml`. |
+| `appcast.xml`                   | (repo root) Sparkle feed. Owned by `release-local.sh`; never edit by hand.           |
+| `docs/release-setup.md`         | (local only) New-Mac setup, credential recovery, post-tag recovery.                  |

@@ -6,8 +6,7 @@ name: Deploy website
 # would delete the other (the app's SUFeedURL points at /appcast.xml).
 # Nothing else in the repo is published.
 # Requires Settings > Pages > Source = "GitHub Actions".
-# release.yml dispatches this workflow after committing appcast.xml, because pushes made with
-# GITHUB_TOKEN don't trigger `push` workflows.
+# scripts/release-local.sh pushes the new appcast.xml to main, which triggers this workflow.
 
 on:
   push:

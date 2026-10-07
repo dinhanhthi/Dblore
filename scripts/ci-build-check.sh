@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Archives the app like release.yml, with the Xcode pinned in .xcode-version (the CI toolchain).
+# Archives the app like scripts/build-release.sh, with the Xcode pinned in .xcode-version (the CI toolchain).
 # Catches compiler differences between your Xcode and CI's before anything is pushed.
 # Needs that Xcode installed side by side, e.g. /Applications/Xcode_27.app.
 
