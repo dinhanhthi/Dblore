@@ -319,7 +319,11 @@ class WorkspaceManager: Identifiable {
 
   var activeDocumentMode: DocumentMode? {
     guard let tab = activeTab else { return nil }
-    return tab.documentType == .notebook ? .notebook : .editor
+    switch tab.documentType {
+    case .notebook: return .notebook
+    case .markdown: return .markdown
+    default: return .editor
+    }
   }
 
   // MARK: - Tab Access

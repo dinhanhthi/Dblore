@@ -418,6 +418,11 @@ class NotebookViewModel {
       await sendInlineEdit(edit, target: target)
       return
     }
+    // Markdown notes run nothing
+    if viewMode == .markdown {
+      queryConfirmationState.clear()
+      return
+    }
     // Check if it's editor mode or notebook mode
     if viewMode == .editor {
       await executeConfirmedEditorQuery()

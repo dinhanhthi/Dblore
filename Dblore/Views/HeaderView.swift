@@ -182,7 +182,8 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (Dblore > Settings) or Cmd+,
-      if viewModel.connectionState.isConnected,
+      // Markdown notes run no SQL, so they skip the connection badge
+      if viewModel.viewMode != .markdown, viewModel.connectionState.isConnected,
         let config = workspaceManager?.workspace.connectionConfig
       {
         safetyBadge(
@@ -318,14 +319,17 @@ struct HeaderView: View {
           .help("Parameters")
         }
 
-        // Search button (same square style as the schema visualizer's search button)
-        Button(action: {
-          viewModel.openSearch()
-        }) {
-          Image(systemName: "magnifyingglass")
+        // Search button (same square style as the schema visualizer's search button).
+        // Markdown notes have no search; their trailing controls go here.
+        if viewModel.viewMode != .markdown {
+          Button(action: {
+            viewModel.openSearch()
+          }) {
+            Image(systemName: "magnifyingglass")
+          }
+          .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
+          .help("Search (⌘F)")
         }
-        .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
-        .help("Search (⌘F)")
       }
     }
     .padding(.horizontal, Spacing.sm)

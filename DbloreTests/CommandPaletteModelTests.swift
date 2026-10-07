@@ -425,6 +425,7 @@ struct CommandPaletteModelTests {
       actions.map(\.id) == [
         "new-notebook",
         "new-sql-file",
+        "new-markdown-file",
         "run-cell",
         "run-all",
         "toggle-left-sidebar",
@@ -441,6 +442,7 @@ struct CommandPaletteModelTests {
       actions.map(\.title) == [
         "New Notebook",
         "New SQL File",
+        "New Markdown Note",
         "Run Cell",
         "Run All Cells",
         "Toggle Left Sidebar",
