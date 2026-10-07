@@ -1,6 +1,6 @@
 // CellUndoRoutingTests.swift
 // Cmd+Z routes to cell or staged-change undo for a notebook or data viewer, and
-// leaves a text view, field editor, or SQL editor tab alone.
+// leaves a text view, field editor, SQL editor or markdown tab alone.
 
 import Foundation
 import Testing
@@ -39,5 +39,12 @@ struct CellUndoRoutingTests {
         viewMode: row.notebook ? .notebook : .editor,
         hasDataViewer: row.hasDataViewer
       ) == row.routes)
+  }
+
+  @Test("A markdown tab never routes", arguments: [false, true])
+  func markdownNeverRoutes(firstResponderIsText: Bool) {
+    #expect(
+      !CellUndoRouting.routesCellUndo(
+        firstResponderIsText: firstResponderIsText, viewMode: .markdown, hasDataViewer: false))
   }
 }

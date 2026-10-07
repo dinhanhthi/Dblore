@@ -25,6 +25,7 @@ struct LaunchNotebookCell: Codable, Equatable, Sendable {
 enum LaunchOverlayText: Codable, Equatable, Sendable {
   case notebook([LaunchNotebookCell])
   case script(String)
+  case markdown(String)
 }
 
 /// Tab text reapplied when a session is restored.

@@ -13,12 +13,17 @@ enum AppMode: String, Codable, CaseIterable, Sendable {
   /// Editor mode: Single SQL editor with result panel below (.sql files)
   case editor
 
+  /// Markdown mode: Plain text note with a WYSIWYG preview (.md files)
+  case markdown
+
   var displayName: String {
     switch self {
     case .notebook:
       return "Notebook"
     case .editor:
       return "Editor"
+    case .markdown:
+      return "Markdown"
     }
   }
 
@@ -28,6 +33,8 @@ enum AppMode: String, Codable, CaseIterable, Sendable {
       return "doc.text"
     case .editor:
       return "rectangle.split.2x1"
+    case .markdown:
+      return "doc.richtext"
     }
   }
 
@@ -37,6 +44,8 @@ enum AppMode: String, Codable, CaseIterable, Sendable {
       return "dblore"
     case .editor:
       return "sql"
+    case .markdown:
+      return "md"
     }
   }
 
@@ -46,6 +55,8 @@ enum AppMode: String, Codable, CaseIterable, Sendable {
       return "Cells with inline results"
     case .editor:
       return "Single editor with result panel"
+    case .markdown:
+      return "Markdown note"
     }
   }
 }

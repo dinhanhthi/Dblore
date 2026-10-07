@@ -505,6 +505,25 @@ class WorkspaceManager: Identifiable {
     return tab.id
   }
 
+  @discardableResult
+  func newMarkdownFile() -> UUID {
+    let document = SQLEditorDocument()
+    let cell = NotebookCell(cellType: .sql, content: "")
+    let notebook = DbloreNotebook(cells: [cell], documentType: .script)
+    let viewModel = createViewModel(for: notebook)
+    viewModel.viewMode = .markdown
+    viewModel.editorContent = ""
+
+    let tab = TabItem.newMarkdownFile()
+    tabs.append(tab)
+    viewModels[tab.id] = viewModel
+    editorDocuments[tab.id] = document
+    markDirtyAndScheduleAutoSave()
+
+    selectTab(id: tab.id)
+    return tab.id
+  }
+
   /// Show a table/view in a data viewer tab: select the tab already showing it, else reuse the
   /// preview tab, else open a new preview tab. The preview tab that opened a pending Protected
   /// transaction, or that still has staged edits, is pinned instead of replaced.
@@ -677,7 +696,7 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       notebookDocuments[tab.id] = document
 
-    case .sqlFile:
+    case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
         throw CocoaError(.fileReadCorruptFile)
       }
@@ -688,7 +707,7 @@ class WorkspaceManager: Identifiable {
       let cell = NotebookCell(cellType: .sql, content: content)
       let notebook = DbloreNotebook(cells: [cell], documentType: .script)
       let viewModel = createViewModel(for: notebook)
-      viewModel.viewMode = .editor
+      viewModel.viewMode = tabRef.documentType == .markdown ? .markdown : .editor
       viewModel.editorContent = content
 
       tabs.append(tab)
@@ -752,7 +771,7 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       notebookDocuments[tab.id] = document
 
-    case .sqlFile:
+    case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
         throw CocoaError(.fileReadCorruptFile)
       }
@@ -763,7 +782,7 @@ class WorkspaceManager: Identifiable {
       let cell = NotebookCell(cellType: .sql, content: content)
       let notebook = DbloreNotebook(cells: [cell], documentType: .script)
       let viewModel = createViewModel(for: notebook)
-      viewModel.viewMode = .editor
+      viewModel.viewMode = docType == .markdown ? .markdown : .editor
       viewModel.editorContent = content
 
       tabs.append(tab)
@@ -964,7 +983,9 @@ class WorkspaceManager: Identifiable {
     case .notebook(let cells):
       restoreNotebookOverlay(tabId: overlay.tabId, cells: cells)
     case .script(let script):
-      restoreScriptOverlay(tabId: overlay.tabId, script: script)
+      restoreScriptOverlay(tabId: overlay.tabId, script: script, documentType: .sqlFile)
+    case .markdown(let text):
+      restoreScriptOverlay(tabId: overlay.tabId, script: text, documentType: .markdown)
     }
     markDirty(tabId: overlay.tabId)
   }
@@ -1034,7 +1055,9 @@ class WorkspaceManager: Identifiable {
     ensureOverlayTab(id: tabId, documentType: .notebook, title: "Untitled.dblore")
   }
 
-  private func restoreScriptOverlay(tabId: UUID, script: String) {
+  private func restoreScriptOverlay(
+    tabId: UUID, script: String, documentType: TabDocumentType
+  ) {
     let document: SQLEditorDocument
     if let existing = editorDocuments[tabId] {
       existing.content = script
@@ -1051,10 +1074,12 @@ class WorkspaceManager: Identifiable {
     let notebook = DbloreNotebook(
       cells: [NotebookCell(cellType: .sql, content: script)], documentType: .script)
     let viewModel = createViewModel(for: notebook)
-    viewModel.viewMode = .editor
+    let isMarkdown = documentType == .markdown
+    viewModel.viewMode = isMarkdown ? .markdown : .editor
     viewModel.editorContent = script
     viewModels[tabId] = viewModel
-    ensureOverlayTab(id: tabId, documentType: .sqlFile, title: "Untitled.sql")
+    ensureOverlayTab(
+      id: tabId, documentType: documentType, title: isMarkdown ? "Untitled.md" : "Untitled.sql")
   }
 
   private func ensureOverlayTab(id: UUID, documentType: TabDocumentType, title: String) {
@@ -1147,7 +1172,7 @@ class WorkspaceManager: Identifiable {
       )
       try SecurityScopedAccess.write(data, to: url)
 
-    case .sqlFile:
+    case .sqlFile, .markdown:
       guard let document = editorDocuments[tabId],
         let viewModel = viewModels[tabId]
       else { return }
@@ -1180,6 +1205,11 @@ class WorkspaceManager: Identifiable {
       panel.allowedContentTypes = [.sql]
       if !tab.title.hasSuffix(".sql") {
         panel.nameFieldStringValue += ".sql"
+      }
+    case .markdown:
+      panel.allowedContentTypes = [.markdownText]
+      if !tab.title.hasSuffix(".md") {
+        panel.nameFieldStringValue += ".md"
       }
     case .dataViewer:
       return  // Unreachable: saveTab returns early

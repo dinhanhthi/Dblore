@@ -20,6 +20,11 @@ extension UTType {
   nonisolated static var sql: UTType {
     UTType(importedAs: "public.sql")
   }
+
+  /// Not `markdown`: the macOS 27 SDK declares `UTType.markdown` (macOS 27+ only)
+  nonisolated static var markdownText: UTType {
+    UTType(importedAs: "net.daringfireball.markdown")
+  }
 }
 
 /// Document wrapper for Dblore files (.dblore)

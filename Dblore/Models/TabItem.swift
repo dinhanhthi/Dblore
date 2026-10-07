@@ -56,6 +56,15 @@ struct TabItem: Identifiable, Equatable {
       isDirty: true  // New files are unsaved
     )
   }
+
+  /// Creates a new untitled Markdown note tab
+  static func newMarkdownFile() -> TabItem {
+    TabItem(
+      documentType: .markdown,
+      title: "Untitled.md",
+      isDirty: true  // New files are unsaved
+    )
+  }
 }
 
 /// The type of document in a tab
@@ -63,12 +72,14 @@ enum TabDocumentType: String, Codable, Equatable {
   case notebook  // .dblore files
   case sqlFile  // .sql files
   case dataViewer  // table/view data viewer, no file
+  case markdown  // .md files
 
   var fileExtension: String {
     switch self {
     case .notebook: return "dblore"
     case .sqlFile: return "sql"
     case .dataViewer: return ""
+    case .markdown: return "md"
     }
   }
 
@@ -77,6 +88,7 @@ enum TabDocumentType: String, Codable, Equatable {
     case .notebook: return "doc.text"
     case .sqlFile: return "doc"
     case .dataViewer: return "tablecells"
+    case .markdown: return "doc.richtext"
     }
   }
 
@@ -85,6 +97,7 @@ enum TabDocumentType: String, Codable, Equatable {
     switch url.pathExtension.lowercased() {
     case "dblore": return .notebook
     case "sql": return .sqlFile
+    case "md": return .markdown
     default: return nil
     }
   }

@@ -129,6 +129,8 @@ struct WorkspaceWelcomeView: View {
       panel.allowedContentTypes = [.dblore]
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
+    case .markdown:
+      panel.allowedContentTypes = [.markdownText]
     case .dataViewer:
       return  // No file to open
     }
@@ -309,6 +311,7 @@ struct WorkspaceRecentFileRow: View {
     switch fileType {
     case .notebook: return .accent
     case .sqlFile: return .syntaxFunction
+    case .markdown: return .syntaxString
     case .dataViewer: return .foregroundMuted
     case nil: return .foregroundMuted
     }

@@ -487,6 +487,80 @@ struct LaunchSessionTests {
     #expect(manager.editorDocument(for: tabID)?.content == "select missing")
   }
 
+  @Test("Markdown overlay text and a markdown tab reference survive a Codable round trip")
+  func markdownRoundTrip() throws {
+    let text = LaunchOverlayText.markdown("# a\r\n")
+    let decodedText = try JSONDecoder().decode(
+      LaunchOverlayText.self, from: JSONEncoder().encode(text))
+    #expect(decodedText == text)
+
+    let reference = WorkspaceTabReference(
+      fileURL: URL(fileURLWithPath: "/tmp/note.md"), documentType: .markdown, title: "note.md")
+    let decodedReference = try JSONDecoder().decode(
+      WorkspaceTabReference.self, from: JSONEncoder().encode(reference))
+    #expect(decodedReference == reference)
+  }
+
+  @Test("A dirty untitled markdown note is captured as markdown text")
+  func dirtyMarkdownNoteCaptured() throws {
+    let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
+    let noteID = manager.newMarkdownFile()
+    try #require(manager.viewModel(for: noteID)).editorContent = "# live\r\n"
+
+    let session = LaunchSessionCapture.session(
+      windows: [
+        descriptor(
+          group: "draft", tab: 0, selected: true, ordered: 0, x: 4,
+          content: .workspace(manager.id))
+      ],
+      workspaces: [manager.id: manager])
+
+    guard case .workspace(let workspace) = session.windows.first?.content else {
+      Issue.record("Expected the captured window to be the draft workspace")
+      return
+    }
+    let overlays = Dictionary(
+      uniqueKeysWithValues: workspace.textOverlays.map { ($0.tabId, $0.text) })
+    #expect(overlays[noteID] == .markdown("# live\r\n"))
+  }
+
+  @Test("restoreOverlayTab creates a missing markdown note with the overlay id and text")
+  func restoreMarkdownOverlayCreatesMissingTab() throws {
+    defer { LaunchRestorer.resetLaunchState() }
+    let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
+    let tabID = UUID()
+
+    manager.restoreOverlayTab(LaunchTextOverlay(tabId: tabID, text: .markdown("# missing")))
+
+    let tab = try #require(manager.tabs.first { $0.id == tabID })
+    #expect(tab.documentType == .markdown)
+    #expect(tab.title == "Untitled.md")
+    #expect(tab.isDirty == true)
+    let viewModel = try #require(manager.viewModel(for: tabID))
+    #expect(viewModel.viewMode == .markdown)
+    #expect(viewModel.editorContent == "# missing")
+    #expect(manager.editorDocument(for: tabID)?.content == "# missing")
+  }
+
+  @Test("restoreOverlayTab replaces a markdown tab's text and keeps it a markdown note")
+  func restoreMarkdownOverlayReplacesExistingText() throws {
+    defer { LaunchRestorer.resetLaunchState() }
+    let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
+    let tabID = manager.newMarkdownFile()
+    manager.markClean(tabId: tabID)
+
+    manager.restoreOverlayTab(LaunchTextOverlay(tabId: tabID, text: .markdown("# restored")))
+
+    let tab = try #require(manager.tabs.first { $0.id == tabID })
+    #expect(tab.documentType == .markdown)
+    #expect(tab.isDirty == true)
+    let viewModel = try #require(manager.viewModel(for: tabID))
+    #expect(viewModel.viewMode == .markdown)
+    #expect(viewModel.editorContent == "# restored")
+    #expect(manager.editorDocument(for: tabID)?.content == "# restored")
+    #expect(manager.tabs.count == 1)
+  }
+
   @Test("takeFrontWindowClaim returns the front window once, then nil")
   func takeFrontWindowClaimIsSingleUse() {
     defer { LaunchRestorer.resetLaunchState() }
