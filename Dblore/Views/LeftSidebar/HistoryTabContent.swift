@@ -5,7 +5,6 @@
 //  History tab of the left sidebar: recorded SQL from the local store
 //
 
-import AppKit
 import SwiftUI
 
 struct HistoryTabContent: View {
@@ -222,7 +221,6 @@ struct HistoryTabContent: View {
           }
           .padding(.bottom, Spacing.sm)
           .frame(maxWidth: .infinity, alignment: .leading)
-          .background(HistoryThinScrollChrome())
         }
       }
       Divider()
@@ -259,83 +257,5 @@ struct HistoryTabContent: View {
     .controlSize(.small)
     .help(help)
     .disabled(!enabled || historyList.isLoading)
-  }
-}
-
-/// Finds the history `NSScrollView` and installs a narrow scroller. Other scroll views
-/// keep the system width.
-private struct HistoryThinScrollChrome: NSViewRepresentable {
-  func makeNSView(context: Context) -> HistoryThinScrollProbe {
-    HistoryThinScrollProbe()
-  }
-
-  func updateNSView(_ nsView: HistoryThinScrollProbe, context: Context) {
-    nsView.apply()
-  }
-}
-
-private final class HistoryThinScrollProbe: NSView {
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    apply()
-  }
-
-  override func layout() {
-    super.layout()
-    apply()
-  }
-
-  func apply() {
-    guard let scrollView = enclosingScrollView else { return }
-    var installed = false
-    if !(scrollView.verticalScroller is HistoryThinScroller) {
-      scrollView.verticalScroller = HistoryThinScroller()
-      installed = true
-    }
-    if !(scrollView.horizontalScroller is HistoryThinScroller) {
-      scrollView.horizontalScroller = HistoryThinScroller()
-      installed = true
-    }
-    // Width comes from the scroller class. Tile once so the slot actually shrinks.
-    if installed {
-      scrollView.tile()
-    }
-  }
-}
-
-/// 7pt slot with a 6pt thumb. A 2pt inset on the old 8pt slot left a 4pt thumb in a wider track.
-/// The system width stays in place for every other scroll view.
-private final class HistoryThinScroller: NSScroller {
-  static let thickness: CGFloat = 7
-  static let knobThickness: CGFloat = 6
-
-  override class func scrollerWidth(
-    for controlSize: NSControl.ControlSize,
-    scrollerStyle: NSScroller.Style
-  ) -> CGFloat {
-    thickness
-  }
-
-  /// Custom knob drawing. The layer-backed scroller would keep the system track.
-  override var wantsUpdateLayer: Bool { false }
-
-  override func draw(_ dirtyRect: NSRect) {
-    drawKnob()
-  }
-
-  override func drawKnobSlot(in slotRect: NSRect, highlight: Bool) {}
-
-  override func drawKnob() {
-    let part = rect(for: .knob)
-    let cross = Self.knobThickness
-    let vertical = bounds.height >= bounds.width
-    let knob =
-      vertical
-      ? NSRect(x: bounds.midX - cross / 2, y: part.minY, width: cross, height: part.height)
-      : NSRect(x: part.minX, y: bounds.midY - cross / 2, width: part.width, height: cross)
-    guard knob.width > 0, knob.height > 0 else { return }
-    NSColor.tertiaryLabelColor.setFill()
-    let radius = cross / 2
-    NSBezierPath(roundedRect: knob, xRadius: radius, yRadius: radius).fill()
   }
 }
