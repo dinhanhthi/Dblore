@@ -70,6 +70,9 @@ build_output.txt
 # Release artifacts (scripts/build-release.sh)
 dist/
 
+# Markdown editor bundle toolchain (scripts/markdown-editor)
+scripts/markdown-editor/node_modules/
+
 # Docker
 docker/**/.env
 docker/**/data/

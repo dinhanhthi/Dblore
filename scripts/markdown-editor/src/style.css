@@ -1,0 +1,222 @@
+@import '@milkdown/kit/prose/view/style/prosemirror.css';
+@import '@milkdown/kit/prose/gapcursor/style/gapcursor.css';
+@import '@milkdown/kit/prose/tables/style/tables.css';
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--dblore-bg);
+  color: var(--dblore-fg);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+#editor {
+  min-height: 100vh;
+  background: var(--dblore-bg);
+}
+
+.milkdown .ProseMirror {
+  box-sizing: border-box;
+  max-width: 760px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 24px 32px;
+  outline: none;
+  caret-color: var(--dblore-fg);
+}
+
+.milkdown .ProseMirror ::selection {
+  background: color-mix(in srgb, var(--dblore-accent) 20%, transparent);
+}
+
+/* Node and cell selections draw their own highlight */
+.milkdown .ProseMirror.ProseMirror-hideselection {
+  caret-color: transparent;
+}
+
+.milkdown .ProseMirror.ProseMirror-hideselection ::selection {
+  background: transparent;
+}
+
+/* Headings */
+.milkdown .ProseMirror h1,
+.milkdown .ProseMirror h2,
+.milkdown .ProseMirror h3,
+.milkdown .ProseMirror h4,
+.milkdown .ProseMirror h5,
+.milkdown .ProseMirror h6 {
+  color: var(--dblore-fg);
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1.4em 0 0.5em;
+}
+
+.milkdown .ProseMirror h1 { font-size: 1.85em; }
+.milkdown .ProseMirror h2 { font-size: 1.5em; }
+.milkdown .ProseMirror h3 { font-size: 1.25em; }
+.milkdown .ProseMirror h4 { font-size: 1.1em; }
+.milkdown .ProseMirror h5 { font-size: 1em; }
+.milkdown .ProseMirror h6 { font-size: 0.95em; color: var(--dblore-fg-muted); }
+
+.milkdown .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.milkdown .ProseMirror p {
+  margin: 0.6em 0;
+}
+
+/* Links */
+.milkdown .ProseMirror a {
+  color: var(--dblore-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--dblore-accent-muted);
+  text-underline-offset: 2px;
+  cursor: text;
+}
+
+/* Lists and task lists */
+.milkdown .ProseMirror ul,
+.milkdown .ProseMirror ol {
+  padding-left: 1.6em;
+  margin: 0.6em 0;
+}
+
+.milkdown .ProseMirror li > p {
+  margin: 0.2em 0;
+}
+
+.milkdown .ProseMirror li[data-item-type='task'] {
+  list-style: none;
+  position: relative;
+}
+
+.milkdown .ProseMirror li[data-item-type='task']::before {
+  content: '';
+  position: absolute;
+  left: -1.4em;
+  top: 0.35em;
+  width: 0.9em;
+  height: 0.9em;
+  box-sizing: border-box;
+  border: 1px solid var(--dblore-border);
+  border-radius: 3px;
+  background: var(--dblore-bg);
+}
+
+.milkdown .ProseMirror li[data-item-type='task'][data-checked='true']::before {
+  background: var(--dblore-accent);
+  border-color: var(--dblore-accent);
+}
+
+.milkdown .ProseMirror li[data-item-type='task'][data-checked='true'] > p {
+  color: var(--dblore-fg-subtle);
+  text-decoration: line-through;
+}
+
+/* Blockquote */
+.milkdown .ProseMirror blockquote {
+  margin: 0.8em 0;
+  padding: 0 0 0 1em;
+  border-left: 3px solid var(--dblore-border);
+  color: var(--dblore-fg-muted);
+}
+
+/* Code */
+.milkdown .ProseMirror code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: var(--dblore-code-bg);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.milkdown .ProseMirror pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--dblore-code-bg);
+  border: 1px solid var(--dblore-border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0.8em 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.milkdown .ProseMirror pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Horizontal rule */
+.milkdown .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--dblore-border);
+  margin: 1.6em 0;
+}
+
+.milkdown .ProseMirror hr.ProseMirror-selectednode {
+  border-top-color: var(--dblore-accent);
+}
+
+/* Tables */
+.milkdown .ProseMirror table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  width: 100%;
+}
+
+.milkdown .ProseMirror th,
+.milkdown .ProseMirror td {
+  border: 1px solid var(--dblore-border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.milkdown .ProseMirror th {
+  font-weight: 600;
+  background: var(--dblore-code-bg);
+}
+
+.milkdown .ProseMirror td p,
+.milkdown .ProseMirror th p {
+  margin: 0;
+}
+
+.milkdown .ProseMirror .selectedCell::after {
+  background: color-mix(in srgb, var(--dblore-accent) 20%, transparent);
+}
+
+/* Kit defaults with hardcoded colors, mapped to tokens */
+.milkdown .ProseMirror .ProseMirror-selectednode {
+  outline-color: var(--dblore-accent);
+}
+
+.milkdown .ProseMirror li.ProseMirror-selectednode::after {
+  border-color: var(--dblore-accent);
+}
+
+.milkdown .ProseMirror .column-resize-handle {
+  background-color: var(--dblore-accent);
+}
+
+/* Images */
+.milkdown .ProseMirror img {
+  max-width: 100%;
+}
+
+/* Gap cursor */
+.milkdown .ProseMirror .ProseMirror-gapcursor::after {
+  border-top-color: var(--dblore-fg);
+}
