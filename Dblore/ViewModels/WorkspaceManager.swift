@@ -1151,6 +1151,8 @@ class WorkspaceManager: Identifiable {
     guard let tab = tabs.first(where: { $0.id == id }) else { return }
     // Data viewer tabs have no file: Save and Save As are no-ops
     guard tab.documentType != .dataViewer else { return }
+    // A markdown note in preview mode may hold edits newer than editorContent
+    await viewModels[id]?.flushMarkdownPreview?()
 
     if let url = tab.fileURL {
       try await saveToURL(tabId: id, url: url)

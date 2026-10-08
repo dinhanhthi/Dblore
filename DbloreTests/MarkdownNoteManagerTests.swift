@@ -67,6 +67,42 @@ struct MarkdownNoteManagerTests {
     #expect(try Data(contentsOf: url) == Data(edited.utf8))
   }
 
+  @Test("Saving a markdown tab first flushes the preview text")
+  func saveFlushesPreview() async throws {
+    let (folder, url) = try Self.makeFile(Self.source)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let (manager, suite, name) = try Self.manager()
+    defer { suite.removePersistentDomain(forName: name) }
+    try await manager.openFile(url: url)
+    let tab = try #require(manager.tabs.first)
+    let viewModel = try #require(manager.viewModel(for: tab.id))
+    viewModel.flushMarkdownPreview = { viewModel.editorContent = "flushed" }
+
+    try await manager.saveTab(id: tab.id)
+
+    #expect(try Data(contentsOf: url) == Data("flushed".utf8))
+  }
+
+  @Test("Saving a SQL file tab without a flush hook writes its text unchanged")
+  func saveWithoutFlushHook() async throws {
+    let (folder, mdURL) = try Self.makeFile("")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let url = mdURL.deletingPathExtension().appendingPathExtension("sql")
+    try Data("select 1".utf8).write(to: url)
+    let (manager, suite, name) = try Self.manager()
+    defer { suite.removePersistentDomain(forName: name) }
+    try await manager.openFile(url: url)
+    let tab = try #require(manager.tabs.first)
+    #expect(tab.documentType == .sqlFile)
+    let viewModel = try #require(manager.viewModel(for: tab.id))
+    #expect(viewModel.flushMarkdownPreview == nil)
+
+    viewModel.editorContent = "select 2"
+    try await manager.saveTab(id: tab.id)
+
+    #expect(try Data(contentsOf: url) == Data("select 2".utf8))
+  }
+
   @Test("newMarkdownFile appends a dirty untitled markdown note")
   func newMarkdownFile() throws {
     let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)

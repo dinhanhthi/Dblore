@@ -329,6 +329,16 @@ struct HeaderView: View {
           }
           .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
           .help("Search (⌘F)")
+        } else {
+          Button(action: {
+            viewModel.isMarkdownPreview.toggle()
+          }) {
+            Image(
+              systemName: viewModel.isMarkdownPreview
+                ? "chevron.left.forwardslash.chevron.right" : "eye")
+          }
+          .buttonStyle(GhostButtonStyle(isActive: viewModel.isMarkdownPreview, iconOnly: true))
+          .help(viewModel.isMarkdownPreview ? "Show Markdown" : "Show Preview")
         }
       }
     }

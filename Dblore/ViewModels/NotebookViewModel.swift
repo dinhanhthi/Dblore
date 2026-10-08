@@ -157,6 +157,10 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
+  /// Markdown note shows the WYSIWYG preview instead of the code editor. Session only, never encoded.
+  var isMarkdownPreview = false
+  /// Pulls the preview's latest text into `editorContent` before a save. Set by the markdown view.
+  @ObservationIgnored var flushMarkdownPreview: (@MainActor () async -> Void)?
   /// Editor tab parameter values. Session only, never encoded, and edits are not dirty.
   var editorParameters: [QueryParameter] = []
   /// Editor and result side by side (left/right) in this tab; starts from the user default
