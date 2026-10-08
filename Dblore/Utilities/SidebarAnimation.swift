@@ -22,11 +22,15 @@ enum SidebarAnimation {
   static let animation = Animation.easeInOut(duration: 0.2)
   /// Slides in from the trailing edge and back out to that edge.
   static let trailingSlide = AnyTransition.move(edge: .trailing)
+  /// Snappier curve for the AI bubble expanding, collapsing, and switching to or from the sidebar.
+  static let bubble = Animation.snappy(duration: 0.2)
 }
 
 /// Like `withAnimation`, but survives the app-wide `.transaction` that disables animations.
-func withSidebarAnimation(_ body: () -> Void) {
-  var transaction = Transaction(animation: SidebarAnimation.animation)
+func withSidebarAnimation(
+  _ animation: Animation = SidebarAnimation.animation, _ body: () -> Void
+) {
+  var transaction = Transaction(animation: animation)
   transaction.isSidebarAnimation = true
   withTransaction(transaction, body)
 }

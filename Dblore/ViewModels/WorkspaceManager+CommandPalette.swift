@@ -142,7 +142,7 @@ extension WorkspaceManager {
       guard let viewModel = activeViewModel, viewModel.viewMode != .markdown else { return false }
       viewModel.toggleSidebar()
     case .toggleAIAssistant:
-      withSidebarAnimation { aiAssistant.isVisible.toggle() }
+      toggleAIAssistant()
     case .settings:
       showSettings()
     case .schemaVisualizer:
