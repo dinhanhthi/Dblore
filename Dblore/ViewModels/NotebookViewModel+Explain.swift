@@ -36,6 +36,7 @@ extension NotebookViewModel {
     rollbackAfterAnalyze: Bool = true,
     cellId: UUID? = nil
   ) async {
+    if viewMode == .markdown { return }
     ConfirmedParameterSnapshot.disarmExplain(self)
     let request: ExplainRequest
     do {

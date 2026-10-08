@@ -14,6 +14,7 @@ extension NotebookViewModel {
   /// Place AI-suggested SQL in the tab: at the cursor in editor mode (appended when there is
   /// no text view), as a new SQL cell after the selected one in notebook mode
   func insertAISQL(_ sql: String) {
+    if viewMode == .markdown { return }
     if viewMode == .editor {
       if editorTextView != nil {
         insertTextIntoSelectedCell(sql)
@@ -33,6 +34,7 @@ extension NotebookViewModel {
 
   /// SQL the quick actions work on: editor selection (else whole editor) or the selected cell
   var aiCurrentSQL: String? {
+    if viewMode == .markdown { return nil }
     let text: String
     if viewMode == .editor {
       if let textView = editorTextView,
@@ -51,6 +53,7 @@ extension NotebookViewModel {
 
   /// Error of the selected statement (else the whole result) in the editor or selected cell
   var aiLastError: String? {
+    if viewMode == .markdown { return nil }
     let error: String?
     if viewMode == .editor {
       error = Self.aiError(

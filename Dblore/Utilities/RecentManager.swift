@@ -186,10 +186,13 @@ class RecentManager {
   /// Refresh recent documents from NSDocumentController
   /// Call this after opening/saving a document to update the list
   func refreshRecentDocuments() {
-    recentDocuments = (documentController?.recentDocumentURLs ?? []).filter { url in
-      let ext = url.pathExtension.lowercased()
-      return ext == "dblore" || ext == "sql"
-    }
+    recentDocuments = (documentController?.recentDocumentURLs ?? []).filter(Self.isRecentDocument)
+  }
+
+  /// Notebooks, SQL files and Markdown notes; other recent files are not listed
+  static func isRecentDocument(_ url: URL) -> Bool {
+    let ext = url.pathExtension.lowercased()
+    return ext == "dblore" || ext == "sql" || ext == "md"
   }
 
   /// Add a file to the recent documents and remember its bookmark for the next reopen

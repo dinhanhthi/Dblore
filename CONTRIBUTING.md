@@ -47,6 +47,20 @@ Thanks for your interest — contributions are welcome!
      `swift-format lint --strict <files>`.
   3. Keep pull requests focused, and describe what changed and why.
 
+## Markdown editor bundle
+
+The WYSIWYG preview of Markdown notes runs [Milkdown](https://milkdown.dev) in a
+`WKWebView`. Its bundle (`Dblore/Resources/MarkdownEditor/markdown-editor.{js,css}` plus
+`markdown-editor-licenses.txt`) is vendored: `xcodebuild` never runs npm. Rebuild it with:
+
+```bash
+cd scripts/markdown-editor && npm ci && npm run build
+```
+
+To upgrade, bump both exact pins in `scripts/markdown-editor/package.json`
+(`@milkdown/kit`, `esbuild`), run `npm install`, rebuild, then review the bundle diff and
+`markdown-editor-licenses.txt` before committing. `markdown-editor.html` is hand-written.
+
 ## Website
 
 The landing page and docs live in `website/` (plain HTML and CSS, no build step). Preview

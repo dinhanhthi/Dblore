@@ -1,0 +1,12 @@
+{
+  "name": "dblore-markdown-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@milkdown/kit": "7.22.2",
+    "esbuild": "0.28.2"
+  }
+}

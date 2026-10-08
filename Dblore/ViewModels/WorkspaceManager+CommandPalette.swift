@@ -11,6 +11,7 @@ import Foundation
 private enum CommandPaletteAction: String, CaseIterable {
   case newNotebook = "new-notebook"
   case newSQLFile = "new-sql-file"
+  case newMarkdownFile = "new-markdown-file"
   case runCell = "run-cell"
   case runAll = "run-all"
   case toggleLeftSidebar = "toggle-left-sidebar"
@@ -27,6 +28,7 @@ private enum CommandPaletteAction: String, CaseIterable {
     switch self {
     case .newNotebook: "New Notebook"
     case .newSQLFile: "New SQL File"
+    case .newMarkdownFile: "New Markdown Note"
     case .runCell: "Run Cell"
     case .runAll: "Run All Cells"
     case .toggleLeftSidebar: "Toggle Left Sidebar"
@@ -114,7 +116,7 @@ extension WorkspaceManager {
 
   /// A selected notebook cell, or an editor text view. A data viewer has neither.
   private func canInsertPaletteText() -> Bool {
-    guard let viewModel = activeViewModel else { return false }
+    guard let viewModel = activeViewModel, viewModel.viewMode != .markdown else { return false }
     if viewModel.viewMode == .editor {
       return viewModel.editorTextView != nil
     }
@@ -128,6 +130,8 @@ extension WorkspaceManager {
       newNotebook()
     case .newSQLFile:
       newSQLFile()
+    case .newMarkdownFile:
+      newMarkdownFile()
     case .runCell:
       return runPaletteCell()
     case .runAll:
@@ -135,7 +139,7 @@ extension WorkspaceManager {
     case .toggleLeftSidebar:
       toggleLeftSidebar()
     case .toggleRightSidebar:
-      guard let viewModel = activeViewModel else { return false }
+      guard let viewModel = activeViewModel, viewModel.viewMode != .markdown else { return false }
       viewModel.toggleSidebar()
     case .toggleAIAssistant:
       withSidebarAnimation { aiAssistant.isVisible.toggle() }

@@ -264,6 +264,7 @@ struct DbloreApp: App {
 enum DocumentMode {
   case notebook  // Notebook mode (.dblore files) - has Cell menu, custom Find
   case editor  // Editor mode (.sql files) - uses native macOS menus
+  case markdown  // Markdown notes (.md files) - no Cell or Query menu
 }
 
 /// FocusedValue key for tracking document mode across the app.
@@ -578,6 +579,14 @@ struct TabCommands: Commands {
       }
       .keyboardShortcut("j", modifiers: [.command, .shift])
 
+      Button {
+        let manager = activeWorkspaceOrNew
+        manager.newMarkdownFile()
+      } label: {
+        Label("New Markdown Note", systemImage: "doc.richtext")
+      }
+      .keyboardShortcut("m", modifiers: [.command, .shift])
+
       Divider()
 
       Button {
@@ -727,7 +736,7 @@ struct TabCommands: Commands {
 
   private func openFile() {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.dblore, .sql]
+    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
 

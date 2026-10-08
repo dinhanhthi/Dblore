@@ -218,7 +218,8 @@ struct WorkspaceContainerView: View {
     }
     .focusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
       if let activeTabId = workspaceManager.activeTabId,
-        let viewModel = workspaceManager.viewModel(for: activeTabId)
+        let viewModel = workspaceManager.viewModel(for: activeTabId),
+        viewModel.viewMode != .markdown
       {
         viewModel.toggleSidebar()
       }
@@ -394,6 +395,12 @@ struct WorkspaceTabContentView: View {
   private var contentView: some View {
     if viewModel.viewMode == .notebook {
       notebookContent
+    } else if viewModel.viewMode == .markdown {
+      // No SQL handlers, destructive-query dialog or search on a note. PlainTextEditor's
+      // NSScrollView fills the area, so it needs no GeometryReader wrapper like editorContent.
+      DocumentLayoutView(viewModel: viewModel) {
+        MarkdownNoteView(viewModel: viewModel).id(tabId)
+      }
     } else if viewModel.dataViewer != nil {
       dataViewerContent
     } else {
@@ -402,11 +409,18 @@ struct WorkspaceTabContentView: View {
   }
 
   private var documentMode: DocumentMode {
-    viewModel.viewMode == .notebook ? .notebook : .editor
+    switch viewModel.viewMode {
+    case .notebook: .notebook
+    case .markdown: .markdown
+    default: .editor
+    }
   }
 
+  /// Markdown notes have no right sidebar content.
   private var toggleRightSidebarAction: () -> Void {
-    { [viewModel] in viewModel.toggleSidebar() }
+    { [viewModel] in
+      if viewModel.viewMode != .markdown { viewModel.toggleSidebar() }
+    }
   }
 
   private var openSearchAction: () -> Void {
@@ -898,6 +912,12 @@ struct WorkspaceTitleBarTabsView: View {
             Label("New SQL File", systemImage: "doc")
           }
 
+          Button {
+            workspaceManager.newMarkdownFile()
+          } label: {
+            Label("New Markdown Note", systemImage: "doc.richtext")
+          }
+
           Divider()
 
           Button {
@@ -910,6 +930,12 @@ struct WorkspaceTitleBarTabsView: View {
             openSQLFileWithPanel()
           } label: {
             Label("Open SQL File", systemImage: "folder")
+          }
+
+          Button {
+            openMarkdownWithPanel()
+          } label: {
+            Label("Open Markdown Note", systemImage: "folder")
           }
         } label: {
           Image(systemName: "plus")
@@ -983,6 +1009,22 @@ struct WorkspaceTitleBarTabsView: View {
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
     panel.allowedContentTypes = [.sql]
+
+    panel.begin { response in
+      guard response == .OK else { return }
+      Task { @MainActor in
+        for url in panel.urls {
+          try? await workspaceManager.openFile(url: url)
+        }
+      }
+    }
+  }
+
+  private func openMarkdownWithPanel() {
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.allowedContentTypes = [.markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }

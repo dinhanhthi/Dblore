@@ -19,6 +19,8 @@ today, and SQLite files as beta; more engines (such as MongoDB) are planned.
 
 - **Notebooks**: `.dblore` notebooks that mix SQL cells with inline results, like Jupyter
   for your databases; or plain `.sql` files in a classic editor
+- **Markdown notes**: jot a quick `.md` note in the workspace without saving it first
+  (written to disk only on Cmd+S), and toggle between the source and an editable preview
 - **SQL editor and execution**: syntax highlighting and table- and column-aware
   autocompletion; run a cell, the query at the cursor or all cells, cancel running
   queries, and see row count and execution time per result

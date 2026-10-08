@@ -18,7 +18,7 @@ struct WorkspaceCommands: Commands {
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open
     // (NotebookCommands and EditorCommands handle their own modes)
-    if documentMode == nil {
+    if documentMode == nil || documentMode == .markdown {
       CommandGroup(after: .sidebar) {
         Button {
           toggleLeftSidebarAction?()
@@ -33,6 +33,7 @@ struct WorkspaceCommands: Commands {
           Label("Toggle Right Sidebar", systemImage: "sidebar.right")
         }
         .keyboardShortcut("b", modifiers: [.command, .shift])
+        .disabled(documentMode == .markdown)
       }
     }
 

@@ -61,27 +61,10 @@ struct WorkspaceWelcomeView: View {
             }
           }
 
-          // Document type cards
-          HStack(spacing: Spacing.lg) {
-            // Notebook Card
-            DocumentTypeCard(
-              icon: "doc.text.fill",
-              title: "Notebook",
-              description: "Interactive queries with multiple cells and inline results",
-              accentColor: .accent,
-              onNew: { workspaceManager.newNotebook() },
-              onOpen: { openFile(type: .notebook) }
-            )
-
-            // SQL File Card
-            DocumentTypeCard(
-              icon: "doc.fill",
-              title: "SQL File",
-              description: "Simple SQL script editor for queries",
-              accentColor: .syntaxFunction,
-              onNew: { workspaceManager.newSQLFile() },
-              onOpen: { openFile(type: .sqlFile) }
-            )
+          // Document type cards; stacked when three do not fit side by side
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: Spacing.lg) { documentTypeCards }
+            VStack(spacing: Spacing.lg) { documentTypeCards }
           }
           .padding(.top, Spacing.sm)
 
@@ -119,6 +102,39 @@ struct WorkspaceWelcomeView: View {
     }
   }
 
+  @ViewBuilder
+  private var documentTypeCards: some View {
+    // Notebook Card
+    DocumentTypeCard(
+      icon: "doc.text.fill",
+      title: "Notebook",
+      description: "Interactive queries with multiple cells and inline results",
+      accentColor: .accent,
+      onNew: { workspaceManager.newNotebook() },
+      onOpen: { openFile(type: .notebook) }
+    )
+
+    // SQL File Card
+    DocumentTypeCard(
+      icon: "doc.fill",
+      title: "SQL File",
+      description: "Simple SQL script editor for queries",
+      accentColor: .syntaxFunction,
+      onNew: { workspaceManager.newSQLFile() },
+      onOpen: { openFile(type: .sqlFile) }
+    )
+
+    // Markdown Note Card
+    DocumentTypeCard(
+      icon: "doc.richtext.fill",
+      title: "Markdown Note",
+      description: "Plain Markdown notes saved as .md files",
+      accentColor: .syntaxString,
+      onNew: { workspaceManager.newMarkdownFile() },
+      onOpen: { openFile(type: .markdown) }
+    )
+  }
+
   private func openFile(type: TabDocumentType) {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
@@ -129,6 +145,8 @@ struct WorkspaceWelcomeView: View {
       panel.allowedContentTypes = [.dblore]
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
+    case .markdown:
+      panel.allowedContentTypes = [.markdownText]
     case .dataViewer:
       return  // No file to open
     }
@@ -309,6 +327,7 @@ struct WorkspaceRecentFileRow: View {
     switch fileType {
     case .notebook: return .accent
     case .sqlFile: return .syntaxFunction
+    case .markdown: return .syntaxString
     case .dataViewer: return .foregroundMuted
     case nil: return .foregroundMuted
     }

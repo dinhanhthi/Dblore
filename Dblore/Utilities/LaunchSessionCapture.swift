@@ -217,6 +217,8 @@ enum LaunchSessionCapture {
         return LaunchTextOverlay(tabId: tab.id, text: .notebook(cells))
       case .sqlFile:
         return LaunchTextOverlay(tabId: tab.id, text: .script(viewModel.editorContent))
+      case .markdown:
+        return LaunchTextOverlay(tabId: tab.id, text: .markdown(viewModel.editorContent))
       case .dataViewer:
         return nil
       }

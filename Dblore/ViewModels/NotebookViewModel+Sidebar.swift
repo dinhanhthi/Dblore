@@ -177,6 +177,8 @@ extension NotebookViewModel {
 
   /// Insert text into selected cell or editor at cursor position
   func insertTextIntoSelectedCell(_ text: String) {
+    // Markdown notes have no SQL cell or editor to insert into
+    if viewMode == .markdown { return }
     // Handle based on current view mode
     if viewMode == .editor {
       // Editor mode: insert directly into editor text view

@@ -66,10 +66,10 @@ extension WorkspaceManager {
     }
   }
 
-  /// Only saved file tabs (notebook or SQL) have a file to reveal
+  /// Only saved file tabs (notebook, SQL or markdown) have a file to reveal
   func canRevealFile(tabId: UUID) -> Bool {
     guard let tab = tabs.first(where: { $0.id == tabId }) else { return false }
-    return (tab.documentType == .notebook || tab.documentType == .sqlFile) && tab.fileURL != nil
+    return [.notebook, .sqlFile, .markdown].contains(tab.documentType) && tab.fileURL != nil
   }
 
   func revealFile(tabId: UUID) {
@@ -86,7 +86,7 @@ extension WorkspaceManager {
       !tab.isPinned, tabId != transactionOriginTabId, !isResolvingPendingTransaction
     else { return false }
     switch tab.documentType {
-    case .notebook, .sqlFile:
+    case .notebook, .sqlFile, .markdown:
       return tab.fileURL != nil && !tab.isDirty
     case .dataViewer:
       return viewModels[tabId]?.hasPendingStagedChanges != true
