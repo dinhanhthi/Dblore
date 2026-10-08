@@ -162,6 +162,17 @@ struct WorkspaceContainerView: View {
             Rectangle().fill(Color.borderSubtle).frame(height: 1)
           }
           .zIndex(1)
+
+          // Floating AI bubble above everything in the content area (z-index 2)
+          if workspaceManager.aiAssistant.showsBubble {
+            AIBubbleOverlay(
+              assistant: workspaceManager.aiAssistant,
+              activeTab: activeViewModel,
+              tables: workspaceManager.databaseTables
+            )
+            .transition(.opacity)
+            .zIndex(2)
+          }
         }
 
         FooterView(

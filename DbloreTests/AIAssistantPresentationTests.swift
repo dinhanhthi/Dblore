@@ -100,6 +100,14 @@ struct AIAssistantPresentationTests {
     #expect(!vm.showsBubble)
   }
 
+  @Test("togglePresentation does nothing while the assistant is hidden")
+  func togglePresentationIsNoOpWhileHidden() {
+    let vm = makeVM()
+    vm.togglePresentation()
+    #expect(vm.presentation == .sidebar)
+    #expect(!vm.isBubbleExpanded)
+  }
+
   @Test("toggleBubbleExpanded does nothing unless the bubble is shown")
   func toggleBubbleExpandedIsNoOpOutsideBubble() {
     let vm = makeVM()

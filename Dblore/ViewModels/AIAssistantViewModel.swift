@@ -120,6 +120,7 @@ final class AIAssistantViewModel {
   }
 
   func togglePresentation() {
+    guard isVisible else { return }
     presentation = presentation == .sidebar ? .bubble : .sidebar
     isBubbleExpanded = presentation == .bubble
   }

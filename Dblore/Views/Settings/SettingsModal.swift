@@ -159,7 +159,7 @@ struct SettingsModal: View {
         viewMode: effectiveViewMode
       )
     case .ai:
-      AISettingsSection()
+      AISettingsSection(appSettings: appSettings)
     case .results:
       SettingsModalResultTableSection(
         appSettings: appSettings,
