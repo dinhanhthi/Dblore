@@ -323,7 +323,9 @@ struct AIAssistantPanel: View {
 
   private var footer: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      if canExplain || canFixError {
+      if activeTab?.isReadOnlySource == true, !assistant.needsSetup {
+        readOnlySourceQuickActions
+      } else if canExplain || canFixError {
         quickActions
       }
       AIContextPicker(
@@ -360,6 +362,22 @@ struct AIAssistantPanel: View {
         .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
       }
+    }
+  }
+
+  /// Source tab: its text comes from the server and never goes into a prompt
+  private var readOnlySourceQuickActions: some View {
+    VStack(alignment: .leading, spacing: Spacing.xxs) {
+      HStack(spacing: Spacing.xs) {
+        Button("Explain query") {}
+          .buttonStyle(AIChipButtonStyle())
+        Button("Fix error") {}
+          .buttonStyle(AIChipButtonStyle())
+      }
+      .disabled(true)
+      Text("Not available for read-only source — open an editable copy")
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
     }
   }
 

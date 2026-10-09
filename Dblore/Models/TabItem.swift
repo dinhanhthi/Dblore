@@ -18,6 +18,11 @@ struct TabItem: Identifiable, Equatable {
   var isPreview: Bool
   /// Pinned tabs form the leading zone of the tab bar and persist in the workspace
   var isPinned: Bool
+  /// Read-only routine or trigger source on a .sqlFile tab: never dirty, never saved, and
+  /// rebuilt on demand rather than persisted or restored at launch
+  var objectSource: ObjectSourceRef?
+
+  var isReadOnlySource: Bool { objectSource != nil }
 
   init(
     id: UUID = UUID(),
@@ -27,7 +32,8 @@ struct TabItem: Identifiable, Equatable {
     isDirty: Bool = false,
     lastAccessed: Date = Date(),
     isPreview: Bool = false,
-    isPinned: Bool = false
+    isPinned: Bool = false,
+    objectSource: ObjectSourceRef? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -37,6 +43,7 @@ struct TabItem: Identifiable, Equatable {
     self.lastAccessed = lastAccessed
     self.isPreview = isPreview
     self.isPinned = isPinned
+    self.objectSource = objectSource
   }
 
   /// Creates a new untitled notebook tab
@@ -103,11 +110,57 @@ enum TabDocumentType: String, Codable, Equatable {
   }
 }
 
+/// Identifies the routine or trigger whose definition an object source tab shows
+nonisolated struct ObjectSourceRef: Codable, Hashable, Sendable {
+  enum Kind: String, Codable, Hashable, Sendable {
+    case function, procedure, trigger
+  }
+
+  var kind: Kind
+  var schema: String
+  var name: String
+  /// Owning table (triggers)
+  var table: String?
+  /// Argument list (functions and procedures), labels overloads
+  var arguments: String?
+  /// Catalog oid. Nil on SQLite.
+  var oid: UInt32?
+
+  init(
+    kind: Kind, schema: String, name: String, table: String? = nil, arguments: String? = nil,
+    oid: UInt32? = nil
+  ) {
+    self.kind = kind
+    self.schema = schema
+    self.name = name
+    self.table = table
+    self.arguments = arguments
+    self.oid = oid
+  }
+
+  /// Finds an open tab for the same object: the oid when present, otherwise the qualified name
+  var key: String {
+    if let oid { return "\(kind.rawValue):oid:\(oid)" }
+    return "\(kind.rawValue):\(schema).\(table ?? "").\(name)"
+  }
+
+  /// "name(args)" for routines, "name on table" for triggers
+  var title: String {
+    switch kind {
+    case .function, .procedure:
+      return "\(name)(\(arguments ?? ""))"
+    case .trigger:
+      guard let table, !table.isEmpty else { return name }
+      return "\(name) on \(table)"
+    }
+  }
+}
+
 // MARK: - Codable for persistence
 
 extension TabItem: Codable {
   enum CodingKeys: String, CodingKey {
-    case id, fileURL, documentType, title, isDirty, lastAccessed
+    case id, fileURL, documentType, title, isDirty, lastAccessed, objectSource
   }
 
   init(from decoder: Decoder) throws {
@@ -120,5 +173,6 @@ extension TabItem: Codable {
     lastAccessed = try container.decodeIfPresent(Date.self, forKey: .lastAccessed) ?? Date()
     isPreview = false
     isPinned = false
+    objectSource = try container.decodeIfPresent(ObjectSourceRef.self, forKey: .objectSource)
   }
 }

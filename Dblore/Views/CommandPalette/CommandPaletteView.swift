@@ -240,6 +240,7 @@ private struct CommandPaletteSection: Identifiable {
     case tables = "Tables"
     case views = "Views"
     case functions = "Functions"
+    case sources = "View Source"
     case tabs = "Tabs"
     case favorite = "Favorite"
     case actions = "Actions"
@@ -250,6 +251,7 @@ private struct CommandPaletteSection: Identifiable {
       case .table: .tables
       case .view: .views
       case .function: .functions
+      case .source: .sources
       case .tab: .tabs
       case .favorite: .favorite
       case .action: .actions
@@ -307,6 +309,7 @@ private struct CommandPaletteRow: View {
     case .table: "tablecells"
     case .view: "eye"
     case .function: "function"
+    case .source(let ref): ref.kind.iconName
     case .tab: "doc.text"
     case .favorite: "star"
     case .action: "command"
@@ -339,6 +342,8 @@ private struct CommandPaletteRow: View {
       } else {
         raw = "\(schema) (\(arguments))"
       }
+    case .source(let ref):
+      raw = ref.schema.isEmpty ? ref.kind.displayName : "\(ref.kind.displayName) · \(ref.schema)"
     case .favorite(_, _, let sql):
       raw = sql
     case .tab, .action, .history:

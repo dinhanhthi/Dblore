@@ -39,7 +39,7 @@ class WorkspaceManager: Identifiable {
   // MARK: - Shared Connection
 
   /// Single database connection for entire workspace
-  let connectionManager = DatabaseConnectionManager()
+  let connectionManager: DatabaseConnectionManager
   /// AI chat state shared by the workspace (schema structure only, never row data)
   let aiAssistant = AIAssistantViewModel()
   var connectionState: ConnectionState = .disconnected
@@ -193,6 +193,9 @@ class WorkspaceManager: Identifiable {
   var databaseViews: [DatabaseView] = []
   var databaseFunctions: [DatabaseFunction] = []
   var databaseProcedures: [DatabaseProcedure] = []
+  var databaseTriggers: [DatabaseTrigger] = []
+  /// In-flight definition reads of object source tabs, cancelled when the tab closes
+  @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
@@ -205,8 +208,12 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Initialization
 
-  init(workspace: Workspace, restoreTabs: Bool = true) {
+  init(
+    workspace: Workspace, restoreTabs: Bool = true,
+    connectionManager: DatabaseConnectionManager = DatabaseConnectionManager()
+  ) {
     self.id = workspace.id
+    self.connectionManager = connectionManager
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -466,6 +473,7 @@ class WorkspaceManager: Identifiable {
       viewModel.databaseViews = databaseViews
       viewModel.databaseFunctions = databaseFunctions
       viewModel.databaseProcedures = databaseProcedures
+      viewModel.databaseTriggers = databaseTriggers
       viewModel.databaseUsers = databaseUsers
       viewModel.databaseRoles = databaseRoles
       viewModel.databaseForeignKeys = databaseForeignKeys
@@ -507,6 +515,18 @@ class WorkspaceManager: Identifiable {
 
     selectTab(id: tab.id)
     return tab.id
+  }
+
+  /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
+  func appendEditorTab(_ tab: TabItem, content: String) -> NotebookViewModel {
+    let cell = NotebookCell(cellType: .sql, content: "")
+    let viewModel = createViewModel(for: DbloreNotebook(cells: [cell], documentType: .script))
+    viewModel.viewMode = .editor
+    viewModel.editorContent = content
+    tabs.append(tab)
+    viewModels[tab.id] = viewModel
+    editorDocuments[tab.id] = SQLEditorDocument()
+    return viewModel
   }
 
   @discardableResult
@@ -819,6 +839,7 @@ class WorkspaceManager: Identifiable {
     viewModel.databaseViews = databaseViews
     viewModel.databaseFunctions = databaseFunctions
     viewModel.databaseProcedures = databaseProcedures
+    viewModel.databaseTriggers = databaseTriggers
     viewModel.databaseUsers = databaseUsers
     viewModel.databaseRoles = databaseRoles
     viewModel.databaseForeignKeys = databaseForeignKeys
@@ -960,6 +981,7 @@ class WorkspaceManager: Identifiable {
     editorDocuments.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)
     tabAccess.removeValue(forKey: id)?.release()
+    objectSourceLoads.removeValue(forKey: id)?.cancel()
     markDirtyAndScheduleAutoSave()
   }
 
@@ -1119,9 +1141,9 @@ class WorkspaceManager: Identifiable {
   }
 
   func markDirty(tabId: UUID) {
-    // Data viewer tabs have no document to save
+    // Data viewer and object source tabs have no document to save
     guard let index = tabs.firstIndex(where: { $0.id == tabId }),
-      tabs[index].documentType != .dataViewer
+      tabs[index].documentType != .dataViewer, !tabs[index].isReadOnlySource
     else { return }
     tabs[index].isDirty = true
   }
@@ -1159,9 +1181,8 @@ class WorkspaceManager: Identifiable {
   // MARK: - Save Operations
 
   func saveTab(id: UUID) async throws {
-    guard let tab = tabs.first(where: { $0.id == id }) else { return }
-    // Data viewer tabs have no file: Save and Save As are no-ops
-    guard tab.documentType != .dataViewer else { return }
+    // Data viewer and object source tabs have no file: Save and Save As are no-ops
+    guard canSave(tabId: id), let tab = tabs.first(where: { $0.id == id }) else { return }
     // A markdown note in preview mode may hold edits newer than editorContent
     await viewModels[id]?.flushMarkdownPreview?()
 

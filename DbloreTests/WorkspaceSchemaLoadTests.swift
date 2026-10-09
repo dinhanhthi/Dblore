@@ -318,3 +318,112 @@ struct WorkspaceSchemaLoadTests {
     await manager.disconnect(resolution: .rollback)
   }
 }
+
+// Triggers load with the schema (names only); a routine or trigger source is read on demand.
+// No server: a temporary SQLite file, or a fake session whose trigger query fails.
+@Suite("Workspace Trigger Load")
+@MainActor
+struct WorkspaceTriggerLoadTests {
+  private func sqliteWorkspace() async throws -> (WorkspaceManager, URL) {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-trigger-load-\(UUID().uuidString).sqlite")
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT)")
+    try handle.execute("CREATE TABLE audit (item_id INTEGER)")
+    try handle.execute(
+      """
+      CREATE TRIGGER items_audit AFTER INSERT ON items
+      BEGIN INSERT INTO audit (item_id) VALUES (new.id); END
+      """)
+    let config = ConnectionConfig(
+      databaseType: .sqlite, host: "", port: 0, database: url.path, username: "",
+      rememberConnection: false, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    let workspace = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
+    try await workspace.connectionManager.connect(config: config)
+    workspace.connectionState = .connected
+    return (workspace, url)
+  }
+
+  private func removeDatabase(_ url: URL) {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+      try? FileManager.default.removeItem(at: URL(fileURLWithPath: url.path + suffix))
+    }
+  }
+
+  @Test("schema load lists triggers without their source; disconnect clears them")
+  func loadListsTriggersAndDisconnectClears() async throws {
+    let (workspace, url) = try await sqliteWorkspace()
+    defer { removeDatabase(url) }
+
+    await workspace.connectionManager.resetCatalogQueryCount()
+    await workspace.loadDatabaseSchema()
+
+    #expect(workspace.databaseTriggers.map(\.name) == ["items_audit"])
+    #expect(workspace.databaseTriggers.first?.table == "items")
+    // tables, views, triggers, foreign keys, columns: no definition read during the load
+    #expect(await workspace.connectionManager.catalogQueryCount == 5)
+
+    await workspace.performDisconnect()
+    #expect(workspace.databaseTriggers.isEmpty)
+  }
+
+  @Test("a tab opened after the schema load gets the triggers")
+  func tabOpenedAfterLoadHasTriggers() async throws {
+    let (workspace, url) = try await sqliteWorkspace()
+    defer { removeDatabase(url) }
+    await workspace.loadDatabaseSchema()
+
+    let tabID = workspace.newSQLFile()
+
+    let viewModel = try #require(workspace.viewModels[tabID])
+    #expect(viewModel.databaseTriggers.map(\.name) == ["items_audit"])
+    await workspace.performDisconnect()
+  }
+
+  @Test("loadDefinition reads the source once per request")
+  func loadDefinitionReadsOncePerRequest() async throws {
+    let (workspace, url) = try await sqliteWorkspace()
+    defer { removeDatabase(url) }
+    await workspace.loadDatabaseSchema()
+    let trigger = try #require(workspace.databaseTriggers.first)
+
+    await workspace.connectionManager.resetCatalogQueryCount()
+    let first = try await workspace.loadDefinition(of: .trigger(trigger))
+    let second = try await workspace.loadDefinition(of: .trigger(trigger))
+
+    #expect(first?.hasPrefix("CREATE TRIGGER items_audit") == true)
+    #expect(second == first)
+    #expect(await workspace.connectionManager.catalogQueryCount == 2)
+    await workspace.performDisconnect()
+  }
+
+  @Test("a failing trigger query keeps triggers empty and the rest of the schema loads")
+  func triggerFailureIsNotFatal() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract(), failingQuery: "pg_trigger")
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    let config = ConnectionConfig(
+      databaseType: .postgresql, host: "fake", port: 1, database: "db", username: "u",
+      password: "p", sslMode: .disable, protectionLevel: .none, safeMode: .silent,
+      protectedMode: false)
+    try await manager.connect(config: config)
+    let workspace = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false,
+      connectionManager: manager)
+    workspace.connectionState = .connected
+    // Stale values: a failed load keeps them, a completed load replaces them
+    workspace.databaseTables = [DatabaseTable(schema: "public", name: "stale")]
+    workspace.databaseTriggers = [
+      DatabaseTrigger(
+        schema: "public", table: "stale", name: "old", timing: .after, events: [.insert],
+        enabled: true)
+    ]
+
+    await workspace.loadDatabaseSchema()
+
+    #expect(factory.statements.contains { $0.contains("pg_trigger") })
+    #expect(workspace.databaseTables.isEmpty)
+    #expect(workspace.databaseTriggers.isEmpty)
+    await manager.disconnect()
+  }
+}

@@ -1,6 +1,6 @@
 // SchemaLoadPerformanceTests.swift
 // Catalog query counter (`catalogQueryCount`), the constant number of catalog queries a schema
-// load sends (7 list queries + 1 bulk columns query, independent of table count), and the bulk
+// load sends (8 list queries + 1 bulk columns query, independent of table count), and the bulk
 // pg_catalog fetchers (fetchTables / fetchViews / fetchAllColumns) against the docker test database
 // (TEST_DB_* env, port 5435 in CI/autopilot). Each test only asserts on its own uniquely named
 // schema because other suites mutate the shared database in parallel.
@@ -37,8 +37,9 @@ struct SchemaLoadPerformanceTests {
     return manager
   }
 
-  /// The fetch sequence of `WorkspaceManager.loadDatabaseSchema`: 7 list queries + 1 bulk columns
-  /// query. Returns the tables of `schema` (filtered, so parallel suites cannot change the result).
+  /// The fetch sequence of `WorkspaceManager.loadDatabaseSchema`: 8 list queries + 1 bulk columns
+  /// query (triggers are listed, their source is read on demand). Returns the tables of `schema`
+  /// (filtered, so parallel suites cannot change the result).
   private func runSchemaLoadSequence(
     _ manager: DatabaseConnectionManager, schema: String
   ) async throws -> [DatabaseTable] {
@@ -46,6 +47,7 @@ struct SchemaLoadPerformanceTests {
     _ = try await manager.fetchViews()
     _ = try await manager.fetchFunctions()
     _ = try await manager.fetchProcedures()
+    _ = try await manager.fetchTriggers()
     _ = try await manager.fetchUsers()
     _ = try await manager.fetchRoles()
     _ = try await manager.fetchForeignKeys()
@@ -87,8 +89,8 @@ struct SchemaLoadPerformanceTests {
     await manager.disconnect()
   }
 
-  @Test("schema load sends exactly 8 catalog queries for 1 and for 12 tables")
-  func schemaLoadSendsExactlyEightQueries() async throws {
+  @Test("schema load sends exactly 9 catalog queries for 1 and for 12 tables")
+  func schemaLoadSendsExactlyNineQueries() async throws {
     var results: [(tables: Int, count: Int)] = []
     try await withSchema(Self.testSchema) { manager, schema in
       func measure() async throws -> (tables: Int, count: Int) {
@@ -111,7 +113,7 @@ struct SchemaLoadPerformanceTests {
       FileHandle.standardError.write(Data((line + "\n").utf8))
     }
     #expect(results.map(\.tables) == [1, 12])
-    #expect(results.map(\.count) == [8, 8])
+    #expect(results.map(\.count) == [9, 9])
   }
 
   @Test("table named with a quote gets its columns")
@@ -328,7 +330,7 @@ struct SchemaLoadPerformanceTests {
 
   // MARK: - WorkspaceManager.loadDatabaseSchema (real path)
 
-  @Test("loadDatabaseSchema sends 8 catalog queries and attaches columns and estimates")
+  @Test("loadDatabaseSchema sends 9 catalog queries and attaches columns and estimates")
   func workspaceLoadSchema() async throws {
     let schema = "perf_ws_load_test"
     let admin = try await connect()
@@ -351,7 +353,8 @@ struct SchemaLoadPerformanceTests {
       _ = try await admin.executeInternal(
         "CREATE TABLE \(schema).t1 (id int PRIMARY KEY, v text NOT NULL)")
       let one = await load()
-      #expect(one.count == 8)
+      // 8 list queries (triggers included, names only) + 1 bulk columns query
+      #expect(one.count == 9)
       #expect(one.tables.map(\.name) == ["t1"])
       #expect(one.tables.first?.columns.map(\.name) == ["id", "v"])
       #expect(one.tables.first?.columns.map(\.isPrimaryKey) == [true, false])
@@ -362,7 +365,7 @@ struct SchemaLoadPerformanceTests {
           "CREATE TABLE \(schema).t\(index) (id int PRIMARY KEY, v text NOT NULL)")
       }
       let twelve = await load()
-      #expect(twelve.count == 8)
+      #expect(twelve.count == 9)
       #expect(twelve.tables.count == 12)
       for table in twelve.tables {
         #expect(table.columns.map(\.name) == ["id", "v"])

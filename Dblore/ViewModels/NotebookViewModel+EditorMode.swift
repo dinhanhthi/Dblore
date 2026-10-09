@@ -25,6 +25,8 @@ extension NotebookViewModel {
       await refreshDataViewer()
       return
     }
+    // Object source tab: the definition is shown, never run
+    guard !isReadOnlySource else { return }
     let query = getEditorQueryText()
 
     // In Simple Mode, clear results if no executable query on current line

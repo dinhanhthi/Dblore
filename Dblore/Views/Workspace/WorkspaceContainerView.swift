@@ -486,8 +486,13 @@ struct WorkspaceTabContentView: View {
       // can fill the entire available space.
       GeometryReader { geometry in
         ScrollView {
-          EditorModeView(viewModel: viewModel)
-            .frame(height: geometry.size.height)
+          EditorModeView(
+            viewModel: viewModel,
+            objectSource: workspaceManager.tabs.first { $0.id == tabId }?.objectSource,
+            onRetrySource: { workspaceManager.reloadObjectSource(tabId: tabId) },
+            onOpenEditableCopy: { workspaceManager.openEditableCopy(ofSourceTab: tabId) }
+          )
+          .frame(height: geometry.size.height)
         }
         .scrollDisabled(true)
         .scrollContentBackground(.hidden)
@@ -556,6 +561,7 @@ struct WorkspaceTabContentView: View {
     viewModel.databaseViews = workspaceManager.databaseViews
     viewModel.databaseFunctions = workspaceManager.databaseFunctions
     viewModel.databaseProcedures = workspaceManager.databaseProcedures
+    viewModel.databaseTriggers = workspaceManager.databaseTriggers
     viewModel.databaseUsers = workspaceManager.databaseUsers
     viewModel.databaseRoles = workspaceManager.databaseRoles
     viewModel.databaseForeignKeys = workspaceManager.databaseForeignKeys

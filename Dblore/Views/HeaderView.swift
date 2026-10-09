@@ -129,7 +129,10 @@ struct HeaderView: View {
           .menuIndicator(.hidden)
           .linkPointer()
           .help("Show/Hide Results")
-        } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
+          // Object source tabs never run, so they get no Run button.
           // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
           // disabled for the first second, then a click stops the query (after confirmation)
           Button(action: {
@@ -280,8 +283,11 @@ struct HeaderView: View {
           .help("Highlight rows")
         }
 
-        // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right)
-        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right).
+        // Object source tabs have no result pane and no parameters.
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
           Button(action: { viewModel.isEditorSideBySide.toggle() }) {
             Image(
               systemName: viewModel.isEditorSideBySide
@@ -294,7 +300,9 @@ struct HeaderView: View {
         }
 
         // Parameters: named :name values in a .sql editor tab
-        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
           let isParametersShown =
             viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .parameters
           let hasMissingParameters =

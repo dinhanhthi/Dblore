@@ -63,6 +63,7 @@ class NotebookViewModel {
   var databaseViews: [DatabaseView] = []
   var databaseFunctions: [DatabaseFunction] = []
   var databaseProcedures: [DatabaseProcedure] = []
+  var databaseTriggers: [DatabaseTrigger] = []
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
@@ -159,6 +160,10 @@ class NotebookViewModel {
   var editorContent: String = ""  // Content for editor mode
   /// Markdown note shows the WYSIWYG preview instead of the code editor. Session only, never encoded.
   var isMarkdownPreview = false
+  /// Read state of an object source tab's definition. Session only, never encoded.
+  var objectSourceLoad: ObjectSourceLoadState = .idle
+  /// An object source tab: shown read-only and never run
+  var isReadOnlySource: Bool { objectSourceLoad != .idle }
   /// Pulls the preview's latest text into `editorContent` before a save. Set by the markdown view.
   @ObservationIgnored var flushMarkdownPreview: (@MainActor () async -> Void)?
   /// Editor tab parameter values. Session only, never encoded, and edits are not dirty.

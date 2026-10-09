@@ -82,7 +82,7 @@ enum LaunchSessionCapture {
   /// the frontmost window (`orderedIndex`). Welcome stays welcome. A saved workspace stores its
   /// file and bookmarks. An untitled workspace stores the encoded document with the password
   /// cleared. Preview tabs are omitted. Text overlays are the live editor contents of dirty or
-  /// file-less tabs.
+  /// file-less tabs. Object source tabs are omitted too.
   static func session(
     windows: [WindowDescriptor], workspaces: [UUID: WorkspaceManager]
   ) -> LaunchSession {
@@ -204,10 +204,12 @@ enum LaunchSessionCapture {
   }
 
   /// Live notebook cells or SQL editor text. The stored document can be behind the editor.
-  /// Preview tabs are omitted, matching `encodedWorkspaceData()`.
+  /// Preview and object source tabs are omitted, matching `encodedWorkspaceData()`.
   private static func textOverlays(of manager: WorkspaceManager) -> [LaunchTextOverlay] {
     manager.tabs.compactMap { tab in
-      guard !tab.isPreview, tab.isDirty || tab.fileURL == nil else { return nil }
+      guard !tab.isPreview, !tab.isReadOnlySource, tab.isDirty || tab.fileURL == nil else {
+        return nil
+      }
       guard let viewModel = manager.viewModel(for: tab.id) else { return nil }
       switch tab.documentType {
       case .notebook:

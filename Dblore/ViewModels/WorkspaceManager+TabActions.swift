@@ -10,8 +10,10 @@ extension WorkspaceManager {
 
   /// Pin a tab at the end of the pinned zone, or unpin it to the first slot after the zone.
   /// Pinning also keeps a preview tab, so it is persisted and not replaced by the next preview.
+  /// Source tabs are never saved, so they cannot be pinned.
   func setPinned(_ pinned: Bool, id: UUID) {
-    guard let index = tabs.firstIndex(where: { $0.id == id }), tabs[index].isPinned != pinned
+    guard let index = tabs.firstIndex(where: { $0.id == id }), tabs[index].isPinned != pinned,
+      !(pinned && tabs[index].isReadOnlySource)
     else { return }
     var tab = tabs.remove(at: index)
     tab.isPinned = pinned
@@ -64,6 +66,12 @@ extension WorkspaceManager {
       guard !closesAsynchronously(tabId: id) else { continue }
       requestCloseTab(id: id)
     }
+  }
+
+  /// Data viewer and read-only object source tabs have no document to save
+  func canSave(tabId: UUID) -> Bool {
+    guard let tab = tabs.first(where: { $0.id == tabId }) else { return false }
+    return tab.documentType != .dataViewer && !tab.isReadOnlySource
   }
 
   /// Only saved file tabs (notebook, SQL or markdown) have a file to reveal

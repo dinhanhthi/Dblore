@@ -196,4 +196,112 @@ struct DataModelSchemaTests {
     #expect(role.members.count == 3)
     #expect(role.members.contains("alice"))
   }
+
+  // MARK: - DatabaseFunction oid
+
+  @Test("DatabaseFunction overloads sharing a name differ by oid")
+  func databaseFunctionOverloadsDifferByOid() {
+    let first = DatabaseFunction(schema: "public", name: "f", returnType: "int", oid: 101)
+    let second = DatabaseFunction(schema: "public", name: "f", returnType: "int", oid: 102)
+    let sqlite = DatabaseFunction(schema: "main", name: "f", returnType: "int")
+
+    #expect(first.oid == 101)
+    #expect(second.oid == 102)
+    #expect(sqlite.oid == nil)
+  }
+
+  // MARK: - DatabaseTrigger Tests
+
+  @Test("DatabaseTrigger equal values are equal and share an id")
+  func databaseTriggerEquality() {
+    let a = DatabaseTrigger(
+      schema: "public", table: "users", name: "audit", timing: .after,
+      events: [.insert, .update], enabled: true, oid: 42)
+    let b = DatabaseTrigger(
+      schema: "public", table: "users", name: "audit", timing: .after,
+      events: [.insert, .update], enabled: true, oid: 42)
+
+    #expect(a == b)
+    #expect(a.id == b.id)
+    #expect(Set([a, b]).count == 1)
+  }
+
+  @Test("DatabaseTrigger id is keyed by oid when present")
+  func databaseTriggerIdUsesOid() {
+    let a = DatabaseTrigger(
+      schema: "public", table: "users", name: "audit", timing: .before, events: [.delete],
+      enabled: true, oid: 1)
+    let b = DatabaseTrigger(
+      schema: "public", table: "orders", name: "audit", timing: .before, events: [.delete],
+      enabled: true, oid: 2)
+
+    #expect(a.id != b.id)
+  }
+
+  @Test("DatabaseTrigger without oid is keyed by schema, table and name")
+  func databaseTriggerIdWithoutOid() {
+    let a = DatabaseTrigger(
+      schema: "main", table: "users", name: "audit", timing: .insteadOf, events: [.insert],
+      enabled: true)
+    let renamed = DatabaseTrigger(
+      schema: "main", table: "users", name: "audit2", timing: .insteadOf, events: [.insert],
+      enabled: true)
+    let disabled = DatabaseTrigger(
+      schema: "main", table: "users", name: "audit", timing: .insteadOf, events: [.insert],
+      enabled: false)
+
+    #expect(a.oid == nil)
+    #expect(a.id != renamed.id)
+    #expect(a.id == disabled.id)
+  }
+
+  @Test("Trigger timing and events keep their SQL keywords")
+  func triggerKeywords() {
+    #expect(DatabaseTrigger.Timing.insteadOf.rawValue == "INSTEAD OF")
+    #expect(DatabaseTrigger.Event.truncate.rawValue == "TRUNCATE")
+  }
+
+  // MARK: - SchemaIntrospector defaults
+
+  @Test("Default introspector has no triggers and no object definitions")
+  func introspectorDefaultsAreEmpty() async throws {
+    let introspector = MinimalIntrospector()
+    let session = FakeDatabaseSession(
+      capabilities: DatabaseType.postgresql.capabilities, columns: [], rows: [],
+      slowQueries: false)
+    let function = DatabaseFunction(schema: "public", name: "f", returnType: "int", oid: 7)
+    let trigger = DatabaseTrigger(
+      schema: "public", table: "t", name: "tr", timing: .after, events: [.insert],
+      enabled: true, oid: 8)
+
+    #expect(try await introspector.triggers(in: session).isEmpty)
+    #expect(try await introspector.definition(of: .function(function), in: session) == nil)
+    #expect(try await introspector.definition(of: .trigger(trigger), in: session) == nil)
+  }
+}
+
+/// Implements only the required reads so the protocol defaults are exercised.
+private struct MinimalIntrospector: SchemaIntrospector {
+  func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] { [] }
+  func views(in session: any DatabaseSession) async throws -> [DatabaseView] { [] }
+  func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] { [] }
+  func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
+    [:]
+  }
+  func editTable(named name: String, in session: any DatabaseSession) async throws -> EditTable? {
+    nil
+  }
+  func enrichColumnTypes(
+    _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
+  ) async -> [ColumnInfo] { columns }
+  func rowCount(
+    schema: String, table: String, in session: any DatabaseSession
+  ) async throws
+    -> Int
+  { 0 }
+  func primaryKeyColumns(
+    of tableName: String, in session: any DatabaseSession
+  ) async throws
+    -> [String]
+  { [] }
 }

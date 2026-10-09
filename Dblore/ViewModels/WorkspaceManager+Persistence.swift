@@ -138,8 +138,9 @@ extension WorkspaceManager {
 
   /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON
   func encodedWorkspaceData() throws -> Data {
-    // Preview tabs are session-only: an active one hands over to the latest persisted tab
-    let persisted = tabs.filter { !$0.isPreview }
+    // Preview and object source tabs are session-only: an active one hands over to the latest
+    // persisted tab
+    let persisted = tabs.filter { !$0.isPreview && !$0.isReadOnlySource }
     workspace.tabs = persisted.map { tab in
       let state = viewModels[tab.id]?.dataViewer
       return WorkspaceTabReference.from(
@@ -148,9 +149,11 @@ extension WorkspaceManager {
           .init(schema: $0.schema, name: $0.name, orderColumns: $0.orderColumns)
         })
     }
-    let activeIsPreview = tabs.contains { $0.id == activeTabId && $0.isPreview }
+    let activeIsSessionOnly = tabs.contains {
+      $0.id == activeTabId && ($0.isPreview || $0.isReadOnlySource)
+    }
     workspace.activeTabId =
-      activeIsPreview ? persisted.max { $0.lastAccessed < $1.lastAccessed }?.id : activeTabId
+      activeIsSessionOnly ? persisted.max { $0.lastAccessed < $1.lastAccessed }?.id : activeTabId
     workspace.lastOpenedAt = Date()
 
     let encoder = JSONEncoder()
@@ -238,6 +241,26 @@ extension WorkspaceManager {
     return try await connectionManager.fetchProcedures()
   }
 
+  /// Triggers are optional sidebar data: a failing trigger query is logged and the schema still
+  /// loads. A pause, a disconnect, or a cancellation is rethrown so the whole load aborts.
+  private func fetchTriggers() async throws -> [DatabaseTrigger] {
+    do {
+      return try await connectionManager.fetchTriggers()
+    } catch let error as DatabaseError {
+      guard case .queryFailed = error else { throw error }
+      try Task.checkCancellation()
+      await AppLogger.shared.warning(
+        "Failed to load triggers: \(error.localizedDescription)", category: "Schema")
+      return []
+    }
+  }
+
+  /// Source of one function, procedure, or trigger, read on demand (never during schema load).
+  /// The query runs on the connection actor; the result returns on the main actor.
+  func loadDefinition(of object: SchemaObjectRef) async throws -> String? {
+    try await connectionManager.fetchDefinition(of: object)
+  }
+
   private func fetchUsers(supported: Bool) async throws -> [DatabaseUser] {
     guard supported else { return [] }
     return try await connectionManager.fetchUsers()
@@ -270,16 +293,20 @@ extension WorkspaceManager {
         async let viewsTask = connectionManager.fetchViews()
         async let functionsTask = fetchFunctions(supported: capabilities.supportsFunctions)
         async let proceduresTask = fetchProcedures(supported: capabilities.supportsFunctions)
+        async let triggersTask = fetchTriggers()
         async let usersTask = fetchUsers(supported: capabilities.supportsRolesAndUsers)
         async let rolesTask = fetchRoles(supported: capabilities.supportsRolesAndUsers)
         async let foreignKeysTask = connectionManager.fetchForeignKeys()
 
         async let columnsTask = connectionManager.fetchAllColumns()
 
-        var (tables, views, functions, procedures, users, roles, foreignKeys, columnsByRelation) =
+        var (
+          tables, views, functions, procedures, triggers, users, roles, foreignKeys,
+          columnsByRelation
+        ) =
           try await (
-            tablesTask, viewsTask, functionsTask, proceduresTask, usersTask, rolesTask,
-            foreignKeysTask, columnsTask
+            tablesTask, viewsTask, functionsTask, proceduresTask, triggersTask, usersTask,
+            rolesTask, foreignKeysTask, columnsTask
           )
 
         // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
@@ -305,6 +332,7 @@ extension WorkspaceManager {
         databaseViews = views
         databaseFunctions = functions
         databaseProcedures = procedures
+        databaseTriggers = triggers
         databaseUsers = users
         databaseRoles = roles
         databaseForeignKeys = foreignKeys

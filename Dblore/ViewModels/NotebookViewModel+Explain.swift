@@ -15,7 +15,8 @@ extension NotebookViewModel {
   func explainSelectedStatement(analyze: Bool) async {
     if analyze, !canExplainAnalyze { return }
     if viewMode == .editor {
-      guard dataViewer == nil, let text = getEditorQueryText(), !text.isEmpty else { return }
+      guard dataViewer == nil, !isReadOnlySource, let text = getEditorQueryText(), !text.isEmpty
+      else { return }
       await explain(statement: text, analyze: analyze, buffers: analyze)
       return
     }

@@ -72,6 +72,22 @@ extension DatabaseConnectionManager {
     }
   }
 
+  // MARK: - Triggers
+
+  /// Fetch all triggers (names only; the source is read with `fetchDefinition(of:)`)
+  func fetchTriggers() async throws -> [DatabaseTrigger] {
+    try await fetchCatalog("triggers") { session in
+      try await self.introspector.triggers(in: session)
+    }
+  }
+
+  /// Fetch the source of one function, procedure, or trigger (nil when the engine has none)
+  func fetchDefinition(of object: SchemaObjectRef) async throws -> String? {
+    try await fetchCatalog("definition") { session in
+      try await self.introspector.definition(of: object, in: session)
+    }
+  }
+
   // MARK: - Procedures
 
   /// Fetch all procedures from the database

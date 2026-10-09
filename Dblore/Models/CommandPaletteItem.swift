@@ -13,6 +13,8 @@ nonisolated enum CommandPaletteItem: Equatable, Identifiable, Sendable {
   case table(schema: String, name: String)
   case view(schema: String, name: String)
   case function(schema: String, name: String, arguments: String)
+  /// View Source: a function, procedure or trigger opened read-only
+  case source(ObjectSourceRef)
   case tab(id: UUID, title: String)
   case favorite(id: UUID, name: String, sql: String)
   case action(id: String, title: String)
@@ -26,6 +28,8 @@ nonisolated enum CommandPaletteItem: Equatable, Identifiable, Sendable {
       "view:\(schema).\(name)"
     case .function(let schema, let name, let arguments):
       "function:\(schema).\(name)(\(arguments))"
+    case .source(let ref):
+      "source:\(ref.key)"
     case .tab(let id, _):
       "tab:\(id.uuidString)"
     case .favorite(let id, _, _):
@@ -44,6 +48,8 @@ nonisolated enum CommandPaletteItem: Equatable, Identifiable, Sendable {
       name
     case .function(_, let name, _):
       name
+    case .source(let ref):
+      ref.title
     case .tab(_, let title), .action(_, let title):
       title
     case .favorite(_, let name, _):
@@ -63,6 +69,10 @@ nonisolated enum CommandPaletteItem: Equatable, Identifiable, Sendable {
       if !arguments.isEmpty {
         texts.append("\(name)(\(arguments))")
       }
+      return texts
+    case .source(let ref):
+      var texts = [ref.name, ref.schema, "\(ref.schema).\(ref.name)", ref.title, "View Source"]
+      if let table = ref.table { texts.append(table) }
       return texts
     case .tab(_, let title), .action(_, let title):
       return [title]

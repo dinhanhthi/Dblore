@@ -388,6 +388,7 @@ struct WorkspaceDraggableTabItem: View {
         Label(
           tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: tab.isPinned ? "pin.slash" : "pin")
       }
+      .disabled(!tab.isPinned && tab.isReadOnlySource)
       Button(action: onClose) {
         Label("Close Tab", systemImage: "xmark")
       }

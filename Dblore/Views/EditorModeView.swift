@@ -24,6 +24,12 @@ struct EditorModeView: View {
   /// Plan / Raw for an EXPLAIN result. A new result reads as Plan.
   @State private var explainDisplayMode: ExplainDisplayMode = .plan
   @State private var explainDisplayModeStamp: Date?
+  /// Object source tab: the routine or trigger shown read-only. Nil on other tabs.
+  var objectSource: ObjectSourceRef?
+  /// Read the object source again (Retry after a failed read, or Refresh)
+  var onRetrySource: (() -> Void)?
+  /// Open the loaded source in a new untitled SQL tab
+  var onOpenEditableCopy: (() -> Void)?
 
   /// Width of the line number gutter: the widest line number in the gutter face (one point
   /// under the editor font) plus 8pt padding on each side; at least 2 digits wide
@@ -82,6 +88,42 @@ struct EditorModeView: View {
   // MARK: - Body
 
   var body: some View {
+    if viewModel.isReadOnlySource {
+      readOnlySourceBody
+    } else {
+      editorAndResultBody
+    }
+  }
+
+  /// Object source tab: banner over a read-only editor. No result pane, nothing runs.
+  private var readOnlySourceBody: some View {
+    VStack(spacing: 0) {
+      ObjectSourceBanner(
+        ref: objectSource,
+        state: viewModel.objectSourceLoad,
+        source: viewModel.editorContent,
+        onOpenEditableCopy: onOpenEditableCopy,
+        onRefresh: onRetrySource
+      )
+      Divider()
+      switch viewModel.objectSourceLoad {
+      case .loading:
+        ObjectSourceStatusView(message: "Loading source…", isLoading: true, onRetry: nil)
+      case .failed(let message):
+        ObjectSourceStatusView(message: message, isLoading: false, onRetry: onRetrySource)
+      case .idle, .loaded, .unavailable:
+        SizeReader { containerSize in
+          editorSection(
+            width: containerSize.width, height: containerSize.height, isReadOnly: true)
+        }
+      }
+    }
+    .onChange(of: textViewRef) { _, newValue in
+      viewModel.editorTextView = newValue
+    }
+  }
+
+  private var editorAndResultBody: some View {
     SizeReader { containerSize in
       let totalLength = max(
         viewModel.isEditorSideBySide ? containerSize.width : containerSize.height, 1)
@@ -139,7 +181,9 @@ struct EditorModeView: View {
   // MARK: - Editor Section
 
   @ViewBuilder
-  private func editorSection(width: CGFloat, height editorHeight: CGFloat) -> some View {
+  private func editorSection(
+    width: CGFloat, height editorHeight: CGFloat, isReadOnly: Bool = false
+  ) -> some View {
     ZStack(alignment: .bottomTrailing) {
       HStack(spacing: 0) {
         // Line numbers gutter (conditionally shown based on settings)
@@ -161,18 +205,22 @@ struct EditorModeView: View {
           onFocus: { isFocused = true },
           onTextChanged: { viewModel.onDocumentChanged?() },
           textViewRef: $textViewRef,
-          autocompleteProvider: viewModel.autocompleteProvider,
+          autocompleteProvider: isReadOnly ? nil : viewModel.autocompleteProvider,
           viewModelId: viewModel.id,
           maxHeight: editorHeight - Spacing.sm * 2,  // Account for padding
           isEditorMode: true,  // Remove border and focus effects
           wordWrapEnabled: appSettings.wordWrapEnabled,
-          dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql
+          dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql,
+          isEditable: !isReadOnly
         )
       }
 
-      // Floating format button and syntax highlighting toggle
+      // Floating format button and syntax highlighting toggle. Format rewrites the text, so a
+      // read-only source has only the toggle.
       HStack(spacing: Spacing.xs) {
-        FormatSQLButton(textView: textViewRef)
+        if !isReadOnly {
+          FormatSQLButton(textView: textViewRef)
+        }
         SyntaxHighlightToggleButton()
       }
       .padding(.trailing, Spacing.lg)
@@ -264,6 +312,126 @@ struct EditorModeView: View {
         .foregroundColor(.foregroundMuted)
       Spacer()
     }
+  }
+}
+
+// MARK: - Object Source Banner
+
+/// Slim bar over a read-only routine or trigger source: kind, qualified name, a Read-only
+/// badge, and the copy actions. The actions wait for the source to load.
+private struct ObjectSourceBanner: View {
+  let ref: ObjectSourceRef?
+  let state: ObjectSourceLoadState
+  let source: String
+  let onOpenEditableCopy: (() -> Void)?
+  let onRefresh: (() -> Void)?
+
+  @State private var isCopied = false
+
+  var body: some View {
+    HStack(spacing: Spacing.sm) {
+      if let ref {
+        Image(systemName: ref.kind.iconName)
+          .font(.system(size: 12))
+          .foregroundColor(.accent)
+        Text(ref.kind.displayName)
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+        Text(ref.qualifiedName)
+          .font(.monoMedium)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .help(ref.qualifiedName)
+      }
+
+      readOnlyBadge
+
+      Spacer(minLength: Spacing.sm)
+
+      Button(action: { onRefresh?() }) {
+        Label("Refresh", systemImage: "arrow.clockwise")
+      }
+      .buttonStyle(SecondaryButtonStyle(vPadding: Spacing.xs))
+      .linkPointer()
+      .disabled((state != .loaded && state != .unavailable) || onRefresh == nil)
+      .help("Read the source again from the database")
+
+      Button(action: { onOpenEditableCopy?() }) {
+        Label("Open as editable copy", systemImage: "square.and.pencil")
+      }
+      .buttonStyle(SecondaryButtonStyle(vPadding: Spacing.xs))
+      .linkPointer()
+      .disabled(state != .loaded || onOpenEditableCopy == nil)
+      .help("Open this source in a new untitled SQL tab")
+
+      Button(action: copySource) {
+        Label(isCopied ? "Copied" : "Copy", systemImage: isCopied ? "checkmark" : "doc.on.doc")
+          .contentTransition(.symbolEffect(.replace))
+      }
+      .buttonStyle(SecondaryButtonStyle(vPadding: Spacing.xs))
+      .linkPointer()
+      .disabled(state != .loaded)
+      .help("Copy the source")
+    }
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, Spacing.xs)
+    .frame(minHeight: ComponentSize.compactHeaderHeight)
+  }
+
+  private var readOnlyBadge: some View {
+    HStack(spacing: Spacing.xxs) {
+      Image(systemName: "lock")
+        .font(.system(size: 9))
+      Text("Read-only")
+    }
+    .font(.small)
+    .foregroundColor(.foregroundMuted)
+    .padding(.horizontal, Spacing.sm)
+    .padding(.vertical, Spacing.xxs)
+    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .help("Source of a database object. Open an editable copy to change or run it.")
+    .accessibilityElement(children: .combine)
+  }
+
+  private func copySource() {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(source, forType: .string)
+    isCopied = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+      isCopied = false
+    }
+  }
+}
+
+/// Loading spinner, or a failed read's message with Retry, in place of the source editor
+private struct ObjectSourceStatusView: View {
+  let message: String
+  let isLoading: Bool
+  let onRetry: (() -> Void)?
+
+  var body: some View {
+    VStack(spacing: Spacing.md) {
+      if isLoading {
+        ProgressView()
+          .controlSize(.small)
+          .tint(.accent)
+      }
+      Text(message)
+        .font(.labelText)
+        .foregroundColor(.foregroundMuted)
+        .multilineTextAlignment(.center)
+        .textSelection(.enabled)
+      if let onRetry {
+        Button("Retry", action: onRetry)
+          .buttonStyle(SecondaryButtonStyle())
+          .linkPointer()
+      }
+    }
+    .padding(Spacing.lg)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.inputBackground)
   }
 }
 

@@ -13,6 +13,8 @@ nonisolated struct CommandPaletteSnapshot: Equatable, Sendable {
   var tables: [Relation] = []
   var views: [Relation] = []
   var functions: [Function] = []
+  /// Functions, procedures and triggers whose source View Source opens
+  var sources: [ObjectSourceRef] = []
   var tabs: [Tab] = []
   var favorites: [Favorite] = []
   var actions: [Action] = []
@@ -46,11 +48,12 @@ nonisolated struct CommandPaletteSnapshot: Equatable, Sendable {
     var title: String
   }
 
-  /// Tables, views, functions, tabs, favorites, then actions. History is not included.
+  /// Tables, views, functions, sources, tabs, favorites, then actions. History is not included.
   var items: [CommandPaletteItem] {
     var items: [CommandPaletteItem] = []
     items.reserveCapacity(
-      tables.count + views.count + functions.count + tabs.count + favorites.count + actions.count)
+      tables.count + views.count + functions.count + sources.count + tabs.count + favorites.count
+        + actions.count)
     for table in tables {
       items.append(.table(schema: table.schema, name: table.name))
     }
@@ -60,6 +63,9 @@ nonisolated struct CommandPaletteSnapshot: Equatable, Sendable {
     for function in functions {
       items.append(
         .function(schema: function.schema, name: function.name, arguments: function.arguments))
+    }
+    for source in sources {
+      items.append(.source(source))
     }
     for tab in tabs {
       items.append(.tab(id: tab.id, title: tab.title))

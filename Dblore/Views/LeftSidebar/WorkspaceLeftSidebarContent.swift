@@ -179,6 +179,13 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
+  /// A keyword may hit the trigger name or its table
+  private var filteredTriggers: [DatabaseTrigger] {
+    workspaceManager.databaseTriggers.filter {
+      SidebarEntityFilter.matchesAll("\($0.name) \($0.table)", keywords: publicKeywords)
+    }
+  }
+
   private var filteredUsers: [DatabaseUser] {
     workspaceManager.databaseUsers.filter {
       SidebarEntityFilter.matchesAll($0.name, keywords: securityKeywords)
@@ -200,6 +207,7 @@ struct WorkspaceLeftSidebarContent: View {
         && filteredViews.isEmpty
         && filteredFunctions.isEmpty
         && filteredProcedures.isEmpty
+        && filteredTriggers.isEmpty
       {
         noMatchesState
       } else {
@@ -286,7 +294,8 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: function.isExpanded,
                     onToggle: {
                       workspaceManager.toggleFunctionExpansion(functionId: function.id)
-                    }
+                    },
+                    onViewSource: { workspaceManager.openObjectSource(.function(function)) }
                   )
                 }
               }
@@ -306,11 +315,29 @@ struct WorkspaceLeftSidebarContent: View {
                     isExpanded: procedure.isExpanded,
                     onToggle: {
                       workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
-                    }
+                    },
+                    onViewSource: { workspaceManager.openObjectSource(.procedure(procedure)) }
                   )
                 }
               }
               .id(publicKeywords.isEmpty ? "procedures" : "procedures-filtered")
+            }
+
+            if publicKeywords.isEmpty || !filteredTriggers.isEmpty {
+              EntitySection(
+                title: "Triggers",
+                count: filteredTriggers.count,
+                icon: ObjectSourceRef.Kind.trigger.iconName,
+                isExpanded: true
+              ) {
+                ForEach(filteredTriggers) { trigger in
+                  TriggerRowView(
+                    trigger: trigger,
+                    onViewSource: { workspaceManager.openObjectSource(.trigger(trigger)) }
+                  )
+                }
+              }
+              .id(publicKeywords.isEmpty ? "triggers" : "triggers-filtered")
             }
           }
           .padding(.vertical, Spacing.sm)

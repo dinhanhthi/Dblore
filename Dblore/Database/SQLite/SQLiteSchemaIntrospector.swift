@@ -1,7 +1,7 @@
 // SQLiteSchemaIntrospector.swift
 // SQLite catalog reads for one open session. Row estimates come from sqlite_stat1 when that
 // table exists. Schema load never counts live rows and never loads an extension.
-// Users, roles, functions, and procedures stay empty.
+// Users, roles, functions, and procedures stay empty. Triggers come from sqlite_schema.
 
 import Foundation
 
@@ -39,6 +39,45 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
   func functions(in _: any DatabaseSession) async throws -> [DatabaseFunction] { [] }
 
   func procedures(in _: any DatabaseSession) async throws -> [DatabaseProcedure] { [] }
+
+  /// Triggers of every attached schema. Timing and event come from the CREATE TRIGGER header.
+  func triggers(in session: any DatabaseSession) async throws -> [DatabaseTrigger] {
+    var triggers: [DatabaseTrigger] = []
+    for schema in try await schemas(in: session) {
+      let quoted = try quote(schema)
+      let sql = """
+        SELECT name, tbl_name, sql FROM \(quoted).sqlite_schema
+        WHERE type = 'trigger'
+        ORDER BY name
+        """
+      for row in try await rows(in: session, sql: sql) {
+        guard let name = SQLiteCatalogValue.string(row, 0),
+          let table = SQLiteCatalogValue.string(row, 1)
+        else { continue }
+        let header = Self.triggerHeader(SQLiteCatalogValue.string(row, 2) ?? "")
+        triggers.append(
+          DatabaseTrigger(
+            schema: schema, table: table, name: name, timing: header.timing,
+            events: header.events, enabled: true))
+      }
+    }
+    return triggers
+  }
+
+  /// The stored CREATE TRIGGER text. Routines do not exist in SQLite.
+  func definition(
+    of object: SchemaObjectRef, in session: any DatabaseSession
+  ) async throws -> String? {
+    guard case .trigger(let trigger) = object else { return nil }
+    let found = try await rows(
+      in: session,
+      sql: """
+        SELECT sql FROM \(try quote(trigger.schema)).sqlite_schema
+        WHERE type = 'trigger' AND name = ?
+        """,
+      binds: [.text(trigger.name)])
+    return found.first.flatMap { SQLiteCatalogValue.string($0, 0) }
+  }
 
   func users(in _: any DatabaseSession) async throws -> [DatabaseUser] { [] }
 
@@ -119,6 +158,63 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
     _ columns: [ColumnInfo], query _: String, in _: any DatabaseSession
   ) async -> [ColumnInfo] {
     columns
+  }
+
+  // MARK: - Triggers
+
+  /// Timing from the first words after the trigger name (BEFORE | AFTER | INSTEAD OF), then the
+  /// event up to `OF` / `ON`. The body and `UPDATE OF` columns are never read, so their words do
+  /// not count. No timing written means BEFORE.
+  private static func triggerHeader(
+    _ sql: String
+  ) -> (timing: DatabaseTrigger.Timing, events: [DatabaseTrigger.Event]) {
+    var words = triggerTokens(sql)
+    if let index = words.firstIndex(of: "TRIGGER") {
+      words.removeFirst(index + 1)
+    }
+    if words.starts(with: ["IF", "NOT", "EXISTS"]) { words.removeFirst(3) }
+    if !words.isEmpty { words.removeFirst() }  // name
+    if words.first == ".", words.count >= 2 { words.removeFirst(2) }  // schema.name
+    var timing = DatabaseTrigger.Timing.before
+    switch words.first {
+    case "BEFORE": words.removeFirst()
+    case "AFTER":
+      timing = .after
+      words.removeFirst()
+    case "INSTEAD":
+      timing = .insteadOf
+      words.removeFirst(min(2, words.count))  // INSTEAD OF
+    default: break
+    }
+    // The event, up to `UPDATE OF <columns>` or `ON`
+    let header = words.prefix { $0 != "OF" && $0 != "ON" }
+    let events: [DatabaseTrigger.Event] = [.insert, .update, .delete].filter {
+      header.contains($0.rawValue)
+    }
+    return (timing, events)
+  }
+
+  /// Uppercased words and `.`; quoted names are one token, kept verbatim.
+  private static func triggerTokens(_ sql: String) -> [String] {
+    var tokens: [String] = []
+    var characters = sql[...]
+    let closing: [Character: Character] = ["\"": "\"", "`": "`", "[": "]", "'": "'"]
+    while let first = characters.first {
+      if let close = closing[first] {
+        let rest = characters.dropFirst()
+        let end = rest.firstIndex(of: close) ?? rest.endIndex
+        tokens.append(String(characters[..<end]) + String(close))
+        characters = end < rest.endIndex ? rest[rest.index(after: end)...] : rest[end...]
+      } else if first.isLetter || first.isNumber || first == "_" || first == "$" {
+        let word = characters.prefix { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }
+        tokens.append(word.uppercased())
+        characters = characters.dropFirst(word.count)
+      } else {
+        if first == "." { tokens.append(".") }
+        characters = characters.dropFirst()
+      }
+    }
+    return tokens
   }
 
   // MARK: - Relations
