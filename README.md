@@ -47,6 +47,16 @@ model. Supports PostgreSQL, with SQLite in beta; more engines (such as MongoDB) 
   floating, draggable bubble at the bottom of the window, or pick the default in
   Settings > AI > Panel
 
+## Plugins
+
+Optional engines that are not bundled with the app. Install them from
+**Settings > Plugins**: Dblore downloads a signed, notarized library, checks its SHA-256
+before every load, and **Remove** deletes it again.
+
+| Plugin | Version | What it adds |
+| ------ | ------- | ------------ |
+| **DuckDB** | 1.5.6 | Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema and query Parquet or CSV files |
+
 ## Install
 
 - **Download the app:** get the latest signed &amp; notarized DMG from the
