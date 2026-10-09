@@ -166,6 +166,15 @@ struct FooterView: View {
     }
   }
 
+  /// Footer label: "Connected to <name>" when connected to a named connection, the short state
+  /// otherwise. The name is folded onto one line so a line break cannot stretch the footer.
+  static func footerStatusText(for state: ConnectionState, config: ConnectionConfig?) -> String {
+    let status = connectionStatusText(for: state, config: config)
+    guard state.isConnected, let config else { return status }
+    let name = config.name.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return name.isEmpty ? status : "Connected to \(name)"
+  }
+
   /// Tooltip for the "No SSL" badge, or nil to hide it: only a live network connection whose
   /// SSL mode may fall back to plain text. File engines have no SSL to report.
   static func noSSLTooltip(for config: ConnectionConfig?, isConnected: Bool) -> String? {
@@ -202,7 +211,7 @@ struct FooterView: View {
 
   @ViewBuilder
   private var connectionStatusLabel: some View {
-    let label = Text(Self.connectionStatusText(for: connectionState, config: connectionConfig))
+    let label = Text(Self.footerStatusText(for: connectionState, config: connectionConfig))
       .font(.small)
       .foregroundColor(.foregroundMuted)
       .lineLimit(1)
