@@ -142,3 +142,34 @@ struct DesignSystemContrastTests {
     }
   }
 }
+
+@Suite("Cached AppKit colors follow the appearance")
+@MainActor
+struct CachedAppKitColorTests {
+  private func components(_ color: NSColor, _ name: NSAppearance.Name) -> [CGFloat] {
+    var result: [CGFloat] = []
+    NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
+      let rgb = color.usingColorSpace(.sRGB)!
+      result = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent]
+    }
+    return result
+  }
+
+  @Test("Result grid colors cached in statics resolve per appearance")
+  func gridStatics() {
+    let colors: [(String, NSColor)] = [
+      ("alternate", ResultGridRowView.alternateColor),
+      ("inserted", ResultGridRowView.insertedColor),
+      ("deleted", ResultGridRowView.deletedColor),
+      ("edited", ResultGridRowView.editedCellColor),
+      ("text", ResultGridCoordinator.textColor),
+      ("null", ResultGridCoordinator.nullTextColor),
+      ("rowNumberText", ResultGridRowNumberCell.textColor),
+      ("rowNumberBackground", ResultGridRowNumberCell.backgroundColor),
+      ("rowNumberSeparator", ResultGridRowNumberCell.separatorColor),
+    ]
+    for (label, color) in colors {
+      #expect(components(color, .aqua) != components(color, .darkAqua), "\(label) is frozen")
+    }
+  }
+}
