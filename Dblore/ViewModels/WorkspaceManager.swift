@@ -48,8 +48,14 @@ class WorkspaceManager: Identifiable {
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
+  var pendingWeakeningSSHCredential: SSHStoredCredential?
+  /// Why the connect after the Safe Mode unlock failed, shown inline in the still-open form.
+  /// Cleared by the next connect attempt and when the form goes away.
+  var lastUnlockConnectError: String?
   /// Unremembered certificate for the current workspace connection and its banner Reconnect.
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
+  /// Unremembered SSH secret for the current workspace connection and its banner Reconnect.
+  var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
   /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
@@ -210,7 +216,7 @@ class WorkspaceManager: Identifiable {
 
   init(
     workspace: Workspace, restoreTabs: Bool = true,
-    connectionManager: DatabaseConnectionManager = DatabaseConnectionManager()
+    connectionManager: DatabaseConnectionManager = .withTrustPrompt()
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
@@ -355,7 +361,9 @@ class WorkspaceManager: Identifiable {
     config: ConnectionConfig, isAutoConnect: Bool = false
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
+    let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     activeUnrememberedCertificate = nil
+    activeUnrememberedSSHCredential = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     if !isAutoConnect { await supersedeAutoConnect() }
@@ -374,6 +382,7 @@ class WorkspaceManager: Identifiable {
       workspace.connectionConfig = config
       if !config.rememberConnection {
         activeUnrememberedCertificate = suppliedCertificate
+        activeUnrememberedSSHCredential = suppliedSSHCredential
       }
       workspace.connectionKeychainKey =
         "\(config.host):\(config.port):\(config.database):\(config.username)"
@@ -1004,6 +1013,8 @@ class WorkspaceManager: Identifiable {
   func releaseFileAccess() {
     activeUnrememberedCertificate = nil
     pendingWeakeningCertificate = nil
+    activeUnrememberedSSHCredential = nil
+    pendingWeakeningSSHCredential = nil
     for token in tabAccess.values { token.release() }
     tabAccess = [:]
     workspaceAccess?.release()

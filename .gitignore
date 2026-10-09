@@ -79,6 +79,9 @@ docker/**/data/
 docker/**/backups/
 *.sql.backup
 
+# DuckDB plugin dev artifacts (scripts/release-plugin.sh --install-dev)
+.plugin-dev/
+
 # macOS
 .DS_Store
 docs/CLAUDE.md

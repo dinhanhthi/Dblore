@@ -232,8 +232,13 @@ struct AppWelcomeView: View {
   }
 
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
-    let tempManager = DatabaseConnectionManager()
+    let tempManager = Self.makeTestConnectionManager()
     return try await tempManager.testConnection(config: config)
+  }
+
+  /// Test Connection before a workspace exists. Asks through the app-wide trust sheet.
+  static func makeTestConnectionManager() -> DatabaseConnectionManager {
+    .withTrustPrompt()
   }
 
   private func connectAndCreateWorkspaceForWelcome(_ config: ConnectionConfig) async throws {

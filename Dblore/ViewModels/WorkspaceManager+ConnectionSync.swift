@@ -119,6 +119,7 @@ extension WorkspaceManager {
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async throws {
+    lastUnlockConnectError = nil
     if !isAutoConnect { await supersedeAutoConnect() }
     guard
       await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
@@ -131,27 +132,37 @@ extension WorkspaceManager {
     {
       pendingWeakeningConnect = config
       pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
+      let pendingSSH = SSHCredentialStoreFactory.currentCredential(for: config)
+      pendingWeakeningSSHCredential = pendingSSH?.credential
       throw WorkspaceConnectError.unlockRequired
     }
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
+    pendingWeakeningSSHCredential = nil
     try await connectWithoutUnlockCheck(config: config, isAutoConnect: isAutoConnect)
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.
-  /// The config stays held while connecting and after a failure (a retry needs a new unlock);
-  /// it is cleared on success.
+  /// The config stays held while connecting; it is cleared on success and on failure (a retry
+  /// needs a new unlock).
   func completePendingWeakeningConnect() async throws {
     guard let config = pendingWeakeningConnect else { return }
     let scopedMaterial = pendingWeakeningCertificate.map {
       ClientCertificateStoreFactory.ScopedMaterial(
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
+    let scopedSSH = SSHCredentialStoreFactory.scoped(pendingWeakeningSSHCredential, for: config)
     pendingWeakeningCertificate = nil
-    defer { scopedMaterial?.clear() }
+    pendingWeakeningSSHCredential = nil
+    defer {
+      scopedMaterial?.clear()
+      scopedSSH?.clear()
+    }
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
-        try await connectWithoutUnlockCheck(config: config)
+        try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+          try await connectWithoutUnlockCheck(config: config)
+        }
       }
     } catch {
       pendingWeakeningConnect = nil
@@ -160,10 +171,27 @@ extension WorkspaceManager {
     pendingWeakeningConnect = nil
   }
 
+  /// The unlock sheet's connect. A failure closes the sheet; the form that started it stays
+  /// open and shows `lastUnlockConnectError`. A changed SSH host key also shows the blocking
+  /// alert. True once connected.
+  func completePendingWeakeningConnectReportingFailure(
+    coordinator: SSHHostKeyTrustCoordinator = .shared
+  ) async -> Bool {
+    lastUnlockConnectError = nil
+    do {
+      try await completePendingWeakeningConnect()
+      return true
+    } catch {
+      lastUnlockConnectError = coordinator.report(error)
+      return false
+    }
+  }
+
   /// Unlock cancelled: nothing connects (the form keeps its values).
   func cancelPendingWeakeningConnect() {
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
+    pendingWeakeningSSHCredential = nil
   }
 
   /// Connect/disconnect: results shown in every tab came from the previous connection, so none

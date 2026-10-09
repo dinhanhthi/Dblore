@@ -21,10 +21,15 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let config: ConnectionConfig
   let closeEvents: AsyncStream<SessionCloseReason>
+  /// Builds the SSH tunnel when `config.sshTunnel` is set.
+  let tunnelFactory: any SSHTunnelFactory
+  /// Decides whether the bastion's host key is trusted.
+  let hostKeyValidator: any SSHHostKeyValidating
 
   private let lock = NSLock()
   private var connectionStorage: PostgresConnection?
   private var groupStorage: EventLoopGroup?
+  private var tunnelStorage: (any SSHTunneling)?
   private var watchStorage: ConnectionCloseWatch?
   private var didEmitClose = false
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
@@ -33,8 +38,14 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   // 1s, 2s, 4s in nanoseconds
   private static let retryDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000]
 
-  init(config: ConnectionConfig) {
+  init(
+    config: ConnectionConfig,
+    tunnelFactory: any SSHTunnelFactory = LiveSSHTunnelFactory(),
+    hostKeyValidator: any SSHHostKeyValidating = RejectUnknownSSHHostKeys()
+  ) {
     self.config = config
+    self.tunnelFactory = tunnelFactory
+    self.hostKeyValidator = hostKeyValidator
     capabilities = config.databaseType.capabilities
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
@@ -60,6 +71,10 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// and does not publish anything to the actor. Throws the same `DatabaseError.connectionFailed`
   /// values `connect` used to throw for transport failures.
   func open() async throws {
+    if config.sshTunnel != nil {
+      try await openThroughTunnel()
+      return
+    }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     setGroup(group)
 
@@ -100,6 +115,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// Test connection without storing it on the actor. Same probe as before: real connect,
   /// `SELECT 1 as test`, then close. Connect and the test query share one timeout.
   func probe() async throws -> Bool {
+    if config.sshTunnel != nil {
+      return try await probeThroughTunnel()
+    }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
     let tlsConfig: PostgresConnection.Configuration.TLS
@@ -114,7 +132,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
     do {
       try await withTimeout(of: .seconds(config.timeoutSeconds)) {
-        try await self.probeConnectAndQuery(group: group, postgresConfig: postgresConfig)
+        try await self.probeConnectAndQuery {
+          try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+        }
       }
       return true
     } catch is TimeoutError {
@@ -133,13 +153,10 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// Connect, run `SELECT 1 as test`, and close. `withTimeout` waits until this task finishes.
   /// PostgresNIO writes the query with `promise: nil`, so a closed channel never completes that
   /// future and cancelling the wait does not either. Resume on cancel and leave the query running.
-  private func probeConnectAndQuery(
-    group: MultiThreadedEventLoopGroup,
-    postgresConfig: PostgresConnection.Configuration
-  ) async throws {
+  func probeConnectAndQuery(_ body: @escaping @Sendable () async throws -> Void) async throws {
     let gate = ProbeCancelGate<Void>()
     let work = Task {
-      try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+      try await body()
     }
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
@@ -161,6 +178,13 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   ) async throws {
     let conn = try await attemptConnection(
       group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
+    try await Self.runTestQuery(on: conn)
+    try await conn.close()
+    try await group.shutdownGracefully()
+  }
+
+  /// `SELECT 1 as test` on `conn`. Closes `conn` before rethrowing a failure.
+  static func runTestQuery(on conn: PostgresConnection) async throws {
     do {
       let testQuery = PostgresQuery(unsafeSQL: "SELECT 1 as test")
       let stream = try await conn.query(testQuery, logger: Logger(label: "dblore.testquery"))
@@ -177,22 +201,18 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       try? await conn.close()
       throw error
     }
-    try await conn.close()
-    try await group.shutdownGracefully()
   }
 
-  /// Close the socket and the event-loop group. Yields `.closedByApp` when this session had
-  /// not already reported a close.
+  /// Close the socket, the SSH tunnel (if any) and the event-loop group, in that order.
+  /// Yields `.closedByApp` when this session had not already reported a close.
   func close() async {
     emit(.closedByApp)
-    let (conn, group) = takeResources()
-    try? await conn?.close()
-    try? await group?.shutdownGracefully()
+    await takeResources().close(includingConnection: true)
   }
 
-  /// Drop the socket and group without closing them. The actor closes or shuts them down.
+  /// Drop the socket, tunnel and group without closing them. The actor closes them.
   /// Yields `.closedByApp` so a later socket close is not reported as a loss.
-  func detach() -> (connection: PostgresConnection?, group: EventLoopGroup?) {
+  func detach() -> DetachedPostgresSession {
     emit(.closedByApp)
     return takeResources()
   }
@@ -382,34 +402,45 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private func attemptConnection(
     group: EventLoopGroup,
     config: PostgresConnection.Configuration,
+    timeoutSeconds: Int
+  ) async throws -> PostgresConnection {
+    try await attemptConnection(timeoutSeconds: timeoutSeconds) {
+      try await PostgresConnection.connect(
+        on: group.next(),
+        configuration: config,
+        id: 1,
+        logger: Logger(label: "dblore.connection")
+      )
+    }
+  }
+
+  /// Runs `connect` with a timeout per attempt and retries. An `SSHTunnelError` (the tunnel
+  /// itself failed) is not retried.
+  func attemptConnection(
     timeoutSeconds: Int,
-    attempt: Int = 0
+    attempt: Int = 0,
+    connect: @escaping @Sendable () async throws -> PostgresConnection
   ) async throws -> PostgresConnection {
     do {
       let timeoutDuration = Duration.seconds(timeoutSeconds)
       let conn = try await withTimeout(of: timeoutDuration) {
-        try await PostgresConnection.connect(
-          on: group.next(),
-          configuration: config,
-          id: 1,
-          logger: Logger(label: "dblore.connection")
-        )
+        try await connect()
       }
       return conn
     } catch is TimeoutError {
       throw DatabaseError.connectionFailed("Connection timeout after \(timeoutSeconds) seconds")
     } catch {
-      if attempt >= Self.maxRetries {
+      if attempt >= Self.maxRetries || error is SSHTunnelError {
         throw error
       }
       let delay = Self.retryDelays[min(attempt, Self.retryDelays.count - 1)]
       try await Task.sleep(nanoseconds: delay)
       return try await attemptConnection(
-        group: group, config: config, timeoutSeconds: timeoutSeconds, attempt: attempt + 1)
+        timeoutSeconds: timeoutSeconds, attempt: attempt + 1, connect: connect)
     }
   }
 
-  private static func postgresConfiguration(
+  static func postgresConfiguration(
     _ config: ConnectionConfig, tls: PostgresConnection.Configuration.TLS
   ) -> PostgresConnection.Configuration {
     PostgresConnection.Configuration(
@@ -422,7 +453,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     )
   }
 
-  private func clientCertificateMaterial() throws -> ClientCertificateMaterial? {
+  func clientCertificateMaterial() throws -> ClientCertificateMaterial? {
     guard config.clientCertificate != nil else { return nil }
     guard
       config.sslMode == .require || config.sslMode == .verifyCa
@@ -530,6 +561,21 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Publish a connection that runs through `tunnel`. The close watches are registered before
+  /// the tunnel is stored, so nothing can close the tunnel (and shut its event loop down)
+  /// before they are in place: a dropped tunnel closes the channel and reports a loss.
+  func setConnected(_ connection: PostgresConnection, tunnel: any SSHTunneling) {
+    let watch = ConnectionCloseWatch(closeFuture: connection.closeFuture)
+    connection.closeFuture.whenComplete { [weak self] _ in
+      self?.emit(.connectionLost)
+    }
+    lock.lock()
+    connectionStorage = connection
+    watchStorage = watch
+    tunnelStorage = tunnel
+    lock.unlock()
+  }
+
   /// One resume of a probe continuation. A result that wins the race with cancel is kept
   /// until `start`, so neither side resumes twice.
   private final class ProbeCancelGate<T: Sendable>: @unchecked Sendable {
@@ -601,11 +647,13 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
-  private func takeResources() -> (connection: PostgresConnection?, group: EventLoopGroup?) {
+  private func takeResources() -> DetachedPostgresSession {
     lock.lock()
-    let forgotten = (connectionStorage, groupStorage)
+    let forgotten = DetachedPostgresSession(
+      connection: connectionStorage, group: groupStorage, tunnel: tunnelStorage)
     connectionStorage = nil
     groupStorage = nil
+    tunnelStorage = nil
     watchStorage = nil
     lock.unlock()
     return forgotten
@@ -614,7 +662,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
 /// Production sessions. Tests inject a different `DatabaseSessionFactory`.
 nonisolated struct PostgresSessionFactory: DatabaseSessionFactory {
+  var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
+
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
-    PostgresSession(config: config)
+    PostgresSession(config: config, hostKeyValidator: hostKeyValidator)
   }
 }

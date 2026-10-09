@@ -74,7 +74,11 @@ struct DataSettingsModelTests {
     let certificate = SecretItem.listed(
       service: KeychainClientCertificateStore.serviceName,
       account: "db.example:5432:app:ada")
-    let inventory = InMemorySecretInventory(items: [database, key, certificate])
+    let ssh = SecretItem.listed(
+      service: KeychainSSHCredentialStore.serviceName, account: "v2|9:bastion")
+    let hostKey = SecretItem.listed(
+      service: KeychainSSHKnownHostStore.serviceName, account: "v2|9:bastion|2:22")
+    let inventory = InMemorySecretInventory(items: [database, key, certificate, ssh, hostKey])
     let model = DataSettingsModel(
       providers: [FakeProvider(category: .logs, store: logs)],
       inventory: inventory)
@@ -82,12 +86,12 @@ struct DataSettingsModelTests {
     let mismatched = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: true, confirmed: mismatched)
     #expect(logs.clearCount == 0)
-    #expect(await inventory.items() == [database, key, certificate])
+    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey])
 
     let keepSecrets = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: false, confirmed: keepSecrets)
     #expect(logs.clearCount == 1)
-    #expect(await inventory.items() == [database, key, certificate])
+    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey])
 
     let removeSecrets = model.prepareClearAll(includeSecrets: true)
     await model.clearAll(includeSecrets: true, confirmed: removeSecrets)
@@ -116,6 +120,27 @@ struct DataSettingsModelTests {
 
     let token = model.prepareDeleteSecret(item)
     await model.deleteSecret(item, confirmed: token)
+    #expect(await inventory.items().isEmpty)
+    #expect(model.secrets.isEmpty)
+  }
+
+  @Test("Deleting SSH items removes only the confirmed one")
+  func deletesSSHItems() async {
+    let ssh = SecretItem.listed(
+      service: KeychainSSHCredentialStore.serviceName, account: "v2|9:bastion")
+    let hostKey = SecretItem.listed(
+      service: KeychainSSHKnownHostStore.serviceName, account: "v2|9:bastion|2:22")
+    let inventory = InMemorySecretInventory(items: [ssh, hostKey])
+    let logs = Store(text: "alpha", bytes: 4, itemCount: 1)
+    let model = DataSettingsModel(
+      providers: [FakeProvider(category: .logs, store: logs)],
+      inventory: inventory)
+    await model.refresh()
+    #expect(model.secrets.map(\.kind) == [.sshCredential, .sshHostKey])
+
+    await model.deleteSecret(ssh, confirmed: model.prepareDeleteSecret(ssh))
+    #expect(await inventory.items() == [hostKey])
+    await model.deleteSecret(hostKey, confirmed: model.prepareDeleteSecret(hostKey))
     #expect(await inventory.items().isEmpty)
     #expect(model.secrets.isEmpty)
   }

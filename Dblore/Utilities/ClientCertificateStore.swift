@@ -19,6 +19,13 @@ nonisolated struct ClientCertificateMaterial: Codable, Equatable, Sendable {
   }
 }
 
+/// Length-prefixed Keychain account keys, so ":" or "|" inside a part cannot collide.
+nonisolated enum KeychainAccount {
+  static func v2(_ parts: [String]) -> String {
+    "v2|" + parts.map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
+  }
+}
+
 nonisolated protocol ClientCertificateStore: AnyObject, Sendable {
   func load(account: String) -> ClientCertificateMaterial?
   @discardableResult func save(_ material: ClientCertificateMaterial, account: String) -> Bool
@@ -130,8 +137,7 @@ nonisolated enum ClientCertificateStoreFactory {
   }
 
   static func account(for config: ConnectionConfig) -> String {
-    let parts = [config.host, String(config.port), config.database, config.username]
-    return "v2|" + parts.map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
+    KeychainAccount.v2([config.host, String(config.port), config.database, config.username])
   }
 
   static func load(

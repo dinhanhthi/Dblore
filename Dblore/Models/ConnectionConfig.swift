@@ -138,6 +138,34 @@ nonisolated struct ClientCertificateInfo: Codable, Equatable, Sendable {
   var hasCA: Bool
 }
 
+/// SSH bastion for a connection. Display data only: the password or decrypted key lives in
+/// SSHCredentialStore, and a key passphrase is never kept.
+nonisolated struct SSHTunnelConfig: Codable, Equatable, Sendable {
+  enum AuthMethod: String, Codable, Sendable {
+    case password
+    case privateKey
+  }
+
+  var host: String
+  var port: Int
+  var username: String
+  var authMethod: AuthMethod
+  var keyAlgorithm: String?
+  var keyFingerprint: String?
+
+  init(
+    host: String, port: Int = 22, username: String, authMethod: AuthMethod = .password,
+    keyAlgorithm: String? = nil, keyFingerprint: String? = nil
+  ) {
+    self.host = host
+    self.port = port
+    self.username = username
+    self.authMethod = authMethod
+    self.keyAlgorithm = keyAlgorithm
+    self.keyFingerprint = keyFingerprint
+  }
+}
+
 struct ConnectionConfig: Codable, Equatable, Sendable {
   var databaseType: DatabaseType
   var host: String
@@ -148,6 +176,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var sslMode: SSLMode
   /// Display metadata only. PEM bytes live in ClientCertificateStore.
   var clientCertificate: ClientCertificateInfo?
+  /// Display metadata only. SSH secrets live in SSHCredentialStore.
+  var sshTunnel: SSHTunnelConfig?
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -170,6 +200,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
+    // Absent on connections saved before SSH tunnels
+    case sshTunnel
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -195,6 +227,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
     clientCertificate = try container.decodeIfPresent(
       ClientCertificateInfo.self, forKey: .clientCertificate)
+    sshTunnel = try container.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -261,6 +294,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(password, forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
     try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
+    try container.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)
@@ -287,6 +321,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     password: String = "",
     sslMode: SSLMode = .prefer,
     clientCertificate: ClientCertificateInfo? = nil,
+    sshTunnel: SSHTunnelConfig? = nil,
     rememberConnection: Bool = true,
     timeoutSeconds: Int = 30,
     protectionLevel: ConnectionProtectionLevel = .none,
@@ -308,6 +343,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.password = password
     self.sslMode = sslMode
     self.clientCertificate = clientCertificate
+    self.sshTunnel = sshTunnel
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
     self.protectionLevel = protectionLevel

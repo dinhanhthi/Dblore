@@ -109,9 +109,14 @@ struct DataSettingsSection: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: { item in
-      if item.kind == .clientCertificate {
+      switch item.kind {
+      case .clientCertificate:
         Text("Deletes the saved client certificate and private key for account \(item.account).")
-      } else {
+      case .sshCredential:
+        Text("Deletes the saved SSH password or private key for account \(item.account).")
+      case .sshHostKey:
+        Text("Forgets the trusted SSH host key for account \(item.account).")
+      default:
         Text(
           "Removes \(item.label) (\(dataSecretKindTitle(item.kind))). The saved value is deleted.")
       }
@@ -207,11 +212,11 @@ struct DataSettingsSection: View {
         ForEach(model.secrets) { item in
           HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
             VStack(alignment: .leading, spacing: Spacing.xxs) {
-              Text(item.kind == .clientCertificate ? "Client certificate" : item.label)
+              Text(showsKindFirst(item) ? dataSecretKindTitle(item.kind) : item.label)
                 .font(.bodyText)
                 .foregroundColor(.foreground)
               Text(
-                item.kind == .clientCertificate
+                showsKindFirst(item)
                   ? "Account: \(item.account)" : dataSecretKindTitle(item.kind)
               )
               .font(.bodyText)
@@ -226,6 +231,11 @@ struct DataSettingsSection: View {
         }
       }
     }
+  }
+
+  /// Accounts of these kinds are encoded identities, so the kind is the readable title.
+  private func showsKindFirst(_ item: SecretItem) -> Bool {
+    [.clientCertificate, .sshCredential, .sshHostKey].contains(item.kind)
   }
 
   private var clearIsPresented: Binding<Bool> {
@@ -428,6 +438,8 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .chatGPTToken: "ChatGPT sign-in"
   case .safeModePassword: "Safe Mode password"
   case .clientCertificate: "Client certificate"
+  case .sshCredential: "SSH credentials"
+  case .sshHostKey: "Trusted SSH host keys"
   }
 }
 

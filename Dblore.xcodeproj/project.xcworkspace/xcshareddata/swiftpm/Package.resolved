@@ -1,5 +1,5 @@
 {
-  "originHash" : "a76addf67fb45d327f229109c1a83e31dd5d64a6574da0cc737e17e3d775610d",
+  "originHash" : "e335ed4b9d5210fafa86683daccb7285156fad1f7f1d4c78a07b99ba17d52e3c",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -143,6 +143,15 @@
       "state" : {
         "revision" : "21de5f08c1a166a6dd293d0e587ad977bf8dac5d",
         "version" : "2.103.0"
+      }
+    },
+    {
+      "identity" : "swift-nio-ssh",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-nio-ssh",
+      "state" : {
+        "revision" : "3ec281496f28a3b6581afd946b759e2642f5cd8d",
+        "version" : "0.15.0"
       }
     },
     {

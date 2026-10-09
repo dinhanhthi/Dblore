@@ -17,6 +17,8 @@ struct ConnectionFormModal: View {
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
   var onConnect: ((ConnectionConfig) async throws -> Void)?
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
+  var unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)?
+  var unlockConnectError: Binding<String?>?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -30,7 +32,9 @@ struct ConnectionFormModal: View {
         onConnectionSuccess: { isPresented = false },
         submitTitle: submitTitle,
         showsRecentHistory: showsRecentHistory,
-        unrememberedCertificate: unrememberedCertificate
+        unrememberedCertificate: unrememberedCertificate,
+        unrememberedSSHCredential: unrememberedSSHCredential,
+        unlockConnectError: unlockConnectError
       )
     }
     .frame(width: 440, height: connectionConfig.databaseType == .sqlite ? 420 : 640)
@@ -71,7 +75,9 @@ extension View {
     showsRecentHistory: Bool = true,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
-    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil
+    unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
+    unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
+    unlockConnectError: Binding<String?>? = nil
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
       ConnectionFormModal(
@@ -82,7 +88,9 @@ extension View {
         showsRecentHistory: showsRecentHistory,
         onTestConnection: onTestConnection,
         onConnect: onConnect,
-        unrememberedCertificate: unrememberedCertificate
+        unrememberedCertificate: unrememberedCertificate,
+        unrememberedSSHCredential: unrememberedSSHCredential,
+        unlockConnectError: unlockConnectError
       )
     }
   }
@@ -108,7 +116,12 @@ extension View {
       onConnect: { config in
         try await workspaceManager.connect(config: config)
       },
-      unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate }
+      unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
+      unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },
+      unlockConnectError: Binding(
+        get: { workspaceManager.lastUnlockConnectError },
+        set: { workspaceManager.lastUnlockConnectError = $0 }
+      )
     )
     .sheet(
       isPresented: Binding(
@@ -131,14 +144,9 @@ struct WorkspaceConnectUnlockSheet: View {
   var onConnected: () -> Void
 
   @State private var isConnecting = false
-  @State private var connectError: String?
 
-  private var message: String {
-    let base =
-      "Safe Mode requires verification to reconnect to this database with weaker protection or Safe Mode settings."
-    guard let connectError else { return base }
-    return "Connection failed: \(connectError)\n\nVerify again to retry."
-  }
+  private let message =
+    "Safe Mode requires verification to reconnect to this database with weaker protection or Safe Mode settings."
 
   var body: some View {
     if isConnecting {
@@ -160,13 +168,10 @@ struct WorkspaceConnectUnlockSheet: View {
   private func connect() {
     guard !isConnecting else { return }
     isConnecting = true
-    connectError = nil
     Task { @MainActor in
-      do {
-        try await workspaceManager.completePendingWeakeningConnect()
+      // A failure closes this sheet; the form shows it inline (plus the changed-key alert)
+      if await workspaceManager.completePendingWeakeningConnectReportingFailure() {
         onConnected()
-      } catch {
-        connectError = error.localizedDescription
       }
       isConnecting = false
     }

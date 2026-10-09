@@ -62,20 +62,32 @@ extension WorkspaceManager {
     let scoped = activeUnrememberedCertificate.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    defer { scoped?.clear() }
+    let scopedSSH = activeUnrememberedSSHCredential.map {
+      SSHCredentialStoreFactory.ScopedSSHCredential(
+        account: $0.account, credential: $0.credential)
+    }
+    defer {
+      scoped?.clear()
+      scopedSSH?.clear()
+    }
     connectionLostMessage = nil
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-        try await connect(config: config)
+        try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+          try await connect(config: config)
+        }
       }
     } catch {
       WorkspaceWindowManager.shared.showToast(
-        "Reconnect failed: \(error.localizedDescription)", type: .error)
+        "Reconnect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
     }
   }
 
   func dismissConnectionLost() {
     connectionLostMessage = nil
-    if !connectionState.isConnected { activeUnrememberedCertificate = nil }
+    if !connectionState.isConnected {
+      activeUnrememberedCertificate = nil
+      activeUnrememberedSSHCredential = nil
+    }
   }
 }

@@ -83,8 +83,10 @@ extension DatabaseConnectionManager {
     // PostgreSQL stays reconnect: close the session and open another one.
     // Not cancelled with the caller: `connect` sleeps between retries
     let certificate = activeUnrememberedCertificate
+    let sshCredential = activeUnrememberedSSHCredential
     let reconnect = Task {
-      try await self.reconnectWithActiveCertificate(config: config, material: certificate)
+      try await self.reconnectWithActiveCertificate(
+        config: config, material: certificate, sshCredential: sshCredential)
     }
     do {
       // `connect` disconnects first (forget + close: the server stops the backend's work)

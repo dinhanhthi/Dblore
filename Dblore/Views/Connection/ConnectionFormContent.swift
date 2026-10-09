@@ -31,12 +31,19 @@ struct ConnectionFormContent: View {
   /// Certificate held by the workspace for its unremembered connection (not in the keychain).
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
 
+  /// SSH secret held by the workspace for its unremembered connection (not in the store).
+  var unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)?
+
   /// Config already applied to a live connection. The submit button stays disabled until the
   /// form differs from it (nil = always enabled).
   var unchangedFrom: ConnectionConfig?
 
   /// Extra footer button at the leading edge (e.g. Disconnect).
   var footerLeading: AnyView?
+
+  /// Failure of the connect run after the Safe Mode unlock sheet (which closes on failure), so
+  /// it shows here. Cleared by Connect, Test Connection and when the form goes away.
+  var unlockConnectError: Binding<String?>?
 
   @State private var isTesting = false
   @State private var testResult: TestResult?
@@ -62,6 +69,13 @@ struct ConnectionFormContent: View {
   @State var passphraseEdited = false
   @State var certificateRemovalAccount: String?
 
+  // SSH tunnel draft. The password and imported key stay in memory until Connect or Save.
+  @State var sshDraft = SSHFormDraft()
+  /// Config the SSH draft was loaded from. Its account holds the stored SSH credential.
+  @State var sshOriginalConfig: ConnectionConfig?
+  /// Auth method of the credential stored under `sshOriginalConfig`'s account (nil = none).
+  @State var sshStoredMethod: SSHTunnelConfig.AuthMethod?
+
   // Connection history
   @State private var connectionHistory: [ConnectionHistoryEntry] = []
   @State private var selectedHistoryId: UUID?
@@ -77,6 +91,22 @@ struct ConnectionFormContent: View {
   enum TestResult {
     case success
     case failure(String)
+  }
+
+  /// Everything the user can edit. A change clears the shown Test/Connect status.
+  struct FormInputs: Equatable {
+    var config: ConnectionConfig
+    var sshDraft: SSHFormDraft
+    var certificatePEM: String?
+    var privateKeyPEM: String?
+    var caPEM: String?
+    var certificatePassphrase: String
+  }
+
+  var formInputs: FormInputs {
+    FormInputs(
+      config: connectionConfig, sshDraft: sshDraft, certificatePEM: certificatePEM,
+      privateKeyPEM: privateKeyPEM, caPEM: caPEM, certificatePassphrase: certificatePassphrase)
   }
 
   enum ConnectionInputMode: String, CaseIterable {
@@ -95,8 +125,10 @@ struct ConnectionFormContent: View {
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
     unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
+    unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
     unchangedFrom: ConnectionConfig? = nil,
-    footerLeading: AnyView? = nil
+    footerLeading: AnyView? = nil,
+    unlockConnectError: Binding<String?>? = nil
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
@@ -105,8 +137,10 @@ struct ConnectionFormContent: View {
     self.submitTitle = submitTitle
     self.showsRecentHistory = showsRecentHistory
     self.unrememberedCertificate = unrememberedCertificate
+    self.unrememberedSSHCredential = unrememberedSSHCredential
     self.unchangedFrom = unchangedFrom
     self.footerLeading = footerLeading
+    self.unlockConnectError = unlockConnectError
   }
 
   // MARK: - Body
@@ -153,6 +187,13 @@ struct ConnectionFormContent: View {
               }
             }
 
+            if SSHFormDraft.supportsSSH(connectionConfig.databaseType) {
+              sectionCard {
+                sectionTitle("SSH Tunnel")
+                sshTunnelSection()
+              }
+            }
+
             sectionCard {
               sectionTitle("Options")
               connectionTogglesAndPickers()
@@ -175,6 +216,7 @@ struct ConnectionFormContent: View {
         }
         loadConnectionHistory()
         restoreCertificateDraft()
+        restoreSSHDraft()
         refreshSQLiteFileBookmark()
       }
       .onChange(of: connectionConfig.databaseType) { _, newType in
@@ -208,6 +250,13 @@ struct ConnectionFormContent: View {
             isHistoryLoad: retained != nil,
             engineChanged: Self.engineChanged(oldKey: oldKey, newKey: newKey),
             isBlankForm: Self.isBlankForm(connectionConfig)))
+        if Self.resetsSSHDraft(
+          isHistoryLoad: retained != nil,
+          engineChanged: Self.engineChanged(oldKey: oldKey, newKey: newKey),
+          isBlankForm: Self.isBlankForm(connectionConfig))
+        {
+          restoreSSHDraft()
+        }
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
         guard connectionConfig.databaseType.capabilities.usesNetwork else { return }
@@ -218,10 +267,23 @@ struct ConnectionFormContent: View {
       .onChange(of: connectionConfig.clientCertificate) { _, _ in
         restoreCertificateDraft()
       }
+      // A Recent row, an engine change or a successful submit replaced the tunnel config.
+      .onChange(of: connectionConfig.sshTunnel) { _, _ in
+        restoreSSHDraft()
+      }
+      // A status describes the values it ran with: any edit makes it stale.
+      // `unlockConnectError` stays: its owner sets it together with a replaced draft.
+      .onChange(of: formInputs) { _, _ in
+        testResult = nil
+      }
 
       footerView()
     }
-    .onDisappear { clearCertificateDraft() }
+    .onDisappear {
+      clearCertificateDraft()
+      sshDraft.clearSecrets()
+      unlockConnectError?.wrappedValue = nil
+    }
   }
 
   func sectionTitle(_ title: String) -> some View {
@@ -353,6 +415,13 @@ struct ConnectionFormContent: View {
     filesPicked && !isHistoryLoad && !engineChanged && !isBlankForm
   }
 
+  /// A Recent row, an engine change or a blank form is another connection: its SSH draft and
+  /// stored-credential account are reloaded. A plain target edit keeps them, so the stored
+  /// credential can move to the edited identity on save.
+  static func resetsSSHDraft(isHistoryLoad: Bool, engineChanged: Bool, isBlankForm: Bool) -> Bool {
+    isHistoryLoad || engineChanged || isBlankForm
+  }
+
   /// Keeps the Recent connections row only while host, port, database, and username match.
   static func retainedHistoryId(
     selectedId: UUID?,
@@ -463,13 +532,16 @@ struct ConnectionFormContent: View {
   private func footerView() -> some View {
     VStack(spacing: 0) {
       Divider()
-      if parseError != nil || testResult != nil {
+      if parseError != nil || testResult != nil || unlockConnectError?.wrappedValue != nil {
         VStack(alignment: .leading, spacing: Spacing.xs) {
           if let error = parseError {
             errorView(error)
           }
           if let result = testResult {
             testResultView(result)
+          }
+          if let message = unlockConnectError?.wrappedValue {
+            testResultView(.failure(message))
           }
         }
         .padding(.horizontal, Spacing.md)
@@ -526,14 +598,89 @@ struct ConnectionFormContent: View {
 
   private var isUnchanged: Bool {
     guard let unchangedFrom else { return false }
-    return connectionConfig == unchangedFrom && !certificateDraftChanged
+    return withSSHConfig(connectionConfig) == unchangedFrom && !certificateDraftChanged
+      && sshDraft.enteredCredential == nil
   }
 
   private var isFormValid: Bool {
+    guard sshDraftIsValid else { return false }
     if inputMode == .connectionString && connectionConfig.databaseType.capabilities.usesNetwork {
       return !connectionString.isEmpty && parseError == nil
     }
     return Self.isFormInputValid(connectionConfig)
+  }
+
+  /// SSH on requires host, user and a usable secret. Engines without SSH ignore the draft.
+  private var sshDraftIsValid: Bool {
+    !SSHFormDraft.supportsSSH(connectionConfig.databaseType)
+      || sshDraft.isValid(storedMethod: usableSSHStoredMethod)
+  }
+
+  // MARK: - SSH Draft
+
+  /// The config with the draft's tunnel applied (nil for engines without SSH).
+  func withSSHConfig(_ config: ConnectionConfig) -> ConnectionConfig {
+    var config = config
+    config.sshTunnel =
+      SSHFormDraft.supportsSSH(config.databaseType) ? sshDraft.preparedConfig : nil
+    return config
+  }
+
+  /// Tunnel config for Connect, Test and Save. Key fingerprint and algorithm come from the
+  /// imported (or still stored) key; no secret is in it.
+  var preparedSSHConfig: SSHTunnelConfig? {
+    withSSHConfig(connectionConfig).sshTunnel
+  }
+
+  /// The SSH secret for this submit: the session reads it, and a remembered save persists it
+  /// (`SessionManager`). Nil keeps the stored credential (same account). A secret never follows
+  /// a changed bastion (`SSHFormDraft.preparedCredential`).
+  var preparedSSHCredential: SSHStoredCredential? {
+    sshDraft.preparedCredential(
+      original: sshOriginalConfig, new: withSSHConfig(connectionConfig),
+      store: SSHCredentialStoreFactory.shared, held: unrememberedSSHCredential?())
+  }
+
+  /// The stored or held secret's method while it still serves the bastion in the form.
+  var usableSSHStoredMethod: SSHTunnelConfig.AuthMethod? {
+    sshDraft.usableStoredMethod(sshStoredMethod, original: sshOriginalConfig)
+  }
+
+  /// The workspace's in-memory SSH secret when it belongs to `original`'s account.
+  func heldSSHCredential(for original: ConnectionConfig?) -> SSHStoredCredential? {
+    guard let original, let held = unrememberedSSHCredential?(),
+      held.account == SSHCredentialStoreFactory.account(for: original)
+    else { return nil }
+    return held.credential
+  }
+
+  /// Reloads the draft from `connectionConfig.sshTunnel` and snapshots the identity the stored
+  /// credential belongs to. Drops any typed password or imported key.
+  func restoreSSHDraft() {
+    sshDraft = SSHFormDraft(from: connectionConfig)
+    let original = connectionConfig.sshTunnel == nil ? nil : connectionConfig
+    sshOriginalConfig = original
+    sshStoredMethod =
+      heldSSHCredential(for: original).map(SSHFormDraft.method(of:))
+      ?? SSHFormDraft.storedMethod(for: original, store: SSHCredentialStoreFactory.shared)
+  }
+
+  /// Parses the key off the main actor, keeps only the decrypted key for the store, and
+  /// clears the passphrase. A newer import or Remove supersedes a slower one.
+  func importSSHKey(data: Data, passphrase: String?) async {
+    let token = sshDraft.beginKeyImport()
+    let result = await SSHFormDraft.parseKey(data: data, passphrase: passphrase)
+    sshDraft.finishKeyImport(result, data: data, token: token)
+  }
+
+  /// Retries an encrypted key with the passphrase now typed in the form.
+  func retrySSHKeyImport() async {
+    guard let data = sshDraft.pendingKeyData else { return }
+    await importSSHKey(data: data, passphrase: sshDraft.passphrase)
+  }
+
+  func removeSSHKey() {
+    sshDraft.removeKey()
   }
 
   // MARK: - Tab Picker
@@ -597,6 +744,7 @@ struct ConnectionFormContent: View {
   // MARK: - Actions
 
   private func testConnection() {
+    unlockConnectError?.wrappedValue = nil
     // Use the active tab: an unparsable connection string would leave stale form values
     guard inputMode == .form || parseError == nil else { return }
 
@@ -616,7 +764,7 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = try preparedCertificateConfig()
+      config = withSSHConfig(try preparedCertificateConfig())
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -624,29 +772,41 @@ struct ConnectionFormContent: View {
 
     isTesting = true
     testResult = nil
+    let testedInputs = formInputs
     let scopedMaterial = certificateMaterialForOperation(config).map {
       ClientCertificateStoreFactory.ScopedMaterial(
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
+    let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
 
     Task { @MainActor in
-      defer { scopedMaterial?.clear() }
+      defer {
+        scopedMaterial?.clear()
+        scopedSSH?.clear()
+      }
       do {
         let success = try await ClientCertificateStoreFactory.$operationMaterial.withValue(
           scopedMaterial
         ) {
-          try await onTest(config)
+          try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+            try await onTest(config)
+          }
         }
         isTesting = false
+        // Edited while the test ran: the result is for values no longer in the form.
+        guard formInputs == testedInputs else { return }
         testResult = success ? .success : .failure("Connection failed unexpectedly")
       } catch {
         isTesting = false
-        testResult = .failure(error.localizedDescription)
+        let message = SSHHostKeyTrustCoordinator.shared.report(error)
+        guard formInputs == testedInputs else { return }
+        testResult = .failure(message)
       }
     }
   }
 
   private func connect() {
+    unlockConnectError?.wrappedValue = nil
     // Use the active tab: an unparsable connection string would leave stale form values
     guard inputMode == .form || parseError == nil else { return }
 
@@ -666,7 +826,7 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = try preparedCertificateConfig()
+      config = withSSHConfig(try preparedCertificateConfig())
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -677,15 +837,26 @@ struct ConnectionFormContent: View {
       ClientCertificateStoreFactory.ScopedMaterial(
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
+    // The typed, imported or moved SSH secret: the session reads it before the store, and a
+    // remembered save persists it (`SessionManager`). Remember off keeps it only here.
+    let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
 
     Task { @MainActor in
-      defer { scopedMaterial?.clear() }
+      defer {
+        scopedMaterial?.clear()
+        scopedSSH?.clear()
+      }
       do {
         try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
-          try await onConnectCallback(config)
+          try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+            try await onConnectCallback(config)
+          }
         }
         connectionConfig.clientCertificate = config.clientCertificate
         clearCertificateDraft()
+        // Restores the draft from the submitted tunnel (and drops the typed secret).
+        connectionConfig.sshTunnel = config.sshTunnel
+        restoreSSHDraft()
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {
@@ -696,7 +867,7 @@ struct ConnectionFormContent: View {
         isConnecting = false
       } catch {
         isConnecting = false
-        testResult = .failure(error.localizedDescription)
+        testResult = .failure(SSHHostKeyTrustCoordinator.shared.report(error))
       }
     }
   }
@@ -725,5 +896,238 @@ struct FormField<Content: View>: View {
 
       content
     }
+  }
+}
+
+// MARK: - SSH Form Draft
+
+/// SSH tunnel fields of the connection form. The password and decrypted key live only here
+/// until Connect or Save hands them to `SSHCredentialStore`; key bytes and the passphrase are
+/// dropped once a key is imported.
+nonisolated struct SSHFormDraft: Equatable, Sendable {
+  /// A key parsed in this form. `keychainRepresentation` is the decrypted secret.
+  struct ImportedKey: Equatable, Sendable {
+    var algorithm: String
+    var fingerprint: String
+    var keychainRepresentation: Data
+  }
+
+  var enabled = false
+  var host = ""
+  var port = 22
+  var username = ""
+  var authMethod: SSHTunnelConfig.AuthMethod = .password
+  /// Typed in this form. Empty keeps the stored password.
+  var password = ""
+  /// Only for decrypting an encrypted key; cleared after every import attempt.
+  var passphrase = ""
+  var importedKey: ImportedKey?
+  /// The key already in the store, from the saved config. Nil after Remove.
+  var storedKeyAlgorithm: String?
+  var storedKeyFingerprint: String?
+  /// Encrypted key bytes waiting for a (correct) passphrase. Dropped on success or Remove.
+  var pendingKeyData: Data?
+  /// User-readable import error (plain text).
+  var keyError: String?
+  private(set) var importToken: UUID?
+
+  var isImportingKey: Bool { importToken != nil }
+  /// The picked key is encrypted and needs its passphrase before it can be imported.
+  var needsPassphrase: Bool { pendingKeyData != nil }
+
+  init() {}
+
+  init(from config: ConnectionConfig) {
+    guard let tunnel = config.sshTunnel else { return }
+    enabled = true
+    host = tunnel.host
+    port = tunnel.port
+    username = tunnel.username
+    authMethod = tunnel.authMethod
+    storedKeyAlgorithm = tunnel.keyAlgorithm
+    storedKeyFingerprint = tunnel.keyFingerprint
+  }
+
+  /// SSH tunnels are PostgreSQL-only.
+  static func supportsSSH(_ type: DatabaseType) -> Bool { type == .postgresql }
+
+  /// Nil when SSH is off. The key's algorithm and fingerprint are display data only.
+  var preparedConfig: SSHTunnelConfig? {
+    guard enabled else { return nil }
+    let usesKey = authMethod == .privateKey
+    return SSHTunnelConfig(
+      host: host.trimmingCharacters(in: .whitespacesAndNewlines), port: port,
+      username: username.trimmingCharacters(in: .whitespacesAndNewlines), authMethod: authMethod,
+      keyAlgorithm: usesKey ? importedKey?.algorithm ?? storedKeyAlgorithm : nil,
+      keyFingerprint: usesKey ? importedKey?.fingerprint ?? storedKeyFingerprint : nil)
+  }
+
+  /// The secret typed or imported in this form for the selected auth method.
+  var enteredCredential: SSHStoredCredential? {
+    guard enabled else { return nil }
+    switch authMethod {
+    case .password:
+      return password.isEmpty ? nil : .password(password)
+    case .privateKey:
+      return importedKey.map { .privateKey(keychainRepresentation: $0.keychainRepresentation) }
+    }
+  }
+
+  /// A stored credential of `storedMethod` still serves the selected method (a removed key
+  /// does not).
+  func canUseStoredCredential(_ storedMethod: SSHTunnelConfig.AuthMethod?) -> Bool {
+    guard let storedMethod, storedMethod == authMethod else { return false }
+    return authMethod == .password || storedKeyFingerprint != nil
+  }
+
+  /// SSH on requires host, user, a valid port and a secret (typed, imported, or stored).
+  func isValid(storedMethod: SSHTunnelConfig.AuthMethod?) -> Bool {
+    guard enabled else { return true }
+    guard let config = preparedConfig, !config.host.isEmpty, !config.username.isEmpty,
+      (1...65535).contains(port), !isImportingKey
+    else { return false }
+    return enteredCredential != nil || canUseStoredCredential(storedMethod)
+  }
+
+  /// The bastion (host, port, SSH user) is still `original`'s. A stored or held secret belongs
+  /// to that bastion and is never sent to another one.
+  func bastionMatches(_ original: ConnectionConfig?) -> Bool {
+    guard let tunnel = original?.sshTunnel, let config = preparedConfig else { return false }
+    return config.host == tunnel.host && config.port == tunnel.port
+      && config.username == tunnel.username
+  }
+
+  /// `storedMethod` while the bastion is unchanged, else nil (the old secret no longer counts).
+  func usableStoredMethod(
+    _ storedMethod: SSHTunnelConfig.AuthMethod?, original: ConnectionConfig?
+  ) -> SSHTunnelConfig.AuthMethod? {
+    bastionMatches(original) ? storedMethod : nil
+  }
+
+  /// The bastion changed and the saved secret was for the old one: ask for a new secret.
+  func needsSecretForNewBastion(
+    storedMethod: SSHTunnelConfig.AuthMethod?, original: ConnectionConfig?
+  ) -> Bool {
+    enabled && storedMethod != nil && enteredCredential == nil && !bastionMatches(original)
+  }
+
+  static let newBastionSecretHint =
+    "Enter the password or choose the key again for the new SSH server."
+
+  /// The secret to use and save with `new`. A typed or imported secret wins. Otherwise, while
+  /// the bastion is unchanged: the `held` secret of a live unremembered connection (not in the
+  /// store), else, when the account changed (DB fields or engine), the credential stored under
+  /// the original account so it moves to the new account. Nil keeps the store as is.
+  func preparedCredential(
+    original: ConnectionConfig?, new: ConnectionConfig, store: any SSHCredentialStore,
+    held: SSHCredentialStoreFactory.ConnectionCredential? = nil
+  ) -> SSHStoredCredential? {
+    guard enabled, let newAccount = SSHCredentialStoreFactory.account(for: new) else {
+      return nil
+    }
+    if let enteredCredential { return enteredCredential }
+    guard bastionMatches(original), let original,
+      let oldAccount = SSHCredentialStoreFactory.account(for: original)
+    else { return nil }
+    if let held, held.account == oldAccount,
+      canUseStoredCredential(Self.method(of: held.credential))
+    {
+      return held.credential
+    }
+    guard oldAccount != newAccount, let stored = store.load(account: oldAccount),
+      canUseStoredCredential(Self.method(of: stored))
+    else { return nil }
+    return stored
+  }
+
+  /// Auth method of the credential stored for `config` (nil when there is none).
+  static func storedMethod(
+    for config: ConnectionConfig?, store: any SSHCredentialStore
+  ) -> SSHTunnelConfig.AuthMethod? {
+    guard let config, let account = SSHCredentialStoreFactory.account(for: config) else {
+      return nil
+    }
+    return store.load(account: account).map(method(of:))
+  }
+
+  static func method(of credential: SSHStoredCredential) -> SSHTunnelConfig.AuthMethod {
+    switch credential {
+    case .password: .password
+    case .privateKey: .privateKey
+    }
+  }
+
+  // MARK: Key import
+
+  /// Marks an import in flight. Pass the token to `finishKeyImport`.
+  mutating func beginKeyImport() -> UUID {
+    let token = UUID()
+    importToken = token
+    keyError = nil
+    return token
+  }
+
+  /// Parses off the main actor: decrypting an OpenSSH key runs bcrypt_pbkdf (about 1 s).
+  static func parseKey(data: Data, passphrase: String?) async -> Result<ParsedSSHKey, any Error> {
+    let passphrase = passphrase?.isEmpty == true ? nil : passphrase
+    return await Task.detached(priority: .userInitiated) {
+      Result {
+        try PerfSignpost.interval("ssh-key-import") {
+          try SSHPrivateKeyParser.parse(data, passphrase: passphrase)
+        }
+      }
+    }.value
+  }
+
+  /// Applies an import result unless a newer import or Remove superseded it. The passphrase
+  /// is always cleared. Encrypted bytes are kept only while a passphrase is still needed.
+  mutating func finishKeyImport(
+    _ result: Result<ParsedSSHKey, any Error>, data: Data, token: UUID
+  ) {
+    guard token == importToken else { return }
+    importToken = nil
+    passphrase = ""
+    switch result {
+    case .success(let key):
+      importedKey = ImportedKey(
+        algorithm: key.algorithm, fingerprint: key.fingerprint,
+        keychainRepresentation: key.keychainRepresentation)
+      authMethod = .privateKey
+      pendingKeyData = nil
+      keyError = nil
+    case .failure(let error):
+      let keyError = error as? SSHPrivateKeyError
+      pendingKeyData =
+        keyError == .passphraseRequired || keyError == .wrongPassphrase ? data : nil
+      self.keyError = Self.message(for: error)
+    }
+  }
+
+  /// Parser messages carry static text only, never key material.
+  static func message(for error: any Error) -> String {
+    if let error = error as? SSHPrivateKeyError, let text = error.errorDescription {
+      return text
+    }
+    return "The private key could not be read."
+  }
+
+  /// Drops the imported or stored key; a stored key then no longer counts for validation.
+  mutating func removeKey() {
+    importedKey = nil
+    storedKeyAlgorithm = nil
+    storedKeyFingerprint = nil
+    pendingKeyData = nil
+    passphrase = ""
+    keyError = nil
+    importToken = nil
+  }
+
+  /// Drops typed and imported secrets, e.g. when the form closes.
+  mutating func clearSecrets() {
+    password = ""
+    passphrase = ""
+    importedKey = nil
+    pendingKeyData = nil
+    importToken = nil
   }
 }

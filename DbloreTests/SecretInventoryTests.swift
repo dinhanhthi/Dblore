@@ -40,7 +40,27 @@ struct SecretInventoryTests {
         account: "db.example:5432:app:ada",
         label: "db.example:5432:app:ada",
         kind: .clientCertificate),
+      SecretItem(
+        service: KeychainSSHCredentialStore.serviceName,
+        account: sshAccount,
+        label: sshAccount,
+        kind: .sshCredential),
+      SecretItem(
+        service: KeychainSSHKnownHostStore.serviceName,
+        account: hostAccount,
+        label: hostAccount,
+        kind: .sshHostKey),
     ]
+  }
+
+  private var sshAccount: String {
+    SSHCredentialStoreFactory.account(
+      databaseType: .postgresql, host: "db.internal", port: 5432, database: "app",
+      username: "ada", sshHost: "bastion.example", sshPort: 22, sshUsername: "deploy")
+  }
+
+  private var hostAccount: String {
+    SSHKnownHostStoreFactory.account(host: "bastion.example", port: 22)
   }
 
   @Test("List returns the planted items")
@@ -55,7 +75,11 @@ struct SecretInventoryTests {
     let items = planted()
     let inventory = InMemorySecretInventory(items: items)
     try await inventory.delete(items[4])
-    #expect(await inventory.items() == [items[0], items[1], items[2], items[3], items[5]])
+    #expect(
+      await inventory.items() == [
+        items[0], items[1], items[2], items[3], items[5], items[6], items[7],
+      ]
+    )
   }
 
   @Test("deleteAll removes only that kind")
@@ -63,7 +87,18 @@ struct SecretInventoryTests {
     let items = planted()
     let inventory = InMemorySecretInventory(items: items)
     try await inventory.deleteAll(kind: .aiKey)
-    #expect(await inventory.items() == [items[0], items[3], items[4], items[5]])
+    #expect(
+      await inventory.items() == [items[0], items[3], items[4], items[5], items[6], items[7]])
+  }
+
+  @Test("SSH credentials and host keys are deleted by service and account")
+  func deletesSSHItems() async throws {
+    let items = planted()
+    let inventory = InMemorySecretInventory(items: items)
+    try await inventory.delete(items[6])
+    #expect(await inventory.items() == Array(items[0...5]) + [items[7]])
+    try await inventory.deleteAll(kind: .sshHostKey)
+    #expect(await inventory.items() == Array(items[0...5]))
   }
 
   @Test("ChatGPT tokens and API keys are different kinds")
@@ -92,6 +127,16 @@ struct SecretInventoryTests {
       account: "db.example:5432:app:ada")
     #expect(certificate.kind == .clientCertificate)
     #expect(certificate.label == certificate.account)
+
+    let ssh = SecretItem.listed(
+      service: KeychainSSHCredentialStore.serviceName, account: sshAccount)
+    #expect(ssh.kind == .sshCredential)
+    #expect(ssh.label == sshAccount)
+
+    let hostKey = SecretItem.listed(
+      service: KeychainSSHKnownHostStore.serviceName, account: hostAccount)
+    #expect(hostKey.kind == .sshHostKey)
+    #expect(hostKey.label == hostAccount)
   }
 
   @Test("The default inventory is in-memory under the test host")
@@ -109,5 +154,7 @@ struct SecretInventoryTests {
     #expect(!text.contains("kSecReturnData"))
     #expect(!text.contains("kSecReturnPersistentRef"))
     #expect(text.contains("removePassword"))
+    #expect(text.contains("KeychainSSHCredentialStore.serviceName"))
+    #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
   }
 }

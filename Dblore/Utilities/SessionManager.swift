@@ -146,7 +146,9 @@ class SessionManager {
     _ config: ConnectionConfig,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    sshCredential: SSHStoredCredential? = nil
   ) -> Bool {
     let config = singleLineName(config)
     guard config.rememberConnection else {
@@ -173,7 +175,8 @@ class SessionManager {
     }
 
     guard let encoded = encodedHistory(history, defaults: defaults),
-      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
+      saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
     if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
       passwords.savePassword(config.password, forKey: newEntry.keychainKey)
@@ -183,6 +186,7 @@ class SessionManager {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
     pruneCertificates(previous: previous, current: history, certificates: certificates)
+    pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     return true
   }
 
@@ -203,14 +207,17 @@ class SessionManager {
     with config: ConnectionConfig,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    sshCredential: SSHStoredCredential? = nil
   ) -> Bool {
     let config = singleLineName(config)
     var history = loadHistory(defaults: defaults, passwords: passwords)
     let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
-        config, defaults: defaults, passwords: passwords, certificates: certificates)
+        config, defaults: defaults, passwords: passwords, certificates: certificates,
+        sshCredentials: sshCredentials, sshCredential: sshCredential)
     }
 
     let previous = history[index]
@@ -221,6 +228,7 @@ class SessionManager {
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
       pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+      pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
       return true
     }
 
@@ -230,11 +238,13 @@ class SessionManager {
     history.removeAll { $0.id != id && $0.keychainKey == newKey }
     guard let kept = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
-        config, defaults: defaults, passwords: passwords, certificates: certificates)
+        config, defaults: defaults, passwords: passwords, certificates: certificates,
+        sshCredentials: sshCredentials, sshCredential: sshCredential)
     }
     history[kept] = updated
     guard let encoded = encodedHistory(history, defaults: defaults),
-      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
+      saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
     if previous.keychainKey != newKey,
       !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
@@ -250,6 +260,7 @@ class SessionManager {
     }
     defaults.set(encoded, forKey: historyKey)
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+    pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
     return true
   }
 
@@ -262,7 +273,8 @@ class SessionManager {
   static func clearAllHistory(
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
   ) {
     let history = loadHistory(defaults: defaults, passwords: passwords)
 
@@ -270,6 +282,7 @@ class SessionManager {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
     pruneCertificates(previous: history, current: [], certificates: certificates)
+    pruneSSHCredentials(previous: history, current: [], sshCredentials: sshCredentials)
 
     defaults.removeObject(forKey: historyKey)
   }
@@ -279,7 +292,8 @@ class SessionManager {
     id: UUID,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
   ) {
     var history = loadHistory(defaults: defaults, passwords: passwords)
 
@@ -291,6 +305,7 @@ class SessionManager {
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
       pruneCertificates(previous: previous, current: history, certificates: certificates)
+      pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     }
   }
 
@@ -358,6 +373,34 @@ class SessionManager {
       if !retained.contains(account) {
         ClientCertificateStoreFactory.delete(for: entry.config, from: certificates)
       }
+    }
+  }
+
+  /// Saves a credential supplied with this save, else the operation's scoped one (the form's
+  /// secret). Without a tunnel there is nothing to key it by.
+  private static func saveSSHCredential(
+    _ credential: SSHStoredCredential?, for config: ConnectionConfig,
+    to sshCredentials: any SSHCredentialStore
+  ) -> Bool {
+    guard let credential else {
+      return SSHCredentialStoreFactory.persistOperationCredential(for: config, to: sshCredentials)
+    }
+    guard let account = SSHCredentialStoreFactory.account(for: config) else { return true }
+    return sshCredentials.save(credential, account: account)
+  }
+
+  /// Deletes SSH credentials no remaining entry uses. Host key pins are kept: they belong
+  /// to the bastion, not the connection, and are removed only in Settings > Data.
+  private static func pruneSSHCredentials(
+    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
+    sshCredentials: any SSHCredentialStore
+  ) {
+    let retained = Set(current.compactMap { SSHCredentialStoreFactory.account(for: $0.config) })
+    for entry in previous {
+      guard let account = SSHCredentialStoreFactory.account(for: entry.config),
+        !retained.contains(account)
+      else { continue }
+      sshCredentials.delete(account: account)
     }
   }
 

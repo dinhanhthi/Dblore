@@ -24,6 +24,8 @@ actor DatabaseConnectionManager {
   private(set) var config: ConnectionConfig?
   /// PEM for an unremembered connection, owned only while this actor's session is active.
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
+  /// SSH secret of an unremembered connection, owned only while this actor's session is active.
+  var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -84,8 +86,18 @@ actor DatabaseConnectionManager {
   nonisolated let sessionResets: AsyncStream<SessionResetEvent>
   let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
 
-  init(sessionFactory: any DatabaseSessionFactory = AppDatabaseSessionFactory()) {
-    self.sessionFactory = sessionFactory
+  /// TOFU for SSH bastions: the injected prompt confirms unknown host keys, pins go to the
+  /// shared known-host store. Used by the default session factory and `testConnection`.
+  nonisolated let sshHostKeyPolicy: SSHHostKeyPolicy
+
+  /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
+  init(
+    sessionFactory: (any DatabaseSessionFactory)? = nil,
+    sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt()
+  ) {
+    let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
+    sshHostKeyPolicy = policy
+    self.sessionFactory = sessionFactory ?? AppDatabaseSessionFactory(hostKeyValidator: policy)
     (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
       of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
     (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
@@ -115,6 +127,7 @@ actor DatabaseConnectionManager {
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
+    let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
@@ -161,6 +174,7 @@ actor DatabaseConnectionManager {
     self.config = prepared.config
     if !config.rememberConnection {
       activeUnrememberedCertificate = suppliedCertificate
+      activeUnrememberedSSHCredential = suppliedSSHCredential
     }
     sqliteFileAccessRelease = prepared.release
     sqliteReadOnlyReason = prepared.readOnlyReason
@@ -174,17 +188,28 @@ actor DatabaseConnectionManager {
   }
 
   /// Internal reset of this connection. A fresh connect must use the active unremembered
-  /// certificate rather than a same-account Keychain item from an older saved connection.
+  /// certificate and SSH secret rather than same-account Keychain items from an older saved
+  /// connection.
   func reconnectWithActiveCertificate(
     config: ConnectionConfig,
-    material: ClientCertificateStoreFactory.ConnectionMaterial?
+    material: ClientCertificateStoreFactory.ConnectionMaterial?,
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential? = nil
   ) async throws {
     let scoped = material.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    defer { scoped?.clear() }
+    let scopedSSH = sshCredential.map {
+      SSHCredentialStoreFactory.ScopedSSHCredential(
+        account: $0.account, credential: $0.credential)
+    }
+    defer {
+      scoped?.clear()
+      scopedSSH?.clear()
+    }
     try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-      try await connect(config: config)
+      try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+        try await connect(config: config)
+      }
     }
   }
 
@@ -193,7 +218,8 @@ actor DatabaseConnectionManager {
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     switch config.databaseType {
     case .postgresql:
-      return try await PostgresSession(config: config).probe()
+      return try await PostgresSession(config: config, hostKeyValidator: sshHostKeyPolicy)
+        .probe()
     case .sqlite:
       return try await probeSQLite(config)
     }
@@ -250,6 +276,7 @@ actor DatabaseConnectionManager {
   /// Disconnect from database
   func disconnect() async {
     activeUnrememberedCertificate = nil
+    activeUnrememberedSSHCredential = nil
     let releaseFileAccess = sqliteFileAccessRelease
     sqliteFileAccessRelease = nil
 
@@ -282,7 +309,7 @@ actor DatabaseConnectionManager {
   func forgetConnection() -> ForgottenSession {
     connectionEpoch &+= 1
     let forgotten = session
-    let resources = (forgotten as? PostgresSession)?.detach() ?? (nil, nil)
+    let resources = (forgotten as? PostgresSession)?.detach() ?? DetachedPostgresSession()
     session = nil
     config = nil
     sqliteReadOnlyReason = nil
@@ -293,15 +320,18 @@ actor DatabaseConnectionManager {
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
     return ForgottenSession(
-      session: forgotten, connection: resources.0, group: resources.1)
+      session: forgotten, connection: resources.connection, group: resources.group,
+      tunnel: resources.tunnel)
   }
 
-  /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket and its
-  /// event-loop group. Any other session closes itself.
+  /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket, its SSH
+  /// tunnel (always, even when the socket is already closed) and its event-loop group, in that
+  /// order. Any other session closes itself.
   static func closeForgotten(_ forgotten: ForgottenSession, includingConnection: Bool) async {
-    if forgotten.connection != nil || forgotten.group != nil {
-      if includingConnection { try? await forgotten.connection?.close() }
-      try? await forgotten.group?.shutdownGracefully()
+    if forgotten.connection != nil || forgotten.group != nil || forgotten.tunnel != nil {
+      await DetachedPostgresSession(
+        connection: forgotten.connection, group: forgotten.group, tunnel: forgotten.tunnel
+      ).close(includingConnection: includingConnection)
       return
     }
     await forgotten.session?.close()
@@ -360,6 +390,7 @@ nonisolated struct ForgottenSession: Sendable {
   var session: (any DatabaseSession)?
   var connection: PostgresConnection?
   var group: EventLoopGroup?
+  var tunnel: (any SSHTunneling)?
 }
 
 /// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
@@ -374,10 +405,12 @@ private struct PreparedSQLiteOpen: Sendable {
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` after the caller has resolved
 /// sandbox access.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
+  var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
+
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
     switch config.databaseType {
     case .postgresql:
-      PostgresSession(config: config)
+      PostgresSession(config: config, hostKeyValidator: hostKeyValidator)
     case .sqlite:
       SQLiteSession(config: config)
     }

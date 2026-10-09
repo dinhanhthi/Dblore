@@ -154,9 +154,11 @@ struct WorkspaceInfoModal: View {
               ? "Save & Reconnect" : "Save & Connect",
             showsRecentHistory: false,
             unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
+            unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },
             unchangedFrom: workspaceManager.connectionState.isConnected ? appliedConfig : nil,
             footerLeading: workspaceManager.connectionState.isConnected
-              ? AnyView(disconnectButton) : nil
+              ? AnyView(disconnectButton) : nil,
+            unlockConnectError: $workspaceManager.lastUnlockConnectError
           )
         }
       }

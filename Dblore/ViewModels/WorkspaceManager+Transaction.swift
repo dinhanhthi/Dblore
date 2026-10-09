@@ -313,7 +313,10 @@ extension WorkspaceManager {
   /// Close the connection and clear everything that came from it (no resolve: the caller did it,
   /// or chose to discard the pending changes by disconnecting)
   func performDisconnect(preserveCertificateForReconnect: Bool = false) async {
-    if !preserveCertificateForReconnect { activeUnrememberedCertificate = nil }
+    if !preserveCertificateForReconnect {
+      activeUnrememberedCertificate = nil
+      activeUnrememberedSSHCredential = nil
+    }
     autoConnectTask?.cancel()
     cancelSchemaLoad()
     await connectionManager.disconnect()

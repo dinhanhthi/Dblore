@@ -20,6 +20,12 @@ struct ClientCertificateStoreTests {
     #expect(ClientCertificateStoreFactory.account(for: config) != "db.example:6432:analytics:ada")
   }
 
+  @Test("The account string format is stable across releases")
+  func accountLiteralIsPinned() {
+    let config = ConnectionConfig(host: "db", port: 5432, database: "app", username: "ada")
+    #expect(ClientCertificateStoreFactory.account(for: config) == "v2|2:db|4:5432|3:app|3:ada")
+  }
+
   @Test("Colon-containing database and username cannot share an account")
   func accountComponentsCannotCollide() {
     let first = ConnectionConfig(host: "db", port: 5432, database: "a:b", username: "c")
