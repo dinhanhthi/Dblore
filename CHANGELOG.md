@@ -2,6 +2,18 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.6.1 (2026-10-09)
+
+### Added
+
+- **Connection name in the footer.** The connected status now shows the name of the connection. [#07901169](https://github.com/dinhanhthi/Dblore/commit/07901169)
+
+### Improved
+
+- **Readable colors in both appearances.** Color tokens are retuned for WCAG contrast in light and dark, labels on accent and destructive fills are readable, state fills, borders and the search highlight are calmer, and the toast is less intrusive. [#68c95602](https://github.com/dinhanhthi/Dblore/commit/68c95602) [#463f1147](https://github.com/dinhanhthi/Dblore/commit/463f1147) [#ba5f963b](https://github.com/dinhanhthi/Dblore/commit/ba5f963b)
+- **Tab pickers and settings controls.** Tab pickers use readable on-accent labels, and controls stand off the settings panels. [#6db9acb8](https://github.com/dinhanhthi/Dblore/commit/6db9acb8) [#a159597e](https://github.com/dinhanhthi/Dblore/commit/a159597e)
+- **Plugin buttons.** Install, Retry and Cancel in Settings > Plugins use the regular size. [#b055cbad](https://github.com/dinhanhthi/Dblore/commit/b055cbad)
+
 ## v0.6.0 (2026-10-09)
 
 ### Added
