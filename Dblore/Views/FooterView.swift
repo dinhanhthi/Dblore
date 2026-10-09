@@ -36,6 +36,8 @@ struct FooterView: View {
   var viewModel: NotebookViewModel?
   var connectionState: ConnectionState
   var connectionConfig: ConnectionConfig?
+  @Environment(\.pixelLength) private var pixelLength
+
   var body: some View {
     bar(viewModel: viewModel)
   }
@@ -58,6 +60,12 @@ struct FooterView: View {
 
         if let viewModel, connectionState.isConnected {
           ConnectionSafetyMenus(viewModel: viewModel)
+        }
+
+        if let tooltip = Self.noSSLTooltip(
+          for: connectionConfig, isConnected: connectionState.isConnected)
+        {
+          noSSLBadge(tooltip: tooltip)
         }
 
         // Window dimensions (for debugging)
@@ -156,6 +164,33 @@ struct FooterView: View {
     case .error:
       return "Connection failed"
     }
+  }
+
+  /// Tooltip for the "No SSL" badge, or nil to hide it: only a live network connection whose
+  /// SSL mode may fall back to plain text. File engines have no SSL to report.
+  static func noSSLTooltip(for config: ConnectionConfig?, isConnected: Bool) -> String? {
+    guard isConnected, let config, config.databaseType.capabilities.supportsSSL,
+      config.sslMode.mayBeUnencrypted
+    else { return nil }
+    return "SSL mode \(config.sslMode.displayName): the connection may be unencrypted"
+  }
+
+  /// Faint and neutral: a hint, not an alarm
+  private func noSSLBadge(tooltip: String) -> some View {
+    HStack(spacing: Spacing.xxs) {
+      Image(systemName: "lock.open")
+        .font(.system(size: 9, weight: .semibold))
+      Text("No SSL")
+        .font(.smallest)
+        .lineLimit(1)
+    }
+    .foregroundStyle(Color.foregroundSubtle)
+    .padding(.horizontal, Spacing.sm)
+    .frame(height: 18)
+    .fixedSize()
+    .overlay(Capsule().strokeBorder(Color.border, lineWidth: pixelLength))
+    .help(tooltip)
+    .accessibilityElement(children: .combine)
   }
 
   /// Server text for a failed connection. Hover-only; the status label stays short.

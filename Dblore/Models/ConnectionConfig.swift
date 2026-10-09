@@ -523,6 +523,14 @@ enum SSLMode: String, Codable, CaseIterable, Sendable {
     case .verifyFull: return "Verify Full"
     }
   }
+
+  /// Disable, Allow and Prefer may fall back to a plain connection
+  var mayBeUnencrypted: Bool {
+    switch self {
+    case .disable, .allow, .prefer: return true
+    case .require, .verifyCa, .verifyFull: return false
+    }
+  }
 }
 
 /// State of the database connection
