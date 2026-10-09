@@ -153,8 +153,39 @@ extension NotebookViewModel {
     executionQueue.enqueue(cellId: id, query: query)
   }
 
-  /// Internal method to execute a task (called by ExecutionQueue)
+  /// Internal method to execute a task (called by ExecutionQueue). Posts the long-query
+  /// notification of a single cell run, or of the Run All batch after its last cell.
   func executeTask(_ task: ExecutionTask) async -> CellResult? {
+    let start = ContinuousClock.now
+    let result = await runTask(task)
+    let cancelled =
+      Task.isCancelled
+      || executionQueue.tasks.first(where: { $0.id == task.id })?.state == .cancelled
+    guard let batchId = task.batchId else {
+      if !cancelled, let result {
+        notifyCompletion(elapsed: start.duration(to: .now), outcome: Self.completionOutcome(result))
+      }
+      return result
+    }
+    guard var batch = runAllNotification, batch.id == batchId else { return result }
+    if cancelled {
+      runAllNotification = nil
+      return result
+    }
+    if let result { batch.add(Self.completionOutcome(result)) }
+    let morePending = executionQueue.tasks.contains {
+      $0.batchId == batchId && $0.state == .pending
+    }
+    guard !morePending else {
+      runAllNotification = batch
+      return result
+    }
+    runAllNotification = nil
+    notifyCompletion(elapsed: batch.start.duration(to: .now), outcome: batch.outcome)
+    return result
+  }
+
+  private func runTask(_ task: ExecutionTask) async -> CellResult? {
     // Returns before takeCell still have to drop the stash (missing cell, no connection,
     // another tab's transaction, a refused batch, or a cancel that never reached takeCell).
     defer { ConfirmedParameterSnapshot.dropCell(self, cellId: task.cellId) }
@@ -511,5 +542,67 @@ extension NotebookViewModel {
     // Remove comments for display
     rightSidebarContent = .executedQuery(
       query: SQLSyntaxHighlighter.removeComments(sourceQuery), cellId: cellId)
+  }
+}
+
+// MARK: - Long-query notifications
+
+/// Totals of a Run All batch, posted once when its last cell finishes
+struct RunAllNotificationBatch {
+  let id: UUID
+  let start: ContinuousClock.Instant
+  private var rows = 0
+  private var affected = 0
+  private var failed = false
+
+  init(id: UUID, start: ContinuousClock.Instant = .now) {
+    self.id = id
+    self.start = start
+  }
+
+  mutating func add(_ outcome: QueryCompletionOutcome) {
+    switch outcome {
+    case .rows(let count): rows += count
+    case .affected(let count): affected += count
+    case .failed: failed = true
+    case .cancelled: break
+    }
+  }
+
+  /// Failed if any cell failed, else the rows read (affected rows when nothing was read)
+  var outcome: QueryCompletionOutcome {
+    if failed { return .failed }
+    return rows == 0 && affected > 0 ? .affected(affected) : .rows(rows)
+  }
+}
+
+extension NotebookViewModel {
+  /// Counts only: the error text and SQL of `result` never reach the notification
+  nonisolated static func completionOutcome(_ result: CellResult) -> QueryCompletionOutcome {
+    if result.error != nil { return .failed }
+    if result.columns.isEmpty, let affected = result.affectedRows { return .affected(affected) }
+    return .rows(result.rowCount)
+  }
+
+  /// The user cancelled the statement (Cancel closed the session)
+  nonisolated static func isCancellation(_ error: Error) -> Bool {
+    switch error as? DatabaseError {
+    case .queryCancelled, .batchCancelled: true
+    default: false
+    }
+  }
+
+  /// Posts in a task with the settings and app state at completion; never blocks the run
+  func notifyCompletion(elapsed: Duration, outcome: QueryCompletionOutcome) {
+    guard let tab = notificationTab() else { return }
+    let settings = notificationSettings()
+    let appActive = isAppActive()
+    let seconds = elapsed / .seconds(1)
+    let notifier = queryNotifier
+    lastCompletionNotification = Task {
+      await notifier.notifyIfNeeded(
+        tabID: tab.id, tabName: tab.name, elapsed: seconds, outcome: outcome,
+        settings: settings, appActive: appActive)
+    }
   }
 }

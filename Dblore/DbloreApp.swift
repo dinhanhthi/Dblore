@@ -8,6 +8,7 @@ import Combine
 @preconcurrency import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 // MARK: - App Delegate for file handling
 
@@ -35,6 +36,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     // Start Sparkle (no-op under tests)
     UpdaterController.shared.start()
+  }
+
+  /// Set before launch finishes, so a click that launches the app is delivered too
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    // Long-query notification clicks open their tab
+    if !SessionManager.isRunningAsTestHost {
+      UNUserNotificationCenter.current().delegate = self
+    }
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -144,6 +153,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       manager.flushToExistingFile()
     }
     LaunchSessionCapture.saveNow()
+  }
+}
+
+// MARK: - Long-query notification clicks
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+  /// A click activates the app and selects the tab the run finished in
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+  ) async {
+    let tabID =
+      (response.notification.request.content.userInfo[
+        QueryCompletionNotifier.tabIDKey] as? String).flatMap(UUID.init(uuidString:))
+    await MainActor.run { QueryNotificationRouter.open(tabID: tabID) }
+  }
+
+  /// Delivered while Dblore is active: shown only when "only when inactive" is off
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+  ) async -> UNNotificationPresentationOptions {
+    await MainActor.run {
+      AppSettings.shared.notifyOnlyWhenInactive ? [] : [.banner, .sound]
+    }
+  }
+}
+
+/// Brings the tab of a long-query notification to the front
+@MainActor
+enum QueryNotificationRouter {
+  /// Activates the app; selects the tab and fronts its window when it is still open
+  static func open(tabID: UUID?) {
+    NSApp.activate()
+    guard let tabID,
+      let manager = WorkspaceWindowManager.shared.allWorkspaces.first(where: {
+        $0.tabs.contains { $0.id == tabID }
+      })
+    else { return }
+    manager.selectTab(id: tabID)
+    let store = NewWindowStore.shared
+    if let window = store.findWindow(for: manager.id)
+      ?? NSApp.windows.first(where: { store.registration(for: $0) == .workspace(manager.id) })
+    {
+      if window.isMiniaturized { window.deminiaturize(nil) }
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      // The window showing it focuses itself (see `WorkspaceWindowView`)
+      WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+    }
   }
 }
 

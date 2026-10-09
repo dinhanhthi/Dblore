@@ -834,6 +834,13 @@ class WorkspaceManager: Identifiable {
       guard let self else { return nil }
       return (id: self.workspace.id, name: self.workspace.name)
     }
+    // Resolved at completion: the tab is registered after this returns
+    viewModel.notificationTab = { [weak self, weak viewModel] in
+      guard let self, let viewModel,
+        let tab = self.tabs.first(where: { self.viewModels[$0.id] === viewModel })
+      else { return nil }
+      return (id: tab.id, name: tab.title)
+    }
     viewModel.onHistoryRecorded = { [weak self] in
       guard let self else { return }
       Task { await self.refreshHistory() }

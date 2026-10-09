@@ -162,6 +162,7 @@ extension NotebookViewModel {
 
     // One batch: its cells only run on the connection its first cell started on
     let batchId = UUID()
+    var enqueued = false
     // Enqueue cells, optionally skipping the ones that needed confirmation
     for cell in pendingCells {
       if skipConfirmable && cell.needsConfirmation {
@@ -174,6 +175,9 @@ extension NotebookViewModel {
         ConfirmedParameterSnapshot.dropCell(self, cellId: cell.id)
       }
       executionQueue.enqueue(cellId: cell.id, query: cell.query, batchId: batchId)
+      enqueued = true
     }
+    // One notification for the whole batch, timed from here (see `executeTask`)
+    if enqueued { runAllNotification = RunAllNotificationBatch(id: batchId) }
   }
 }

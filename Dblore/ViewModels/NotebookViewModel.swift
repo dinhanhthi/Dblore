@@ -248,6 +248,19 @@ class NotebookViewModel {
   /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.
   /// Tests inject the answer.
   @ObservationIgnored var cancelQueryPrompt: (@MainActor (QueryCancelWarning) async -> Bool)?
+
+  // MARK: - Long-query notifications (see NotebookViewModel+Execution.swift)
+  @ObservationIgnored var queryNotifier = QueryCompletionNotifier()
+  /// Tab id and display name for the notification. Nil posts nothing. Set by `WorkspaceManager`.
+  @ObservationIgnored var notificationTab: @MainActor () -> (id: UUID, name: String)? = { nil }
+  @ObservationIgnored var notificationSettings: @MainActor () -> QueryNotificationSettings = {
+    AppSettings.shared.queryNotificationSettings
+  }
+  @ObservationIgnored var isAppActive: @MainActor () -> Bool = { NSApplication.shared.isActive }
+  /// Run All batch that posts one notification when its last cell finishes
+  @ObservationIgnored var runAllNotification: RunAllNotificationBatch?
+  /// Latest posting task (posting never blocks the run)
+  @ObservationIgnored var lastCompletionNotification: Task<Void, Never>?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
 
   init(notebook: DbloreNotebook = .newDocument()) {
