@@ -385,7 +385,7 @@ enum DataSettingsProduction {
 }
 
 /// Visual groups for Settings → Data. Every `LocalDataCategory` belongs to one group.
-private enum DataSettingsGroup: CaseIterable {
+enum DataSettingsGroup: CaseIterable {
   case history
   case workspace
   case assistant
