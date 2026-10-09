@@ -820,6 +820,7 @@ struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
   @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
+  @Environment(\.colorScheme) private var colorScheme
 
   @State private var isHoveringNewTabButton = false
 
@@ -898,6 +899,18 @@ struct WorkspaceTitleBarTabsView: View {
         .controlSize(.small)
         .blockDoubleClickZoom()
         .help("AI Assistant (⌘L)")
+
+        // Light/dark toggle button
+        Button {
+          AppSettings.shared.themePreference = ThemePreference.toggled(from: colorScheme)
+        } label: {
+          Image(systemName: colorScheme == .dark ? "sun.max" : "moon")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .blockDoubleClickZoom()
+        .help(colorScheme == .dark ? "Switch to Light Mode" : "Switch to Dark Mode")
 
         // Settings button
         Button {

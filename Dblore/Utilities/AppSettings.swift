@@ -22,6 +22,11 @@ enum ThemePreference: String, CaseIterable {
       return .dark
     }
   }
+
+  /// Light/dark-only toggle: the opposite of the scheme currently on screen
+  static func toggled(from displayed: ColorScheme) -> ThemePreference {
+    displayed == .dark ? .light : .dark
+  }
 }
 
 /// Type of tab created by default by the new tab action
