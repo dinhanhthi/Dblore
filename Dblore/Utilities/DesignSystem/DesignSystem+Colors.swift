@@ -138,6 +138,12 @@ extension Color {
     dark: Color(hex: "ef4444")  // Red 500
   )
 
+  // Light gray in both modes so the light-blue AI bubble icon stays visible
+  static let aiBubbleBackground = Color(
+    light: Color(hex: "e5e7eb"),  // Gray 200
+    dark: Color(hex: "d1d5db")  // Gray 300
+  )
+
   // Table colors
   static let tableHeaderBackground = Color(
     light: Color(hex: "f3f4f6"),  // Gray 100

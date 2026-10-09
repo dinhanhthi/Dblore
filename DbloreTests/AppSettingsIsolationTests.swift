@@ -13,6 +13,8 @@ struct AppSettingsIsolationTests {
   private static let simpleModeKey = "app.settings.editorSimpleMode"
   private static let safeModeKey = "app.settings.safeMode"
   private static let commitStyleKey = "app.settings.commitStyle"
+  private static let aiPanelOpenModeKey = "app.settings.aiPanelOpenMode"
+  private static let aiBubblePositionKey = "app.settings.aiBubblePosition"
 
   @Test("AppSettings(defaults:) reads and writes only the given suite")
   func injectedSuiteOnly() throws {
@@ -115,5 +117,57 @@ struct AppSettingsIsolationTests {
     #expect(settings.safeMode == .silent)
     #expect(suite.string(forKey: Self.commitStyleKey) == CommitStyle.review.rawValue)
     #expect(suite.object(forKey: Self.safeModeKey) as? Int == 0)
+  }
+
+  @Test("AI panel open mode defaults to sidebar and persists")
+  func aiPanelOpenModeDefaultsToSidebarAndPersists() throws {
+    let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+
+    let settings = AppSettings(defaults: suite)
+    #expect(settings.aiPanelOpenMode == .sidebar)
+    settings.aiPanelOpenMode = .bubble
+
+    #expect(suite.string(forKey: Self.aiPanelOpenModeKey) == AIPanelMode.bubble.rawValue)
+    let reloaded = AppSettings(defaults: suite)
+    #expect(reloaded.aiPanelOpenMode == .bubble)
+  }
+
+  @Test("AI bubble position defaults to 1, clamps to 0...1 and persists")
+  func aiBubblePositionDefaultsToOneAndClamps() throws {
+    let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+
+    let settings = AppSettings(defaults: suite)
+    #expect(settings.aiBubblePosition == 1.0)
+    settings.aiBubblePosition = 1.7
+    #expect(settings.aiBubblePosition == 1.0)
+    settings.aiBubblePosition = -0.2
+    #expect(settings.aiBubblePosition == 0.0)
+    settings.aiBubblePosition = 0.3
+
+    #expect(suite.double(forKey: Self.aiBubblePositionKey) == 0.3)
+    let reloaded = AppSettings(defaults: suite)
+    #expect(reloaded.aiBubblePosition == 0.3)
+  }
+
+  @Test("resetToDefaults restores AI panel open mode and bubble position")
+  func resetToDefaultsRestoresAIPanelSettings() throws {
+    let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+
+    let settings = AppSettings(defaults: suite)
+    settings.aiPanelOpenMode = .bubble
+    settings.aiBubblePosition = 0.3
+    settings.resetToDefaults()
+
+    #expect(settings.aiPanelOpenMode == .sidebar)
+    #expect(settings.aiBubblePosition == 1.0)
+    let reloaded = AppSettings(defaults: suite)
+    #expect(reloaded.aiPanelOpenMode == .sidebar)
+    #expect(reloaded.aiBubblePosition == 1.0)
   }
 }

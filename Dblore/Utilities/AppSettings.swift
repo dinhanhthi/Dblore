@@ -22,6 +22,11 @@ enum ThemePreference: String, CaseIterable {
       return .dark
     }
   }
+
+  /// Light/dark-only toggle: the opposite of the scheme currently on screen
+  static func toggled(from displayed: ColorScheme) -> ThemePreference {
+    displayed == .dark ? .light : .dark
+  }
 }
 
 /// Type of tab created by default by the new tab action
@@ -46,6 +51,19 @@ enum LaunchBehavior: String, CaseIterable {
     switch self {
     case .welcome: return "Show Welcome screen"
     case .restoreLastSession: return "Restore last sessions"
+    }
+  }
+}
+
+/// Where the AI assistant panel opens
+enum AIPanelMode: String, CaseIterable {
+  case sidebar
+  case bubble
+
+  var title: String {
+    switch self {
+    case .sidebar: return "Right sidebar"
+    case .bubble: return "Bubble"
     }
   }
 }
@@ -272,6 +290,8 @@ class AppSettings {
     static let openWindowsAsTabs = "app.settings.openWindowsAsTabs"
     static let defaultNewTabType = "app.settings.defaultNewTabType"
     static let launchBehavior = "app.settings.launchBehavior"
+    static let aiPanelOpenMode = "app.settings.aiPanelOpenMode"
+    static let aiBubblePosition = "app.settings.aiBubblePosition"
     static let editorSideBySideDefault = "app.settings.editorSideBySideDefault"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
@@ -475,6 +495,27 @@ class AppSettings {
       if launchBehavior == .welcome {
         LaunchSessionStore(defaults: defaults).clear()
       }
+    }
+  }
+
+  /// Where the AI assistant panel opens
+  /// Default: sidebar
+  var aiPanelOpenMode: AIPanelMode = .sidebar {
+    didSet {
+      defaults.set(aiPanelOpenMode.rawValue, forKey: Keys.aiPanelOpenMode)
+    }
+  }
+
+  /// Horizontal position of the AI bubble along the bottom edge (0 = left, 1 = right)
+  /// Default: 1, clamped to 0...1
+  var aiBubblePosition: Double = 1.0 {
+    didSet {
+      let clampedValue = min(max(aiBubblePosition, 0), 1)
+      if clampedValue != aiBubblePosition {
+        aiBubblePosition = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(aiBubblePosition, forKey: Keys.aiBubblePosition)
     }
   }
 
@@ -782,6 +823,16 @@ class AppSettings {
       launchBehavior = behavior
     }
 
+    if let raw = defaults.string(forKey: Keys.aiPanelOpenMode),
+      let mode = AIPanelMode(rawValue: raw)
+    {
+      aiPanelOpenMode = mode
+    }
+
+    if defaults.object(forKey: Keys.aiBubblePosition) != nil {
+      aiBubblePosition = min(max(defaults.double(forKey: Keys.aiBubblePosition), 0), 1)
+    }
+
     if defaults.object(forKey: Keys.editorFontSize) != nil {
       let stored = CGFloat(defaults.double(forKey: Keys.editorFontSize))
       let clamped = Self.clampFontSize(stored)
@@ -889,6 +940,8 @@ class AppSettings {
     launchBehavior = .welcome
     // Same-value assignment may not run didSet, so remove the snapshot here too.
     LaunchSessionStore(defaults: defaults).clear()
+    aiPanelOpenMode = .sidebar
+    aiBubblePosition = 1.0
     editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false

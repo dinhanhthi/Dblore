@@ -35,7 +35,10 @@ final class AIAssistantViewModel {
   var isGenerating = false
   /// True while an on-device model is being loaded into memory (before the first token)
   var isLoadingModel = false
-  var isVisible = false
+  private(set) var isVisible = false
+  /// Session presentation while visible; reset to the default mode on each open
+  var presentation: AIPanelMode = .sidebar
+  private(set) var isBubbleExpanded = false
   var providerOverride: AIProviderKind?
   var modelOverride: String?
   /// Qualified table names; empty means automatic selection
@@ -86,6 +89,45 @@ final class AIAssistantViewModel {
   var needsSetup: Bool {
     guard let provider = activeProvider else { return true }
     return !settings.isConfigured(provider)
+  }
+
+  var showsSidebarPanel: Bool { isVisible && presentation == .sidebar }
+
+  var showsBubble: Bool { isVisible && presentation == .bubble }
+
+  // MARK: - Presentation
+
+  /// Hidden opens in `defaultMode`, a collapsed bubble expands, anything else hides
+  func toggleVisibility(defaultMode: AIPanelMode) {
+    if !isVisible {
+      presentation = defaultMode
+      isBubbleExpanded = defaultMode == .bubble
+      isVisible = true
+    } else if showsBubble && !isBubbleExpanded {
+      isBubbleExpanded = true
+    } else {
+      hide()
+    }
+  }
+
+  func toggleBubbleExpanded() {
+    guard showsBubble else { return }
+    isBubbleExpanded.toggle()
+  }
+
+  func collapseBubble() {
+    isBubbleExpanded = false
+  }
+
+  func togglePresentation() {
+    guard isVisible else { return }
+    presentation = presentation == .sidebar ? .bubble : .sidebar
+    isBubbleExpanded = presentation == .bubble
+  }
+
+  func hide() {
+    isVisible = false
+    isBubbleExpanded = false
   }
 
   // MARK: - Actions

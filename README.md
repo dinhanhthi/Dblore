@@ -37,7 +37,9 @@ today, and SQLite files as beta; more engines (such as MongoDB) are planned.
   LM Studio, `mlx_lm.server` or any OpenAI-compatible endpoint (bring your own API key).
   Only schema metadata is sent automatically; query text and errors are sent only when
   you confirm, row data is never sent on its own, and generated SQL is never run
-  automatically. Point it at a local model for fully local use
+  automatically. Point it at a local model for fully local use. Detach it into a
+  floating, draggable bubble at the bottom of the window, or pick the default in
+  Settings > AI > Panel
 
 ## Install
 

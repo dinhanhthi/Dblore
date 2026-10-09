@@ -396,7 +396,11 @@ final class ResultGridScrollView: NSScrollView {
 /// Header view with an opaque background (distinct from the body, same as the "#" gutter) and a bottom border. Super (not called) draws a
 /// translucent background over the fill, so the header cells are drawn here.
 /// A click on a column's filter icon opens the value popover and does not sort.
+/// The filter icon and the sort arrow show a tooltip.
 final class ResultGridHeaderView: NSTableHeaderView {
+  private lazy var toolTipOwner = ToolTipOwner(headerView: self)
+  private var toolTipTags: [NSView.ToolTipTag] = []
+
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     if let hit = filterButton(at: point) {
@@ -409,10 +413,49 @@ final class ResultGridHeaderView: NSTableHeaderView {
 
   override func resetCursorRects() {
     super.resetCursorRects()
+    toolTipTags.forEach(removeToolTip)
+    toolTipTags = []
     guard let tableView else { return }
     for index in tableView.tableColumns.indices {
       guard let button = filterButtonRect(tableColumn: index) else { continue }
       addCursorRect(button, cursor: .pointingHand)
+      toolTipTags.append(addToolTip(button, owner: toolTipOwner, userData: nil))
+      if let arrow = sortArrowRect(tableColumn: index) {
+        toolTipTags.append(addToolTip(arrow, owner: toolTipOwner, userData: nil))
+      }
+    }
+  }
+
+  /// Tooltip for the filter icon or the sort arrow under `point`. Empty (no tooltip) over the
+  /// arrow area of an unsorted column.
+  fileprivate func toolTip(at point: NSPoint) -> String {
+    guard let tableView else { return "" }
+    for (index, column) in tableView.tableColumns.enumerated() {
+      guard let cell = column.headerCell as? ResultGridHeaderCell else { continue }
+      if filterButtonRect(tableColumn: index)?.contains(point) == true {
+        return cell.content.isFiltered ? "Filter values (some values hidden)" : "Filter values"
+      }
+      if sortArrowRect(tableColumn: index)?.contains(point) == true,
+        let ascending = ResultGridHeaderCell.sortAscending(for: column, in: tableView)
+      {
+        return ascending ? "Sorted ascending" : "Sorted descending"
+      }
+    }
+    return ""
+  }
+
+  private final class ToolTipOwner: NSObject, NSViewToolTipOwner {
+    weak var headerView: ResultGridHeaderView?
+
+    init(headerView: ResultGridHeaderView) {
+      self.headerView = headerView
+    }
+
+    func view(
+      _ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+      userData data: UnsafeMutableRawPointer?
+    ) -> String {
+      headerView?.toolTip(at: point) ?? ""
     }
   }
 
@@ -438,6 +481,17 @@ final class ResultGridHeaderView: NSTableHeaderView {
     var columnRect = headerRect(ofColumn: index)
     if index == draggedColumn { columnRect.origin.x += draggedDistance }
     return cell.filterButtonRect(columnRect: columnRect, headerBounds: bounds)
+  }
+
+  private func sortArrowRect(tableColumn index: Int) -> NSRect? {
+    guard let tableView, tableView.tableColumns.indices.contains(index) else { return nil }
+    let column = tableView.tableColumns[index]
+    guard !column.isHidden, let cell = column.headerCell as? ResultGridHeaderCell else {
+      return nil
+    }
+    var columnRect = headerRect(ofColumn: index)
+    if index == draggedColumn { columnRect.origin.x += draggedDistance }
+    return cell.sortArrowRect(columnRect: columnRect, headerBounds: bounds)
   }
 
   override func draw(_ dirtyRect: NSRect) {

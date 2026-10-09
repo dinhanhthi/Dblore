@@ -84,7 +84,7 @@ struct WorkspaceContainerView: View {
             }
 
             // AI assistant panel (schema structure only, never row data)
-            if workspaceManager.aiAssistant.isVisible {
+            if workspaceManager.aiAssistant.showsSidebarPanel {
               AIAssistantPanel(
                 assistant: workspaceManager.aiAssistant,
                 activeTab: activeViewModel,
@@ -93,7 +93,9 @@ struct WorkspaceContainerView: View {
               .transition(SidebarAnimation.trailingSlide)
             }
           }
-          .animation(SidebarAnimation.animation, value: workspaceManager.aiAssistant.isVisible)
+          .animation(
+            SidebarAnimation.animation, value: workspaceManager.aiAssistant.showsSidebarPanel
+          )
           .zIndex(0)
 
           // Traffic light controls stay above the sidebar while it slides (z-index 1).
@@ -160,6 +162,17 @@ struct WorkspaceContainerView: View {
             Rectangle().fill(Color.borderSubtle).frame(height: 1)
           }
           .zIndex(1)
+
+          // Floating AI bubble above everything in the content area (z-index 2)
+          if workspaceManager.aiAssistant.showsBubble {
+            AIBubbleOverlay(
+              assistant: workspaceManager.aiAssistant,
+              activeTab: activeViewModel,
+              tables: workspaceManager.databaseTables
+            )
+            .transition(.opacity)
+            .zIndex(2)
+          }
         }
 
         FooterView(
@@ -225,7 +238,7 @@ struct WorkspaceContainerView: View {
       }
     }
     .focusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
-      withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
+      workspaceManager.toggleAIAssistant()
     }
     .focusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
       workspaceManager.openCommandPalette()
@@ -807,6 +820,7 @@ struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
   @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
+  @Environment(\.colorScheme) private var colorScheme
 
   @State private var isHoveringNewTabButton = false
 
@@ -874,7 +888,7 @@ struct WorkspaceTitleBarTabsView: View {
       HStack(spacing: Spacing.xxs) {
         // AI assistant button
         Button {
-          withSidebarAnimation { workspaceManager.aiAssistant.isVisible.toggle() }
+          workspaceManager.toggleAIAssistant()
         } label: {
           Image(systemName: "sparkles")
             .foregroundColor(
@@ -885,6 +899,18 @@ struct WorkspaceTitleBarTabsView: View {
         .controlSize(.small)
         .blockDoubleClickZoom()
         .help("AI Assistant (⌘L)")
+
+        // Light/dark toggle button
+        Button {
+          AppSettings.shared.themePreference = ThemePreference.toggled(from: colorScheme)
+        } label: {
+          Image(systemName: colorScheme == .dark ? "sun.max" : "moon")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .blockDoubleClickZoom()
+        .help(colorScheme == .dark ? "Switch to Light Mode" : "Switch to Dark Mode")
 
         // Settings button
         Button {

@@ -1290,6 +1290,15 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  // MARK: - AI Assistant
+
+  /// Hidden opens in `defaultMode`, a collapsed bubble expands, anything else hides.
+  func toggleAIAssistant(defaultMode: AIPanelMode = AppSettings.shared.aiPanelOpenMode) {
+    withSidebarAnimation(SidebarAnimation.bubble) {
+      aiAssistant.toggleVisibility(defaultMode: defaultMode)
+    }
+  }
+
   // MARK: - Schema Visualizer
 
   /// Toggle the schema visualizer visibility

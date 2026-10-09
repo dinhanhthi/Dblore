@@ -9,6 +9,7 @@ import AppKit
 import SwiftUI
 
 struct AISettingsSection: View {
+  @Bindable var appSettings: AppSettings
   private let settings = AISettings.shared
 
   @State private var kind: AIProviderKind = .anthropic
@@ -53,6 +54,8 @@ struct AISettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      panelCard
+
       SettingsGroupCard(title: "Provider") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           providerControls
@@ -154,6 +157,26 @@ struct AISettingsSection: View {
           modelEditor
           testRow
         }
+      }
+    }
+  }
+
+  private var panelCard: some View {
+    SettingsGroupCard(title: "Panel") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Text("Where the AI Assistant opens from the toolbar button and ⌘L")
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+
+        CapsuleDropdown(
+          title: appSettings.aiPanelOpenMode.title,
+          width: 200,
+          accessibilityLabel: "AI Assistant panel",
+          options: Array(AIPanelMode.allCases),
+          optionTitle: \.title,
+          isSelected: { $0 == appSettings.aiPanelOpenMode },
+          onSelect: { appSettings.aiPanelOpenMode = $0 }
+        )
       }
     }
   }

@@ -5,8 +5,8 @@
 //  Two-line header cell of the result grid, as in the old result table: the column name
 //  (yellow key before it for a primary-key column, search highlight on a column-name match)
 //  over the column type in a smaller muted font. The coordinator decides the content
-//  (ResultGridHeaderContent); the cell only draws it, plus the sort indicator and the
-//  filter icon on the type line.
+//  (ResultGridHeaderContent); the cell only draws it, plus the filter icon on the name line
+//  and the sort indicator on the type line.
 //
 
 import AppKit
@@ -90,7 +90,6 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
         in: NSRect(x: cellFrame.minX, y: bounds.minY, width: cellFrame.width, height: bounds.height)
       )
     }
-    let indicator = sortIndicatorRect(forBounds: cellFrame)
     let filterButton = filterButtonRect(columnRect: cellFrame, headerBounds: controlView.bounds)
     let span = textSpan(columnRect: cellFrame, headerBounds: controlView.bounds)
     let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
@@ -101,7 +100,8 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
       let column = tableView.tableColumns.first(where: { $0.headerCell === self }),
       let ascending = Self.sortAscending(for: column, in: tableView)
     {
-      drawSortArrow(ascending: ascending, centerX: indicator.midX, centerY: top + titleHeight / 2)
+      let arrow = sortArrowRect(columnRect: cellFrame, headerBounds: controlView.bounds)
+      drawSortArrow(ascending: ascending, centerX: arrow.midX, centerY: arrow.midY)
     }
     if let filterButton {
       drawFilterIcon(in: filterButton, active: content.isFiltered)
@@ -167,9 +167,9 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     return ceil(chrome + max(nameWidth, typeWidth)) + 1
   }
 
-  /// Horizontal limits of the name and type text. The filter icon sits on the type line,
-  /// centered on the sort indicator, so it extends past that indicator and the name line
-  /// stops at the icon, not at the indicator.
+  /// Horizontal limits of the name and type text. The filter icon and the sort arrow are
+  /// centered on the sort indicator, so they extend past it and the text stops at them, not
+  /// at the indicator.
   private func textSpan(columnRect: NSRect, headerBounds: NSRect) -> (minX: CGFloat, maxX: CGFloat)
   {
     let minX = columnRect.minX + Spacing.xsm
@@ -180,7 +180,7 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     return (minX, max(minX, reserved - Spacing.xs))
   }
 
-  /// Hit target of the filter icon, in the header view's coordinates. On the type line, under
+  /// Hit target of the filter icon, in the header view's coordinates. On the name line, above
   /// the sort arrow. Nil for the row-number gutter. Without a type line it sits just left of
   /// the sort indicator so the two don't overlap in the short header.
   func filterButtonRect(columnRect: NSRect, headerBounds: NSRect) -> NSRect? {
@@ -194,13 +194,25 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
       centerX = indicator.midX
       let top = Self.linesTop(in: headerBounds, hasType: true)
       let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
-      let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
-      centerY = top + titleHeight + Spacing.xxs + typeHeight / 2
+      centerY = top + titleHeight / 2
     } else {
       centerX = indicator.minX - Spacing.xs - side / 2
       centerY = headerBounds.midY
     }
     return NSRect(x: centerX - side / 2, y: centerY - side / 2, width: side, height: side)
+  }
+
+  /// Area of the sort arrow, in the header view's coordinates: on the type line under the
+  /// filter icon, or on the name line when column types are hidden
+  func sortArrowRect(columnRect: NSRect, headerBounds: NSRect) -> NSRect {
+    let indicator = sortIndicatorRect(forBounds: columnRect)
+    let side = Self.filterButtonSide
+    let top = Self.linesTop(in: headerBounds, hasType: content.type != nil)
+    let titleHeight = Self.titleFont.ascender - Self.titleFont.descender
+    let typeHeight = Self.typeFont.ascender - Self.typeFont.descender
+    let centerY =
+      content.type != nil ? top + titleHeight + Spacing.xxs + typeHeight / 2 : top + titleHeight / 2
+    return NSRect(x: indicator.midX - side / 2, y: centerY - side / 2, width: side, height: side)
   }
 
   // MARK: - Private
@@ -259,7 +271,7 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
   }
 
-  /// Sort chevron in the app accent color, centered on the name line
+  /// Sort chevron in the app accent color
   private func drawSortArrow(ascending: Bool, centerX: CGFloat, centerY: CGFloat) {
     guard
       let image = NSImage(

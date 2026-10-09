@@ -46,28 +46,35 @@ struct ColumnValueFilterPopover: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
+    VStack(alignment: .leading, spacing: Spacing.xsm) {
       Text(columnName)
         .font(.system(size: 12, weight: .semibold))
         .foregroundColor(.foreground)
         .lineLimit(1)
 
       if categories.count > 8 {
+        // Compact `inputCapsuleStyle`: its `Spacing.sm` vertical padding is too tall here
         TextField("Search values", text: $query)
           .textFieldStyle(.plain)
           .font(.system(size: 12))
-          .inputCapsuleStyle()
+          .padding(.vertical, Spacing.xs)
+          .padding(.horizontal, Spacing.sm)
+          .background(Color.inputBackground)
+          .clipShape(Capsule())
+          .overlay(Capsule().stroke(Color.border, lineWidth: 1))
       }
 
+      // Filled and bordered: ghost buttons fade into the popover background
       HStack(spacing: Spacing.sm) {
         Button("Show all", action: showAll)
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle(vPadding: Spacing.xxs))
           .disabled(hidden.isEmpty)
         Spacer()
         Button("Hide all", action: hideAll)
-          .buttonStyle(GhostButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle(vPadding: Spacing.xxs))
           .disabled(allKeys.isEmpty || hidden.isSuperset(of: allKeys))
       }
+      .controlSize(.small)
 
       Divider()
 
@@ -104,7 +111,7 @@ struct ColumnValueFilterPopover: View {
         .frame(maxHeight: 280)
       }
     }
-    .padding(Spacing.md)
+    .padding(Spacing.sm)
     .frame(width: 260)
   }
 

@@ -12,6 +12,8 @@ struct AIAssistantPanel: View {
   @Bindable var assistant: AIAssistantViewModel
   let activeTab: NotebookViewModel?
   let tables: [DatabaseTable]
+  /// Shown as the bubble card instead of the docked sidebar column
+  var isFloating = false
 
   @FocusState private var composerFocused: Bool
   @State private var composerIsMultiline = false
@@ -41,6 +43,9 @@ struct AIAssistantPanel: View {
   var body: some View {
     VStack(spacing: 0) {
       header
+      if isFloating {
+        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      }
       if assistant.needsSetup {
         setupState
       } else if assistant.messages.isEmpty {
@@ -54,17 +59,21 @@ struct AIAssistantPanel: View {
     .frame(width: ComponentSize.sidebarWidth)
     .background(background)
     .overlay(alignment: .leading) {
-      Rectangle()
-        .fill(
-          LinearGradient(
-            colors: [Color.accent.opacity(0.7), Color.accent.opacity(0.25), Color.borderSubtle],
-            startPoint: .top, endPoint: .bottom)
-        )
-        .frame(width: 1)
+      if !isFloating {
+        Rectangle()
+          .fill(
+            LinearGradient(
+              colors: [Color.accent.opacity(0.7), Color.accent.opacity(0.25), Color.borderSubtle],
+              startPoint: .top, endPoint: .bottom)
+          )
+          .frame(width: 1)
+      }
     }
     .onAppear { assistant.attachViewerTable(viewerTableName) }
     .onChange(of: viewerTableName) { _, name in assistant.attachViewerTable(name) }
-    .onDisappear { assistant.attachViewerTable(nil) }
+    // Only detach when the assistant is hidden: on a mode switch the outgoing panel disappears
+    // after the incoming one appeared (its onAppear was a no-op), so detaching would drop the table
+    .onDisappear { if !assistant.isVisible { assistant.attachViewerTable(nil) } }
   }
 
   /// Accent glow from the top so the panel reads as the AI surface, fading out before the messages
@@ -81,6 +90,8 @@ struct AIAssistantPanel: View {
   }
 
   // MARK: - Header
+
+  private var isBubble: Bool { assistant.presentation == .bubble }
 
   private var header: some View {
     HStack(spacing: Spacing.xs) {
@@ -128,13 +139,27 @@ struct AIAssistantPanel: View {
       .disabled(assistant.messages.isEmpty)
       .help("New chat")
       Button {
-        withSidebarAnimation { assistant.isVisible = false }
+        withSidebarAnimation(SidebarAnimation.bubble) { assistant.togglePresentation() }
+      } label: {
+        Image(systemName: isBubble ? "sidebar.right" : "pip.enter")
+          .foregroundColor(.foregroundMuted)
+          .contentTransition(.symbolEffect(.replace))
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .help(isBubble ? "Attach to sidebar" : "Detach as bubble")
+      Button {
+        if isBubble {
+          withSidebarAnimation(SidebarAnimation.bubble) { assistant.collapseBubble() }
+        } else {
+          withSidebarAnimation { assistant.hide() }
+        }
       } label: {
         Image(systemName: "xmark").foregroundColor(.foregroundMuted)
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
-      .help("Close")
+      .help(isBubble ? "Collapse" : "Close")
     }
     .padding(.horizontal, Spacing.md)
     // Matches the tab bar so the workspace's full-width tab bar border doubles as this divider
