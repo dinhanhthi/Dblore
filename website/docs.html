@@ -86,8 +86,10 @@
               <li><a href="#results">Results grid</a></li>
               <li><a href="#charts">Charts</a></li>
               <li><a href="#export">Export</a></li>
+              <li><a href="#import">Import data</a></li>
               <li><a href="#safe-mode">Safe Mode</a></li>
               <li><a href="#ai">AI assistant</a></li>
+              <li><a href="#plugins">Plugins</a></li>
               <li><a href="#settings">Settings &amp; data</a></li>
             </ul>
           </nav>
@@ -99,7 +101,7 @@
             <li>Download the signed and notarized DMG from <a href="https://github.com/dinhanhthi/Dblore/releases/latest" target="_blank" rel="noopener noreferrer">Releases</a>, drag Dblore to Applications.</li>
             <li>Needs macOS 14+ on Apple Silicon.</li>
             <li>Updates itself: <strong>Dblore &gt; Check for Updates…</strong></li>
-            <li>Opens <code>.sqlite</code>, <code>.sqlite3</code> and <code>.db</code> files from Finder.</li>
+            <li>Opens <code>.sqlite</code>, <code>.sqlite3</code> and <code>.db</code> files from Finder, and <code>.duckdb</code> files once the DuckDB plugin is installed.</li>
 </ul>
           </section>
 
@@ -107,9 +109,15 @@
             <h2>Connect</h2>
 <ul class="list">
             <li><strong>PostgreSQL:</strong> host, port, user, database. SSL modes from <code>disable</code> to <code>verify-full</code>, timeouts, retry on failure, read-only mode.</li>
+            <li><strong>SSH tunnel:</strong> password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
+            <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority.</li>
+            <li>Statement, lock and idle-in-transaction timeouts: global in <strong>Settings &gt; Results</strong>, overridable per connection.</li>
             <li>Passwords are stored in the Keychain.</li>
             <li><strong>SQLite (beta):</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
-            <li>Recent connections are on the welcome screen. Hover a card to remove it.</li>
+            <li><strong>DuckDB:</strong> needs the <a href="#plugins">plugin</a>.</li>
+            <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
+            <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
+            <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted.</li>
 </ul>
           </section>
 
@@ -122,7 +130,8 @@
             <li>Switch with <kbd>Cmd+1</kbd> to <kbd>Cmd+9</kbd>. Reopen a closed tab with <kbd>Cmd+Shift+T</kbd>.</li>
             <li>Optional native macOS window tabs: enable <strong>Settings &gt; General &gt; Open new windows as tabs</strong>. <kbd>Cmd+Shift+N</kbd> or the <strong>+</strong> button opens a new window tab, <kbd>Ctrl+Tab</kbd> switches, <kbd>Cmd+T</kbd> opens a new tab.</li>
             <li>Drag a window tab out of the tab bar (or use <strong>Window &gt; Move Tab to New Window</strong>) to split it into its own window.</li>
-            <li>Tabs and window state are restored on relaunch.</li>
+            <li>Tabs and window state are restored on relaunch. <strong>Settings &gt; General</strong> chooses between the welcome screen and the last session at startup.</li>
+            <li>Command palette: <kbd>Cmd+K</kbd> finds and runs commands.</li>
 </ul>
           </section>
 
@@ -133,6 +142,7 @@
             <li>Run the cell with <kbd>Ctrl+Enter</kbd>, run and move on with <kbd>Shift+Enter</kbd>, run and insert below with <kbd>Option+Enter</kbd>, run all with <kbd>Cmd+Shift+Enter</kbd>.</li>
             <li>Cancel a running query. Each result shows row count and execution time.</li>
             <li>New cell <kbd>Cmd+Option+N</kbd>, duplicate <kbd>Cmd+D</kbd>, delete <kbd>Cmd+Delete</kbd>.</li>
+            <li>Named parameters: write <code>:name</code> in a cell and fill the values in the inline form under it. You choose whether the values are saved in the file.</li>
             <li>Old <code>.sqlnb</code> files: rename them to <code>.dblore</code>, the content is unchanged.</li>
 </ul>
           </section>
@@ -143,6 +153,7 @@
             <li>Open a <code>.sql</code> file in a tab (<kbd>Cmd+Shift+J</kbd> for a new one).</li>
             <li>For quick notes, <kbd>Cmd+Shift+M</kbd> opens a Markdown note in the workspace. It is written to a <code>.md</code> file only when you press <kbd>Cmd+S</kbd>; the eye button in the header switches between the source and an editable preview.</li>
             <li>Run the query with <kbd>Cmd+R</kbd> or <kbd>Cmd+Enter</kbd>.</li>
+            <li>Named parameters (<code>:name</code>) are bound from the right sidebar.</li>
             <li>Table- and column-aware autocomplete: <kbd>Up</kbd> / <kbd>Down</kbd> to choose, <kbd>Enter</kbd> or <kbd>Tab</kbd> to accept.</li>
             <li>Toggle comment with <kbd>Cmd+/</kbd>. Format SQL, word wrap and syntax highlight toggles sit in the editor toolbar.</li>
             <li>Explain with <kbd>Cmd+E</kbd>, Explain Analyze with <kbd>Cmd+Shift+E</kbd> (runs the statement, so it asks first).</li>
@@ -153,10 +164,11 @@
             <h2>Sidebar</h2>
 <ul class="list">
             <li>Left sidebar (<kbd>Cmd+B</kbd>) has three tabs: <strong>Schema</strong>, <strong>Favorites</strong> and <strong>History</strong>.</li>
-            <li>Schema: tables, columns and types. Click a table to browse its data in a preview tab.</li>
+            <li>Schema: tables, columns, types and triggers, grouped by schema. Click a table to browse its data in a preview tab.</li>
+            <li><strong>View Source</strong> on a function, procedure or trigger opens its definition read-only, with Copy and <strong>Open as editable copy</strong>.</li>
             <li>Type in the filter field of a tab for a loose fuzzy match.</li>
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
-            <li>History: every query is recorded locally.</li>
+            <li>History: every query is recorded locally. Filter by status, or show only writes.</li>
             <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle.</li>
             <li>Right sidebar (<kbd>Cmd+Shift+B</kbd>) shows cell details, column filters and highlights.</li>
 </ul>
@@ -166,7 +178,9 @@
             <h2>Results grid</h2>
 <ul class="list">
             <li>Sort, resize (double-click a divider to auto-fit), search and paginate.</li>
-            <li>Edit values inline. Changes are staged and committed as one batch, or applied directly depending on Safe Mode.</li>
+            <li>Edit values inline. Changes are staged and committed as one batch, or applied directly depending on Safe Mode. Undo staged changes from the Edit menu.</li>
+            <li>Foreign keys: look up the referenced row while editing, or jump to it.</li>
+            <li><strong>Pin result</strong>, re-run, then <strong>Compare</strong>: added, removed and changed rows are highlighted. Two <code>EXPLAIN</code> plans compare node by node. A notebook cell's pin is saved with its results.</li>
             <li>Column header filter, plus a filter sidebar that builds <code>WHERE</code> conditions. Filters can be saved.</li>
             <li>Highlight matching cells or rows from the sidebar.</li>
             <li>Open a cell in the detail panel, with a JSON viewer and string beautifier.</li>
@@ -191,12 +205,21 @@
 </ul>
           </section>
 
+          <section id="import" class="doc">
+            <h2>Import data</h2>
+<ul class="list">
+            <li><strong>Import Data…</strong> from the File menu or a table's context menu: CSV, TSV, JSON and newline-delimited JSON.</li>
+            <li>Preview rows and <code>NULL</code> values, map columns, override inferred types, review the SQL, then import into an existing or a new table. A running import can be cancelled.</li>
+</ul>
+          </section>
+
           <section id="safe-mode" class="doc">
             <h2>Safe Mode</h2>
 <ul class="list">
             <li>Five protection levels.</li>
             <li>Confirmation before <code>DROP</code>, <code>TRUNCATE</code>, <code>ALTER</code> and <code>CREATE</code>. Warning on <code>DELETE</code> or <code>UPDATE</code> without <code>WHERE</code>.</li>
             <li>Pending transactions show a Commit / Rollback banner. Touch ID, or your Safe Mode password, unlocks changes.</li>
+            <li><strong>Commit style</strong> (footer or <strong>Settings &gt; Security</strong>): Immediate, Confirm, Review or Password, for dialogs, unlocks and inline edits.</li>
             <li>Read-only connections block writes.</li>
             <li>Large reads inside transactions are capped with a server-side cursor (PostgreSQL).</li>
 </ul>
@@ -216,15 +239,26 @@
 </ul>
           </section>
 
+          <section id="plugins" class="doc">
+            <h2>Plugins</h2>
+<ul class="list">
+            <li>Optional engines, installed from <strong>Settings &gt; Plugins</strong>. Dblore downloads a signed, notarized library and checks its SHA-256 before every load. <strong>Remove</strong> deletes it.</li>
+            <li><strong>DuckDB:</strong> open a <code>.duckdb</code> file (read-only by default), create one or use an in-memory database. <strong>Query Parquet/CSV File…</strong> in the command palette queries a file directly.</li>
+            <li>Safe Mode guards DuckDB writes such as <code>INSTALL</code>, <code>ATTACH</code>, <code>COPY … TO</code> and <code>CREATE TABLE</code>. Row edits, data import and foreign-key lookup are not available.</li>
+</ul>
+          </section>
+
           <section id="settings" class="doc">
             <h2>Settings &amp; data</h2>
 <ul class="list">
             <li>Open with <kbd>Cmd+,</kbd>. View keyboard shortcuts in <strong>Settings &gt; Shortcuts</strong>.</li>
-            <li>Light or dark theme and an accent color.</li>
+            <li>Search sections from the sidebar of the settings modal.</li>
+            <li>Light or dark theme (also the toggle in the header) and an accent color.</li>
+            <li>Long-query notifications (<strong>Settings &gt; General</strong>, off by default): a macOS notification when a query runs longer than a threshold. It never shows the SQL or data; clicking it opens the tab.</li>
             <li>Editor font size, word wrap, side-by-side layout and a configurable result row cap.</li>
             <li>Safe Mode levels. AI keys are stored in the Keychain.</li>
             <li>Updates: toggle background checks.</li>
-            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package. Secrets are never included.</li>
+            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package. Secrets are never included. Saved SSH passwords, keys and trusted host keys can be deleted here.</li>
 </ul>
           </section>
           </div>

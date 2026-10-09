@@ -7,7 +7,8 @@
 A native macOS database client: query in Jupyter-style **notebooks** or a classic
 **SQL editor**, browse and edit results and tables, explore the schema, guard production
 with Safe Mode, and get help from an AI assistant that works with your own key or a local
-model. Supports PostgreSQL, with SQLite in beta; more engines (such as MongoDB) are planned.
+model. Supports PostgreSQL, SQLite (beta) and DuckDB (as a plugin); more engines (such
+as MongoDB) are planned.
 
 [Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
@@ -23,21 +24,28 @@ model. Supports PostgreSQL, with SQLite in beta; more engines (such as MongoDB) 
 
 ## Features
 
+- **Connections**: PostgreSQL with SSL, client certificates and SSH tunnels; import
+  connections from DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
 - **Notebooks**: `.dblore` notebooks that mix SQL cells with inline results, like Jupyter
   for your databases; or plain `.sql` files in a classic editor
 - **Markdown notes**: jot a quick `.md` note in the workspace without saving it first
   (written to disk only on Cmd+S), and toggle between the source and an editable preview
 - **SQL editor and execution**: syntax highlighting and table- and column-aware
   autocompletion; run a cell, the query at the cursor or all cells, cancel running
-  queries, and see row count and execution time per result
+  queries, and see row count and execution time per result; bind named `:name`
+  parameters; find any command with `Cmd+K`
 - **Results grid**: sort, resize and search columns, paginate, edit values inline, inspect
-  a cell with a JSON viewer, and export to Excel, CSV, JSON, Markdown, PDF or TSV
+  a cell with a JSON viewer, follow foreign keys, pin a result to compare re-runs, and
+  export to Excel, CSV, JSON, Markdown, PDF, TSV or SQL `INSERT`
+- **Import data**: CSV, TSV and JSON into a new or existing table, with a preview,
+  column mapping and type overrides
 - **Table data viewer**: open any table or view from the sidebar to browse and edit its
   data without writing a query
 - **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
-  canvas of tables with foreign-key lines
+  canvas of tables with foreign-key lines; view the source of functions and triggers
 - **Safe Mode**: protection levels, confirmation before destructive statements, and a
-  Commit / Rollback banner for pending transactions, with Touch ID to unlock
+  Commit / Rollback banner for pending transactions, with Touch ID to unlock, and a
+  commit style (Immediate, Confirm, Review or Password)
 - **AI assistant**: chat panel (`Cmd+L`) that writes SQL from plain-language questions
   and explains or fixes queries. Works with Anthropic, OpenAI, OpenRouter, Ollama,
   LM Studio, `mlx_lm.server` or any OpenAI-compatible endpoint (bring your own API key).
