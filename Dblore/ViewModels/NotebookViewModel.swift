@@ -52,6 +52,8 @@ class NotebookViewModel {
   var openParameterFormCellIds: Set<UUID> = []
   var rightSidebarContent: SidebarContent?
   var isRightSidebarVisible: Bool = false
+  /// Right sidebar width while it shows a cell value (user-resizable). Session only.
+  var cellInfoSidebarWidth: CGFloat = ComponentSize.sidebarWidth
   var executionCounter: Int = 0
   var draggingCellId: UUID? = nil  // Track which cell is currently being dragged
   var dropTargetCellId: UUID? = nil  // Track which cell is the drop target (for blue indicator)

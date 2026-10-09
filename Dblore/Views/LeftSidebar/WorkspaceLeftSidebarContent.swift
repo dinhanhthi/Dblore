@@ -198,153 +198,222 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
+  /// Filtered Public tab objects, for the whole database or one schema
+  private struct PublicEntities {
+    var tables: [FilteredTable]
+    var views: [FilteredView]
+    var functions: [DatabaseFunction]
+    var procedures: [DatabaseProcedure]
+    var triggers: [DatabaseTrigger]
+
+    var isEmpty: Bool {
+      tables.isEmpty && views.isEmpty && functions.isEmpty && procedures.isEmpty
+        && triggers.isEmpty
+    }
+
+    var count: Int {
+      tables.count + views.count + functions.count + procedures.count + triggers.count
+    }
+
+    func inSchema(_ schema: String) -> PublicEntities {
+      PublicEntities(
+        tables: tables.filter { $0.source.schema == schema },
+        views: views.filter { $0.source.schema == schema },
+        functions: functions.filter { $0.schema == schema },
+        procedures: procedures.filter { $0.schema == schema },
+        triggers: triggers.filter { $0.schema == schema })
+    }
+  }
+
+  /// Schemas that hold at least one object, the connection's default schema first
+  private var publicSchemas: [String] {
+    var names = Set(workspaceManager.databaseTables.map(\.schema))
+    names.formUnion(workspaceManager.databaseViews.map(\.schema))
+    names.formUnion(workspaceManager.databaseFunctions.map(\.schema))
+    names.formUnion(workspaceManager.databaseProcedures.map(\.schema))
+    names.formUnion(workspaceManager.databaseTriggers.map(\.schema))
+    var sorted = names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    if let index = sorted.firstIndex(of: connectionDatabaseType.dialect.defaultSchema) {
+      sorted.insert(sorted.remove(at: index), at: 0)
+    }
+    return sorted
+  }
+
   private var publicTabContent: some View {
-    VStack(spacing: 0) {
+    let entities = PublicEntities(
+      tables: filteredTables, views: filteredViews, functions: filteredFunctions,
+      procedures: filteredProcedures, triggers: filteredTriggers)
+    let schemas = publicSchemas
+    return VStack(spacing: 0) {
       SidebarFilterField(text: $publicFilter)
 
-      if !publicKeywords.isEmpty
-        && filteredTables.isEmpty
-        && filteredViews.isEmpty
-        && filteredFunctions.isEmpty
-        && filteredProcedures.isEmpty
-        && filteredTriggers.isEmpty
-      {
+      if !publicKeywords.isEmpty && entities.isEmpty {
         noMatchesState
       } else {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.sm) {
-            if publicKeywords.isEmpty || !filteredTables.isEmpty {
-              EntitySection(
-                title: "Tables",
-                count: filteredTables.count,
-                icon: "tablecells",
-                isExpanded: true
-              ) {
-                ForEach(filteredTables) { table in
-                  TableRowView(
-                    table: table.display,
-                    isExpanded: table.expandForMatch || table.source.isExpanded,
-                    isSelected: isOpenInActiveTab(
-                      schema: table.source.schema, name: table.source.name),
-                    databaseType: connectionDatabaseType,
-                    onToggle: {
-                      if !table.expandForMatch {
-                        workspaceManager.toggleTableExpansion(tableId: table.id)
-                      }
-                    },
-                    onOpen: {
-                      workspaceManager.openDataViewer(
-                        schema: table.source.schema,
-                        name: table.source.name,
-                        orderColumns: table.source.columns.filter(\.isPrimaryKey).map(\.name)
-                      )
-                    },
-                    onColumnClick: { _ in
-                      // No active cell to insert into when no document is open
-                    },
-                    onImport: connectionDatabaseType.capabilities.supportsDataImport
-                      ? { onImportTable(table.source) } : nil
-                  )
-                }
-              }
-              .id(publicKeywords.isEmpty ? "tables" : "tables-filtered")
-            }
-
-            if publicKeywords.isEmpty || !filteredViews.isEmpty {
-              EntitySection(
-                title: "Views",
-                count: filteredViews.count,
-                icon: "eye",
-                isExpanded: true
-              ) {
-                ForEach(filteredViews) { view in
-                  ViewRowView(
-                    view: view.display,
-                    isExpanded: view.expandForMatch || view.source.isExpanded,
-                    isSelected: isOpenInActiveTab(
-                      schema: view.source.schema, name: view.source.name),
-                    databaseType: connectionDatabaseType,
-                    onToggle: {
-                      if !view.expandForMatch {
-                        workspaceManager.toggleViewExpansion(viewId: view.id)
-                      }
-                    },
-                    onOpen: {
-                      workspaceManager.openDataViewer(
-                        schema: view.source.schema, name: view.source.name, orderColumns: [])
-                    },
-                    onColumnClick: { _ in
-                      // No active cell to insert into when no document is open
+            // One schema keeps the flat layout; two or more get one group per schema
+            if schemas.count > 1 {
+              ForEach(schemas, id: \.self) { schema in
+                let inSchema = entities.inSchema(schema)
+                if !inSchema.isEmpty {
+                  EntitySection(title: schema, count: inSchema.count, icon: "folder") {
+                    VStack(alignment: .leading, spacing: Spacing.xs) {
+                      entitySections(
+                        inSchema, idPrefix: "\(schema).", showsEmptySections: false,
+                        showsSchema: false)
                     }
-                  )
+                  }
+                  .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
                 }
               }
-              .id(publicKeywords.isEmpty ? "views" : "views-filtered")
-            }
-
-            if publicKeywords.isEmpty || !filteredFunctions.isEmpty {
-              EntitySection(
-                title: "Functions",
-                count: filteredFunctions.count,
-                icon: "function",
-                isExpanded: true
-              ) {
-                ForEach(filteredFunctions) { function in
-                  FunctionRowView(
-                    function: function,
-                    isExpanded: function.isExpanded,
-                    onToggle: {
-                      workspaceManager.toggleFunctionExpansion(functionId: function.id)
-                    },
-                    onViewSource: { workspaceManager.openObjectSource(.function(function)) }
-                  )
-                }
-              }
-              .id(publicKeywords.isEmpty ? "functions" : "functions-filtered")
-            }
-
-            if publicKeywords.isEmpty || !filteredProcedures.isEmpty {
-              EntitySection(
-                title: "Procedures",
-                count: filteredProcedures.count,
-                icon: "gearshape.2",
-                isExpanded: true
-              ) {
-                ForEach(filteredProcedures) { procedure in
-                  ProcedureRowView(
-                    procedure: procedure,
-                    isExpanded: procedure.isExpanded,
-                    onToggle: {
-                      workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
-                    },
-                    onViewSource: { workspaceManager.openObjectSource(.procedure(procedure)) }
-                  )
-                }
-              }
-              .id(publicKeywords.isEmpty ? "procedures" : "procedures-filtered")
-            }
-
-            if publicKeywords.isEmpty || !filteredTriggers.isEmpty {
-              EntitySection(
-                title: "Triggers",
-                count: filteredTriggers.count,
-                icon: ObjectSourceRef.Kind.trigger.iconName,
-                isExpanded: true
-              ) {
-                ForEach(filteredTriggers) { trigger in
-                  TriggerRowView(
-                    trigger: trigger,
-                    onViewSource: { workspaceManager.openObjectSource(.trigger(trigger)) }
-                  )
-                }
-              }
-              .id(publicKeywords.isEmpty ? "triggers" : "triggers-filtered")
+            } else {
+              entitySections(
+                entities, idPrefix: "", showsEmptySections: publicKeywords.isEmpty,
+                showsSchema: true)
             }
           }
           .padding(.vertical, Spacing.sm)
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
+    }
+  }
+
+  /// Tables, Views, Functions, Procedures and Triggers sections. `idPrefix` keeps section ids
+  /// unique per schema; `showsSchema` adds the "(schema)" label to table and view rows.
+  @ViewBuilder
+  private func entitySections(
+    _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool
+  ) -> some View {
+    if showsEmptySections || !entities.tables.isEmpty {
+      EntitySection(
+        title: "Tables",
+        count: entities.tables.count,
+        icon: "tablecells",
+        isExpanded: true
+      ) {
+        ForEach(entities.tables) { table in
+          TableRowView(
+            table: table.display,
+            isExpanded: table.expandForMatch || table.source.isExpanded,
+            isSelected: isOpenInActiveTab(
+              schema: table.source.schema, name: table.source.name),
+            databaseType: connectionDatabaseType,
+            showsSchema: showsSchema,
+            onToggle: {
+              if !table.expandForMatch {
+                workspaceManager.toggleTableExpansion(tableId: table.id)
+              }
+            },
+            onOpen: {
+              workspaceManager.openDataViewer(
+                schema: table.source.schema,
+                name: table.source.name,
+                orderColumns: table.source.columns.filter(\.isPrimaryKey).map(\.name)
+              )
+            },
+            onColumnClick: { _ in
+              // No active cell to insert into when no document is open
+            },
+            onImport: connectionDatabaseType.capabilities.supportsDataImport
+              ? { onImportTable(table.source) } : nil
+          )
+        }
+      }
+      .id(idPrefix + (publicKeywords.isEmpty ? "tables" : "tables-filtered"))
+    }
+
+    if showsEmptySections || !entities.views.isEmpty {
+      EntitySection(
+        title: "Views",
+        count: entities.views.count,
+        icon: "eye",
+        isExpanded: true
+      ) {
+        ForEach(entities.views) { view in
+          ViewRowView(
+            view: view.display,
+            isExpanded: view.expandForMatch || view.source.isExpanded,
+            isSelected: isOpenInActiveTab(
+              schema: view.source.schema, name: view.source.name),
+            databaseType: connectionDatabaseType,
+            showsSchema: showsSchema,
+            onToggle: {
+              if !view.expandForMatch {
+                workspaceManager.toggleViewExpansion(viewId: view.id)
+              }
+            },
+            onOpen: {
+              workspaceManager.openDataViewer(
+                schema: view.source.schema, name: view.source.name, orderColumns: [])
+            },
+            onColumnClick: { _ in
+              // No active cell to insert into when no document is open
+            }
+          )
+        }
+      }
+      .id(idPrefix + (publicKeywords.isEmpty ? "views" : "views-filtered"))
+    }
+
+    if showsEmptySections || !entities.functions.isEmpty {
+      EntitySection(
+        title: "Functions",
+        count: entities.functions.count,
+        icon: "function",
+        isExpanded: true
+      ) {
+        ForEach(entities.functions) { function in
+          FunctionRowView(
+            function: function,
+            isExpanded: function.isExpanded,
+            onToggle: {
+              workspaceManager.toggleFunctionExpansion(functionId: function.id)
+            },
+            onViewSource: { workspaceManager.openObjectSource(.function(function)) }
+          )
+        }
+      }
+      .id(idPrefix + (publicKeywords.isEmpty ? "functions" : "functions-filtered"))
+    }
+
+    if showsEmptySections || !entities.procedures.isEmpty {
+      EntitySection(
+        title: "Procedures",
+        count: entities.procedures.count,
+        icon: "gearshape.2",
+        isExpanded: true
+      ) {
+        ForEach(entities.procedures) { procedure in
+          ProcedureRowView(
+            procedure: procedure,
+            isExpanded: procedure.isExpanded,
+            onToggle: {
+              workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
+            },
+            onViewSource: { workspaceManager.openObjectSource(.procedure(procedure)) }
+          )
+        }
+      }
+      .id(idPrefix + (publicKeywords.isEmpty ? "procedures" : "procedures-filtered"))
+    }
+
+    if showsEmptySections || !entities.triggers.isEmpty {
+      EntitySection(
+        title: "Triggers",
+        count: entities.triggers.count,
+        icon: ObjectSourceRef.Kind.trigger.iconName,
+        isExpanded: true
+      ) {
+        ForEach(entities.triggers) { trigger in
+          TriggerRowView(
+            trigger: trigger,
+            onViewSource: { workspaceManager.openObjectSource(.trigger(trigger)) }
+          )
+        }
+      }
+      .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
     }
   }
 

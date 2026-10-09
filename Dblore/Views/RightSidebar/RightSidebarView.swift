@@ -62,11 +62,30 @@ struct RightSidebarView: View {
         emptyState
       }
     }
-    .frame(width: ComponentSize.sidebarWidth)
+    .frame(width: sidebarWidth)
     .chromeGlass()
     .overlay(alignment: .leading) {
       Divider()
     }
+    .overlay(alignment: .leading) {
+      // Only the cell value view can be widened, for long text and JSON
+      if case .cellInfo = viewModel.rightSidebarContent {
+        ResizableSidebarDivider(
+          sidebarWidth: $viewModel.cellInfoSidebarWidth,
+          minWidth: ComponentSize.sidebarWidth,
+          maxWidth: 720,
+          side: .right
+        )
+        .offset(x: -4)
+      }
+    }
+  }
+
+  private var sidebarWidth: CGFloat {
+    if case .cellInfo = viewModel.rightSidebarContent {
+      return viewModel.cellInfoSidebarWidth
+    }
+    return ComponentSize.sidebarWidth
   }
 
   /// Form content filling the sidebar with a footer (Apply/Clear) pinned at the bottom
