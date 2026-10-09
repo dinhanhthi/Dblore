@@ -25,7 +25,9 @@ enum ButtonStyleVariant {
     case .secondary:
       return isPressed ? Color.cellBackgroundHover : Color.clear
     case .filledSecondary:
-      return isPressed ? Color.cellBackgroundHover : Color.inputBackground
+      // Hover keeps the fill: a gray hover would match the tinted settings panels.
+      // The border carries the hover instead (see `borderColor`).
+      return Color.controlBackground
     case .danger:
       return isPressed ? Color.destructive.opacity(0.85) : Color.destructive
     case .ghost:
@@ -209,6 +211,10 @@ private struct BaseButtonStyleView: View {
     }
   }
 
+  private var borderColor: Color {
+    variant == .filledSecondary && (isHovering || isActive) ? .borderStrong : .border
+  }
+
   var body: some View {
     configuration.label
       .font(iconFontSize.map { Font.system(size: $0) } ?? font)
@@ -233,10 +239,10 @@ private struct BaseButtonStyleView: View {
         if variant.hasBorder {
           if iconOnly {
             Circle()
-              .stroke(Color.border, lineWidth: 1)
+              .stroke(borderColor, lineWidth: 1)
           } else {
             Capsule()
-              .stroke(Color.border, lineWidth: 1)
+              .stroke(borderColor, lineWidth: 1)
           }
         }
       }
@@ -381,7 +387,7 @@ extension View {
 
   func inputStyle() -> some View {
     padding(Spacing.sm)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.xxl)
@@ -393,7 +399,7 @@ extension View {
   func inputCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.md)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -409,7 +415,7 @@ extension View {
       .controlSize(.small)
       .padding(.horizontal, Spacing.sm)
       .frame(height: ButtonMetrics.regularHeight)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -429,7 +435,7 @@ extension View {
   func dropdownCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.sm + 2)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -440,7 +446,7 @@ extension View {
   /// Rounded style for multiline text fields with capsule-like radius
   func textAreaCapsuleStyle() -> some View {
     padding(Spacing.sm)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxxl))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.xxxl)

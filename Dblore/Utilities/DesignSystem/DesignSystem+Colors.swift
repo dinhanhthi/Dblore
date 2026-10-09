@@ -43,6 +43,13 @@ extension Color {
     dark: Color(hex: "3c3c3c")  // VS Code input
   )
 
+  /// Fill of an input, dropdown, number field, segmented track or filled button. White in light so
+  /// it stands off the tinted `cardHeaderBackground` panels; one step up from the panel in dark.
+  static let controlBackground = Color(
+    light: Color(hex: "ffffff"),
+    dark: Color(hex: "3c3c3c")  // VS Code input
+  )
+
   static let gutterBackground = Color(
     light: Color(hex: "f4f4f5"),  // Zinc 100, one quiet step off the white editor
     dark: Color(hex: "2d2d2d")  // One quiet step off the editor

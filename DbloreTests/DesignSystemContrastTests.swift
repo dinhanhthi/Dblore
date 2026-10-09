@@ -184,6 +184,19 @@ struct DesignSystemContrastTests {
     }
   }
 
+  @Test("Controls stand off tinted panels, and off cards by fill or border")
+  func controlsOnPanels() {
+    for name in Self.appearances {
+      let onPanel = ratio(.controlBackground, .cardHeaderBackground, name)
+      #expect(onPanel >= 1.08, "\(name.rawValue): control on panel \(onPanel)")
+      for surface in [Color.cardBackground, .cardHeaderBackground] {
+        let fill = ratio(.controlBackground, surface, name)
+        let edge = ratio(.border, surface, name)
+        #expect(max(fill, edge) >= 1.15, "\(name.rawValue): fill \(fill), border \(edge)")
+      }
+    }
+  }
+
   @Test("Cards stand off the window background in both appearances")
   func surfaceStep() {
     for name in Self.appearances {

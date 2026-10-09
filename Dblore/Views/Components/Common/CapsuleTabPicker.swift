@@ -98,7 +98,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
     return ZStack {
       // Background
       Capsule()
-        .fill(Color.inputBackground)
+        .fill(Color.controlBackground)
         .overlay(
           Capsule()
             .stroke(Color.border, lineWidth: 1)
@@ -181,7 +181,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
     .background(alignment: .leading) {
       ZStack(alignment: .leading) {
         Capsule()
-          .fill(Color.inputBackground)
+          .fill(Color.controlBackground)
           .overlay(Capsule().stroke(Color.border, lineWidth: 1))
 
         Capsule()

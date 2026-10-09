@@ -113,7 +113,7 @@ struct AISettingsSection: View {
         Button("Set as active") {
           settings.configuration.activeProvider = kind
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
         .linkPointer()
       }
     }
@@ -237,7 +237,7 @@ struct AISettingsSection: View {
             .font(.bodyText)
             .foregroundColor(.foregroundMuted)
           Button("Sign out") { signOut() }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
             .linkPointer()
         }
       } else {
@@ -253,7 +253,7 @@ struct AISettingsSection: View {
               .font(.bodyText)
               .foregroundColor(.foregroundMuted)
             Button("Cancel") { cancelSignIn() }
-              .buttonStyle(SecondaryButtonStyle())
+              .buttonStyle(FilledSecondaryButtonStyle())
               .linkPointer()
           }
         }
@@ -276,7 +276,7 @@ struct AISettingsSection: View {
             .font(.bodyText)
             .foregroundColor(.foregroundMuted)
           Button("Remove") { removeKey() }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
             .linkPointer()
         }
       } else {
@@ -287,7 +287,7 @@ struct AISettingsSection: View {
             .inputStyle()
             .onSubmit(saveKey)
           Button("Save") { saveKey() }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
             .disabled(trimmedKey.isEmpty)
             .linkPointer()
         }
@@ -305,7 +305,7 @@ struct AISettingsSection: View {
       ModelNameComboBox(text: $model, options: fetchedModelNames)
 
       Button("Refresh") { run(reportSuccess: false) }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
         .disabled(isRunning || !canRun)
         .linkPointer()
     }
@@ -587,7 +587,7 @@ private struct ModelNameComboBox: View {
     .padding(.trailing, Spacing.sm)
     .frame(height: ButtonMetrics.regularHeight)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.inputBackground, in: Capsule())
+    .background(Color.controlBackground, in: Capsule())
     .overlay(Capsule().stroke(Color.border, lineWidth: 1))
     .accessibilityLabel("Model")
   }
