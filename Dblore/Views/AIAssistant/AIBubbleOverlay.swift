@@ -2,7 +2,7 @@
 //  AIBubbleOverlay.swift
 //  Dblore
 //
-//  Floating AI bubble: draggable app-icon circle and the chat card above it
+//  Floating AI bubble: draggable icon circle and the chat card above it
 //
 
 import AppKit
@@ -101,14 +101,13 @@ struct AIBubbleOverlay: View {
   }
 
   private var circleBase: some View {
-    Image(nsImage: NSApp.applicationIconImage)
+    Image("AIBubbleIcon")
       .resizable()
       .interpolation(.high)
       .scaleEffect(assistant.isBubbleExpanded ? 0.9 : 1)
       .frame(width: AIBubbleLayout.circleDiameter, height: AIBubbleLayout.circleDiameter)
-      .background(Color.cardBackground)
+      .background(Color.aiBubbleBackground)
       .clipShape(Circle())
-      .overlay(Circle().stroke(Color.border, lineWidth: 1))
       .overlay(
         Circle()
           .stroke(Color.accent, lineWidth: 2)

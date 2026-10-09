@@ -54,6 +54,8 @@ struct AISettingsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
+      panelCard
+
       SettingsGroupCard(title: "Provider") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           providerControls
@@ -69,7 +71,6 @@ struct AISettingsSection: View {
 
       modelsCard
       privacyCard
-      panelCard
     }
     .onAppear(perform: loadInitial)
     .task { await detectOllamaIfNeeded() }
