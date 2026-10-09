@@ -13,7 +13,7 @@ extension Color {
   // Background colors. Dark mode follows VS Code Dark:
   // editor #1E1E1E, sidebar #252526, inactive tab #2D2D2D, input #3C3C3C.
   static let appBackground = Color(
-    light: Color(hex: "ffffff"),  // White
+    light: Color(hex: "fafafa"),  // Zinc 50, one step under white cards and cells
     dark: Color(hex: "1e1e1e")  // VS Code editor
   )
 
@@ -44,8 +44,8 @@ extension Color {
   )
 
   static let gutterBackground = Color(
-    light: Color(hex: "e5e5e5"),  // Lighter gray than inputBackground
-    dark: Color(hex: "454545")  // Lighter than inputBackground
+    light: Color(hex: "f4f4f5"),  // Zinc 100, one quiet step off the white editor
+    dark: Color(hex: "2d2d2d")  // One quiet step off the editor
   )
 
   // Foreground colors
@@ -59,9 +59,10 @@ extension Color {
     dark: Color(hex: "a1a1aa")  // Zinc 400
   )
 
+  /// Faintest text that still reaches 4.5:1 on every surface and the gutter
   static let foregroundSubtle = Color(
-    light: Color(hex: "71717a"),  // Zinc 500
-    dark: Color(hex: "71717a")  // Zinc 500
+    light: Color(hex: "63636b"),
+    dark: Color(hex: "98989f")
   )
 
   /// Result grid cells: softer than `foreground`, stronger than `foregroundMuted`
@@ -76,14 +77,21 @@ extension Color {
     dark: Color(hex: "3c3c3c")  // VS Code input, visible on sidebar
   )
 
+  /// Lighter than `border`
   static let borderSubtle = Color(
+    light: Color(hex: "f0f0f2"),
+    dark: Color(hex: "303032")
+  )
+
+  /// One step stronger than `border`, for a divider that must stand out from grid lines
+  static let borderStrong = Color(
     light: Color(hex: "d4d4d8"),  // Zinc 300
     dark: Color(hex: "454545")  // VS Code widget border
   )
 
   // Schema visualizer specific colors (darker in light theme for better visibility)
   static let schemaNodeBorder = Color(
-    light: Color(hex: "a1a1aa"),  // Zinc 400 (darker than border's Zinc 200)
+    light: Color(hex: "d4d4d8"),  // Zinc 300, same as borderStrong
     dark: Color(hex: "454545")  // Slightly lighter than border
   )
 
@@ -124,18 +132,18 @@ extension Color {
 
   // Semantic colors
   static let success = Color(
-    light: Color(hex: "16a34a"),  // Green 600
+    light: Color(hex: "15803d"),  // Green 700
     dark: Color(hex: "22c55e")  // Green 500
   )
 
   static let warning = Color(
-    light: Color(hex: "ea580c"),  // Orange 600
+    light: Color(hex: "c2410c"),  // Orange 700
     dark: Color(hex: "f59e0b")  // Amber 500
   )
 
   static let destructive = Color(
-    light: Color(hex: "dc2626"),  // Red 600
-    dark: Color(hex: "ef4444")  // Red 500
+    light: Color(hex: "b91c1c"),  // Red 700
+    dark: Color(hex: "f87171")  // Red 400
   )
 
   // Light gray in both modes so the light-blue AI bubble icon stays visible
@@ -180,14 +188,33 @@ extension Color {
   )
 
   static let syntaxComment = Color(
-    light: Color(hex: "9ca3af"),  // Gray 400
-    dark: Color(hex: "6b7280")  // Gray 500
+    light: Color(hex: "6b7280"),  // Gray 500
+    dark: Color(hex: "8b919c")
   )
 
   static let syntaxOperator = Color(
     light: Color(hex: "09090b"),  // Very dark zinc
     dark: Color(hex: "fafafa")  // Very light gray
   )
+}
+
+/// WCAG 2 contrast between two opaque colors.
+enum ColorContrast {
+  static func ratio(_ a: NSColor, _ b: NSColor) -> Double {
+    let la = luminance(a)
+    let lb = luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+  }
+
+  static func luminance(_ color: NSColor) -> Double {
+    guard let rgb = color.usingColorSpace(.sRGB) else { return 0 }
+    func channel(_ c: CGFloat) -> Double {
+      let c = Double(c)
+      return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+    return 0.2126 * channel(rgb.redComponent) + 0.7152 * channel(rgb.greenComponent)
+      + 0.0722 * channel(rgb.blueComponent)
+  }
 }
 
 extension Color {
