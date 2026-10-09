@@ -44,7 +44,7 @@ struct HistoryTabContent: View {
     } label: {
       Text("Writes")
         .font(.system(size: 11))
-        .foregroundStyle(isOn ? Color.white : Color.foreground)
+        .foregroundStyle(isOn ? Color.onAccent : Color.foreground)
         .lineLimit(1)
         .padding(.horizontal, Spacing.sm)
         .frame(height: SidebarFilterMetrics.controlHeight)

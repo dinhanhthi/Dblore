@@ -91,6 +91,49 @@ struct DesignSystemContrastTests {
     }
   }
 
+  private func hexRatio(_ a: String, _ b: String) -> Double {
+    ColorContrast.ratio(NSColor(Color(hex: a)), NSColor(Color(hex: b)))
+  }
+
+  @Test("The label on every accent fill, resting and pressed, reaches 4.5:1")
+  func labelOnAccent() {
+    for accent in AccentColor.allCases {
+      for (fills, mode) in [
+        ([accent.lightHex, accent.mutedLightHex], "light"),
+        ([accent.darkHex, accent.mutedDarkHex], "dark"),
+      ] {
+        let label = ColorContrast.labelHex(on: fills[0])
+        for fill in fills {
+          let value = hexRatio(label, fill)
+          #expect(value >= 4.5, "\(accent.rawValue) \(mode) \(fill): \(value)")
+        }
+      }
+    }
+  }
+
+  @Test("Accent reads as text on cards and syntax keywords on the editor")
+  func accentAsText() {
+    for accent in AccentColor.allCases {
+      for (hex, surface, mode) in [
+        (accent.lightHex, "ffffff", "light"),
+        (accent.darkHex, "252526", "dark"),
+        (accent.syntaxLightHex, "ffffff", "light keyword"),
+        (accent.syntaxDarkHex, "252526", "dark keyword"),
+      ] {
+        let value = hexRatio(hex, surface)
+        #expect(value >= 4.5, "\(accent.rawValue) \(mode): \(value)")
+      }
+    }
+  }
+
+  @Test("Destructive fill keeps its label at 4.5:1")
+  func labelOnDestructive() {
+    for name in Self.appearances {
+      let value = ratio(.onDestructive, .destructive, name)
+      #expect(value >= 4.5, "\(name.rawValue): \(value)")
+    }
+  }
+
   @Test("Cards stand off the window background in both appearances")
   func surfaceStep() {
     for name in Self.appearances {

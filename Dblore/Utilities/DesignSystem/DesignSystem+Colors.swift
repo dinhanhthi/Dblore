@@ -130,6 +130,15 @@ extension Color {
     )
   }
 
+  /// Label on an accent fill: white or near-black, whichever reads better on that accent
+  static var onAccent: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: ColorContrast.labelHex(on: accent.lightHex)),
+      dark: Color(hex: ColorContrast.labelHex(on: accent.darkHex))
+    )
+  }
+
   // Semantic colors
   static let success = Color(
     light: Color(hex: "15803d"),  // Green 700
@@ -144,6 +153,12 @@ extension Color {
   static let destructive = Color(
     light: Color(hex: "b91c1c"),  // Red 700
     dark: Color(hex: "f87171")  // Red 400
+  )
+
+  /// Label on a `destructive` fill
+  static let onDestructive = Color(
+    light: Color(hex: "ffffff"),
+    dark: Color(hex: "09090b")
   )
 
   // Light gray in both modes so the light-blue AI bubble icon stays visible
@@ -214,6 +229,14 @@ enum ColorContrast {
     }
     return 0.2126 * channel(rgb.redComponent) + 0.7152 * channel(rgb.greenComponent)
       + 0.0722 * channel(rgb.blueComponent)
+  }
+
+  /// White or near-black (`foreground` light), whichever contrasts more with the fill
+  static func labelHex(on fillHex: String) -> String {
+    let fill = NSColor(Color(hex: fillHex))
+    let white = ratio(NSColor(Color(hex: "ffffff")), fill)
+    let ink = ratio(NSColor(Color(hex: "09090b")), fill)
+    return white >= ink ? "ffffff" : "09090b"
   }
 }
 

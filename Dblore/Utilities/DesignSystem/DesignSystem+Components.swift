@@ -27,7 +27,7 @@ enum ButtonStyleVariant {
     case .filledSecondary:
       return isPressed ? Color.cellBackgroundHover : Color.inputBackground
     case .danger:
-      return isPressed ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
+      return isPressed ? Color.destructive.opacity(0.85) : Color.destructive
     case .ghost:
       if isPressed {
         return Color.cellBackgroundHover
@@ -51,6 +51,10 @@ enum ButtonStyleVariant {
     switch self {
     case .ghost:
       return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
+    case .primary:
+      return .onAccent
+    case .danger:
+      return .onDestructive
     default:
       return isActive ? .accent : .foreground
     }
@@ -72,14 +76,11 @@ struct PrimaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
-  /// Label color on the accent fill. Nil keeps the standard foreground.
-  /// The editor Run button passes white so it matches the selected sidebar tab.
-  var labelColor: Color? = nil
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(
       variant: .primary, iconOnly: iconOnly, hPadding: hPadding,
-      vPadding: vPadding, labelColor: labelColor, configuration: configuration
+      vPadding: vPadding, configuration: configuration
     )
   }
 }
@@ -144,7 +145,6 @@ private struct BaseButtonStyleView: View {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
-  var labelColor: Color? = nil
   let configuration: ButtonStyleConfiguration
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.controlSize) private var controlSize
@@ -213,9 +213,8 @@ private struct BaseButtonStyleView: View {
     configuration.label
       .font(iconFontSize.map { Font.system(size: $0) } ?? font)
       .foregroundColor(
-        labelColor
-          ?? variant.foregroundColor(
-            isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
+        variant.foregroundColor(
+          isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, verticalPadding)

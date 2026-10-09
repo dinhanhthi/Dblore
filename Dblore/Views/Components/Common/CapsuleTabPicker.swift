@@ -236,6 +236,6 @@ struct CapsuleTabLabel: View {
     Text(text)
       .font(.body)
       .fontWeight(isSelected ? .semibold : .regular)
-      .foregroundColor(isSelected ? .white : .foreground)
+      .foregroundColor(isSelected ? .onAccent : .foreground)
   }
 }

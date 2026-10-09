@@ -179,10 +179,10 @@ enum AccentColor: String, CaseIterable {
     switch self {
     case .purple: return "9333ea"
     case .blue: return "2563eb"
-    case .green: return "16a34a"
-    case .orange: return "ea580c"
+    case .green: return "15803d"
+    case .orange: return "c2410c"
     case .pink: return "db2777"
-    case .cyan: return "0891b2"
+    case .cyan: return "0e7490"
     case .gray: return "71717a"
     }
   }
@@ -190,13 +190,13 @@ enum AccentColor: String, CaseIterable {
   /// Dark mode hex color
   var darkHex: String {
     switch self {
-    case .purple: return "a855f7"
-    case .blue: return "3b82f6"
+    case .purple: return "c084fc"
+    case .blue: return "60a5fa"
     case .green: return "22c55e"
     case .orange: return "f97316"
-    case .pink: return "ec4899"
+    case .pink: return "f472b6"
     case .cyan: return "06b6d4"
-    case .gray: return "71717a"
+    case .gray: return "a1a1aa"
     }
   }
 
@@ -205,24 +205,24 @@ enum AccentColor: String, CaseIterable {
     switch self {
     case .purple: return "7e22ce"
     case .blue: return "1d4ed8"
-    case .green: return "15803d"
-    case .orange: return "c2410c"
+    case .green: return "166534"
+    case .orange: return "9a3412"
     case .pink: return "be185d"
-    case .cyan: return "0e7490"
+    case .cyan: return "155e75"
     case .gray: return "52525b"
     }
   }
 
-  /// Muted dark mode hex color
+  /// Muted dark mode hex color (pressed state, darker than `darkHex`)
   var mutedDarkHex: String {
     switch self {
-    case .purple: return "7c3aed"
-    case .blue: return "2563eb"
+    case .purple: return "a855f7"
+    case .blue: return "3b82f6"
     case .green: return "16a34a"
     case .orange: return "ea580c"
-    case .pink: return "db2777"
+    case .pink: return "ec4899"
     case .cyan: return "0891b2"
-    case .gray: return "52525b"
+    case .gray: return "8e8e96"
     }
   }
 
@@ -231,10 +231,10 @@ enum AccentColor: String, CaseIterable {
     switch self {
     case .purple: return "9333ea"
     case .blue: return "2563eb"
-    case .green: return "16a34a"
-    case .orange: return "ea580c"
+    case .green: return "15803d"
+    case .orange: return "c2410c"
     case .pink: return "db2777"
-    case .cyan: return "0891b2"
+    case .cyan: return "0e7490"
     case .gray: return "18181b"
     }
   }
