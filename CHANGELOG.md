@@ -2,7 +2,7 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.6.0 (2026-10-09)
 
 ### Added
 
@@ -12,10 +12,24 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Pin and compare results.** Pin a cell or SQL editor result, re-run, and compare both side by side with added, removed and changed rows highlighted; two `EXPLAIN` JSON plans compare node by node. A notebook cell's pin is saved in the file when results are saved. [#fa317b83](https://github.com/dinhanhthi/Dblore/commit/fa317b83)
 - **Long-query notifications.** Get a macOS notification when a query runs longer than a threshold (default 10 seconds, by default only while Dblore is in the background). It shows the tab, duration and row count, never the SQL or data; clicking it opens the tab. Off by default, in General settings. [#95adb329](https://github.com/dinhanhthi/Dblore/commit/95adb329)
 - **Routine and trigger source.** The schema sidebar lists triggers, and View Source opens a function, procedure or trigger definition in a read-only tab, with Copy and "Open as editable copy". [#95f19c7a](https://github.com/dinhanhthi/Dblore/commit/95f19c7a) [#9d0963bd](https://github.com/dinhanhthi/Dblore/commit/9d0963bd)
+- **Markdown notes.** Open a `.md` file or start a new note in the workspace; it is written to disk only on `Cmd+S`. Switch between the source (code mode) and an editable WYSIWYG preview. [#8da64483](https://github.com/dinhanhthi/Dblore/commit/8da64483) [#ec0af407](https://github.com/dinhanhthi/Dblore/commit/ec0af407) [#8f730574](https://github.com/dinhanhthi/Dblore/commit/8f730574) [#4ef38485](https://github.com/dinhanhthi/Dblore/commit/4ef38485)
+- **AI assistant as a floating bubble.** Detach the AI panel into a draggable bubble at the bottom of the window; choose the default presentation in Settings > AI > Panel. [#eff78a21](https://github.com/dinhanhthi/Dblore/commit/eff78a21) [#d646ae28](https://github.com/dinhanhthi/Dblore/commit/d646ae28) [#f495f618](https://github.com/dinhanhthi/Dblore/commit/f495f618)
+- **Light/dark toggle** button in the header, between AI and Settings. [#d3b118df](https://github.com/dinhanhthi/Dblore/commit/d3b118df)
+- **Settings search.** Fuzzy-search the sections of the settings modal from its sidebar. [#f86add0b](https://github.com/dinhanhthi/Dblore/commit/f86add0b)
 
 ### Improved
 
+- **Safety cues in the footer.** The Safe Mode and protection cues moved to the footer, with a "No SSL" badge when the connection is not encrypted. [#f4e4625a](https://github.com/dinhanhthi/Dblore/commit/f4e4625a)
+- **Schema sidebar and cell value sidebar.** The Public tab groups tables by schema, and the cell value sidebar is resizable. [#75cc20fc](https://github.com/dinhanhthi/Dblore/commit/75cc20fc)
+- **Polished UI.** Chrome is painted with solid design tokens instead of macOS glass, and tabs, the welcome window, the command palette, modals and alerts are refined. [#acc85de2](https://github.com/dinhanhthi/Dblore/commit/acc85de2) [#36fa7bee](https://github.com/dinhanhthi/Dblore/commit/36fa7bee)
+- **Result column headers.** The filter icon sits on the name line and the sort arrow on the type line, with tooltips; the filter popover header is more compact. [#a8e5297e](https://github.com/dinhanhthi/Dblore/commit/a8e5297e) [#3578139f](https://github.com/dinhanhthi/Dblore/commit/3578139f)
 - **Connection history** keeps up to 50 connections (was 6), and entries written by a newer Dblore version are kept instead of emptying the history. [#53f86a0c](https://github.com/dinhanhthi/Dblore/commit/53f86a0c) [#dbce5881](https://github.com/dinhanhthi/Dblore/commit/dbce5881)
+
+### Fixed
+
+- **Stopping a SQLite query** now works even when Stop is pressed just as the query starts; before, such a query kept running until its statement timeout. [#9bdaec70](https://github.com/dinhanhthi/Dblore/commit/9bdaec70)
+- **Log files** are created reliably: the Logs directory is created before the first log file is written. [#960bcf72](https://github.com/dinhanhthi/Dblore/commit/960bcf72)
+- **History sidebar** uses the system scrollbar. [#52b1e02b](https://github.com/dinhanhthi/Dblore/commit/52b1e02b)
 
 ### Upgrade notes
 
