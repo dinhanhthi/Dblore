@@ -24,7 +24,7 @@ extension SQLTextView {
     }
 
     autocompleteTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: Self.autocompleteDebounce)
+      try? await Self.autocompleteSleep(Self.autocompleteDebounce)
       guard !Task.isCancelled, let self else { return }
       self.computeAutocompleteSuggestions()
     }

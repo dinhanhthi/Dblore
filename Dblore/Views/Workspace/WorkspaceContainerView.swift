@@ -411,7 +411,9 @@ struct WorkspaceTabContentView: View {
     } else if viewModel.viewMode == .markdown {
       // No SQL handlers, destructive-query dialog or search on a note. PlainTextEditor's
       // NSScrollView fills the area, so it needs no GeometryReader wrapper like editorContent.
-      DocumentLayoutView(viewModel: viewModel) {
+      DocumentLayoutView(
+        viewModel: viewModel, connectionConfig: workspaceManager.workspace.connectionConfig
+      ) {
         MarkdownNoteView(viewModel: viewModel).id(tabId)
       }
     } else if viewModel.dataViewer != nil {
@@ -452,7 +454,9 @@ struct WorkspaceTabContentView: View {
 
   @ViewBuilder
   private var notebookContent: some View {
-    DocumentLayoutView(viewModel: viewModel) {
+    DocumentLayoutView(
+      viewModel: viewModel, connectionConfig: workspaceManager.workspace.connectionConfig
+    ) {
       NotebookScrollContent(viewModel: viewModel, syncDocument: syncNotebookDocument)
     }
     .modifier(
@@ -471,7 +475,9 @@ struct WorkspaceTabContentView: View {
 
   @ViewBuilder
   private var editorContent: some View {
-    DocumentLayoutView(viewModel: viewModel) {
+    DocumentLayoutView(
+      viewModel: viewModel, connectionConfig: workspaceManager.workspace.connectionConfig
+    ) {
       // Wrap in List so it absorbs parent geometry changes gracefully
       // during sidebar animation, just like NotebookScrollContent does.
       // Without List, EditorModeView's SizeReader recalculates on every
@@ -505,7 +511,9 @@ struct WorkspaceTabContentView: View {
   /// reaches runEditorQuery, which refreshes the page. No editor document, so sync is a no-op.
   @ViewBuilder
   private var dataViewerContent: some View {
-    DocumentLayoutView(viewModel: viewModel) {
+    DocumentLayoutView(
+      viewModel: viewModel, connectionConfig: workspaceManager.workspace.connectionConfig
+    ) {
       GeometryReader { geometry in
         ScrollView {
           DataViewerView(viewModel: viewModel)

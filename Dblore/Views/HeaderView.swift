@@ -7,7 +7,8 @@ import SwiftUI
 
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
-  @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
+  /// The workspace connection, passed down from WorkspaceContainerView
+  let connectionConfig: ConnectionConfig?
   @State private var showRunAllConfirmation = false
   @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
@@ -183,13 +184,12 @@ struct HeaderView: View {
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (Dblore > Settings) or Cmd+,
       // Markdown notes run no SQL, so they skip the connection badge
-      if viewModel.viewMode != .markdown, viewModel.connectionState.isConnected,
-        let config = workspaceManager?.workspace.connectionConfig
+      if let badge = Self.connectionBadge(
+        for: connectionConfig, viewMode: viewModel.viewMode,
+        isConnected: viewModel.connectionState.isConnected,
+        fallback: AppSettings.shared.commitStyle)
       {
-        safetyBadge(
-          ConnectionSafetyBadge(
-            config: config,
-            commitStyle: config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)))
+        safetyBadge(badge)
       }
 
       // Refresh and Search sit close together, tighter than the header's spacing
@@ -371,6 +371,16 @@ struct HeaderView: View {
 
   // MARK: - Safety Badge
 
+  /// The badge to show, or nil when there is no connection config, no live connection or the
+  /// tab is a markdown note
+  static func connectionBadge(
+    for config: ConnectionConfig?, viewMode: ViewMode, isConnected: Bool, fallback: CommitStyle
+  ) -> ConnectionSafetyBadge? {
+    guard viewMode != .markdown, isConnected, let config else { return nil }
+    return ConnectionSafetyBadge(
+      config: config, commitStyle: config.resolvedCommitStyle(fallback: fallback))
+  }
+
   /// Protection state and SSL state at a glance; tinted by the SSL level
   private func safetyBadge(_ badge: ConnectionSafetyBadge) -> some View {
     let sslColor = badge.ssl.map { color(for: $0.level) } ?? .foregroundMuted
@@ -454,7 +464,7 @@ private struct RunSpinner: View {
 // SafeModeIndicator moved to Components/Shared/SafeModeIndicator.swift
 
 #Preview {
-  HeaderView(viewModel: NotebookViewModel())
+  HeaderView(viewModel: NotebookViewModel(), connectionConfig: nil)
     .frame(width: 850)
     .preferredColorScheme(.dark)
 }

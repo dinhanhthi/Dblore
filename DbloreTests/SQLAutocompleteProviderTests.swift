@@ -307,14 +307,30 @@ private final class SpyProvider: SQLAutocompleteProvider {
   }
 }
 
+/// Test-controlled replacement for the debounce sleep: sleeps park until `open()`, later ones pass through
+@MainActor
+private final class SleepGate {
+  private var waiters: [CheckedContinuation<Void, Error>] = []
+  private var isOpen = false
+  private(set) var requested: [Duration] = []
+
+  func sleep(_ duration: Duration) async throws {
+    requested.append(duration)
+    if isOpen { return }
+    try await withCheckedThrowingContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    let parked = waiters
+    waiters = []
+    for waiter in parked { waiter.resume() }
+  }
+}
+
 @Suite("SQLTextView autocomplete debounce", .serialized)
 @MainActor
 struct SQLTextViewAutocompleteDebounceTests {
-  /// Large enough that scheduling delays under a loaded parallel run cannot let a second compute fire
-  private static let debounce: Duration = .milliseconds(200)
-  /// Negative assertions wait well over 3x the debounce
-  private static let negativeWaitMs = 800
-
   private func makeHost() -> (OffscreenEditorHost, SpyProvider) {
     let host = OffscreenEditorHost(text: "SELECT us")
     let spy = SpyProvider()
@@ -323,36 +339,35 @@ struct SQLTextViewAutocompleteDebounceTests {
     return (host, spy)
   }
 
-  private func pause(_ ms: Int) async {
-    try? await Task.sleep(for: .milliseconds(ms))
-  }
-
-  /// Polls until the spy has computed at least once; false after the deadline (never hangs)
-  private func waitForFirstCompute(_ spy: SpyProvider, timeoutSeconds: Int = 30) async -> Bool {
-    let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
-    while spy.calls == 0 {
-      if ContinuousClock.now >= deadline { return false }
-      try? await Task.sleep(for: .milliseconds(5))
+  /// Installs a gate as the debounce sleep; restores the seam and releases parked sleeps afterwards
+  private func withSleepGate(_ body: (SleepGate) async -> Void) async {
+    let saved = SQLTextView.autocompleteSleep
+    let gate = SleepGate()
+    SQLTextView.autocompleteSleep = { try await gate.sleep($0) }
+    defer {
+      SQLTextView.autocompleteSleep = saved
+      gate.open()
     }
-    return true
+    await body(gate)
   }
 
   @Test("rapid calls within the debounce window compute once")
   func rapidCallsComputeOnce() async {
-    let saved = SQLTextView.autocompleteDebounce
-    SQLTextView.autocompleteDebounce = Self.debounce
-    defer { SQLTextView.autocompleteDebounce = saved }
-    let (host, spy) = makeHost()
+    await withSleepGate { gate in
+      let (host, spy) = makeHost()
 
-    // One synchronous main-actor block: no suspension, so scheduling can never split the calls
-    for _ in 0..<5 { host.textView.updateAutocompleteSuggestions() }
-    #expect(spy.calls == 0)
+      var tasks: [Task<Void, Never>?] = []
+      for _ in 0..<5 {
+        host.textView.updateAutocompleteSuggestions()
+        tasks.append(host.textView.autocompleteTask)
+      }
+      #expect(spy.calls == 0)
 
-    let computed = await waitForFirstCompute(spy)
-    #expect(computed, "no autocomplete compute within 30 s (main actor starved?)")
-    // A wrongly surviving earlier task would fire in the same window: give it time to show up
-    await pause(Self.negativeWaitMs)
-    #expect(spy.calls == 1)
+      gate.open()
+      for task in tasks { await task?.value }
+      #expect(spy.calls == 1)
+      #expect(gate.requested.allSatisfy { $0 == SQLTextView.autocompleteDebounce })
+    }
   }
 
   @Test("hides immediately on empty text")
@@ -370,43 +385,46 @@ struct SQLTextViewAutocompleteDebounceTests {
 
   @Test("hideAutocomplete cancels a pending computation")
   func hideCancelsPending() async {
-    let saved = SQLTextView.autocompleteDebounce
-    SQLTextView.autocompleteDebounce = Self.debounce
-    defer { SQLTextView.autocompleteDebounce = saved }
-    let (host, spy) = makeHost()
+    await withSleepGate { gate in
+      let (host, spy) = makeHost()
 
-    host.textView.updateAutocompleteSuggestions()
-    host.textView.hideAutocomplete()
-    await pause(Self.negativeWaitMs)
-    #expect(spy.calls == 0)
+      host.textView.updateAutocompleteSuggestions()
+      let task = host.textView.autocompleteTask
+      host.textView.hideAutocomplete()
+      gate.open()
+      await task?.value
+      #expect(spy.calls == 0)
+    }
   }
 
   @Test("programmatic edit while a debounce is pending suppresses the computation")
   func programmaticEditSuppressesPending() async {
-    let saved = SQLTextView.autocompleteDebounce
-    SQLTextView.autocompleteDebounce = Self.debounce
-    defer { SQLTextView.autocompleteDebounce = saved }
-    let (host, spy) = makeHost()
+    await withSleepGate { gate in
+      let (host, spy) = makeHost()
 
-    host.textView.updateAutocompleteSuggestions()
-    host.textView.setProgrammaticEditFlag(true)
-    await pause(Self.negativeWaitMs)
-    host.textView.setProgrammaticEditFlag(false)
-    #expect(spy.calls == 0)
-    #expect(host.textView.getAutocompleteSuggestions().isEmpty)
+      host.textView.updateAutocompleteSuggestions()
+      let task = host.textView.autocompleteTask
+      host.textView.setProgrammaticEditFlag(true)
+      gate.open()
+      await task?.value
+      host.textView.setProgrammaticEditFlag(false)
+      #expect(spy.calls == 0)
+      #expect(host.textView.getAutocompleteSuggestions().isEmpty)
+    }
   }
 
   @Test("accepting a suggestion while a debounce is pending suppresses the computation")
   func acceptingSuppressesPending() async {
-    let saved = SQLTextView.autocompleteDebounce
-    SQLTextView.autocompleteDebounce = Self.debounce
-    defer { SQLTextView.autocompleteDebounce = saved }
-    let (host, spy) = makeHost()
+    await withSleepGate { gate in
+      let (host, spy) = makeHost()
 
-    host.textView.updateAutocompleteSuggestions()
-    host.textView.setAcceptingSuggestionFlag(true)
-    await pause(Self.negativeWaitMs)
-    host.textView.setAcceptingSuggestionFlag(false)
-    #expect(spy.calls == 0)
+      host.textView.updateAutocompleteSuggestions()
+      let task = host.textView.autocompleteTask
+      host.textView.setAcceptingSuggestionFlag(true)
+      gate.open()
+      await task?.value
+      host.textView.setAcceptingSuggestionFlag(false)
+      #expect(spy.calls == 0)
+    }
   }
 }

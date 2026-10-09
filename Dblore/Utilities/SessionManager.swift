@@ -70,11 +70,7 @@ class SessionManager {
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
   ) -> [ConnectionHistoryEntry] {
-    guard let data = defaults.data(forKey: historyKey),
-      var entries = try? JSONDecoder().decode([ConnectionHistoryEntry].self, from: data)
-    else {
-      return []
-    }
+    var entries = storedEntries(defaults: defaults).known
 
     // Load passwords for engines that store one. Others are not queried.
     for i in 0..<entries.count where entries[i].config.databaseType.capabilities.usesPassword {
@@ -88,23 +84,57 @@ class SessionManager {
     return entries.sorted { $0.lastUsedAt > $1.lastUsedAt }
   }
 
+  /// Decodes saved entries one by one. Entries this build cannot decode (for example an
+  /// engine added by a newer build) come back as raw JSON objects in `unknown`.
+  private static func storedEntries(
+    defaults: UserDefaults
+  ) -> (known: [ConnectionHistoryEntry], unknown: [Any]) {
+    guard let data = defaults.data(forKey: historyKey),
+      let array = try? JSONSerialization.jsonObject(with: data) as? [Any]
+    else { return ([], []) }
+    var known: [ConnectionHistoryEntry] = []
+    var unknown: [Any] = []
+    for object in array {
+      if let entryData = try? JSONSerialization.data(
+        withJSONObject: object, options: .fragmentsAllowed),
+        let entry = try? JSONDecoder().decode(ConnectionHistoryEntry.self, from: entryData)
+      {
+        known.append(entry)
+      } else {
+        unknown.append(object)
+      }
+    }
+    return (known, unknown)
+  }
+
   /// Save connection history (private helper)
   private static func saveHistory(
     _ entries: [ConnectionHistoryEntry], defaults: UserDefaults = .standard
   ) {
-    if let encoded = encodedHistory(entries) {
+    if let encoded = encodedHistory(entries, defaults: defaults) {
       defaults.set(encoded, forKey: historyKey)
     }
   }
 
-  private static func encodedHistory(_ entries: [ConnectionHistoryEntry]) -> Data? {
+  /// Encodes `entries` without passwords. Entries this build cannot decode are read from
+  /// `defaults` before the write and appended unchanged, so a downgrade never drops them.
+  /// They do not count toward the size limit. Load sorts by date, so their position is free.
+  private static func encodedHistory(
+    _ entries: [ConnectionHistoryEntry], defaults: UserDefaults
+  ) -> Data? {
     // Remove passwords before saving
     var cleanEntries = entries
     for i in 0..<cleanEntries.count {
       cleanEntries[i].config.password = ""
     }
 
-    return try? JSONEncoder().encode(cleanEntries)
+    guard let encoded = try? JSONEncoder().encode(cleanEntries) else { return nil }
+    let unknown = storedEntries(defaults: defaults).unknown
+    guard !unknown.isEmpty else { return encoded }
+    guard let known = try? JSONSerialization.jsonObject(with: encoded) as? [Any] else {
+      return nil
+    }
+    return try? JSONSerialization.data(withJSONObject: known + unknown)
   }
 
   /// Maximum number of connection history entries to store
@@ -142,7 +172,7 @@ class SessionManager {
       history = Array(history.prefix(maxConnectionHistorySize))
     }
 
-    guard let encoded = encodedHistory(history),
+    guard let encoded = encodedHistory(history, defaults: defaults),
       ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
     else { return false }
     if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
@@ -203,7 +233,7 @@ class SessionManager {
         config, defaults: defaults, passwords: passwords, certificates: certificates)
     }
     history[kept] = updated
-    guard let encoded = encodedHistory(history),
+    guard let encoded = encodedHistory(history, defaults: defaults),
       ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
     else { return false }
     if previous.keychainKey != newKey,

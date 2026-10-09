@@ -10,6 +10,7 @@ import SwiftUI
 /// WorkspaceContainerView)
 struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
+  let connectionConfig: ConnectionConfig?
   @Bindable private var appSettings = AppSettings.shared
 
   @ViewBuilder let content: Content
@@ -25,7 +26,7 @@ struct DocumentLayoutView<Content: View>: View {
         // Left side: Header + Content
         VStack(spacing: 0) {
           // Header
-          HeaderView(viewModel: viewModel)
+          HeaderView(viewModel: viewModel, connectionConfig: connectionConfig)
 
           // Main content (passed from parent) with search panel overlay
           // Note: Schema Visualizer is now handled at WorkspaceContainerView level

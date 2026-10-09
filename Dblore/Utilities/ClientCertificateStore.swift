@@ -134,12 +134,6 @@ nonisolated enum ClientCertificateStoreFactory {
     return "v2|" + parts.map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
   }
 
-  private static func legacyAccount(for config: ConnectionConfig) -> String? {
-    let parts = [config.host, config.database, config.username]
-    guard parts.allSatisfy({ !$0.contains(":") }) else { return nil }
-    return "\(config.host):\(config.port):\(config.database):\(config.username)"
-  }
-
   static func load(
     for config: ConnectionConfig, from store: any ClientCertificateStore = shared
   ) -> ClientCertificateMaterial? {
@@ -149,15 +143,7 @@ nonisolated enum ClientCertificateStoreFactory {
     {
       return material
     }
-    // When both exist the v2 item wins; save and delete already remove the legacy one.
-    if let material = store.load(account: account) { return material }
-    // Legacy fallback: drop after one release, see
-    // docs/later/2026-10-05-client-certificate-legacy-account-migration.md.
-    guard let legacy = legacyAccount(for: config), let material = store.load(account: legacy)
-    else { return nil }
-    // Delete the old item only after the copy succeeds, so a failed write never locks the user out.
-    if store.save(material, account: account) { store.delete(account: legacy) }
-    return material
+    return store.load(account: account)
   }
 
   @discardableResult
@@ -169,16 +155,12 @@ nonisolated enum ClientCertificateStoreFactory {
       let scoped = operationMaterial, scoped.account == account,
       let material = scoped.material
     else { return true }
-    guard store.save(material, account: account) else { return false }
-    if let legacy = legacyAccount(for: config) { store.delete(account: legacy) }
-    return true
+    return store.save(material, account: account)
   }
 
   static func delete(
     for config: ConnectionConfig, from store: any ClientCertificateStore = shared
   ) {
-    let account = account(for: config)
-    store.delete(account: account)
-    if let legacy = legacyAccount(for: config) { store.delete(account: legacy) }
+    store.delete(account: account(for: config))
   }
 }
