@@ -68,7 +68,7 @@ struct WorkspaceSidebarTopArea: View {
     // With the native tab bar above, continue the tab bar's top border across the sidebar
     .overlay(alignment: .top) {
       if isNativeTabBarVisible {
-        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+        Rectangle().fill(Color.border).frame(height: 1)
       }
     }
   }

@@ -288,14 +288,14 @@ struct FloatingPanelButtonStyle: ButtonStyle {
           // Hover/press overlay with accent color (only in dark theme)
           if colorScheme == .dark && (isHovering || configuration.isPressed) {
             Circle()
-              .fill(Color.selectionFill)
+              .fill(Color.accentHoverFill)
           }
         }
         .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
         Circle()
-          .stroke(isHovering ? Color.accent.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+          .stroke(isHovering ? Color.accent.opacity(0.5) : Color.border, lineWidth: 1)
       )
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -339,7 +339,7 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
       .overlay(
         Circle()
           .stroke(
-            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.borderSubtle,
+            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.border,
             lineWidth: 1
           )
       )

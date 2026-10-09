@@ -267,9 +267,9 @@ private struct SettingsNavRow: View {
       .background {
         Capsule()
           .fill(
+            // cellBackgroundHover matches cardHeaderBackground, so the hover capsule would disappear.
             isSelected
               ? Color.selectionFill
-                // cellBackgroundHover matches cardHeaderBackground, so the capsule disappears.
               : (isHovered ? Color.foreground.opacity(0.12) : Color.clear))
       }
       .contentShape(Capsule())

@@ -38,7 +38,7 @@ struct FilterConditionsEditor: View {
   private func connectorPill(_ condition: Binding<FilterCondition>) -> some View {
     let isOr = condition.wrappedValue.connector == .or
     return HStack(spacing: Spacing.xs) {
-      Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      Rectangle().fill(Color.border).frame(height: 1)
       Menu {
         Button("AND") { condition.wrappedValue.connector = .and }
         Button("OR") { condition.wrappedValue.connector = .or }
@@ -49,7 +49,7 @@ struct FilterConditionsEditor: View {
       }
       .menuStyle(.borderlessButton)
       .fixedSize()
-      Rectangle().fill(Color.borderSubtle).frame(height: 1)
+      Rectangle().fill(Color.border).frame(height: 1)
     }
   }
 

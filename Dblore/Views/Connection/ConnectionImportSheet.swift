@@ -215,7 +215,7 @@ struct ConnectionImportSheet: View {
   private var sourceSection: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       CapsuleTabPicker(selection: sourceBinding, tabs: ImportSource.sheetOrder, height: 32) {
-        Text($0.title)
+        CapsuleTabLabel(text: $0.title, isSelected: $0 == model.source)
       }
 
       Text(model.source.hint)

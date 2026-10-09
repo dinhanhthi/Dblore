@@ -116,7 +116,7 @@ struct WorkspaceContainerView: View {
                     // Keep the tab bar's top border (native tab bar above) across this strip
                     .overlay(alignment: .top) {
                       if isNativeTabBarVisible {
-                        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+                        Rectangle().fill(Color.border).frame(height: 1)
                       }
                     }
                 }
@@ -159,7 +159,7 @@ struct WorkspaceContainerView: View {
           .frame(height: ComponentSize.tabBarHeight)
           // Single full-width border under the tab bar (flat, no glass rim)
           .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.borderSubtle).frame(height: 1)
+            Rectangle().fill(Color.border).frame(height: 1)
           }
           .zIndex(1)
 
@@ -985,7 +985,7 @@ struct WorkspaceTitleBarTabsView: View {
     // With the native tab bar above, match the sidebar's top edge
     .overlay(alignment: .top) {
       if isNativeTabBarVisible {
-        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+        Rectangle().fill(Color.border).frame(height: 1)
       }
     }
   }

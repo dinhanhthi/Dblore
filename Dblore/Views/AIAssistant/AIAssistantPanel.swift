@@ -44,7 +44,7 @@ struct AIAssistantPanel: View {
     VStack(spacing: 0) {
       header
       if isFloating {
-        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+        Rectangle().fill(Color.border).frame(height: 1)
       }
       if assistant.needsSetup {
         setupState
@@ -63,7 +63,7 @@ struct AIAssistantPanel: View {
         Rectangle()
           .fill(
             LinearGradient(
-              colors: [Color.accent.opacity(0.7), Color.accent.opacity(0.25), Color.borderSubtle],
+              colors: [Color.accent.opacity(0.7), Color.accent.opacity(0.25), Color.border],
               startPoint: .top, endPoint: .bottom)
           )
           .frame(width: 1)
@@ -434,7 +434,7 @@ struct AIAssistantPanel: View {
       .clipShape(composerShape)
       .overlay(
         composerShape
-          .stroke(composerFocused ? Color.borderFocus : Color.borderSubtle, lineWidth: 1)
+          .stroke(composerFocused ? Color.borderFocus : Color.border, lineWidth: 1)
       )
 
       if assistant.isGenerating {

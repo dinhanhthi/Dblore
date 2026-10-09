@@ -1,6 +1,7 @@
 // DesignSystemContrastTests.swift
 // Color tokens stay legible in both appearances: text meets WCAG AA 4.5:1 on every surface
-// it sits on, the "subtle" border is the lighter one, and light mode has a surface step.
+// it sits on, labels on accent and destructive fills read, borders keep their order, state
+// fills stay visible for every accent, and light mode has a surface step.
 
 import AppKit
 import SwiftUI
@@ -73,12 +74,14 @@ struct DesignSystemContrastTests {
     }
   }
 
-  @Test("borderSubtle is lighter than border")
+  @Test("borderStrong is stronger than border, and border stays visible on the window")
   func borderOrder() {
     for name in Self.appearances {
-      let subtle = ratio(.borderSubtle, .cardBackground, name)
+      let strong = ratio(.borderStrong, .cardBackground, name)
       let regular = ratio(.border, .cardBackground, name)
-      #expect(subtle < regular, "\(name.rawValue): subtle \(subtle), border \(regular)")
+      #expect(strong > regular, "\(name.rawValue): strong \(strong), border \(regular)")
+      let onWindow = ratio(.border, .appBackground, name)
+      #expect(onWindow >= 1.15, "\(name.rawValue): border on window \(onWindow)")
     }
   }
 
@@ -129,8 +132,19 @@ struct DesignSystemContrastTests {
   @Test("Destructive fill keeps its label at 4.5:1")
   func labelOnDestructive() {
     for name in Self.appearances {
-      let value = ratio(.onDestructive, .destructive, name)
-      #expect(value >= 4.5, "\(name.rawValue): \(value)")
+      let label = resolve(.onDestructive, name)
+      let fill = resolve(.destructive, name)
+      let card = resolve(.cardBackground, name)
+      // Pressed: destructive at 0.85 over the card
+      func mix(_ f: CGFloat, _ c: CGFloat) -> CGFloat { f * 0.85 + c * 0.15 }
+      let pressed = NSColor(
+        srgbRed: mix(fill.redComponent, card.redComponent),
+        green: mix(fill.greenComponent, card.greenComponent),
+        blue: mix(fill.blueComponent, card.blueComponent), alpha: 1)
+      for (state, background) in [("resting", fill), ("pressed", pressed)] {
+        let value = ColorContrast.ratio(label, background)
+        #expect(value >= 4.5, "\(name.rawValue) \(state): \(value)")
+      }
     }
   }
 

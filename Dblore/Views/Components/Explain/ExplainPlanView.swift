@@ -40,7 +40,7 @@ struct ExplainDisplayPicker: View {
       let isSelected = mode == tab
       Text(tab == .plan ? "Plan" : "Raw")
         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-        .foregroundColor(isSelected ? .white : .foreground)
+        .foregroundColor(isSelected ? .onAccent : .foreground)
         .lineLimit(1)
     }
     .frame(width: Self.width)

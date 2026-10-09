@@ -77,19 +77,13 @@ extension Color {
     dark: Color(hex: "3c3c3c")  // VS Code input, visible on sidebar
   )
 
-  /// Lighter than `border`
-  static let borderSubtle = Color(
-    light: Color(hex: "f0f0f2"),
-    dark: Color(hex: "303032")
-  )
-
   /// One step stronger than `border`, for a divider that must stand out from grid lines
   static let borderStrong = Color(
     light: Color(hex: "d4d4d8"),  // Zinc 300
     dark: Color(hex: "454545")  // VS Code widget border
   )
 
-  // Schema visualizer specific colors (darker in light theme for better visibility)
+  // Schema visualizer specific colors
   static let schemaNodeBorder = Color(
     light: Color(hex: "d4d4d8"),  // Zinc 300, same as borderStrong
     dark: Color(hex: "454545")  // Slightly lighter than border

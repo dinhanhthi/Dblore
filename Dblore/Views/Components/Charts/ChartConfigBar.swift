@@ -34,7 +34,7 @@ struct ResultDisplayPicker: View {
       let isSelected = mode == tab
       Text(tab == .grid ? "Grid" : "Chart")
         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-        .foregroundColor(isSelected ? .white : .foreground)
+        .foregroundColor(isSelected ? .onAccent : .foreground)
         .lineLimit(1)
     }
     .frame(width: Self.width)

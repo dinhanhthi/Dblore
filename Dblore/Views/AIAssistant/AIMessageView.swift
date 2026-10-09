@@ -406,7 +406,7 @@ private struct AICodeActionButton: View {
       .padding(.vertical, Spacing.xxs)
       .background(Capsule().fill(isHighlighted ? Color.gutterBackground : Color.clear))
       .overlay(
-        Capsule().stroke(isHighlighted ? Color.borderSubtle : Color.border, lineWidth: 1)
+        Capsule().stroke(isHighlighted ? Color.borderStrong : Color.border, lineWidth: 1)
       )
       .contentShape(Capsule())
       .opacity(isEnabled ? 1 : 0.5)

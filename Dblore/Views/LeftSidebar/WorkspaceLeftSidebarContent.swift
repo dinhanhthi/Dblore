@@ -67,7 +67,7 @@ struct WorkspaceLeftSidebarContent: View {
     let label = Text(tab == .history ? "History" : tab.rawValue)
       .font(.body)
       .fontWeight(isSelected ? .semibold : .regular)
-      .foregroundColor(isSelected ? .white : .foreground)
+      .foregroundColor(isSelected ? .onAccent : .foreground)
       .lineLimit(1)
       .minimumScaleFactor(0.7)
       .accessibilityLabel(tab.rawValue)
