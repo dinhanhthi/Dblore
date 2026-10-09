@@ -364,7 +364,7 @@ struct SafeModeSection: View {
         Button("Cancel") {
           showPasswordSetup = false
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
 
         Button(isChangingPassword ? "Change" : "Set Password") {
           setPassword()
@@ -444,7 +444,7 @@ struct SafeModeSection: View {
             showAuthSheet = false
             pendingAction = nil
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
 
           Button("Verify") {
             verifyPassword()

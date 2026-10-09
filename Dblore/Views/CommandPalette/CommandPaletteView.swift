@@ -298,8 +298,8 @@ private struct CommandPaletteRow: View {
     .contentShape(Rectangle())
     .background(
       isSelected
-        ? Color.accent.opacity(0.15)
-        : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+        ? Color.selectionFill
+        : (isHovering ? Color.hoverFill : Color.clear)
     )
     .onHover { isHovering = $0 }
     .onTapGesture(perform: onActivate)

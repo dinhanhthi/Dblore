@@ -312,7 +312,7 @@ struct CapsuleDropdown<Option: Hashable>: View {
       .padding(.horizontal, ButtonMetrics.regularHorizontalPadding)
       .padding(.vertical, ButtonMetrics.regularVerticalPadding)
       .frame(maxWidth: width == nil ? nil : .infinity, alignment: .leading)
-      .background(Capsule().fill(Color.inputBackground))
+      .background(Capsule().fill(Color.controlBackground))
       .overlay(Capsule().stroke(Color.border, lineWidth: 1))
       .contentShape(Capsule())
     }
@@ -345,7 +345,7 @@ struct ShortcutRow: View {
         .foregroundColor(.foregroundSubtle)
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, Spacing.xs)
-        .background(Color.inputBackground)
+        .background(Color.controlBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
     }
   }

@@ -225,11 +225,7 @@ struct SQLSyntaxHighlighterCharacterizationTests {
     a.attributes(at: offset, effectiveRange: nil)[.backgroundColor] as? NSColor
   }
 
-  private var passiveMatchBackground: NSColor {
-    let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    return isDark
-      ? NSColor.white.withAlphaComponent(0.8) : NSColor.gray.withAlphaComponent(0.6)
-  }
+  private var passiveMatchBackground: NSColor { NSColor(SearchHighlighter.highlightColor) }
 
   private let currentMatchBackground = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)
 

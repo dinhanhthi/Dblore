@@ -90,7 +90,7 @@ private struct AIChatHistoryRow: View {
         .fill(
           isCurrent
             ? Color.cellBackgroundHover
-            : isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+            : isHovering ? Color.hoverFill : Color.clear)
     )
     .onHover { isHovering = $0 }
   }

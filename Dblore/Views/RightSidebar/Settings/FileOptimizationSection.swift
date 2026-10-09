@@ -41,7 +41,7 @@ struct FileOptimizationSection: View {
           }
         }
         .padding(Spacing.md)
-        .background(Color.inputBackground)
+        .background(Color.controlBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
 
         if viewModel.isFileSizeLarge || viewModel.isFileSizeWarning {

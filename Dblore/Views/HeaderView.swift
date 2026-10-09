@@ -152,11 +152,11 @@ struct HeaderView: View {
               }
             }
           }
-          // Flat accent fill and white label, same paint as the selected sidebar tab.
+          // Flat accent fill and onAccent label, same paint as the selected sidebar tab.
           // glassProminent tints the glass material, so the fill reads lighter than Color.accent.
           // Spacing.xs is 2pt shorter per side than a regular primary button. editorHeaderHeight
           // drops by the same amount so the gap around Run stays put.
-          .buttonStyle(PrimaryButtonStyle(vPadding: Spacing.xs, labelColor: .white))
+          .buttonStyle(PrimaryButtonStyle(vPadding: Spacing.xs))
           .linkPointer()
           .disabled(
             viewModel.isEditorQueryRunning

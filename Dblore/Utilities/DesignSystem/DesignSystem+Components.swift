@@ -25,14 +25,16 @@ enum ButtonStyleVariant {
     case .secondary:
       return isPressed ? Color.cellBackgroundHover : Color.clear
     case .filledSecondary:
-      return isPressed ? Color.cellBackgroundHover : Color.inputBackground
+      // Hover keeps the fill: a gray hover would match the tinted settings panels.
+      // The border carries the hover instead (see `borderColor`).
+      return Color.controlBackground
     case .danger:
-      return isPressed ? Color.destructive.opacity(0.8) : Color.destructive.opacity(0.6)
+      return isPressed ? Color.destructive.opacity(0.85) : Color.destructive
     case .ghost:
       if isPressed {
         return Color.cellBackgroundHover
       } else if isHovering {
-        return Color.cellBackgroundHover.opacity(0.5)
+        return Color.hoverFill
       } else {
         return Color.clear
       }
@@ -51,6 +53,10 @@ enum ButtonStyleVariant {
     switch self {
     case .ghost:
       return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
+    case .primary:
+      return .onAccent
+    case .danger:
+      return .onDestructive
     default:
       return isActive ? .accent : .foreground
     }
@@ -72,14 +78,11 @@ struct PrimaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
-  /// Label color on the accent fill. Nil keeps the standard foreground.
-  /// The editor Run button passes white so it matches the selected sidebar tab.
-  var labelColor: Color? = nil
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(
       variant: .primary, iconOnly: iconOnly, hPadding: hPadding,
-      vPadding: vPadding, labelColor: labelColor, configuration: configuration
+      vPadding: vPadding, configuration: configuration
     )
   }
 }
@@ -144,7 +147,6 @@ private struct BaseButtonStyleView: View {
   var iconOnly: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
-  var labelColor: Color? = nil
   let configuration: ButtonStyleConfiguration
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.controlSize) private var controlSize
@@ -209,13 +211,16 @@ private struct BaseButtonStyleView: View {
     }
   }
 
+  private var borderColor: Color {
+    variant == .filledSecondary && (isHovering || isActive) ? .borderStrong : .border
+  }
+
   var body: some View {
     configuration.label
       .font(iconFontSize.map { Font.system(size: $0) } ?? font)
       .foregroundColor(
-        labelColor
-          ?? variant.foregroundColor(
-            isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
+        variant.foregroundColor(
+          isPressed: configuration.isPressed, isHovering: isHovering, isActive: isActive)
       )
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, verticalPadding)
@@ -234,10 +239,10 @@ private struct BaseButtonStyleView: View {
         if variant.hasBorder {
           if iconOnly {
             Circle()
-              .stroke(Color.border, lineWidth: 1)
+              .stroke(borderColor, lineWidth: 1)
           } else {
             Capsule()
-              .stroke(Color.border, lineWidth: 1)
+              .stroke(borderColor, lineWidth: 1)
           }
         }
       }
@@ -289,14 +294,14 @@ struct FloatingPanelButtonStyle: ButtonStyle {
           // Hover/press overlay with accent color (only in dark theme)
           if colorScheme == .dark && (isHovering || configuration.isPressed) {
             Circle()
-              .fill(Color.accent.opacity(0.15))
+              .fill(Color.accentHoverFill)
           }
         }
-        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+        .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
         Circle()
-          .stroke(isHovering ? Color.accent.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+          .stroke(isHovering ? Color.accent.opacity(0.5) : Color.border, lineWidth: 1)
       )
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -332,15 +337,15 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
           // Hover/press/active overlay with accent color (only in dark theme)
           if colorScheme == .dark && (isHovering || configuration.isPressed || isActive) {
             Circle()
-              .fill(Color.accent.opacity(0.15))
+              .fill(Color.selectionFill)
           }
         }
-        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+        .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
         Circle()
           .stroke(
-            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.borderSubtle,
+            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.border,
             lineWidth: 1
           )
       )
@@ -382,7 +387,7 @@ extension View {
 
   func inputStyle() -> some View {
     padding(Spacing.sm)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.xxl)
@@ -394,7 +399,7 @@ extension View {
   func inputCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.md)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -410,7 +415,7 @@ extension View {
       .controlSize(.small)
       .padding(.horizontal, Spacing.sm)
       .frame(height: ButtonMetrics.regularHeight)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -430,7 +435,7 @@ extension View {
   func dropdownCapsuleStyle() -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.sm + 2)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(Capsule())
       .overlay(
         Capsule()
@@ -441,7 +446,7 @@ extension View {
   /// Rounded style for multiline text fields with capsule-like radius
   func textAreaCapsuleStyle() -> some View {
     padding(Spacing.sm)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxxl))
       .overlay(
         RoundedRectangle(cornerRadius: CornerRadius.xxxl)

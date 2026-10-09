@@ -15,7 +15,7 @@ import SwiftUI
 final class ResultGridRowView: NSTableRowView {
   static let alternateColor = NSColor(Color.tableRowAlternate)
   /// Read on each draw: the accent color can change in settings
-  static var hoverColor: NSColor { NSColor(Color.accent.opacity(0.08)) }
+  static var hoverColor: NSColor { NSColor(Color.accentHoverFill) }
   static let insertedColor = NSColor(Color.success.opacity(0.14))
   static let deletedColor = NSColor(Color.destructive.opacity(0.14))
   static let editedCellColor = NSColor(Color.warning.opacity(0.18))

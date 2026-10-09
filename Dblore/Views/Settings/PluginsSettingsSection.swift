@@ -85,7 +85,7 @@ struct PluginsSettingsSection: View {
     case .notInstalled:
       Button("Install") { install() }
         .buttonStyle(PrimaryButtonStyle())
-        .controlSize(.small)
+        .controlSize(.regular)
         .disabled(manager.catalog == nil)
         .linkPointer()
     case .downloading(let fraction):
@@ -96,8 +96,8 @@ struct PluginsSettingsSection: View {
           .foregroundColor(.foregroundMuted)
           .monospacedDigit()
         Button("Cancel") { manager.cancel() }
-          .buttonStyle(SecondaryButtonStyle())
-          .controlSize(.small)
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .controlSize(.regular)
           .linkPointer()
       }
     case .verifying:
@@ -116,14 +116,14 @@ struct PluginsSettingsSection: View {
         .foregroundColor(.success)
         Spacer(minLength: Spacing.sm)
         Button("Remove") { isConfirmingRemove = true }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.regular)
           .linkPointer()
       }
     case .failed:
       Button("Retry") { install() }
         .buttonStyle(PrimaryButtonStyle())
-        .controlSize(.small)
+        .controlSize(.regular)
         .disabled(manager.catalog == nil)
         .linkPointer()
     }

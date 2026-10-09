@@ -52,28 +52,14 @@ struct ToastView: View {
     .padding(.vertical, Spacing.md)
     .background(
       RoundedRectangle(cornerRadius: CornerRadius.md)
-        .fill(backgroundColor)
+        .fill(Color.cardBackground)
     )
+    // Neutral edge; the icon carries the toast type
     .overlay(
       RoundedRectangle(cornerRadius: CornerRadius.md)
-        .strokeBorder(borderColor, lineWidth: 1)
+        .strokeBorder(Color.border, lineWidth: 1)
     )
-    .overlay(
-      // Subtle inner glow
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .strokeBorder(
-          LinearGradient(
-            colors: [borderColor.opacity(0.3), .clear],
-            startPoint: .top,
-            endPoint: .bottom
-          ),
-          lineWidth: 1
-        )
-        .padding(1)
-    )
-    .shadow(color: borderColor.opacity(0.2), radius: 8, x: 0, y: 0)  // Glow effect
-    .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 4)  // Deep shadow
-    .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)  // Close shadow
+    .shadow(color: Color.shadow, radius: 12, x: 0, y: 4)
     .onHover { hovering in
       isHovered = hovering
       windowManager.setToastHovered(hovering)
@@ -105,23 +91,6 @@ struct ToastView: View {
     case .success:
       return .success
     }
-  }
-
-  private var borderColor: Color {
-    switch toast.type {
-    case .info:
-      return .accent
-    case .warning:
-      return .warning
-    case .error:
-      return .destructive
-    case .success:
-      return .success
-    }
-  }
-
-  private var backgroundColor: Color {
-    Color.cellBackground.opacity(0.95)
   }
 }
 

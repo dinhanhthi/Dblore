@@ -219,7 +219,7 @@ struct ModalBackdrop: View {
   var body: some View {
     ZStack {
       Rectangle().fill(.thinMaterial).opacity(0.8)
-      Color.black.opacity(0.35)
+      Color.scrim
     }
     .contentShape(Rectangle())
   }

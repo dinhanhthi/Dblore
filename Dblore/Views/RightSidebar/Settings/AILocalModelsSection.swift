@@ -106,7 +106,7 @@ struct AILocalModelsSection: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
         Button("Cancel") { manager.cancel() }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.small)
           .linkPointer()
       }
@@ -125,7 +125,7 @@ struct AILocalModelsSection: View {
           .disabled(isSelected && isActive)
           .linkPointer()
         Button("Delete") { pendingDelete = model }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.small)
           .disabled(manager.isBusy)
           .linkPointer()

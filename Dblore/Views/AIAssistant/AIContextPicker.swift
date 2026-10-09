@@ -258,7 +258,7 @@ struct AIContextPicker<Accessory: View>: View {
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
         .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.sm).stroke(Color.borderSubtle, lineWidth: 1))
+          RoundedRectangle(cornerRadius: CornerRadius.sm).stroke(Color.border, lineWidth: 1))
 
       Button("Auto (relevant tables)") { selected = [] }
         .buttonStyle(GhostButtonStyle(isActive: selected.isEmpty))
