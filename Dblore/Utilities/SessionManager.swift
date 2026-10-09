@@ -70,11 +70,7 @@ class SessionManager {
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
   ) -> [ConnectionHistoryEntry] {
-    guard let data = defaults.data(forKey: historyKey),
-      var entries = try? JSONDecoder().decode([ConnectionHistoryEntry].self, from: data)
-    else {
-      return []
-    }
+    var entries = storedEntries(defaults: defaults).known
 
     // Load passwords for engines that store one. Others are not queried.
     for i in 0..<entries.count where entries[i].config.databaseType.capabilities.usesPassword {
@@ -88,27 +84,61 @@ class SessionManager {
     return entries.sorted { $0.lastUsedAt > $1.lastUsedAt }
   }
 
+  /// Decodes saved entries one by one. Entries this build cannot decode (for example an
+  /// engine added by a newer build) come back as raw JSON objects in `unknown`.
+  private static func storedEntries(
+    defaults: UserDefaults
+  ) -> (known: [ConnectionHistoryEntry], unknown: [Any]) {
+    guard let data = defaults.data(forKey: historyKey),
+      let array = try? JSONSerialization.jsonObject(with: data) as? [Any]
+    else { return ([], []) }
+    var known: [ConnectionHistoryEntry] = []
+    var unknown: [Any] = []
+    for object in array {
+      if let entryData = try? JSONSerialization.data(
+        withJSONObject: object, options: .fragmentsAllowed),
+        let entry = try? JSONDecoder().decode(ConnectionHistoryEntry.self, from: entryData)
+      {
+        known.append(entry)
+      } else {
+        unknown.append(object)
+      }
+    }
+    return (known, unknown)
+  }
+
   /// Save connection history (private helper)
   private static func saveHistory(
     _ entries: [ConnectionHistoryEntry], defaults: UserDefaults = .standard
   ) {
-    if let encoded = encodedHistory(entries) {
+    if let encoded = encodedHistory(entries, defaults: defaults) {
       defaults.set(encoded, forKey: historyKey)
     }
   }
 
-  private static func encodedHistory(_ entries: [ConnectionHistoryEntry]) -> Data? {
+  /// Encodes `entries` without passwords. Entries this build cannot decode are read from
+  /// `defaults` before the write and appended unchanged, so a downgrade never drops them.
+  /// They do not count toward the size limit. Load sorts by date, so their position is free.
+  private static func encodedHistory(
+    _ entries: [ConnectionHistoryEntry], defaults: UserDefaults
+  ) -> Data? {
     // Remove passwords before saving
     var cleanEntries = entries
     for i in 0..<cleanEntries.count {
       cleanEntries[i].config.password = ""
     }
 
-    return try? JSONEncoder().encode(cleanEntries)
+    guard let encoded = try? JSONEncoder().encode(cleanEntries) else { return nil }
+    let unknown = storedEntries(defaults: defaults).unknown
+    guard !unknown.isEmpty else { return encoded }
+    guard let known = try? JSONSerialization.jsonObject(with: encoded) as? [Any] else {
+      return nil
+    }
+    return try? JSONSerialization.data(withJSONObject: known + unknown)
   }
 
   /// Maximum number of connection history entries to store
-  private static let maxConnectionHistorySize = 6
+  static let maxConnectionHistorySize = 50
 
   /// Add or update connection in history
   @discardableResult
@@ -116,7 +146,9 @@ class SessionManager {
     _ config: ConnectionConfig,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    sshCredential: SSHStoredCredential? = nil
   ) -> Bool {
     let config = singleLineName(config)
     guard config.rememberConnection else {
@@ -142,8 +174,9 @@ class SessionManager {
       history = Array(history.prefix(maxConnectionHistorySize))
     }
 
-    guard let encoded = encodedHistory(history),
-      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+    guard let encoded = encodedHistory(history, defaults: defaults),
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
+      saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
     if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
       passwords.savePassword(config.password, forKey: newEntry.keychainKey)
@@ -153,7 +186,102 @@ class SessionManager {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
     pruneCertificates(previous: previous, current: history, certificates: certificates)
+    pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     return true
+  }
+
+  /// Saves imported connections with one history load and one history write.
+  /// Remember is forced on. A connection whose Keychain key is already saved, or earlier in
+  /// the batch, is skipped and none of its secrets are written. A rejected SSH credential
+  /// leaves the entry out. Imports fill only the free history slots: saved rows are never
+  /// evicted, and extra imports are dropped unsaved.
+  @discardableResult
+  static func saveConnections(
+    _ imported: [ImportedConnection],
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
+  ) -> BulkSaveReport {
+    let history = loadHistory(defaults: defaults, passwords: passwords)
+    let freeSlots = max(0, maxConnectionHistorySize - history.count)
+    var report = BulkSaveReport()
+    var seen = savedConnectionKeys(defaults: defaults)
+    var kept: [ConnectionHistoryEntry] = []
+    var savedSSHAccounts: [String] = []
+    var pendingPasswords: [(key: String, password: String)] = []
+
+    for item in imported {
+      var saved = singleLineName(item.config)
+      saved.rememberConnection = true
+      saved.password = item.password ?? ""
+      let name = reportName(saved.name.isEmpty ? saved.displayString : saved.name)
+      let entry = ConnectionHistoryEntry(config: saved)
+      guard !seen.contains(entry.keychainKey) else {
+        report.skippedDuplicates.append(name)
+        continue
+      }
+      guard kept.count < freeSlots else {
+        report.droppedByLimit += 1
+        continue
+      }
+      if let credential = item.sshCredential,
+        let account = SSHCredentialStoreFactory.account(for: saved)
+      {
+        guard sshCredentials.save(credential, account: account) else {
+          report.failed.append(.init(name: name, reason: "The SSH credential could not be saved."))
+          continue
+        }
+        savedSSHAccounts.append(account)
+      }
+      seen.insert(entry.keychainKey)
+      kept.append(entry)
+      if saved.databaseType.capabilities.usesPassword, !saved.password.isEmpty {
+        pendingPasswords.append((entry.keychainKey, saved.password))
+      }
+    }
+
+    guard !kept.isEmpty else { return report }
+    guard let encoded = encodedHistory(kept + history, defaults: defaults) else {
+      // Each kept key is new, so these accounts belong to no saved row.
+      for account in savedSSHAccounts { sshCredentials.delete(account: account) }
+      report.failed += kept.map {
+        .init(
+          name: reportName($0.shortDisplayName),
+          reason: "The connection history could not be saved.")
+      }
+      return report
+    }
+    for pending in pendingPasswords {
+      passwords.savePassword(pending.password, forKey: pending.key)
+    }
+    defaults.set(encoded, forKey: historyKey)
+    report.added = kept.count
+    return report
+  }
+
+  /// Keychain keys of every saved row. Rows this build cannot decode keep their saved password
+  /// under the same key, so they count too. Reads no Keychain item.
+  static func savedConnectionKeys(defaults: UserDefaults = .standard) -> Set<String> {
+    let stored = storedEntries(defaults: defaults)
+    return Set(stored.known.map(\.keychainKey) + stored.unknown.compactMap(rawKeychainKey))
+  }
+
+  /// Keychain key of a raw history row, read from its `config` like `keychainKey(for:)`.
+  /// Nil when host, port, database, or username is missing or has the wrong type.
+  private static func rawKeychainKey(_ object: Any) -> String? {
+    guard let config = (object as? [String: Any])?["config"] as? [String: Any],
+      let host = config["host"] as? String,
+      let port = config["port"] as? Int,
+      let database = config["database"] as? String,
+      let username = config["username"] as? String
+    else { return nil }
+    return "\(host):\(port):\(database):\(username)"
+  }
+
+  /// One line of at most 80 characters, for names shown in a bulk save report.
+  private static func reportName(_ name: String) -> String {
+    let line = DropdownTitle.singleLine(name).trimmingCharacters(in: .whitespaces)
+    return line.count <= 80 ? line : String(line.prefix(79)) + "\u{2026}"
   }
 
   /// A single-line text field still accepts pasted line breaks, which it does not show.
@@ -173,14 +301,17 @@ class SessionManager {
     with config: ConnectionConfig,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    sshCredential: SSHStoredCredential? = nil
   ) -> Bool {
     let config = singleLineName(config)
     var history = loadHistory(defaults: defaults, passwords: passwords)
     let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
-        config, defaults: defaults, passwords: passwords, certificates: certificates)
+        config, defaults: defaults, passwords: passwords, certificates: certificates,
+        sshCredentials: sshCredentials, sshCredential: sshCredential)
     }
 
     let previous = history[index]
@@ -191,6 +322,7 @@ class SessionManager {
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
       pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+      pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
       return true
     }
 
@@ -200,11 +332,13 @@ class SessionManager {
     history.removeAll { $0.id != id && $0.keychainKey == newKey }
     guard let kept = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
-        config, defaults: defaults, passwords: passwords, certificates: certificates)
+        config, defaults: defaults, passwords: passwords, certificates: certificates,
+        sshCredentials: sshCredentials, sshCredential: sshCredential)
     }
     history[kept] = updated
-    guard let encoded = encodedHistory(history),
-      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates)
+    guard let encoded = encodedHistory(history, defaults: defaults),
+      ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
+      saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
     if previous.keychainKey != newKey,
       !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
@@ -220,6 +354,7 @@ class SessionManager {
     }
     defaults.set(encoded, forKey: historyKey)
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
+    pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
     return true
   }
 
@@ -232,7 +367,8 @@ class SessionManager {
   static func clearAllHistory(
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
   ) {
     let history = loadHistory(defaults: defaults, passwords: passwords)
 
@@ -240,6 +376,7 @@ class SessionManager {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
     pruneCertificates(previous: history, current: [], certificates: certificates)
+    pruneSSHCredentials(previous: history, current: [], sshCredentials: sshCredentials)
 
     defaults.removeObject(forKey: historyKey)
   }
@@ -249,7 +386,8 @@ class SessionManager {
     id: UUID,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared
+    certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
   ) {
     var history = loadHistory(defaults: defaults, passwords: passwords)
 
@@ -261,6 +399,7 @@ class SessionManager {
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
       pruneCertificates(previous: previous, current: history, certificates: certificates)
+      pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     }
   }
 
@@ -331,6 +470,34 @@ class SessionManager {
     }
   }
 
+  /// Saves a credential supplied with this save, else the operation's scoped one (the form's
+  /// secret). Without a tunnel there is nothing to key it by.
+  private static func saveSSHCredential(
+    _ credential: SSHStoredCredential?, for config: ConnectionConfig,
+    to sshCredentials: any SSHCredentialStore
+  ) -> Bool {
+    guard let credential else {
+      return SSHCredentialStoreFactory.persistOperationCredential(for: config, to: sshCredentials)
+    }
+    guard let account = SSHCredentialStoreFactory.account(for: config) else { return true }
+    return sshCredentials.save(credential, account: account)
+  }
+
+  /// Deletes SSH credentials no remaining entry uses. Host key pins are kept: they belong
+  /// to the bastion, not the connection, and are removed only in Settings > Data.
+  private static func pruneSSHCredentials(
+    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
+    sshCredentials: any SSHCredentialStore
+  ) {
+    let retained = Set(current.compactMap { SSHCredentialStoreFactory.account(for: $0.config) })
+    for entry in previous {
+      guard let account = SSHCredentialStoreFactory.account(for: entry.config),
+        !retained.contains(account)
+      else { continue }
+      sshCredentials.delete(account: account)
+    }
+  }
+
   // MARK: - Local data (UserDefaults only)
 
   /// History blobs in `domainName`, still containing whatever was stored.
@@ -381,6 +548,20 @@ class SessionManager {
     domain.removeValue(forKey: legacySessionKey)
     defaults.setPersistentDomain(domain, forName: domainName)
   }
+}
+
+/// Outcome of `SessionManager.saveConnections`. Holds names only, never secrets.
+struct BulkSaveReport: Equatable, Sendable {
+  struct Failure: Equatable, Sendable {
+    let name: String
+    let reason: String
+  }
+
+  var added = 0
+  var skippedDuplicates: [String] = []
+  var failed: [Failure] = []
+  /// Imports left out because history had no free slot.
+  var droppedByLimit = 0
 }
 
 /// Saves, loads, and deletes one connection password.

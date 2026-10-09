@@ -154,9 +154,13 @@ struct WorkspaceInfoModal: View {
               ? "Save & Reconnect" : "Save & Connect",
             showsRecentHistory: false,
             unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
+            unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },
             unchangedFrom: workspaceManager.connectionState.isConnected ? appliedConfig : nil,
             footerLeading: workspaceManager.connectionState.isConnected
-              ? AnyView(disconnectButton) : nil
+              ? AnyView(disconnectButton) : nil,
+            unlockConnectError: $workspaceManager.lastUnlockConnectError,
+            onOpenPluginSettings: ConnectionErrorAction.postOpenPluginSettings,
+            draftGeneration: workspaceManager.connectionFormDraftGeneration
           )
         }
       }
@@ -188,6 +192,9 @@ struct WorkspaceInfoModal: View {
             for: workspaceManager.connectionState, config: workspace.connectionConfig),
           help: FooterView.connectionFailureDetail(for: workspaceManager.connectionState)
         )
+        if isPluginMissing {
+          missingPluginRow
+        }
         if workspaceManager.connectionState.isConnected {
           if workspaceManager.isLoadingSchema && workspaceManager.databaseTables.isEmpty {
             infoRow(label: "Schema", value: "Loading...")
@@ -204,6 +211,31 @@ struct WorkspaceInfoModal: View {
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .topLeading)
     .background(RoundedRectangle(cornerRadius: CornerRadius.lg).fill(Color.cardHeaderBackground))
+  }
+
+  /// The workspace's engine needs a plugin that is not installed (DuckDB). Read in `body`, so
+  /// the row goes away once Settings > Plugins installs it.
+  private var isPluginMissing: Bool {
+    guard let type = workspace.connectionConfig?.databaseType, type == .duckdb,
+      type.capabilities.requiresPlugin
+    else { return false }
+    return !DuckDBPluginManager.shared.isInstalledOrPending
+  }
+
+  /// Same Install action as the connection form's missing-plugin row: opens Settings > Plugins,
+  /// which sits above this modal.
+  private var missingPluginRow: some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.warning)
+      Text("DuckDB plugin not installed")
+        .foregroundColor(.warning)
+      Spacer(minLength: Spacing.sm)
+      Button("Install…", action: ConnectionErrorAction.postOpenPluginSettings)
+        .buttonStyle(.link)
+        .linkPointer()
+    }
+    .font(.caption)
   }
 
   private var tabsValue: String {

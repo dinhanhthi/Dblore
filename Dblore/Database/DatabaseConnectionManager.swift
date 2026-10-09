@@ -14,16 +14,22 @@ actor DatabaseConnectionManager {
   var session: (any DatabaseSession)?
   /// Production uses `AppDatabaseSessionFactory`. Tests inject another `DatabaseSessionFactory`.
   private let sessionFactory: any DatabaseSessionFactory
-  /// Catalog SQL for the connected engine. PostgreSQL until a SQLite file is connected.
+  /// Catalog SQL for the connected engine. PostgreSQL while nothing is connected.
   var introspector: any SchemaIntrospector {
-    if config?.databaseType == .sqlite {
-      return SQLiteSchemaIntrospector()
+    switch config?.databaseType {
+    case .postgresql, nil:
+      PostgresSchemaIntrospector()
+    case .sqlite:
+      SQLiteSchemaIntrospector()
+    case .duckdb:
+      DuckDBSchemaIntrospector()
     }
-    return PostgresSchemaIntrospector()
   }
   private(set) var config: ConnectionConfig?
   /// PEM for an unremembered connection, owned only while this actor's session is active.
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
+  /// SSH secret of an unremembered connection, owned only while this actor's session is active.
+  var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -48,10 +54,18 @@ actor DatabaseConnectionManager {
   /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
   /// Nil until a file grant is stored. Must not call back into this actor.
   var sqliteFileAccessRelease: (@Sendable () -> Void)?
+  /// Files the current DuckDB session may read (`DuckDBSession` `extraAllowedPaths`). Set when
+  /// a connect succeeds, cleared by `disconnect`. Internal reconnects (capped read, cancel) go
+  /// through `reconnectWithActiveCertificate`, which passes it on to the new session.
+  private(set) var duckDBAllowedPaths: [String] = []
   /// Reads that went through a server-side cursor (`executeCursorRead`); observed by tests
   var cursorReadCount = 0
   /// App catalog queries that passed `catalogConnection()`; observed by performance tests
   var catalogQueryCount = 0
+  /// A DuckDB catalog read holds the session's one open result (see `withCatalogReadSession`)
+  var isDuckDBCatalogReadActive = false
+  /// DuckDB catalog reads waiting for the running one, in arrival order
+  var duckDBCatalogWaiters: [CheckedContinuation<Void, Never>] = []
   /// Queries waiting in `performSend`: queued on the connection or running (see
   /// `resetSessionIfCapped`)
   var activeSends = 0
@@ -84,8 +98,18 @@ actor DatabaseConnectionManager {
   nonisolated let sessionResets: AsyncStream<SessionResetEvent>
   let sessionResetsContinuation: AsyncStream<SessionResetEvent>.Continuation
 
-  init(sessionFactory: any DatabaseSessionFactory = AppDatabaseSessionFactory()) {
-    self.sessionFactory = sessionFactory
+  /// TOFU for SSH bastions: the injected prompt confirms unknown host keys, pins go to the
+  /// shared known-host store. Used by the default session factory and `testConnection`.
+  nonisolated let sshHostKeyPolicy: SSHHostKeyPolicy
+
+  /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
+  init(
+    sessionFactory: (any DatabaseSessionFactory)? = nil,
+    sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt()
+  ) {
+    let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
+    sshHostKeyPolicy = policy
+    self.sessionFactory = sessionFactory ?? AppDatabaseSessionFactory(hostKeyValidator: policy)
     (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
       of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
     (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
@@ -110,11 +134,13 @@ actor DatabaseConnectionManager {
   // MARK: - Connection Management
 
   /// Connect to PostgreSQL. The session is published only after its brakes are applied, so
-  /// no user statement can run before the timeouts are set.
-  func connect(config: ConnectionConfig) async throws {
+  /// no user statement can run before the timeouts are set. `extraAllowedPaths`: the files the
+  /// new DuckDB session may read (`duckDBAllowedPaths` once connected).
+  func connect(config: ConnectionConfig, extraAllowedPaths: [String] = []) async throws {
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
+    let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
 
@@ -122,19 +148,31 @@ actor DatabaseConnectionManager {
     // epoch) is published until its session brakes are applied.
     await disconnect()
 
-    let prepared: PreparedSQLiteOpen
+    var prepared: PreparedSQLiteOpen
     do {
       prepared = try await prepareSQLiteOpen(config)
     } catch {
       throw error
     }
-    let opening = sessionFactory.makeSession(config: prepared.config)
+    let opening: any DatabaseSession
+    do {
+      opening = try await sessionFactory.makeSession(
+        config: prepared.config, extraAllowedPaths: extraAllowedPaths)
+    } catch {
+      prepared.release?()
+      throw error
+    }
     do {
       try await opening.open()
     } catch {
       await opening.close()
       prepared.release?()
       throw error
+    }
+    // A file picked with "New File…" exists only now: bookmark it so it reopens after relaunch
+    if prepared.config.fileBookmark == nil, prepared.release != nil {
+      prepared.config.fileBookmark = SecurityScopedAccess.bookmarkIfPossible(
+        for: URL(fileURLWithPath: prepared.config.database))
     }
 
     do {
@@ -159,8 +197,10 @@ actor DatabaseConnectionManager {
 
     session = opening
     self.config = prepared.config
+    duckDBAllowedPaths = extraAllowedPaths
     if !config.rememberConnection {
       activeUnrememberedCertificate = suppliedCertificate
+      activeUnrememberedSSHCredential = suppliedSSHCredential
     }
     sqliteFileAccessRelease = prepared.release
     sqliteReadOnlyReason = prepared.readOnlyReason
@@ -174,17 +214,29 @@ actor DatabaseConnectionManager {
   }
 
   /// Internal reset of this connection. A fresh connect must use the active unremembered
-  /// certificate rather than a same-account Keychain item from an older saved connection.
+  /// certificate and SSH secret rather than same-account Keychain items from an older saved
+  /// connection, and the same picked DuckDB files.
   func reconnectWithActiveCertificate(
     config: ConnectionConfig,
-    material: ClientCertificateStoreFactory.ConnectionMaterial?
+    material: ClientCertificateStoreFactory.ConnectionMaterial?,
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential? = nil
   ) async throws {
+    let allowedPaths = duckDBAllowedPaths
     let scoped = material.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    defer { scoped?.clear() }
+    let scopedSSH = sshCredential.map {
+      SSHCredentialStoreFactory.ScopedSSHCredential(
+        account: $0.account, credential: $0.credential)
+    }
+    defer {
+      scoped?.clear()
+      scopedSSH?.clear()
+    }
     try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-      try await connect(config: config)
+      try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+        try await connect(config: config, extraAllowedPaths: allowedPaths)
+      }
     }
   }
 
@@ -193,19 +245,25 @@ actor DatabaseConnectionManager {
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     switch config.databaseType {
     case .postgresql:
-      return try await PostgresSession(config: config).probe()
-    case .sqlite:
-      return try await probeSQLite(config)
+      return try await PostgresSession(config: config, hostKeyValidator: sshHostKeyPolicy)
+        .probe()
+    case .sqlite, .duckdb:
+      return try await probeFile(config)
     }
   }
 
   /// Bookmark present: sandbox grant, then the resolved path. No bookmark: the path as given
-  /// (a file the process can already open, including a temporary file in tests).
+  /// (a file the process can already open, including a temporary file in tests), except a
+  /// read-write DuckDB file, whose `.wal` still needs the grant. In-memory DuckDB needs no
+  /// file access.
   private func prepareSQLiteOpen(_ config: ConnectionConfig) async throws -> PreparedSQLiteOpen {
-    guard config.databaseType == .sqlite else {
+    guard config.databaseType == .sqlite || config.databaseType == .duckdb else {
       return PreparedSQLiteOpen(config: config, release: nil)
     }
-    guard config.fileBookmark != nil else {
+    let duckDBReadWrite = config.databaseType == .duckdb && !config.readOnlyFile
+    guard config.fileBookmark != nil || duckDBReadWrite,
+      config.database != DuckDBSession.inMemoryPath
+    else {
       return PreparedSQLiteOpen(config: config, release: nil)
     }
     let grant = try await SQLiteFileAccess.open(config: config)
@@ -217,10 +275,16 @@ actor DatabaseConnectionManager {
       config: resolved, release: { grant.release() }, readOnlyReason: grant.bannerReason)
   }
 
-  /// `SELECT 1` on a SQLite file, then close. The grant is released either way.
-  private func probeSQLite(_ config: ConnectionConfig) async throws -> Bool {
+  /// `SELECT 1` on a SQLite or DuckDB database, then close. The grant is released either way.
+  private func probeFile(_ config: ConnectionConfig) async throws -> Bool {
     let prepared = try await prepareSQLiteOpen(config)
-    let session = SQLiteSession(config: prepared.config)
+    let session: any DatabaseSession
+    do {
+      session = try await sessionFactory.makeSession(config: prepared.config)
+    } catch {
+      prepared.release?()
+      throw error
+    }
     do {
       try await session.open()
       let source = try await session.query("SELECT 1", binds: [])
@@ -247,9 +311,11 @@ actor DatabaseConnectionManager {
     sqliteFileAccessRelease = release
   }
 
-  /// Disconnect from database
+  /// Disconnect from database. The picked DuckDB files go with the connection.
   func disconnect() async {
+    duckDBAllowedPaths = []
     activeUnrememberedCertificate = nil
+    activeUnrememberedSSHCredential = nil
     let releaseFileAccess = sqliteFileAccessRelease
     sqliteFileAccessRelease = nil
 
@@ -282,7 +348,7 @@ actor DatabaseConnectionManager {
   func forgetConnection() -> ForgottenSession {
     connectionEpoch &+= 1
     let forgotten = session
-    let resources = (forgotten as? PostgresSession)?.detach() ?? (nil, nil)
+    let resources = (forgotten as? PostgresSession)?.detach() ?? DetachedPostgresSession()
     session = nil
     config = nil
     sqliteReadOnlyReason = nil
@@ -293,15 +359,18 @@ actor DatabaseConnectionManager {
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
     return ForgottenSession(
-      session: forgotten, connection: resources.0, group: resources.1)
+      session: forgotten, connection: resources.connection, group: resources.group,
+      tunnel: resources.tunnel)
   }
 
-  /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket and its
-  /// event-loop group. Any other session closes itself.
+  /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket, its SSH
+  /// tunnel (always, even when the socket is already closed) and its event-loop group, in that
+  /// order. Any other session closes itself.
   static func closeForgotten(_ forgotten: ForgottenSession, includingConnection: Bool) async {
-    if forgotten.connection != nil || forgotten.group != nil {
-      if includingConnection { try? await forgotten.connection?.close() }
-      try? await forgotten.group?.shutdownGracefully()
+    if forgotten.connection != nil || forgotten.group != nil || forgotten.tunnel != nil {
+      await DetachedPostgresSession(
+        connection: forgotten.connection, group: forgotten.group, tunnel: forgotten.tunnel
+      ).close(includingConnection: includingConnection)
       return
     }
     await forgotten.session?.close()
@@ -360,6 +429,7 @@ nonisolated struct ForgottenSession: Sendable {
   var session: (any DatabaseSession)?
   var connection: PostgresConnection?
   var group: EventLoopGroup?
+  var tunnel: (any SSHTunneling)?
 }
 
 /// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
@@ -371,15 +441,85 @@ private struct PreparedSQLiteOpen: Sendable {
   var readOnlyReason: String?
 }
 
-/// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` after the caller has resolved
-/// sandbox access.
+/// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
+/// after the caller has resolved sandbox access.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
-  func makeSession(config: ConnectionConfig) -> any DatabaseSession {
+  /// The DuckDB plugin's loader, or nil when the plugin is not installed. Read on the main actor
+  /// before each DuckDB session: a removed plugin stays loaded (and cached) until the app quits.
+  typealias DuckDBLibraryLoader = @Sendable () async -> (@Sendable () throws -> DuckDBLibrary)?
+
+  var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
+  var duckDBLibraryLoader: DuckDBLibraryLoader = {
+    await MainActor.run {
+      let manager = DuckDBPluginManager.shared
+      guard manager.isInstalled else { return nil }
+      return { try manager.loadLibrary() }
+    }
+  }
+
+  func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {
+    try await makeSession(config: config, extraAllowedPaths: [])
+  }
+
+  func makeSession(
+    config: ConnectionConfig, extraAllowedPaths: [String]
+  ) async throws -> any DatabaseSession {
     switch config.databaseType {
     case .postgresql:
-      PostgresSession(config: config)
+      return PostgresSession(config: config, hostKeyValidator: hostKeyValidator)
     case .sqlite:
-      SQLiteSession(config: config)
+      return SQLiteSession(config: config)
+    case .duckdb:
+      guard let load = await duckDBLibraryLoader() else {
+        throw DatabaseError.engineUnavailable(.duckdb)
+      }
+      // `open()` runs the loader (hash, signature check, dlopen) on the session's own queue.
+      return DuckDBSession(config: config, extraAllowedPaths: extraAllowedPaths, loadLibrary: load)
     }
+  }
+}
+
+/// Catalog for an engine that cannot run in this build. Every read throws
+/// `DatabaseError.engineUnavailable`; column enrichment keeps the driver types.
+nonisolated struct UnavailableSchemaIntrospector: SchemaIntrospector {
+  let engine: DatabaseType
+
+  private var unavailable: DatabaseError { .engineUnavailable(engine) }
+
+  func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
+    throw unavailable
+  }
+
+  func views(in session: any DatabaseSession) async throws -> [DatabaseView] {
+    throw unavailable
+  }
+
+  func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
+    throw unavailable
+  }
+
+  func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
+    throw unavailable
+  }
+
+  func editTable(named name: String, in session: any DatabaseSession) async throws -> EditTable? {
+    throw unavailable
+  }
+
+  func enrichColumnTypes(
+    _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
+  ) async -> [ColumnInfo] {
+    columns
+  }
+
+  func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int
+  {
+    throw unavailable
+  }
+
+  func primaryKeyColumns(
+    of tableName: String, in session: any DatabaseSession
+  ) async throws -> [String] {
+    throw unavailable
   }
 }

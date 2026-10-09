@@ -239,7 +239,9 @@ extension NotebookViewModel {
           pieces.append(.other)
         }
       case .quoted(let kind, let content):
-        pieces.append(quotedLikeLexeme(kind, content: content, dialect: dialect))
+        let escaped = raw.unicodeScalars.first == "E" || raw.unicodeScalars.first == "e"
+        pieces.append(
+          quotedLikeLexeme(kind, content: content, isEscapeString: escaped, dialect: dialect))
       }
       offset = lexeme.range.upperBound
     }
@@ -261,12 +263,15 @@ extension NotebookViewModel {
     return String(String.UnicodeScalarView(scalars[tagCount..<(scalars.count - tagCount)]))
   }
 
-  /// A PostgreSQL escape string is decoded. A plain or ambiguous string stays raw.
+  /// A PostgreSQL or DuckDB `E'...'` escape string is decoded. A plain or ambiguous string
+  /// stays raw: DuckDB plain strings have no backslash escapes, and SQLite has no `E'...'`.
   /// A quoted identifier is not a pattern literal.
   private nonisolated static func quotedLikeLexeme(
-    _ kind: SQLToken.Kind, content: String, dialect: SQLDialect
+    _ kind: SQLToken.Kind, content: String, isEscapeString: Bool, dialect: SQLDialect
   ) -> LikeLexeme {
-    if kind == .string, dialect == .postgresql, content.contains("\\") {
+    if kind == .string, isEscapeString, dialect == .postgresql || dialect == .duckdb,
+      content.contains("\\")
+    {
       return .literal(eStringText(content))
     }
     if kind == .string || kind == .backslashString {

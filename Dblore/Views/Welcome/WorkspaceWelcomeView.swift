@@ -61,12 +61,9 @@ struct WorkspaceWelcomeView: View {
             }
           }
 
-          // Document type cards; stacked when three do not fit side by side
-          ViewThatFits(in: .horizontal) {
-            HStack(spacing: Spacing.lg) { documentTypeCards }
-            VStack(spacing: Spacing.lg) { documentTypeCards }
-          }
-          .padding(.top, Spacing.sm)
+          // Document type cards, stacked as compact rows (same width as Recent)
+          VStack(spacing: Spacing.sm) { documentTypeCards }
+            .padding(.top, Spacing.sm)
 
           // Recent Files Section
           if !recentFiles.isEmpty {

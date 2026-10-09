@@ -70,7 +70,8 @@ nonisolated struct ClassificationSummary: Sendable, Equatable {
 
 /// Classifies SQL statements using `SQLTokenizer`. Safe to call from any isolation domain.
 /// Blind spots: side effects hidden in functions (`SELECT volatile_fn()`, `set_config`),
-/// DO/CALL bodies and triggers are not detected.
+/// DO/CALL bodies and triggers are not detected. On DuckDB a read that calls a listed
+/// side-effecting function or names a remote URL fails closed (`duckdbAdjusted`).
 nonisolated enum SQLStatementClassifier {
 
   /// Split `sql` into statements and classify each. Empty / comment-only statements are dropped.
@@ -150,18 +151,18 @@ nonisolated enum SQLStatementClassifier {
   ) -> Analysis {
     let body = tokens.drop { $0.isSymbol("(") }
     guard let first = body.first, first.kind == .word else {
-      return sqliteAdjusted(Analysis(kind: .unknown), body: body, dialect: dialect)
+      return dialectAdjusted(Analysis(kind: .unknown), body: body, dialect: dialect)
     }
     let base = first.depth
     let topWords = body.filter { $0.kind == .word && $0.depth == base }.map { $0.keyword ?? "" }
 
     if first.isWord("EXPLAIN") {
-      return sqliteAdjusted(explain(body, dialect: dialect), body: body, dialect: dialect)
+      return dialectAdjusted(explain(body, dialect: dialect), body: body, dialect: dialect)
     }
     let kind = kind(
       of: body, keyword: first.keyword ?? "", topWords: topWords, dialect: dialect)
     let discardsAll = topWords.starts(with: ["DISCARD", "ALL"])
-    return sqliteAdjusted(
+    return dialectAdjusted(
       Analysis(
         kind: kind,
         hasReturning: body.contains { $0.isWord("RETURNING") },
@@ -180,6 +181,9 @@ nonisolated enum SQLStatementClassifier {
   ) -> StatementKind {
     if dialect == .sqlite, let sqlite = sqliteKind(of: body, keyword: keyword) {
       return sqlite
+    }
+    if dialect == .duckdb, let duckdb = duckdbKind(of: body, keyword: keyword) {
+      return duckdb
     }
     return switch keyword {
     case "SELECT", "VALUES", "TABLE": selectKind(body)
@@ -207,6 +211,48 @@ nonisolated enum SQLStatementClassifier {
     }
   }
 
+  /// DuckDB commands that PostgreSQL classifies differently. Nil leaves the shared rules.
+  /// Extension, file, catalog and setting commands are utilities, so read-only, schema
+  /// protection and Safe Mode confirmation all stop them. Every PRAGMA and SET / RESET counts,
+  /// because some write (`PRAGMA enable_profiling`, `SET GLOBAL ...`), and so does
+  /// `UPDATE EXTENSIONS` (it replaces extension binaries; a table named `extensions` fails
+  /// closed). Table functions that read a local file inside a SELECT (`read_csv`,
+  /// `read_parquet`, `read_json`) stay reads: the sandbox limits which files they can open, and
+  /// the phase-15 session hardening turns off extension autoload and locks the configuration.
+  /// A remote URL or a side-effecting function in a read fails closed (`duckdbAdjusted`).
+  /// FROM-first (`FROM t [SELECT ...]`), `PIVOT` and `UNPIVOT` are queries, checked like a
+  /// SELECT.
+  private static func duckdbKind(
+    of body: ArraySlice<SQLToken>, keyword: String
+  ) -> StatementKind? {
+    switch keyword {
+    case "UPDATE" where body.dropFirst().first?.isWord("EXTENSIONS") == true: .utility
+    case "DESCRIBE", "SUMMARIZE": describedKind(body)
+    case "FROM", "PIVOT", "UNPIVOT": selectKind(withoutUnpivotInto(body))
+    case _ where duckdbUtilityKeywords.contains(keyword): .utility
+    default: nil
+    }
+  }
+
+  /// `body` without each `INTO` that starts the `UNPIVOT ... INTO NAME n VALUE v` clause, so
+  /// only a real `INTO` target makes the query a write.
+  private static func withoutUnpivotInto(_ body: ArraySlice<SQLToken>) -> ArraySlice<SQLToken> {
+    let tokens = Array(body)
+    let kept = tokens.indices.filter { index in
+      !(tokens[index].isWord("INTO") && index + 1 < tokens.count
+        && tokens[index + 1].isWord("NAME"))
+    }
+    return ArraySlice(kept.map { tokens[$0] })
+  }
+
+  /// DuckDB `DESCRIBE` / `SUMMARIZE` of nothing, a table name or a read query is a read.
+  /// Anything else (`DESCRIBE INSERT ...`) is unrecognized, so it fails closed.
+  private static func describedKind(_ body: ArraySlice<SQLToken>) -> StatementKind {
+    let rest = body.dropFirst()
+    if rest.isEmpty || isBarePragmaQuery(Array(body)) { return .read }
+    return analyze(rest, dialect: .duckdb).kind == .read ? .read : .unknown
+  }
+
   /// `PRAGMA name` and `PRAGMA schema.name` query the setting. Assignment (`=` or the
   /// parenthesized form) is schema-changing: `journal_mode`, `writable_schema`,
   /// `foreign_keys`, and every other assignment. A bare `PRAGMA` with no name is unrecognized.
@@ -217,7 +263,8 @@ nonisolated enum SQLStatementClassifier {
     return top.count > 1 ? .ddl : .unknown
   }
 
-  /// `PRAGMA name` or `PRAGMA schema.name`, with nothing assigned.
+  /// `PRAGMA name` or `PRAGMA schema.name`, with nothing assigned (also a DuckDB `DESCRIBE`
+  /// target).
   private static func isBarePragmaQuery(_ top: [SQLToken]) -> Bool {
     let rest = top.dropFirst()
     switch rest.count {
@@ -235,35 +282,172 @@ nonisolated enum SQLStatementClassifier {
     token?.kind == .word || token?.kind == .quotedIdentifier
   }
 
+  private static func dialectAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>, dialect: SQLDialect
+  ) -> Analysis {
+    switch dialect {
+    case .sqlite: sqliteAdjusted(analysis, body: body)
+    case .duckdb: duckdbAdjusted(analysis, body: body)
+    default: analysis
+    }
+  }
+
   /// Commands whose effect cannot be checked from the text: another database file, a backup
   /// file, or a native `load_extension(` call. A read, including plain EXPLAIN of one, becomes
   /// a utility so read-only and schema protection both block it.
   private static func sqliteAdjusted(
-    _ analysis: Analysis, body: ArraySlice<SQLToken>, dialect: SQLDialect
+    _ analysis: Analysis, body: ArraySlice<SQLToken>
   ) -> Analysis {
-    guard dialect == .sqlite else { return analysis }
     var analysis = analysis
-    if callsLoadExtension(body) || containsAttachOrDetach(body) || isVacuumInto(body) {
+    if calls(body, anyOf: [sqliteLoadExtensionFunction]) || containsAttachOrDetach(body)
+      || isVacuumInto(body)
+    {
       analysis.kind = .utility
     }
     if isVacuumInto(body) { analysis.nonTransactional = true }
     return analysis
   }
 
-  /// `load_extension(` at any depth, including a quoted, bracketed, or backticked name.
-  /// A mention inside a string or comment is not a call: those are not word tokens.
-  private static func callsLoadExtension(_ body: ArraySlice<SQLToken>) -> Bool {
+  /// A DuckDB read that calls a `duckdbSideEffectFunctions` function (or one named with a
+  /// `duckdbSideEffectFunctionPrefixes` prefix) or names a remote URL (`namesRemoteURL`)
+  /// becomes a utility, so read-only and schema protection both block it (plain EXPLAIN of one
+  /// too). `UPDATE EXTENSIONS` has no rows to warn about.
+  /// Best-effort only: it sees function names and single literals in the text, not what runs.
+  /// See `namesRemoteURL` for what it misses; the phase-15 DuckDB session hardening
+  /// (`enable_external_access=false` with `allowed_directories` / `allowed_paths`, extension
+  /// autoinstall / autoload off, `lock_configuration=true`) is what enforces external access.
+  private static func duckdbAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>
+  ) -> Analysis {
+    var analysis = analysis
+    if analysis.kind == .read,
+      calls(
+        body, anyOf: duckdbSideEffectFunctions, orPrefixes: duckdbSideEffectFunctionPrefixes)
+        || namesRemoteURL(body)
+    {
+      analysis.kind = .utility
+    }
+    if analysis.kind == .utility, body.first?.isWord("UPDATE") == true {
+      analysis.affectsAllRows = false
+    }
+    return analysis
+  }
+
+  /// A call `name(` at any depth to one of `names` (uppercase) or to a name starting with one
+  /// of `prefixes` (uppercase), including a quoted, bracketed, or backticked name. A mention
+  /// inside a string or comment is not a call: those are not word tokens.
+  private static func calls(
+    _ body: ArraySlice<SQLToken>, anyOf names: Set<String>, orPrefixes prefixes: [String] = []
+  ) -> Bool {
     body.indices.contains { index in
       let next = body.index(after: index)
-      guard next < body.endIndex, body[next].isSymbol("(") else { return false }
-      return isLoadExtension(body[index])
+      guard next < body.endIndex, body[next].isSymbol("("),
+        let name = functionName(body[index])
+      else { return false }
+      return names.contains(name) || prefixes.contains { name.hasPrefix($0) }
     }
   }
 
-  private static func isLoadExtension(_ token: SQLToken) -> Bool {
-    if token.isWord(sqliteLoadExtensionFunction) { return true }
-    guard token.kind == .quotedIdentifier, let text = token.asciiText else { return false }
-    return SQLTokenizer.asciiUppercased(text) == sqliteLoadExtensionFunction
+  /// The uppercased name of a word or quoted-identifier token, else nil.
+  private static func functionName(_ token: SQLToken) -> String? {
+    if let word = token.keyword { return word }
+    guard token.kind == .quotedIdentifier, let text = token.asciiText else { return nil }
+    return SQLTokenizer.asciiUppercased(text)
+  }
+
+  /// A string (dollar-quoted after its opening tag) or quoted identifier whose text starts
+  /// with a remote URL scheme, ASCII case-insensitive. A string with a backslash is also
+  /// checked after `E'...'` decoding (`decodingDuckDBEscapes`): tokens do not say whether the
+  /// string had the `E` prefix, so a plain string that decodes to a URL fails closed too.
+  /// Best-effort only. It misses URLs built at run time (`||`, `concat`, `format`, `replace`),
+  /// bound parameters (`$1`, `?`), URLs inside macros, views or prepared statements, and
+  /// adjacent literals joined across a newline (`'https:'` newline `'//h/x'`, DuckDB's
+  /// `quotecontinue`). The phase-15 session (`enable_external_access=false` with
+  /// `allowed_directories` / `allowed_paths`, `lock_configuration=true`) blocks those.
+  private static func namesRemoteURL(_ body: ArraySlice<SQLToken>) -> Bool {
+    body.contains { token in
+      guard token.kind == .string || token.kind == .quotedIdentifier else { return false }
+      let text = withoutDollarTag(token.text)
+      var candidates = [text]
+      if token.kind == .string, text.contains("\\") {
+        candidates.append(decodingDuckDBEscapes(text))
+      }
+      return candidates.contains { candidate in
+        let lowered = SQLTokenizer.asciiLowercased(candidate)
+        return duckdbRemoteSchemes.contains { lowered.hasPrefix($0) }
+      }
+    }
+  }
+
+  /// `text` with DuckDB `E'...'` backslash escapes decoded as DuckDB's scanner does
+  /// (`third_party/libpg_query/scan.l`, DuckDB 1.4 / 1.5): `\xH` / `\xHH` hex and `\O` to
+  /// `\OOO` octal (one byte: DuckDB stores `strtoul` in an `unsigned char`, so `\400`-`\777`
+  /// keep their low 8 bits; kept as the scalar of that byte), `\uHHHH` / `\UHHHHHHHH`,
+  /// `\b \f \n \r \t`, and `\c` as `c` for any other `c`. DuckDB's docs list only the five
+  /// control escapes; the scanner decodes all of these. An invalid code point stops decoding
+  /// (DuckDB rejects the literal).
+  private static func decodingDuckDBEscapes(_ text: String) -> String {
+    let s = Array(text.unicodeScalars)
+    var result = String.UnicodeScalarView()
+    var i = 0
+    while i < s.count {
+      guard s[i] == "\\", i + 1 < s.count else {
+        result.append(s[i])
+        i += 1
+        continue
+      }
+      let next = s[i + 1]
+      let decoded: (value: UInt32, length: Int)?
+      switch next {
+      case "x": decoded = number(in: s, from: i + 2, radix: 16, maxDigits: 2)
+      case "0"..."7":
+        decoded = number(in: s, from: i + 1, radix: 8, maxDigits: 3).map {
+          ($0.value & 0xFF, $0.length)
+        }
+      case "u": decoded = number(in: s, from: i + 2, radix: 16, exactDigits: 4)
+      case "U": decoded = number(in: s, from: i + 2, radix: 16, exactDigits: 8)
+      default: decoded = nil
+      }
+      if let decoded {
+        guard let scalar = Unicode.Scalar(decoded.value) else { break }
+        result.append(scalar)
+        i += (next == "x" || next == "u" || next == "U" ? 2 : 1) + decoded.length
+        continue
+      }
+      result.append(controlEscapes[next] ?? next)
+      i += 2
+    }
+    return String(result)
+  }
+
+  private static let controlEscapes: [Unicode.Scalar: Unicode.Scalar] = [
+    "b": "\u{08}", "f": "\u{0C}", "n": "\n", "r": "\r", "t": "\t",
+  ]
+
+  /// Digits of `radix` at `start`: up to `maxDigits` (at least one), or exactly `exactDigits`.
+  private static func number(
+    in s: [Unicode.Scalar], from start: Int, radix: Int, maxDigits: Int? = nil,
+    exactDigits: Int? = nil
+  ) -> (value: UInt32, length: Int)? {
+    let limit = exactDigits ?? maxDigits ?? 0
+    var digits = ""
+    var j = start
+    while j < s.count, digits.count < limit, s[j].isASCII,
+      Int(String(s[j]), radix: radix) != nil
+    {
+      digits.unicodeScalars.append(s[j])
+      j += 1
+    }
+    if digits.isEmpty || (exactDigits.map { digits.count != $0 } ?? false) { return nil }
+    return UInt32(digits, radix: radix).map { ($0, digits.count) }
+  }
+
+  /// `text` after an opening `$$` / `$tag$`, else `text` unchanged.
+  private static func withoutDollarTag(_ text: String) -> String {
+    guard text.hasPrefix("$"), let close = text.dropFirst().firstIndex(of: "$") else {
+      return text
+    }
+    return String(text[text.index(after: close)...])
   }
 
   /// `ATTACH` / `DETACH` as the statement, or the same words inside a `WITH` (a column named
@@ -464,6 +648,8 @@ nonisolated enum SQLStatementClassifier {
       }
     }
     let inner = analyze(rest, dialect: dialect)
+    // DuckDB may bind or run an extension, file or setting command while planning it.
+    if dialect == .duckdb, !isAnalyze, inner.kind == .utility { return Analysis(kind: .utility) }
     guard isAnalyze else { return Analysis(kind: .explain(inner: inner.kind, analyze: false)) }
     return Analysis(
       kind: .explain(inner: inner.kind, analyze: true), hasReturning: inner.hasReturning,
@@ -474,7 +660,7 @@ nonisolated enum SQLStatementClassifier {
   }
 
   /// SQLite `EXPLAIN` and `EXPLAIN QUERY PLAN` return a grid. They do not run the statement,
-  /// so Analyze stays off (`supportsExplainJSON` is false for this engine).
+  /// so Analyze stays off (`supportsExplainAnalyze` is false for this engine).
   private static func sqliteExplain(_ body: ArraySlice<SQLToken>) -> Analysis {
     var rest = body.dropFirst()
     if rest.first?.isWord("QUERY") == true, rest.dropFirst().first?.isWord("PLAN") == true {

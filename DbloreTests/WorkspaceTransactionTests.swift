@@ -309,6 +309,16 @@ struct WorkspaceTransactionRulesTests {
     #expect(long.contains("… and 3 more"))
   }
 
+  @Test("Review statements list the statements without the earlier-changes warning")
+  func reviewStatementsOmitWarning() {
+    let unknown = summary("DELETE FROM t WHERE id > 5", rows: nil)
+    let statements = PendingTransactionSummary(
+      state: .appTx(pending: [.earlierChanges(), unknown])
+    ).reviewStatements
+    #expect(statements.contains("DELETE FROM t WHERE id > 5 (rows unknown)"))
+    #expect(!statements.contains("before Protected mode"))
+  }
+
   // MARK: Commit unlock
 
   @Test("Banner commit never requires an unlock")

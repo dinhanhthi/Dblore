@@ -14,6 +14,7 @@
 		D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC352EF71234009A0E5A /* HuggingFace */; };
 		D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC392EF71234009A0E5A /* Tokenizers */; };
 		D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */; };
+		D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC422EF71234009A0E5A /* NIOSSH */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 				D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */,
 				D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */,
 				D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */,
+				D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -162,6 +164,7 @@
 				D3E0FC352EF71234009A0E5A /* HuggingFace */,
 				D3E0FC392EF71234009A0E5A /* Tokenizers */,
 				D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */,
+				D3E0FC422EF71234009A0E5A /* NIOSSH */,
 			);
 			productName = Dblore;
 			productReference = D3E0FB932EF70DBB009A0E5A /* Dblore.app */;
@@ -201,6 +204,7 @@
 				D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 				D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */,
 				D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */,
+				D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D3E0FB942EF70DBB009A0E5A /* Products */;
@@ -603,6 +607,14 @@
 				version = 1.3.3;
 			};
 		};
+		D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio-ssh";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.15.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -640,6 +652,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
 			productName = MLXHuggingFace;
+		};
+		D3E0FC422EF71234009A0E5A /* NIOSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+			productName = NIOSSH;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

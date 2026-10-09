@@ -178,6 +178,8 @@ struct DatabaseFunction: Identifiable, Sendable {
   let arguments: String
   var definition: String?  // Function definition/SQL
   var isExpanded: Bool
+  /// Catalog oid. Overloads share a name, so the oid tells them apart. Nil on SQLite.
+  let oid: UInt32?
 
   nonisolated init(
     schema: String,
@@ -185,7 +187,8 @@ struct DatabaseFunction: Identifiable, Sendable {
     returnType: String,
     arguments: String = "",
     definition: String? = nil,
-    isExpanded: Bool = false
+    isExpanded: Bool = false,
+    oid: UInt32? = nil
   ) {
     self.schema = schema
     self.name = name
@@ -193,6 +196,7 @@ struct DatabaseFunction: Identifiable, Sendable {
     self.arguments = arguments
     self.definition = definition
     self.isExpanded = isExpanded
+    self.oid = oid
   }
 
   /// Full qualified name: schema.function
@@ -206,6 +210,64 @@ struct DatabaseFunction: Identifiable, Sendable {
   }
 }
 
+// MARK: - Database Triggers
+
+/// A trigger on a table. Names only; the source is read on demand.
+nonisolated struct DatabaseTrigger: Identifiable, Hashable, Sendable {
+  /// When the trigger fires relative to the row change.
+  nonisolated enum Timing: String, Hashable, Sendable {
+    case before = "BEFORE"
+    case after = "AFTER"
+    case insteadOf = "INSTEAD OF"
+  }
+
+  /// Statement kinds that fire the trigger.
+  nonisolated enum Event: String, Hashable, Sendable {
+    case insert = "INSERT"
+    case update = "UPDATE"
+    case delete = "DELETE"
+    case truncate = "TRUNCATE"
+  }
+
+  let schema: String
+  let table: String
+  let name: String
+  let timing: Timing
+  let events: [Event]
+  let enabled: Bool
+  /// Catalog oid. Nil on SQLite.
+  let oid: UInt32?
+
+  init(
+    schema: String,
+    table: String,
+    name: String,
+    timing: Timing,
+    events: [Event],
+    enabled: Bool,
+    oid: UInt32? = nil
+  ) {
+    self.schema = schema
+    self.table = table
+    self.name = name
+    self.timing = timing
+    self.events = events
+    self.enabled = enabled
+    self.oid = oid
+  }
+
+  /// Stable key: the oid when the engine has one, otherwise `schema.table.name`.
+  var id: String {
+    if let oid { return "oid:\(oid)" }
+    return "\(schema).\(table).\(name)"
+  }
+
+  /// Full qualified name: schema.trigger
+  var qualifiedName: String {
+    "\(schema).\(name)"
+  }
+}
+
 // MARK: - Database Procedures
 
 /// Represents a database procedure (stored procedure)
@@ -216,19 +278,23 @@ struct DatabaseProcedure: Identifiable, Sendable {
   let arguments: String
   var definition: String?  // Procedure definition/SQL
   var isExpanded: Bool
+  /// Catalog oid. Overloads share a name, so the oid tells them apart.
+  let oid: UInt32?
 
   nonisolated init(
     schema: String,
     name: String,
     arguments: String = "",
     definition: String? = nil,
-    isExpanded: Bool = false
+    isExpanded: Bool = false,
+    oid: UInt32? = nil
   ) {
     self.schema = schema
     self.name = name
     self.arguments = arguments
     self.definition = definition
     self.isExpanded = isExpanded
+    self.oid = oid
   }
 
   /// Full qualified name: schema.procedure

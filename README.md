@@ -4,14 +4,20 @@
 
 # Dblore
 
-A native macOS app for working with databases: write and run queries in **notebooks**
-(like Jupyter, for your databases) or in a classic **SQL editor**. Supports PostgreSQL
-today, and SQLite files as beta; more engines (such as MongoDB) are planned.
+A native macOS database client: query in Jupyter-style **notebooks** or a classic
+**SQL editor**, browse and edit results and tables, explore the schema, guard production
+with Safe Mode, and get help from an AI assistant that works with your own key or a local
+model. Supports PostgreSQL, with SQLite in beta; more engines (such as MongoDB) are planned.
 
 [Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
 
 </div>
+
+> [!NOTE]
+> Dblore is built around my own day-to-day needs, so many features are still missing.
+> Need something? [Suggest a feature](https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md&title=New%20feature%3A%20&labels=enhancement)
+> and I'll consider adding it.
 
 ![Screenshot](assets/poster.png)
 

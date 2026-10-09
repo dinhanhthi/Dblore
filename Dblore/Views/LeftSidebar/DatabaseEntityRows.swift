@@ -2,7 +2,7 @@
 //  DatabaseEntityRows.swift
 //  Dblore
 //
-//  Row views for database entities: Tables, Views, Functions, Procedures, and Columns
+//  Row views for database entities: Tables, Views, Functions, Procedures, Triggers, and Columns
 //
 
 import SwiftUI
@@ -16,10 +16,13 @@ struct TableRowView: View {
   var isSelected = false
   /// Connection type; its default schema is omitted from the row label
   var databaseType: DatabaseType = .postgresql
+  /// False when the row sits under its schema group (the label would repeat it)
+  var showsSchema = true
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
-  let onImport: () -> Void
+  /// Nil hides "Import Data..." (the engine has no table import)
+  let onImport: (() -> Void)?
 
   @State private var isHoveringTable = false
 
@@ -52,7 +55,9 @@ struct TableRowView: View {
             .font(.monoMedium)
             .foregroundColor(.foreground)
 
-          if !table.schema.isEmpty && table.schema != databaseType.dialect.defaultSchema {
+          if showsSchema && !table.schema.isEmpty
+            && table.schema != databaseType.dialect.defaultSchema
+          {
             Text("(\(table.schema))")
               .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)
@@ -97,7 +102,9 @@ struct TableRowView: View {
         }
       }
       .contextMenu {
-        Button("Import Data...", action: onImport)
+        if let onImport {
+          Button("Import Data...", action: onImport)
+        }
       }
 
       // Columns (when expanded)
@@ -135,6 +142,8 @@ struct ViewRowView: View {
   var isSelected = false
   /// Connection type; its default schema is omitted from the row label
   var databaseType: DatabaseType = .postgresql
+  /// False when the row sits under its schema group (the label would repeat it)
+  var showsSchema = true
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
@@ -170,7 +179,9 @@ struct ViewRowView: View {
             .font(.monoMedium)
             .foregroundColor(.foreground)
 
-          if !view.schema.isEmpty && view.schema != databaseType.dialect.defaultSchema {
+          if showsSchema && !view.schema.isEmpty
+            && view.schema != databaseType.dialect.defaultSchema
+          {
             Text("(\(view.schema))")
               .font(.monoSmall)
               .foregroundColor(.foregroundSubtle)
@@ -233,6 +244,8 @@ struct FunctionRowView: View {
   let function: DatabaseFunction
   let isExpanded: Bool
   let onToggle: () -> Void
+  /// Opens the definition in a read-only tab
+  let onViewSource: () -> Void
 
   @State private var isHovering = false
 
@@ -288,6 +301,9 @@ struct FunctionRowView: View {
           NSCursor.pop()
         }
       }
+      .contextMenu {
+        Button("View Source", action: onViewSource)
+      }
 
       // Details (when expanded)
       if isExpanded {
@@ -322,6 +338,8 @@ struct ProcedureRowView: View {
   let procedure: DatabaseProcedure
   let isExpanded: Bool
   let onToggle: () -> Void
+  /// Opens the definition in a read-only tab
+  let onViewSource: () -> Void
 
   @State private var isHovering = false
 
@@ -377,7 +395,66 @@ struct ProcedureRowView: View {
           NSCursor.pop()
         }
       }
+      .contextMenu {
+        Button("View Source", action: onViewSource)
+      }
     }
+  }
+}
+
+// MARK: - Trigger Row View
+
+/// A trigger with its table and firing events. A click opens its definition read-only.
+struct TriggerRowView: View {
+  let trigger: DatabaseTrigger
+  let onViewSource: () -> Void
+
+  @State private var isHovering = false
+
+  var body: some View {
+    HStack(alignment: .top, spacing: Spacing.xs) {
+      Image(systemName: ObjectSourceRef.Kind.trigger.iconName)
+        .font(.system(size: 12))
+        .foregroundColor(trigger.enabled ? .accent : .foregroundSubtle)
+        .frame(width: 12)
+        .padding(.top, 2)  // Fine-tune alignment with text
+        .padding(.leading, 12 + Spacing.xs)  // Align with chevron rows
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(trigger.name)
+          .font(.monoMedium)
+          .foregroundColor(.foreground)
+
+        Text(trigger.sidebarSubtitle)
+          .font(.monoSmall)
+          .foregroundColor(.foregroundSubtle)
+          .lineLimit(1)
+      }
+
+      Spacer()
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      onViewSource()
+    }
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, Spacing.xs)
+    .background(
+      RoundedRectangle(cornerRadius: CornerRadius.sm)
+        .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+    )
+    .onHover { hovering in
+      isHovering = hovering
+      if hovering {
+        NSCursor.pointingHand.push()
+      } else {
+        NSCursor.pop()
+      }
+    }
+    .contextMenu {
+      Button("View Source", action: onViewSource)
+    }
+    .help(trigger.sidebarSubtitle)
   }
 }
 

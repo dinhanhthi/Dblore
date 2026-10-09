@@ -490,30 +490,30 @@ struct DocumentTypeCard: View {
   @State private var isHovering = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Icon and Title
-      HStack(spacing: Spacing.sm) {
-        Image(systemName: icon)
-          .font(.system(size: 28))
-          .foregroundColor(accentColor)
+    HStack(spacing: Spacing.md) {
+      Image(systemName: icon)
+        .font(.system(size: 20))
+        .foregroundColor(accentColor)
+        .frame(width: 24)
 
+      // Title and description
+      VStack(alignment: .leading, spacing: 2) {
         Text(title)
-          .font(.title2)
+          .font(.callout)
           .fontWeight(.semibold)
           .foregroundColor(.foreground)
+
+        Text(description)
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+          .lineLimit(1)
+          .truncationMode(.tail)
       }
 
-      // Description
-      Text(description)
-        .font(.subheadline)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(3)
-        .fixedSize(horizontal: false, vertical: true)
-
-      Spacer()
+      Spacer(minLength: Spacing.sm)
 
       // Buttons
-      HStack(spacing: Spacing.md) {
+      HStack(spacing: Spacing.sm) {
         Button {
           onNew()
         } label: {
@@ -528,17 +528,17 @@ struct DocumentTypeCard: View {
         }
         .buttonStyle(SecondaryButtonStyle())
       }
+      .controlSize(.small)
     }
-    .padding(Spacing.xl)
-    .frame(width: 250, height: 180)
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, Spacing.sm)
+    .frame(width: 460)
     .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.xl)
+    .cornerRadius(CornerRadius.lg)
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.xl)
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
         .stroke(isHovering ? accentColor.opacity(0.5) : Color.border, lineWidth: 1)
     )
-    .shadow(color: .black.opacity(isHovering ? 0.1 : 0.05), radius: isHovering ? 8 : 4, y: 2)
-    .scaleEffect(isHovering ? 1.02 : 1.0)
     .animation(.easeInOut(duration: 0.15), value: isHovering)
     .onHover { hovering in
       isHovering = hovering

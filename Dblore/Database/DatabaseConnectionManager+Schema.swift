@@ -28,7 +28,7 @@ extension DatabaseConnectionManager {
   func fetchRowCount(tableSchema: String, tableName: String) async throws -> Int {
     _ = try catalogConnection()
     do {
-      return try await withSession { session in
+      return try await withCatalogReadSession { session in
         try await self.introspector.rowCount(schema: tableSchema, table: tableName, in: session)
       }
     } catch {
@@ -45,7 +45,7 @@ extension DatabaseConnectionManager {
   func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
     _ = try catalogConnection()
     do {
-      return try await withSession { session in
+      return try await withCatalogReadSession { session in
         try await self.introspector.primaryKeyColumns(of: tableName, in: session)
       }
     } catch {
@@ -69,6 +69,22 @@ extension DatabaseConnectionManager {
   func fetchFunctions() async throws -> [DatabaseFunction] {
     try await fetchCatalog("functions") { session in
       try await self.introspector.functions(in: session)
+    }
+  }
+
+  // MARK: - Triggers
+
+  /// Fetch all triggers (names only; the source is read with `fetchDefinition(of:)`)
+  func fetchTriggers() async throws -> [DatabaseTrigger] {
+    try await fetchCatalog("triggers") { session in
+      try await self.introspector.triggers(in: session)
+    }
+  }
+
+  /// Fetch the source of one function, procedure, or trigger (nil when the engine has none)
+  func fetchDefinition(of object: SchemaObjectRef) async throws -> String? {
+    try await fetchCatalog("definition") { session in
+      try await self.introspector.definition(of: object, in: session)
     }
   }
 

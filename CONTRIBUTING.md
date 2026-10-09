@@ -61,6 +61,31 @@ To upgrade, bump both exact pins in `scripts/markdown-editor/package.json`
 (`@milkdown/kit`, `esbuild`), run `npm install`, rebuild, then review the bundle diff and
 `markdown-editor-licenses.txt` before committing. `markdown-editor.html` is hand-written.
 
+## DuckDB plugin
+
+DuckDB ships as an optional plugin, not inside the app: users install it from
+Settings > Plugins, which downloads the `libduckdb.dylib` named in
+`Dblore/Utilities/Plugins/DuckDBPluginCatalog.json` and refuses it unless its SHA-256
+matches. `scripts/release-plugin.sh` builds that artifact: it downloads the pinned official
+DuckDB release, checks the upstream SHA-256, re-signs the dylib with the Developer ID
+(hardened runtime) and notarizes it.
+
+- **Local tests:** `scripts/release-plugin.sh --install-dev` writes the signed dylib, an
+  ad-hoc-signed copy and `dev-catalog.json` into the gitignored `.plugin-dev/`. The DuckDB
+  suites that load it are gated; run them with
+  `TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 DUCKDB_PLUGIN_TESTS=1` in front of the `xcodebuild test`
+  command above.
+- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --publish` creates the
+  public GitHub release `plugin-duckdb-v<version>` with `--latest=false`, so
+  `releases/latest` keeps pointing at the app DMG, and rewrites the catalog SHA-256. Review
+  and commit the catalog.
+- **Before an app release:** `scripts/release-local.sh --check-plugin-only` downloads the
+  published asset and checks it against the catalog. The full release preflight runs the
+  same check and refuses to build while the asset is missing (not published yet) or its
+  SHA-256 differs from the catalog.
+- **Bumping DuckDB:** change `DUCKDB_VERSION` and `UPSTREAM_SHA256` in
+  `scripts/release-plugin.sh` after reviewing the upstream release, then publish again.
+
 ## Website
 
 The landing page and docs live in `website/` (plain HTML and CSS, no build step). Preview

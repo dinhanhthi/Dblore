@@ -39,7 +39,7 @@ struct GenericModal<Content: View, Footer: View>: View {
       // Footer (if provided)
       footer()
     }
-    .frame(width: width, height: height)
+    .modalFrame(width: width, height: height)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
@@ -148,6 +148,13 @@ struct GenericModalFooter<Content: View>: View {
 }
 
 extension View {
+  /// Modal size that shrinks with a smaller window instead of overflowing it. The content
+  /// must scroll or stretch (`modalOverlay` keeps a margin around it).
+  func modalFrame(width: CGFloat, height: CGFloat) -> some View {
+    frame(maxWidth: .infinity, maxHeight: .infinity)
+      .frame(maxWidth: width, maxHeight: height)
+  }
+
   /// Horizontal inset stays at the body margin. Title bars and action bars share
   /// the same vertical room.
   func modalBarPadding(vertical: CGFloat = Spacing.sm) -> some View {
@@ -180,6 +187,7 @@ extension View {
         // Modal content with zoom animation
         if isPresented.wrappedValue {
           modal()
+            .padding(Spacing.lg)
             .background {
               ModalEscapeCatcher {
                 dismissPresentedModal(isPresented)

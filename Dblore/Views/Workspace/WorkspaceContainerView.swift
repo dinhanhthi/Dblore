@@ -288,12 +288,12 @@ struct WorkspaceContainerView: View {
   }
 
   private var importAction: (() -> Void)? {
-    guard workspaceManager.connectionState.isConnected else { return nil }
+    guard workspaceManager.canImportData else { return nil }
     return { requestImport() }
   }
 
   private func requestImport(for table: DatabaseTable? = nil) {
-    guard workspaceManager.connectionState.isConnected else { return }
+    guard workspaceManager.canImportData else { return }
     let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
     importTabID = tabID
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
@@ -480,8 +480,13 @@ struct WorkspaceTabContentView: View {
       // can fill the entire available space.
       GeometryReader { geometry in
         ScrollView {
-          EditorModeView(viewModel: viewModel)
-            .frame(height: geometry.size.height)
+          EditorModeView(
+            viewModel: viewModel,
+            objectSource: workspaceManager.tabs.first { $0.id == tabId }?.objectSource,
+            onRetrySource: { workspaceManager.reloadObjectSource(tabId: tabId) },
+            onOpenEditableCopy: { workspaceManager.openEditableCopy(ofSourceTab: tabId) }
+          )
+          .frame(height: geometry.size.height)
         }
         .scrollDisabled(true)
         .scrollContentBackground(.hidden)
@@ -548,6 +553,7 @@ struct WorkspaceTabContentView: View {
     viewModel.databaseViews = workspaceManager.databaseViews
     viewModel.databaseFunctions = workspaceManager.databaseFunctions
     viewModel.databaseProcedures = workspaceManager.databaseProcedures
+    viewModel.databaseTriggers = workspaceManager.databaseTriggers
     viewModel.databaseUsers = workspaceManager.databaseUsers
     viewModel.databaseRoles = workspaceManager.databaseRoles
     viewModel.databaseForeignKeys = workspaceManager.databaseForeignKeys
@@ -947,21 +953,9 @@ struct WorkspaceTitleBarTabsView: View {
           Divider()
 
           Button {
-            openNotebookWithPanel()
+            openFileWithPanel()
           } label: {
-            Label("Open Notebook", systemImage: "folder")
-          }
-
-          Button {
-            openSQLFileWithPanel()
-          } label: {
-            Label("Open SQL File", systemImage: "folder")
-          }
-
-          Button {
-            openMarkdownWithPanel()
-          } label: {
-            Label("Open Markdown Note", systemImage: "folder")
+            Label("Open File…", systemImage: "folder")
           }
         } label: {
           Image(systemName: "plus")
@@ -1014,43 +1008,11 @@ struct WorkspaceTitleBarTabsView: View {
     workspaceManager.selectTab(id: nextTab.id)
   }
 
-  private func openNotebookWithPanel() {
+  private func openFileWithPanel() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore]
-
-    panel.begin { response in
-      guard response == .OK else { return }
-      Task { @MainActor in
-        for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
-        }
-      }
-    }
-  }
-
-  private func openSQLFileWithPanel() {
-    let panel = NSOpenPanel()
-    panel.allowsMultipleSelection = true
-    panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.sql]
-
-    panel.begin { response in
-      guard response == .OK else { return }
-      Task { @MainActor in
-        for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
-        }
-      }
-    }
-  }
-
-  private func openMarkdownWithPanel() {
-    let panel = NSOpenPanel()
-    panel.allowsMultipleSelection = true
-    panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }

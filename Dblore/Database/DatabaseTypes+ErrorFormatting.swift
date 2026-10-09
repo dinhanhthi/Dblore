@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import NIOSSL
 import PostgresNIO
 
 // MARK: - Error Formatting
@@ -59,9 +60,26 @@ extension PostgresSession {
       }
     } else {
       message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
+      if let underlying = error.underlying {
+        message = underlyingErrorMessage(underlying, fallback: message)
+      }
     }
 
     return message
+  }
+
+  /// No server message: the client-side cause (TLS handshake, socket, tunnel channel) explains
+  /// a bare `connectionError`.
+  static func underlyingErrorMessage(_ underlying: any Error, fallback: String) -> String {
+    if underlying is NIOSSLError {
+      guard String(describing: underlying).contains("CERTIFICATE_VERIFY_FAILED") else {
+        return "SSL handshake with the database server failed: \(underlying)"
+      }
+      return "SSL handshake failed: the server certificate is not trusted. If the server uses "
+        + "a self-signed certificate, choose its CA under \"Custom CA\" or change the SSL mode."
+    }
+    let detail = (underlying as? LocalizedError)?.errorDescription ?? String(describing: underlying)
+    return "\(fallback): \(detail)"
   }
 
   /// The server brake `statement_timeout` (applied on connect) stopped the statement: SQLSTATE

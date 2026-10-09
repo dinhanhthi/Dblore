@@ -23,6 +23,8 @@ struct SQLEditorView: View {
   var isEditorMode: Bool = false  // True when used in Editor mode (removes border/focus effects)
   var wordWrapEnabled: Bool = true  // Word wrap setting (default: enabled)
   var dialect: SQLDialect = .postgresql
+  /// False for read-only text (object source tabs): still selectable and copyable
+  var isEditable = true
 
   private var editorFontSize: CGFloat { AppSettings.shared.editorFontSize }
 
@@ -65,7 +67,8 @@ struct SQLEditorView: View {
         isEditorMode: isEditorMode,
         wordWrapEnabled: wordWrapEnabled,
         dialect: dialect,
-        fontSize: editorFontSize
+        fontSize: editorFontSize,
+        isEditable: isEditable
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)

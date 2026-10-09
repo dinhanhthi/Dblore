@@ -21,8 +21,8 @@ struct ExplainRequestGateTests {
     let plainSelect = try ExplainRequest(
       statement: "SELECT * FROM t", analyze: false, buffers: false)
     let blocked = viewModel(protection: .readOnly, safeMode: .alertRead, protectedMode: true)
-    #expect(blocked.protectionBlockMessage(for: analyzeUpdate.sql(dialect: .postgresql)) != nil)
-    #expect(blocked.protectionBlockMessage(for: plainSelect.sql(dialect: .postgresql)) == nil)
+    #expect(blocked.protectionBlockMessage(for: analyzeUpdate.sql) != nil)
+    #expect(blocked.protectionBlockMessage(for: plainSelect.sql) == nil)
 
     await blocked.explain(statement: update, analyze: true, buffers: true)
     #expect(blocked.queryConfirmationState.showDialog == false)
@@ -44,13 +44,13 @@ struct ExplainRequestGateTests {
   func rollbackWrapper() throws {
     let wrapped = try ExplainRequest(statement: update, analyze: true, buffers: true)
     #expect(wrapped.wrappedSQL == wrappedUpdate)
-    #expect(wrapped.sql(dialect: .postgresql) == analyzedUpdate)
+    #expect(wrapped.sql == analyzedUpdate)
 
     let bare = try ExplainRequest(
       statement: update, analyze: true, buffers: true, rollbackAfterAnalyze: false)
     #expect(bare.wrappedSQL == analyzedUpdate)
     #expect(
-      wrapped.sqlToRun(protectedTransactionOpen: true, dialect: .postgresql) == analyzedUpdate)
+      wrapped.sqlToRun(protectedTransactionOpen: true) == analyzedUpdate)
 
     let select = try ExplainRequest(statement: "SELECT 1", analyze: true, buffers: true)
     #expect(select.wrappedSQL == "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1")

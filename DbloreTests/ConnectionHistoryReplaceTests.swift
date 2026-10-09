@@ -299,6 +299,197 @@ struct ConnectionHistoryReplaceTests {
     #expect(harness.store.deletedKeys.contains(entry.keychainKey))
   }
 
+  private static func tunneledConfig(bastion: String = "bastion.example") -> ConnectionConfig {
+    var config = ConnectionConfig(
+      host: "db.internal", port: 5432, database: "app", username: "ada",
+      rememberConnection: true, name: "Tunneled")
+    config.sshTunnel = SSHTunnelConfig(host: bastion, username: "jump")
+    return config
+  }
+
+  @Test("Removing the last entry using an SSH credential deletes it")
+  func removeDeletesSSHCredential() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    var config = Self.tunneledConfig()
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    #expect(credentials.save(.password("ssh-secret"), account: account))
+    let first = ConnectionHistoryEntry(config: config)
+    config.name = "Second"
+    let second = ConnectionHistoryEntry(config: config)
+    harness.defaults.set(
+      try JSONEncoder().encode([first, second]),
+      forKey: "ace.thi.dblore.connectionHistory")
+
+    SessionManager.removeConnection(
+      id: first.id, defaults: harness.defaults, passwords: harness.store,
+      sshCredentials: credentials)
+    #expect(credentials.load(account: account) == .password("ssh-secret"))
+    SessionManager.removeConnection(
+      id: second.id, defaults: harness.defaults, passwords: harness.store,
+      sshCredentials: credentials)
+    #expect(credentials.load(account: account) == nil)
+  }
+
+  @Test("Clear history deletes saved SSH credentials but keeps host key pins")
+  func clearDeletesSSHCredentialKeepsPins() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    let pins = SSHKnownHostStoreFactory.shared
+    let bastion = "pin-\(UUID().uuidString).example"
+    defer { pins.remove(host: bastion, port: 22) }
+    let config = Self.tunneledConfig(bastion: bastion)
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    #expect(
+      try pins.trust(host: bastion, port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:x"))
+    #expect(
+      SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: credentials, sshCredential: .password("ssh-secret")))
+    #expect(credentials.load(account: account) == .password("ssh-secret"))
+
+    SessionManager.clearAllHistory(
+      defaults: harness.defaults, passwords: harness.store, sshCredentials: credentials)
+    #expect(credentials.load(account: account) == nil)
+    #expect(try pins.lookup(host: bastion, port: 22)?.fingerprint == "SHA256:x")
+  }
+
+  @Test("Remember off saves neither the row nor the SSH credential")
+  func rememberOffLeavesNoSSHCredential() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    var config = Self.tunneledConfig()
+    config.rememberConnection = false
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    #expect(
+      SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: credentials, sshCredential: .password("ssh-secret")))
+    #expect(credentials.load(account: account) == nil)
+    #expect(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).isEmpty)
+  }
+
+  @Test("Save and replace fall back to the scoped SSH credential; remember off never stores it")
+  func scopedSSHCredentialFallback() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    var config = Self.tunneledConfig()
+    config.rememberConnection = false
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    func scoped(_ secret: String) -> SSHCredentialStoreFactory.ScopedSSHCredential {
+      .init(account: account, credential: .password(secret))
+    }
+    SSHCredentialStoreFactory.$operationCredential.withValue(scoped("unremembered")) {
+      #expect(
+        SessionManager.saveConnection(
+          config, defaults: harness.defaults, passwords: harness.store,
+          sshCredentials: credentials))
+    }
+    #expect(credentials.load(account: account) == nil)
+
+    config.rememberConnection = true
+    SSHCredentialStoreFactory.$operationCredential.withValue(scoped("first")) {
+      #expect(
+        SessionManager.saveConnection(
+          config, defaults: harness.defaults, passwords: harness.store,
+          sshCredentials: credentials))
+    }
+    #expect(credentials.load(account: account) == .password("first"))
+
+    let entry = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+    SSHCredentialStoreFactory.$operationCredential.withValue(scoped("second")) {
+      #expect(
+        SessionManager.replaceConnection(
+          id: entry.id, with: config, defaults: harness.defaults, passwords: harness.store,
+          sshCredentials: credentials))
+    }
+    #expect(credentials.load(account: account) == .password("second"))
+
+    // An explicit credential wins over the scoped one.
+    SSHCredentialStoreFactory.$operationCredential.withValue(scoped("scoped")) {
+      #expect(
+        SessionManager.replaceConnection(
+          id: entry.id, with: config, defaults: harness.defaults, passwords: harness.store,
+          sshCredentials: credentials, sshCredential: .password("explicit")))
+    }
+    #expect(credentials.load(account: account) == .password("explicit"))
+  }
+
+  @Test("A changed bastion drops the old SSH credential and saves only a supplied new one")
+  func replaceChangedBastion() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    let config = Self.tunneledConfig(bastion: "old-bastion.example")
+    let oldAccount = try #require(SSHCredentialStoreFactory.account(for: config))
+    SessionManager.saveConnection(
+      config, defaults: harness.defaults, passwords: harness.store,
+      sshCredentials: credentials, sshCredential: .password("old-secret"))
+    let entry = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+
+    var moved = config
+    moved.sshTunnel?.host = "new-bastion.example"
+    let newAccount = try #require(SSHCredentialStoreFactory.account(for: moved))
+    #expect(
+      SessionManager.replaceConnection(
+        id: entry.id, with: moved, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: credentials))
+    #expect(credentials.load(account: oldAccount) == nil)
+    #expect(credentials.load(account: newAccount) == nil)
+
+    #expect(
+      SessionManager.replaceConnection(
+        id: entry.id, with: moved, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: credentials, sshCredential: .password("new-secret")))
+    #expect(credentials.load(account: newAccount) == .password("new-secret"))
+  }
+
+  @Test("Removing the SSH tunnel from a saved card deletes its credential")
+  func replaceRemovesTunnel() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let credentials = InMemorySSHCredentialStore()
+    var config = Self.tunneledConfig()
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    SessionManager.saveConnection(
+      config, defaults: harness.defaults, passwords: harness.store,
+      sshCredentials: credentials, sshCredential: .password("ssh-secret"))
+    let entry = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+    config.sshTunnel = nil
+    #expect(
+      SessionManager.replaceConnection(
+        id: entry.id, with: config, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: credentials))
+    #expect(credentials.load(account: account) == nil)
+  }
+
+  @Test("A rejected SSH credential write keeps the original card")
+  func sshCredentialWriteFailureKeepsHistory() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let config = Self.tunneledConfig()
+    #expect(
+      !SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store,
+        sshCredentials: RejectingSSHCredentialStore(), sshCredential: .password("ssh-secret")))
+    #expect(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).isEmpty)
+  }
+
+  private final class RejectingSSHCredentialStore: SSHCredentialStore, @unchecked Sendable {
+    func load(account: String) -> SSHStoredCredential? { nil }
+    func save(_ credential: SSHStoredCredential, account: String) -> Bool { false }
+    func delete(account: String) {}
+  }
+
   private struct Harness {
     let suiteName: String
     let defaults: UserDefaults

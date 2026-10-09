@@ -293,6 +293,80 @@ struct LocalDataBackupTests {
     }
   }
 
+  @Test("SSH passwords and keys never reach backups, workspaces or launch sessions")
+  func plantedSSHSecretsStayOut() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let suite = makeSuite()
+    defer { suite.defaults.removePersistentDomain(forName: suite.name) }
+
+    let tunnel = SSHTunnelConfig(
+      host: "bastion.example", username: "deploy", authMethod: .privateKey,
+      keyAlgorithm: "ssh-ed25519", keyFingerprint: "SHA256:planted-fingerprint")
+    let config = ConnectionConfig(
+      host: "db.internal", port: 5432, database: "app", username: "ada", sshTunnel: tunnel)
+    let password = "planted-ssh-password"
+    let keyBytes = Data("planted-ssh-raw-key-bytes".utf8)
+    let credentials = InMemorySSHCredentialStore()
+    let account = try #require(SSHCredentialStoreFactory.account(for: config))
+    #expect(credentials.save(.password(password), account: account))
+    #expect(credentials.save(.privateKey(keychainRepresentation: keyBytes), account: account + "k"))
+
+    // A stray secret-looking field must be dropped by the export strip.
+    var entries =
+      try JSONSerialization.jsonObject(
+        with: JSONEncoder().encode([ConnectionHistoryEntry(config: config)])) as! [[String: Any]]
+    var stored = entries[0]["config"] as! [String: Any]
+    var storedTunnel = stored["sshTunnel"] as! [String: Any]
+    storedTunnel["passphrase"] = password
+    storedTunnel["privateKeyPEM"] = keyBytes.base64EncodedString()
+    storedTunnel["clientSecret"] = password
+    stored["sshTunnel"] = storedTunnel
+    entries[0]["config"] = stored
+    var domain = suite.defaults.persistentDomain(forName: suite.name) ?? [:]
+    domain["ace.thi.dblore.connectionHistory"] = try JSONSerialization.data(
+      withJSONObject: entries)
+    suite.defaults.setPersistentDomain(domain, forName: suite.name)
+
+    let provider = ConnectionHistoryLocalDataProvider(
+      defaults: suite.defaults, domainName: suite.name)
+    let package = root.appendingPathComponent("NoSSH.dblorebackup", isDirectory: true)
+    try await LocalDataBackup.export(
+      categories: [.connectionHistory], providers: [provider], to: package, appVersion: "9.2.0",
+      created: created)
+    var exported = Data()
+    for relative in try FileManager.default.subpathsOfDirectory(atPath: package.path) {
+      let url = package.appendingPathComponent(relative)
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+        !isDirectory.boolValue
+      else { continue }
+      exported.append(try Data(contentsOf: url))
+    }
+    let text = String(decoding: exported, as: UTF8.self)
+    #expect(text.contains("SHA256:planted-fingerprint"))
+    #expect(text.contains("ssh-ed25519"))
+    #expect(text.contains("\"privateKey\""))
+    #expect(!text.contains("passphrase"))
+    #expect(!text.contains("privateKeyPEM"))
+    #expect(!text.contains("clientSecret"))
+
+    var embedded = LaunchWorkspace(
+      workspace: Workspace(connectionConfig: config, connectionKeychainKey: "k"))
+    embedded.clearPasswords()
+    let produced: [Data] = [
+      exported,
+      try JSONEncoder().encode(Workspace(connectionConfig: config)),
+      try JSONEncoder().encode(embedded),
+    ]
+    for data in produced {
+      for secret in [Data(password.utf8), keyBytes, Data(keyBytes.base64EncodedString().utf8)] {
+        #expect(data.range(of: secret) == nil)
+      }
+    }
+    #expect(credentials.load(account: account) == .password(password))
+  }
+
   @Test("The backup package is an exported directory UTI")
   func exportedType() throws {
     let plist = try source("Dblore/Info.plist")

@@ -22,6 +22,11 @@ struct SecurityScopedAccessHooks {
   var chooseFolder: @MainActor (URL) async -> URL? = {
     await FileAccessPanel.chooseFolder(containing: $0)
   }
+  /// Ask the user for a Parquet / CSV file for DuckDB; the argument is the panel's message.
+  /// nil = cancelled
+  var chooseDataFile: @MainActor (String) async -> URL? = {
+    await FileAccessPanel.chooseDataFile(message: $0)
+  }
 
   static var live: SecurityScopedAccessHooks { SecurityScopedAccessHooks() }
 
@@ -69,7 +74,8 @@ enum FileAccessPanel {
     return await run(panel)
   }
 
-  static func chooseFolder(containing file: URL) async -> URL? {
+  /// `message` defaults to the workspace wording (reopening its tabs).
+  static func chooseFolder(containing file: URL, message: String? = nil) async -> URL? {
     let folder = file.deletingLastPathComponent()
     let panel = NSOpenPanel()
     panel.directoryURL = folder
@@ -77,9 +83,23 @@ enum FileAccessPanel {
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false
     panel.message =
-      "Allow access to the folder \"\(folder.lastPathComponent)\" to reopen the tabs of "
+      message
+      ?? "Allow access to the folder \"\(folder.lastPathComponent)\" to reopen the tabs of "
       + "\"\(file.lastPathComponent)\"."
     panel.prompt = "Allow"
+    return await run(panel)
+  }
+
+  static func chooseDataFile(message: String) async -> URL? {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes =
+      [.commaSeparatedText, .tabSeparatedText]
+      + [UTType(filenameExtension: "parquet")].compactMap { $0 }
+    panel.message = message
+    panel.prompt = "Query"
     return await run(panel)
   }
 

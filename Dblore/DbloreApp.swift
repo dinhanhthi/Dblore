@@ -8,6 +8,7 @@ import Combine
 @preconcurrency import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 // MARK: - App Delegate for file handling
 
@@ -37,17 +38,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     UpdaterController.shared.start()
   }
 
+  /// Set before launch finishes, so a click that launches the app is delivered too
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    // Long-query notification clicks open their tab
+    if !SessionManager.isRunningAsTestHost {
+      UNUserNotificationCenter.current().delegate = self
+    }
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     // Separate workspace files from document files
     var workspaceURLs: [URL] = []
     var documentURLs: [URL] = []
 
     for url in urls {
-      let ext = url.pathExtension.lowercased()
-      if ext == "sqlws" {
-        workspaceURLs.append(url)
-      } else {
-        documentURLs.append(url)
+      switch WorkspaceManager.fileOpenRoute(url) {
+      case .workspace: workspaceURLs.append(url)
+      case .ignored: continue  // A DuckDB .wal opens with its database, not alone
+      case .duckDBDatabase, .document: documentURLs.append(url)
       }
     }
 
@@ -144,6 +152,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       manager.flushToExistingFile()
     }
     LaunchSessionCapture.saveNow()
+  }
+}
+
+// MARK: - Long-query notification clicks
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+  /// A click activates the app and selects the tab the run finished in
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+  ) async {
+    let tabID =
+      (response.notification.request.content.userInfo[
+        QueryCompletionNotifier.tabIDKey] as? String).flatMap(UUID.init(uuidString:))
+    await MainActor.run { QueryNotificationRouter.open(tabID: tabID) }
+  }
+
+  /// Delivered while Dblore is active: shown only when "only when inactive" is off
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+  ) async -> UNNotificationPresentationOptions {
+    await MainActor.run {
+      AppSettings.shared.notifyOnlyWhenInactive ? [] : [.banner, .sound]
+    }
+  }
+}
+
+/// Brings the tab of a long-query notification to the front
+@MainActor
+enum QueryNotificationRouter {
+  /// Activates the app; selects the tab and fronts its window when it is still open
+  static func open(tabID: UUID?) {
+    NSApp.activate()
+    guard let tabID,
+      let manager = WorkspaceWindowManager.shared.allWorkspaces.first(where: {
+        $0.tabs.contains { $0.id == tabID }
+      })
+    else { return }
+    manager.selectTab(id: tabID)
+    let store = NewWindowStore.shared
+    if let window = store.findWindow(for: manager.id)
+      ?? NSApp.windows.first(where: { store.registration(for: $0) == .workspace(manager.id) })
+    {
+      if window.isMiniaturized { window.deminiaturize(nil) }
+      window.makeKeyAndOrderFront(nil)
+    } else {
+      // The window showing it focuses itself (see `WorkspaceWindowView`)
+      WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+    }
   }
 }
 
@@ -421,6 +477,25 @@ private struct CheckForUpdatesButton: View {
   }
 }
 
+/// "Reopen Closed Tab" menu item. A view body tracks `closedTabs`; read straight from the
+/// `Commands` body the disabled state went stale and Cmd+Shift+T stayed off after a close.
+private struct ReopenClosedTabButton: View {
+  var body: some View {
+    Button("Reopen Closed Tab") {
+      Task {
+        do {
+          try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
+        } catch {
+          WorkspaceWindowManager.shared.showToast(
+            "Could not reopen tab: \(error.localizedDescription)", type: .warning)
+        }
+      }
+    }
+    .keyboardShortcut("t", modifiers: [.command, .shift])
+    .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+  }
+}
+
 /// Edit menu items for the focused notebook or data viewer undo stack.
 private struct CellUndoCommandButtons: View {
   @ObservedObject private var refresh = CellUndoMenuRefresh.shared
@@ -602,6 +677,9 @@ struct TabCommands: Commands {
 
       Button("Import Data...") { openTableImportAction?() }
         .disabled(openTableImportAction == nil)
+
+      // Works with no window open: the sheet opens the Welcome window first.
+      Button("Import Connections...") { ConnectionImportPresenter.present() }
     }
 
     // File menu - Save
@@ -674,18 +752,7 @@ struct TabCommands: Commands {
       .keyboardShortcut("w", modifiers: .command)
       .disabled(activeTabId == nil)
 
-      Button("Reopen Closed Tab") {
-        Task {
-          do {
-            try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
-          } catch {
-            WorkspaceWindowManager.shared.showToast(
-              "Could not reopen tab: \(error.localizedDescription)", type: .warning)
-          }
-        }
-      }
-      .keyboardShortcut("t", modifiers: [.command, .shift])
-      .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+      ReopenClosedTabButton()
 
       Divider()
 

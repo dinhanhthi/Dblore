@@ -23,6 +23,7 @@ private enum CommandPaletteAction: String, CaseIterable {
   case disconnect = "disconnect"
   case commit = "commit"
   case rollback = "rollback"
+  case queryDuckDBFile = "query-duckdb-file"
 
   var title: String {
     switch self {
@@ -40,6 +41,7 @@ private enum CommandPaletteAction: String, CaseIterable {
     case .disconnect: "Disconnect"
     case .commit: "Commit"
     case .rollback: "Roll Back"
+    case .queryDuckDBFile: "Query Parquet/CSV File..."
     }
   }
 
@@ -49,7 +51,7 @@ private enum CommandPaletteAction: String, CaseIterable {
 }
 
 extension WorkspaceManager {
-  /// Tables, views, functions, open tabs, favorites, and the fixed actions.
+  /// Tables, views, functions, View Source rows, open tabs, favorites, and the fixed actions.
   /// History is searched separately. `connectionKey` is empty when no database is configured.
   func paletteSources() -> CommandPaletteSnapshot {
     CommandPaletteSnapshot(
@@ -58,9 +60,10 @@ extension WorkspaceManager {
       functions: databaseFunctions.map {
         .init(schema: $0.schema, name: $0.name, arguments: $0.arguments)
       },
+      sources: paletteSourceRefs(),
       tabs: tabs.map { .init(id: $0.id, title: $0.title) },
       favorites: workspace.favorites.items.map { .init(id: $0.id, name: $0.name, sql: $0.sql) },
-      actions: CommandPaletteAction.allCases.map(\.snapshot),
+      actions: paletteActions().map(\.snapshot),
       connectionKey: activeHistoryConnectionKey ?? ""
     )
   }
@@ -96,6 +99,10 @@ extension WorkspaceManager {
       guard canInsertPaletteText() else { return false }
       activeViewModel?.insertTextIntoSelectedCell(name)
       return true
+    case .source(let ref):
+      // Read-only tab; the definition is never run
+      guard let object = schemaObjectRef(for: ref) else { return false }
+      openObjectSource(object)
     case .tab(let id, _):
       selectTab(id: id)
     case .favorite(let id, let name, let sql):
@@ -114,9 +121,24 @@ extension WorkspaceManager {
     return true
   }
 
-  /// A selected notebook cell, or an editor text view. A data viewer has neither.
+  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not).
+  private func paletteActions() -> [CommandPaletteAction] {
+    CommandPaletteAction.allCases.filter { $0 != .queryDuckDBFile || duckDBFileQueryConfig != nil }
+  }
+
+  /// One View Source row per function, procedure and trigger in the loaded schema
+  func paletteSourceRefs() -> [ObjectSourceRef] {
+    databaseFunctions.map { ObjectSourceRef(.function($0)) }
+      + databaseProcedures.map { ObjectSourceRef(.procedure($0)) }
+      + databaseTriggers.map { ObjectSourceRef(.trigger($0)) }
+  }
+
+  /// A selected notebook cell, or an editable editor text view. A data viewer has neither.
   private func canInsertPaletteText() -> Bool {
-    guard let viewModel = activeViewModel, viewModel.viewMode != .markdown else { return false }
+    // Object source tabs are read-only
+    guard let viewModel = activeViewModel, viewModel.viewMode != .markdown,
+      !viewModel.isReadOnlySource
+    else { return false }
     if viewModel.viewMode == .editor {
       return viewModel.editorTextView != nil
     }
@@ -163,6 +185,11 @@ extension WorkspaceManager {
         !isTransactionOriginRunning
       else { return false }
       Task { await rollback() }
+    case .queryDuckDBFile:
+      // The query goes into the selected cell or the editor, so one must be there
+      guard duckDBFileQueryConfig != nil, !connectionState.isConnecting, canInsertPaletteText()
+      else { return false }
+      Task { await queryDuckDBFile() }
     }
     return true
   }

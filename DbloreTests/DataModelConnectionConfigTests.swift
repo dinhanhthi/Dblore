@@ -576,6 +576,151 @@ struct DataModelConnectionConfigTests {
     return Data(json.utf8)
   }
 
+  // MARK: - SSH tunnel
+
+  private func tunnelConfig(
+    sshHost: String = "bastion.example.com", sshPort: Int = 2222
+  ) -> ConnectionConfig {
+    var config = ConnectionConfig(
+      host: "db.internal", database: "app", username: "ada", password: "db-secret")
+    config.sshTunnel = SSHTunnelConfig(
+      host: sshHost, port: sshPort, username: "ops", authMethod: .privateKey,
+      keyAlgorithm: "ssh-ed25519", keyFingerprint: "SHA256:abc")
+    return config
+  }
+
+  @Test("A config with an SSH tunnel round-trips")
+  func sshTunnelRoundTrip() throws {
+    let config = tunnelConfig()
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded.sshTunnel == config.sshTunnel)
+    #expect(decoded == config)
+  }
+
+  @Test("A config without an SSH tunnel round-trips and omits the key")
+  func noSSHTunnelRoundTrip() throws {
+    let config = ConnectionConfig(host: "db", database: "app", username: "ada")
+    #expect(config.sshTunnel == nil)
+    #expect(try encodedObject(config)["sshTunnel"] == nil)
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded.sshTunnel == nil)
+  }
+
+  @Test("Old JSON without sshTunnel decodes to no tunnel")
+  func legacyJSONHasNoSSHTunnel() throws {
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: savedConnectionJSON())
+    #expect(decoded.sshTunnel == nil)
+  }
+
+  @Test("The SSH tunnel defaults to port 22 and password auth")
+  func sshTunnelDefaults() {
+    let tunnel = SSHTunnelConfig(host: "bastion", username: "ops")
+    #expect(tunnel.port == 22)
+    #expect(tunnel.authMethod == .password)
+    #expect(tunnel.keyAlgorithm == nil)
+    #expect(tunnel.keyFingerprint == nil)
+  }
+
+  @Test("The encoded SSH tunnel holds only non-secret display fields")
+  func sshTunnelEncodesNoSecrets() throws {
+    let object = try encodedObject(tunnelConfig())
+    let tunnel = try #require(object["sshTunnel"] as? [String: Any])
+    #expect(
+      Set(tunnel.keys)
+        == ["host", "port", "username", "authMethod", "keyAlgorithm", "keyFingerprint"])
+    let tunnelJSON = String(
+      decoding: try JSONSerialization.data(withJSONObject: tunnel), as: UTF8.self)
+    #expect(!tunnelJSON.contains("db-secret"))
+    #expect(!tunnelJSON.lowercased().contains("passphrase"))
+  }
+
+  @Test("Equality tells SSH tunnel changes apart")
+  func sshTunnelEquality() {
+    let base = tunnelConfig()
+    var noTunnel = base
+    noTunnel.sshTunnel = nil
+    var otherPort = base
+    otherPort.sshTunnel?.port = 22
+    var otherAuth = base
+    otherAuth.sshTunnel?.authMethod = .password
+    #expect(base != noTunnel)
+    #expect(base != otherPort)
+    #expect(base != otherAuth)
+    #expect(base == tunnelConfig())
+  }
+
+  @Test("The SSH credential account is nil without a tunnel and depends on the bastion")
+  func sshCredentialAccountForConfig() {
+    let plain = ConnectionConfig(host: "db.internal", database: "app", username: "ada")
+    #expect(SSHCredentialStoreFactory.account(for: plain) == nil)
+
+    let account = SSHCredentialStoreFactory.account(for: tunnelConfig())
+    #expect(
+      account
+        == SSHCredentialStoreFactory.account(
+          databaseType: .postgresql, host: "db.internal", port: 5432, database: "app",
+          username: "ada", sshHost: "bastion.example.com", sshPort: 2222, sshUsername: "ops"))
+    #expect(account != SSHCredentialStoreFactory.account(for: tunnelConfig(sshHost: "other")))
+    #expect(account != SSHCredentialStoreFactory.account(for: tunnelConfig(sshPort: 22)))
+  }
+
+  // MARK: - DuckDB form
+
+  @Test("File engines get the file form; only PostgreSQL uses the network fields")
+  func fileBasedPredicate() {
+    for type in DatabaseType.allCases {
+      #expect(type.capabilities.isFileBased == (type != .postgresql), "\(type)")
+    }
+  }
+
+  @Test("Opening a DuckDB file is read-only, creating one is read-write")
+  func duckDBOpenAndCreateReadOnlyDefaults() {
+    let bookmark = Data([0x02])
+    let draft = ConnectionConfig(databaseType: .duckdb, readOnlyFile: false)
+
+    let opened = ConnectionFormContent.applyingDuckDBChoice(
+      .open(path: "/tmp/sales.duckdb", bookmark: bookmark), to: draft, selected: nil
+    ).config
+    #expect(opened.database == "/tmp/sales.duckdb")
+    #expect(opened.fileBookmark == bookmark)
+    #expect(opened.readOnlyFile)
+    #expect(opened.name == "sales")
+
+    let created = ConnectionFormContent.applyingDuckDBChoice(
+      .create(path: "/tmp/new.duckdb", bookmark: nil), to: opened, selected: nil
+    ).config
+    #expect(created.database == "/tmp/new.duckdb")
+    #expect(created.fileBookmark == nil)
+    #expect(!created.readOnlyFile)
+  }
+
+  @Test("In-memory DuckDB has no bookmark and is not a read-only file")
+  func duckDBInMemory() {
+    let opened = ConnectionConfig(
+      databaseType: .duckdb, database: "/tmp/sales.duckdb", fileBookmark: Data([0x03]))
+
+    let config = ConnectionFormContent.applyingDuckDBChoice(.inMemory, to: opened, selected: nil)
+      .config
+    #expect(config.database == DuckDBSession.inMemoryPath)
+    #expect(config.fileBookmark == nil)
+    #expect(!config.readOnlyFile)
+    #expect(config.name == "In-memory")
+  }
+
+  @Test("Switching between SQLite and DuckDB re-applies the engine's read-only default")
+  func switchingEngineReDefaultsReadOnlyFile() throws {
+    let toDuckDB = try #require(
+      ConnectionFormContent.formAfterEngineChange(fieldsEngine: .sqlite, newType: .duckdb))
+    #expect(toDuckDB.readOnlyFile)
+
+    let toSQLite = try #require(
+      ConnectionFormContent.formAfterEngineChange(fieldsEngine: .duckdb, newType: .sqlite))
+    #expect(!toSQLite.readOnlyFile)
+  }
+
   private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {
     let data = try JSONEncoder().encode(config)
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])

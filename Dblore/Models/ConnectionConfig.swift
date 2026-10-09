@@ -9,11 +9,13 @@ import Foundation
 enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case postgresql = "PostgreSQL"
   case sqlite = "SQLite"
+  case duckdb = "DuckDB"
 
   var displayName: String {
     switch self {
     case .postgresql: rawValue
     case .sqlite: "SQLite (Beta)"
+    case .duckdb: rawValue
     }
   }
 
@@ -24,6 +26,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "postgresql"
     case .sqlite:
       return "sqlite"
+    case .duckdb:
+      return "duckdb"
     }
   }
 
@@ -32,10 +36,12 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     switch self {
     case .postgresql: .postgresql
     case .sqlite: .sqlite
+    case .duckdb: .duckdb
     }
   }
 
-  /// Feature set for this engine. SQLite is a beta file database.
+  /// Feature set for this engine. SQLite is a beta file database. DuckDB is a file database
+  /// shipped as a plugin: no staged edits, import, or foreign key lookup.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -51,7 +57,12 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         cancelStrategy: .reconnect,
         cappedReadResetsSession: true,
         supportsExplainJSON: true,
+        supportsExplainAnalyze: true,
         supportsUpdateOnly: true,
+        supportsRowStaging: true,
+        supportsDataImport: true,
+        supportsForeignKeyLookup: true,
+        requiresPlugin: false,
         isAvailable: true
       )
     case .sqlite:
@@ -67,17 +78,51 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         cancelStrategy: .interrupt,
         cappedReadResetsSession: false,
         supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
         supportsUpdateOnly: false,
+        supportsRowStaging: true,
+        supportsDataImport: true,
+        supportsForeignKeyLookup: true,
+        requiresPlugin: false,
+        isAvailable: true
+      )
+    case .duckdb:
+      DatabaseCapabilities(
+        usesNetwork: false,
+        usesPassword: false,
+        supportsSSL: false,
+        supportsSchemas: true,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: false,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: true,
+        supportsUpdateOnly: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: true,
         isAvailable: true
       )
     }
   }
 
   /// Engines listed in the connection form. Unavailable engines appear only when
-  /// `showExperimental` is on. SQLite is available, so the picker lists PostgreSQL and
-  /// SQLite (Beta) without that toggle.
-  nonisolated static func connectionPickerTypes(showExperimental: Bool) -> [DatabaseType] {
-    allCases.filter { $0.capabilities.isAvailable || showExperimental }
+  /// `showExperimental` is on. An engine that `requiresPlugin` appears only when
+  /// `isPluginInstalled` says so, whatever the toggle. The default provider reports no plugin
+  /// installed. Saved connections are not filtered here.
+  nonisolated static func connectionPickerTypes(
+    showExperimental: Bool,
+    isPluginInstalled: (DatabaseType) -> Bool = { _ in false }
+  ) -> [DatabaseType] {
+    allCases.filter { type in
+      let capabilities = type.capabilities
+      guard capabilities.isAvailable || showExperimental else { return false }
+      return !capabilities.requiresPlugin || isPluginInstalled(type)
+    }
   }
 }
 
@@ -138,7 +183,35 @@ nonisolated struct ClientCertificateInfo: Codable, Equatable, Sendable {
   var hasCA: Bool
 }
 
-struct ConnectionConfig: Codable, Equatable, Sendable {
+/// SSH bastion for a connection. Display data only: the password or decrypted key lives in
+/// SSHCredentialStore, and a key passphrase is never kept.
+nonisolated struct SSHTunnelConfig: Codable, Equatable, Sendable {
+  enum AuthMethod: String, Codable, Sendable {
+    case password
+    case privateKey
+  }
+
+  var host: String
+  var port: Int
+  var username: String
+  var authMethod: AuthMethod
+  var keyAlgorithm: String?
+  var keyFingerprint: String?
+
+  init(
+    host: String, port: Int = 22, username: String, authMethod: AuthMethod = .password,
+    keyAlgorithm: String? = nil, keyFingerprint: String? = nil
+  ) {
+    self.host = host
+    self.port = port
+    self.username = username
+    self.authMethod = authMethod
+    self.keyAlgorithm = keyAlgorithm
+    self.keyFingerprint = keyFingerprint
+  }
+}
+
+struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var databaseType: DatabaseType
   var host: String
   var port: Int
@@ -148,6 +221,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   var sslMode: SSLMode
   /// Display metadata only. PEM bytes live in ClientCertificateStore.
   var clientCertificate: ClientCertificateInfo?
+  /// Display metadata only. SSH secrets live in SSHCredentialStore.
+  var sshTunnel: SSHTunnelConfig?
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -165,11 +240,14 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
   /// Security-scoped bookmark for a file database. The path itself is `database`. Never a password.
   var fileBookmark: Data?
   /// Open a file database without writing. Distinct from `protectionLevel` and from `readOnly`.
+  /// Defaults to true for DuckDB files (the brief: read-only by default), false otherwise.
   var readOnlyFile: Bool
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
+    // Absent on connections saved before SSH tunnels
+    case sshTunnel
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -195,6 +273,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     sslMode = try container.decode(SSLMode.self, forKey: .sslMode)
     clientCertificate = try container.decodeIfPresent(
       ClientCertificateInfo.self, forKey: .clientCertificate)
+    sshTunnel = try container.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -227,7 +306,8 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
       legacyDefault: SessionBrakeLimits.defaultIdleTimeout)
     rowCapOverride = try container.decodeIfPresent(Int.self, forKey: .rowCapOverride)
     fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
-    readOnlyFile = try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? false
+    readOnlyFile =
+      try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? (databaseType == .duckdb)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -261,6 +341,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     try container.encode(password, forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
     try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
+    try container.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)
@@ -287,6 +368,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     password: String = "",
     sslMode: SSLMode = .prefer,
     clientCertificate: ClientCertificateInfo? = nil,
+    sshTunnel: SSHTunnelConfig? = nil,
     rememberConnection: Bool = true,
     timeoutSeconds: Int = 30,
     protectionLevel: ConnectionProtectionLevel = .none,
@@ -298,7 +380,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     idleInTransactionTimeoutSeconds: Int? = nil,
     rowCapOverride: Int? = nil,
     fileBookmark: Data? = nil,
-    readOnlyFile: Bool = false
+    readOnlyFile: Bool? = nil
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -308,6 +390,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.password = password
     self.sslMode = sslMode
     self.clientCertificate = clientCertificate
+    self.sshTunnel = sshTunnel
     self.rememberConnection = rememberConnection
     self.timeoutSeconds = timeoutSeconds
     self.protectionLevel = protectionLevel
@@ -320,7 +403,7 @@ struct ConnectionConfig: Codable, Equatable, Sendable {
     self.idleInTransactionTimeoutSeconds = idleInTransactionTimeoutSeconds
     self.rowCapOverride = rowCapOverride
     self.fileBookmark = fileBookmark
-    self.readOnlyFile = readOnlyFile
+    self.readOnlyFile = readOnlyFile ?? (databaseType == .duckdb)
   }
 
   /// A copy with every timeout filled in: the connection's own override, else `global`.
@@ -438,6 +521,14 @@ enum SSLMode: String, Codable, CaseIterable, Sendable {
     case .require: return "Require"
     case .verifyCa: return "Verify CA"
     case .verifyFull: return "Verify Full"
+    }
+  }
+
+  /// Disable, Allow and Prefer may fall back to a plain connection
+  var mayBeUnencrypted: Bool {
+    switch self {
+    case .disable, .allow, .prefer: return true
+    case .require, .verifyCa, .verifyFull: return false
     }
   }
 }

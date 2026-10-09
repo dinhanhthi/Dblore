@@ -126,7 +126,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         n.nspname AS schema,
         p.proname AS name,
         pg_get_function_result(p.oid) AS return_type,
-        pg_get_function_arguments(p.oid) AS arguments
+        pg_get_function_arguments(p.oid) AS arguments,
+        p.oid::int8
       FROM pg_proc p
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
@@ -135,7 +136,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       """
     var functions: [DatabaseFunction] = []
     for row in try await rows(in: session, sql: query) {
-      guard row.count >= 4,
+      guard row.count >= 5,
         let schema = CatalogValue.string(row[0]),
         let name = CatalogValue.string(row[1]),
         let returnType = CatalogValue.string(row[2]),
@@ -144,7 +145,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       functions.append(
         DatabaseFunction(
           schema: schema, name: name, returnType: returnType, arguments: arguments,
-          definition: nil))
+          definition: nil, oid: CatalogValue.oid(row[4])))
     }
     return functions
   }
@@ -154,7 +155,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       SELECT
         n.nspname AS schema,
         p.proname AS name,
-        pg_get_function_arguments(p.oid) AS arguments
+        pg_get_function_arguments(p.oid) AS arguments,
+        p.oid::int8
       FROM pg_proc p
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
@@ -163,15 +165,111 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       """
     var procedures: [DatabaseProcedure] = []
     for row in try await rows(in: session, sql: query) {
-      guard row.count >= 3,
+      guard row.count >= 4,
         let schema = CatalogValue.string(row[0]),
         let name = CatalogValue.string(row[1]),
         let arguments = CatalogValue.string(row[2])
       else { continue }
       procedures.append(
-        DatabaseProcedure(schema: schema, name: name, arguments: arguments, definition: nil))
+        DatabaseProcedure(
+          schema: schema, name: name, arguments: arguments, definition: nil,
+          oid: CatalogValue.oid(row[3])))
     }
     return procedures
+  }
+
+  /// User triggers (not the internal ones behind foreign keys), in the schemas functions use.
+  func triggers(in session: any DatabaseSession) async throws -> [DatabaseTrigger] {
+    let query = """
+      SELECT
+        n.nspname::text,
+        c.relname::text,
+        t.tgname::text,
+        t.tgtype::int4,
+        t.tgenabled::text,
+        t.oid::int8
+      FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT t.tgisinternal
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY n.nspname, c.relname, t.tgname
+      """
+    var triggers: [DatabaseTrigger] = []
+    for row in try await rows(in: session, sql: query) {
+      guard row.count >= 6,
+        let schema = CatalogValue.string(row[0]),
+        let table = CatalogValue.string(row[1]),
+        let name = CatalogValue.string(row[2]),
+        let type = CatalogValue.int(row[3]),
+        let enabled = CatalogValue.string(row[4])
+      else { continue }
+      triggers.append(
+        DatabaseTrigger(
+          schema: schema, table: table, name: name, timing: Self.triggerTiming(type),
+          events: Self.triggerEvents(type), enabled: enabled != "D",
+          oid: CatalogValue.oid(row[5])))
+    }
+    return triggers
+  }
+
+  /// `pg_get_functiondef` for functions and procedures, `pg_get_triggerdef` for triggers.
+  /// Aggregates and window functions have no definition, so they get a comment stub.
+  func definition(
+    of object: SchemaObjectRef, in session: any DatabaseSession
+  ) async throws
+    -> String?
+  {
+    switch object {
+    case .function(let function):
+      guard let oid = function.oid else { return nil }
+      return try await routineDefinition(oid: oid, in: session)
+    case .procedure(let procedure):
+      guard let oid = procedure.oid else { return nil }
+      return try await routineDefinition(oid: oid, in: session)
+    case .trigger(let trigger):
+      guard let oid = trigger.oid else { return nil }
+      let found = try await rows(
+        in: session, sql: "SELECT pg_get_triggerdef($1::oid, true)", binds: [.text(String(oid))])
+      return found.first?.first.flatMap(CatalogValue.string)
+    }
+  }
+
+  private func routineDefinition(
+    oid: UInt32, in session: any DatabaseSession
+  ) async throws -> String? {
+    // pg_get_functiondef raises on an aggregate, so the CASE keeps it to 'f' and 'p'.
+    let query = """
+      SELECT
+        CASE WHEN p.prokind IN ('f', 'p') THEN pg_get_functiondef(p.oid) END,
+        p.prokind::text,
+        p.proname::text,
+        pg_get_function_arguments(p.oid)
+      FROM pg_proc p
+      WHERE p.oid = $1::oid
+      """
+    guard let row = try await rows(in: session, sql: query, binds: [.text(String(oid))]).first,
+      row.count >= 4
+    else { return nil }
+    if let source = CatalogValue.string(row[0]) { return source }
+    let kind = CatalogValue.string(row[1]) == "a" ? "aggregate" : "window function"
+    let name = CatalogValue.string(row[2]) ?? ""
+    let arguments = CatalogValue.string(row[3]) ?? ""
+    return "-- Source not available for \(kind) \(name)(\(arguments))"
+  }
+
+  // pg_trigger.tgtype bits: ROW 1, BEFORE 2, INSERT 4, DELETE 8, UPDATE 16, TRUNCATE 32,
+  // INSTEAD 64.
+  private static func triggerTiming(_ type: Int) -> DatabaseTrigger.Timing {
+    if type & 64 != 0 { return .insteadOf }
+    return type & 2 != 0 ? .before : .after
+  }
+
+  private static func triggerEvents(_ type: Int) -> [DatabaseTrigger.Event] {
+    let bits: [(Int, DatabaseTrigger.Event)] = [
+      (4, .insert), (16, .update), (8, .delete), (32, .truncate),
+    ]
+    return bits.filter { type & $0.0 != 0 }.map(\.1)
   }
 
   func users(in session: any DatabaseSession) async throws -> [DatabaseUser] {
@@ -507,6 +605,11 @@ private nonisolated enum CatalogValue {
   static func int(_ value: CellValue) -> Int? {
     if case .int(let number) = value { return number }
     return nil
+  }
+
+  /// An `oid::int8` cell.
+  static func oid(_ value: CellValue) -> UInt32? {
+    int(value).flatMap { UInt32(exactly: $0) }
   }
 
   /// NULL and a failed decode are both "no estimate", matching `decode(Int?.self)`.

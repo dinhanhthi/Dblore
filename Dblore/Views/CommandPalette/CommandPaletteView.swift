@@ -26,7 +26,7 @@ struct CommandPaletteView: View {
       Divider()
       results
     }
-    .frame(width: 520, height: 420)
+    .modalFrame(width: 520, height: 420)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
@@ -114,7 +114,8 @@ struct CommandPaletteView: View {
             .foregroundColor(.foregroundMuted)
             .frame(maxWidth: .infinity, minHeight: 120)
         } else {
-          LazyVStack(alignment: .leading, spacing: 0) {
+          // Not lazy: at most 100 rows, and scrollTo lands short on rows a lazy stack has not laid out.
+          VStack(alignment: .leading, spacing: 0) {
             ForEach(sections) { section in
               Text(section.title)
                 .font(.caption)
@@ -240,6 +241,7 @@ private struct CommandPaletteSection: Identifiable {
     case tables = "Tables"
     case views = "Views"
     case functions = "Functions"
+    case sources = "View Source"
     case tabs = "Tabs"
     case favorite = "Favorite"
     case actions = "Actions"
@@ -250,6 +252,7 @@ private struct CommandPaletteSection: Identifiable {
       case .table: .tables
       case .view: .views
       case .function: .functions
+      case .source: .sources
       case .tab: .tabs
       case .favorite: .favorite
       case .action: .actions
@@ -307,6 +310,7 @@ private struct CommandPaletteRow: View {
     case .table: "tablecells"
     case .view: "eye"
     case .function: "function"
+    case .source(let ref): ref.kind.iconName
     case .tab: "doc.text"
     case .favorite: "star"
     case .action: "command"
@@ -339,6 +343,8 @@ private struct CommandPaletteRow: View {
       } else {
         raw = "\(schema) (\(arguments))"
       }
+    case .source(let ref):
+      raw = ref.schema.isEmpty ? ref.kind.displayName : "\(ref.kind.displayName) · \(ref.schema)"
     case .favorite(_, _, let sql):
       raw = sql
     case .tab, .action, .history:

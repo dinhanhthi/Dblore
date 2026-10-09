@@ -1,5 +1,6 @@
 // DatabaseCapabilitiesTests.swift
-// DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta.
+// DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
+// DuckDB is a file engine offered only when its plugin is installed.
 
 import Foundation
 import Testing
@@ -27,6 +28,52 @@ struct DatabaseCapabilitiesTests {
     #expect(!capabilities.supportsSSL)
   }
 
+  @Test("DuckDB is a file engine without staged edits, import, or FK lookup")
+  func duckdbCapabilities() {
+    let capabilities = DatabaseType.duckdb.capabilities
+    #expect(capabilities == Self.duckdb)
+    #expect(!capabilities.supportsRowStaging)
+    #expect(!capabilities.supportsDataImport)
+    #expect(!capabilities.supportsForeignKeyLookup)
+    #expect(capabilities.requiresPlugin)
+  }
+
+  @Test("Every engine has an explicit capability set", arguments: DatabaseType.allCases)
+  func everyEngineHasExplicitCapabilities(type: DatabaseType) throws {
+    let expected = try #require(Self.expected[type], "No expected capabilities for \(type)")
+    #expect(type.capabilities == expected)
+  }
+
+  @Test("The picker hides DuckDB while its plugin is not installed")
+  func pickerHidesDuckDBWithoutPlugin() {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: false, isPluginInstalled: { _ in false })
+    #expect(types == [.postgresql, .sqlite])
+  }
+
+  @Test("The picker lists DuckDB once its plugin is installed")
+  func pickerListsDuckDBWithPlugin() {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: false, isPluginInstalled: { $0 == .duckdb })
+    #expect(types == [.postgresql, .sqlite, .duckdb])
+  }
+
+  @Test("Showing experimental engines does not list DuckDB without its plugin")
+  func experimentalToggleDoesNotBypassPlugin() {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: true, isPluginInstalled: { _ in false })
+    #expect(!types.contains(.duckdb))
+  }
+
+  @Test("By default the picker treats the DuckDB plugin as not installed")
+  func pickerDefaultProviderHidesDuckDB() {
+    #expect(!DatabaseType.connectionPickerTypes(showExperimental: false).contains(.duckdb))
+  }
+
+  private static let expected: [DatabaseType: DatabaseCapabilities] = [
+    .postgresql: postgresql, .sqlite: sqlite, .duckdb: duckdb,
+  ]
+
   private static let postgresql = DatabaseCapabilities(
     usesNetwork: true,
     usesPassword: true,
@@ -39,7 +86,12 @@ struct DatabaseCapabilitiesTests {
     cancelStrategy: .reconnect,
     cappedReadResetsSession: true,
     supportsExplainJSON: true,
+    supportsExplainAnalyze: true,
     supportsUpdateOnly: true,
+    supportsRowStaging: true,
+    supportsDataImport: true,
+    supportsForeignKeyLookup: true,
+    requiresPlugin: false,
     isAvailable: true
   )
 
@@ -55,7 +107,33 @@ struct DatabaseCapabilitiesTests {
     cancelStrategy: .interrupt,
     cappedReadResetsSession: false,
     supportsExplainJSON: false,
+    supportsExplainAnalyze: false,
     supportsUpdateOnly: false,
+    supportsRowStaging: true,
+    supportsDataImport: true,
+    supportsForeignKeyLookup: true,
+    requiresPlugin: false,
+    isAvailable: true
+  )
+
+  private static let duckdb = DatabaseCapabilities(
+    usesNetwork: false,
+    usesPassword: false,
+    supportsSSL: false,
+    supportsSchemas: true,
+    supportsRolesAndUsers: false,
+    supportsFunctions: false,
+    supportsServerCursor: false,
+    supportsSessionBrakes: false,
+    cancelStrategy: .interrupt,
+    cappedReadResetsSession: false,
+    supportsExplainJSON: false,
+    supportsExplainAnalyze: true,
+    supportsUpdateOnly: false,
+    supportsRowStaging: false,
+    supportsDataImport: false,
+    supportsForeignKeyLookup: false,
+    requiresPlugin: true,
     isAvailable: true
   )
 }

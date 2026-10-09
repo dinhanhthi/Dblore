@@ -11,6 +11,14 @@ import SwiftUI
 
 extension EditorModeView {
 
+  /// The editor pin is not written to the file
+  static let editorPinNote = "Kept for this session only"
+
+  /// Whether the "Run with query" footer is shown; it holds the Grid / Chart slider when it is
+  func showsResultPanelFooter(result: CellResult) -> Bool {
+    !getAppSettings().hideRunWithQuerySection && result.sourceQuery != nil
+  }
+
   // MARK: - Result Panel Header
 
   /// Creates the header bar for the result panel.
@@ -24,10 +32,6 @@ extension EditorModeView {
   /// - Parameter result: The query result containing metadata and optional error
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
-    resultPanelHeader(result: result, displayMode: resultDisplayModeBinding(for: result))
-  }
-
-  func resultPanelHeader(result: CellResult, displayMode: Binding<ResultDisplayMode>) -> some View {
     VStack(spacing: 0) {
       // Warning banner (row cap reached; session reset details when the cap closed it)
       if result.error == nil, let notice = result.capNotice {
@@ -66,13 +70,26 @@ extension EditorModeView {
 
         Spacer()
 
-        if ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
-          ResultDisplayPicker(mode: displayMode)
+        // Grid / Chart falls back here when the "Run with query" footer is hidden
+        if !showsResultPanelFooter(result: result),
+          ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
+        {
+          ResultDisplayPicker(mode: resultDisplayModeBinding(for: result))
         }
 
         if ExplainResultPlan.parse(result) != nil {
           ExplainDisplayPicker(mode: explainDisplayModeBinding(for: result))
         }
+
+        ResultPinControls(
+          isPinned: viewModel.editorPinnedResult != nil,
+          canPin: result.error == nil,
+          isComparing: viewModel.isEditorComparing,
+          pinNote: Self.editorPinNote,
+          onPin: { viewModel.pinEditorResult() },
+          onUnpin: { viewModel.unpinEditorResult() },
+          onToggleCompare: { viewModel.toggleEditorCompare() }
+        )
 
         explainToolbarMenu()
 
@@ -249,7 +266,7 @@ extension EditorModeView {
   @ViewBuilder
   func resultPanelFooter(result: CellResult) -> some View {
     // Don't show if setting is enabled to hide this section
-    if !getAppSettings().hideRunWithQuerySection, result.sourceQuery != nil {
+    if showsResultPanelFooter(result: result) {
       // Show clickable query text + Download button for both single and multi-statement
       let actualQuery = getActualExecutedQuery(result: result)
       let displayQuery = SQLSyntaxHighlighter.removeComments(actualQuery)
@@ -259,7 +276,8 @@ extension EditorModeView {
         viewModel: viewModel,
         cellId: nil,  // Editor mode has no cell ID
         queryIndex: !viewModel.editorStatementResults.isEmpty
-          ? (viewModel.selectedStatementIndex + 1) : nil
+          ? (viewModel.selectedStatementIndex + 1) : nil,
+        displayMode: resultDisplayModeBinding(for: result)
       )
       .frame(height: 24)
       .padding(.horizontal, Spacing.md)
@@ -429,7 +447,7 @@ struct EditorResultGridView: View {
           relationSchema: relation?.schema,
           relationTable: relation?.table,
           baseColumnNames: relation?.baseColumns,
-          foreignKeys: viewModel.databaseForeignKeys,
+          foreignKeys: viewModel.lookupForeignKeys,
           lookupDialect: viewModel.sqlDialect,
           onLookupReferencedRow: referencedRow.lookup,
           onJumpToReferencedRow: referencedRow.jump

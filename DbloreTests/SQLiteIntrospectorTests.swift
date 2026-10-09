@@ -192,6 +192,75 @@ struct SQLiteIntrospectorTests {
     }
   }
 
+  @Test("Triggers are listed with timing and event parsed from their header; source is the sql")
+  func triggersAreListed() async throws {
+    try await withDatabase { session in
+      let statements = [
+        "CREATE TABLE notes (body TEXT)",
+        "CREATE TABLE log (body TEXT)",
+        "CREATE VIEW notes_view AS SELECT body FROM notes",
+        """
+        CREATE TRIGGER "before_delete" AFTER INSERT ON notes
+        BEGIN DELETE FROM log; INSERT INTO log VALUES (new.body); END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS main.on_change BEFORE UPDATE OF body ON notes
+        BEGIN SELECT 1; END
+        """,
+        "CREATE TRIGGER plain DELETE ON notes BEGIN INSERT INTO log VALUES (old.body); END",
+        """
+        CREATE TRIGGER view_insert INSTEAD OF INSERT ON notes_view
+        BEGIN INSERT INTO notes VALUES (new.body); END
+        """,
+      ]
+      for sql in statements {
+        _ = try await session.command(sql, binds: [])
+      }
+
+      let triggers = try await introspector.triggers(in: session)
+      #expect(triggers.map(\.name) == ["before_delete", "on_change", "plain", "view_insert"])
+      #expect(triggers.allSatisfy { $0.schema == "main" && $0.enabled && $0.oid == nil })
+      let shapes = triggers.map { "\($0.table) \($0.timing.rawValue) \($0.events.map(\.rawValue))" }
+      #expect(
+        shapes == [
+          "notes AFTER [\"INSERT\"]",
+          "notes BEFORE [\"UPDATE\"]",
+          "notes BEFORE [\"DELETE\"]",
+          "notes_view INSTEAD OF [\"INSERT\"]",
+        ])
+
+      let plain = try #require(triggers.first { $0.name == "plain" })
+      let source = try await introspector.definition(of: .trigger(plain), in: session)
+      #expect(source == statements[5])
+      let function = DatabaseFunction(schema: "main", name: "f", returnType: "int")
+      #expect(try await introspector.definition(of: .function(function), in: session) == nil)
+    }
+  }
+
+  @Test("Timing comes only from the words after the name; UPDATE OF columns are not keywords")
+  func triggerColumnsNamedLikeKeywords() async throws {
+    try await withDatabase { session in
+      let statements = [
+        "CREATE TABLE t (after TEXT, instead TEXT, body TEXT)",
+        "CREATE TRIGGER a BEFORE UPDATE OF after, instead ON t BEGIN SELECT 1; END",
+        "CREATE TRIGGER b UPDATE OF instead ON t BEGIN SELECT 1; END",
+        "CREATE TRIGGER c AFTER UPDATE OF body ON t BEGIN SELECT 1; END",
+      ]
+      for sql in statements {
+        _ = try await session.command(sql, binds: [])
+      }
+
+      let triggers = try await introspector.triggers(in: session)
+      let shapes = triggers.map { "\($0.name) \($0.timing.rawValue) \($0.events.map(\.rawValue))" }
+      #expect(
+        shapes == [
+          "a BEFORE [\"UPDATE\"]",
+          "b BEFORE [\"UPDATE\"]",
+          "c AFTER [\"UPDATE\"]",
+        ])
+    }
+  }
+
   private func withFixture(
     _ body: (SQLiteSession) async throws -> Void
   ) async throws {

@@ -17,6 +17,13 @@ struct AppWelcomeView: View {
 
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
+  /// Settings modal; no workspace hosts it here, so connection-scoped pages show a placeholder
+  @State private var isShowingSettings = false
+  /// Page requested by the opener (nil opens General)
+  @State private var settingsSection: SettingsPage?
+  /// Bumped on open only: a fresh token per render would reset the selected tab
+  @State private var settingsToken = UUID()
+  @State private var hostWindow = HostWindowReference()
   @State private var editingConnectionConfig = ConnectionFormContent.newFormDraft()
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
@@ -61,6 +68,7 @@ struct AppWelcomeView: View {
                     onConfigure: editConnection,
                     onRemove: { recentManager.removeConnection(id: $0.id) },
                     onNew: showConnectionForm,
+                    onImport: ConnectionImportPresenter.present,
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,
                       hasBothColumns: recentManager.hasBothLists
@@ -72,7 +80,8 @@ struct AppWelcomeView: View {
               // No recent items - show action buttons
               EmptyWelcomeActions(
                 onNewWorkspace: createNewWorkspace,
-                onConnect: showConnectionForm
+                onConnect: showConnectionForm,
+                onImport: ConnectionImportPresenter.present
               )
             }
           }
@@ -87,6 +96,21 @@ struct AppWelcomeView: View {
     .overlay {
       ToastOverlay()
     }
+    .overlay(alignment: .topTrailing) {
+      // Same row as the traffic lights
+      Button {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
+      } label: {
+        Image(systemName: "gearshape")
+          .foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .blockDoubleClickZoom()
+      .help("Settings (⌘,)")
+      .frame(height: ComponentSize.tabBarHeight)
+      .padding(.trailing, Spacing.md)
+    }
     .connectionFormModal(
       isPresented: $isShowingConnectionSidebar,
       connectionConfig: $editingConnectionConfig,
@@ -94,7 +118,13 @@ struct AppWelcomeView: View {
       submitTitle: editingConnectionId == nil ? "Connect" : "Save",
       showsRecentHistory: editingConnectionId == nil,
       onTestConnection: testConnectionForWelcome,
-      onConnect: submitConnectionForm
+      onConnect: submitConnectionForm,
+      onOpenPluginSettings: { openSettings(section: .plugins) }
+    )
+    // After the connection form, so it opens on top of it
+    .settingsModal(
+      isPresented: $isShowingSettings, viewMode: nil, section: settingsSection,
+      openToken: settingsToken
     )
     .modalOverlay(isPresented: workspaceEditPresented) {
       if let entry = editingWorkspace {
@@ -114,9 +144,30 @@ struct AppWelcomeView: View {
       TrafficLightPositioner(
         tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
     )
+    .background(HostWindowReader(reference: hostWindow))
     .onChange(of: controlActiveState) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
     }
+    // Dblore > Settings (Cmd+,) posts this; only the key Welcome window answers
+    .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
+      guard let window = hostWindow.window, let keyWindow = NSApp.keyWindow,
+        keyWindow === window || keyWindow.sheetParent === window
+      else { return }
+      if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
+        let section = SettingsPage(rawValue: raw)
+      {
+        openSettings(section: section)
+      } else {
+        settingsSection = nil
+        isShowingSettings.toggle()
+      }
+    }
+  }
+
+  private func openSettings(section: SettingsPage) {
+    settingsSection = section
+    settingsToken = UUID()
+    isShowingSettings = true
   }
 
   // MARK: - Layout Helpers
@@ -180,6 +231,8 @@ struct AppWelcomeView: View {
         try await manager.connect(config: entry.config)
       } catch {
         await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+        // The window now shows the workspace: its form offers the plugin install
+        manager.presentConnectErrorIfActionable(error, config: entry.config)
       }
     }
   }
@@ -232,8 +285,13 @@ struct AppWelcomeView: View {
   }
 
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
-    let tempManager = DatabaseConnectionManager()
+    let tempManager = Self.makeTestConnectionManager()
     return try await tempManager.testConnection(config: config)
+  }
+
+  /// Test Connection before a workspace exists. Asks through the app-wide trust sheet.
+  static func makeTestConnectionManager() -> DatabaseConnectionManager {
+    .withTrustPrompt()
   }
 
   private func connectAndCreateWorkspaceForWelcome(_ config: ConnectionConfig) async throws {
@@ -473,10 +531,14 @@ struct RecentConnectionsColumn: View {
   let onConfigure: (ConnectionHistoryEntry) -> Void
   let onRemove: (ConnectionHistoryEntry) -> Void
   let onNew: () -> Void
+  var onImport: () -> Void = {}
   let columnWidth: CGFloat
 
   /// Track which connection is currently being loaded
   @State private var loadingConnectionId: UUID?
+  /// Shows every saved connection instead of the first `collapsedCount`.
+  @State private var showsAll = false
+  private let collapsedCount = 6
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -489,6 +551,15 @@ struct RecentConnectionsColumn: View {
         Spacer()
 
         Button {
+          onImport()
+        } label: {
+          Label("Import", systemImage: "square.and.arrow.down")
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .controlSize(.small)
+        .help("Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip")
+
+        Button {
           onNew()
         } label: {
           Label("Connect", systemImage: "plus")
@@ -499,7 +570,7 @@ struct RecentConnectionsColumn: View {
 
       // Connection list
       VStack(spacing: 0) {
-        let rows = Array(connections.prefix(6))
+        let rows = showsAll ? connections : Array(connections.prefix(collapsedCount))
         ForEach(Array(rows.enumerated()), id: \.element.id) { index, connection in
           RecentConnectionRow(
             connection: connection,
@@ -523,6 +594,14 @@ struct RecentConnectionsColumn: View {
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .stroke(Color.border, lineWidth: 1)
       )
+
+      if connections.count > collapsedCount {
+        Button(showsAll ? "Show less" : "Show all (\(connections.count))") {
+          showsAll.toggle()
+        }
+        .buttonStyle(GhostButtonStyle())
+        .controlSize(.small)
+      }
     }
     .frame(width: columnWidth)
   }
@@ -764,8 +843,22 @@ private struct RecentMetaDot: View {
 struct EmptyWelcomeActions: View {
   let onNewWorkspace: () -> Void
   let onConnect: () -> Void
+  var onImport: () -> Void = {}
 
   var body: some View {
+    VStack(spacing: Spacing.lg) {
+      cards
+
+      Button {
+        onImport()
+      } label: {
+        Label("Import Connections...", systemImage: "square.and.arrow.down")
+      }
+      .buttonStyle(GhostButtonStyle())
+    }
+  }
+
+  private var cards: some View {
     HStack(spacing: Spacing.lg) {
       // New Workspace Card
       ActionCard(

@@ -121,6 +121,12 @@ nonisolated struct PendingTransactionSummary: Sendable, Equatable {
   /// then "… and N more" and the earlier-changes warning. Used by the resolve prompt
   /// before close / disconnect / quit.
   var reviewText: String {
+    let warning = earlierChangesWarning.map { ["", $0] } ?? []
+    return ([reviewStatements] + warning).joined(separator: "\n")
+  }
+
+  /// `reviewText` without the earlier-changes warning: the statement lines and "… and N more"
+  var reviewStatements: String {
     let shown = pending.prefix(Self.reviewLimit).map { statement -> String in
       let preview = String(statement.sqlPreview.prefix(80))
       let kind =
@@ -130,8 +136,7 @@ nonisolated struct PendingTransactionSummary: Sendable, Equatable {
     }
     let more =
       pending.count > Self.reviewLimit ? ["… and \(pending.count - Self.reviewLimit) more"] : []
-    let warning = earlierChangesWarning.map { ["", $0] } ?? []
-    return (shown + more + warning).joined(separator: "\n")
+    return (shown + more).joined(separator: "\n")
   }
 
   /// Commit / Rollback awaited this long: the banner offers to disconnect

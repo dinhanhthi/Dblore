@@ -47,7 +47,7 @@ extension ConnectionFormContent {
         }
       }
 
-      if connectionConfig.databaseType == .sqlite {
+      if capabilities.isFileBased {
         sqliteFileSection()
       } else {
         FormField(label: "Database") {
@@ -527,23 +527,66 @@ extension ConnectionFormContent {
         }
       }
 
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Read-only")
-            .font(.body)
-          Text("Open this file without writing to it")
-            .font(.caption)
-            .foregroundColor(.foregroundMuted)
-        }
+      readOnlyFileToggle()
+    }
+  }
 
-        Spacer()
-
-        Toggle("", isOn: $connectionConfig.readOnlyFile)
-          .labelsHidden()
-          .toggleStyle(.switch)
-          .tint(.accent)
-          .scaleEffect(0.8)
+  /// Name, the three DuckDB sources (existing file, new file, in-memory), the chosen database
+  /// and the read-only toggle. In-memory has no file, so no toggle.
+  @ViewBuilder
+  func duckDBFileFields() -> some View {
+    let isInMemory = connectionConfig.database == DuckDBSession.inMemoryPath
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      FormField(label: "Name") {
+        TextField("e.g. Analytics", text: $connectionConfig.name)
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()
       }
+
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        HStack(spacing: Spacing.sm) {
+          Button("Open File…", action: chooseDuckDBFile)
+            .buttonStyle(SecondaryButtonStyle())
+          Button("New File…", action: createDuckDBFile)
+            .buttonStyle(SecondaryButtonStyle())
+          Button("In-Memory") { storeDuckDBChoice(.inMemory) }
+            .buttonStyle(SecondaryButtonStyle())
+        }
+        if !connectionConfig.database.isEmpty {
+          Text(
+            isInMemory ? "In-memory database, discarded on disconnect" : connectionConfig.database
+          )
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .lineLimit(2)
+          .textSelection(.enabled)
+        }
+      }
+
+      if !isInMemory && !connectionConfig.database.isEmpty {
+        readOnlyFileToggle()
+      }
+    }
+  }
+
+  /// Bound to `readOnlyFile`: the file opens without writing.
+  private func readOnlyFileToggle() -> some View {
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Read-only")
+          .font(.body)
+        Text("Open this file without writing to it")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle("", isOn: $connectionConfig.readOnlyFile)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .scaleEffect(0.8)
     }
   }
 
@@ -563,22 +606,46 @@ extension ConnectionFormContent {
   }
 
   private func chooseSQLiteFile() {
-    presentSQLitePanel(SQLiteFilePicker.openPanel())
+    presentFilePanel(SQLiteFilePicker.openPanel(), onPick: storeSQLiteFile)
   }
 
   private func createSQLiteFile() {
-    presentSQLitePanel(SQLiteFilePicker.savePanel())
+    presentFilePanel(SQLiteFilePicker.savePanel(), onPick: storeSQLiteFile)
   }
 
-  private func presentSQLitePanel(_ panel: NSSavePanel) {
+  private func chooseDuckDBFile() {
+    presentFilePanel(DuckDBFilePicker.openPanel()) { path, bookmark in
+      storeDuckDBChoice(.open(path: path, bookmark: bookmark))
+    }
+  }
+
+  private func createDuckDBFile() {
+    presentFilePanel(DuckDBFilePicker.savePanel()) { path, bookmark in
+      storeDuckDBChoice(.create(path: path, bookmark: bookmark))
+    }
+  }
+
+  /// Runs `onPick` with the chosen path and its security-scoped bookmark (nil when the file
+  /// does not exist yet, as for a new file).
+  private func presentFilePanel(
+    _ panel: NSSavePanel,
+    onPick: @escaping @MainActor (_ path: String, _ bookmark: Data?) -> Void
+  ) {
     guard !SessionManager.isRunningAsTestHost else { return }
     panel.begin { response in
       guard response == .OK, let url = panel.url else { return }
       Task { @MainActor in
         let bookmark = try? SecurityScopedAccess.makeBookmark(for: url)
-        storeSQLiteFile(path: url.path, bookmark: bookmark)
+        onPick(url.path, bookmark)
       }
     }
+  }
+
+  private func storeDuckDBChoice(_ choice: DuckDBChoice) {
+    let applied = Self.applyingDuckDBChoice(
+      choice, to: connectionConfig, selected: selectedHistoryEntry)
+    connectionConfig = applied.config
+    setSelectedHistoryId(applied.selectedHistoryId)
   }
 
   private func storeSQLiteFile(path: String, bookmark: Data?) {
@@ -594,7 +661,8 @@ extension ConnectionFormContent {
 
   /// Refresh the stored path from the security-scoped bookmark, and replace a stale bookmark.
   func refreshSQLiteFileBookmark() {
-    guard connectionConfig.databaseType == .sqlite, let bookmark = connectionConfig.fileBookmark
+    guard connectionConfig.databaseType.capabilities.isFileBased,
+      let bookmark = connectionConfig.fileBookmark
     else { return }
     do {
       let resolved = try SecurityScopedAccess.resolve(bookmark)
@@ -829,6 +897,36 @@ enum SQLiteFilePicker {
     panel.nameFieldStringValue = "database.sqlite"
     panel.prompt = "Create"
     panel.message = "Create a new SQLite database file"
+    return panel
+  }
+}
+
+/// Open and save panels for a DuckDB database file (`ace.thi.dblore.duckdb`).
+enum DuckDBFilePicker {
+  static var contentTypes: [UTType] {
+    [UTType(importedAs: "ace.thi.dblore.duckdb")]
+  }
+
+  static func openPanel() -> NSOpenPanel {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = contentTypes
+    panel.allowsOtherFileTypes = true
+    panel.prompt = "Open"
+    panel.message = "Choose a DuckDB database file"
+    return panel
+  }
+
+  static func savePanel() -> NSSavePanel {
+    let panel = NSSavePanel()
+    panel.canCreateDirectories = true
+    panel.allowedContentTypes = contentTypes
+    panel.isExtensionHidden = false
+    panel.nameFieldStringValue = "database.duckdb"
+    panel.prompt = "Create"
+    panel.message = "Create a new DuckDB database file"
     return panel
   }
 }

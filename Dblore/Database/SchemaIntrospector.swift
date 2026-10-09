@@ -10,6 +10,7 @@ import Foundation
 /// `functions` and `procedures` when `supportsFunctions` is false, `users` and `roles`
 /// when `supportsRolesAndUsers` is false. Tables, views, foreign keys, and columns stay
 /// required when `supportsSchemas` is false; that engine uses its default schema name.
+/// `triggers` (empty) and `definition(of:in:)` (nil) default for every engine until overridden.
 nonisolated protocol SchemaIntrospector: Sendable {
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable]
 
@@ -18,6 +19,15 @@ nonisolated protocol SchemaIntrospector: Sendable {
   func functions(in session: any DatabaseSession) async throws -> [DatabaseFunction]
 
   func procedures(in session: any DatabaseSession) async throws -> [DatabaseProcedure]
+
+  /// Triggers of every table, names only.
+  func triggers(in session: any DatabaseSession) async throws -> [DatabaseTrigger]
+
+  /// Source of one function, procedure, or trigger. Nil when the engine cannot show it.
+  func definition(
+    of object: SchemaObjectRef, in session: any DatabaseSession
+  ) async throws
+    -> String?
 
   func users(in session: any DatabaseSession) async throws -> [DatabaseUser]
 
@@ -47,6 +57,13 @@ nonisolated protocol SchemaIntrospector: Sendable {
     -> [String]
 }
 
+/// A schema object whose source can be read with `definition(of:in:)`.
+nonisolated enum SchemaObjectRef: Sendable {
+  case function(DatabaseFunction)
+  case procedure(DatabaseProcedure)
+  case trigger(DatabaseTrigger)
+}
+
 // Empty catalogs for engines that do not have them. A concrete introspector overrides a
 // method when the matching capability is true.
 nonisolated extension SchemaIntrospector {
@@ -58,6 +75,18 @@ nonisolated extension SchemaIntrospector {
   func procedures(in session: any DatabaseSession) async throws -> [DatabaseProcedure] {
     guard session.capabilities.supportsFunctions else { return [] }
     return []
+  }
+
+  func triggers(in session: any DatabaseSession) async throws -> [DatabaseTrigger] {
+    []
+  }
+
+  func definition(
+    of object: SchemaObjectRef, in session: any DatabaseSession
+  ) async throws
+    -> String?
+  {
+    nil
   }
 
   func users(in session: any DatabaseSession) async throws -> [DatabaseUser] {

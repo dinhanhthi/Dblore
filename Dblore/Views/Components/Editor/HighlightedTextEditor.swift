@@ -62,6 +62,8 @@ struct HighlightedTextEditor: View {
   var dialect: SQLDialect = .postgresql
   /// SQL text size. The default reads Settings so a slider move refreshes this editor.
   var fontSize: CGFloat = AppSettings.shared.editorFontSize
+  /// False for read-only text (object source tabs): still selectable and copyable
+  var isEditable = true
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -78,7 +80,8 @@ struct HighlightedTextEditor: View {
       isEditorMode: isEditorMode,
       wordWrapEnabled: wordWrapEnabled,
       dialect: dialect,
-      fontSize: fontSize
+      fontSize: fontSize,
+      isEditable: isEditable
     )
     .frame(height: maxHeight ?? height)
   }
@@ -99,6 +102,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var wordWrapEnabled: Bool = true
   var dialect: SQLDialect = .postgresql
   var fontSize: CGFloat = AppSettings.shared.editorFontSize
+  var isEditable = true
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
@@ -120,6 +124,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Set editor mode
     textView.isEditorMode = isEditorMode
+    textView.isEditable = isEditable
 
     // Store reference to textView
     DispatchQueue.main.async {
@@ -211,6 +216,9 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Update editor mode
     textView.isEditorMode = isEditorMode
+    if textView.isEditable != isEditable {
+      textView.isEditable = isEditable
+    }
 
     // Update word wrap setting only when it changes (ensureLayout is a full-document layout)
     context.coordinator.configureWordWrapIfNeeded(

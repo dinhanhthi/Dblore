@@ -306,6 +306,20 @@ class AppSettings {
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
     static let editorFontSize = "app.settings.editorFontSize"
+    static let notifyLongQueries = "app.settings.notifyLongQueries"
+    static let longQueryThresholdSeconds = "app.settings.longQueryThresholdSeconds"
+    static let notifyOnlyWhenInactive = "app.settings.notifyOnlyWhenInactive"
+  }
+
+  /// Seconds a query must run before it notifies, when none is stored.
+  static let defaultLongQueryThresholdSeconds: Double = 10
+  /// Inclusive seconds range for the long-query threshold.
+  static let longQueryThresholdRange: ClosedRange<Double> = 1...3600
+
+  /// Clamp to `longQueryThresholdRange`; a non-finite value becomes the default.
+  static func clampLongQueryThreshold(_ seconds: Double) -> Double {
+    guard seconds.isFinite else { return defaultLongQueryThresholdSeconds }
+    return min(max(seconds, longQueryThresholdRange.lowerBound), longQueryThresholdRange.upperBound)
   }
 
   /// Result cell text. Matches the previous grid face (`NSFont.smallSystemFontSize`, 11pt).
@@ -650,6 +664,52 @@ class AppSettings {
     }
   }
 
+  /// Post a notification when a query runs longer than `longQueryThresholdSeconds`.
+  /// Default: false (turning it on asks for notification permission)
+  var notifyLongQueries: Bool = false {
+    didSet {
+      defaults.set(notifyLongQueries, forKey: Keys.notifyLongQueries)
+    }
+  }
+
+  /// Seconds a query must run before it notifies, clamped to 1...3600.
+  /// Default: 10
+  var longQueryThresholdSeconds: Double = AppSettings.defaultLongQueryThresholdSeconds {
+    didSet {
+      let clampedValue = Self.clampLongQueryThreshold(longQueryThresholdSeconds)
+      if clampedValue != longQueryThresholdSeconds {
+        longQueryThresholdSeconds = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(longQueryThresholdSeconds, forKey: Keys.longQueryThresholdSeconds)
+    }
+  }
+
+  /// Notify only while Dblore is not the active app.
+  /// Default: true
+  var notifyOnlyWhenInactive: Bool = true {
+    didSet {
+      defaults.set(notifyOnlyWhenInactive, forKey: Keys.notifyOnlyWhenInactive)
+    }
+  }
+
+  /// Snapshot of the long-query notification settings, taken when a run finishes.
+  var queryNotificationSettings: QueryNotificationSettings {
+    QueryNotificationSettings(
+      enabled: notifyLongQueries, thresholdSeconds: longQueryThresholdSeconds,
+      onlyWhenInactive: notifyOnlyWhenInactive)
+  }
+
+  /// Turns long-query notifications on, then asks for permission. When permission is denied
+  /// the setting goes back to off. Returns whether permission was granted.
+  @discardableResult
+  func enableLongQueryNotifications(authorize: () async -> Bool) async -> Bool {
+    notifyLongQueries = true
+    let granted = await authorize()
+    if !granted { notifyLongQueries = false }
+    return granted
+  }
+
   /// Maximum query-history rows, clamped to 1,000...500,000.
   /// Default: 50,000
   var historyMaxEntries: Int = AppSettings.defaultHistoryMaxEntries {
@@ -904,6 +964,23 @@ class AppSettings {
       historyMaxEntries = clamped
     }
 
+    if defaults.object(forKey: Keys.notifyLongQueries) != nil {
+      notifyLongQueries = defaults.bool(forKey: Keys.notifyLongQueries)
+    }
+
+    if defaults.object(forKey: Keys.longQueryThresholdSeconds) != nil {
+      let stored = defaults.double(forKey: Keys.longQueryThresholdSeconds)
+      let clamped = Self.clampLongQueryThreshold(stored)
+      if clamped != stored {
+        defaults.set(clamped, forKey: Keys.longQueryThresholdSeconds)
+      }
+      longQueryThresholdSeconds = clamped
+    }
+
+    if defaults.object(forKey: Keys.notifyOnlyWhenInactive) != nil {
+      notifyOnlyWhenInactive = defaults.bool(forKey: Keys.notifyOnlyWhenInactive)
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -958,6 +1035,9 @@ class AppSettings {
     historyRetentionDays = Self.defaultHistoryRetentionDays
     historyMaxEntries = Self.defaultHistoryMaxEntries
     showExperimentalEngines = false
+    notifyLongQueries = false
+    longQueryThresholdSeconds = Self.defaultLongQueryThresholdSeconds
+    notifyOnlyWhenInactive = true
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

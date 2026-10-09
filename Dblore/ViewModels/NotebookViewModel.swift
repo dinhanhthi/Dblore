@@ -52,6 +52,8 @@ class NotebookViewModel {
   var openParameterFormCellIds: Set<UUID> = []
   var rightSidebarContent: SidebarContent?
   var isRightSidebarVisible: Bool = false
+  /// Right sidebar width while it shows a cell value (user-resizable). Session only.
+  var cellInfoSidebarWidth: CGFloat = ComponentSize.sidebarWidth
   var executionCounter: Int = 0
   var draggingCellId: UUID? = nil  // Track which cell is currently being dragged
   var dropTargetCellId: UUID? = nil  // Track which cell is the drop target (for blue indicator)
@@ -63,6 +65,7 @@ class NotebookViewModel {
   var databaseViews: [DatabaseView] = []
   var databaseFunctions: [DatabaseFunction] = []
   var databaseProcedures: [DatabaseProcedure] = []
+  var databaseTriggers: [DatabaseTrigger] = []
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
@@ -159,6 +162,10 @@ class NotebookViewModel {
   var editorContent: String = ""  // Content for editor mode
   /// Markdown note shows the WYSIWYG preview instead of the code editor. Session only, never encoded.
   var isMarkdownPreview = false
+  /// Read state of an object source tab's definition. Session only, never encoded.
+  var objectSourceLoad: ObjectSourceLoadState = .idle
+  /// An object source tab: shown read-only and never run
+  var isReadOnlySource: Bool { objectSourceLoad != .idle }
   /// Pulls the preview's latest text into `editorContent` before a save. Set by the markdown view.
   @ObservationIgnored var flushMarkdownPreview: (@MainActor () async -> Void)?
   /// Editor tab parameter values. Session only, never encoded, and edits are not dirty.
@@ -169,6 +176,19 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+
+  // MARK: - Pinning (session only, see NotebookViewModel+Pinning.swift)
+  /// Cells showing the compare view
+  var comparingCellIds: Set<UUID> = []
+  /// Latest pinned-vs-current comparison of each comparing cell, with the result it describes
+  var cellComparisons: [UUID: SubjectComparison] = [:]
+  /// Editor tab pin. Never saved.
+  var editorPinnedResult: PinnedResult?
+  var isEditorComparing = false
+  var editorComparison: SubjectComparison?
+  /// Bumped per refresh so an older comparison does not overwrite a newer one
+  @ObservationIgnored var comparisonGenerations: [UUID: Int] = [:]
+  @ObservationIgnored var editorComparisonGeneration = 0
   /// Table/view data viewer tab state (nil for every other tab).
   /// Changing page, page size, filter, or relation drops staged undo for the previous page.
   var dataViewer: DataViewerState? {
@@ -212,6 +232,10 @@ class NotebookViewModel {
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
+  /// Whether a save writes results (and pins). A workspace injects its resolved setting.
+  @ObservationIgnored var resultsSavedWithFile: @MainActor () -> Bool = {
+    AppSettings.shared.includeResultsOnSave
+  }
   /// Opens a table in the data viewer. `WorkspaceManager` sets this.
   /// Arguments are schema, name, order columns, and an optional filter.
   @ObservationIgnored var onOpenDataViewer:
@@ -231,6 +255,19 @@ class NotebookViewModel {
   /// Asks before a cancel that discards pending changes (true = cancel); nil shows an alert.
   /// Tests inject the answer.
   @ObservationIgnored var cancelQueryPrompt: (@MainActor (QueryCancelWarning) async -> Bool)?
+
+  // MARK: - Long-query notifications (see NotebookViewModel+Execution.swift)
+  @ObservationIgnored var queryNotifier = QueryCompletionNotifier()
+  /// Tab id and display name for the notification. Nil posts nothing. Set by `WorkspaceManager`.
+  @ObservationIgnored var notificationTab: @MainActor () -> (id: UUID, name: String)? = { nil }
+  @ObservationIgnored var notificationSettings: @MainActor () -> QueryNotificationSettings = {
+    AppSettings.shared.queryNotificationSettings
+  }
+  @ObservationIgnored var isAppActive: @MainActor () -> Bool = { NSApplication.shared.isActive }
+  /// Run All batch that posts one notification when its last cell finishes
+  @ObservationIgnored var runAllNotification: RunAllNotificationBatch?
+  /// Latest posting task (posting never blocks the run)
+  @ObservationIgnored var lastCompletionNotification: Task<Void, Never>?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
 
   init(notebook: DbloreNotebook = .newDocument()) {
@@ -355,9 +392,22 @@ class NotebookViewModel {
     notebook.connectionConfig?.databaseType.dialect ?? .postgresql
   }
 
-  /// Explain Analyze needs a JSON plan. SQLite shows `EXPLAIN QUERY PLAN` as a grid instead.
+  /// Explain Analyze: PostgreSQL (JSON plan) and DuckDB (text plan). SQLite has no ANALYZE
+  /// and shows `EXPLAIN QUERY PLAN` as a grid instead.
   var canExplainAnalyze: Bool {
-    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainJSON
+    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainAnalyze
+  }
+
+  /// Nil when this tab's engine supports `feature`, else "<action> is not available for
+  /// <engine> connections". Both the connection's engine and an open data viewer's must
+  /// support it.
+  func unavailableFeatureMessage(
+    _ action: String, _ feature: KeyPath<DatabaseCapabilities, Bool>
+  ) -> String? {
+    var types = [notebook.connectionConfig?.databaseType ?? .postgresql]
+    if let viewer = dataViewer?.databaseType { types.append(viewer) }
+    guard let type = types.first(where: { !$0.capabilities[keyPath: feature] }) else { return nil }
+    return "\(action) is not available for \(type.displayName) connections"
   }
 
   /// The gate's error message if the connection's protection level blocks `query`, else nil.

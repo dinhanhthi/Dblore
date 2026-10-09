@@ -29,6 +29,8 @@ nonisolated struct SQLLexeme {
 /// (no grapheme clustering, no canonical equivalence), and any non-ASCII scalar is an
 /// identifier character. `lexeme(in:at:)` on a value follows `dialect`; the static
 /// `lexeme(in:at:)` is the PostgreSQL scanner and stays the implementation of that path.
+/// DuckDB uses the PostgreSQL scanner, except that a plain `'...'` string has no backslash
+/// escapes (only `''`), so it is `.string`, never `.backslashString`.
 nonisolated extension SQLTokenizer {
 
   /// The lexeme starting at scalar offset `i` (which must be a token boundary).
@@ -36,12 +38,23 @@ nonisolated extension SQLTokenizer {
     if dialect == .sqlite {
       return sqliteLexeme(in: s, at: i)
     }
+    if dialect == .duckdb {
+      return SQLTokenizer.lexeme(in: s, at: i, markBackslash: false)
+    }
     return SQLTokenizer.lexeme(in: s, at: i)
   }
 
   /// The lexeme starting at scalar offset `i` (which must be a token boundary).
-  /// PostgreSQL rules. SQLite goes through the instance method.
+  /// PostgreSQL rules. SQLite and DuckDB go through the instance method.
   static func lexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
+    lexeme(in: s, at: i, markBackslash: true)
+  }
+
+  /// PostgreSQL rules. `markBackslash` turns a plain string that contains `\` into
+  /// `.backslashString` (PostgreSQL); DuckDB passes false.
+  private static func lexeme(
+    in s: [Unicode.Scalar], at i: Int, markBackslash: Bool
+  ) -> SQLLexeme {
     let char = s[i]
     let next: Unicode.Scalar? = i + 1 < s.count ? s[i + 1] : nil
 
@@ -60,7 +73,8 @@ nonisolated extension SQLTokenizer {
       return SQLLexeme(kind: .dollarString, range: i..<end)
     }
     if char == "'" {
-      return quoted(s, start: i, quoteAt: i, escape: false, kind: .string)
+      return quoted(
+        s, start: i, quoteAt: i, escape: false, kind: .string, markBackslash: markBackslash)
     }
     if char == "\"" {
       return quoted(s, start: i, quoteAt: i, escape: false, kind: .quotedIdentifier)

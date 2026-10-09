@@ -7,7 +7,6 @@ import SwiftUI
 
 struct HeaderView: View {
   @Bindable var viewModel: NotebookViewModel
-  @Environment(WorkspaceManager.self) private var workspaceManager: WorkspaceManager?
   @State private var showRunAllConfirmation = false
   @State private var showClearAllOutputsConfirmation = false
   @State private var showResultVisibilityMenu = false
@@ -128,7 +127,10 @@ struct HeaderView: View {
           .menuIndicator(.hidden)
           .linkPointer()
           .help("Show/Hide Results")
-        } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        } else if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
+          // Object source tabs never run, so they get no Run button.
           // Editor mode: while a query runs, Run keeps its label and shows a spinner; it is
           // disabled for the first second, then a click stops the query (after confirmation)
           Button(action: {
@@ -182,15 +184,6 @@ struct HeaderView: View {
 
       // Trailing group - Search (common to both modes)
       // Note: Settings button removed - use menu bar (Dblore > Settings) or Cmd+,
-      // Markdown notes run no SQL, so they skip the connection badge
-      if viewModel.viewMode != .markdown, viewModel.connectionState.isConnected,
-        let config = workspaceManager?.workspace.connectionConfig
-      {
-        safetyBadge(
-          ConnectionSafetyBadge(
-            config: config,
-            commitStyle: config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)))
-      }
 
       // Refresh and Search sit close together, tighter than the header's spacing
       HStack(spacing: Spacing.xxs) {
@@ -280,8 +273,11 @@ struct HeaderView: View {
           .help("Highlight rows")
         }
 
-        // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right)
-        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        // Layout toggle: editor/result stacked (top/bottom) or side by side (left/right).
+        // Object source tabs have no result pane and no parameters.
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
           Button(action: { viewModel.isEditorSideBySide.toggle() }) {
             Image(
               systemName: viewModel.isEditorSideBySide
@@ -294,7 +290,9 @@ struct HeaderView: View {
         }
 
         // Parameters: named :name values in a .sql editor tab
-        if viewModel.viewMode == .editor && viewModel.dataViewer == nil {
+        if viewModel.viewMode == .editor && viewModel.dataViewer == nil
+          && !viewModel.isReadOnlySource
+        {
           let isParametersShown =
             viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .parameters
           let hasMissingParameters =
@@ -368,39 +366,6 @@ struct HeaderView: View {
   /// so each side loses 1pt to keep the 28pt outer edge.
   private static let notebookToolbarVerticalPadding: CGFloat =
     ButtonMetrics.regularVerticalPadding - 1
-
-  // MARK: - Safety Badge
-
-  /// Protection state and SSL state at a glance; tinted by the SSL level
-  private func safetyBadge(_ badge: ConnectionSafetyBadge) -> some View {
-    let sslColor = badge.ssl.map { color(for: $0.level) } ?? .foregroundMuted
-    return HStack(spacing: Spacing.xs) {
-      Image(systemName: badge.protectionIcon)
-        .font(.system(size: 10))
-      Text(badge.protectionLabel)
-      if let ssl = badge.ssl {
-        Image(systemName: "circle.fill")
-          .font(.system(size: 6))
-          .foregroundColor(sslColor)
-        Text(ssl.label)
-      }
-    }
-    .font(.small)
-    .foregroundColor(.foreground)
-    .padding(.horizontal, Spacing.sm)
-    .padding(.vertical, Spacing.xs)
-    .tintedCapsuleGlass(sslColor)
-    .help(badge.tooltip)
-    .accessibilityElement(children: .combine)
-  }
-
-  private func color(for level: ConnectionSafetyBadge.Level) -> Color {
-    switch level {
-    case .danger: return .destructive
-    case .warning: return .warning
-    case .ok: return .success
-    }
-  }
 
   // MARK: - Help Text
 

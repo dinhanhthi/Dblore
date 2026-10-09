@@ -14,6 +14,7 @@ enum SettingsPage: String {
   case data
   case security
   case results
+  case plugins
 
   static let userInfoKey = "settingsSection"
 }
@@ -32,6 +33,7 @@ struct SettingsModal: View {
   @Bindable var appSettings = AppSettings.shared
   @State private var isExportingLogs = false
   @State private var selectedTab: SettingsTab
+  @State private var searchQuery = ""
 
   init(
     isPresented: Binding<Bool>,
@@ -49,7 +51,7 @@ struct SettingsModal: View {
   }
 
   /// Tabs shown in the settings tab row (rawValue = label)
-  private enum SettingsTab: String, CaseIterable {
+  enum SettingsTab: String, CaseIterable {
     case general = "General"
     case appearance = "Appearance"
     case editor = "Editor"
@@ -58,6 +60,7 @@ struct SettingsModal: View {
     case save = "Save"
     case data = "Data"
     case security = "Security"
+    case plugins = "Plugins"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
 
@@ -72,6 +75,7 @@ struct SettingsModal: View {
       case .save: return "square.and.arrow.down"
       case .data: return "externaldrive"
       case .security: return "lock.shield"
+      case .plugins: return "puzzlepiece.extension"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
       }
@@ -83,6 +87,7 @@ struct SettingsModal: View {
       case .data: .data
       case .security: .security
       case .results: .results
+      case .plugins: .plugins
       case nil: .general
       }
     }
@@ -101,34 +106,54 @@ struct SettingsModal: View {
       height: 600,
       isPresented: $isPresented
     ) {
-      HStack(spacing: 0) {
-        // Navigation sidebar (fixed, does not scroll)
-        VStack(alignment: .leading, spacing: Spacing.xsm) {
-          ForEach(SettingsTab.allCases, id: \.self) { tab in
-            SettingsNavRow(
-              title: tab.rawValue,
-              icon: tab.icon,
-              isSelected: selectedTab == tab,
-              action: { selectedTab = tab }
-            )
-          }
-          Spacer(minLength: 0)
-        }
-        .padding(Spacing.sm)
-        .frame(width: 180)
-        .frame(maxHeight: .infinity)
-        .background(Color.cardHeaderBackground)
+      ScrollViewReader { proxy in
+        HStack(spacing: 0) {
+          // Navigation sidebar: search field, then tabs filtered by the search
+          VStack(spacing: 0) {
+            SidebarFilterField(text: $searchQuery, placeholder: "Search settings")
 
-        Divider()
-
-        ScrollView {
-          VStack(alignment: .leading, spacing: Spacing.lg) {
-            selectedSection
+            ScrollView {
+              VStack(alignment: .leading, spacing: Spacing.xsm) {
+                ForEach(searchMatches, id: \.tab) { match in
+                  SettingsNavRow(
+                    title: match.tab.rawValue,
+                    icon: match.tab.icon,
+                    isSelected: selectedTab == match.tab,
+                    action: { selectedTab = match.tab }
+                  )
+                  // A few matched settings per tab, so a description-only hit shows why
+                  ForEach(Array(match.entries.prefix(3).enumerated()), id: \.offset) { _, entry in
+                    SettingsSearchResultRow(title: entry.title) {
+                      show(entry, in: match.tab, proxy: proxy)
+                    }
+                  }
+                }
+                if searchMatches.isEmpty {
+                  Text("No matching settings")
+                    .font(.small)
+                    .foregroundColor(.foregroundSubtle)
+                    .padding(.horizontal, Spacing.sm)
+                }
+              }
+              .padding(Spacing.sm)
+            }
+            .scrollIndicators(.hidden)
           }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(Spacing.xl)
+          .frame(width: 180)
+          .frame(maxHeight: .infinity)
+          .background(Color.cardHeaderBackground)
+
+          Divider()
+
+          ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.lg) {
+              selectedSection
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.xl)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .fileExporter(
@@ -142,6 +167,25 @@ struct SettingsModal: View {
     .onChange(of: openToken) { _, _ in
       guard let section else { return }
       selectedTab = SettingsTab.tab(for: section)
+    }
+    .onChange(of: searchQuery) { _, _ in
+      // Keep the page in step with the filtered list
+      let tabs = searchMatches.map(\.tab)
+      if let first = tabs.first, !tabs.contains(selectedTab) {
+        selectedTab = first
+      }
+    }
+  }
+
+  private var searchMatches: [SettingsSearchMatch] {
+    SettingsTab.search(searchQuery)
+  }
+
+  /// Opens the entry's tab, then scrolls its card into view once the page has rendered.
+  private func show(_ entry: SettingsSearchEntry, in tab: SettingsTab, proxy: ScrollViewProxy) {
+    selectedTab = tab
+    DispatchQueue.main.async {
+      withAnimation { proxy.scrollTo(entry.card, anchor: .top) }
     }
   }
 
@@ -178,6 +222,8 @@ struct SettingsModal: View {
           .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
       }
+    case .plugins:
+      PluginsSettingsSection()
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
@@ -230,6 +276,36 @@ private struct SettingsNavRow: View {
     }
     .buttonStyle(.plain)
     .linkPointer()
+    .onHover { isHovered = $0 }
+  }
+}
+
+// MARK: - Settings Search Result Row
+
+/// A matched setting under its tab row, indented to the tab label. Tapping opens and scrolls to it.
+private struct SettingsSearchResultRow: View {
+  let title: String
+  let action: () -> Void
+
+  @State private var isHovered = false
+
+  var body: some View {
+    Button(action: action) {
+      Text(title)
+        .font(.small)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundColor(isHovered ? .foreground : .foregroundSubtle)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Icon column (16) + gap, so the text lines up with the tab label
+        .padding(.leading, Spacing.sm + 16 + Spacing.sm)
+        .padding(.trailing, Spacing.sm)
+        .frame(height: 22)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .help(title)
     .onHover { isHovered = $0 }
   }
 }
@@ -467,95 +543,112 @@ struct SettingsModalKeyboardShortcutsSection: View {
     }
   }
 
+  /// One card of shortcuts: card title and its (action, shortcut) rows
+  typealias ShortcutGroup = (title: String, rows: [(action: String, shortcut: String)])
+
+  /// Cards on the App sub-tab. The settings search indexes these too.
+  static let appGroups: [ShortcutGroup] = [
+    (
+      "Files",
+      [
+        ("New Tab (Notebook or SQL File, see General)", "Cmd+T"),
+        ("New SQL File", "Cmd+Shift+J"),
+        ("Open", "Cmd+O"),
+        ("Save", "Cmd+S"),
+        ("Save As", "Cmd+Shift+S"),
+      ]
+    ),
+    (
+      "Workspace",
+      [
+        ("New Workspace", "Cmd+Ctrl+N"),
+        ("Open Workspace", "Cmd+Option+O"),
+        ("Save Workspace", "Cmd+Option+S"),
+        ("Save Workspace As", "Cmd+Option+Shift+S"),
+        ("Close Workspace", "Cmd+Option+W"),
+      ]
+    ),
+    (
+      "Tabs",
+      [
+        ("Close Tab", "Cmd+W"),
+        ("Reopen Closed Tab", "Cmd+Shift+T"),
+        ("Next Tab", "Cmd+Shift+]"),
+        ("Previous Tab", "Cmd+Shift+["),
+        ("Go to Tab 1-9", "Cmd+1 ... Cmd+9"),
+        ("New Window Tab", "Cmd+Shift+N"),
+        ("Next / Previous Window Tab", "Ctrl+Tab / Ctrl+Shift+Tab"),
+      ]
+    ),
+    (
+      "View",
+      [
+        ("Settings", "Cmd+,"),
+        ("Toggle Left Sidebar", "Cmd+B"),
+        ("Toggle Right Sidebar", "Cmd+Shift+B"),
+        ("Toggle AI Assistant", "Cmd+L"),
+      ]
+    ),
+    (
+      "AI",
+      [
+        ("Send Message", "Return"),
+        ("New Line in Message", "Shift+Return"),
+      ]
+    ),
+  ]
+
+  /// Cards on the Editor sub-tab. The settings search indexes these too.
+  static let editorGroups: [ShortcutGroup] = [
+    (
+      "Editor",
+      [
+        ("Run Query", "Cmd+R / Cmd+Enter"),
+        ("Toggle Comment", "Cmd+/"),
+        ("Toggle Word Wrap", "Option+Z"),
+        ("Find", "Cmd+F"),
+        ("Find Next", "Cmd+G"),
+        ("Find Previous", "Cmd+Shift+G"),
+        ("Close Search", "Esc"),
+        ("Accept Autocomplete", "Tab / Enter"),
+        ("Dismiss Autocomplete", "Esc"),
+      ]
+    ),
+    (
+      "Notebook Cells",
+      [
+        ("Add New Cell", "Cmd+Option+N"),
+        ("Run Cell", "Ctrl+Enter"),
+        ("Run Cell and Select Next", "Shift+Enter"),
+        ("Run Cell and Insert Below", "Option+Enter"),
+        ("Run All Cells", "Cmd+Shift+Enter"),
+        ("Delete Cell", "Cmd+Delete"),
+        ("Duplicate Cell", "Cmd+D"),
+        ("Undo / Redo Cell Change", "Cmd+Z / Cmd+Shift+Z outside the editor"),
+        ("Previous / Next Cell", "Up / Down at first / last line"),
+      ]
+    ),
+    (
+      "View",
+      [
+        ("Settings", "Cmd+,")
+      ]
+    ),
+  ]
+
   private var appShortcuts: some View {
-    VStack(alignment: .leading, spacing: Spacing.lg) {
-      shortcutCard(
-        "Files",
-        [
-          ("New Tab (Notebook or SQL File, see General)", "Cmd+T"),
-          ("New SQL File", "Cmd+Shift+J"),
-          ("Open", "Cmd+O"),
-          ("Save", "Cmd+S"),
-          ("Save As", "Cmd+Shift+S"),
-        ]
-      )
-      shortcutCard(
-        "Workspace",
-        [
-          ("New Workspace", "Cmd+Ctrl+N"),
-          ("Open Workspace", "Cmd+Option+O"),
-          ("Save Workspace", "Cmd+Option+S"),
-          ("Save Workspace As", "Cmd+Option+Shift+S"),
-          ("Close Workspace", "Cmd+Option+W"),
-        ]
-      )
-      shortcutCard(
-        "Tabs",
-        [
-          ("Close Tab", "Cmd+W"),
-          ("Reopen Closed Tab", "Cmd+Shift+T"),
-          ("Next Tab", "Cmd+Shift+]"),
-          ("Previous Tab", "Cmd+Shift+["),
-          ("Go to Tab 1-9", "Cmd+1 ... Cmd+9"),
-          ("New Window Tab", "Cmd+Shift+N"),
-          ("Next / Previous Window Tab", "Ctrl+Tab / Ctrl+Shift+Tab"),
-        ]
-      )
-      shortcutCard(
-        "View",
-        [
-          ("Settings", "Cmd+,"),
-          ("Toggle Left Sidebar", "Cmd+B"),
-          ("Toggle Right Sidebar", "Cmd+Shift+B"),
-          ("Toggle AI Assistant", "Cmd+L"),
-        ]
-      )
-      shortcutCard(
-        "AI",
-        [
-          ("Send Message", "Return"),
-          ("New Line in Message", "Shift+Return"),
-        ]
-      )
-    }
+    shortcutCards(Self.appGroups)
   }
 
   private var editorShortcuts: some View {
+    shortcutCards(Self.editorGroups)
+  }
+
+  private func shortcutCards(_ groups: [ShortcutGroup]) -> some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      shortcutCard(
-        "Editor",
-        [
-          ("Run Query", "Cmd+R / Cmd+Enter"),
-          ("Toggle Comment", "Cmd+/"),
-          ("Toggle Word Wrap", "Option+Z"),
-          ("Find", "Cmd+F"),
-          ("Find Next", "Cmd+G"),
-          ("Find Previous", "Cmd+Shift+G"),
-          ("Close Search", "Esc"),
-          ("Accept Autocomplete", "Tab / Enter"),
-          ("Dismiss Autocomplete", "Esc"),
-        ]
-      )
-      shortcutCard(
-        "Notebook Cells",
-        [
-          ("Add New Cell", "Cmd+Option+N"),
-          ("Run Cell", "Ctrl+Enter"),
-          ("Run Cell and Select Next", "Shift+Enter"),
-          ("Run Cell and Insert Below", "Option+Enter"),
-          ("Run All Cells", "Cmd+Shift+Enter"),
-          ("Delete Cell", "Cmd+Delete"),
-          ("Duplicate Cell", "Cmd+D"),
-          ("Undo / Redo Cell Change", "Cmd+Z / Cmd+Shift+Z outside the editor"),
-          ("Previous / Next Cell", "Up / Down at first / last line"),
-        ]
-      )
-      shortcutCard(
-        "View",
-        [
-          ("Settings", "Cmd+,")
-        ]
-      )
+      ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+        shortcutCard(group.title, group.rows)
+      }
     }
   }
 }

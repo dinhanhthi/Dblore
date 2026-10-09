@@ -130,8 +130,10 @@ nonisolated enum LocalDataJSON {
     return count
   }
 
+  /// Secret-looking keys dropped from exported connection JSON. Matches keys, never values.
   static func isPasswordKey(_ key: String) -> Bool {
-    key.range(of: "password", options: .caseInsensitive) != nil
+    let lower = key.lowercased()
+    return ["password", "passphrase", "privatekey", "secret"].contains { lower.contains($0) }
   }
 
   static func isCredentialKey(_ key: String) -> Bool {

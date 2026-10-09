@@ -1,6 +1,26 @@
 # Changelog
 
-All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved` and `### Fixed` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
+All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
+
+## Unreleased
+
+### Added
+
+- **DuckDB, as an optional plugin.** Install DuckDB from Settings > Plugins; it downloads a signed, notarized `libduckdb.dylib` and checks its SHA-256 before every load, and Remove deletes it. Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema tree, and query Parquet or CSV files with the "Query Parquet/CSV File..." palette action. Safe Mode guards DuckDB writes such as `INSTALL`, `ATTACH`, `COPY ... TO` and `CREATE TABLE`; row edits, data import and foreign-key lookup are not available for DuckDB. A saved DuckDB connection without the plugin offers an Install button. [#0b537ef1](https://github.com/dinhanhthi/Dblore/commit/0b537ef1) [#34364049](https://github.com/dinhanhthi/Dblore/commit/34364049) [#ad27f360](https://github.com/dinhanhthi/Dblore/commit/ad27f360) [#5b95427d](https://github.com/dinhanhthi/Dblore/commit/5b95427d)
+- **PostgreSQL over SSH.** Connect through an SSH tunnel with a password or an ed25519/ECDSA private key, including passphrase-protected keys (the passphrase is never stored). The first connection asks you to trust the server's host-key fingerprint, and a changed host key blocks the connection. RSA keys are not supported. Saved SSH passwords, keys and trusted host keys can be deleted in Settings > Data. [#2ebd7fb5](https://github.com/dinhanhthi/Dblore/commit/2ebd7fb5) [#bcc8755a](https://github.com/dinhanhthi/Dblore/commit/bcc8755a) [#581bb704](https://github.com/dinhanhthi/Dblore/commit/581bb704)
+- **Import connections** from `.pgpass`, a PostgreSQL URI, DBeaver (including saved passwords), TablePlus and DataGrip. Preview and pick the connections first; duplicates and connections without a password are flagged. Available from the welcome screen, the saved connections list and the File menu. [#dbce5881](https://github.com/dinhanhthi/Dblore/commit/dbce5881) [#6cd3f1b5](https://github.com/dinhanhthi/Dblore/commit/6cd3f1b5)
+- **Pin and compare results.** Pin a cell or SQL editor result, re-run, and compare both side by side with added, removed and changed rows highlighted; two `EXPLAIN` JSON plans compare node by node. A notebook cell's pin is saved in the file when results are saved. [#fa317b83](https://github.com/dinhanhthi/Dblore/commit/fa317b83)
+- **Long-query notifications.** Get a macOS notification when a query runs longer than a threshold (default 10 seconds, by default only while Dblore is in the background). It shows the tab, duration and row count, never the SQL or data; clicking it opens the tab. Off by default, in General settings. [#95adb329](https://github.com/dinhanhthi/Dblore/commit/95adb329)
+- **Routine and trigger source.** The schema sidebar lists triggers, and View Source opens a function, procedure or trigger definition in a read-only tab, with Copy and "Open as editable copy". [#95f19c7a](https://github.com/dinhanhthi/Dblore/commit/95f19c7a) [#9d0963bd](https://github.com/dinhanhthi/Dblore/commit/9d0963bd)
+
+### Improved
+
+- **Connection history** keeps up to 50 connections (was 6), and entries written by a newer Dblore version are kept instead of emptying the history. [#53f86a0c](https://github.com/dinhanhthi/Dblore/commit/53f86a0c) [#dbce5881](https://github.com/dinhanhthi/Dblore/commit/dbce5881)
+
+### Upgrade notes
+
+- **Client certificates** saved before v0.5.0 and never opened since must be re-imported: the fallback that read their old Keychain entry is removed. The orphaned entries (service `ace.thi.dblore.client-certificate`) can be deleted in Keychain Access. [#53f86a0c](https://github.com/dinhanhthi/Dblore/commit/53f86a0c)
+- **Downgrading to v0.5.0:** v0.5.0 cannot read a saved DuckDB connection, so its whole connection history shows as empty, and re-saving a connection there drops its SSH tunnel settings. [#53f86a0c](https://github.com/dinhanhthi/Dblore/commit/53f86a0c) [#34364049](https://github.com/dinhanhthi/Dblore/commit/34364049)
 
 ## v0.5.0 (2026-10-06)
 

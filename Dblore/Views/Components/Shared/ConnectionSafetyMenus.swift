@@ -106,7 +106,8 @@ struct ConnectionSafetyMenus: View {
     ) {
       menuLabel(
         protection.displayName, icon: protection.iconName,
-        iconColor: SafetyOptionStyle.color(for: protection))
+        iconColor: SafetyOptionStyle.color(for: protection),
+        tone: SafetyOptionStyle.footerTone(for: protection))
     }
     .help(protection.description)
   }
@@ -132,7 +133,8 @@ struct ConnectionSafetyMenus: View {
       menuLabel(
         resolvedStyle.title,
         icon: SafetyOptionStyle.iconName(for: resolvedStyle),
-        iconColor: SafetyOptionStyle.color(for: resolvedStyle))
+        iconColor: SafetyOptionStyle.color(for: resolvedStyle),
+        tone: SafetyOptionStyle.footerTone(for: resolvedStyle))
     }
     .help(resolvedStyle.summary)
   }
@@ -143,21 +145,24 @@ struct ConnectionSafetyMenus: View {
     }
   }
 
-  private func menuLabel(_ title: String, icon: String, iconColor: Color) -> some View {
+  /// The footer pill takes its icon tint from `tone`, the settings row from `iconColor`.
+  private func menuLabel(
+    _ title: String, icon: String, iconColor: Color, tone: SafetyOptionStyle.FooterTone
+  ) -> some View {
     HStack(spacing: prominent ? Spacing.xs : Spacing.xxs) {
       Image(systemName: icon)
         .font(prominent ? .caption : .system(size: 9, weight: .semibold))
         .symbolRenderingMode(.monochrome)
-        .foregroundStyle(iconColor)
+        .foregroundStyle(prominent ? iconColor : tone.color)
       Text(title)
         .font(prominent ? .body : .smallest)
-        .foregroundStyle(prominent ? iconColor : Color.foregroundMuted)
+        .foregroundStyle(prominent ? iconColor : tone.textColor)
         .lineLimit(1)
       Image(systemName: "chevron.up.chevron.down")
         .font(prominent ? .caption : .system(size: 7, weight: .semibold))
-        .foregroundStyle(Color.foregroundMuted)
+        .foregroundStyle(prominent ? Color.foregroundMuted : Color.foregroundSubtle)
     }
-    .modifier(SafetyMenuSurface(prominent: prominent))
+    .modifier(SafetyMenuSurface(prominent: prominent, tone: tone))
   }
 
   private func selectProtection(_ level: ConnectionProtectionLevel) {
@@ -259,6 +264,42 @@ struct SafetyOptionRow: Identifiable {
 }
 
 enum SafetyOptionStyle {
+  /// Footer pill tint. None and Immediate stay neutral so a quiet setup reads quiet.
+  enum FooterTone: Equatable {
+    case neutral, accent, warning, success
+
+    var color: Color {
+      switch self {
+      case .neutral: return .foregroundMuted
+      case .accent: return .syntaxFunction
+      case .warning: return .warning
+      case .success: return .success
+      }
+    }
+
+    /// Label text stays a neutral gray; only the icon and the capsule carry the tint
+    var textColor: Color {
+      self == .neutral ? .foregroundMuted : .gridForeground
+    }
+  }
+
+  static func footerTone(for level: ConnectionProtectionLevel) -> FooterTone {
+    switch level {
+    case .none: return .neutral
+    case .schemaOnly: return .accent
+    case .readOnly: return .warning
+    }
+  }
+
+  static func footerTone(for style: CommitStyle) -> FooterTone {
+    switch style {
+    case .immediate: return .neutral
+    case .confirm: return .warning
+    case .review: return .accent
+    case .password: return .success
+    }
+  }
+
   static func color(for level: ConnectionProtectionLevel) -> Color {
     switch level {
     case .none: return .foregroundMuted
@@ -442,6 +483,10 @@ private struct SafetyOptionListRow: View {
 
 private struct SafetyMenuSurface: ViewModifier {
   let prominent: Bool
+  let tone: SafetyOptionStyle.FooterTone
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.pixelLength) private var pixelLength
+  @State private var hovering = false
 
   @ViewBuilder
   func body(content: Content) -> some View {
@@ -454,7 +499,22 @@ private struct SafetyMenuSurface: ViewModifier {
         .padding(.vertical, 2)
         .frame(height: 18)
         .fixedSize(horizontal: true, vertical: true)
-        .tintedCapsuleGlass(.foregroundMuted)
+        .background(tone.color.opacity(fillOpacity), in: Capsule())
+        .overlay(
+          Capsule().strokeBorder(tone.color.opacity(strokeOpacity), lineWidth: pixelLength)
+        )
+        .contentShape(Capsule())
+        .onHover { hovering = $0 }
     }
+  }
+
+  /// A faint wash, a little stronger in dark mode where the tint reads darker
+  private var fillOpacity: Double {
+    let base = colorScheme == .dark ? 0.14 : 0.08
+    return hovering ? base + 0.06 : base
+  }
+
+  private var strokeOpacity: Double {
+    colorScheme == .dark ? 0.28 : 0.22
   }
 }

@@ -35,7 +35,9 @@ extension AppLogger {
         try fileHandle.write(contentsOf: data)
         try fileHandle.close()
       } else {
-        // Create new file
+        // Create new file (and the Logs directory on first use)
+        try FileManager.default.createDirectory(
+          at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: fileURL)
       }
     } catch {

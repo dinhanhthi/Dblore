@@ -86,7 +86,22 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
   func formatError(_ error: Error) -> String
 }
 
-/// Builds a session that is not open yet. `open()` connects.
+/// Builds a session that is not open yet. `open()` connects. Throws when the engine cannot
+/// run in this build (`DatabaseError.engineUnavailable`). Async so a factory can read state
+/// on the main actor (the DuckDB plugin's install state).
 nonisolated protocol DatabaseSessionFactory: Sendable {
-  func makeSession(config: ConnectionConfig) -> any DatabaseSession
+  func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession
+  /// `extraAllowedPaths`: the only files a DuckDB session's SQL may read (user-picked files).
+  /// Other engines ignore them.
+  func makeSession(
+    config: ConnectionConfig, extraAllowedPaths: [String]
+  ) async throws -> any DatabaseSession
+}
+
+extension DatabaseSessionFactory {
+  func makeSession(
+    config: ConnectionConfig, extraAllowedPaths: [String]
+  ) async throws -> any DatabaseSession {
+    try await makeSession(config: config)
+  }
 }

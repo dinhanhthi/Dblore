@@ -44,6 +44,8 @@ struct SettingsGroupCard<Content: View, Accessory: View>: View {
       RoundedRectangle(cornerRadius: CornerRadius.lg)
         .stroke(Color.border, lineWidth: 1)
     )
+    // Scroll target for the settings search
+    .id(title)
   }
 }
 

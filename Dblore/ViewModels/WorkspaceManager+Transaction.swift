@@ -313,10 +313,15 @@ extension WorkspaceManager {
   /// Close the connection and clear everything that came from it (no resolve: the caller did it,
   /// or chose to discard the pending changes by disconnecting)
   func performDisconnect(preserveCertificateForReconnect: Bool = false) async {
-    if !preserveCertificateForReconnect { activeUnrememberedCertificate = nil }
+    if !preserveCertificateForReconnect {
+      activeUnrememberedCertificate = nil
+      activeUnrememberedSSHCredential = nil
+    }
     autoConnectTask?.cancel()
     cancelSchemaLoad()
     await connectionManager.disconnect()
+    // After the session closed: the picked files belong to that connection
+    releaseDuckDBFileAccess()
     await refreshPendingTransaction()
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
@@ -327,6 +332,7 @@ extension WorkspaceManager {
     databaseViews = []
     databaseFunctions = []
     databaseProcedures = []
+    databaseTriggers = []
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []
@@ -378,8 +384,10 @@ extension WorkspaceManager {
       : "Uncommitted changes in \"\(workspace.name)\""
     let decision = WorkspaceTransactionRules.promptDecision(
       summary: summary, options: resolutions, action: action)
+    let warning = summary.earlierChangesWarning.map { "\n\n\($0)" } ?? ""
+    alert.informativeText = "\(summary.headline). \(decision)\(warning)"
     // What Commit would make permanent (or Rollback / Discard throws away)
-    alert.informativeText = "\(summary.headline). \(decision)\n\n\(summary.reviewText)"
+    alert.accessoryView = Self.statementsBox(summary.reviewStatements)
     for resolution in resolutions {
       let button = alert.addButton(withTitle: WorkspaceTransactionRules.title(for: resolution))
       if resolution == .cancel {
@@ -397,6 +405,28 @@ extension WorkspaceManager {
     }
     let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     return resolutions.indices.contains(index) ? resolutions[index] : .cancel
+  }
+
+  /// The pending statements in small monospaced text on a darker rounded box
+  private static func statementsBox(_ text: String) -> NSView {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+    label.textColor = .secondaryLabelColor
+    label.isSelectable = true
+    label.preferredMaxLayoutWidth = 228
+    label.frame.size = label.fittingSize
+    let box = NSBox()
+    box.boxType = .custom
+    box.borderWidth = 0
+    box.cornerRadius = 6
+    box.fillColor = NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        ? NSColor.black.withAlphaComponent(0.25) : NSColor.black.withAlphaComponent(0.06)
+    }
+    box.contentViewMargins = NSSize(width: 8, height: 6)
+    box.contentView = label
+    box.setFrameFromContentFrame(NSRect(origin: .zero, size: label.frame.size))
+    return box
   }
 
   /// Reload every data-viewer page. A page read inside the transaction still shows those rows.

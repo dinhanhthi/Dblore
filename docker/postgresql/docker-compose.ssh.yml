@@ -1,0 +1,114 @@
+name: dblore-ssh
+
+# PostgreSQL reachable only through an SSH tunnel. Generate fixtures first:
+#   docker/postgresql/scripts/gen-ssh-fixtures.sh
+# sshd (ed25519 host key): 127.0.0.1:${SSH_TUNNEL_PORT:-2222}
+# sshd (RSA-only host key): 127.0.0.1:${SSH_TUNNEL_RSA_PORT:-2223}
+# User dblore: password dblore-ssh-123 or the ed25519/ecdsa/encrypted ed25519 keys.
+# Tunnel target: postgres:5432 (db dblore_ssh, user dblore_ssh, password dblore123),
+# TLS optional with the self-signed data/ssh/postgres/server.crt (CN/SAN postgres).
+
+x-sshd: &sshd
+  build:
+    context: .
+    dockerfile_inline: |
+      FROM alpine:3.20
+      RUN apk add --no-cache openssh-server \
+        && adduser -D -s /bin/sh dblore \
+        && echo 'dblore:dblore-ssh-123' | chpasswd
+  image: dblore-sshd:alpine3.20
+  volumes:
+    - ./data/ssh:/fixtures:ro
+  entrypoint: ["/bin/sh", "-ec"]
+  command:
+    - |
+      cp "/fixtures/$${HOST_KEY}" /etc/ssh/host_key
+      chmod 600 /etc/ssh/host_key
+      mkdir -p /home/dblore/.ssh
+      cp /fixtures/authorized_keys /home/dblore/.ssh/authorized_keys
+      chown -R dblore:dblore /home/dblore/.ssh
+      chmod 700 /home/dblore/.ssh
+      chmod 600 /home/dblore/.ssh/authorized_keys
+      cat > /etc/ssh/sshd_config <<'CONF'
+      Port 22
+      HostKey /etc/ssh/host_key
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      PasswordAuthentication yes
+      KbdInteractiveAuthentication no
+      AuthorizedKeysFile .ssh/authorized_keys
+      AllowTcpForwarding yes
+      GatewayPorts no
+      X11Forwarding no
+      AllowUsers dblore
+      CONF
+      exec /usr/sbin/sshd -D -e
+  healthcheck:
+    test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+    interval: 2s
+    timeout: 2s
+    retries: 15
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - ssh_internal
+    - ssh_public
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dblore-postgres-ssh
+    hostname: postgres
+    environment:
+      POSTGRES_DB: dblore_ssh
+      POSTGRES_USER: dblore_ssh
+      POSTGRES_PASSWORD: dblore123
+    volumes:
+      - postgres_ssh_data:/var/lib/postgresql/data
+      - ./data/ssh/postgres:/tls:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /tmp/dblore-ssh-tls
+        cp /tls/server.crt /tls/server.key /tmp/dblore-ssh-tls/
+        chown -R postgres:postgres /tmp/dblore-ssh-tls
+        chmod 600 /tmp/dblore-ssh-tls/server.key
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/tmp/dblore-ssh-tls/server.crt \
+          -c ssl_key_file=/tmp/dblore-ssh-tls/server.key
+    networks:
+      ssh_internal:
+        aliases:
+          - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dblore_ssh -d dblore_ssh"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  sshd:
+    <<: *sshd
+    container_name: dblore-sshd
+    environment:
+      HOST_KEY: ssh_host_ed25519_key
+    ports:
+      - "127.0.0.1:${SSH_TUNNEL_PORT:-2222}:22"
+
+  sshd-rsa:
+    <<: *sshd
+    container_name: dblore-sshd-rsa
+    environment:
+      HOST_KEY: ssh_host_rsa_key
+    ports:
+      - "127.0.0.1:${SSH_TUNNEL_RSA_PORT:-2223}:22"
+
+networks:
+  ssh_internal:
+    internal: true
+  ssh_public:
+
+volumes:
+  postgres_ssh_data:
+    name: dblore-postgres-ssh-data

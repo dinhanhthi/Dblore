@@ -14,6 +14,7 @@ enum SidebarFilterMetrics {
 
 struct SidebarFilterField<Trailing: View>: View {
   @Binding var text: String
+  var placeholder: String = "filter"
   /// Fixed capsule height for the field and its trailing control. Nil keeps the field's padding.
   var controlHeight: CGFloat? = SidebarFilterMetrics.controlHeight
   var topPadding: CGFloat = Spacing.sm
@@ -23,6 +24,7 @@ struct SidebarFilterField<Trailing: View>: View {
 
   init(
     text: Binding<String>,
+    placeholder: String = "filter",
     controlHeight: CGFloat? = SidebarFilterMetrics.controlHeight,
     topPadding: CGFloat = Spacing.sm,
     bottomPadding: CGFloat = Spacing.sm,
@@ -30,6 +32,7 @@ struct SidebarFilterField<Trailing: View>: View {
     @ViewBuilder trailing: () -> Trailing
   ) {
     self._text = text
+    self.placeholder = placeholder
     self.controlHeight = controlHeight
     self.topPadding = topPadding
     self.bottomPadding = bottomPadding
@@ -65,7 +68,7 @@ struct SidebarFilterField<Trailing: View>: View {
         .font(.system(size: 11))
         .foregroundColor(.foregroundSubtle)
 
-      TextField("filter", text: $text)
+      TextField(placeholder, text: $text)
         .textFieldStyle(.plain)
         .font(.small)
         .autocorrectionDisabled()
@@ -92,7 +95,7 @@ struct SidebarFilterField<Trailing: View>: View {
 }
 
 extension SidebarFilterField where Trailing == EmptyView {
-  init(text: Binding<String>) {
-    self.init(text: text) { EmptyView() }
+  init(text: Binding<String>, placeholder: String = "filter") {
+    self.init(text: text, placeholder: placeholder) { EmptyView() }
   }
 }

@@ -1,6 +1,7 @@
 // DatabaseSessionContractTests.swift
 // The connection actor talks to `any DatabaseSession`. These tests use a fake session and no
-// server: the gate and Protected-mode confirmation stay on the actor, ahead of any session call.
+// server (except the gated DuckDB test and a temp SQLite file for interrupt cancel): the gate
+// and Protected-mode confirmation stay on the actor, ahead of any session call.
 
 import Foundation
 import Testing
@@ -210,5 +211,109 @@ struct DatabaseSessionContractTests {
     try await connection.rollbackAppTransaction()
     #expect(factory.statements.contains("ROLLBACK"))
     #expect(factory.statements.filter { $0 == "UPDATE t SET a = 1" }.count == 1)
+  }
+
+  @Test(
+    "DuckDB behind the actor: a capped read keeps the session and cancel interrupts",
+    .requiresDuckDBPlugin)
+  func duckDBSessionThroughActor() async throws {
+    let connection = DatabaseConnectionManager(sessionFactory: DuckDBContractFactory())
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: .duckdb, database: DuckDBSession.inMemoryPath, sslMode: .disable,
+        safeMode: .silent, protectedMode: false, statementTimeoutSeconds: 30))
+    _ = try await connection.execute(
+      userSQL: "CREATE TEMP TABLE kept AS SELECT 1 AS id", policy: open)
+    let epoch = await connection.connectionEpoch
+
+    let capped = try await connection.execute(
+      userSQL: "SELECT * FROM range(100000)", policy: open, maxRows: 10)
+    #expect(capped.rows.count == 10)
+    #expect(capped.truncated)
+    #expect(capped.sessionReset == false)
+    #expect(await connection.connectionEpoch == epoch)
+    let kept = try await connection.execute(userSQL: "SELECT id FROM kept", policy: open)
+    #expect(kept.rows == [[.int(1)]])
+
+    let running = Task {
+      try await connection.execute(
+        userSQL:
+          "SELECT count(*) FROM range(100000000000) t(a) WHERE md5(a::VARCHAR) LIKE 'xyz%'",
+        policy: open)
+    }
+    var status = await connection.runningStatementStatus()
+    while !status.inFlight {
+      try await Task.sleep(for: .milliseconds(10))
+      status = await connection.runningStatementStatus()
+    }
+    try await Task.sleep(for: .milliseconds(300))
+    let outcome = await connection.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    let error = await #expect(throws: DatabaseError.self) { try await running.value }
+    guard case .queryCancelled = error else {
+      Issue.record("Expected queryCancelled, got \(String(describing: error))")
+      return
+    }
+    #expect(await connection.connectionEpoch == epoch)
+    // The interrupted session stays open with its temp table, and the next script runs.
+    let after = try await connection.execute(userSQL: "SELECT id FROM kept", policy: open)
+    #expect(after.rows == [[.int(1)]])
+    await connection.disconnect()
+  }
+
+  @Test(
+    "An interrupt cancel stops only the running script: the next one on the connection runs",
+    .timeLimit(.minutes(1)))
+  func interruptCancelDoesNotPoisonTheConnection() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-interrupt-cancel-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let connection = DatabaseConnectionManager()
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: .sqlite, host: "", port: 0, database: url.path, username: "",
+        rememberConnection: false, safeMode: .silent, protectedMode: false,
+        statementTimeoutSeconds: 10))
+    let epoch = await connection.connectionEpoch
+
+    let running = Task {
+      try await connection.execute(
+        userSQL: """
+          WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 1000000000)
+          SELECT max(x) FROM c
+          """,
+        policy: open)
+    }
+    var status = await connection.runningStatementStatus()
+    while !status.inFlight {
+      try await Task.sleep(for: .milliseconds(10))
+      status = await connection.runningStatementStatus()
+    }
+    // Repeat: an interrupt that lands before SQLite starts the statement does nothing.
+    while await connection.runningStatementStatus().inFlight {
+      _ = await connection.cancelRunningStatement(
+        expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+        expectedEpoch: status.epoch)
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    let error = await #expect(throws: DatabaseError.self) { try await running.value }
+    guard case .queryCancelled = error else {
+      Issue.record("Expected queryCancelled, got \(String(describing: error))")
+      return
+    }
+    #expect(await connection.connectionEpoch == epoch)
+
+    let next = try await connection.execute(userSQL: "SELECT 1", policy: open)
+    #expect(next.rows == [[.int(1)]])
+    await connection.disconnect()
+  }
+}
+
+/// Real DuckDB sessions on the dev plugin, for the actor contract.
+private struct DuckDBContractFactory: DatabaseSessionFactory {
+  func makeSession(config: ConnectionConfig) throws -> any DatabaseSession {
+    DuckDBSession(config: config) { try DuckDBTestPlugin.library() }
   }
 }

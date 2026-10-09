@@ -32,6 +32,28 @@ nonisolated enum MTLSIntegrationGate {
   }
 }
 
+nonisolated enum SSHIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["SSH_TESTS"] ?? env["TEST_RUNNER_SSH_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum DuckDBPluginGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["DUCKDB_PLUGIN_TESTS"] ?? env["TEST_RUNNER_DUCKDB_PLUGIN_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 extension Trait where Self == ConditionTrait {
   /// Skip a suite when integration tests are turned off in the environment.
   static var requiresPostgres: Self {
@@ -46,6 +68,22 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: MTLSIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_MTLS_TESTS=1 and start docker/postgresql/docker-compose.mtls.yml to run"
+    )
+  }
+
+  /// SSH fixtures and the SSH + PostgreSQL containers are opt-in.
+  static var requiresSSHPostgres: Self {
+    .enabled(
+      if: SSHIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_SSH_TESTS=1 and start docker/postgresql/docker-compose.ssh.yml to run"
+    )
+  }
+
+  /// The dev DuckDB plugin in .plugin-dev/ is opt-in.
+  static var requiresDuckDBPlugin: Self {
+    .enabled(
+      if: DuckDBPluginGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 and run scripts/release-plugin.sh --install-dev"
     )
   }
 }

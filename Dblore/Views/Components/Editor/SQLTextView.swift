@@ -32,6 +32,10 @@ class SQLTextView: NSTextView {
   var autocompleteTask: Task<Void, Never>?
   /// Delay between the last edit and the suggestion computation
   static var autocompleteDebounce: Duration = .milliseconds(80)
+  /// Sleep used for the debounce; tests swap in a gate to control when it returns
+  static var autocompleteSleep: @Sendable (Duration) async throws -> Void = {
+    try await Task.sleep(for: $0)
+  }
   private var isAcceptingSuggestion = false  // Flag to prevent retriggering autocomplete
   private var isProgrammaticEdit = false  // Flag to prevent autocomplete during programmatic edits
 

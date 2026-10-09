@@ -198,6 +198,61 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.activeUnrememberedCertificate == nil)
   }
 
+  @Test("A changed SSH host key after the unlock shows the blocking alert and an inline error")
+  func unlockedConnectReportsChangedHostKey() async {
+    let changed = DatabaseError.sshHostKeyChanged(
+      host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract(), openError: changed)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: Self.strict), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(sessionFactory: factory))
+    _ = try? await manager.connect(
+      config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
+    #expect(manager.pendingWeakeningConnect == Self.weak)
+    WorkspaceWindowManager.shared.dismissToast()
+
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let connected = await manager.completePendingWeakeningConnectReportingFailure(
+      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter))
+
+    #expect(!connected)
+    #expect(
+      presenter.changes == [
+        SSHHostKeyChange(
+          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+      ])
+    // The unlock sheet closes (no pending connect); the still-open form shows the message.
+    #expect(manager.pendingWeakeningConnect == nil)
+    #expect(manager.lastUnlockConnectError?.contains("bastion.example:22") == true)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+  }
+
+  @Test("A failed connect after the unlock shows inline; the next attempt clears it")
+  func unlockedConnectReportsFailureInline() async {
+    let failure = DatabaseError.connectionFailed("password authentication failed for user admin")
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract(), openError: failure)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: Self.strict), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(sessionFactory: factory))
+    _ = try? await manager.connect(
+      config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
+    WorkspaceWindowManager.shared.dismissToast()
+
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let connected = await manager.completePendingWeakeningConnectReportingFailure(
+      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter))
+
+    #expect(!connected)
+    #expect(presenter.changes.isEmpty)
+    #expect(manager.pendingWeakeningConnect == nil)
+    #expect(manager.lastUnlockConnectError?.contains("password authentication failed") == true)
+    #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+
+    _ = try? await manager.connect(
+      config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
+    #expect(manager.lastUnlockConnectError == nil)
+  }
+
   @Test("Completing without a pending connect does nothing")
   func completeWithoutPending() async throws {
     let manager = WorkspaceManager(

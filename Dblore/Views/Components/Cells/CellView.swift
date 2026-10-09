@@ -173,12 +173,17 @@ struct CellView: View {
         let textView = textViewRef
       else { return }
 
-      // Insert text at current cursor position
-      let selectedRange = textView.selectedRange()
-      textView.insertText(text, replacementRange: selectedRange)
+      // Insert on the next main-queue turn, outside the SwiftUI update that delivers this
+      // notification: inserting inside it emptied the text storage mid-edit (NSRangeException
+      // in ensureLayout, after Cmd+K in a .sql tab then Cmd+K in a notebook cell)
+      DispatchQueue.main.async {
+        // Insert text at current cursor position
+        let selectedRange = textView.selectedRange()
+        textView.insertText(text, replacementRange: selectedRange)
 
-      // Focus the editor after inserting text
-      isEditorFocused = true
+        // Focus the editor after inserting text
+        isEditorFocused = true
+      }
     }
   }
 

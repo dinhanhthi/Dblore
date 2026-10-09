@@ -29,8 +29,21 @@ nonisolated struct ProtectionPolicy: Sendable {
       return
     }
     self.init(
-      protectionLevel: config.protectionLevel, safeMode: config.safeMode,
+      protectionLevel: Self.gatingLevel(of: config), safeMode: config.safeMode,
       protectedMode: config.protectedMode)
+  }
+
+  /// The level the gate enforces, which can be stricter than the configured (displayed) one.
+  /// A DuckDB file opened read-only gates as at least Read-only: DuckDB SQL can still write the
+  /// database file and its `.wal` in READ_ONLY access mode (e.g. `COPY ... TO '<db>'
+  /// (USE_TMP_FILE false)` corrupts it). In-memory DuckDB ignores `readOnlyFile`. SQLite's
+  /// read-only open already refuses SQL writes.
+  private static func gatingLevel(of config: ConnectionConfig) -> ConnectionProtectionLevel {
+    guard config.databaseType == .duckdb, config.readOnlyFile,
+      config.database != DuckDBSession.inMemoryPath,
+      config.protectionLevel.strictness < ConnectionProtectionLevel.readOnly.strictness
+    else { return config.protectionLevel }
+    return .readOnly
   }
 
   /// The stricter of `self` (the caller's policy) and `other` (e.g. the connected config):

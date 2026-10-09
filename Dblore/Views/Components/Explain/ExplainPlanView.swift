@@ -13,7 +13,7 @@ enum ExplainDisplayMode: Hashable {
 }
 
 /// Reads a plan only when the result is one `QUERY PLAN` cell and JSON parses.
-enum ExplainResultPlan {
+nonisolated enum ExplainResultPlan {
   static func parse(_ result: CellResult) -> ExplainPlan? {
     guard result.columns.count == 1,
       result.columns[0].name.compare("QUERY PLAN", options: [.caseInsensitive]) == .orderedSame,
@@ -49,8 +49,8 @@ struct ExplainDisplayPicker: View {
   }
 }
 
-/// Fixed plan height in a notebook cell. The editor panel fills its parent instead.
-private let notebookPlanHeight: CGFloat = 420
+/// Fixed plan (and compare view) height in a notebook cell. The editor panel fills its parent.
+let notebookPlanHeight: CGFloat = 420
 
 /// Plan view when `ExplainPlan.parse` succeeds; otherwise the raw result.
 /// The editor header draws the toggle and passes `showsPicker: false`.

@@ -15,6 +15,7 @@ extension NotebookViewModel {
     editorStatementResults = []
     selectedStatementIndex = 0
     totalExecutionTime = 0
+    refreshEditorComparison()
   }
 
   /// Run query in editor mode (selection if any, otherwise all content)
@@ -24,6 +25,8 @@ extension NotebookViewModel {
       await refreshDataViewer()
       return
     }
+    // Object source tab: the definition is shown, never run
+    guard !isReadOnlySource else { return }
     let query = getEditorQueryText()
 
     // In Simple Mode, clear results if no executable query on current line
@@ -81,6 +84,9 @@ extension NotebookViewModel {
     let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
 
     let startTime = Date()
+    let notifyStart = ContinuousClock.now
+    // Long-query notification of a user run; nil after a cancel
+    var completion: QueryCompletionOutcome?
 
     do {
       // Check if this is a multi-statement query
@@ -139,6 +145,7 @@ extension NotebookViewModel {
           syncCellDetail(cellId: nil, result: editorResult)
         }
         recordResults(results.map { (sql: $0.queryText, result: $0.result) }, source: source)
+        completion = results.last.map { Self.completionOutcome($0.result) }
 
       } else {
         // Single statement - use existing logic
@@ -183,6 +190,7 @@ extension NotebookViewModel {
         updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)
         syncCellDetail(cellId: nil, result: cellResult)
         recordResults([(sql: query, result: cellResult)], source: source)
+        completion = Self.completionOutcome(cellResult)
       }
 
     } catch {
@@ -199,7 +207,13 @@ extension NotebookViewModel {
         sourceQuery: query
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)
+      completion = Self.isCancellation(error) ? nil : .failed
     }
+    if source == .editor, let completion {
+      notifyCompletion(elapsed: notifyStart.duration(to: .now), outcome: completion)
+    }
+    // A re-run keeps the pin; compare against the new result
+    refreshEditorComparison()
     await onStatementsExecuted?()
   }
 
@@ -208,6 +222,7 @@ extension NotebookViewModel {
     guard index >= 0 && index < editorStatementResults.count else { return }
     selectedStatementIndex = index
     editorResult = editorStatementResults[index].result
+    refreshEditorComparison()
 
     // Update the View Query sidebar if it's currently open for editor mode
     updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)

@@ -12,23 +12,30 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let columns: [ColumnInfo]
   let rows: [[CellValue]]
   let slowQueries: Bool
+  /// A `query` whose SQL contains this text throws `FakeQueryError`.
+  let failingQuery: String?
+  /// Every `open` throws this when set (a failed connect).
+  let openError: (any Error)?
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo] = [], rows: [[CellValue]] = [],
-    slowQueries: Bool = false
+    slowQueries: Bool = false, failingQuery: String? = nil, openError: (any Error)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
+    self.failingQuery = failingQuery
+    self.openError = openError
   }
 
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
     let session = FakeDatabaseSession(
-      capabilities: capabilities, columns: columns, rows: rows, slowQueries: slowQueries)
+      capabilities: capabilities, columns: columns, rows: rows, slowQueries: slowQueries,
+      failingQuery: failingQuery, openError: openError)
     lock.lock()
     made.append(session)
     lock.unlock()
@@ -56,6 +63,8 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private let columns: [ColumnInfo]
   private let rows: [[CellValue]]
   private let slowQueries: Bool
+  private let failingQuery: String?
+  private let openError: (any Error)?
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
@@ -75,12 +84,14 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo], rows: [[CellValue]],
-    slowQueries: Bool
+    slowQueries: Bool, failingQuery: String? = nil, openError: (any Error)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
+    self.failingQuery = failingQuery
+    self.openError = openError
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -105,6 +116,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   }
 
   func open() async throws {
+    if let openError { throw openError }
     markOpen()
   }
 
@@ -128,6 +140,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
 
   func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
     record(sql, binds: binds, query: true)
+    if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
     if slowQueries { try await waitUntilInterrupted() }
     return rowSource()
   }
@@ -279,6 +292,9 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   }
 }
 
+/// The scripted failure of a `failingQuery` match.
+struct FakeQueryError: Error {}
+
 extension DatabaseCapabilities {
   /// PostgreSQL-shaped flags with a chosen cancel strategy, for a fake session.
   static func contract(
@@ -296,7 +312,12 @@ extension DatabaseCapabilities {
       cancelStrategy: cancelStrategy,
       cappedReadResetsSession: true,
       supportsExplainJSON: false,
+      supportsExplainAnalyze: false,
       supportsUpdateOnly: false,
+      supportsRowStaging: true,
+      supportsDataImport: true,
+      supportsForeignKeyLookup: true,
+      requiresPlugin: false,
       isAvailable: true
     )
   }
