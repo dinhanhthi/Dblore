@@ -50,6 +50,10 @@ extension ConnectionFormContent {
 
         Divider()
 
+        Button("Import Connections...") {
+          ConnectionImportPresenter.present()
+        }
+
         Button("Clear All History", role: .destructive) {
           prepareClearAllHistory()
         }
@@ -110,6 +114,13 @@ extension ConnectionFormContent {
       setSelectedHistoryId(mostRecent.id)
       loadConnection(mostRecent)
     }
+  }
+
+  /// Refreshes the menu after another view changed the history (e.g. an import). Keeps the
+  /// form's values: `loadConnectionHistory()` would load the most recent row over them.
+  func reloadHistoryList(_ note: Notification) {
+    guard LocalDataCategory.notification(note, includes: .connectionHistory) else { return }
+    setConnectionHistory(SessionManager.loadHistory())
   }
 
   func loadConnection(_ entry: ConnectionHistoryEntry) {

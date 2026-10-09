@@ -138,7 +138,7 @@ class SessionManager {
   }
 
   /// Maximum number of connection history entries to store
-  private static let maxConnectionHistorySize = 6
+  static let maxConnectionHistorySize = 50
 
   /// Add or update connection in history
   @discardableResult
@@ -188,6 +188,100 @@ class SessionManager {
     pruneCertificates(previous: previous, current: history, certificates: certificates)
     pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     return true
+  }
+
+  /// Saves imported connections with one history load and one history write.
+  /// Remember is forced on. A connection whose Keychain key is already saved, or earlier in
+  /// the batch, is skipped and none of its secrets are written. A rejected SSH credential
+  /// leaves the entry out. Imports fill only the free history slots: saved rows are never
+  /// evicted, and extra imports are dropped unsaved.
+  @discardableResult
+  static func saveConnections(
+    _ imported: [ImportedConnection],
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
+  ) -> BulkSaveReport {
+    let history = loadHistory(defaults: defaults, passwords: passwords)
+    let freeSlots = max(0, maxConnectionHistorySize - history.count)
+    var report = BulkSaveReport()
+    var seen = savedConnectionKeys(defaults: defaults)
+    var kept: [ConnectionHistoryEntry] = []
+    var savedSSHAccounts: [String] = []
+    var pendingPasswords: [(key: String, password: String)] = []
+
+    for item in imported {
+      var saved = singleLineName(item.config)
+      saved.rememberConnection = true
+      saved.password = item.password ?? ""
+      let name = reportName(saved.name.isEmpty ? saved.displayString : saved.name)
+      let entry = ConnectionHistoryEntry(config: saved)
+      guard !seen.contains(entry.keychainKey) else {
+        report.skippedDuplicates.append(name)
+        continue
+      }
+      guard kept.count < freeSlots else {
+        report.droppedByLimit += 1
+        continue
+      }
+      if let credential = item.sshCredential,
+        let account = SSHCredentialStoreFactory.account(for: saved)
+      {
+        guard sshCredentials.save(credential, account: account) else {
+          report.failed.append(.init(name: name, reason: "The SSH credential could not be saved."))
+          continue
+        }
+        savedSSHAccounts.append(account)
+      }
+      seen.insert(entry.keychainKey)
+      kept.append(entry)
+      if saved.databaseType.capabilities.usesPassword, !saved.password.isEmpty {
+        pendingPasswords.append((entry.keychainKey, saved.password))
+      }
+    }
+
+    guard !kept.isEmpty else { return report }
+    guard let encoded = encodedHistory(kept + history, defaults: defaults) else {
+      // Each kept key is new, so these accounts belong to no saved row.
+      for account in savedSSHAccounts { sshCredentials.delete(account: account) }
+      report.failed += kept.map {
+        .init(
+          name: reportName($0.shortDisplayName),
+          reason: "The connection history could not be saved.")
+      }
+      return report
+    }
+    for pending in pendingPasswords {
+      passwords.savePassword(pending.password, forKey: pending.key)
+    }
+    defaults.set(encoded, forKey: historyKey)
+    report.added = kept.count
+    return report
+  }
+
+  /// Keychain keys of every saved row. Rows this build cannot decode keep their saved password
+  /// under the same key, so they count too. Reads no Keychain item.
+  static func savedConnectionKeys(defaults: UserDefaults = .standard) -> Set<String> {
+    let stored = storedEntries(defaults: defaults)
+    return Set(stored.known.map(\.keychainKey) + stored.unknown.compactMap(rawKeychainKey))
+  }
+
+  /// Keychain key of a raw history row, read from its `config` like `keychainKey(for:)`.
+  /// Nil when host, port, database, or username is missing or has the wrong type.
+  private static func rawKeychainKey(_ object: Any) -> String? {
+    guard let config = (object as? [String: Any])?["config"] as? [String: Any],
+      let host = config["host"] as? String,
+      let port = config["port"] as? Int,
+      let database = config["database"] as? String,
+      let username = config["username"] as? String
+    else { return nil }
+    return "\(host):\(port):\(database):\(username)"
+  }
+
+  /// One line of at most 80 characters, for names shown in a bulk save report.
+  private static func reportName(_ name: String) -> String {
+    let line = DropdownTitle.singleLine(name).trimmingCharacters(in: .whitespaces)
+    return line.count <= 80 ? line : String(line.prefix(79)) + "\u{2026}"
   }
 
   /// A single-line text field still accepts pasted line breaks, which it does not show.
@@ -454,6 +548,20 @@ class SessionManager {
     domain.removeValue(forKey: legacySessionKey)
     defaults.setPersistentDomain(domain, forName: domainName)
   }
+}
+
+/// Outcome of `SessionManager.saveConnections`. Holds names only, never secrets.
+struct BulkSaveReport: Equatable, Sendable {
+  struct Failure: Equatable, Sendable {
+    let name: String
+    let reason: String
+  }
+
+  var added = 0
+  var skippedDuplicates: [String] = []
+  var failed: [Failure] = []
+  /// Imports left out because history had no free slot.
+  var droppedByLimit = 0
 }
 
 /// Saves, loads, and deletes one connection password.

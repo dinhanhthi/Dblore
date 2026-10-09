@@ -5,6 +5,7 @@
 //  Connection form for database configuration
 //
 
+import Combine
 import SwiftUI
 
 // MARK: - Connection Form Content
@@ -219,6 +220,10 @@ struct ConnectionFormContent: View {
         restoreSSHDraft()
         refreshSQLiteFileBookmark()
       }
+      .onReceive(
+        NotificationCenter.default.publisher(for: .localDataChanged).receive(on: RunLoop.main),
+        perform: reloadHistoryList
+      )
       .onChange(of: connectionConfig.databaseType) { _, newType in
         clearParseErrorAndTestResult()
         if !newType.capabilities.usesNetwork {

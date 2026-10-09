@@ -166,7 +166,7 @@ nonisolated struct SSHTunnelConfig: Codable, Equatable, Sendable {
   }
 }
 
-struct ConnectionConfig: Codable, Equatable, Sendable {
+struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var databaseType: DatabaseType
   var host: String
   var port: Int

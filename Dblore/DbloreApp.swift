@@ -659,6 +659,9 @@ struct TabCommands: Commands {
 
       Button("Import Data...") { openTableImportAction?() }
         .disabled(openTableImportAction == nil)
+
+      // Works with no window open: the sheet opens the Welcome window first.
+      Button("Import Connections...") { ConnectionImportPresenter.present() }
     }
 
     // File menu - Save

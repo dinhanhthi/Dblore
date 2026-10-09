@@ -61,6 +61,7 @@ struct AppWelcomeView: View {
                     onConfigure: editConnection,
                     onRemove: { recentManager.removeConnection(id: $0.id) },
                     onNew: showConnectionForm,
+                    onImport: ConnectionImportPresenter.present,
                     columnWidth: columnWidth(
                       containerWidth: geometry.size.width,
                       hasBothColumns: recentManager.hasBothLists
@@ -72,7 +73,8 @@ struct AppWelcomeView: View {
               // No recent items - show action buttons
               EmptyWelcomeActions(
                 onNewWorkspace: createNewWorkspace,
-                onConnect: showConnectionForm
+                onConnect: showConnectionForm,
+                onImport: ConnectionImportPresenter.present
               )
             }
           }
@@ -478,10 +480,14 @@ struct RecentConnectionsColumn: View {
   let onConfigure: (ConnectionHistoryEntry) -> Void
   let onRemove: (ConnectionHistoryEntry) -> Void
   let onNew: () -> Void
+  var onImport: () -> Void = {}
   let columnWidth: CGFloat
 
   /// Track which connection is currently being loaded
   @State private var loadingConnectionId: UUID?
+  /// Shows every saved connection instead of the first `collapsedCount`.
+  @State private var showsAll = false
+  private let collapsedCount = 6
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.md) {
@@ -494,6 +500,15 @@ struct RecentConnectionsColumn: View {
         Spacer()
 
         Button {
+          onImport()
+        } label: {
+          Label("Import", systemImage: "square.and.arrow.down")
+        }
+        .buttonStyle(GhostButtonStyle())
+        .controlSize(.small)
+        .help("Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip")
+
+        Button {
           onNew()
         } label: {
           Label("Connect", systemImage: "plus")
@@ -504,7 +519,7 @@ struct RecentConnectionsColumn: View {
 
       // Connection list
       VStack(spacing: 0) {
-        let rows = Array(connections.prefix(6))
+        let rows = showsAll ? connections : Array(connections.prefix(collapsedCount))
         ForEach(Array(rows.enumerated()), id: \.element.id) { index, connection in
           RecentConnectionRow(
             connection: connection,
@@ -528,6 +543,14 @@ struct RecentConnectionsColumn: View {
         RoundedRectangle(cornerRadius: CornerRadius.md)
           .stroke(Color.border, lineWidth: 1)
       )
+
+      if connections.count > collapsedCount {
+        Button(showsAll ? "Show less" : "Show all (\(connections.count))") {
+          showsAll.toggle()
+        }
+        .buttonStyle(GhostButtonStyle())
+        .controlSize(.small)
+      }
     }
     .frame(width: columnWidth)
   }
@@ -769,8 +792,22 @@ private struct RecentMetaDot: View {
 struct EmptyWelcomeActions: View {
   let onNewWorkspace: () -> Void
   let onConnect: () -> Void
+  var onImport: () -> Void = {}
 
   var body: some View {
+    VStack(spacing: Spacing.lg) {
+      cards
+
+      Button {
+        onImport()
+      } label: {
+        Label("Import Connections...", systemImage: "square.and.arrow.down")
+      }
+      .buttonStyle(GhostButtonStyle())
+    }
+  }
+
+  private var cards: some View {
     HStack(spacing: Spacing.lg) {
       // New Workspace Card
       ActionCard(
