@@ -256,6 +256,10 @@ section p {
   margin: 0 0 var(--space-sm);
 }
 
+section p + .list {
+  margin-top: var(--space-md);
+}
+
 .note {
   margin: var(--space-sm) 0 0;
   color: var(--color-muted);
