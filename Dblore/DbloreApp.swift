@@ -52,11 +52,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var documentURLs: [URL] = []
 
     for url in urls {
-      let ext = url.pathExtension.lowercased()
-      if ext == "sqlws" {
-        workspaceURLs.append(url)
-      } else {
-        documentURLs.append(url)
+      switch WorkspaceManager.fileOpenRoute(url) {
+      case .workspace: workspaceURLs.append(url)
+      case .ignored: continue  // A DuckDB .wal opens with its database, not alone
+      case .duckDBDatabase, .document: documentURLs.append(url)
       }
     }
 

@@ -28,7 +28,7 @@ extension DatabaseConnectionManager {
   func fetchRowCount(tableSchema: String, tableName: String) async throws -> Int {
     _ = try catalogConnection()
     do {
-      return try await withSession { session in
+      return try await withCatalogReadSession { session in
         try await self.introspector.rowCount(schema: tableSchema, table: tableName, in: session)
       }
     } catch {
@@ -45,7 +45,7 @@ extension DatabaseConnectionManager {
   func fetchPrimaryKeyColumns(tableName: String) async throws -> [String] {
     _ = try catalogConnection()
     do {
-      return try await withSession { session in
+      return try await withCatalogReadSession { session in
         try await self.introspector.primaryKeyColumns(of: tableName, in: session)
       }
     } catch {

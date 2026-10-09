@@ -43,7 +43,7 @@ extension NotebookViewModel {
     do {
       request = try ExplainRequest(
         statement: statement, analyze: analyze, buffers: buffers,
-        rollbackAfterAnalyze: rollbackAfterAnalyze)
+        rollbackAfterAnalyze: rollbackAfterAnalyze, dialect: explainDialect)
     } catch let error as ExplainRequestError {
       showToast(error.message, type: .error)
       return
@@ -52,8 +52,7 @@ extension NotebookViewModel {
       return
     }
 
-    let sql = request.sqlToRun(
-      protectedTransactionOpen: await protectedTransactionOpen(), dialect: explainDialect)
+    let sql = request.sqlToRun(protectedTransactionOpen: await protectedTransactionOpen())
     if let message = protectionBlockMessage(for: sql) {
       showToast(message, type: .error)
       return

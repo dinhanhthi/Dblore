@@ -288,12 +288,12 @@ struct WorkspaceContainerView: View {
   }
 
   private var importAction: (() -> Void)? {
-    guard workspaceManager.connectionState.isConnected else { return nil }
+    guard workspaceManager.canImportData else { return nil }
     return { requestImport() }
   }
 
   private func requestImport(for table: DatabaseTable? = nil) {
-    guard workspaceManager.connectionState.isConnected else { return }
+    guard workspaceManager.canImportData else { return }
     let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
     importTabID = tabID
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }

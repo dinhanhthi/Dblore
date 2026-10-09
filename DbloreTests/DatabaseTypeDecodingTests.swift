@@ -28,4 +28,37 @@ struct DatabaseTypeDecodingTests {
       try JSONDecoder().decode(ConnectionHistoryEntry.self, from: data)
     }
   }
+
+  @Test("The DuckDB raw value decodes")
+  func duckdbRawValueDecodes() throws {
+    let data = try JSONEncoder().encode(["DuckDB"])
+    #expect(try JSONDecoder().decode([DatabaseType].self, from: data) == [.duckdb])
+  }
+
+  @Test("History with a DuckDB entry loads it next to an unknown engine")
+  func historyWithDuckDBEntryLoads() throws {
+    let suiteName = "ace.thi.Dblore.tests.duckdb-history.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let duck = ConnectionHistoryEntry(
+      config: ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/lake.duckdb"))
+    var unknown = try #require(
+      JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(
+          ConnectionHistoryEntry(config: ConnectionConfig(host: "h", database: "d"))))
+        as? [String: Any])
+    var unknownConfig = try #require(unknown["config"] as? [String: Any])
+    unknownConfig["databaseType"] = "FutureEngine"
+    unknown["config"] = unknownConfig
+    let duckObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(duck))
+    defaults.set(
+      try JSONSerialization.data(withJSONObject: [duckObject, unknown]),
+      forKey: "ace.thi.dblore.connectionHistory")
+
+    let loaded = SessionManager.loadHistory(
+      defaults: defaults, passwords: RecordingConnectionPasswordStore())
+
+    #expect(loaded.map(\.config.databaseType) == [.duckdb])
+    #expect(loaded.first?.config.database == "/tmp/lake.duckdb")
+  }
 }

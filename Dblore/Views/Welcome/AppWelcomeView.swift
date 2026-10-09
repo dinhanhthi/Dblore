@@ -17,6 +17,10 @@ struct AppWelcomeView: View {
 
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
+  /// Settings > Plugins, opened from the connection form (no workspace hosts Settings here)
+  @State private var isShowingPluginSettings = false
+  /// Bumped on open only: a fresh token per render would reset the selected tab
+  @State private var pluginSettingsToken = UUID()
   @State private var editingConnectionConfig = ConnectionFormContent.newFormDraft()
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
@@ -96,7 +100,16 @@ struct AppWelcomeView: View {
       submitTitle: editingConnectionId == nil ? "Connect" : "Save",
       showsRecentHistory: editingConnectionId == nil,
       onTestConnection: testConnectionForWelcome,
-      onConnect: submitConnectionForm
+      onConnect: submitConnectionForm,
+      onOpenPluginSettings: {
+        pluginSettingsToken = UUID()
+        isShowingPluginSettings = true
+      }
+    )
+    // After the connection form, so it opens on top of it
+    .settingsModal(
+      isPresented: $isShowingPluginSettings, viewMode: nil, section: .plugins,
+      openToken: pluginSettingsToken
     )
     .modalOverlay(isPresented: workspaceEditPresented) {
       if let entry = editingWorkspace {
@@ -182,6 +195,8 @@ struct AppWelcomeView: View {
         try await manager.connect(config: entry.config)
       } catch {
         await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+        // The window now shows the workspace: its form offers the plugin install
+        manager.presentConnectErrorIfActionable(error, config: entry.config)
       }
     }
   }

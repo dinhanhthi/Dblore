@@ -667,6 +667,60 @@ struct DataModelConnectionConfigTests {
     #expect(account != SSHCredentialStoreFactory.account(for: tunnelConfig(sshPort: 22)))
   }
 
+  // MARK: - DuckDB form
+
+  @Test("File engines get the file form; only PostgreSQL uses the network fields")
+  func fileBasedPredicate() {
+    for type in DatabaseType.allCases {
+      #expect(type.capabilities.isFileBased == (type != .postgresql), "\(type)")
+    }
+  }
+
+  @Test("Opening a DuckDB file is read-only, creating one is read-write")
+  func duckDBOpenAndCreateReadOnlyDefaults() {
+    let bookmark = Data([0x02])
+    let draft = ConnectionConfig(databaseType: .duckdb, readOnlyFile: false)
+
+    let opened = ConnectionFormContent.applyingDuckDBChoice(
+      .open(path: "/tmp/sales.duckdb", bookmark: bookmark), to: draft, selected: nil
+    ).config
+    #expect(opened.database == "/tmp/sales.duckdb")
+    #expect(opened.fileBookmark == bookmark)
+    #expect(opened.readOnlyFile)
+    #expect(opened.name == "sales")
+
+    let created = ConnectionFormContent.applyingDuckDBChoice(
+      .create(path: "/tmp/new.duckdb", bookmark: nil), to: opened, selected: nil
+    ).config
+    #expect(created.database == "/tmp/new.duckdb")
+    #expect(created.fileBookmark == nil)
+    #expect(!created.readOnlyFile)
+  }
+
+  @Test("In-memory DuckDB has no bookmark and is not a read-only file")
+  func duckDBInMemory() {
+    let opened = ConnectionConfig(
+      databaseType: .duckdb, database: "/tmp/sales.duckdb", fileBookmark: Data([0x03]))
+
+    let config = ConnectionFormContent.applyingDuckDBChoice(.inMemory, to: opened, selected: nil)
+      .config
+    #expect(config.database == DuckDBSession.inMemoryPath)
+    #expect(config.fileBookmark == nil)
+    #expect(!config.readOnlyFile)
+    #expect(config.name == "In-memory")
+  }
+
+  @Test("Switching between SQLite and DuckDB re-applies the engine's read-only default")
+  func switchingEngineReDefaultsReadOnlyFile() throws {
+    let toDuckDB = try #require(
+      ConnectionFormContent.formAfterEngineChange(fieldsEngine: .sqlite, newType: .duckdb))
+    #expect(toDuckDB.readOnlyFile)
+
+    let toSQLite = try #require(
+      ConnectionFormContent.formAfterEngineChange(fieldsEngine: .duckdb, newType: .sqlite))
+    #expect(!toSQLite.readOnlyFile)
+  }
+
   private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {
     let data = try JSONEncoder().encode(config)
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])

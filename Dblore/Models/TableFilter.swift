@@ -139,8 +139,8 @@ struct TableFilter: Codable, Hashable {
     }
   }
 
-  /// PostgreSQL casts to text and keeps `LIKE` vs `ILIKE`. SQLite is always `LIKE`.
-  /// `caseInsensitiveLike` matches only the non-negated form of that text.
+  /// PostgreSQL (`::text`) and DuckDB (`::VARCHAR`) cast to text and keep `LIKE` vs `ILIKE`.
+  /// SQLite is always `LIKE`. `caseInsensitiveLike` matches only the non-negated form of that text.
   private static func likeSQL(
     column: String, value: String, op: FilterOperator, dialect: SQLDialect
   ) -> String {
@@ -149,8 +149,8 @@ struct TableFilter: Codable, Hashable {
     if !negated && (insensitive || dialect.likeIsCaseInsensitive) {
       return dialect.caseInsensitiveLike(column: column, pattern: value)
     }
-    let subject = dialect == .postgresql ? "\(column)::text" : column
-    let keyword = dialect == .postgresql && insensitive ? "ILIKE" : "LIKE"
+    let subject = dialect.likeSubject(column)
+    let keyword = insensitive && !dialect.likeIsCaseInsensitive ? "ILIKE" : "LIKE"
     return "\(subject) \(negated ? "NOT " : "")\(keyword) \(value)"
   }
 }

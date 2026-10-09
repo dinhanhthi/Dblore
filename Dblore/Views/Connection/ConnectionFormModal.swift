@@ -19,11 +19,18 @@ struct ConnectionFormModal: View {
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
   var unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)?
   var unlockConnectError: Binding<String?>?
+  /// Opens Settings > Plugins (the missing-plugin row and connect errors offer it).
+  var onOpenPluginSettings: @MainActor () -> Void = ConnectionErrorAction.postOpenPluginSettings
+  /// See `ConnectionFormContent.draftGeneration`.
+  var draftGeneration: Int = 0
 
   var body: some View {
     VStack(spacing: 0) {
       GenericModalHeader(title: title, onClose: { isPresented = false }) {
         databaseTypeMenu
+      }
+      if connectionConfig.databaseType.capabilities.requiresPlugin && !isDuckDBInstalled {
+        missingPluginRow
       }
       ConnectionFormContent(
         connectionConfig: $connectionConfig,
@@ -34,10 +41,12 @@ struct ConnectionFormModal: View {
         showsRecentHistory: showsRecentHistory,
         unrememberedCertificate: unrememberedCertificate,
         unrememberedSSHCredential: unrememberedSSHCredential,
-        unlockConnectError: unlockConnectError
+        unlockConnectError: unlockConnectError,
+        onOpenPluginSettings: onOpenPluginSettings,
+        draftGeneration: draftGeneration
       )
     }
-    .frame(width: 440, height: connectionConfig.databaseType == .sqlite ? 420 : 640)
+    .frame(width: 440, height: connectionConfig.databaseType.capabilities.isFileBased ? 420 : 640)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
@@ -50,8 +59,11 @@ struct ConnectionFormModal: View {
 
   /// Engine picker, sitting on the right of the title and before the close button.
   private var databaseTypeMenu: some View {
-    let types = DatabaseType.connectionPickerTypes(
-      showExperimental: AppSettings.shared.showExperimentalEngines)
+    let installed = isDuckDBInstalled
+    let types = Self.pickerTypes(
+      showExperimental: AppSettings.shared.showExperimentalEngines,
+      current: connectionConfig.databaseType,
+      isPluginInstalled: { $0 == .duckdb ? installed : true })
     return Picker("Database", selection: $connectionConfig.databaseType) {
       ForEach(types, id: \.self) { type in
         Text(type.displayName).tag(type)
@@ -60,6 +72,83 @@ struct ConnectionFormModal: View {
     .pickerStyle(.menu)
     .labelsHidden()
     .fixedSize()
+  }
+
+  /// Read in `body`, so the picker and the missing-plugin row follow install and remove. While
+  /// the launch check hashes the file, a present file counts as installed.
+  private var isDuckDBInstalled: Bool { DuckDBPluginManager.shared.isInstalledOrPending }
+
+  private var missingPluginRow: some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.warning)
+      Text("DuckDB plugin not installed")
+        .foregroundColor(.warning)
+      Spacer(minLength: Spacing.sm)
+      Button("Install…", action: onOpenPluginSettings)
+        .buttonStyle(.link)
+        .linkPointer()
+    }
+    .font(.caption)
+    .padding(Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .fill(Color.warning.opacity(0.1))
+    )
+    .padding(.horizontal, Spacing.md)
+    .padding(.top, Spacing.sm)
+  }
+
+  /// Picker engines. The engine of the connection being edited stays listed even when its
+  /// plugin is missing, so the picker never shows an empty selection.
+  nonisolated static func pickerTypes(
+    showExperimental: Bool,
+    current: DatabaseType,
+    isPluginInstalled: (DatabaseType) -> Bool
+  ) -> [DatabaseType] {
+    DatabaseType.connectionPickerTypes(
+      showExperimental: showExperimental,
+      isPluginInstalled: { $0 == current || isPluginInstalled($0) })
+  }
+}
+
+// MARK: - Connect Error Action
+
+/// The button a connect error offers next to its message.
+nonisolated enum ConnectionErrorAction: Equatable, Sendable {
+  /// The engine's plugin is not installed: open Settings > Plugins.
+  case openPluginSettings
+
+  var title: String {
+    switch self {
+    case .openPluginSettings: "Install DuckDB Plugin"
+    }
+  }
+
+  /// `DatabaseError.engineUnavailable`, directly or wrapped in another error's message (catalog
+  /// fetches wrap it in `queryFailed`).
+  static func action(for error: any Error) -> ConnectionErrorAction? {
+    if case DatabaseError.engineUnavailable = error { return .openPluginSettings }
+    return action(forMessage: error.localizedDescription)
+  }
+
+  /// Same check on an error message already shown as text (the form keeps only the message).
+  static func action(forMessage message: String) -> ConnectionErrorAction? {
+    let missing = DatabaseType.allCases.filter(\.capabilities.requiresPlugin)
+    let hit = missing.contains { type in
+      DatabaseError.engineUnavailable(type).errorDescription.map(message.contains) ?? false
+    }
+    return hit ? .openPluginSettings : nil
+  }
+
+  /// Asks the key workspace window to open Settings > Plugins.
+  @MainActor
+  static func postOpenPluginSettings() {
+    NotificationCenter.default.post(
+      name: .openSettings,
+      object: nil,
+      userInfo: [SettingsPage.userInfoKey: SettingsPage.plugins.rawValue]
+    )
   }
 }
 
@@ -77,7 +166,10 @@ extension View {
     onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
     unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
     unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
-    unlockConnectError: Binding<String?>? = nil
+    unlockConnectError: Binding<String?>? = nil,
+    onOpenPluginSettings: @escaping @MainActor () -> Void = ConnectionErrorAction
+      .postOpenPluginSettings,
+    draftGeneration: Int = 0
   ) -> some View {
     modalOverlay(isPresented: isPresented) {
       ConnectionFormModal(
@@ -90,7 +182,9 @@ extension View {
         onConnect: onConnect,
         unrememberedCertificate: unrememberedCertificate,
         unrememberedSSHCredential: unrememberedSSHCredential,
-        unlockConnectError: unlockConnectError
+        unlockConnectError: unlockConnectError,
+        onOpenPluginSettings: onOpenPluginSettings,
+        draftGeneration: draftGeneration
       )
     }
   }
@@ -121,7 +215,8 @@ extension View {
       unlockConnectError: Binding(
         get: { workspaceManager.lastUnlockConnectError },
         set: { workspaceManager.lastUnlockConnectError = $0 }
-      )
+      ),
+      draftGeneration: workspaceManager.connectionFormDraftGeneration
     )
     .sheet(
       isPresented: Binding(

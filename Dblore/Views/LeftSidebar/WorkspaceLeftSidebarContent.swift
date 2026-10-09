@@ -242,7 +242,8 @@ struct WorkspaceLeftSidebarContent: View {
                     onColumnClick: { _ in
                       // No active cell to insert into when no document is open
                     },
-                    onImport: { onImportTable(table.source) }
+                    onImport: connectionDatabaseType.capabilities.supportsDataImport
+                      ? { onImportTable(table.source) } : nil
                   )
                 }
               }

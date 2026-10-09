@@ -19,7 +19,8 @@ struct TableRowView: View {
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
-  let onImport: () -> Void
+  /// Nil hides "Import Data..." (the engine has no table import)
+  let onImport: (() -> Void)?
 
   @State private var isHoveringTable = false
 
@@ -97,7 +98,9 @@ struct TableRowView: View {
         }
       }
       .contextMenu {
-        Button("Import Data...", action: onImport)
+        if let onImport {
+          Button("Import Data...", action: onImport)
+        }
       }
 
       // Columns (when expanded)

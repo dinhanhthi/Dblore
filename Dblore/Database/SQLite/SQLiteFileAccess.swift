@@ -1,7 +1,7 @@
 // SQLiteFileAccess.swift
-// Sandbox access for one SQLite file. Resolves the security-scoped bookmark, registers
-// sidecar file presenters, then probes writability. `release()` drops presenters and
-// stops access. Bookmarks go through `SecurityScopedAccess`.
+// Sandbox access for one SQLite or DuckDB file. Resolves the security-scoped bookmark, registers
+// sidecar file presenters, then probes writability. `release()` drops presenters and stops
+// access. Bookmarks go through `SecurityScopedAccess`.
 
 import Foundation
 import SQLite3
@@ -12,9 +12,15 @@ nonisolated enum SQLiteFileAccess {
   /// Shown when the file is opened read-only because a sidecar could not be written.
   static let readOnlyBannerReason =
     "This database is open read-only. Allow its folder so Dblore can write the -wal, -shm, and -journal files."
+  /// The DuckDB counterpart: the sandbox does not treat `data.duckdb.wal` as a related item
+  /// (its base name is `data.duckdb`, not `data`), so writing needs the folder.
+  static let duckDBReadOnlyBannerReason =
+    "This database is open read-only. Allow its folder so Dblore can write the .wal file."
 
   /// Suffixes SQLite appends to the database path. Not a replacement extension.
   static let sidecarSuffixes = ["-wal", "-shm", "-journal"]
+  /// DuckDB appends `.wal` to the database path (`data.duckdb.wal`).
+  static let duckDBSidecarSuffixes = [".wal"]
 
   /// The write probe could not open a sidecar (`-wal`, `-shm`, or `-journal`).
   struct SidecarDenied: Error, Equatable {}
@@ -34,7 +40,11 @@ nonisolated enum SQLiteFileAccess {
     var makeBookmark: (URL) -> Data? = { SecurityScopedAccess.bookmarkIfPossible(for: $0) }
     var startAccess: (URL) -> SecurityScopedAccessToken = { SecurityScopedAccessToken(url: $0) }
     var chooseFolder: @MainActor (URL) async -> URL? = { url in
-      await FileAccessPanel.chooseFolder(containing: url)
+      await FileAccessPanel.chooseFolder(
+        containing: url,
+        message:
+          "Allow access to the folder \"\(url.deletingLastPathComponent().lastPathComponent)\" "
+          + "so Dblore can write the journal files of \"\(url.lastPathComponent)\".")
     }
     var addPresenter: (SidecarFilePresenter) -> Void = { presenter in
       NSFileCoordinator.addFilePresenter(presenter)
@@ -46,6 +56,9 @@ nonisolated enum SQLiteFileAccess {
     }
     var probe: (URL) throws -> Void = { url in
       try probeWritable(url)
+    }
+    var probeDuckDB: (URL) throws -> Void = { url in
+      try probeDuckDBWAL(url)
     }
 
     static var live: Hooks { Hooks() }
@@ -133,24 +146,38 @@ nonisolated enum SQLiteFileAccess {
 
   /// Resolve `config.fileBookmark`, start access, register sidecar presenters, then probe.
   /// A sidecar denial asks once for the folder. Declining that prompt opens read-only.
+  /// A read-write DuckDB file without a bookmark (just picked with "New File…", so it does not
+  /// exist yet) uses the path as given: the save panel grant covers the file, not its `.wal`.
   @MainActor
   static func open(config: ConnectionConfig, hooks: Hooks = .live) async throws -> AccessGrant {
-    guard let storedBookmark = config.fileBookmark else { throw Failure.missingBookmark }
-    let resolved = try hooks.resolve(storedBookmark)
-    let fileToken = hooks.startAccess(resolved.url)
-    guard fileToken.isGranted else {
-      fileToken.release()
-      throw Failure.accessNotGranted
+    let isDuckDB = config.databaseType == .duckdb
+    let url: URL
+    let bookmark: Data?
+    var tokens: [SecurityScopedAccessToken] = []
+    if let storedBookmark = config.fileBookmark {
+      let resolved = try hooks.resolve(storedBookmark)
+      let fileToken = hooks.startAccess(resolved.url)
+      guard fileToken.isGranted else {
+        fileToken.release()
+        throw Failure.accessNotGranted
+      }
+      tokens.append(fileToken)
+      url = resolved.url
+      bookmark =
+        resolved.isStale ? hooks.makeBookmark(resolved.url) ?? storedBookmark : storedBookmark
+    } else if isDuckDB, !config.readOnlyFile {
+      url = URL(fileURLWithPath: config.database)
+      bookmark = nil
+    } else {
+      throw Failure.missingBookmark
     }
 
-    let bookmark =
-      resolved.isStale ? hooks.makeBookmark(resolved.url) ?? storedBookmark : storedBookmark
-    let presenters = makePresenters(for: resolved.url)
+    let presenters = makePresenters(
+      for: url, suffixes: isDuckDB ? duckDBSidecarSuffixes : sidecarSuffixes)
     for presenter in presenters {
       hooks.addPresenter(presenter)
     }
 
-    var tokens = [fileToken]
     var folderBookmark: Data?
     var readOnly = config.readOnlyFile
     var bannerReason: String?
@@ -168,16 +195,17 @@ nonisolated enum SQLiteFileAccess {
 
     if !config.readOnlyFile {
       let writable = try await recoverWritability(
-        of: resolved.url, hooks: hooks, tokens: &tokens, folderBookmark: &folderBookmark)
+        of: url, probe: isDuckDB ? hooks.probeDuckDB : hooks.probe, hooks: hooks,
+        tokens: &tokens, folderBookmark: &folderBookmark)
       if !writable {
         readOnly = true
-        bannerReason = readOnlyBannerReason
+        bannerReason = isDuckDB ? duckDBReadOnlyBannerReason : readOnlyBannerReason
       }
     }
 
     keep = true
     return AccessGrant(
-      url: resolved.url,
+      url: url,
       readOnly: readOnly,
       bannerReason: bannerReason,
       bookmark: bookmark,
@@ -217,15 +245,31 @@ nonisolated enum SQLiteFileAccess {
     }
   }
 
+  /// Creates `<db>.wal` (then removes it), or opens an existing one for writing without
+  /// changing it. A permission error is a sidecar denial. The database file is not touched.
+  static func probeDuckDBWAL(_ url: URL) throws {
+    let wal = url.path + duckDBSidecarSuffixes[0]
+    var fd = Darwin.open(wal, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+    let created = fd >= 0
+    if fd < 0, errno == EEXIST { fd = Darwin.open(wal, O_WRONLY) }
+    guard fd >= 0 else {
+      let code = errno
+      if code == EPERM || code == EACCES { throw SidecarDenied() }
+      throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+    }
+    Darwin.close(fd)
+    if created { unlink(wal) }
+  }
+
   @MainActor
   private static func recoverWritability(
-    of url: URL, hooks: Hooks, tokens: inout [SecurityScopedAccessToken],
-    folderBookmark: inout Data?
+    of url: URL, probe: (URL) throws -> Void, hooks: Hooks,
+    tokens: inout [SecurityScopedAccessToken], folderBookmark: inout Data?
   ) async throws -> Bool {
     var askedForFolder = false
     while true {
       do {
-        try hooks.probe(url)
+        try probe(url)
         return true
       } catch is SidecarDenied {
         if askedForFolder { return false }
@@ -237,11 +281,11 @@ nonisolated enum SQLiteFileAccess {
     }
   }
 
-  private static func makePresenters(for url: URL) -> [SidecarFilePresenter] {
+  private static func makePresenters(for url: URL, suffixes: [String]) -> [SidecarFilePresenter] {
     let queue = OperationQueue()
     queue.name = "dblore.sqlite.file-presenter"
     queue.maxConcurrentOperationCount = 1
-    return sidecarSuffixes.map { suffix in
+    return suffixes.map { suffix in
       SidecarFilePresenter(primaryURL: url, suffix: suffix, queue: queue)
     }
   }

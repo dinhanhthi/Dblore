@@ -23,6 +23,7 @@ private enum CommandPaletteAction: String, CaseIterable {
   case disconnect = "disconnect"
   case commit = "commit"
   case rollback = "rollback"
+  case queryDuckDBFile = "query-duckdb-file"
 
   var title: String {
     switch self {
@@ -40,6 +41,7 @@ private enum CommandPaletteAction: String, CaseIterable {
     case .disconnect: "Disconnect"
     case .commit: "Commit"
     case .rollback: "Roll Back"
+    case .queryDuckDBFile: "Query Parquet/CSV File..."
     }
   }
 
@@ -61,7 +63,7 @@ extension WorkspaceManager {
       sources: paletteSourceRefs(),
       tabs: tabs.map { .init(id: $0.id, title: $0.title) },
       favorites: workspace.favorites.items.map { .init(id: $0.id, name: $0.name, sql: $0.sql) },
-      actions: CommandPaletteAction.allCases.map(\.snapshot),
+      actions: paletteActions().map(\.snapshot),
       connectionKey: activeHistoryConnectionKey ?? ""
     )
   }
@@ -117,6 +119,11 @@ extension WorkspaceManager {
       return performPaletteAction(id: id)
     }
     return true
+  }
+
+  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not).
+  private func paletteActions() -> [CommandPaletteAction] {
+    CommandPaletteAction.allCases.filter { $0 != .queryDuckDBFile || duckDBFileQueryConfig != nil }
   }
 
   /// One View Source row per function, procedure and trigger in the loaded schema
@@ -178,6 +185,11 @@ extension WorkspaceManager {
         !isTransactionOriginRunning
       else { return false }
       Task { await rollback() }
+    case .queryDuckDBFile:
+      // The query goes into the selected cell or the editor, so one must be there
+      guard duckDBFileQueryConfig != nil, !connectionState.isConnecting, canInsertPaletteText()
+      else { return false }
+      Task { await queryDuckDBFile() }
     }
     return true
   }

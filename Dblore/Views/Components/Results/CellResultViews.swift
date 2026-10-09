@@ -600,7 +600,7 @@ struct NotebookResultGridView: View {
           relationSchema: relation?.schema,
           relationTable: relation?.table,
           baseColumnNames: relation?.baseColumns,
-          foreignKeys: viewModel.databaseForeignKeys,
+          foreignKeys: viewModel.lookupForeignKeys,
           lookupDialect: viewModel.sqlDialect,
           onLookupReferencedRow: referencedRow.lookup,
           onJumpToReferencedRow: referencedRow.jump,

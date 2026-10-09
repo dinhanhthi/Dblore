@@ -1,5 +1,5 @@
 // SQLDialect.swift
-// Quote, literal, and statement-fragment rules for PostgreSQL and SQLite.
+// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, and DuckDB.
 
 import Foundation
 
@@ -14,18 +14,21 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   private enum Engine: Sendable, Equatable {
     case postgresql
     case sqlite
+    case duckdb
   }
 
   private let engine: Engine
 
   static let postgresql = SQLDialect(engine: .postgresql)
   static let sqlite = SQLDialect(engine: .sqlite)
+  static let duckdb = SQLDialect(engine: .duckdb)
 
-  /// Name used in prompts ("PostgreSQL", "SQLite").
+  /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB").
   var promptName: String {
     switch engine {
     case .postgresql: "PostgreSQL"
     case .sqlite: "SQLite"
+    case .duckdb: "DuckDB"
     }
   }
 
@@ -33,7 +36,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   var defaultSchema: String {
     switch engine {
     case .postgresql: "public"
-    case .sqlite: "main"
+    case .sqlite, .duckdb: "main"
     }
   }
 
@@ -42,7 +45,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     engine == .postgresql
   }
 
-  /// SQLite `LIKE` folds case. PostgreSQL `LIKE` does not (`ILIKE` does).
+  /// SQLite `LIKE` folds case. PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
   var likeIsCaseInsensitive: Bool {
     engine == .sqlite
   }
@@ -84,10 +87,10 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
-  /// PostgreSQL `$n`, SQLite `?n`. `index` is written as given (1-based by convention).
+  /// PostgreSQL and DuckDB `$n`, SQLite `?n`. `index` is written as given (1-based).
   func placeholder(_ index: Int) -> String {
     switch engine {
-    case .postgresql: "$\(index)"
+    case .postgresql, .duckdb: "$\(index)"
     case .sqlite: "?\(index)"
     }
   }
@@ -97,11 +100,14 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT.
-  /// SQLite is always `EXPLAIN QUERY PLAN`.
+  /// SQLite is always `EXPLAIN QUERY PLAN`. DuckDB is text only: `EXPLAIN` or `EXPLAIN ANALYZE`,
+  /// with `buffers` and `format` ignored.
   func explainPrefix(analyze: Bool, buffers: Bool, format: String?) -> String {
     switch engine {
     case .sqlite:
       return "EXPLAIN QUERY PLAN"
+    case .duckdb:
+      return analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"
     case .postgresql:
       var options: [String] = []
       if analyze { options.append("ANALYZE") }
@@ -114,17 +120,28 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
+  /// `column` as text for `LIKE`: PostgreSQL `::text`, DuckDB `::VARCHAR`, SQLite unchanged.
+  func likeSubject(_ column: String) -> String {
+    switch engine {
+    case .postgresql: "\(column)::text"
+    case .sqlite: column
+    case .duckdb: "\(column)::VARCHAR"
+    }
+  }
+
   /// `column` and `pattern` are SQL fragments, inserted unchanged.
   func caseInsensitiveLike(column: String, pattern: String) -> String {
     switch engine {
     case .postgresql: "\(column)::text ILIKE \(pattern)"
     case .sqlite: "\(column) LIKE \(pattern)"
+    case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
     }
   }
 
   /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:
   /// every `\` becomes `\\` and every `'` becomes `''`, so those characters stay
-  /// data with `standard_conforming_strings` on or off. SQLite never uses `E`.
+  /// data with `standard_conforming_strings` on or off. SQLite and DuckDB never use `E`: their
+  /// plain strings have no backslash escapes.
   private func quoteLiteral(_ text: String) -> String {
     let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
     guard engine == .postgresql, text.contains("\\") else {
@@ -142,6 +159,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .postgresql:
       if number.isNaN { return "'NaN'::float8" }
       return number > 0 ? "'Infinity'::float8" : "'-Infinity'::float8"
+    case .duckdb:
+      if number.isNaN { return "'NaN'::DOUBLE" }
+      return number > 0 ? "'Infinity'::DOUBLE" : "'-Infinity'::DOUBLE"
     }
   }
 
@@ -153,6 +173,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .sqlite:
       let hex = data.map { String(format: "%02X", $0) }.joined()
       return "X'\(hex)'"
+    case .duckdb:
+      let escaped = data.map { String(format: "\\x%02X", $0) }.joined()
+      return "'\(escaped)'::BLOB"
     }
   }
 }

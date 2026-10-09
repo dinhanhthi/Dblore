@@ -41,7 +41,8 @@ extension NotebookViewModel {
   }
 
   private func canEdit(target: EditTarget, columnNames: Set<String>) -> Bool {
-    protectionPolicy.protectionLevel != .readOnly && !target.primaryKeyColumns.isEmpty
+    rowEditingUnsupportedReason == nil && protectionPolicy.protectionLevel != .readOnly
+      && !target.primaryKeyColumns.isEmpty
       && target.primaryKeyColumns.allSatisfy(columnNames.contains)
   }
 
@@ -211,6 +212,10 @@ extension NotebookViewModel {
     )
 
     guard let connectionManager, let rowData else { return }
+    if let reason = rowEditingUnsupportedReason {
+      showToast(reason, type: .error)
+      return
+    }
     guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Only the live target of the result the cell was opened from; never the passed table/key

@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// Rewrites `:name` into PostgreSQL `$n` or SQLite `?n`.
+/// Rewrites `:name` into PostgreSQL and DuckDB `$n`, or SQLite `?n`.
 /// One placeholder per distinct name, in first-occurrence order. The name keeps the
 /// source spelling. A statement with no `:name` is returned unchanged.
 nonisolated enum SQLParameterRewriter: Sendable {
@@ -29,8 +29,9 @@ nonisolated enum SQLParameterRewriter: Sendable {
     return names
   }
 
-  /// PostgreSQL `$n`, or SQLite `?` / `?n` / `@name` / `$name`. Does not rewrite.
-  /// SQLite numbers `@name` and `$name` after the `?n` from `:name`, and nothing binds them.
+  /// PostgreSQL `$n`, DuckDB `?` / `$n` / `$name`, or SQLite `?` / `?n` / `@name` / `$name`.
+  /// Does not rewrite. SQLite numbers `@name` and `$name` after the `?n` from `:name`, and
+  /// nothing binds them. DuckDB `@` is an operator, not a placeholder.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .postgresql {
@@ -40,9 +41,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
       }
       return false
     }
+    let namePrefixes = dialect == .duckdb ? ["$"] : ["@", "$"]
     for index in lexemes.indices {
       if isSymbol(lexemes[index], scalars, "?") { return true }
-      guard isSymbol(lexemes[index], scalars, "@") || isSymbol(lexemes[index], scalars, "$"),
+      guard namePrefixes.contains(where: { isSymbol(lexemes[index], scalars, $0) }),
         index + 1 < lexemes.count
       else { continue }
       switch lexemes[index + 1].kind {

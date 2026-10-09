@@ -312,7 +312,12 @@ extension DatabaseCapabilities {
       cancelStrategy: cancelStrategy,
       cappedReadResetsSession: true,
       supportsExplainJSON: false,
+      supportsExplainAnalyze: false,
       supportsUpdateOnly: false,
+      supportsRowStaging: true,
+      supportsDataImport: true,
+      supportsForeignKeyLookup: true,
+      requiresPlugin: false,
       isAvailable: true
     )
   }

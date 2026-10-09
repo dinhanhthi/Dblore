@@ -274,8 +274,8 @@ enum SQLSyntaxHighlighter {
   static func scanBlockSpans(
     in text: NSString, range: NSRange, dialect: SQLDialect = .postgresql
   ) -> [(range: NSRange, isComment: Bool)] {
-    if dialect == .sqlite {
-      return sqliteBlockSpans(in: text, range: range)
+    if dialect == .sqlite || dialect == .duckdb {
+      return lexedBlockSpans(in: text, range: range, dialect: dialect)
     }
     guard range.length > 0 else { return [] }
     var buffer = [unichar](repeating: 0, count: range.length)
@@ -351,10 +351,11 @@ enum SQLSyntaxHighlighter {
     return result
   }
 
-  /// Comments and `'…'` strings for SQLite. Dollar quotes are not strings, and a backslash
-  /// does not escape a quote. Ranges are UTF-16, matching `scanBlockSpans`.
-  private static func sqliteBlockSpans(
-    in text: NSString, range: NSRange
+  /// Comments and strings from the `dialect` tokenizer. SQLite: `'…'` only (dollar quotes are
+  /// not strings). DuckDB: `'…'`, `E'…'` and dollar quotes. Neither lets a backslash escape a
+  /// quote in a plain string. Ranges are UTF-16, matching `scanBlockSpans`.
+  private static func lexedBlockSpans(
+    in text: NSString, range: NSRange, dialect: SQLDialect
   ) -> [(range: NSRange, isComment: Bool)] {
     guard range.length > 0 else { return [] }
     let substring = text.substring(with: range)
@@ -367,7 +368,7 @@ enum SQLSyntaxHighlighter {
     }
     utf16At[scalars.count] = unit
 
-    let tokenizer = SQLTokenizer(dialect: .sqlite)
+    let tokenizer = SQLTokenizer(dialect: dialect)
     var result: [(range: NSRange, isComment: Bool)] = []
     var i = 0
     while i < scalars.count {
@@ -377,7 +378,7 @@ enum SQLSyntaxHighlighter {
       switch lexeme.kind {
       case .comment:
         isString = false
-      case .quoted(.string, _), .quoted(.backslashString, _):
+      case .quoted(.string, _), .quoted(.backslashString, _), .dollarString:
         isString = true
       default:
         i = end > i ? end : i + 1

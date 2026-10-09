@@ -137,6 +137,7 @@ nonisolated struct SQLToken: Sendable, Equatable {
     /// Plain `'...'` string containing a backslash (content). With
     /// `standard_conforming_strings = off` the server treats the backslash as an escape,
     /// so where the string ends is ambiguous and the classifier must fail closed.
+    /// PostgreSQL only: SQLite and DuckDB plain strings have no backslash escapes.
     case backslashString
     /// Any other single (ASCII) scalar, including `(`, `)`, `,`, `=`
     case symbol

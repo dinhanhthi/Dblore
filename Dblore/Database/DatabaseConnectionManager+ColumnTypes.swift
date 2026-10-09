@@ -14,9 +14,14 @@ extension DatabaseConnectionManager {
   /// Uses information_schema to get detailed type info. Skipped (driver types kept) while the
   /// app transaction is pending: a failing catalog query would abort it.
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
+    // Only PostgreSQL has modifiers to add. SQLite keeps declared types; DuckDB has no
+    // enrichment yet.
+    switch databaseType {
+    case .postgresql: break
+    case .sqlite, .duckdb, nil: return columns
+    }
     // Only proceed if we have columns and connection
     guard !columns.isEmpty, !isMetadataPaused, _postgresConnection != nil,
-      databaseType == .postgresql,
       Self.singleTableName(in: query) != nil
     else {
       return columns

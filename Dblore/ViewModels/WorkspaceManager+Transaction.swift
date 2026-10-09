@@ -320,6 +320,8 @@ extension WorkspaceManager {
     autoConnectTask?.cancel()
     cancelSchemaLoad()
     await connectionManager.disconnect()
+    // After the session closed: the picked files belong to that connection
+    releaseDuckDBFileAccess()
     await refreshPendingTransaction()
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry

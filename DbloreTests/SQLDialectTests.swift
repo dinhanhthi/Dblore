@@ -17,7 +17,7 @@ private let quotedIdentifierCases: [(String, String)] = [
 ]
 
 private let quoteCases: [(SQLDialect, String, String)] = [
-  SQLDialect.postgresql, SQLDialect.sqlite,
+  SQLDialect.postgresql, SQLDialect.sqlite, SQLDialect.duckdb,
 ].flatMap { dialect in
   quotedIdentifierCases.map { (dialect, $0.0, $0.1) }
 }
@@ -35,6 +35,10 @@ private let qualifiedCases: [(SQLDialect, String?, String, String)] = [
   (.sqlite, "main", "users", #""users""#),
   (.sqlite, "public", "users", #""public"."users""#),
   (.sqlite, "app", "t", #""app"."t""#),
+  (.duckdb, nil, "users", #""users""#),
+  (.duckdb, "main", "users", #""users""#),
+  (.duckdb, "public", "users", #""public"."users""#),
+  (.duckdb, "a\"b", "c\"d", #""a""b"."c""d""#),
   (.sqlite, "a\"b", "c\"d", #""a""b"."c""d""#),
   (.sqlite, "", "t", #"""."t""#),
 ]
@@ -61,7 +65,7 @@ private let sharedLiteralCases: [(CellValue, String)] = [
 ]
 
 private let sharedLiteralDialectCases: [(SQLDialect, CellValue, String)] = [
-  SQLDialect.postgresql, SQLDialect.sqlite,
+  SQLDialect.postgresql, SQLDialect.sqlite, SQLDialect.duckdb,
 ].flatMap { dialect in
   sharedLiteralCases.map { (dialect, $0.0, $0.1) }
 }
@@ -79,6 +83,11 @@ private let specialLiteralCases: [(SQLDialect, CellValue, String)] = [
   (.postgresql, .data(Data()), #"'\x'"#),
   (.sqlite, .data(byteSample), "X'000AFF'"),
   (.sqlite, .data(Data()), "X''"),
+  (.duckdb, .double(.nan), "'NaN'::DOUBLE"),
+  (.duckdb, .double(.infinity), "'Infinity'::DOUBLE"),
+  (.duckdb, .double(-.infinity), "'-Infinity'::DOUBLE"),
+  (.duckdb, .data(byteSample), #"'\x00\x0A\xFF'::BLOB"#),
+  (.duckdb, .data(Data()), "''::BLOB"),
 ]
 
 private let placeholderCases: [(SQLDialect, Int, String)] = [
@@ -88,6 +97,9 @@ private let placeholderCases: [(SQLDialect, Int, String)] = [
   (.sqlite, 0, "?0"),
   (.sqlite, 1, "?1"),
   (.sqlite, 12, "?12"),
+  (.duckdb, 0, "$0"),
+  (.duckdb, 1, "$1"),
+  (.duckdb, 12, "$12"),
 ]
 
 private let limitOffsetCases: [(SQLDialect, Int, Int, String)] = [
@@ -95,6 +107,7 @@ private let limitOffsetCases: [(SQLDialect, Int, Int, String)] = [
   (.postgresql, 10, 25, "LIMIT 10 OFFSET 25"),
   (.sqlite, 0, 0, "LIMIT 0 OFFSET 0"),
   (.sqlite, 10, 25, "LIMIT 10 OFFSET 25"),
+  (.duckdb, 10, 25, "LIMIT 10 OFFSET 25"),
 ]
 
 private let explainCases: [(SQLDialect, Bool, Bool, String?, String)] = [
@@ -116,6 +129,14 @@ private let explainCases: [(SQLDialect, Bool, Bool, String?, String)] = [
   (.sqlite, false, true, "json", "EXPLAIN QUERY PLAN"),
   (.sqlite, true, true, "json", "EXPLAIN QUERY PLAN"),
   (.sqlite, true, true, "TeXt", "EXPLAIN QUERY PLAN"),
+  (.duckdb, false, false, nil, "EXPLAIN"),
+  (.duckdb, true, false, nil, "EXPLAIN ANALYZE"),
+  (.duckdb, false, true, nil, "EXPLAIN"),
+  (.duckdb, true, true, nil, "EXPLAIN ANALYZE"),
+  (.duckdb, false, false, "json", "EXPLAIN"),
+  (.duckdb, true, false, "json", "EXPLAIN ANALYZE"),
+  (.duckdb, false, true, "json", "EXPLAIN"),
+  (.duckdb, true, true, "json", "EXPLAIN ANALYZE"),
 ]
 
 @Suite("SQL Dialect")
@@ -128,7 +149,8 @@ struct SQLDialectTests {
   }
 
   @Test(
-    "A NUL in an identifier is rejected", arguments: [SQLDialect.postgresql, SQLDialect.sqlite])
+    "A NUL in an identifier is rejected",
+    arguments: [SQLDialect.postgresql, SQLDialect.sqlite, SQLDialect.duckdb])
   func nulInIdentifier(dialect: SQLDialect) {
     #expect(throws: SQLDialectError.nulInIdentifier) {
       try dialect.quoteIdentifier("a\0b")
@@ -173,7 +195,7 @@ struct SQLDialectTests {
   }
 
   @Test(
-    "EXPLAIN options are PostgreSQL-only; SQLite is always EXPLAIN QUERY PLAN",
+    "EXPLAIN options are PostgreSQL-only; SQLite is EXPLAIN QUERY PLAN; DuckDB is plain text",
     arguments: explainCases)
   func explainPrefix(
     dialect: SQLDialect, analyze: Bool, buffers: Bool, format: String?, expected: String
@@ -186,6 +208,7 @@ struct SQLDialectTests {
     arguments: [
       (SQLDialect.postgresql, #""weird""name"::text ILIKE 'o''brien'"#),
       (SQLDialect.sqlite, #""weird""name" LIKE 'o''brien'"#),
+      (SQLDialect.duckdb, #""weird""name"::VARCHAR ILIKE 'o''brien'"#),
     ])
   func caseInsensitiveLike(dialect: SQLDialect, expected: String) {
     #expect(
@@ -197,6 +220,7 @@ struct SQLDialectTests {
     arguments: [
       (SQLDialect.postgresql, "public", true),
       (SQLDialect.sqlite, "main", false),
+      (SQLDialect.duckdb, "main", false),
     ])
   func capabilities(dialect: SQLDialect, schema: String, updateOnly: Bool) {
     #expect(dialect.defaultSchema == schema)
@@ -208,6 +232,7 @@ struct SQLDialectTests {
     arguments: [
       (SQLDialect.sqlite, true),
       (SQLDialect.postgresql, false),
+      (SQLDialect.duckdb, false),
     ])
   func likeIsCaseInsensitive(dialect: SQLDialect, insensitive: Bool) {
     #expect(dialect.likeIsCaseInsensitive == insensitive)
@@ -223,6 +248,16 @@ struct SQLDialectTests {
     #expect(SQLDialect.sqlite.literal(.string("o'brien")) == "'o''brien'")
     #expect(SQLDialect.sqlite.literal(.string(#"a\b"#)) == #"'a\b'"#)
     #expect(SQLDialect.postgresql.literal(.string(#"\n\t\x"#)) == #"E'\\n\\t\\x'"#)
+  }
+
+  @Test("DuckDB names itself and never writes an escape string")
+  func duckdbPromptNameAndLiterals() {
+    let attack = #"\' ; DELETE FROM secrets; --"#
+    #expect(SQLDialect.duckdb.promptName == "DuckDB")
+    #expect(SQLDialect.duckdb.literal(.string(attack)) == #"'\'' ; DELETE FROM secrets; --'"#)
+    #expect(SQLDialect.duckdb.literal(.string(#"a\b"#)) == #"'a\b'"#)
+    #expect(SQLDialect.duckdb != SQLDialect.postgresql)
+    #expect(SQLDialect.duckdb != SQLDialect.sqlite)
   }
 
   @Test("DatabaseType.dialect selects the matching dialect")

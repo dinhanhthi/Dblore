@@ -9,6 +9,13 @@
 import Foundation
 
 extension NotebookViewModel {
+  /// Foreign keys the result grid may follow: none when the engine has no lookup
+  /// (`supportsForeignKeyLookup`), so the grid offers no referenced row.
+  var lookupForeignKeys: [ForeignKey] {
+    unavailableFeatureMessage("Foreign key lookup", \.supportsForeignKeyLookup) == nil
+      ? databaseForeignKeys : []
+  }
+
   /// The referenced rows (at most two), or nil when nothing is looked up.
   /// Nil schema or table, no matching key, or a NULL component sends nothing — never `= NULL`.
   /// A connection or gate failure is thrown. The statement is not recorded.
@@ -53,7 +60,7 @@ extension NotebookViewModel {
   ) -> ForeignKey? {
     guard let schema, let table else { return nil }
     return ForeignKeyLookup.reference(
-      for: column, schema: schema, table: table, foreignKeys: databaseForeignKeys,
+      for: column, schema: schema, table: table, foreignKeys: lookupForeignKeys,
       rowColumns: rowColumns)
   }
 

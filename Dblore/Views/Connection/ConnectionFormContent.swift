@@ -46,6 +46,12 @@ struct ConnectionFormContent: View {
   /// it shows here. Cleared by Connect, Test Connection and when the form goes away.
   var unlockConnectError: Binding<String?>?
 
+  /// Opens Settings > Plugins from a missing-plugin failure (nil = no button).
+  var onOpenPluginSettings: (@MainActor () -> Void)?
+
+  /// Changes when the owner replaces `connectionConfig` with a new draft (a Finder file).
+  var draftGeneration: Int = 0
+
   @State private var isTesting = false
   @State private var testResult: TestResult?
   @State private var isConnecting = false
@@ -83,6 +89,8 @@ struct ConnectionFormContent: View {
   /// Engine the current field values belong to. The header picker changes
   /// `databaseType` without clearing those fields; loading a history row sets both.
   @State private var fieldsEngine: DatabaseType?
+  /// `draftGeneration` the fields were last taken from.
+  @State private var seenDraftGeneration = 0
   @State private var showDeleteConfirmation = false
   @State private var showClearAllConfirmation = false
   @State private var entryToDelete: UUID?
@@ -129,7 +137,9 @@ struct ConnectionFormContent: View {
     unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
     unchangedFrom: ConnectionConfig? = nil,
     footerLeading: AnyView? = nil,
-    unlockConnectError: Binding<String?>? = nil
+    unlockConnectError: Binding<String?>? = nil,
+    onOpenPluginSettings: (@MainActor () -> Void)? = nil,
+    draftGeneration: Int = 0
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
@@ -142,6 +152,8 @@ struct ConnectionFormContent: View {
     self.unchangedFrom = unchangedFrom
     self.footerLeading = footerLeading
     self.unlockConnectError = unlockConnectError
+    self.onOpenPluginSettings = onOpenPluginSettings
+    self.draftGeneration = draftGeneration
   }
 
   // MARK: - Body
@@ -157,10 +169,14 @@ struct ConnectionFormContent: View {
             }
           }
 
-          if connectionConfig.databaseType == .sqlite {
+          if connectionConfig.databaseType.capabilities.isFileBased {
             sectionCard {
               sectionTitle("Connection")
-              sqliteSimpleFields()
+              if connectionConfig.databaseType == .duckdb {
+                duckDBFileFields()
+              } else {
+                sqliteSimpleFields()
+              }
             }
           } else {
             sectionCard {
@@ -215,6 +231,7 @@ struct ConnectionFormContent: View {
         if fieldsEngine == nil {
           fieldsEngine = connectionConfig.databaseType
         }
+        seenDraftGeneration = draftGeneration
         loadConnectionHistory()
         restoreCertificateDraft()
         restoreSSHDraft()
@@ -232,12 +249,19 @@ struct ConnectionFormContent: View {
         // Loading a history row sets `fieldsEngine` before `databaseType`, so this
         // only runs for the header picker. A PostgreSQL database name would otherwise
         // stay in `database` and show up under Browse.
+        let draftReplaced = draftGeneration != seenDraftGeneration
+        if draftReplaced { adoptReplacedDraft() }
         guard
-          let replacement = Self.formAfterEngineChange(fieldsEngine: fieldsEngine, newType: newType)
+          let replacement = Self.formAfterEngineChange(
+            fieldsEngine: fieldsEngine, newType: newType, draftReplaced: draftReplaced)
         else { return }
         fieldsEngine = newType
         selectedHistoryId = nil
         connectionConfig = replacement
+      }
+      // Either handler may run first when a new draft also changes the engine
+      .onChange(of: draftGeneration) { _, _ in
+        if draftGeneration != seenDraftGeneration { adoptReplacedDraft() }
       }
       .onChange(of: Self.connectionTargetKey(connectionConfig)) { oldKey, newKey in
         // A loaded recent row stays selected only while host, port, database, and user match.
@@ -344,12 +368,13 @@ struct ConnectionFormContent: View {
     history.filter { $0.config.databaseType == type }
   }
 
-  /// Nil when the field values already belong to `newType` (a history row just loaded).
-  /// Otherwise a blank config, so the previous engine's database name is dropped.
+  /// Nil when the field values already belong to `newType` (a history row just loaded, or a
+  /// new draft from the owner). Otherwise a blank config, so the previous engine's database
+  /// name is dropped.
   static func formAfterEngineChange(
-    fieldsEngine: DatabaseType?, newType: DatabaseType
+    fieldsEngine: DatabaseType?, newType: DatabaseType, draftReplaced: Bool = false
   ) -> ConnectionConfig? {
-    guard fieldsEngine != newType else { return nil }
+    guard !draftReplaced, fieldsEngine != newType else { return nil }
     return newFormDraft(databaseType: newType)
   }
 
@@ -444,7 +469,7 @@ struct ConnectionFormContent: View {
     return sameTarget ? selectedId : nil
   }
 
-  /// Choosing a SQLite file. A different path drops the loaded recent row.
+  /// Choosing a SQLite or DuckDB file. A different path drops the loaded recent row.
   /// Name becomes the file name when it is blank or still that row's name.
   static func applyingSQLiteFile(
     path: String,
@@ -462,15 +487,56 @@ struct ConnectionFormContent: View {
     return (updated, sameFile ? selected?.id : nil)
   }
 
-  /// File name without its extension. A name the user typed is left as they typed it.
+  /// File name without its extension ("In-memory" for an in-memory DuckDB). A name the user
+  /// typed is left as they typed it.
   static func sqliteDisplayName(current: String, path: String, loadedName: String?) -> String {
     let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-    let derived = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    let derived =
+      path == DuckDBSession.inMemoryPath
+      ? "In-memory" : URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
     if trimmed.isEmpty { return derived }
     if let loadedName, trimmed == loadedName.trimmingCharacters(in: .whitespacesAndNewlines) {
       return derived
     }
     return current
+  }
+
+  /// A DuckDB database picked in the form or opened from Finder.
+  enum DuckDBChoice: Equatable {
+    /// An existing file. Opens read-only by default.
+    case open(path: String, bookmark: Data?)
+    /// A new file. Read-write, since DuckDB refuses to open a missing file read-only.
+    case create(path: String, bookmark: Data?)
+    /// No file. DuckDB cannot open an in-memory database read-only.
+    case inMemory
+  }
+
+  /// Applies a DuckDB choice with the same path, name and recent-row rules as a SQLite file,
+  /// then sets that choice's `readOnlyFile` default.
+  static func applyingDuckDBChoice(
+    _ choice: DuckDBChoice, to config: ConnectionConfig, selected: ConnectionHistoryEntry?
+  ) -> (config: ConnectionConfig, selectedHistoryId: UUID?) {
+    let path: String
+    let bookmark: Data?
+    let readOnly: Bool
+    switch choice {
+    case .open(let filePath, let fileBookmark):
+      (path, bookmark, readOnly) = (filePath, fileBookmark, true)
+    case .create(let filePath, let fileBookmark):
+      (path, bookmark, readOnly) = (filePath, fileBookmark, false)
+    case .inMemory:
+      (path, bookmark, readOnly) = (DuckDBSession.inMemoryPath, nil, false)
+    }
+    var applied = applyingSQLiteFile(path: path, bookmark: bookmark, to: config, selected: selected)
+    applied.config.readOnlyFile = readOnly
+    return applied
+  }
+
+  /// The owner's new draft: its fields belong to its engine, no Recent row is selected.
+  private func adoptReplacedDraft() {
+    seenDraftGeneration = draftGeneration
+    fieldsEngine = connectionConfig.databaseType
+    selectedHistoryId = nil
   }
 
   func setFieldsEngine(_ type: DatabaseType) {
@@ -735,6 +801,15 @@ struct ConnectionFormContent: View {
         Text(message)
           .foregroundColor(.destructive)
           .textSelection(.enabled)
+        if let onOpenPluginSettings,
+          let action = ConnectionErrorAction.action(forMessage: message)
+        {
+          Spacer(minLength: Spacing.sm)
+          Button(action.title, action: onOpenPluginSettings)
+            .buttonStyle(FilledSecondaryButtonStyle())
+            .controlSize(.small)
+            .linkPointer()
+        }
       }
     }
     .font(.caption)

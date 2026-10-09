@@ -13,13 +13,18 @@ TEAM_ID="86H6CNLN4C"
 IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
 NOTARY_PROFILE="DbloreNotary"
 SPARKLE_ACCOUNT="sqlnotebook"
+PLUGIN_CATALOG="Dblore/Utilities/Plugins/DuckDBPluginCatalog.json"
 
 usage() {
   cat <<EOF
 Usage: scripts/release-local.sh --expect-version <version> [--dry-run]
+       scripts/release-local.sh --check-plugin-only
 
   --expect-version <v>      <v> is X.Y.Z, the version to release as tag v<v>
   --dry-run                 Run the preflight checks only (no build, tag or push)
+  --check-plugin-only       Only check that the DuckDB plugin asset named in
+                            $PLUGIN_CATALOG is published
+                            and matches its SHA-256 (part of every preflight)
   -h, --help                Show this help
 EOF
 }
@@ -31,6 +36,7 @@ fail() {
 
 VERSION=""
 DRY_RUN=0
+CHECK_PLUGIN_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expect-version)
@@ -39,6 +45,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --dry-run) DRY_RUN=1 ;;
+    --check-plugin-only) CHECK_PLUGIN_ONLY=1 ;;
     -h | --help)
       usage
       exit 0
@@ -53,6 +60,51 @@ done
 
 cd "$(dirname "$0")/.."
 
+WORK_DIR=""
+NOTES=""
+PLUGIN_TMP=""
+cleanup() {
+  [[ -n "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
+  [[ -n "$NOTES" ]] && rm -f "$NOTES"
+  [[ -n "$PLUGIN_TMP" ]] && rm -rf "$PLUGIN_TMP"
+  return 0
+}
+trap cleanup EXIT
+
+# The app installs the DuckDB plugin from the catalog URL only when its SHA-256
+# matches, so never ship a catalog whose asset is missing or different.
+check_plugin_asset() {
+  echo "==> Checking the DuckDB plugin asset"
+  [[ -f "$PLUGIN_CATALOG" ]] || fail "$PLUGIN_CATALOG not found"
+  local version url expected_sha max_size http_code actual_sha
+  version=$(plutil -extract version raw -o - "$PLUGIN_CATALOG") || fail "no version in $PLUGIN_CATALOG"
+  url=$(plutil -extract url raw -o - "$PLUGIN_CATALOG") || fail "no url in $PLUGIN_CATALOG"
+  expected_sha=$(plutil -extract sha256 raw -o - "$PLUGIN_CATALOG") || fail "no sha256 in $PLUGIN_CATALOG"
+  max_size=$(plutil -extract maxSize raw -o - "$PLUGIN_CATALOG") || fail "no maxSize in $PLUGIN_CATALOG"
+  [[ "$url" == https://* ]] || fail "plugin url in $PLUGIN_CATALOG is not https: $url"
+  [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "plugin sha256 in $PLUGIN_CATALOG is not 64 lowercase hex characters"
+  [[ "$max_size" =~ ^[0-9]+$ ]] || fail "plugin maxSize in $PLUGIN_CATALOG is not an integer"
+
+  PLUGIN_TMP=$(mktemp -d -t dblore-plugin-check)
+  local curl_status=0
+  http_code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-filesize "$max_size" \
+    --connect-timeout 20 --max-time 600 -w '%{http_code}' -o "$PLUGIN_TMP/asset" "$url") ||
+    curl_status=$?
+  [[ "$http_code" != "404" ]] ||
+    fail "DuckDB plugin $version asset not published ($url returned HTTP 404) — run scripts/release-plugin.sh --publish, commit the updated catalog, then rerun"
+  [[ $curl_status -eq 0 && "$http_code" == "200" ]] ||
+    fail "could not download the DuckDB plugin asset $url (curl exit $curl_status, HTTP ${http_code:-none}; network error, timeout or larger than $max_size bytes)"
+  actual_sha=$(shasum -a 256 "$PLUGIN_TMP/asset" | awk '{ print $1 }')
+  [[ "$actual_sha" == "$expected_sha" ]] ||
+    fail "DuckDB plugin SHA-256 mismatch: $PLUGIN_CATALOG has $expected_sha, the published asset is $actual_sha"
+  echo "plugin: DuckDB $version asset matches $PLUGIN_CATALOG"
+}
+
+if [[ $CHECK_PLUGIN_ONLY -eq 1 ]]; then
+  check_plugin_asset
+  exit 0
+fi
+
 [[ -n "$VERSION" ]] || {
   usage >&2
   fail "--expect-version is required"
@@ -60,15 +112,6 @@ cd "$(dirname "$0")/.."
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "--expect-version must be X.Y.Z (got $VERSION)"
 TAG="v$VERSION"
 DMG="dist/$SCHEME-$VERSION.dmg"
-
-WORK_DIR=""
-NOTES=""
-cleanup() {
-  [[ -n "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
-  [[ -n "$NOTES" ]] && rm -f "$NOTES"
-  return 0
-}
-trap cleanup EXIT
 
 echo "==> Preflight for $TAG"
 
@@ -119,6 +162,8 @@ awk -v heading="## $TAG" '
   $0 == heading || index($0, heading " ") == 1 { found = 1 }
 ' CHANGELOG.md >"$NOTES"
 grep -q '[^[:space:]]' "$NOTES" || fail "CHANGELOG.md has no non-empty '## $TAG' section"
+
+check_plugin_asset
 
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "dry run: preflight passed for $TAG"

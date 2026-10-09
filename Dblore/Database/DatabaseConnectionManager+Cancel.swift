@@ -15,6 +15,10 @@ nonisolated struct QueryCancelRecord: Sendable, Equatable {
   let pendingCount: Int
   /// A transaction the user opened with BEGIN (Protected mode off) was rolled back
   let userTxRolledBack: Bool
+  /// Interrupt cancel only: `batchCancellationGeneration` after this cancel. The epoch does not
+  /// change, so a script started at this generation (after the cancel) is not cancelled.
+  /// Nil for a reconnect cancel: the new connection has a new epoch.
+  var interruptGeneration: UInt64? = nil
 
   var error: DatabaseError {
     .queryCancelled(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
@@ -70,13 +74,15 @@ extension DatabaseConnectionManager {
       return .transactionChanged
     }
     let stateBefore = txState
+    let interrupts = session?.capabilities.cancelStrategy == .interrupt
+    batchCancellationGeneration &+= 1
     let record = QueryCancelRecord(
       epoch: connectionEpoch, pendingCount: stateBefore.pending.count,
-      userTxRolledBack: userTxOpen)
+      userTxRolledBack: userTxOpen,
+      interruptGeneration: interrupts ? batchCancellationGeneration : nil)
     lastCancel = record
-    batchCancellationGeneration &+= 1
     await AppLogger.shared.info("Cancelling the running statement", category: "Database")
-    if session?.capabilities.cancelStrategy == .interrupt {
+    if interrupts {
       await session?.interrupt()
       return .cancelled
     }
@@ -107,10 +113,12 @@ extension DatabaseConnectionManager {
     return .cancelled
   }
 
-  /// The error for a statement of a script started on connection `epoch`, if the user
-  /// cancelled that connection (nil otherwise)
-  func cancelError(since epoch: UInt64) -> DatabaseError? {
+  /// The error for a statement of a script started on connection `epoch` at cancellation
+  /// `generation` (`batchCancellationGeneration`), if the user cancelled that connection while
+  /// the script ran (nil otherwise)
+  func cancelError(since epoch: UInt64, generation: UInt64) -> DatabaseError? {
     guard let lastCancel, lastCancel.epoch == epoch else { return nil }
+    if let interrupted = lastCancel.interruptGeneration, interrupted == generation { return nil }
     return lastCancel.error
   }
 }

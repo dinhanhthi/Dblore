@@ -390,9 +390,22 @@ class NotebookViewModel {
     notebook.connectionConfig?.databaseType.dialect ?? .postgresql
   }
 
-  /// Explain Analyze needs a JSON plan. SQLite shows `EXPLAIN QUERY PLAN` as a grid instead.
+  /// Explain Analyze: PostgreSQL (JSON plan) and DuckDB (text plan). SQLite has no ANALYZE
+  /// and shows `EXPLAIN QUERY PLAN` as a grid instead.
   var canExplainAnalyze: Bool {
-    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainJSON
+    (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainAnalyze
+  }
+
+  /// Nil when this tab's engine supports `feature`, else "<action> is not available for
+  /// <engine> connections". Both the connection's engine and an open data viewer's must
+  /// support it.
+  func unavailableFeatureMessage(
+    _ action: String, _ feature: KeyPath<DatabaseCapabilities, Bool>
+  ) -> String? {
+    var types = [notebook.connectionConfig?.databaseType ?? .postgresql]
+    if let viewer = dataViewer?.databaseType { types.append(viewer) }
+    guard let type = types.first(where: { !$0.capabilities[keyPath: feature] }) else { return nil }
+    return "\(action) is not available for \(type.displayName) connections"
   }
 
   /// The gate's error message if the connection's protection level blocks `query`, else nil.

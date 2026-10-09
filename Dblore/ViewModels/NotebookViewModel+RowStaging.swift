@@ -28,9 +28,21 @@ extension NotebookViewModel {
   /// Shown when the connection's protection level blocks data changes.
   static let connectionIsReadOnly = "This connection is read-only"
 
+  /// Why grid edits are refused for this engine (`supportsRowStaging`), or nil.
+  var rowEditingUnsupportedReason: String? {
+    unavailableFeatureMessage("Editing rows", \.supportsRowStaging)
+  }
+
+  /// Why a table import is refused for this engine (`supportsDataImport`), or nil.
+  var importUnsupportedReason: String? {
+    unavailableFeatureMessage("Importing data", \.supportsDataImport)
+  }
+
   /// Why staging actions do nothing, or nil when this data viewer can stage.
-  /// Read-only is checked first so + Row, grid staging, and Commit share one gate.
+  /// The engine, then read-only, are checked first so + Row, grid staging, and Commit share
+  /// one gate.
   var rowStagingUnavailableReason: String? {
+    if let reason = rowEditingUnsupportedReason { return reason }
     if protectionPolicy.protectionLevel == .readOnly { return Self.connectionIsReadOnly }
     return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
   }
@@ -241,6 +253,7 @@ extension NotebookViewModel {
 
   /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
   func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
+    if let reason = importUnsupportedReason { return reason }
     guard !hasPendingStagedChanges else {
       return "Commit or discard staged changes before importing"
     }

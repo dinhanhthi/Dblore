@@ -111,6 +111,8 @@ enum DatabaseError: LocalizedError {
   case sshUnsupportedHostKeyAlgorithm(host: String, port: Int)
   /// The SSH handshake (key exchange, host-key check, login) did not finish in time
   case sshHandshakeTimedOut
+  /// The engine needs a plugin that is not installed (DuckDB): nothing was opened
+  case engineUnavailable(DatabaseType)
 
   var errorDescription: String? {
     switch self {
@@ -190,6 +192,9 @@ enum DatabaseError: LocalizedError {
     case .sshHandshakeTimedOut:
       return "The SSH server did not complete the handshake in time. Check the SSH host and "
         + "port, or raise the connection timeout."
+    case .engineUnavailable(let type):
+      let name = type.rawValue
+      return "\(name) support is not installed. Install the \(name) plugin in Settings > Plugins."
     }
   }
 

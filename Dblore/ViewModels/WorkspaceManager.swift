@@ -44,12 +44,20 @@ class WorkspaceManager: Identifiable {
   let aiAssistant = AIAssistantViewModel()
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
+
+  /// Import Data (File menu, table context menu): connected, and the engine supports a table
+  /// import (`supportsDataImport`; DuckDB does not).
+  var canImportData: Bool {
+    connectionState.isConnected
+      && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
+  }
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
   var pendingWeakeningSSHCredential: SSHStoredCredential?
-  /// Why the connect after the Safe Mode unlock failed, shown inline in the still-open form.
+  /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
+  /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
   var lastUnlockConnectError: String?
   /// Unremembered certificate for the current workspace connection and its banner Reconnect.
@@ -116,6 +124,11 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var folderAccess: SecurityScopedAccessToken?
   /// Access held while each tab is open (released on tab close)
   @ObservationIgnored var tabAccess: [UUID: SecurityScopedAccessToken] = [:]
+  /// Files picked by "Query Parquet/CSV File...", by canonical path: access held for the life of
+  /// the DuckDB connection (see `WorkspaceManager+DuckDBFiles.swift`)
+  @ObservationIgnored var duckDBFileAccess: [String: SecurityScopedAccessToken] = [:]
+  /// Asks before reconnecting an in-memory DuckDB database; nil = NSAlert (tests inject an answer)
+  @ObservationIgnored var duckDBReconnectPrompt: (@MainActor () async -> Bool)?
   @ObservationIgnored var accessHooks = SecurityScopedAccessHooks.live
   @ObservationIgnored var recents = RecentManager.shared
   /// Creates the manager of the window a tab moves to (injectable for tests)
@@ -143,6 +156,10 @@ class WorkspaceManager: Identifiable {
   // MARK: - Connection Modals
 
   var isConnectionFormModalVisible: Bool = false
+  /// Bumped when `editingConnectionConfig` is replaced from outside the form (a Finder file, a
+  /// failed connect). An open form then takes the new draft as is: its fields belong to the
+  /// draft's engine and no Recent row stays selected.
+  var connectionFormDraftGeneration = 0
   var isWorkspaceInfoModalVisible: Bool = false
   /// Tab shown when the details modal opens. The info button starts on Workspace.
   var workspaceInfoTab: WorkspaceInfoTab = .workspace
@@ -371,9 +388,19 @@ class WorkspaceManager: Identifiable {
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
 
+    // Picked DuckDB files stay readable only when reconnecting the same database
+    let keepsDuckDBFiles = keepsDuckDBFileAccess(for: config)
+
     do {
       try await PerfSignpost.interval("db.connect") {
-        try await connectionManager.connect(config: config)
+        try await connectionManager.connect(
+          config: config, extraAllowedPaths: keepsDuckDBFiles ? duckDBAllowedPaths : [])
+      }
+      if !keepsDuckDBFiles { releaseDuckDBFileAccess() }
+      // A file created by "New File…" gets its bookmark on connect
+      var config = config
+      if config.fileBookmark == nil, let bookmark = await connectionManager.config?.fileBookmark {
+        config.fileBookmark = bookmark
       }
       guard SessionManager.saveConnection(config) else {
         throw CertificateFormError.keychainSave
@@ -406,6 +433,7 @@ class WorkspaceManager: Identifiable {
       startSchemaLoad()
     } catch {
       await connectionManager.disconnect()
+      releaseDuckDBFileAccess()
       connectionState = .disconnected
       invalidateEditTargetsInTabs()
       await refreshPendingTransaction()
@@ -439,8 +467,8 @@ class WorkspaceManager: Identifiable {
     guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
 
     var configWithPassword = config
-    // A SQLite file has no password; PostgreSQL gets it from the Keychain
-    if config.databaseType == .postgresql {
+    // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain
+    if config.databaseType.capabilities.usesPassword {
       guard let keychainKey = workspace.keychainKey,
         let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
       else {
@@ -470,7 +498,36 @@ class WorkspaceManager: Identifiable {
       )
       // Never over a newer connection: only while this attempt is still the visible one
       if !Task.isCancelled, connectionState == .connecting { connectionState = .disconnected }
+      if !Task.isCancelled { presentConnectErrorIfActionable(error, config: configWithPassword) }
     }
+  }
+
+  /// A connect outside the form (auto-connect, a Welcome recent card) failed with an error the
+  /// form offers an action for (missing plugin): open the form showing the error and its button.
+  func presentConnectErrorIfActionable(_ error: any Error, config: ConnectionConfig) {
+    guard ConnectionErrorAction.action(for: error) != nil else { return }
+    editingConnectionConfig = config
+    connectionFormDraftGeneration += 1
+    lastUnlockConnectError = error.localizedDescription
+    isConnectionFormModalVisible = true
+  }
+
+  /// A `.duckdb` file opened from Finder: the connection form, prefilled to open it read-only.
+  /// The bookmark is made now, while the Finder grant lasts. Without the plugin, the form also
+  /// shows the missing-plugin error and its Install button.
+  func presentDuckDBFile(_ url: URL) {
+    let config = ConnectionFormContent.applyingDuckDBChoice(
+      .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
+      to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
+    ).config
+    guard DuckDBPluginManager.shared.isInstalledOrPending else {
+      presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
+      return
+    }
+    editingConnectionConfig = config
+    connectionFormDraftGeneration += 1
+    lastUnlockConnectError = nil
+    isConnectionFormModalVisible = true
   }
 
   func syncConnectionStateToTabs() {
@@ -756,7 +813,37 @@ class WorkspaceManager: Identifiable {
     return bookmark != tabRef.bookmark
   }
 
+  /// What opening a file from Finder (or the workspace chooser) does with it.
+  enum FileOpenRoute: Equatable {
+    /// A `.sqlws` workspace.
+    case workspace
+    /// A DuckDB database: the connection form, prefilled.
+    case duckDBDatabase
+    /// A DuckDB write-ahead log (`.wal`): nothing to open on its own.
+    case ignored
+    /// A notebook, SQL or Markdown tab (unknown extensions fail in `openFile`).
+    case document
+  }
+
+  nonisolated static func fileOpenRoute(_ url: URL) -> FileOpenRoute {
+    switch url.pathExtension.lowercased() {
+    case "sqlws": .workspace
+    case "duckdb": .duckDBDatabase
+    case "wal": .ignored
+    default: .document
+    }
+  }
+
   func openFile(url: URL, selectTab: Bool = true) async throws {
+    switch Self.fileOpenRoute(url) {
+    case .duckDBDatabase:
+      presentDuckDBFile(url)
+      return
+    case .ignored:
+      return
+    case .workspace, .document:
+      break
+    }
     // Check if already open
     if let existingTab = tabs.first(where: { $0.fileURL == url }) {
       if selectTab {
@@ -1021,6 +1108,7 @@ class WorkspaceManager: Identifiable {
     workspaceAccess = nil
     folderAccess?.release()
     folderAccess = nil
+    releaseDuckDBFileAccess()
   }
 
   /// Reapplies snapshot text onto a tab `load` already restored, or creates the tab when it

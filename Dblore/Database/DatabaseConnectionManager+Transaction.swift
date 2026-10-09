@@ -58,8 +58,10 @@ extension DatabaseConnectionManager {
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
-    // The connection this script runs on: a cancel closes it (see `cancelError(since:)`)
+    // The connection this script runs on: a cancel closes or interrupts it
+    // (see `cancelError(since:generation:)`)
     let epoch = connectionEpoch
+    let cancelGeneration = batchCancellationGeneration
     try await adoptUserTransactionIfNeeded(protectedMode: protectedMode, caller: caller)
 
     let start = Date()
@@ -75,7 +77,8 @@ extension DatabaseConnectionManager {
       await scriptCheckpointHook?(.beforeStatement(caller: caller, index: results.count))
       // Cancelled, reset or reconnected between two statements: the rest must not run on the
       // new session (outside the user's BEGIN, without its temp tables / SET)
-      try refuseIfSessionChanged(since: epoch, remaining: statements.count - results.count)
+      try refuseIfSessionChanged(
+        since: epoch, generation: cancelGeneration, remaining: statements.count - results.count)
       // Another tab may have opened the transaction while this script was suspended
       try refuseIfOwnedByAnotherCaller(caller)
       let action =
@@ -85,7 +88,7 @@ extension DatabaseConnectionManager {
         do {
           try await beginAppTransaction(caller: caller)
         } catch {
-          throw cancelError(since: epoch) ?? error
+          throw cancelError(since: epoch, generation: cancelGeneration) ?? error
         }
         openedHere = true
       }
@@ -95,7 +98,8 @@ extension DatabaseConnectionManager {
         editTableCache.removeAll()
       }
       // BEGIN suspended: the connection may have changed meanwhile
-      try refuseIfSessionChanged(since: epoch, remaining: statements.count - results.count)
+      try refuseIfSessionChanged(
+        since: epoch, generation: cancelGeneration, remaining: statements.count - results.count)
       var result: QueryResult
       do {
         let inTransaction = !txState.isIdle || userTxOpen
@@ -104,7 +108,9 @@ extension DatabaseConnectionManager {
           statement.text, maxRows: maxRows, inTransaction: inTransaction, binds: statementBinds)
       } catch {
         // The session is gone: nothing of the old transaction state applies any more
-        if let cancelled = cancelError(since: epoch) { throw cancelled }
+        if let cancelled = cancelError(since: epoch, generation: cancelGeneration) {
+          throw cancelled
+        }
         if !protectedMode {
           noteUserTransaction(after: statement, succeeded: false)
         }
@@ -250,12 +256,12 @@ extension DatabaseConnectionManager {
     throw DatabaseError.transactionPendingInAnotherTab
   }
 
-  /// A script started on connection `epoch` stops once the user cancelled that connection (its
-  /// close may still be in progress) or the connection changed (another tab's capped read,
+  /// A script started on connection `epoch` at cancellation `generation` stops once the user
+  /// cancelled that connection (its close may still be in progress) or the connection changed (another tab's capped read,
   /// reconnect): `DatabaseError.queryCancelled`, else `DatabaseError.sessionChanged`
   /// (`remaining` statements not run).
-  func refuseIfSessionChanged(since epoch: UInt64, remaining: Int) throws {
-    if let cancelled = cancelError(since: epoch) { throw cancelled }
+  func refuseIfSessionChanged(since epoch: UInt64, generation: UInt64, remaining: Int) throws {
+    if let cancelled = cancelError(since: epoch, generation: generation) { throw cancelled }
     guard connectionEpoch != epoch else { return }
     throw DatabaseError.sessionChanged(skippedStatements: remaining)
   }
@@ -413,10 +419,14 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// App-owned transaction start. SQLite takes the writer lock immediately. A user-typed
-  /// `BEGIN` is never rewritten.
+  /// App-owned transaction start. SQLite takes the writer lock immediately. DuckDB uses the
+  /// standard form. A user-typed `BEGIN` is never rewritten.
   var appOwnedBeginSQL: String {
-    config?.databaseType == .sqlite ? "BEGIN IMMEDIATE" : "BEGIN"
+    switch config?.databaseType {
+    case .postgresql, nil: "BEGIN"
+    case .sqlite: "BEGIN IMMEDIATE"
+    case .duckdb: "BEGIN TRANSACTION"
+    }
   }
 
   /// PostgreSQL suspends the idle-in-transaction timeout for the app transaction.

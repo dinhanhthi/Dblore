@@ -28,7 +28,8 @@ notarizes it and prints its SHA-256.
   --install-dev     Write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
                     into .plugin-dev/ at the repo root
   --publish         Upload to GitHub release $TAG (--latest=false) and rewrite
-                    $CATALOG. Manual, user-run only
+                    $CATALOG. Manual, user-run only; afterwards
+                    scripts/release-local.sh --check-plugin-only verifies the asset
   --yes             Skip the interactive confirmation of --publish
   --skip-notarize   Sign only (not allowed with --publish)
   -h, --help        Show this help
@@ -200,7 +201,7 @@ with open(path, "w") as f:
     f.write("\n")
 PY
   echo "release: $(gh release view "$TAG" --repo "$REPO" --json url -q .url)"
-  echo "updated $CATALOG; review and commit it"
+  echo "updated $CATALOG; review and commit it, then run scripts/release-local.sh --check-plugin-only"
 fi
 
 echo "==> Done"

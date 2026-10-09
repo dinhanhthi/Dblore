@@ -14,6 +14,7 @@ enum SettingsPage: String {
   case data
   case security
   case results
+  case plugins
 
   static let userInfoKey = "settingsSection"
 }
@@ -58,6 +59,7 @@ struct SettingsModal: View {
     case save = "Save"
     case data = "Data"
     case security = "Security"
+    case plugins = "Plugins"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
 
@@ -72,6 +74,7 @@ struct SettingsModal: View {
       case .save: return "square.and.arrow.down"
       case .data: return "externaldrive"
       case .security: return "lock.shield"
+      case .plugins: return "puzzlepiece.extension"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
       }
@@ -83,6 +86,7 @@ struct SettingsModal: View {
       case .data: .data
       case .security: .security
       case .results: .results
+      case .plugins: .plugins
       case nil: .general
       }
     }
@@ -178,6 +182,8 @@ struct SettingsModal: View {
           .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
       }
+    case .plugins:
+      PluginsSettingsSection()
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:

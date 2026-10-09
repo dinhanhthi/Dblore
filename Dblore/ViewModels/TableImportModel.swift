@@ -220,6 +220,10 @@ final class TableImportModel {
   /// The active tab owns the transaction, Safe Mode prompt, history, and viewer reload.
   @discardableResult
   func submit(to viewModel: NotebookViewModel) async -> Bool {
+    if let reason = viewModel.importUnsupportedReason {
+      errorMessage = reason
+      return false
+    }
     guard !Task.isCancelled else {
       errorMessage = "Import cancelled"
       return false

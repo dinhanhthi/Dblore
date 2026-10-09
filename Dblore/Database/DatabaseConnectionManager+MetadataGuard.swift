@@ -33,6 +33,28 @@ extension DatabaseConnectionManager {
     _ body: (any DatabaseSession) async throws -> T
   ) async throws -> T {
     _ = try catalogConnection()
+    return try await withCatalogReadSession(body)
+  }
+
+  /// `withSession` for an app catalog read. A DuckDB connection holds one open result and a new
+  /// statement interrupts it, so DuckDB catalog reads (the schema load fetches in parallel) run
+  /// one at a time. Other engines run them as they come.
+  func withCatalogReadSession<T: Sendable>(
+    _ body: (any DatabaseSession) async throws -> T
+  ) async throws -> T {
+    guard session is DuckDBSession else { return try await withSession(body) }
+    if isDuckDBCatalogReadActive {
+      await withCheckedContinuation { duckDBCatalogWaiters.append($0) }
+    } else {
+      isDuckDBCatalogReadActive = true
+    }
+    defer {
+      if duckDBCatalogWaiters.isEmpty {
+        isDuckDBCatalogReadActive = false
+      } else {
+        duckDBCatalogWaiters.removeFirst().resume()
+      }
+    }
     return try await withSession(body)
   }
 
@@ -44,7 +66,7 @@ extension DatabaseConnectionManager {
   ) async throws -> T {
     _ = try catalogConnection()
     do {
-      return try await withSession(body)
+      return try await withCatalogReadSession(body)
     } catch {
       throw DatabaseError.queryFailed(
         "Failed to fetch \(what): \(error.localizedDescription)", 0)
