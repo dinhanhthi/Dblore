@@ -316,7 +316,7 @@ struct WorkspaceTransactionRulesTests {
       state: .appTx(pending: [.earlierChanges(), unknown])
     ).reviewStatements
     #expect(statements.contains("DELETE FROM t WHERE id > 5 (rows unknown)"))
-    #expect(!statements.contains("before Protected mode"))
+    #expect(!statements.contains("Commit also makes permanent"))
   }
 
   // MARK: Commit unlock
