@@ -3,6 +3,16 @@
     <channel>
         <title>Dblore</title>
         <item>
+            <title>0.6.0</title>
+            <pubDate>Fri, 09 Oct 2026 18:58:16 +0200</pubDate>
+            <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/Dblore/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/dinhanhthi/Dblore/releases/download/v0.6.0/Dblore-0.6.0.dmg" length="22020959" type="application/octet-stream" sparkle:edSignature="MwBZC/+Xx1xXAcUySipvXw/C8g9GamXzOTL8NL0KgCdYm22utvV2/RP1OLVd2NewDIAkK/OL1Ukt1yAnZsSBBg=="/>
+        </item>
+        <item>
             <title>0.5.0</title>
             <pubDate>Wed, 07 Oct 2026 09:16:33 +0200</pubDate>
             <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/Dblore/releases</sparkle:fullReleaseNotesLink>
@@ -21,16 +31,6 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/dinhanhthi/Dblore/releases/download/v0.4.2/Dblore-0.4.2.dmg" length="19142541" type="application/octet-stream" sparkle:edSignature="krXEfig2/sm5CIDdIsR006FQNRrv/fBAuhtcySOsB3d+AwEWAIHpJTvzmVydI5MIfE/BnBt4nAiwUS9dnsTGAw=="/>
-        </item>
-        <item>
-            <title>0.4.1</title>
-            <pubDate>Fri, 02 Oct 2026 22:53:49 +0000</pubDate>
-            <sparkle:fullReleaseNotesLink>https://github.com/dinhanhthi/Dblore/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>10</sparkle:version>
-            <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/dinhanhthi/Dblore/releases/download/v0.4.1/Dblore-0.4.1.dmg" length="19098695" type="application/octet-stream" sparkle:edSignature="zWe25XmAHUThBZciWxNuWNj1Z5W9NohWg+SLNzhm9hHFnFyFe+3OR2WK2/zejlU9q1HVlAf5F1tTwxfDvEHECg=="/>
         </item>
         <item>
             <title>0.3.2</title>
