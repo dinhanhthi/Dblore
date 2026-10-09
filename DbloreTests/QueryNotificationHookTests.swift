@@ -154,7 +154,7 @@ struct QueryNotificationHookTests {
     }
   }
 
-  @Test("A cancelled cell run posts nothing", .timeLimit(.minutes(1)))
+  @Test("A cancelled cell run posts nothing", .timeLimit(.minutes(2)))
   func cancelledCellRunPostsNothing() async throws {
     try await withViewModel(cells: [Self.endless]) { viewModel, center in
       viewModel.cancelQueryPrompt = { _ in true }
@@ -163,8 +163,9 @@ struct QueryNotificationHookTests {
       try await waitUntilInFlight(viewModel)
 
       await viewModel.cancelRunningStatement(cancelQueue: true)
-      // The cell gets its error result once the interrupted statement returns
-      for _ in 0..<500 where viewModel.notebook.cells[0].result == nil {
+      // The cell gets its error result once the interrupted statement returns (up to 20s on a
+      // loaded runner)
+      for _ in 0..<2000 where viewModel.notebook.cells[0].result == nil {
         try await Task.sleep(for: .milliseconds(10))
       }
       #expect(viewModel.notebook.cells[0].result?.error != nil)

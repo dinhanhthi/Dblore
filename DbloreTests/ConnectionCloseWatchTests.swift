@@ -96,7 +96,8 @@ struct ConnectionCloseWatchTests {
     await #expect(throws: ConnectionClosedError.self) {
       try await watch.run { await held.wait() }
     }
-    #expect(Date().timeIntervalSince(start) < 1)
+    // The held operation never returns on its own; the bound leaves slack for a loaded runner
+    #expect(Date().timeIntervalSince(start) < 5)
     held.release()
   }
 

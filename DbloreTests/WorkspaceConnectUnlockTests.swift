@@ -224,7 +224,10 @@ struct WorkspaceConnectUnlockTests {
     // The unlock sheet closes (no pending connect); the still-open form shows the message.
     #expect(manager.pendingWeakeningConnect == nil)
     #expect(manager.lastUnlockConnectError?.contains("bastion.example:22") == true)
-    #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+    // The toast state is shared with tests running in parallel: only this failure must not toast
+    #expect(
+      WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("bastion.example")
+        != true)
   }
 
   @Test("A failed connect after the unlock shows inline; the next attempt clears it")
@@ -246,7 +249,10 @@ struct WorkspaceConnectUnlockTests {
     #expect(presenter.changes.isEmpty)
     #expect(manager.pendingWeakeningConnect == nil)
     #expect(manager.lastUnlockConnectError?.contains("password authentication failed") == true)
-    #expect(WorkspaceWindowManager.shared.toastState.currentToast == nil)
+    // The toast state is shared with tests running in parallel: only this failure must not toast
+    #expect(
+      WorkspaceWindowManager.shared.toastState.currentToast?.message.contains(
+        "password authentication failed") != true)
 
     _ = try? await manager.connect(
       config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
