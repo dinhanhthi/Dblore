@@ -131,7 +131,7 @@ struct MarkdownPreviewBridgeTests {
     let light = MarkdownEditorTheme.variables(colorScheme: .light)
     let dark = MarkdownEditorTheme.variables(colorScheme: .dark)
     // Literals from DesignSystem+Colors.swift: appBackground and foreground.
-    #expect(light["--dblore-bg"] == "#ffffff")
+    #expect(light["--dblore-bg"] == "#fafafa")
     #expect(dark["--dblore-bg"] == "#1e1e1e")
     #expect(light["--dblore-fg"] == "#09090b")
     #expect(dark["--dblore-fg"] == "#fafafa")

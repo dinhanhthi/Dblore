@@ -47,7 +47,7 @@ struct UserRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(isHovering ? Color.hoverFill : Color.clear)
       )
       .onHover { hovering in
         isHovering = hovering
@@ -140,7 +140,7 @@ struct RoleRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(isHovering ? Color.hoverFill : Color.clear)
       )
       .onHover { hovering in
         isHovering = hovering

@@ -268,8 +268,8 @@ private struct SettingsNavRow: View {
         Capsule()
           .fill(
             isSelected
-              ? Color.accent.opacity(0.15)
-              // cellBackgroundHover matches cardHeaderBackground, so the capsule disappears.
+              ? Color.selectionFill
+                // cellBackgroundHover matches cardHeaderBackground, so the capsule disappears.
               : (isHovered ? Color.foreground.opacity(0.12) : Color.clear))
       }
       .contentShape(Capsule())

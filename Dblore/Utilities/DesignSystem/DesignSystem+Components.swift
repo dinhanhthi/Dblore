@@ -32,7 +32,7 @@ enum ButtonStyleVariant {
       if isPressed {
         return Color.cellBackgroundHover
       } else if isHovering {
-        return Color.cellBackgroundHover.opacity(0.5)
+        return Color.hoverFill
       } else {
         return Color.clear
       }
@@ -288,10 +288,10 @@ struct FloatingPanelButtonStyle: ButtonStyle {
           // Hover/press overlay with accent color (only in dark theme)
           if colorScheme == .dark && (isHovering || configuration.isPressed) {
             Circle()
-              .fill(Color.accent.opacity(0.15))
+              .fill(Color.selectionFill)
           }
         }
-        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+        .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
         Circle()
@@ -331,10 +331,10 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
           // Hover/press/active overlay with accent color (only in dark theme)
           if colorScheme == .dark && (isHovering || configuration.isPressed || isActive) {
             Circle()
-              .fill(Color.accent.opacity(0.15))
+              .fill(Color.selectionFill)
           }
         }
-        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+        .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
         Circle()

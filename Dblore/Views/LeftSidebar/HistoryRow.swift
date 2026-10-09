@@ -144,7 +144,7 @@ struct HistoryRow: View {
     ZStack {
       isAlternate ? Color.tableRowAlternate : Color.cellBackground
       if showsActions {
-        Color.cellBackgroundHover.opacity(0.5)
+        Color.hoverFill
       }
     }
   }

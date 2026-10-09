@@ -134,6 +134,42 @@ struct DesignSystemContrastTests {
     }
   }
 
+  /// `fillHex` at `opacity` over `surfaceHex`
+  private func composite(_ fillHex: String, _ opacity: Double, over surfaceHex: String) -> NSColor {
+    let fill = NSColor(Color(hex: fillHex)).usingColorSpace(.sRGB)!
+    let surface = NSColor(Color(hex: surfaceHex)).usingColorSpace(.sRGB)!
+    func mix(_ f: CGFloat, _ s: CGFloat) -> CGFloat { f * opacity + s * (1 - opacity) }
+    return NSColor(
+      srgbRed: mix(fill.redComponent, surface.redComponent),
+      green: mix(fill.greenComponent, surface.greenComponent),
+      blue: mix(fill.blueComponent, surface.blueComponent), alpha: 1)
+  }
+
+  @Test("Selected rows stand out at 1.3:1 and hovered rows at 1.1:1 for every accent")
+  func stateFills() {
+    for accent in AccentColor.allCases {
+      for (hex, surface, selection, hover, mode) in [
+        (accent.lightHex, "ffffff", StateFill.selectionLight, StateFill.hoverLight, "light"),
+        (accent.darkHex, "252526", StateFill.selectionDark, StateFill.hoverDark, "dark"),
+      ] {
+        let base = NSColor(Color(hex: surface))
+        let selected = ColorContrast.ratio(composite(hex, selection, over: surface), base)
+        let hovered = ColorContrast.ratio(composite(hex, hover, over: surface), base)
+        #expect(selected >= 1.3, "\(accent.rawValue) \(mode) selection: \(selected)")
+        #expect(hovered >= 1.1, "\(accent.rawValue) \(mode) hover: \(hovered)")
+      }
+    }
+  }
+
+  @Test("Neutral hover stands out at 1.1:1")
+  func neutralHover() {
+    for (ink, surface, mode) in [("09090b", "ffffff", "light"), ("fafafa", "252526", "dark")] {
+      let value = ColorContrast.ratio(
+        composite(ink, StateFill.neutralHover, over: surface), NSColor(Color(hex: surface)))
+      #expect(value >= 1.1, "\(mode): \(value)")
+    }
+  }
+
   @Test("Cards stand off the window background in both appearances")
   func surfaceStep() {
     for name in Self.appearances {

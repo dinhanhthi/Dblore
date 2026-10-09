@@ -324,7 +324,7 @@ struct ExplainTreeBranch: View {
       .padding(.horizontal, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(selectedID == item.id ? Color.accent.opacity(0.15) : Color.clear)
+          .fill(selectedID == item.id ? Color.selectionFill : Color.clear)
       )
       .id(item.id)
 

@@ -139,6 +139,39 @@ extension Color {
     )
   }
 
+  /// Selected row or item: accent tint, at least 1.3:1 against its surface for every accent
+  static var selectionFill: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.lightHex).opacity(StateFill.selectionLight),
+      dark: Color(hex: accent.darkHex).opacity(StateFill.selectionDark)
+    )
+  }
+
+  /// Hovered row or item in an accent-tinted list, at least 1.1:1 against its surface
+  static var accentHoverFill: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.lightHex).opacity(StateFill.hoverLight),
+      dark: Color(hex: accent.darkHex).opacity(StateFill.hoverDark)
+    )
+  }
+
+  /// Hovered neutral control, at least 1.1:1 against its surface
+  static let hoverFill = Color.foreground.opacity(StateFill.neutralHover)
+
+  /// Drop shadow under floating surfaces: light enough for light mode, visible in dark mode
+  static let shadow = Color(
+    light: Color.black.opacity(0.12),
+    dark: Color.black.opacity(0.4)
+  )
+
+  /// Dim layer behind a modal: lighter in light mode so the window doesn't go gray
+  static let scrim = Color(
+    light: Color.black.opacity(0.18),
+    dark: Color.black.opacity(0.35)
+  )
+
   // Semantic colors
   static let success = Color(
     light: Color(hex: "15803d"),  // Green 700
@@ -211,6 +244,15 @@ extension Color {
     light: Color(hex: "09090b"),  // Very dark zinc
     dark: Color(hex: "fafafa")  // Very light gray
   )
+}
+
+/// Opacities of the state fills, kept apart so their contrast can be checked for every accent
+enum StateFill {
+  static let selectionLight = 0.22
+  static let selectionDark = 0.2
+  static let hoverLight = 0.1
+  static let hoverDark = 0.1
+  static let neutralHover = 0.06
 }
 
 /// WCAG 2 contrast between two opaque colors.

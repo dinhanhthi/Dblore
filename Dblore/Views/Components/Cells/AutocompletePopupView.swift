@@ -27,7 +27,7 @@ struct AutocompletePopupView: View {
     .frame(maxWidth: 400)
     .background(Color.cellBackground)
     .cornerRadius(CornerRadius.sm)
-    .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 2)
+    .shadow(color: Color.shadow, radius: 8, x: 0, y: 2)
     .overlay(
       RoundedRectangle(cornerRadius: CornerRadius.sm)
         .stroke(Color.foregroundSubtle.opacity(0.2), lineWidth: 1)
@@ -80,9 +80,9 @@ struct AutocompleteSuggestionRow: View {
 
   private var backgroundColor: Color {
     if isSelected {
-      return Color.accent.opacity(0.15)
+      return Color.selectionFill
     } else if isHovering {
-      return Color.accent.opacity(0.08)
+      return Color.accentHoverFill
     } else {
       return Color.clear
     }

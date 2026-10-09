@@ -368,12 +368,11 @@ struct WorkspaceDraggableTabItem: View {
         // Neutral capsule for the active tab - slides between tabs; the label stays above it
         Capsule()
           .fill(Color.foreground.opacity(0.12))
-          .overlay(Capsule().strokeBorder(Color.foreground.opacity(0.12), lineWidth: 1))
           .matchedGeometryEffect(id: "activeTab", in: capsuleNamespace)
       } else if isHovering || isDragging {
         // Subtle hover state for inactive tabs
         Capsule()
-          .fill(Color.foreground.opacity(0.06))
+          .fill(Color.hoverFill)
       }
     }
     .background(WindowDragBlocker())

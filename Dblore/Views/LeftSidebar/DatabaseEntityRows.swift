@@ -90,8 +90,8 @@ struct TableRowView: View {
         RoundedRectangle(cornerRadius: CornerRadius.sm)
           .fill(
             isSelected
-              ? Color.accent.opacity(0.15)
-              : (isHoveringTable ? Color.cellBackgroundHover.opacity(0.5) : Color.clear))
+              ? Color.selectionFill
+              : (isHoveringTable ? Color.hoverFill : Color.clear))
       )
       .onHover { hovering in
         isHoveringTable = hovering
@@ -200,8 +200,8 @@ struct ViewRowView: View {
         RoundedRectangle(cornerRadius: CornerRadius.sm)
           .fill(
             isSelected
-              ? Color.accent.opacity(0.15)
-              : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear))
+              ? Color.selectionFill
+              : (isHovering ? Color.hoverFill : Color.clear))
       )
       .onHover { hovering in
         isHovering = hovering
@@ -291,7 +291,7 @@ struct FunctionRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(isHovering ? Color.hoverFill : Color.clear)
       )
       .onHover { hovering in
         isHovering = hovering
@@ -385,7 +385,7 @@ struct ProcedureRowView: View {
       .padding(.vertical, Spacing.xs)
       .background(
         RoundedRectangle(cornerRadius: CornerRadius.sm)
-          .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+          .fill(isHovering ? Color.hoverFill : Color.clear)
       )
       .onHover { hovering in
         isHovering = hovering
@@ -441,7 +441,7 @@ struct TriggerRowView: View {
     .padding(.vertical, Spacing.xs)
     .background(
       RoundedRectangle(cornerRadius: CornerRadius.sm)
-        .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+        .fill(isHovering ? Color.hoverFill : Color.clear)
     )
     .onHover { hovering in
       isHovering = hovering

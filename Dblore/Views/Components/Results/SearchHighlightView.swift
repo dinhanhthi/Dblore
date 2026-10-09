@@ -14,18 +14,11 @@ enum SearchHighlighter {
   // #FFD500 (orange-yellow)
   static let currentMatchColor = Color(red: 1.0, green: 0.835, blue: 0.0)
 
-  /// Check if current appearance is dark mode
-  static var isDarkMode: Bool {
-    NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-  }
-
-  /// Highlight color for other matches (adapts to color scheme)
-  /// Dark mode: white with opacity / Light mode: gray with opacity
-  static var highlightColor: Color {
-    isDarkMode
-      ? Color.white.opacity(0.8)
-      : Color.gray.opacity(0.6)
-  }
+  /// Highlight color for other matches: a paler yellow than the current match, under black text
+  static let highlightColor = Color(
+    light: Color(hex: "fef08a"),  // Yellow 200
+    dark: Color(hex: "b8a642")
+  )
 
   // MARK: - Caching
 

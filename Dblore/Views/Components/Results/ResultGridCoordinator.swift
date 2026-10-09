@@ -1117,7 +1117,7 @@ final class ResultGridRowNumberCell: NSTableCellView {
   static let backgroundColor = NSColor(Color.tableHeaderBackground)
 
   /// Stronger than the grid lines between result columns
-  static let separatorColor = NSColor(Color.foregroundMuted.opacity(0.35))
+  static let separatorColor = NSColor(Color.borderStrong)
 
   /// Gutter background and trailing separator over `rect`
   static func drawGutter(in rect: NSRect, overlay: NSColor? = nil) {

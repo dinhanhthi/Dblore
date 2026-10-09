@@ -44,7 +44,7 @@ struct FolderRowView: View {
     .onTapGesture { onToggle() }
     .background(
       RoundedRectangle(cornerRadius: CornerRadius.sm)
-        .fill(isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear)
+        .fill(isHovering ? Color.hoverFill : Color.clear)
     )
     .onHover { isHovering = $0 }
     .contextMenu {
@@ -92,8 +92,8 @@ struct FavoriteRowView: View {
       RoundedRectangle(cornerRadius: CornerRadius.sm)
         .fill(
           isSelected
-            ? Color.accent.opacity(0.15)
-            : (isHovering ? Color.cellBackgroundHover.opacity(0.5) : Color.clear))
+            ? Color.selectionFill
+            : (isHovering ? Color.hoverFill : Color.clear))
     )
     .onHover { isHovering = $0 }
     .contextMenu {
