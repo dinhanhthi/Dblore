@@ -953,21 +953,9 @@ struct WorkspaceTitleBarTabsView: View {
           Divider()
 
           Button {
-            openNotebookWithPanel()
+            openFileWithPanel()
           } label: {
-            Label("Open Notebook", systemImage: "folder")
-          }
-
-          Button {
-            openSQLFileWithPanel()
-          } label: {
-            Label("Open SQL File", systemImage: "folder")
-          }
-
-          Button {
-            openMarkdownWithPanel()
-          } label: {
-            Label("Open Markdown Note", systemImage: "folder")
+            Label("Open File…", systemImage: "folder")
           }
         } label: {
           Image(systemName: "plus")
@@ -1020,43 +1008,11 @@ struct WorkspaceTitleBarTabsView: View {
     workspaceManager.selectTab(id: nextTab.id)
   }
 
-  private func openNotebookWithPanel() {
+  private func openFileWithPanel() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore]
-
-    panel.begin { response in
-      guard response == .OK else { return }
-      Task { @MainActor in
-        for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
-        }
-      }
-    }
-  }
-
-  private func openSQLFileWithPanel() {
-    let panel = NSOpenPanel()
-    panel.allowsMultipleSelection = true
-    panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.sql]
-
-    panel.begin { response in
-      guard response == .OK else { return }
-      Task { @MainActor in
-        for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
-        }
-      }
-    }
-  }
-
-  private func openMarkdownWithPanel() {
-    let panel = NSOpenPanel()
-    panel.allowsMultipleSelection = true
-    panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }

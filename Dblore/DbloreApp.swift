@@ -477,6 +477,25 @@ private struct CheckForUpdatesButton: View {
   }
 }
 
+/// "Reopen Closed Tab" menu item. A view body tracks `closedTabs`; read straight from the
+/// `Commands` body the disabled state went stale and Cmd+Shift+T stayed off after a close.
+private struct ReopenClosedTabButton: View {
+  var body: some View {
+    Button("Reopen Closed Tab") {
+      Task {
+        do {
+          try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
+        } catch {
+          WorkspaceWindowManager.shared.showToast(
+            "Could not reopen tab: \(error.localizedDescription)", type: .warning)
+        }
+      }
+    }
+    .keyboardShortcut("t", modifiers: [.command, .shift])
+    .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+  }
+}
+
 /// Edit menu items for the focused notebook or data viewer undo stack.
 private struct CellUndoCommandButtons: View {
   @ObservedObject private var refresh = CellUndoMenuRefresh.shared
@@ -733,18 +752,7 @@ struct TabCommands: Commands {
       .keyboardShortcut("w", modifiers: .command)
       .disabled(activeTabId == nil)
 
-      Button("Reopen Closed Tab") {
-        Task {
-          do {
-            try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
-          } catch {
-            WorkspaceWindowManager.shared.showToast(
-              "Could not reopen tab: \(error.localizedDescription)", type: .warning)
-          }
-        }
-      }
-      .keyboardShortcut("t", modifiers: [.command, .shift])
-      .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+      ReopenClosedTabButton()
 
       Divider()
 

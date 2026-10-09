@@ -45,7 +45,7 @@ struct HistoryDetailModal: View {
           .keyboardShortcut(.cancelAction)
       }
     }
-    .frame(width: 440, height: errorMessage == nil ? 260 : 340)
+    .modalFrame(width: 440, height: errorMessage == nil ? 260 : 340)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(

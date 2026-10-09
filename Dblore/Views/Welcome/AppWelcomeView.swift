@@ -17,10 +17,13 @@ struct AppWelcomeView: View {
 
   // State for connection form sidebar (before workspace is created)
   @State private var isShowingConnectionSidebar = false
-  /// Settings > Plugins, opened from the connection form (no workspace hosts Settings here)
-  @State private var isShowingPluginSettings = false
+  /// Settings modal; no workspace hosts it here, so connection-scoped pages show a placeholder
+  @State private var isShowingSettings = false
+  /// Page requested by the opener (nil opens General)
+  @State private var settingsSection: SettingsPage?
   /// Bumped on open only: a fresh token per render would reset the selected tab
-  @State private var pluginSettingsToken = UUID()
+  @State private var settingsToken = UUID()
+  @State private var hostWindow = HostWindowReference()
   @State private var editingConnectionConfig = ConnectionFormContent.newFormDraft()
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
@@ -93,6 +96,21 @@ struct AppWelcomeView: View {
     .overlay {
       ToastOverlay()
     }
+    .overlay(alignment: .topTrailing) {
+      // Same row as the traffic lights
+      Button {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
+      } label: {
+        Image(systemName: "gearshape")
+          .foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+      .controlSize(.small)
+      .blockDoubleClickZoom()
+      .help("Settings (⌘,)")
+      .frame(height: ComponentSize.tabBarHeight)
+      .padding(.trailing, Spacing.md)
+    }
     .connectionFormModal(
       isPresented: $isShowingConnectionSidebar,
       connectionConfig: $editingConnectionConfig,
@@ -101,15 +119,12 @@ struct AppWelcomeView: View {
       showsRecentHistory: editingConnectionId == nil,
       onTestConnection: testConnectionForWelcome,
       onConnect: submitConnectionForm,
-      onOpenPluginSettings: {
-        pluginSettingsToken = UUID()
-        isShowingPluginSettings = true
-      }
+      onOpenPluginSettings: { openSettings(section: .plugins) }
     )
     // After the connection form, so it opens on top of it
     .settingsModal(
-      isPresented: $isShowingPluginSettings, viewMode: nil, section: .plugins,
-      openToken: pluginSettingsToken
+      isPresented: $isShowingSettings, viewMode: nil, section: settingsSection,
+      openToken: settingsToken
     )
     .modalOverlay(isPresented: workspaceEditPresented) {
       if let entry = editingWorkspace {
@@ -129,9 +144,30 @@ struct AppWelcomeView: View {
       TrafficLightPositioner(
         tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
     )
+    .background(HostWindowReader(reference: hostWindow))
     .onChange(of: controlActiveState) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
     }
+    // Dblore > Settings (Cmd+,) posts this; only the key Welcome window answers
+    .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
+      guard let window = hostWindow.window, let keyWindow = NSApp.keyWindow,
+        keyWindow === window || keyWindow.sheetParent === window
+      else { return }
+      if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
+        let section = SettingsPage(rawValue: raw)
+      {
+        openSettings(section: section)
+      } else {
+        settingsSection = nil
+        isShowingSettings.toggle()
+      }
+    }
+  }
+
+  private func openSettings(section: SettingsPage) {
+    settingsSection = section
+    settingsToken = UUID()
+    isShowingSettings = true
   }
 
   // MARK: - Layout Helpers
@@ -519,7 +555,7 @@ struct RecentConnectionsColumn: View {
         } label: {
           Label("Import", systemImage: "square.and.arrow.down")
         }
-        .buttonStyle(GhostButtonStyle())
+        .buttonStyle(SecondaryButtonStyle())
         .controlSize(.small)
         .help("Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip")
 

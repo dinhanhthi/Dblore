@@ -26,7 +26,7 @@ struct CommandPaletteView: View {
       Divider()
       results
     }
-    .frame(width: 520, height: 420)
+    .modalFrame(width: 520, height: 420)
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
@@ -114,7 +114,8 @@ struct CommandPaletteView: View {
             .foregroundColor(.foregroundMuted)
             .frame(maxWidth: .infinity, minHeight: 120)
         } else {
-          LazyVStack(alignment: .leading, spacing: 0) {
+          // Not lazy: at most 100 rows, and scrollTo lands short on rows a lazy stack has not laid out.
+          VStack(alignment: .leading, spacing: 0) {
             ForEach(sections) { section in
               Text(section.title)
                 .font(.caption)

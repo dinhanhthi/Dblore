@@ -46,7 +46,9 @@ struct ConnectionFormModal: View {
         draftGeneration: draftGeneration
       )
     }
-    .frame(width: 440, height: connectionConfig.databaseType.capabilities.isFileBased ? 420 : 640)
+    .modalFrame(
+      width: 440, height: connectionConfig.databaseType.capabilities.isFileBased ? 420 : 640
+    )
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
