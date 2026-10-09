@@ -46,6 +46,10 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// Deadline checked by the progress handler. Nil when no statement is inside `sqlite3_step`.
   private var publishedDeadline: ContinuousClock.Instant?
   private var timedOut = false
+  /// Set by `interrupt` / `close` and checked by the progress handler, so a stop that lands
+  /// before `sqlite3_step` starts (which `sqlite3_interrupt` alone ignores) still aborts the
+  /// statement. Cleared with the deadline when no statement is running.
+  private var interruptRequested = false
   private var reads: [UUID: ReadState] = [:]
 
   /// Virtual-machine instructions between progress-handler checks. Small enough that a one-second
@@ -93,6 +97,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
 
   func close() async {
     emit(.closedByApp)
+    requestInterrupt()
     if let handle = withState({ db }) {
       sqlite3_interrupt(handle)
     }
@@ -167,6 +172,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// Stops the statement currently inside `sqlite3_step`. Does not hop to the serial queue:
   /// that queue is blocked in the step this call is meant to abort.
   func interrupt() async {
+    requestInterrupt()
     if let handle = withState({ db }) {
       sqlite3_interrupt(handle)
     }
@@ -504,6 +510,13 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   private func clearDeadline() {
     stateLock.lock()
     publishedDeadline = nil
+    interruptRequested = false
+    stateLock.unlock()
+  }
+
+  private func requestInterrupt() {
+    stateLock.lock()
+    interruptRequested = true
     stateLock.unlock()
   }
 
@@ -511,7 +524,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   fileprivate func progressTick() -> Int32 {
     stateLock.lock()
     let deadline = publishedDeadline
+    let interrupted = interruptRequested
     stateLock.unlock()
+    if interrupted { return 1 }
     guard let deadline, ContinuousClock.now >= deadline else { return 0 }
     stateLock.lock()
     timedOut = true
