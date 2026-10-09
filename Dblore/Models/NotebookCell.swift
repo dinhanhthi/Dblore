@@ -26,6 +26,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
   var parameters: [QueryParameter]
   /// Persist `parameters` in the saved file. Off keeps the values session-only.
   var savesParameterValues: Bool
+  /// Result pinned for comparison with later runs. Running the cell does not change it.
+  var pinnedResult: PinnedResult?
 
   // MARK: - Codable
 
@@ -43,6 +45,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     case chartSpec
     case parameters
     case savesParameterValues
+    case pinnedResult
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -66,6 +69,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
       try container.decodeIfPresent([QueryParameter].self, forKey: .parameters) ?? []
     savesParameterValues =
       try container.decodeIfPresent(Bool.self, forKey: .savesParameterValues) ?? false
+    // A malformed pin is dropped instead of failing the cell
+    pinnedResult = (try? container.decodeIfPresent(PinnedResult.self, forKey: .pinnedResult)) ?? nil
     // Legacy `paginationInfo` / `statementPaginationInfo` (LIMIT-rewrite pagination) are ignored
   }
 
@@ -84,6 +89,7 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     try container.encodeIfPresent(chartSpec, forKey: .chartSpec)
     try container.encode(parameters, forKey: .parameters)
     try container.encode(savesParameterValues, forKey: .savesParameterValues)
+    try container.encodeIfPresent(pinnedResult, forKey: .pinnedResult)
   }
 
   nonisolated init(
@@ -99,7 +105,8 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     totalExecutionTime: TimeInterval? = nil,
     chartSpec: ChartSpec? = nil,
     parameters: [QueryParameter] = [],
-    savesParameterValues: Bool = false
+    savesParameterValues: Bool = false,
+    pinnedResult: PinnedResult? = nil
   ) {
     self.id = id
     self.cellType = cellType
@@ -114,7 +121,16 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     self.chartSpec = chartSpec
     self.parameters = parameters
     self.savesParameterValues = savesParameterValues
+    self.pinnedResult = pinnedResult
   }
+}
+
+/// A result snapshot a cell keeps to compare later runs against
+nonisolated struct PinnedResult: Codable, Sendable, Equatable {
+  let result: CellResult
+  let pinnedAt: Date
+  /// The SQL that produced the pinned result. Nil for pins saved before it was recorded.
+  let sourceQuery: String?
 }
 
 /// The type of cell content (SQL only)
@@ -251,6 +267,8 @@ nonisolated struct ColumnOrigin: Hashable, Sendable, Codable {
   let columnOrdinal: Int
 }
 
+nonisolated extension CellResult: Equatable {}
+
 /// Information about a result column
 struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated var id: String { name }
@@ -292,6 +310,8 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     try container.encodeIfPresent(origin, forKey: .origin)
   }
 }
+
+nonisolated extension ColumnInfo: Equatable {}
 
 /// A value in a result cell, supporting multiple SQL types
 enum CellValue: Codable, Equatable, Sendable, Comparable {

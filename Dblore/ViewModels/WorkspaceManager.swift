@@ -842,6 +842,10 @@ class WorkspaceManager: Identifiable {
       self?.openDataViewer(
         schema: schema, name: name, orderColumns: orderColumns, filter: filter)
     }
+    // Same flag as `saveToURL`, so the pin note matches what a save writes
+    viewModel.resultsSavedWithFile = { [weak self] in
+      self?.settingsResolver.includeResultsOnSave ?? AppSettings.shared.includeResultsOnSave
+    }
 
     return viewModel
   }

@@ -45,7 +45,7 @@ struct QueryCopyBar: View {
   /// Dialect of INSERT export and clipboard copy. Notebook call sites keep PostgreSQL.
   var dialect: SQLDialect = .postgresql
 
-  /// When set, the Grid / Chart slider sits on this bar (notebook cells).
+  /// When set, the Grid / Chart slider sits left of View Query (editor result footer).
   var displayMode: Binding<ResultDisplayMode>? = nil
 
   /// Icon-only circle for View Query and Download. Notebook cells pass true.

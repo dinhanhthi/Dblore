@@ -169,6 +169,19 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+
+  // MARK: - Pinning (session only, see NotebookViewModel+Pinning.swift)
+  /// Cells showing the compare view
+  var comparingCellIds: Set<UUID> = []
+  /// Latest pinned-vs-current comparison of each comparing cell, with the result it describes
+  var cellComparisons: [UUID: SubjectComparison] = [:]
+  /// Editor tab pin. Never saved.
+  var editorPinnedResult: PinnedResult?
+  var isEditorComparing = false
+  var editorComparison: SubjectComparison?
+  /// Bumped per refresh so an older comparison does not overwrite a newer one
+  @ObservationIgnored var comparisonGenerations: [UUID: Int] = [:]
+  @ObservationIgnored var editorComparisonGeneration = 0
   /// Table/view data viewer tab state (nil for every other tab).
   /// Changing page, page size, filter, or relation drops staged undo for the previous page.
   var dataViewer: DataViewerState? {
@@ -212,6 +225,10 @@ class NotebookViewModel {
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
+  /// Whether a save writes results (and pins). A workspace injects its resolved setting.
+  @ObservationIgnored var resultsSavedWithFile: @MainActor () -> Bool = {
+    AppSettings.shared.includeResultsOnSave
+  }
   /// Opens a table in the data viewer. `WorkspaceManager` sets this.
   /// Arguments are schema, name, order columns, and an optional filter.
   @ObservationIgnored var onOpenDataViewer:

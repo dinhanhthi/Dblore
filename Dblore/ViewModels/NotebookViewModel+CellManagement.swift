@@ -53,6 +53,7 @@ extension NotebookViewModel {
 
     notebook.cells.remove(at: index)
     openParameterFormCellIds.remove(id)
+    forgetComparison(cellID: id)
 
     // Update selection
     if selectedCellId == id {
@@ -92,6 +93,7 @@ extension NotebookViewModel {
     let deletedIndex = index
 
     notebook.cells.remove(at: index)
+    forgetComparison(cellID: id)
 
     selectedCellId = restoreSelection
 
@@ -142,7 +144,8 @@ extension NotebookViewModel {
       cellType: original.cellType,
       content: original.content,
       parameters: original.parameters,
-      savesParameterValues: original.savesParameterValues
+      savesParameterValues: original.savesParameterValues,
+      pinnedResult: original.pinnedResult
     )
     duplicate.result = nil
     duplicate.executionCount = nil

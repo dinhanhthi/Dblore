@@ -15,6 +15,7 @@ extension NotebookViewModel {
     editorStatementResults = []
     selectedStatementIndex = 0
     totalExecutionTime = 0
+    refreshEditorComparison()
   }
 
   /// Run query in editor mode (selection if any, otherwise all content)
@@ -200,6 +201,8 @@ extension NotebookViewModel {
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)
     }
+    // A re-run keeps the pin; compare against the new result
+    refreshEditorComparison()
     await onStatementsExecuted?()
   }
 
@@ -208,6 +211,7 @@ extension NotebookViewModel {
     guard index >= 0 && index < editorStatementResults.count else { return }
     selectedStatementIndex = index
     editorResult = editorStatementResults[index].result
+    refreshEditorComparison()
 
     // Update the View Query sidebar if it's currently open for editor mode
     updateExecutedQuerySidebarIfNeeded(cellId: nil, result: editorResult)

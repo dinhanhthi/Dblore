@@ -44,16 +44,13 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        // Query footer (for both single and multi-statement). The Grid / Chart slider
-        // sits on this row; the grid draws it only when this bar is hidden.
-        let showsQueryFooter =
-          !AppSettings.shared.hideRunWithQuerySection && result.sourceQuery != nil
+        // Query footer (for both single and multi-statement). The Grid / Chart slider sits
+        // at the trailing end of the metadata bar under the grid.
         ResultQueryFooterView(
           result: result,
           isQueryCopied: $isQueryCopied,
           viewModel: viewModel,
-          cellId: cellId,
-          displayMode: displayMode
+          cellId: cellId
         )
 
         if let error = result.error {
@@ -78,7 +75,7 @@ struct ResultAreaView: View {
             viewModel: viewModel,
             cellId: cellId,
             displayMode: displayMode,
-            showsDisplayPicker: !showsQueryFooter
+            showsDisplayPicker: false
           )
         }
       }
@@ -237,6 +234,8 @@ struct ResultMetadataView: View {
   var selectedStatementIndex: Int? = nil
   var viewModel: NotebookViewModel? = nil
   var cellId: UUID? = nil
+  /// Grid / Chart shared with the grid, drawn at the trailing end. Nil hides the slider.
+  var displayMode: Binding<ResultDisplayMode>? = nil
   /// Bar width, measured without a GeometryReader so the bar hugs its text height.
   @State private var barWidth: CGFloat = 0
 
@@ -367,6 +366,14 @@ struct ResultMetadataView: View {
             .foregroundColor(.foregroundSubtle)
           Text(CellResultViews.formatTimestamp(result.timestamp))
         }
+
+        Spacer(minLength: 0)
+        if let viewModel, let cellId {
+          CellResultPinControls(result: result, viewModel: viewModel, cellId: cellId)
+        }
+        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
+          ResultDisplayPicker(mode: displayMode)
+        }
       }
       .font(.labelText)
       .foregroundColor(.foregroundSubtle)
@@ -397,8 +404,6 @@ struct ResultQueryFooterView: View {
   @Binding var isQueryCopied: Bool
   var viewModel: NotebookViewModel?
   var cellId: UUID?
-  /// Shared with the result grid. Nil keeps the slider out of this bar.
-  var displayMode: Binding<ResultDisplayMode>? = nil
 
   var body: some View {
     // Don't show if setting is enabled to hide this section (the query is sent as written)
@@ -409,7 +414,6 @@ struct ResultQueryFooterView: View {
         viewModel: viewModel,
         cellId: cellId,
         queryIndex: nil,  // Notebook mode always uses nil
-        displayMode: displayMode,
         iconOnlyActions: true
       )
       .frame(height: ResultDisplayPicker.height)
@@ -525,9 +529,9 @@ struct NotebookResultGridView: View {
   let result: CellResult
   @Bindable var viewModel: NotebookViewModel
   let cellId: UUID
-  /// Shared with the query bar. Nil keeps an internal mode inside the chart view.
+  /// Drawn by the metadata bar under the grid. Nil keeps an internal mode inside the chart view.
   var displayMode: Binding<ResultDisplayMode>? = nil
-  /// False when the query bar already draws the Grid / Chart slider.
+  /// False when the metadata bar draws the Grid / Chart slider.
   var showsDisplayPicker = true
   @State private var sortColumn: String?
   @State private var sortAscending = true
@@ -556,57 +560,73 @@ struct NotebookResultGridView: View {
     )
   }
 
+  @ViewBuilder
+  private var gridOrChart: some View {
+    ExplainableResult(result: result) {
+      ChartableResult(
+        result: result, chartSpec: chartSpecBinding, mode: displayMode,
+        showsPicker: showsDisplayPicker
+      ) {
+        let relation = referencedRelation(
+          dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+        let referencedRow = referencedRowHandlers(
+          viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+        ResultGridView(
+          result: result,
+          sortColumn: sortColumn,
+          ascending: sortAscending,
+          isEditable: viewModel.canEdit(result),
+          readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
+          onCommitEdit: { row, column, newValue in
+            viewModel.handleGridCellEdit(
+              row: row, column: column, newValue: newValue, result: result, cellId: cellId,
+              connectionManager: viewModel.connectionManager)
+          },
+          onSortChange: { column, ascending in
+            sortColumn = column
+            sortAscending = ascending
+          },
+          valueFilter: valueFilter,
+          onValueFilterChange: { valueFilter = $0 },
+          onShowCellDetails: { row, originalRow, column in
+            viewModel.showGridCellInSidebar(
+              row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
+          },
+          searchQuery: viewModel.searchState.query,
+          caseSensitive: viewModel.searchState.isCaseSensitive,
+          currentMatch: currentMatch,
+          searchMatches: viewModel.searchState.matches,
+          hideColumnTypes: AppSettings.shared.hideColumnTypes,
+          relationSchema: relation?.schema,
+          relationTable: relation?.table,
+          baseColumnNames: relation?.baseColumns,
+          foreignKeys: viewModel.databaseForeignKeys,
+          lookupDialect: viewModel.sqlDialect,
+          onLookupReferencedRow: referencedRow.lookup,
+          onJumpToReferencedRow: referencedRow.jump,
+          onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
+        )
+        .frame(
+          height: ResultGridView.height(
+            rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
+            reservesHorizontalScroller: showsHorizontalScroller))
+      }
+    }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      ExplainableResult(result: result) {
-        ChartableResult(
-          result: result, chartSpec: chartSpecBinding, mode: displayMode,
-          showsPicker: showsDisplayPicker
-        ) {
-          let relation = referencedRelation(
-            dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
-          let referencedRow = referencedRowHandlers(
-            viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
-          ResultGridView(
-            result: result,
-            sortColumn: sortColumn,
-            ascending: sortAscending,
-            isEditable: viewModel.canEdit(result),
-            readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
-            onCommitEdit: { row, column, newValue in
-              viewModel.handleGridCellEdit(
-                row: row, column: column, newValue: newValue, result: result, cellId: cellId,
-                connectionManager: viewModel.connectionManager)
-            },
-            onSortChange: { column, ascending in
-              sortColumn = column
-              sortAscending = ascending
-            },
-            valueFilter: valueFilter,
-            onValueFilterChange: { valueFilter = $0 },
-            onShowCellDetails: { row, originalRow, column in
-              viewModel.showGridCellInSidebar(
-                row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
-            },
-            searchQuery: viewModel.searchState.query,
-            caseSensitive: viewModel.searchState.isCaseSensitive,
-            currentMatch: currentMatch,
-            searchMatches: viewModel.searchState.matches,
-            hideColumnTypes: AppSettings.shared.hideColumnTypes,
-            relationSchema: relation?.schema,
-            relationTable: relation?.table,
-            baseColumnNames: relation?.baseColumns,
-            foreignKeys: viewModel.databaseForeignKeys,
-            lookupDialect: viewModel.sqlDialect,
-            onLookupReferencedRow: referencedRow.lookup,
-            onJumpToReferencedRow: referencedRow.jump,
-            onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
-          )
-          .frame(
-            height: ResultGridView.height(
-              rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
-              reservesHorizontalScroller: showsHorizontalScroller))
-        }
+      if viewModel.isComparing(cellID: cellId) {
+        ResultComparePanel(
+          pin: cell?.pinnedResult,
+          current: result,
+          comparison: viewModel.displayedComparison(cellID: cellId),
+          pinNote: CellResultPinControls.pinNote(for: viewModel),
+          dialect: viewModel.sqlDialect
+        )
+        .padding(.bottom, Spacing.sm)
+      } else {
+        gridOrChart
       }
 
       // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
@@ -617,12 +637,21 @@ struct NotebookResultGridView: View {
           statementResults: cell.statementResults,
           selectedStatementIndex: cell.selectedStatementIndex,
           viewModel: viewModel,
-          cellId: cellId
+          cellId: cellId,
+          displayMode: displayMode
         )
       } else {
         // Single statement: no dropdown
-        ResultMetadataView(result: result)
+        ResultMetadataView(
+          result: result, viewModel: viewModel, cellId: cellId, displayMode: displayMode)
       }
+    }
+    // A new result (run or statement switch) refreshes the comparison off the main actor
+    .task(
+      id: CompareRefreshKey(timestamp: result.timestamp, statement: cell?.selectedStatementIndex)
+    ) {
+      guard viewModel.isComparing(cellID: cellId) else { return }
+      await viewModel.refreshComparison(cellID: cellId).value
     }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
@@ -656,4 +685,36 @@ struct NotebookResultGridView: View {
       currentMatch = nil
     }
   }
+}
+
+/// Pin / Compare buttons of a notebook cell result
+struct CellResultPinControls: View {
+  let result: CellResult
+  let viewModel: NotebookViewModel
+  let cellId: UUID
+
+  /// Pins are written to the file only with the results (workspace or app setting)
+  static func pinNote(for viewModel: NotebookViewModel) -> String? {
+    viewModel.resultsSavedWithFile()
+      ? nil : "Not saved with the file while \"Include results on save\" is off"
+  }
+
+  var body: some View {
+    let cell = viewModel.notebook.cells.first(where: { $0.id == cellId })
+    ResultPinControls(
+      isPinned: cell?.pinnedResult != nil,
+      canPin: result.error == nil,
+      isComparing: viewModel.isComparing(cellID: cellId),
+      pinNote: Self.pinNote(for: viewModel),
+      onPin: { viewModel.pinResult(cellID: cellId) },
+      onUnpin: { viewModel.unpinResult(cellID: cellId) },
+      onToggleCompare: { viewModel.toggleCompare(cellID: cellId) }
+    )
+  }
+}
+
+/// Identity of the shown cell result for the compare refresh task
+private struct CompareRefreshKey: Hashable {
+  let timestamp: Date
+  let statement: Int?
 }

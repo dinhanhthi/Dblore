@@ -96,6 +96,8 @@ enum DocumentCoder {
         // Named parameters. A missing key, or an old file, is an empty list.
         let parameters = Self.queryParameters(from: cellDict["parameters"])
         let savesParameterValues = cellDict["savesParameterValues"] as? Bool ?? false
+        let pinnedResult = Self.pinnedResult(
+          from: cellDict["pinnedResult"], dateFormatter: dateFormatter)
 
         let cell = NotebookCell(
           id: cellId,
@@ -110,7 +112,8 @@ enum DocumentCoder {
           totalExecutionTime: totalExecutionTime,
           chartSpec: chartSpec,
           parameters: parameters,
-          savesParameterValues: savesParameterValues
+          savesParameterValues: savesParameterValues,
+          pinnedResult: pinnedResult
         )
         cells.append(cell)
       }
@@ -165,6 +168,17 @@ enum DocumentCoder {
       // Encode result if present AND if app settings allow it
       if let result = cell.result, includeResultsOnSave {
         cellDict["result"] = encodeResult(result, dateFormatter: dateFormatter)
+      }
+      // A pin is a result, so it follows the same setting
+      if let pin = cell.pinnedResult, includeResultsOnSave {
+        var pinDict: [String: Any] = [
+          "result": encodeResult(pin.result, dateFormatter: dateFormatter),
+          "pinnedAt": dateFormatter.string(from: pin.pinnedAt),
+        ]
+        if let sourceQuery = pin.sourceQuery {
+          pinDict["sourceQuery"] = sourceQuery
+        }
+        cellDict["pinnedResult"] = pinDict
       }
       // Save isRunning and isResultVisible state
       cellDict["isRunning"] = cell.isRunning
@@ -274,6 +288,20 @@ enum DocumentCoder {
   }
 
   // MARK: - Result Encoding/Decoding Helpers
+
+  /// Nil when the pin is missing or malformed, so a bad pin does not reject the file.
+  /// A pin without `sourceQuery` (older files) loads with no query.
+  private nonisolated static func pinnedResult(
+    from value: Any?, dateFormatter: ISO8601DateFormatter
+  ) -> PinnedResult? {
+    guard let dict = value as? [String: Any],
+      let resultDict = dict["result"] as? [String: Any],
+      let result = decodeResult(from: resultDict, dateFormatter: dateFormatter),
+      let pinnedAt = (dict["pinnedAt"] as? String).flatMap({ dateFormatter.date(from: $0) })
+    else { return nil }
+    return PinnedResult(
+      result: result, pinnedAt: pinnedAt, sourceQuery: dict["sourceQuery"] as? String)
+  }
 
   private nonisolated static func decodeResult(
     from dict: [String: Any], dateFormatter: ISO8601DateFormatter

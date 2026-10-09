@@ -195,6 +195,16 @@ struct EditorModeView: View {
         if let error = result.error {
           errorView(error: error)
             .frame(maxHeight: .infinity)
+        } else if viewModel.isEditorComparing {
+          ResultComparePanel(
+            pin: viewModel.editorPinnedResult,
+            current: result,
+            comparison: viewModel.displayedEditorComparison,
+            pinNote: Self.editorPinNote,
+            dialect: viewModel.sqlDialect,
+            fillsAvailableHeight: true
+          )
+          .padding(Spacing.sm)
         } else if result.rows.isEmpty && result.columns.isEmpty {
           emptyResultView()
         } else {
