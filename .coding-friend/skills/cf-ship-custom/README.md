@@ -11,7 +11,9 @@ the contract the model follows (coding-friend applies its `## Before`,
 ## What one release does
 
 `/cf-ship` reads the app commits since the last published tag, picks a version,
-writes `CHANGELOG.md`, updates the website Feature list from app-source changes, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
+writes `CHANGELOG.md`, updates the website Feature list from app-source changes, updates
+the user docs (`website/docs.html`, and README / landing page for headline features) when
+the release adds something worth documenting, bumps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in
 `Dblore.xcodeproj/project.pbxproj` (only when the file version changes),
 runs build + tests + a lint of the changed Swift files, commits
 `chore(release): bump to <tag version>` on `main` and pushes. Then it runs

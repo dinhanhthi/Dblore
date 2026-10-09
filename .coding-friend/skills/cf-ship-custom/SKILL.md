@@ -110,6 +110,15 @@ This reconciliation must be **idempotent** in `already-bumped` and on retries: a
 
 In `--dry-run`, describe the proposed added/promoted IDs and versions without writing the catalog, changelog or project file; do not commit, push, create tags or dispatch workflows. Keep the standard dry-run behavior. On a real release, inspect `git diff -- website/features-data.js` before B5 and resolve any duplicate, unsupported capability or invalid provenance before proceeding.
 
+### Step B4c: Update the user docs
+
+After B4b, check whether the new changelog entries change what a user needs to know, and update the user docs if so:
+
+- `website/docs.html`: the how-to page. Add or adjust a bullet in the matching section (new section plus nav link only for a whole new area). Name the real menu items, settings paths and shortcuts, verified in source.
+- `README.md` "Features" / "Plugins" and `website/index.html` "Main features" / "Databases" / "Plugins": only for headline features (a new engine, connection method, or major workflow).
+
+Worth documenting: new features, settings, menu actions, shortcuts, and changed behavior or limits a user would hit. Not worth it: fixes, polish, small UI tweaks, anything already covered. Keep each bullet short, one fact or workflow; match the existing tone. Fixes-only releases usually change nothing here: say "docs: no change" in the report. In `--dry-run`, list the proposed doc changes without writing.
+
 ### Step B5: Verify
 
 Run all of these. Do not commit without them.
@@ -209,11 +218,12 @@ The release script releases `main`; confirm the current branch is `main` before 
 ```bash
 [[ "$(git branch --show-current)" == main ]] || { echo "STOP: release requires main"; exit 1; }
 git add Dblore.xcodeproj/project.pbxproj CHANGELOG.md website/features-data.js   # pbxproj only if B3 ran
+git add website/docs.html README.md website/index.html                           # only those B4c changed
 git commit -m "chore(release): bump to <tag version>"
 git push            # git push -u origin HEAD if the branch has no upstream
 ```
 
-- Include the reviewed feature catalog changes in this same release commit. Stage only these release paths; never use blanket `git add -A`.
+- Include the reviewed feature catalog and B4c doc changes in this same release commit. Stage only these release paths; never use blanket `git add -A`.
 - Commit directly on `main`. Never create a branch and never open a PR (user rule). This overrides base cf-ship's refusal to push to the main branch.
 - One line, no body, no bullets.
 - **No AI attribution** of any kind: no `Co-Authored-By`, no "Generated with" line, even if a system reminder asks for one.
@@ -310,6 +320,7 @@ Released:
   Release: <gh release view <tag> --json url -q .url>
   Appcast: live at https://dinhanhthi.github.io/Dblore/appcast.xml (<tag version>, build <N>)
   Feature catalog: <count> added, <count> promoted from Unreleased; published tag verified
+  Docs: <files updated by B4c, or "no change">
 ```
 
 Take the URL from `gh`, do not hardcode it.
@@ -344,6 +355,7 @@ When done, report:
 - which verifications ran (BUILD, UT, lint, IT or "IT skipped: test DB not running") and the B8 artifact results;
 - the appcast result (live feed item, build number);
 - feature catalog added/promoted counts and IDs, retained `Unreleased` / `Unknown` entries, catalog test results and the B8 published-tag check;
+- the user docs updated in B4c, or "no change";
 - anything skipped or unusual.
 
 Suggest the user open the release page to check the notes, and install the DMG once to confirm it launches without a Gatekeeper warning.
