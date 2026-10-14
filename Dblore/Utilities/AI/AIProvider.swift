@@ -71,15 +71,24 @@ nonisolated struct AIProviderConfig: Codable, Equatable, Sendable {
 nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
   var activeProvider: AIProviderKind?
   var configs: [AIProviderKind: AIProviderConfig]
+  /// The assistant runs the read-only query of a ```sql run block and shows the rows to the
+  /// user only; they never reach the model
+  var runsQueries: Bool
 
   static let empty = AIConfiguration(activeProvider: nil, configs: [:])
 
-  init(activeProvider: AIProviderKind?, configs: [AIProviderKind: AIProviderConfig]) {
+  init(
+    activeProvider: AIProviderKind?, configs: [AIProviderKind: AIProviderConfig],
+    runsQueries: Bool = false
+  ) {
     self.activeProvider = activeProvider
     self.configs = configs
+    self.runsQueries = runsQueries
   }
 
-  private enum CodingKeys: String, CodingKey { case activeProvider, configs }
+  private enum CodingKeys: String, CodingKey {
+    case activeProvider, configs, runsQueries
+  }
 
   // A dictionary with enum keys encodes as a flat array by default; use string keys instead
   init(from decoder: Decoder) throws {
@@ -92,6 +101,7 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
       uniqueKeysWithValues: raw.compactMap { key, value in
         AIProviderKind(rawValue: key).map { ($0, value) }
       })
+    runsQueries = try container.decodeIfPresent(Bool.self, forKey: .runsQueries) ?? false
   }
 
   func encode(to encoder: Encoder) throws {
@@ -99,6 +109,7 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     try container.encodeIfPresent(activeProvider, forKey: .activeProvider)
     let raw = Dictionary(uniqueKeysWithValues: configs.map { ($0.key.rawValue, $0.value) })
     try container.encode(raw, forKey: .configs)
+    try container.encode(runsQueries, forKey: .runsQueries)
   }
 }
 

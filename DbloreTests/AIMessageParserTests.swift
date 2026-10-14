@@ -26,21 +26,37 @@ struct AIMessageParserTests {
         == [.text("Try:"), .code(language: "sql", body: "SELECT *\nFROM t")])
   }
 
-  @Test func fenceWithoutLanguageHasNilLanguage() {
-    #expect(AIMessageParser.parse("```\nx\n```") == [.code(language: nil, body: "x")])
+  @Test func parseMarksOnlySQLRunFencesAsRun() {
+    #expect(
+      AIMessageParser.parse(
+        "```sql run\nSELECT 1\n```\n```sql\nSELECT 2\n```\n```python run\nx\n```")
+        == [
+          .code(language: "sql", body: "SELECT 1", isRun: true),
+          .code(language: "sql", body: "SELECT 2", isRun: false),
+          .code(language: "python", body: "x", isRun: false),
+        ])
   }
 
-  @Test func plainTextIsOneSegment() {
-    #expect(AIMessageParser.parse("Hello\nworld") == [.text("Hello\nworld")])
+  @Test(arguments: [
+    ("```sql run\n  SELECT 1\n```", "SELECT 1"),
+    ("```SQL RUN\nSELECT 1\n```", "SELECT 1"),
+    ("```postgresql run\nSELECT 1\n```", "SELECT 1"),
+    ("Text\n```sql run\nSELECT 1\n```\n```sql run\nSELECT 2\n```", "SELECT 1"),
+  ])
+  func runQueryReturnsFirstClosedRunFenceBody(markdown: String, expected: String) {
+    #expect(AIMessageParser.runQuery(in: markdown) == expected)
   }
 
-  @Test func emptyInputHasNoSegments() {
-    #expect(AIMessageParser.parse("").isEmpty)
-  }
-
-  @Test(arguments: ["sql", "SQL", "postgresql", "postgres", "psql", "pgsql"])
-  func sqlLanguagesAreSQL(language: String) {
-    #expect(AIMessageParser.isSQL(language: language))
+  @Test(arguments: [
+    "```sql run\nSELECT 1",
+    "```sql\nSELECT 1\n```",
+    "```\nSELECT 1\n```",
+    "```python run\nprint(1)\n```",
+    "```sql run\n  \n```",
+    "No code here",
+  ])
+  func runQueryIsNilWithoutClosedNonEmptyRunFence(markdown: String) {
+    #expect(AIMessageParser.runQuery(in: markdown) == nil)
   }
 
   @Test func nilLanguageIsSQLAndOthersAreNot() {
@@ -49,11 +65,7 @@ struct AIMessageParserTests {
   }
 
   @Test func selectIsReadOnly() {
-    #expect(AIMessageParser.isReadOnly("SELECT * FROM users"))
-  }
-
-  @Test func emptySQLIsReadOnly() {
-    #expect(AIMessageParser.isReadOnly(""))
+    #expect(AIMessageParser.isReadOnly("SELECT * FROM users", dialect: .postgresql))
   }
 
   @Test(arguments: [
@@ -63,11 +75,12 @@ struct AIMessageParserTests {
     "SELECT 1; DELETE FROM users",
   ])
   func modifyingStatementsAreNotReadOnly(sql: String) {
-    #expect(!AIMessageParser.isReadOnly(sql))
+    #expect(!AIMessageParser.isReadOnly(sql, dialect: .postgresql))
   }
 
   @Test func explainAnalyzeUpdateIsNotReadOnly() {
     // The classifier reports .explain(inner: .dml, analyze: true), which is not read-only safe.
-    #expect(!AIMessageParser.isReadOnly("EXPLAIN ANALYZE UPDATE users SET a = 1"))
+    #expect(
+      !AIMessageParser.isReadOnly("EXPLAIN ANALYZE UPDATE users SET a = 1", dialect: .postgresql))
   }
 }

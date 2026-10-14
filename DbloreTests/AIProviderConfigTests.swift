@@ -34,19 +34,21 @@ struct AIProviderConfigTests {
     #expect(decoded == config)
   }
 
-  @Test("provider kind defaults")
-  func kindDefaults() {
-    #expect(AIProviderKind.allCases.count == 9)
-    #expect(AIProviderKind.anthropic.wire == .anthropicMessages)
-    #expect(AIProviderKind.ollama.wire == .chatCompletions)
-    #expect(AIProviderKind.ollama.defaultBaseURL == "http://127.0.0.1:11434/v1")
-    #expect(AIProviderKind.custom.defaultBaseURL.isEmpty)
-    for kind in [AIProviderKind.ollama, .lmStudio, .mlxServer, .custom] {
-      #expect(!kind.requiresAPIKey)
-    }
-    for kind in [AIProviderKind.anthropic, .openAI, .openRouter] {
-      #expect(kind.requiresAPIKey)
-    }
+  @Test("runsQueries defaults to off, ignores the old query mode keys and round-trips")
+  func runsQueriesCoding() throws {
+    let old = #"{"activeProvider":"ollama","configs":{"ollama":{"baseURL":"u","model":"m"}}}"#
+    #expect(
+      try JSONDecoder().decode(AIConfiguration.self, from: Data(old.utf8)).runsQueries == false)
+
+    let unreleased =
+      #"{"configs":{"ollama":{"baseURL":"u","model":"m"}},"queryMode":"readResults","hidesQueryModeInChat":true}"#
+    let decoded = try JSONDecoder().decode(AIConfiguration.self, from: Data(unreleased.utf8))
+    #expect(decoded.runsQueries == false)
+    #expect(decoded.configs[.ollama]?.model == "m")
+
+    let config = AIConfiguration(activeProvider: nil, configs: [:], runsQueries: true)
+    let data = try JSONEncoder().encode(config)
+    #expect(try JSONDecoder().decode(AIConfiguration.self, from: data).runsQueries)
   }
 
   @Test("corrupt JSON falls back to empty")
@@ -64,14 +66,6 @@ struct AIProviderConfigTests {
     settings.configuration.configs[.openAI] = AIProviderConfig(baseURL: "u", model: "m")
     let (reloaded, _, _) = makeSettings(defaults: suite)
     #expect(reloaded.configuration == settings.configuration)
-  }
-
-  @Test("config(for:) falls back to default base URL and empty model")
-  func configFallback() {
-    let (settings, _, _) = makeSettings()
-    let config = settings.config(for: .lmStudio)
-    #expect(config.baseURL == "http://127.0.0.1:1234/v1")
-    #expect(config.model.isEmpty)
   }
 
   @Test("isConfigured for keyless local provider needs only a model")

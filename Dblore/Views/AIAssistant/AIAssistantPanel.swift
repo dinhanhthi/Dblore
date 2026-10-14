@@ -14,6 +14,8 @@ struct AIAssistantPanel: View {
   let tables: [DatabaseTable]
   /// Shown as the bubble card instead of the docked sidebar column
   var isFloating = false
+  /// Column width (sidebar) or card width (bubble)
+  var width: CGFloat = ComponentSize.sidebarWidth
 
   @FocusState private var composerFocused: Bool
   @State private var composerIsMultiline = false
@@ -56,7 +58,7 @@ struct AIAssistantPanel: View {
       Divider()
       footer
     }
-    .frame(width: ComponentSize.sidebarWidth)
+    .frame(width: width)
     .background(background)
     .overlay(alignment: .leading) {
       if !isFloating {
@@ -85,7 +87,7 @@ struct AIAssistantPanel: View {
         startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.45))
       RadialGradient(
         colors: [Color.accent.opacity(0.16), .clear],
-        center: .topTrailing, startRadius: 0, endRadius: ComponentSize.sidebarWidth * 1.1)
+        center: .topTrailing, startRadius: 0, endRadius: width * 1.1)
     }
   }
 
@@ -240,7 +242,7 @@ struct AIAssistantPanel: View {
 
   private var emptyState: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text("Ask about your schema or describe a query. Suggestions are never run automatically.")
+      Text(emptyStateText)
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
       ForEach(Self.examples, id: \.self) { example in
@@ -258,17 +260,31 @@ struct AIAssistantPanel: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
+  /// Discloses whether read-only queries run
+  private var emptyStateText: String {
+    let intro = "Ask about your schema or describe a query."
+    guard assistant.settings.configuration.runsQueries else {
+      return intro + " Suggestions are never run automatically."
+    }
+    return intro
+      + " Read-only queries run automatically; results are shown only to you."
+      + " Ask for the SQL to get it without running."
+  }
+
   private var messageList: some View {
-    ScrollViewReader { proxy in
+    let dialect = assistant.sqlDialect
+    let messages = assistant.messages
+    return ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(spacing: Spacing.sm) {
-          ForEach(assistant.messages) { entry in
+          ForEach(Array(messages.enumerated()), id: \.element.id) { index, entry in
             AIMessageView(
               entry: entry, placeholder: assistant.isLoadingModel ? "Loading model…" : "Thinking…",
-              onInsert: insertHandler,
+              onInsert: insertHandler, dialect: dialect,
               onRetry: canRetry(entry) ? { retryEntryId = entry.id } : nil,
               onEdit: canRetry(entry)
-                ? { assistant.retry(from: entry.id, editedText: $0) } : nil)
+                ? { assistant.retry(from: entry.id, editedText: $0) } : nil,
+              firstRunLabel: firstRunLabel(after: index, in: messages))
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
@@ -300,6 +316,16 @@ struct AIAssistantPanel: View {
   }
 
   private static let bottomID = "ai-bottom"
+
+  /// Label of the first run block of the entry at `index`, from the next entry: "Ran" for its
+  /// running placeholder or result, "Failed" for a database error, else "Not run". nil while
+  /// that entry is still streaming (not decided yet).
+  private func firstRunLabel(after index: Int, in messages: [AIChatEntry]) -> String? {
+    let next = messages.indices.contains(index + 1) ? messages[index + 1] : nil
+    if next == nil, assistant.isGenerating { return nil }
+    if next?.queryResult != nil || next?.isRunning == true { return "Ran" }
+    return next?.queryOutcome == .failed ? "Failed" : "Not run"
+  }
 
   /// Only the user's own messages can be restarted from, and not while a reply is streaming
   private func canRetry(_ entry: AIChatEntry) -> Bool {
@@ -338,6 +364,7 @@ struct AIAssistantPanel: View {
         }
       ) {
         modelMenu
+        AIRunQueriesToggle(isOn: Bindable(assistant.settings).configuration.runsQueries)
       }
       inputRow
     }
@@ -468,6 +495,34 @@ struct AIAssistantPanel: View {
       return
     }
     textView.insertText("\n", replacementRange: textView.selectedRange())
+  }
+}
+
+/// "Run read-only queries" on/off, an icon chip of the chat input row: accent-tinted when on
+struct AIRunQueriesToggle: View {
+  @Binding var isOn: Bool
+
+  var body: some View {
+    Button {
+      isOn.toggle()
+    } label: {
+      Image(systemName: isOn ? "play.circle.fill" : "play.slash")
+        .font(.system(size: 11))
+        .foregroundColor(isOn ? .accent : .foregroundSubtle)
+        // Same width on and off, so the row does not shift when it is toggled
+        .frame(width: 30, height: 26)
+        .background(isOn ? Color.selectionFill : Color.inputBackground)
+        .clipShape(Capsule())
+        .overlay(HairlineBorder(shape: Capsule(), color: isOn ? .accent : .border))
+        .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .fixedSize()
+    .linkPointer()
+    .help("Run read-only queries: \(isOn ? "On" : "Off") — results are shown only to you")
+    .accessibilityLabel("Run read-only queries")
+    .accessibilityValue(isOn ? "On" : "Off")
+    .accessibilityAddTraits(.isToggle)
   }
 }
 

@@ -66,7 +66,7 @@ struct AIDropdownLabel: View {
     .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
     .background(Color.inputBackground)
     .clipShape(Capsule())
-    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .overlay(HairlineBorder(shape: Capsule()))
     .contentShape(Capsule())
   }
 }
@@ -169,10 +169,9 @@ struct AIContextPicker<Accessory: View>: View {
         picker
           .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
           .clipped()
+        // Each accessory child sizes itself; flexible ones share the row with the picker
         if Accessory.self != EmptyView.self {
           accessory()
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .clipped()
         }
       }
     }
@@ -257,8 +256,7 @@ struct AIContextPicker<Accessory: View>: View {
         .frame(height: ComponentSize.buttonHeight)
         .background(Color.inputBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.sm).stroke(Color.border, lineWidth: 1))
+        .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.sm)))
 
       Button("Auto (relevant tables)") { selected = [] }
         .buttonStyle(GhostButtonStyle(isActive: selected.isEmpty))

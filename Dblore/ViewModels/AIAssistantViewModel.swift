@@ -1,5 +1,7 @@
 // AIAssistantViewModel.swift
-// Workspace-level chat state for the AI SQL assistant. Only schema is sent; SQL is never executed.
+// Workspace-level chat state for the AI SQL assistant. Schema is sent; with "Run read-only
+// queries" on, the read-only query of a ```sql run block runs (see `+Query`) and its rows are
+// shown to the user only, never sent to the model. Other SQL is never executed.
 
 import Foundation
 import Observation
@@ -9,6 +11,22 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   let role: AIChatMessage.Role
   var text: String
   var isError: Bool
+  /// Rows of a query the app ran for the assistant
+  var queryResult: AIQueryResult? = nil
+  /// The query is still running (placeholder entry)
+  var isRunning: Bool? = nil
+  /// Set on the entry of a query that could not run: its text holds the error and the SQL
+  var queryOutcome: QueryOutcome? = nil
+  /// The SQL of a query that could not run: a `.failed` entry is saved with it and without the
+  /// database error (`AIConversationStore.save`)
+  var querySQL: String? = nil
+
+  enum QueryOutcome: String, Codable {
+    /// The database (or the connection) returned an error
+    case failed
+    /// Refused before the database: guard refusal or no connection
+    case refused
+  }
 }
 
 /// Structure-only snapshot of the connected database, read at send time
@@ -16,9 +34,10 @@ struct AISchemaSnapshot: Sendable {
   var tables: [DatabaseTable]
   var foreignKeys: [ForeignKey]
   var databaseName: String?
-  var dialect: SQLDialect = .postgresql
+  var dialect: SQLDialect
 
-  static let empty = AISchemaSnapshot(tables: [], foreignKeys: [], databaseName: nil)
+  static let empty = AISchemaSnapshot(
+    tables: [], foreignKeys: [], databaseName: nil, dialect: .postgresql)
 }
 
 @MainActor @Observable
@@ -26,6 +45,8 @@ final class AIAssistantViewModel {
   private static let historyLimit = 20
   private static let conversationLimit = 100
   private static let titleLength = 80
+  /// Rows of a result kept for the card
+  static let modelRowCap = 50
 
   var messages: [AIChatEntry] = []
   /// Saved conversations of the workspace, most recently updated first
@@ -47,13 +68,20 @@ final class AIAssistantViewModel {
   @ObservationIgnored private var viewerTableName: String?
 
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var generation = 0
+  @ObservationIgnored private(set) var generation = 0
   @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
 
   @ObservationIgnored let settings: AISettings
   @ObservationIgnored private let makeClient:
     (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
+  /// Reads only the connection's dialect, so a view body does not collect the whole schema.
+  /// Nil falls back to `schemaSource`.
+  @ObservationIgnored var dialectSource: (() -> SQLDialect)?
+  /// Runs one read-only statement the assistant asked for; nil means not connected
+  @ObservationIgnored var queryRunner: ((String) async throws -> QueryResult)?
+  /// Dialect of the connected database (read-only badge on SQL replies)
+  var sqlDialect: SQLDialect { dialectSource?() ?? schemaSource().dialect }
   /// nil keeps conversations in memory only
   @ObservationIgnored var historyStore: AIConversationStore? {
     didSet { conversations = historyStore?.load() ?? [] }
@@ -184,30 +212,16 @@ final class AIAssistantViewModel {
     }
 
     // Schema selection and rendering can be large; they run off the main actor
-    let snapshot = schemaSource()
-    let explicit = selectedTableNames
+    let context = TurnContext(
+      client: client, model: model, question: question, explicit: selectedTableNames,
+      snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
+      dialect: sqlDialect)
     let history = makeHistory()
     isGenerating = true
     generation += 1
     let token = generation
     generationTask = Task { [weak self] in
-      let request = await Self.buildRequest(
-        model: model, question: question, explicit: explicit, snapshot: snapshot,
-        history: history)
-      do {
-        for try await event in client.stream(request) {
-          guard let self, !Task.isCancelled else { return }
-          switch event {
-          case .text(let delta):
-            self.isLoadingModel = false
-            self.append(delta, to: entryId)
-          case .loadingModel:
-            self.isLoadingModel = true
-          }
-        }
-      } catch {
-        if !Task.isCancelled { self?.markError(entryId, error) }
-      }
+      await self?.runTurn(context, history: history, entryId: entryId, token: token)
       self?.finishGeneration(token)
     }
   }
@@ -249,7 +263,8 @@ final class AIAssistantViewModel {
     guard id != conversationId, let conversation = conversations.first(where: { $0.id == id })
     else { return }
     stop()
-    messages = conversation.messages
+    // A query still running when the app quit never finished
+    messages = conversation.messages.filter { $0.isRunning != true }
     conversationId = id
   }
 
@@ -268,7 +283,7 @@ final class AIAssistantViewModel {
   }
 
   /// Upserts the current conversation and moves it to the top; unchanged or empty ones are skipped
-  private func saveConversation() {
+  func saveConversation() {
     guard
       let firstQuestion = messages.first(where: { $0.role == .user })?.text
     else { return }
@@ -288,19 +303,24 @@ final class AIAssistantViewModel {
 
   // MARK: - Helpers
 
-  /// History of the conversation (which already ends with the new question)
-  private func makeHistory() -> [AIChatMessage] {
-    messages
-      .filter { !$0.isError && !$0.text.isEmpty }
+  /// History of the conversation (which already ends with the new question). Query results and
+  /// errors are placeholders (`historyMessage`); running queries are left out.
+  func makeHistory() -> [AIChatMessage] {
+    let sent =
+      messages
+      .filter {
+        !$0.isError && $0.isRunning != true && (!$0.text.isEmpty || $0.queryResult != nil)
+      }
       .suffix(Self.historyLimit)
+      .map(Self.historyMessage(for:))
       .drop(while: { $0.role == .assistant })  // Anthropic requires the first message to be user
-      .map { AIChatMessage(role: $0.role, text: $0.text) }
+    return Array(sent)
   }
 
   /// Builds the request off the main actor: table selection and rendering are O(tables)
-  nonisolated private static func buildRequest(
+  nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
-    history: [AIChatMessage]
+    history: [AIChatMessage], runsQueries: Bool
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -310,19 +330,20 @@ final class AIAssistantViewModel {
       return AIChatRequest(
         model: model,
         system: AIPrompts.system(
-          databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect),
+          databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
+          runsQueries: runsQueries),
         messages: history)
     }.value
   }
 
-  private func append(_ delta: String, to id: UUID) {
+  func append(_ delta: String, to id: UUID) {
     guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
     messages[index].text += delta
   }
 
   /// Keeps partial text in its entry and shows the error in a separate entry below it;
   /// an entry that has no text yet becomes the error entry itself.
-  private func markError(_ id: UUID, _ error: Error) {
+  func markError(_ id: UUID, _ error: Error) {
     guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
     let description = error.localizedDescription
     if messages[index].text.isEmpty {
@@ -344,8 +365,11 @@ final class AIAssistantViewModel {
     saveConversation()
   }
 
-  /// An assistant entry that never received text would show "Thinking…" forever
+  /// An assistant entry that never received text would show "Thinking…" forever, and a query
+  /// placeholder "Running query…"; a query result has no text but stays
   private func removeEmptyAssistantEntries() {
-    messages.removeAll { $0.role == .assistant && !$0.isError && $0.text.isEmpty }
+    messages.removeAll {
+      $0.role == .assistant && !$0.isError && $0.text.isEmpty && $0.queryResult == nil
+    }
   }
 }

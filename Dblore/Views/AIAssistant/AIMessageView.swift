@@ -2,7 +2,8 @@
 //  AIMessageView.swift
 //  Dblore
 //
-//  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge
+//  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge,
+//  or the result card of a query the app ran for the assistant
 //
 
 import AppKit
@@ -12,12 +13,18 @@ struct AIMessageView: View {
   let entry: AIChatEntry
   /// Shown while the entry has no text yet
   var placeholder = "Thinking…"
-  /// Places SQL in the active tab; nil disables Insert. Never executes.
+  /// Places SQL in the active tab; nil disables Insert. Inserting never executes: queries run
+  /// only through the assistant's read-only run setting.
   let onInsert: ((String) -> Void)?
+  /// Connection dialect used to classify SQL blocks for the "modifies data" badge
+  let dialect: SQLDialect
   /// Restarts the conversation from this entry; nil hides the button
   var onRetry: (() -> Void)?
   /// Restarts the conversation from this entry with edited text; nil hides the button
   var onEdit: ((String) -> Void)?
+  /// Label of this entry's first ```sql run block ("Ran", "Failed" or "Not run"); other run
+  /// blocks are "Not run". nil while the reply streams: no label yet.
+  var firstRunLabel: String? = "Not run"
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -29,35 +36,44 @@ struct AIMessageView: View {
   var body: some View {
     HStack(spacing: 0) {
       if isUser { Spacer(minLength: Spacing.xl) }
-      bubbleContent
-        .padding(Spacing.sm)
-        .background(bubbleBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
-        .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.lg)
-            .stroke(entry.isError ? Color.destructive : Color.border, lineWidth: 1)
-            .opacity(isUser && !entry.isError ? 0 : 1)
-        )
-        .overlay(alignment: .topTrailing) {
-          if isHovering, !isEditing, onRetry != nil || onEdit != nil {
-            HStack(spacing: Spacing.xs) {
-              if onEdit != nil {
-                actionButton("pencil", help: "Edit") {
-                  editText = entry.text
-                  isEditing = true
-                }
-              }
-              if let onRetry {
-                actionButton("arrow.clockwise", help: "Try again", action: onRetry)
-              }
-            }
-            .padding(Spacing.xs)
-          }
-        }
-        .onHover { isHovering = $0 }
+      // A result is its own bordered card: no bubble around it, no actions on it
+      if let result = entry.queryResult {
+        AIQueryResultCard(result: result)
+      } else {
+        bubble
+      }
       if !isUser { Spacer(minLength: Spacing.xl) }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+  }
+
+  private var bubble: some View {
+    bubbleContent
+      .padding(Spacing.sm)
+      .background(bubbleBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
+      .overlay(
+        RoundedRectangle(cornerRadius: CornerRadius.lg)
+          .stroke(entry.isError ? Color.destructive : Color.border, lineWidth: 1)
+          .opacity(isUser && !entry.isError ? 0 : 1)
+      )
+      .overlay(alignment: .topTrailing) {
+        if isHovering, !isEditing, onRetry != nil || onEdit != nil {
+          HStack(spacing: Spacing.xs) {
+            if onEdit != nil {
+              actionButton("pencil", help: "Edit") {
+                editText = entry.text
+                isEditing = true
+              }
+            }
+            if let onRetry {
+              actionButton("arrow.clockwise", help: "Try again", action: onRetry)
+            }
+          }
+          .padding(Spacing.xs)
+        }
+      }
+      .onHover { isHovering = $0 }
   }
 
   private func actionButton(
@@ -121,23 +137,160 @@ struct AIMessageView: View {
         .foregroundColor(.destructive)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+    } else if entry.isRunning == true {
+      HStack(spacing: Spacing.sm) {
+        ProgressView().controlSize(.small)
+        Text("Running query…")
+          .font(.labelText)
+          .foregroundColor(.foregroundMuted)
+      }
     } else if entry.text.isEmpty {
       Text(placeholder)
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
     } else {
+      let segments = segments
+      let firstRun = segments.firstIndex {
+        if case .code(_, _, true) = $0 { return true } else { return false }
+      }
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+        ForEach(Array(segments.enumerated()), id: \.offset) { offset, segment in
           switch segment {
           case .text(let text):
             AIMarkdownText(text: text)
-          case .code(let language, let body):
-            AICodeBlock(language: language, code: body, onInsert: onInsert)
+          case .code(let language, let body, let isRun):
+            AICodeBlock(
+              language: language, code: body, onInsert: onInsert, dialect: dialect,
+              runLabel: isRun ? runLabel(isFirstRun: offset == firstRun) : nil)
           }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  private func runLabel(isFirstRun: Bool) -> String? {
+    guard let firstRunLabel else { return nil }
+    return isFirstRun ? firstRunLabel : "Not run"
+  }
+}
+
+/// Rows of a query the app ran for the assistant: one value large, otherwise a compact grid.
+/// Rows are not saved with the chat, so a reopened chat shows only the row count.
+private struct AIQueryResultCard: View {
+  let result: AIQueryResult
+
+  @Environment(\.pixelLength) private var pixelLength
+
+  /// Longer cell values and column names are cut with "…"; the full value is the tooltip
+  private static let maxCellCharacters = 28
+
+  private var isSingleValue: Bool { result.columns.count == 1 && result.rows.count == 1 }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      if !result.rows.isEmpty {
+        if isSingleValue {
+          singleValue
+        } else {
+          grid
+        }
+        Rectangle().fill(Color.border).frame(height: pixelLength)
+      }
+      Text(footer)
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.xs)
+        .background(Color.cardHeaderBackground)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.md).stroke(Color.border, lineWidth: pixelLength))
+  }
+
+  private var footer: String {
+    let count = result.rowCount
+    guard count > 0 else { return "No rows" }
+    let rows = "\(count) row\(count == 1 ? "" : "s")"
+    if result.rows.isEmpty {
+      let partial = result.rowsTruncated ? " · first \(count) rows only" : ""
+      return rows + partial + " · results are not saved with the chat"
+    }
+    if result.rowsTruncated {
+      return rows + " · first \(count) rows only — run the SQL above for all"
+    }
+    return rows
+  }
+
+  private var singleValue: some View {
+    VStack(alignment: .leading, spacing: Spacing.xxs) {
+      Text(result.columns.first?.name ?? "")
+        .font(.smallest)
+        .foregroundColor(.foregroundMuted)
+        .lineLimit(1)
+      valueText(result.rows[0].first ?? nil, font: .subheading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(Spacing.sm)
+    .background(Color.cellBackground)
+  }
+
+  /// A grid that fits stretches its last column to the card edge; a wider one scrolls sideways.
+  /// Cells keep no fill of their own (a cell narrower than its column would leave a gap).
+  private var grid: some View {
+    ViewThatFits(in: .horizontal) {
+      gridRows
+      ScrollView(.horizontal, showsIndicators: false) { gridRows }
+    }
+    .background(Color.cellBackground)
+  }
+
+  private var gridRows: some View {
+    let lastColumn = result.columns.count - 1
+    return Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+      GridRow {
+        ForEach(Array(result.columns.enumerated()), id: \.offset) { column, info in
+          Text(verbatim: Self.cut(info.name))
+            .font(.smallest.weight(.medium))
+            .foregroundColor(.foregroundMuted)
+            .lineLimit(1)
+            .help(info.type.isEmpty ? info.name : "\(info.name) (\(info.type))")
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .frame(maxWidth: column == lastColumn ? .infinity : nil, alignment: .leading)
+        }
+      }
+      Rectangle().fill(Color.border).frame(height: pixelLength)
+        .gridCellUnsizedAxes(.horizontal)
+      ForEach(Array(result.rows.enumerated()), id: \.offset) { _, row in
+        GridRow {
+          ForEach(Array(row.enumerated()), id: \.offset) { column, value in
+            valueText(value.map(Self.cut), font: .monoSmall)
+              .lineLimit(1)
+              .help(value ?? "NULL")
+              .padding(.horizontal, Spacing.sm)
+              .padding(.vertical, Spacing.xxs)
+              .frame(maxWidth: column == lastColumn ? .infinity : nil, alignment: .leading)
+          }
+        }
+      }
+    }
+  }
+
+  private static func cut(_ text: String) -> String {
+    text.count > maxCellCharacters ? text.prefix(maxCellCharacters - 1) + "…" : text
+  }
+
+  /// NULL shows as a dim "NULL" so it never reads as the text "NULL" or an empty string
+  private func valueText(_ value: String?, font: Font) -> some View {
+    Text(verbatim: value ?? "NULL")
+      .font(value == nil ? font.italic() : font)
+      .foregroundColor(value == nil ? .foregroundSubtle : .foreground)
+      .textSelection(.enabled)
   }
 }
 
@@ -319,11 +472,14 @@ private struct AICodeBlock: View {
   let language: String?
   let code: String
   let onInsert: ((String) -> Void)?
+  let dialect: SQLDialect
+  /// "Ran", "Failed" or "Not run" on a ```sql run block; nil for plain blocks
+  var runLabel: String? = nil
 
   @State private var copied = false
 
   private var isSQL: Bool { AIMessageParser.isSQL(language: language) }
-  private var modifiesData: Bool { isSQL && !AIMessageParser.isReadOnly(code) }
+  private var modifiesData: Bool { isSQL && !AIMessageParser.isReadOnly(code, dialect: dialect) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -331,6 +487,7 @@ private struct AICodeBlock: View {
         Text(language ?? "sql")
           .font(.small)
           .foregroundColor(.foregroundMuted)
+        if let runLabel { runBadge(runLabel) }
         if modifiesData { modifiesBadge }
         Spacer(minLength: 0)
         Button(copied ? "Copied" : "Copy") { copy() }
@@ -372,6 +529,23 @@ private struct AICodeBlock: View {
       .clipShape(Capsule())
   }
 
+  private func runBadge(_ label: String) -> some View {
+    let (color, help): (Color, String) =
+      switch label {
+      case "Ran": (.success, "The app ran this read-only query for the assistant")
+      case "Failed": (.destructive, "The database returned an error for this query")
+      default: (.foregroundMuted, "This query was not run")
+      }
+    return Text(label)
+      .font(.smallest)
+      .foregroundColor(color)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.xxs)
+      .background(color.opacity(0.14))
+      .clipShape(Capsule())
+      .help(help)
+  }
+
   private func copy() {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(code, forType: .string)
@@ -404,7 +578,8 @@ private struct AICodeActionButton: View {
       .foregroundColor(.foreground)
       .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.xxs)
-      .background(Capsule().fill(isHighlighted ? Color.gutterBackground : Color.clear))
+      // Filled so it stands off the gray code header; hover shows on the border.
+      .background(Capsule().fill(Color.controlBackground))
       .overlay(
         Capsule().stroke(isHighlighted ? Color.borderStrong : Color.border, lineWidth: 1)
       )
@@ -421,20 +596,72 @@ private struct AICodeActionButton: View {
     AIMessageView(
       entry: AIChatEntry(
         id: UUID(), role: .user, text: "Delete inactive customers", isError: false),
-      onInsert: nil)
+      onInsert: nil, dialect: .postgresql)
     AIMessageView(
       entry: AIChatEntry(
         id: UUID(), role: .assistant,
         text:
           "### Inactive customers\nThis removes **all** inactive rows:\n- active = false\n```sql\nDELETE FROM customers WHERE active = false;\n```\nReview before running.",
         isError: false),
-      onInsert: { _ in })
+      onInsert: { _ in }, dialect: .postgresql)
     AIMessageView(
       entry: AIChatEntry(
         id: UUID(), role: .assistant, text: "Request failed: 401", isError: true),
-      onInsert: nil)
+      onInsert: nil, dialect: .postgresql)
   }
   .padding(Spacing.md)
   .frame(width: ComponentSize.sidebarWidth)
+  .background(Color.appBackground)
+}
+
+#Preview("AIMessageView query results") {
+  let columns = [
+    AIQueryResult.Column(name: "id", type: "int4"),
+    AIQueryResult.Column(name: "email", type: "text"),
+    AIQueryResult.Column(name: "last_login", type: "timestamptz"),
+  ]
+  let rows: [[String?]] = (1...6).map { index in
+    [
+      "\(index)", "customer\(index)@example.com",
+      index.isMultiple(of: 3) ? nil : "2026-10-0\(index)",
+    ]
+  }
+  func entry(text: String = "", result: AIQueryResult? = nil, running: Bool? = nil) -> AIChatEntry {
+    AIChatEntry(
+      id: UUID(), role: .assistant, text: text, isError: false, queryResult: result,
+      isRunning: running)
+  }
+  return ScrollView {
+    VStack(spacing: Spacing.md) {
+      AIMessageView(
+        entry: entry(text: "```sql run\nSELECT email FROM customers WHERE id = 11;\n```"),
+        onInsert: { _ in }, dialect: .postgresql, firstRunLabel: "Ran")
+      AIMessageView(entry: entry(running: true), onInsert: nil, dialect: .postgresql)
+      AIMessageView(
+        entry: entry(
+          result: AIQueryResult(
+            columns: [AIQueryResult.Column(name: "email", type: "text")],
+            rows: [["ada@example.com"]], rowCount: 1, rowsTruncated: false)),
+        onInsert: nil, dialect: .postgresql)
+      AIMessageView(
+        entry: entry(
+          result: AIQueryResult(columns: columns, rows: rows, rowCount: 6, rowsTruncated: false)),
+        onInsert: nil, dialect: .postgresql)
+      AIMessageView(
+        entry: entry(
+          result: AIQueryResult(columns: columns, rows: rows, rowCount: 6, rowsTruncated: true)),
+        onInsert: nil, dialect: .postgresql)
+      AIMessageView(
+        entry: entry(
+          result: AIQueryResult(columns: columns, rows: [], rowCount: 50, rowsTruncated: true)),
+        onInsert: nil, dialect: .postgresql)
+      AIMessageView(
+        entry: entry(
+          result: AIQueryResult(columns: columns, rows: [], rowCount: 0, rowsTruncated: false)),
+        onInsert: nil, dialect: .postgresql)
+    }
+    .padding(Spacing.md)
+  }
+  .frame(width: ComponentSize.sidebarWidth, height: 900)
   .background(Color.appBackground)
 }

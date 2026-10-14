@@ -182,11 +182,7 @@ struct AISettingsSection: View {
   }
 
   private var privacyCard: some View {
-    SettingsGroupCard(title: "Privacy") {
-      helpText(
-        "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
-      )
-    }
+    AIPrivacyCard(settings: settings)
   }
 
   private var serviceNote: String? {
@@ -560,6 +556,42 @@ struct AISettingsSection: View {
   }
 }
 
+/// What the assistant may send and run: the "Run read-only queries" switch and what it shares.
+struct AIPrivacyCard: View {
+  @Bindable var settings: AISettings
+
+  private var runsQueries: Bool { settings.configuration.runsQueries }
+
+  var body: some View {
+    SettingsGroupCard(title: "Privacy") {
+      SettingsToggle(
+        title: "Run read-only queries", isOn: $settings.configuration.runsQueries
+      ) {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          helpText(help)
+          if runsQueries {
+            helpText(
+              "Only a single read-only statement runs; anything else is refused and shown as SQL.")
+          }
+        }
+      }
+    }
+  }
+
+  private var help: String {
+    runsQueries
+      ? "AI writes a read-only query, the app runs it and shows the rows to you. Row values are never sent to the AI."
+      : "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
+  }
+
+  private func helpText(_ text: String) -> some View {
+    Text(verbatim: text)
+      .font(.bodyText)
+      .foregroundColor(.foregroundSubtle)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
 /// Editable model name with a menu of names from the last fetch.
 private struct ModelNameComboBox: View {
   @Binding var text: String
@@ -679,4 +711,10 @@ private final class MenuClickView: NSView {
   override func mouseDown(with event: NSEvent) {
     coordinator?.pop(from: self)
   }
+}
+
+#Preview("AIPrivacyCard") {
+  AIPrivacyCard(settings: .shared)
+    .padding(Spacing.lg)
+    .frame(width: 560)
 }

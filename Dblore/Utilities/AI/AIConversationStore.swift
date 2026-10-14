@@ -34,8 +34,20 @@ final class AIConversationStore {
     return conversations
   }
 
+  /// A database error can echo row values, so a `.failed` query entry is saved with its SQL
+  /// only; refused entries hold only app messages and are saved as they are.
   func save(_ conversations: [AIConversation]) {
-    guard let data = try? JSONEncoder().encode(conversations) else { return }
+    let saved = conversations.map { conversation in
+      var conversation = conversation
+      for index in conversation.messages.indices
+      where conversation.messages[index].queryOutcome == .failed {
+        conversation.messages[index].text = AIPrompts.queryFailure(
+          sql: conversation.messages[index].querySQL ?? "",
+          error: "The error is not saved with the chat.")
+      }
+      return conversation
+    }
+    guard let data = try? JSONEncoder().encode(saved) else { return }
     do {
       try FileManager.default.createDirectory(
         at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
