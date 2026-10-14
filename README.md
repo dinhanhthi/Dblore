@@ -7,7 +7,7 @@
 A native macOS database client: query in Jupyter-style **notebooks** or a classic
 **SQL editor**, browse and edit results and tables, explore the schema, guard production
 with Safe Mode, and get help from an AI assistant that works with your own key or a local
-model. Supports PostgreSQL, MySQL/MariaDB, SQLite (beta) and DuckDB (as a plugin); more
+model. Supports PostgreSQL, MySQL/MariaDB, SQLite and DuckDB (as a plugin); more
 engines (such as MongoDB) are planned.
 
 [Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
@@ -39,8 +39,9 @@ engines (such as MongoDB) are planned.
   queries, and see row count and execution time per result; bind named `:name`
   parameters; find any command with `Cmd+K`
 - **Results grid**: sort, resize and search columns, paginate, edit values inline, inspect
-  a cell with a JSON viewer, follow foreign keys, pin a result to compare re-runs, and
-  export to Excel, CSV, JSON, Markdown, PDF, TSV or SQL `INSERT`
+  a cell with a JSON viewer, follow foreign keys, add a row from a form, color values by
+  type, pin a result to compare re-runs, and export to Excel, CSV, JSON, Markdown, PDF,
+  TSV or SQL `INSERT`
 - **Import data**: CSV, TSV and JSON into a new or existing table, with a preview,
   column mapping and type overrides
 - **Table data viewer**: open any table or view from the sidebar to browse and edit its
@@ -58,10 +59,11 @@ engines (such as MongoDB) are planned.
   and explains or fixes queries. Works with Anthropic, OpenAI, OpenRouter, Ollama,
   LM Studio, `mlx_lm.server` or any OpenAI-compatible endpoint (bring your own API key).
   Only schema metadata is sent automatically; query text and errors are sent only when
-  you confirm, row data is never sent on its own, and generated SQL is never run
-  automatically. Point it at a local model for fully local use. Detach it into a
-  floating, draggable bubble at the bottom of the window, or pick the default in
-  Settings > AI > Panel
+  you confirm, row data is never sent on its own, and generated SQL does not run unless
+  you turn on "Run read-only queries" (off by default): then a single read-only statement
+  runs and only you see the rows. Point it at a local model (Qwen3.5 or Gemma 4 on-device,
+  Ollama, LM Studio) for fully local use. Detach it into a floating, resizable bubble at
+  the bottom of the window, or pick the default in Settings > AI > Panel
 - **MCP server**: let AI agents such as Claude Code or Cursor read your databases through a
   read-only server on `127.0.0.1`. Off by default; only the connections you allow in
   Settings > MCP are exposed, every query is checked and run read-only, and queries are

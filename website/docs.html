@@ -121,10 +121,10 @@
             <li><strong>MySQL and MariaDB:</strong> host, port, user and database (required; the sidebar shows only that database). TCP only, no SSH tunnel. Users with <code>caching_sha2_password</code> or <code>mysql_native_password</code>; <code>sha256_password</code> and MariaDB ed25519 are not supported.</li>
             <li><strong>MySQL SSL:</strong> only <strong>Verify CA</strong> and <strong>Verify Full</strong> check the server certificate. Allow, Prefer and Require encrypt the connection without checking it, so on an untrusted network an active attacker could read the traffic and the password. Allow and Prefer also fall back to plain text when the server offers no SSL. A client certificate needs Require, Verify CA or Verify Full.</li>
             <li><strong>SSH tunnel</strong> (PostgreSQL): password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
-            <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority.</li>
+            <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority. A custom CA also works on its own, without a certificate.</li>
             <li>Statement, lock and idle-in-transaction timeouts: global in <strong>Settings &gt; Results</strong>, overridable per connection.</li>
             <li>Passwords are stored in the Keychain.</li>
-            <li><strong>SQLite (beta):</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
+            <li><strong>SQLite:</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
             <li><strong>DuckDB:</strong> needs the <a href="#plugins">plugin</a>.</li>
             <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
             <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
@@ -152,7 +152,7 @@
             <li>Notebooks are <code>.dblore</code> files made of SQL cells, with inline results under each cell.</li>
             <li>Run the cell with <kbd>Ctrl+Enter</kbd>, run and move on with <kbd>Shift+Enter</kbd>, run and insert below with <kbd>Option+Enter</kbd>, run all with <kbd>Cmd+Shift+Enter</kbd>.</li>
             <li>Cancel a running query. Each result shows row count and execution time.</li>
-            <li>New cell <kbd>Cmd+Option+N</kbd>, duplicate <kbd>Cmd+D</kbd>, delete <kbd>Cmd+Delete</kbd>.</li>
+            <li>New cell <kbd>Cmd+Option+N</kbd>, duplicate <kbd>Cmd+D</kbd>, delete <kbd>Cmd+Delete</kbd>. The floating toolbar of a cell has a <strong>Format SQL</strong> button.</li>
             <li>Named parameters: write <code>:name</code> in a cell and fill the values in the inline form under it. You choose whether the values are saved in the file.</li>
             <li>Old <code>.sqlnb</code> files: rename them to <code>.dblore</code>, the content is unchanged.</li>
 </ul>
@@ -179,7 +179,7 @@
             <li><strong>View Source</strong> on a function, procedure or trigger opens its definition read-only, with Copy and <strong>Open as editable copy</strong>.</li>
             <li>Type in the filter field of a tab for a loose fuzzy match.</li>
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
-            <li>History: every query is recorded locally. Filter by status, or show only writes.</li>
+            <li>History: every query is recorded locally. Filter by status, or show only writes. Search also matches the source or kind badge, such as "AI Assistant".</li>
             <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle.</li>
             <li>Right sidebar (<kbd>Cmd+Shift+B</kbd>) shows cell details, column filters and highlights.</li>
 </ul>
@@ -195,6 +195,8 @@
             <li>Column header filter, plus a filter sidebar that builds <code>WHERE</code> conditions. Filters can be saved.</li>
             <li>Highlight matching cells or rows from the sidebar.</li>
             <li>Open a cell in the detail panel, with a JSON viewer and string beautifier.</li>
+            <li><strong>Add Row</strong> in the grid menu opens a form in the right sidebar: one field per column, a NULL button, checked against the column type. An empty field is left out of the <code>INSERT</code>, and Add stages the row.</li>
+            <li><strong>Settings &gt; Results &gt; Color Values by Type</strong> shows numbers, text, dates, booleans and JSON in their own soft colors.</li>
             <li>View Query shows the exact SQL sent, including the row limit.</li>
 </ul>
           </section>
@@ -242,7 +244,7 @@
 <ul class="list">
             <li>Five protection levels.</li>
             <li>Confirmation before <code>DROP</code>, <code>TRUNCATE</code>, <code>ALTER</code> and <code>CREATE</code>. Warning on <code>DELETE</code> or <code>UPDATE</code> without <code>WHERE</code>.</li>
-            <li>Pending transactions show a Commit / Rollback banner. Touch ID, or your Safe Mode password, unlocks changes.</li>
+            <li>Pending transactions show a Commit / Rollback banner; <strong>View Details</strong> shows every pending statement in full. Touch ID, or your Safe Mode password, unlocks changes.</li>
             <li><strong>Commit style</strong> (footer or <strong>Settings &gt; Security</strong>): Immediate, Confirm, Review or Password, for dialogs, unlocks and inline edits.</li>
             <li>Read-only connections block writes.</li>
             <li>Large reads inside transactions are capped with a server-side cursor (PostgreSQL).</li>
@@ -255,11 +257,13 @@
 <ul class="list">
             <li>Toggle the chat panel with <kbd>Cmd+L</kbd>. It writes SQL from plain-language questions and explains or fixes queries.</li>
             <li>Bubble mode: the detach button in the panel header turns it into a floating circle at the bottom of the window. Click the circle to expand or collapse the chat, drag it left or right to move it, hover it and click the small x to hide it, and press <kbd>Esc</kbd> to collapse it. Choose the default in Settings &gt; AI &gt; Panel (Right sidebar or Bubble).</li>
-            <li>Providers: Anthropic, OpenAI, OpenRouter, ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, or on-device MLX models.</li>
+            <li>Providers: Anthropic, OpenAI, OpenRouter, ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, or on-device MLX models (Qwen3.5 2B, 4B and 9B, Gemma 4 12B). <strong>Settings &gt; AI &gt; Unused model files</strong> removes files of models that are no longer offered.</li>
             <li>Bring your own API key. Claude Pro/Max subscriptions are not supported.</li>
             <li>Sent automatically: table and column names, types and keys.</li>
             <li>Sent only after you review and press Send: query text and error messages.</li>
-            <li>Row data is never sent on its own. Generated SQL never runs automatically.</li>
+            <li>Row data is never sent on its own. Generated SQL does not run automatically.</li>
+            <li><strong>Run read-only queries</strong> (<strong>Settings &gt; AI &gt; Privacy</strong>, off by default): the assistant writes a query, Dblore runs it and shows you the rows. Only a single read-only statement runs, in a read-only transaction; anything else is refused and shown as SQL. Row values and errors are never sent to the model.</li>
+            <li>In bubble mode, drag an edge of the card to resize it.</li>
             <li>For fully local use, point it at Ollama, LM Studio or <code>mlx_lm.server</code>.</li>
 </ul>
           </section>
@@ -293,12 +297,13 @@
 <ul class="list">
             <li>Open with <kbd>Cmd+,</kbd>. View keyboard shortcuts in <strong>Settings &gt; Shortcuts</strong>.</li>
             <li>Search sections from the sidebar of the settings modal.</li>
-            <li>Light or dark theme (also the toggle in the header) and an accent color.</li>
+            <li>Light or dark theme (also the toggle in the header) and an accent color. <strong>Settings &gt; Appearance &gt; Animations</strong> turns interface animations on or off; System follows macOS Reduce Motion.</li>
+            <li><strong>Settings &gt; General &gt; Confirm before quitting with Cmd+Q</strong> asks first. Quitting from the Dock or the menu bar never asks.</li>
             <li>Long-query notifications (<strong>Settings &gt; General</strong>, off by default): a macOS notification when a query runs longer than a threshold. It never shows the SQL or data; clicking it opens the tab.</li>
             <li>Editor font size, word wrap, side-by-side layout and a configurable result row cap.</li>
             <li>Safe Mode levels. AI keys are stored in the Keychain.</li>
             <li>Updates: toggle background checks.</li>
-            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package. Secrets are never included. Saved SSH passwords, keys and trusted host keys can be deleted here.</li>
+            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package, with progress, a Cancel button and a toast when it ends. Secrets are never included. Saved SSH passwords, keys and trusted host keys can be deleted here.</li>
 </ul>
           </section>
           </div>
