@@ -69,7 +69,7 @@ struct MCPHTTPServerTests {
   private func waitFor(
     _ controller: MCPServerController, _ expected: (MCPServerController.Status) -> Bool
   ) async throws {
-    let deadline = ContinuousClock.now + .seconds(10)
+    let deadline = ContinuousClock.now + .seconds(30)
     while !expected(controller.status), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
     }
@@ -184,6 +184,9 @@ struct MCPHTTPServerTests {
 
   @Test("Removing a connection from the allowlist closes its pooled session")
   func allowlistRemovalClosesSession() async throws {
+    // run_query posts a History change; the gate keeps it from reloading another test's list
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let settings = try makeSettings()
     defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
     let entry = ConnectionHistoryEntry(

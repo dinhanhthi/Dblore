@@ -29,6 +29,9 @@ final class LocalModelManager {
   /// Returns the ids of the installed catalog models found under the root (runs off-main).
   typealias Scanner = @Sendable (URL) async -> Set<LocalModel.ID>
 
+  /// Deletes the unused entries under the root (runs off-main).
+  typealias Remover = @Sendable (URL) async -> Void
+
   static let shared = LocalModelManager(root: defaultRoot)
 
   nonisolated static var defaultRoot: URL {
@@ -51,6 +54,7 @@ final class LocalModelManager {
   private let sampleInterval: Duration
   private let unloader: Unloader
   private let scanner: Scanner
+  private let remover: Remover
   private var scanSequence = 0
   private var appliedScanSequence = 0
   private var task: Task<Void, Never>?
@@ -61,13 +65,15 @@ final class LocalModelManager {
     sampleInterval: Duration = .milliseconds(500),
     downloader: @escaping Downloader = LocalModelManager.hubDownload,
     unloader: @escaping Unloader = { MLXEngine.shared.unload(modelID: $0) },
-    scanner: @escaping Scanner = LocalModelManager.diskScan
+    scanner: @escaping Scanner = LocalModelManager.diskScan,
+    remover: @escaping Remover = LocalModelManager.diskRemove
   ) {
     self.root = root
     self.sampleInterval = sampleInterval
     self.downloader = downloader
     self.unloader = unloader
     self.scanner = scanner
+    self.remover = remover
     Task { [weak self] in await self?.refreshInstalled() }
   }
 
@@ -99,6 +105,12 @@ final class LocalModelManager {
         LocalModelCatalog.all.map(\.id).filter {
           isInstalled(at: root.appendingPathComponent($0, isDirectory: true))
         })
+    }.value
+  }
+
+  static let diskRemove: Remover = { root in
+    await Task.detached {
+      for url in unusedEntries(in: root) { try? FileManager.default.removeItem(at: url) }
     }.value
   }
 
@@ -251,10 +263,7 @@ final class LocalModelManager {
   func removeUnused() async {
     guard !isBusy else { return }
     isRemovingUnused = true
-    let root = root
-    await Task.detached {
-      for url in Self.unusedEntries(in: root) { try? FileManager.default.removeItem(at: url) }
-    }.value
+    await remover(root)
     isRemovingUnused = false
     await refreshUnused()
   }

@@ -353,16 +353,24 @@ struct LocalModelManagerTests {
     let root = makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     var calls = 0
-    let manager = LocalModelManager(root: root) { _, _, _ in calls += 1 }
-    try write(["model.safetensors"], in: root.appendingPathComponent("omnisql-7b"))
+    // The remover holds the removal open until the download was tried, so the flag stays set
+    let (started, startedSink) = AsyncStream<Void>.makeStream()
+    let (released, releasedSink) = AsyncStream<Void>.makeStream()
+    let manager = LocalModelManager(
+      root: root, downloader: { _, _, _ in calls += 1 },
+      remover: { _ in
+        startedSink.yield()
+        for await _ in released {}
+      })
     let cleanup = Task { await manager.removeUnused() }
-    for _ in 0..<300 where !manager.isRemovingUnused { await Task.yield() }
-    // The flag cannot reset until this test suspends again (both run on the main actor)
+    for await _ in started { break }
     try #require(manager.isRemovingUnused)
     manager.download(model)
     #expect(!manager.isDownloading)
     #expect(manager.state[model.id] == nil)
+    releasedSink.finish()
     await cleanup.value
+    #expect(!manager.isRemovingUnused)
     #expect(calls == 0)
   }
 

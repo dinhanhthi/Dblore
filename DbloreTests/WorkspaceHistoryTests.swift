@@ -12,6 +12,8 @@ import Testing
 struct WorkspaceHistoryTests {
   @Test("Scope uses the active connection and workspace, and a missing key searches all")
   func scopeFilters() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
@@ -69,6 +71,8 @@ struct WorkspaceHistoryTests {
 
   @Test("Each page holds 50 rows, and the next page is a separate load")
   func pagingLoadsOnePage() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
@@ -105,6 +109,8 @@ struct WorkspaceHistoryTests {
 
   @Test("Changing status resets paging and updates matching rows")
   func statusResetsPaging() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
@@ -129,6 +135,8 @@ struct WorkspaceHistoryTests {
 
   @Test("deleteHistory removes the row from the list and the store")
   func deleteHistoryRemovesRow() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
@@ -236,6 +244,8 @@ struct WorkspaceHistoryTests {
 
   @Test("Recording a statement reloads an open history list")
   func recordingReloadsOpenHistoryList() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let store = try QueryHistoryStore(url: url)
