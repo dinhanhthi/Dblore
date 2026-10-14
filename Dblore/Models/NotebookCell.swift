@@ -356,7 +356,7 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
 
   // Cached date formatters for performance
   // Note: DateFormatter is thread-safe for reading after initialization
-  private static let displayDateFormatter: DateFormatter = {
+  private nonisolated(unsafe) static let displayDateFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
     formatter.timeStyle = .medium
@@ -365,8 +365,8 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
 
   private nonisolated(unsafe) static let iso8601Formatter = ISO8601DateFormatter()
 
-  /// Display string for the value
-  var displayString: String {
+  /// Display string for the value. Nonisolated: the notebook search scans it off the main actor
+  nonisolated var displayString: String {
     switch self {
     case .string(let value):
       return value

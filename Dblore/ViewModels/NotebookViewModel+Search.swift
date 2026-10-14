@@ -36,12 +36,27 @@ extension NotebookViewModel {
       return
     }
 
-    // Build search index and find matches (async on background)
+    // In editor mode, search in editorContent instead of notebook.cells
+    // because editorContent is the live editing buffer
+    let cellsToSearch: [NotebookCell]
+    if viewMode == .editor, let firstCell = notebook.cells.first {
+      // Create a virtual cell with editorContent for searching
+      var editorCell = firstCell
+      editorCell.content = editorContent
+      editorCell.result = editorResult
+      cellsToSearch = [editorCell]
+    } else {
+      cellsToSearch = notebook.cells
+    }
+    let rowCap = effectiveRowCap
+
     // Performance tracking
     let start = CFAbsoluteTimeGetCurrent()
 
     searchTask = Task {
-      let matches = await buildSearchMatches(query: query, caseSensitive: caseSensitive)
+      // The scan runs off the main actor on a snapshot of the cells
+      let matches = await Self.buildSearchMatches(
+        in: cellsToSearch, query: query, caseSensitive: caseSensitive, rowCap: rowCap)
 
       // Check if search was cancelled
       guard !Task.isCancelled else {
@@ -75,24 +90,14 @@ extension NotebookViewModel {
     await searchTask?.value
   }
 
-  /// Build search matches from all cells (async for performance)
+  /// Build search matches from all cells, off the main actor
   /// Optimized with limits to prevent performance issues with large notebooks
-  private func buildSearchMatches(query: String, caseSensitive: Bool) async -> [SearchMatch] {
+  @concurrent private nonisolated static func buildSearchMatches(
+    in cellsToSearch: [NotebookCell], query: String, caseSensitive: Bool, rowCap: Int
+  ) async -> [SearchMatch] {
     var allMatches: [SearchMatch] = []
     let maxMatchesPerCell = 50  // Limit matches per cell for performance
     let maxTotalMatches = 1000  // Stop after 1000 total matches
-
-    // In editor mode, search in editorContent instead of notebook.cells
-    // because editorContent is the live editing buffer
-    let cellsToSearch: [NotebookCell]
-    if viewMode == .editor, let firstCell = notebook.cells.first {
-      // Create a virtual cell with editorContent for searching
-      var editorCell = firstCell
-      editorCell.content = editorContent
-      cellsToSearch = [editorCell]
-    } else {
-      cellsToSearch = notebook.cells
-    }
 
     for cell in cellsToSearch {
       // Check cancellation frequently
@@ -107,10 +112,8 @@ extension NotebookViewModel {
       )
       allMatches.append(contentsOf: sqlMatches)
 
-      // 2. Search in result data
-      // In editor mode, use editorResult instead of cell.result
-      let resultToSearch = viewMode == .editor ? editorResult : cell.result
-      if let result = resultToSearch {
+      // 2. Search in result data (in editor mode the snapshot cell carries editorResult)
+      if let result = cell.result {
         if Task.isCancelled { break }
 
         // Search in column names
@@ -123,8 +126,8 @@ extension NotebookViewModel {
           ))
 
         // Search in table data (limit rows for performance)
-        // Only search first effectiveRowCap rows to avoid scanning huge result sets
-        let limitedRows = Array(result.rows.prefix(effectiveRowCap))
+        // Only search first rowCap rows to avoid scanning huge result sets
+        let limitedRows = Array(result.rows.prefix(rowCap))
         let limitedResult = CellResult(
           columns: result.columns,
           rows: limitedRows,
@@ -265,7 +268,7 @@ extension NotebookViewModel {
 
   /// Search in SQL content của cell
   /// Optimized with match limit and shorter context for better performance
-  private func searchInSQLContent(
+  private nonisolated static func searchInSQLContent(
     cell: NotebookCell,
     query: String,
     caseSensitive: Bool,
@@ -305,7 +308,7 @@ extension NotebookViewModel {
   }
 
   /// Search in column names
-  private func searchInColumnNames(
+  private nonisolated static func searchInColumnNames(
     cell: NotebookCell, result: CellResult, query: String, caseSensitive: Bool
   ) -> [SearchMatch] {
     var matches: [SearchMatch] = []
@@ -331,7 +334,7 @@ extension NotebookViewModel {
 
   /// Search in table data
   /// Optimized with match limit to prevent scanning huge datasets
-  private func searchInTableData(
+  private nonisolated static func searchInTableData(
     cell: NotebookCell,
     result: CellResult,
     query: String,
@@ -375,7 +378,7 @@ extension NotebookViewModel {
 
   /// Search in error message
   /// Optimized with match limit and shorter context
-  private func searchInErrorMessage(
+  private nonisolated static func searchInErrorMessage(
     cell: NotebookCell,
     error: String,
     query: String,
@@ -413,7 +416,7 @@ extension NotebookViewModel {
   }
 
   /// Extract context around a match (N chars before + match + N chars after)
-  private func extractContext(
+  private nonisolated static func extractContext(
     from text: String, around range: Range<String.Index>, maxLength: Int
   ) -> String {
     let startOffset = max(0, text.distance(from: text.startIndex, to: range.lowerBound) - maxLength)
