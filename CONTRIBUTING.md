@@ -37,8 +37,9 @@ Thanks for your interest — contributions are welcome!
 
      ```bash
      docker compose -f docker/postgresql/docker-compose.test.yml up -d
-     xcodebuild test -scheme Dblore \
+     TEST_RUNNER_POSTGRES_TESTS=1 xcodebuild test -scheme Dblore \
        -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
+       -parallel-testing-enabled NO \
        -skipPackagePluginValidation -skipMacroValidation
      ```
 

@@ -110,6 +110,7 @@ jobs:
       # and DuckDB plugin gates stay off (local only).
       - name: Test
         run: |
+          TEST_RUNNER_POSTGRES_TESTS=1 \
           TEST_RUNNER_MYSQL_TESTS=1 \
           TEST_RUNNER_TEST_DB_PORT="$DBLORE_PG_TEST_PORT" \
           TEST_RUNNER_TEST_MYSQL_PORT="$DBLORE_MYSQL_TEST_PORT" \

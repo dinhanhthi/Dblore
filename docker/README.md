@@ -315,11 +315,13 @@ export TEST_DB_NAME=dblore_test
 export TEST_DB_USER=dblore_test
 export TEST_DB_PASSWORD=dblore123
 
-# Run all tests
-xcodebuild test -scheme Dblore -destination 'platform=macOS'
+# Run all tests, PostgreSQL suites included (opt-in, one test at a time)
+TEST_RUNNER_POSTGRES_TESTS=1 xcodebuild test -scheme Dblore -destination 'platform=macOS' \
+  -parallel-testing-enabled NO
 
 # Run only integration tests
-xcodebuild test -scheme Dblore -destination 'platform=macOS' -only-testing:DbloreTests/DatabaseIntegrationTests
+TEST_RUNNER_POSTGRES_TESTS=1 xcodebuild test -scheme Dblore -destination 'platform=macOS' \
+  -parallel-testing-enabled NO -only-testing:DbloreTests/DatabaseIntegrationTests
 ```
 
 **Option 2: Xcode (Recommended)**
@@ -340,18 +342,16 @@ xcodebuild test -scheme Dblore -destination 'platform=macOS' -only-testing:Dblor
      - Name: `TEST_DB_NAME`, Value: `dblore_test`
      - Name: `TEST_DB_USER`, Value: `dblore_test`
      - Name: `TEST_DB_PASSWORD`, Value: `dblore123`
+     - Name: `POSTGRES_TESTS`, Value: `1` (the PostgreSQL suites are opt-in)
 
 3. **Run tests:**
    - Press **Cmd+U** to run all tests
    - Or use **Test Navigator** (Cmd+6) to run specific tests
 
-**Option 3: Skip Integration Tests**
+**Default: no live database**
 
-If test database is not running, integration tests can be skipped:
-
-```bash
-SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore -destination 'platform=macOS'
-```
+Without `TEST_RUNNER_POSTGRES_TESTS=1` (or `TEST_RUNNER_MYSQL_TESTS=1`), every suite that needs
+a live database is skipped, so a plain `xcodebuild test` needs no container.
 
 ### Test Database vs Development Database
 

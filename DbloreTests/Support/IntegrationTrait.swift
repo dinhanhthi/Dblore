@@ -1,7 +1,7 @@
 // IntegrationTrait.swift
-// Skips PostgreSQL integration suites when SKIP_INTEGRATION_TESTS or
-// TEST_RUNNER_SKIP_INTEGRATION_TESTS is true, 1, or yes. The other gates
-// (mTLS, SSH, DuckDB plugin, MySQL, MySQL TLS) are opt-in.
+// Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, MySQL,
+// MySQL TLS). SKIP_INTEGRATION_TESTS or TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1,
+// or yes) turns them all off.
 
 import Foundation
 import Testing
@@ -19,6 +19,17 @@ nonisolated enum IntegrationGate {
       guard let value = env[key] else { return false }
       return skipValues.contains(value.lowercased())
     }
+  }
+}
+
+nonisolated enum PostgresIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["POSTGRES_TESTS"] ?? env["TEST_RUNNER_POSTGRES_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
   }
 }
 
@@ -78,11 +89,11 @@ nonisolated enum MySQLTLSIntegrationGate {
 }
 
 extension Trait where Self == ConditionTrait {
-  /// Skip a suite when integration tests are turned off in the environment.
+  /// The PostgreSQL test container is opt-in.
   static var requiresPostgres: Self {
     .enabled(
-      if: IntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
-      "Set SKIP_INTEGRATION_TESTS=false and start docker/postgresql to run"
+      if: PostgresIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_POSTGRES_TESTS=1 and start docker/postgresql/docker-compose.test.yml to run"
     )
   }
 

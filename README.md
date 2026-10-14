@@ -119,7 +119,8 @@ PostgreSQL:
 
 - a development database with sample data, on port `5433`
   (`postgresql://dblore:dblore123@localhost:5433/dblore`);
-- a separate database for the integration tests, on port `5435`.
+- a separate database for the opt-in PostgreSQL test suites (`TEST_RUNNER_POSTGRES_TESTS=1`),
+  on port `5435`.
 
 ```sh
 cd docker/postgresql
