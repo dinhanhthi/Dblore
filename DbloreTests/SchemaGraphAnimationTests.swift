@@ -30,6 +30,18 @@ struct SchemaGraphAnimationTests {
     return changes
   }
 
+  /// True once the dash phase changes within `ticks` sleeps of 10 ms. Counted in sleeps, not
+  /// wall time: ticks run on the main actor, which other suites of the same process can keep
+  /// blocked for a long while.
+  private static func animates(_ view: SchemaGraphNSView, within ticks: Int) async -> Bool {
+    let start = view.columnConnectionAnimationPhase
+    for _ in 0..<ticks {
+      try? await Task.sleep(for: .milliseconds(10))
+      if view.columnConnectionAnimationPhase != start { return true }
+    }
+    return false
+  }
+
   @Test(
     "Column connection dashes stop animating once the view leaves its window",
     .enabled { @MainActor in !SidebarAnimation.reduceMotion })
@@ -41,8 +53,9 @@ struct SchemaGraphAnimationTests {
     window.contentView?.addSubview(view)
     view.showColumnConnections = true
 
-    let inWindow = await Self.phaseChanges(of: view, over: .milliseconds(300))
-    #expect(inWindow > 0, "dashes animate while the view is in a window")
+    #expect(
+      await Self.animates(view, within: 500),
+      "dashes animate while the view is in a window")
 
     view.removeFromSuperview()
     // Let a tick already queued land first
