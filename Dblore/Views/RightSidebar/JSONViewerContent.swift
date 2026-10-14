@@ -95,8 +95,13 @@ struct JSONViewerContent: View {
     }
   }
 
+  /// Last pretty-printed JSON and its output: the body re-runs on every state change (copy
+  /// feedback, edit) and on parent re-renders with the same JSON
+  private static var lastPrettyPrint: (json: String, pretty: String)?
+
   private var formattedJSON: String {
     if isPrettyPrinted {
+      if let last = Self.lastPrettyPrint, last.json == json { return last.pretty }
       guard let data = json.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data),
         let prettyData = try? JSONSerialization.data(
@@ -104,8 +109,10 @@ struct JSONViewerContent: View {
         ),
         let prettyString = String(data: prettyData, encoding: .utf8)
       else {
+        Self.lastPrettyPrint = (json, json)
         return json
       }
+      Self.lastPrettyPrint = (json, prettyString)
       return prettyString
     }
     return json

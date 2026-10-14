@@ -184,27 +184,29 @@ enum JSONSyntaxHighlighter {
 // MARK: - Highlighted JSON Text View
 
 struct HighlightedJSONText: View {
-  let tokens: [JSONSyntaxHighlighter.Token]
+  let json: String
 
-  init(json: String) {
-    tokens = JSONSyntaxHighlighter.tokenize(json)
-  }
+  /// Last highlighted JSON and its text: parents re-render with the same JSON (sidebar
+  /// animation, copy feedback), and tokenizing plus building the text is O(size)
+  private static var lastHighlight: (json: String, text: AttributedString)?
 
   var body: some View {
-    Text(attributedString)
+    Text(Self.attributedString(for: json))
       .font(.mono)
       .textSelection(.enabled)
   }
 
-  private var attributedString: AttributedString {
+  private static func attributedString(for json: String) -> AttributedString {
+    if let lastHighlight, lastHighlight.json == json { return lastHighlight.text }
     var result = AttributedString()
 
-    for token in tokens {
+    for token in JSONSyntaxHighlighter.tokenize(json) {
       var attributed = AttributedString(token.text)
       attributed.foregroundColor = token.type.color
       result.append(attributed)
     }
 
+    lastHighlight = (json, result)
     return result
   }
 }
