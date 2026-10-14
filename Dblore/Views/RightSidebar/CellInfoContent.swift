@@ -155,7 +155,7 @@ struct CellInfoContent: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .tint(.accent)
-            .scaleEffect(0.8)
+            .controlSize(.mini)
             .disabled(isReadOnly)
             .onChange(of: editedBoolValue) { _, _ in
               // Trigger UI update when toggle changes

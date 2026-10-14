@@ -109,55 +109,16 @@ struct SettingsToggle<DescriptionContent: View>: View {
 
         Spacer(minLength: Spacing.sm)
 
-        CompactSwitch(title: title, isOn: $isOn)
+        Toggle(title, isOn: $isOn)
+          .toggleStyle(.switch)
+          .labelsHidden()
+          .tint(.accent)
+          .controlSize(.mini)
       }
 
       descriptionContent()
     }
     .disabled(isDisabled)
-  }
-}
-
-/// The system switch, drawn smaller than the default without going down to half size.
-/// `scaleEffect` does not change layout, so the slot uses the measured native size.
-private struct CompactSwitch: View {
-  let title: String
-  @Binding var isOn: Bool
-  @State private var nativeSize = CGSize(width: 38, height: 22)
-
-  private let scale: CGFloat = 0.75
-
-  var body: some View {
-    Color.clear
-      .frame(width: nativeSize.width * scale, height: nativeSize.height * scale)
-      .overlay {
-        Toggle(title, isOn: $isOn)
-          .toggleStyle(.switch)
-          .labelsHidden()
-          .tint(.accent)
-          .fixedSize()
-          .background {
-            GeometryReader { geo in
-              Color.clear.preference(key: SwitchSizeKey.self, value: geo.size)
-            }
-          }
-          .scaleEffect(scale)
-      }
-      .clipped()
-      .onPreferenceChange(SwitchSizeKey.self) { size in
-        guard size.width > 1, size.height > 1 else { return }
-        guard abs(size.width - nativeSize.width) > 0.5 || abs(size.height - nativeSize.height) > 0.5
-        else { return }
-        nativeSize = size
-      }
-  }
-}
-
-private struct SwitchSizeKey: PreferenceKey {
-  static var defaultValue: CGSize = .zero
-  static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-    let next = nextValue()
-    if next != .zero { value = next }
   }
 }
 

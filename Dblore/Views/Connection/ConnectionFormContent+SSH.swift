@@ -31,7 +31,7 @@ extension ConnectionFormContent {
           .labelsHidden()
           .toggleStyle(.switch)
           .tint(.accent)
-          .scaleEffect(0.8)
+          .controlSize(.mini)
       }
 
       if sshDraft.enabled {
