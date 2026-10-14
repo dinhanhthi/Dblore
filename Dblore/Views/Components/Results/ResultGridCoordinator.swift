@@ -148,6 +148,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Called with the displayed row values, its index into `CellResult.rows` and the result
   /// column index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
+  /// Called with the displayed row values and its index into `CellResult.rows` (a staged insert:
+  /// `rows.count + n`) by "Show Row Details"; nil hides that item and the "#" gutter menu
+  var onShowRowDetails: ((_ row: [CellValue], _ originalRow: Int) -> Void)?
   /// Called with the result column, its value and the style and color chosen in the context
   /// menu; nil hides the highlight items (the grid has no highlight form)
   var onHighlightCell:
@@ -265,7 +268,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     }
     updateHiddenColumns(tableView, result: result, hiddenColumns: hiddenColumns)
     tableView.tableColumn(withIdentifier: Self.rowNumberIdentifier)?.width =
-      Self.rowNumberWidth(rowCount: result.rows.count)
+      Self.rowNumberWidth(rowCount: result.rows.count, showsRowDetails: onShowRowDetails != nil)
     let oldKey = key
     // Displayed indexes survive reloadData and then point at other loaded rows.
     let filterChanged = oldKey != nil && newKey.valueFilter != oldKey?.valueFilter
@@ -336,6 +339,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     onShowCellDetails?(model.row(at: row), originalRow, column)
   }
 
+  /// Reports a displayed row to `onShowRowDetails`, a staged insert as its page index
+  /// (`rows.count + n`)
+  func showRowDetails(row: Int) {
+    guard let model, let originalRow = pageIndex(forDisplayedRow: row) else { return }
+    onShowRowDetails?(model.row(at: row), originalRow)
+  }
+
   // MARK: - Context menu
 
   /// Cell a context-menu item acts on, or the highlight chosen for it
@@ -377,24 +387,21 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     inList.isEnabled = selectedColumns.count <= 1
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
+    if onShowRowDetails != nil {
+      addItem(
+        to: menu, "Show Row Details", #selector(showRowDetailsItem(_:)),
+        MenuTarget(row: row, column: column))
+    }
     if referencedForeignKey(column: column) != nil {
       addItem(
         to: menu, "Referenced Row...", #selector(showReferencedRow(_:)),
         MenuTarget(row: row, column: column))
     }
     if stagesEdits {
-      let pages = pageIndexes(in: displayedRows)
       menu.addItem(.separator())
       addItem(to: menu, "Add Row", #selector(addRow(_:)), MenuTarget(row: row, column: column))
-      addItem(
-        to: menu, "Duplicate Row(s)", #selector(duplicateRows(_:)),
-        MenuTarget(row: row, column: column, pageIndexes: pages))
-      addItem(
-        to: menu, "Delete Row(s)", #selector(deleteRows(_:)),
-        MenuTarget(row: row, column: column, pageIndexes: pages))
-      addItem(
-        to: menu, "Revert Selected", #selector(revertRows(_:)),
-        MenuTarget(row: row, column: column, pageIndexes: pages))
+      addStagedRowItems(
+        to: menu, row: row, column: column, pages: pageIndexes(in: displayedRows))
     }
     if onHighlightCell != nil {
       menu.addItem(.separator())
@@ -419,6 +426,37 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       }
     }
     return menu
+  }
+
+  /// Context menu of the "#" gutter at a displayed row: "Show Row Details" and, when staging,
+  /// the row-level staging actions. Nil without `onShowRowDetails` or outside the rows.
+  func gutterContextMenu(row: Int) -> NSMenu? {
+    guard let model, onShowRowDetails != nil, row >= 0, row < model.rowCount else { return nil }
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    addItem(
+      to: menu, "Show Row Details", #selector(showRowDetailsItem(_:)),
+      MenuTarget(row: row, column: 0))
+    if stagesEdits {
+      menu.addItem(.separator())
+      addStagedRowItems(
+        to: menu, row: row, column: 0,
+        pages: pageIndexes(in: displayedRowsForExport(clickedRow: row)))
+    }
+    return menu
+  }
+
+  /// Duplicate, Delete and Revert of the page rows, shared by the cell and gutter menus
+  private func addStagedRowItems(to menu: NSMenu, row: Int, column: Int, pages: [Int]) {
+    addItem(
+      to: menu, "Duplicate Row(s)", #selector(duplicateRows(_:)),
+      MenuTarget(row: row, column: column, pageIndexes: pages))
+    addItem(
+      to: menu, "Delete Row(s)", #selector(deleteRows(_:)),
+      MenuTarget(row: row, column: column, pageIndexes: pages))
+    addItem(
+      to: menu, "Revert Selected", #selector(revertRows(_:)),
+      MenuTarget(row: row, column: column, pageIndexes: pages))
   }
 
   @discardableResult
@@ -452,6 +490,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   @objc private func seeMore(_ sender: NSMenuItem) {
     guard let target = sender.representedObject as? MenuTarget else { return }
     showCellDetails(row: target.row, column: target.column)
+  }
+
+  @objc private func showRowDetailsItem(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    showRowDetails(row: target.row)
   }
 
   @objc private func showReferencedRow(_ sender: NSMenuItem) {
@@ -1032,11 +1075,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     return string
   }
 
-  /// Width of the "#" column: the digits of the last row number plus the cell padding
-  static func rowNumberWidth(rowCount: Int) -> CGFloat {
+  /// Width of the "#" column: the digits of the last row number plus the cell padding, and at
+  /// least room for the details button when it shows row details (`showsRowDetails`)
+  static func rowNumberWidth(
+    rowCount: Int, showsRowDetails: Bool, font: NSFont = rowNumberFont
+  ) -> CGFloat {
     let digits = String(max(rowCount, 1)).count
-    let digitWidth = ("0" as NSString).size(withAttributes: [.font: rowNumberFont]).width
-    return ceil(CGFloat(max(digits, 2)) * digitWidth) + 2 * Spacing.xsm
+    let digitWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
+    let width = ceil(CGFloat(max(digits, 2)) * digitWidth) + 2 * Spacing.xsm
+    return showsRowDetails ? max(width, ResultGridTableView.detailsButtonMinimumWidth) : width
   }
 
   /// Column identifiers are the model column index, so a reordered column still maps back;

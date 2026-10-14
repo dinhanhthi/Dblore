@@ -11,6 +11,7 @@ import Testing
 @MainActor
 struct RowDetailTests {
   private static let usersID = TableRef("users")
+  private static let ordersID = TableRef("orders")
 
   @Test("Fields follow the column order with the row's values as originals")
   func fieldsInColumnOrder() {
@@ -392,6 +393,114 @@ struct RowDetailTests {
     #expect(viewModel.rowDetail?.fields[1].original == .int(40))
   }
 
+  @Test("A sent edit of another table's row with the same key leaves the panel as it is")
+  func sentEditOfAnotherTableKeepsPanel() throws {
+    let viewModel = makeEditorViewModel()
+    let users = makeResult()
+    let orders = makeOrdersResult()
+    viewModel.editorStatementResults = [
+      StatementResult(queryText: "SELECT * FROM users", result: users, statementIndex: 0),
+      StatementResult(queryText: "SELECT * FROM orders", result: orders, statementIndex: 1),
+    ]
+    viewModel.showRowDetail(row: users.rows[0], originalRow: 0, result: users, cellId: nil)
+    viewModel.rowDetail?.fields[1].text = "31"
+    // orders id=1 with a column named like a users one: same statement shape as users id=1
+    let edit = PendingInlineEdit(
+      statement: try CellUpdateStatement.make(
+        qualifiedName: "public.orders", assignments: [(column: "age", value: "9")],
+        primaryKeyColumns: ["id"], rowData: ["id": .int(1)], updateOnly: true,
+        dialect: viewModel.sqlDialect),
+      columnNames: ["age"], tableName: "public.orders", cellId: nil,
+      connectionManager: try #require(viewModel.connectionManager))
+
+    viewModel.rowDetailSent(edit, target: try #require(orders.editTarget))
+
+    #expect(viewModel.rowDetail?.fields[1].original == .int(30))
+    #expect(viewModel.rowDetail?.rowData["age"] == .int(30))
+    #expect(viewModel.rowDetail?.fields[1].text == "31")
+    #expect(viewModel.rowDetailHasChanges)
+  }
+
+  @Test("An inline grid edit of another column keeps Row Details and its drafts")
+  func gridEditKeepsRowDetail() {
+    let viewModel = makeEditorViewModel()
+    let result = viewModel.editorResult!
+    viewModel.showRowDetail(row: result.rows[0], originalRow: 0, result: result, cellId: nil)
+    viewModel.rowDetail?.fields[1].text = "31"
+
+    viewModel.handleGridCellEdit(
+      row: result.rows[0], column: 2, newValue: "x", result: result, cellId: nil,
+      connectionManager: viewModel.connectionManager)
+
+    #expect(viewModel.rightSidebarContent == .rowDetail(cellId: nil))
+    #expect(viewModel.rowDetail?.fields[1].text == "31")
+    #expect(viewModel.rowDetailHasChanges)
+    #expect(viewModel.pendingInlineEdit?.columnNames == ["nickname"])
+    #expect(viewModel.queryConfirmationState.showDialog)
+  }
+
+  @Test("Apply after a grid edit of another statement's table updates the panel's own table")
+  func applyAfterOtherStatementEditKeepsPanelTable() async throws {
+    let viewModel = makeEditorViewModel()
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let users = makeResult()
+    let orders = makeOrdersResult()
+    viewModel.editorStatementResults = [
+      StatementResult(queryText: "SELECT * FROM users", result: users, statementIndex: 0),
+      StatementResult(queryText: "SELECT * FROM orders", result: orders, statementIndex: 1),
+    ]
+    viewModel.showRowDetail(row: users.rows[0], originalRow: 0, result: users, cellId: nil)
+    viewModel.rowDetail?.fields[1].text = "31"
+    // Orders tab: a grid edit replaces the shared target with the orders one
+    viewModel.editorResult = orders
+    viewModel.handleGridCellEdit(
+      row: orders.rows[0], column: 1, newValue: "9", result: orders, cellId: nil,
+      connectionManager: viewModel.connectionManager)
+    viewModel.cancelPendingQuery()
+
+    viewModel.applyRowDetail()
+
+    let edit = try #require(viewModel.pendingInlineEdit)
+    #expect(edit.tableName == "public.users")
+    #expect(edit.statement.sql == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" = $2"#)
+    #expect(edit.statement.values == ["31", "1"])
+    // Accepting sends it against users (no connection: the send fails, not "read-only")
+    await viewModel.executePendingQuery()
+    #expect(!toasts.contains(NotebookViewModel.notEditableMessage))
+    #expect(toasts.contains { $0.contains("Failed to update 'age'") })
+  }
+
+  @Test("Apply after a grid edit in another cell updates the panel's own cell")
+  func applyAfterOtherCellEditKeepsPanelCell() throws {
+    let viewModel = makeEditorViewModel()
+    viewModel.viewMode = .notebook
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let users = makeResult()
+    let orders = makeOrdersResult()
+    let cellA = NotebookCell(
+      id: UUID(), cellType: .sql, content: "SELECT * FROM users", executionCount: 1,
+      result: users)
+    let cellB = NotebookCell(
+      id: UUID(), cellType: .sql, content: "SELECT * FROM orders", executionCount: 2,
+      result: orders)
+    viewModel.notebook.cells = [cellA, cellB]
+    viewModel.showRowDetail(row: users.rows[0], originalRow: 0, result: users, cellId: cellA.id)
+    viewModel.rowDetail?.fields[1].text = "31"
+    viewModel.handleGridCellEdit(
+      row: orders.rows[0], column: 1, newValue: "9", result: orders, cellId: cellB.id,
+      connectionManager: viewModel.connectionManager)
+    viewModel.cancelPendingQuery()
+
+    viewModel.applyRowDetail()
+
+    #expect(!toasts.contains(NotebookViewModel.notEditableMessage))
+    let edit = try #require(viewModel.pendingInlineEdit)
+    #expect(edit.cellId == cellA.id)
+    #expect(edit.statement.sql == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" = $2"#)
+  }
+
   // MARK: - Sync
 
   @Test("A new result rebuilds the panel from the same primary key, drafts cleared")
@@ -427,6 +536,34 @@ struct RowDetailTests {
     viewModel.syncRowDetail(cellId: UUID(), result: changed)
 
     #expect(viewModel.rowDetail == before)
+  }
+
+  @Test("A result of another table leaves the panel as it is, even with the same key")
+  func syncIgnoresOtherTable() {
+    let viewModel = makeViewModel()
+    let result = makeResult()
+    viewModel.showRowDetail(row: result.rows[0], originalRow: 0, result: result, cellId: nil)
+    viewModel.rowDetail?.fields[1].text = "99"
+    let before = viewModel.rowDetail
+
+    viewModel.syncRowDetail(cellId: nil, result: makeOrdersResult())
+
+    #expect(viewModel.rowDetail == before)
+    #expect(viewModel.cellDetailEditTarget == result.editTarget)
+  }
+
+  @Test("A panel without a table (read-only result) is rebuilt from the re-run's live result")
+  func syncRebuildsReadOnlyPanel() {
+    let viewModel = makeViewModel()
+    var readOnly = makeResult()
+    readOnly.editTarget = nil
+    viewModel.showRowDetail(row: readOnly.rows[0], originalRow: 0, result: readOnly, cellId: nil)
+    #expect(viewModel.rowDetail?.fields[1].isReadOnly == true)
+
+    viewModel.syncRowDetail(cellId: nil, result: makeResult())
+
+    #expect(viewModel.rowDetail?.editTarget != nil)
+    #expect(viewModel.rowDetail?.fields[1].isReadOnly == false)
   }
 
   @Test("A new result drops the panel of a staged insert that is no longer staged")
@@ -479,6 +616,24 @@ struct RowDetailTests {
     viewModel.editorResult = makeResult()
     viewModel.connectionManager = DatabaseConnectionManager()
     return viewModel
+  }
+
+  /// orders(id PK, total), one loaded row whose `id` is also a users id
+  private func makeOrdersResult() -> CellResult {
+    let columns = [("id", "int4"), ("total", "int4")]
+    return CellResult(
+      columns: columns.enumerated().map { index, column in
+        ColumnInfo(
+          name: column.0, type: column.1,
+          origin: ColumnOrigin(tableID: Self.ordersID, columnOrdinal: index + 1))
+      },
+      rows: [[.int(1), .int(50)]],
+      rowCount: 1,
+      tableName: "orders",
+      primaryKeyColumns: ["id"],
+      editTarget: EditTarget(
+        qualifiedName: "public.orders", tableID: Self.ordersID, primaryKeyColumns: ["id"],
+        updateOnly: true, schema: "public", name: "orders"))
   }
 
   /// users(id PK, age, nickname, slug generated), two loaded rows unless `rows` is given

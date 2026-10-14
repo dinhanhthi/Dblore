@@ -176,10 +176,13 @@ extension NotebookViewModel {
   func carryCellDetailEditTarget(from old: CellResult?, to new: CellResult?) {
     guard let current = cellDetailEditTarget, old?.editTarget == current else { return }
     let next = new?.editTarget
-    let sameTable =
-      next?.tableID == current.tableID && next?.qualifiedName == current.qualifiedName
-      && next?.primaryKeyColumns == current.primaryKeyColumns
-    cellDetailEditTarget = sameTable ? next : nil
+    cellDetailEditTarget = Self.isSameTable(next, current) ? next : nil
+  }
+
+  /// Same table and key (any generation or connection epoch); two nil targets match
+  nonisolated static func isSameTable(_ lhs: EditTarget?, _ rhs: EditTarget?) -> Bool {
+    lhs?.tableID == rhs?.tableID && lhs?.qualifiedName == rhs?.qualifiedName
+      && lhs?.primaryKeyColumns == rhs?.primaryKeyColumns
   }
 
   // MARK: - Edit
@@ -205,29 +208,34 @@ extension NotebookViewModel {
       NSPasteboard.general.setString(newValue, forType: .string)
     }
 
-    // Update the sidebar content with the new value
-    rightSidebarContent = .cellInfo(
-      columnName: columnName,
-      columnType: columnType,
-      value: Self.editedCellValue(newValue, original: originalValue, columnType: columnType),
-      tableName: tableName,
-      rowData: rowData,
-      primaryKeyColumns: primaryKeyColumns,
-      cellId: cellId
-    )
+    // Update the sidebar content with the new value. Open Row Details are not replaced by a
+    // grid edit; the refresh after the send may still rebuild them and drop their drafts.
+    if case .rowDetail = rightSidebarContent {
+    } else {
+      rightSidebarContent = .cellInfo(
+        columnName: columnName,
+        columnType: columnType,
+        value: Self.editedCellValue(newValue, original: originalValue, columnType: columnType),
+        tableName: tableName,
+        rowData: rowData,
+        primaryKeyColumns: primaryKeyColumns,
+        cellId: cellId
+      )
+    }
 
     guard let connectionManager, let rowData else { return }
     submitInlineEdit(
-      assignments: [(column: columnName, value: bindText)], rowData: rowData, cellId: cellId,
-      connectionManager: connectionManager)
+      assignments: [(column: columnName, value: bindText)], rowData: rowData,
+      target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager)
   }
 
   /// Gate shared by a cell edit and Row Details Apply: ONE UPDATE setting every `assignments`
-  /// column of `rowData` against the live `cellDetailEditTarget`, checked by the protection
-  /// gate, confirmed when the commit style asks, then sent.
+  /// column of `rowData` against `target` (the cell's `cellDetailEditTarget`, the panel's own
+  /// target), which must be live for `cellId`, checked by the protection gate, confirmed when
+  /// the commit style asks, then sent.
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
-    cellId: UUID?, connectionManager: DatabaseConnectionManager
+    target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager
   ) {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
@@ -236,7 +244,7 @@ extension NotebookViewModel {
     guard !refuseWhileTransactionPendingElsewhere() else { return }
 
     // Only the live target of the result the cell was opened from; never the passed table/key
-    guard let target = cellDetailEditTarget, isLiveEditTarget(target, cellId: cellId) else {
+    guard let target, isLiveEditTarget(target, cellId: cellId) else {
       showToast(Self.notEditableMessage, type: .error)
       return
     }

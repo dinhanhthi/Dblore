@@ -7,9 +7,9 @@
 //  Double-click or Return edits a cell when `isEditable` (see NotebookViewModel.canEdit).
 //  `stagesEdits` stages that commit, and Delete/Backspace, instead of an immediate UPDATE.
 //  A click only selects; the details button shown over the hovered cell reports it
-//  (`onShowCellDetails`), a header click the sort (`onSortChange`), the filter icon a
-//  category filter of the loaded rows (`onValueFilterChange`). "Referenced Row..." opens
-//  when the column has a foreign key.
+//  (`onShowCellDetails`), the one over "#" its row (`onShowRowDetails`), a header click the
+//  sort (`onSortChange`), the filter icon a category filter of the loaded rows
+//  (`onValueFilterChange`). "Referenced Row..." opens when the column has a foreign key.
 //
 
 import AppKit
@@ -47,6 +47,9 @@ struct ResultGridView: NSViewRepresentable {
   /// index of the cell whose details button was clicked
   var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)? =
     nil
+  /// Receives the displayed row values and its index into `CellResult.rows` (a staged insert:
+  /// `rows.count + n`) from the "#" details button or the row menus; nil leaves both out
+  var onShowRowDetails: ((_ row: [CellValue], _ originalRow: Int) -> Void)? = nil
   /// Receives the result column, its value and the style and color chosen in the context menu;
   /// nil leaves the highlight items out of the menu
   var onHighlightCell:
@@ -197,6 +200,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onSortChange = onSortChange
     coordinator.onValueFilterChange = onValueFilterChange
     coordinator.onShowCellDetails = onShowCellDetails
+    coordinator.onShowRowDetails = onShowRowDetails
     coordinator.onHighlightCell = onHighlightCell
     coordinator.onClearHighlight = onClearHighlight
     coordinator.relationSchema = relationSchema
@@ -216,7 +220,8 @@ struct ResultGridView: NSViewRepresentable {
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.
     if fontChanged || colorsChanged {
       tableView.tableColumn(withIdentifier: ResultGridCoordinator.rowNumberIdentifier)?.width =
-        ResultGridCoordinator.rowNumberWidth(rowCount: result.rows.count)
+        ResultGridCoordinator.rowNumberWidth(
+          rowCount: result.rows.count, showsRowDetails: onShowRowDetails != nil)
       tableView.reloadData()
     }
   }
@@ -530,6 +535,8 @@ final class ResultGridTableView: NSTableView {
 
   /// Side of the details button
   static let detailsButtonSize: CGFloat = 16
+  /// Narrowest visible cell that shows the details button
+  static let detailsButtonMinimumWidth = detailsButtonSize + 2 * Spacing.xs
   /// Button shown over the hovered cell (subview of the table, hidden when no cell is hovered)
   private(set) lazy var detailsButton: NSButton = makeDetailsButton()
   /// Table row and table (on-screen) column under the details button
@@ -544,7 +551,7 @@ final class ResultGridTableView: NSTableView {
   /// of `cellRect`; nil when that part is too narrow for the button
   static func detailsButtonFrame(cellRect: NSRect, visibleRect: NSRect) -> NSRect? {
     let visible = cellRect.intersection(visibleRect)
-    guard visible.width >= detailsButtonSize + 2 * Spacing.xs else { return nil }
+    guard visible.width >= detailsButtonMinimumWidth else { return nil }
     return NSRect(
       x: visible.maxX - Spacing.xs - detailsButtonSize,
       y: cellRect.midY - detailsButtonSize / 2, width: detailsButtonSize,
@@ -557,18 +564,25 @@ final class ResultGridTableView: NSTableView {
     super.mouseDown(with: event)
   }
 
-  /// Right-click menu of the cell under the pointer (none on the "#" gutter or outside the
-  /// rows); an unselected row becomes the selection first, as in Finder
+  /// Right-click menu of the cell under the pointer, or the gutter menu on the "#" column (none
+  /// outside the rows); an unselected row becomes the selection first, as in Finder
   override func menu(for event: NSEvent) -> NSMenu? {
     let point = convert(event.locationInWindow, from: nil)
     let row = row(at: point)
     let tableColumn = column(at: point)
-    guard row >= 0, tableColumn >= 0,
-      let column = Int(tableColumns[tableColumn].identifier.rawValue)
+    guard row >= 0, tableColumn >= 0 else { return nil }
+    let identifier = tableColumns[tableColumn].identifier
+    let column = Int(identifier.rawValue)
+    // "#" has a menu only with row details: without one the selection stays as it was
+    guard
+      column != nil
+        || (identifier == ResultGridCoordinator.rowNumberIdentifier
+          && coordinator?.onShowRowDetails != nil)
     else { return nil }
     if !selectedRowIndexes.contains(row) {
       selectRowIndexes([row], byExtendingSelection: false)
     }
+    guard let column else { return coordinator?.gutterContextMenu(row: row) }
     return coordinator?.contextMenu(row: row, column: column)
   }
 
@@ -608,23 +622,28 @@ final class ResultGridTableView: NSTableView {
   }
 
   /// Shows the details button over the cell at `point` (table coordinates), or hides it when
-  /// the point is on no visible cell or a cell is being edited
+  /// the point is on no visible cell or a cell is being edited. On the "#" column it shows the
+  /// row details, only when the coordinator takes them.
   func updateDetailsButton(at point: NSPoint) {
     let row = row(at: point)
     setHoveredRow(visibleRect.contains(point) ? row : -1)
     let tableColumn = column(at: point)
     guard row >= 0, tableColumn >= 0, visibleRect.contains(point),
       coordinator?.isEditing != true,
-      tableColumns[tableColumn].identifier != ResultGridCoordinator.rowNumberIdentifier,
+      tableColumns[tableColumn].identifier != ResultGridCoordinator.rowNumberIdentifier
+        || coordinator?.onShowRowDetails != nil,
       let frame = Self.detailsButtonFrame(
         cellRect: frameOfCell(atColumn: tableColumn, row: row), visibleRect: visibleRect)
     else {
       hideDetailsButton()
       return
     }
+    let isGutter = tableColumns[tableColumn].identifier == ResultGridCoordinator.rowNumberIdentifier
     hoveredCell = (row, tableColumn)
     let button = detailsButton
     if button.frame != frame { button.frame = frame }
+    let toolTip = isGutter ? "Show row details" : "Show details"
+    if button.toolTip != toolTip { button.toolTip = toolTip }
     // Row views added while scrolling would cover the button
     if subviews.last !== button { addSubview(button, positioned: .above, relativeTo: nil) }
     button.isHidden = false
@@ -652,9 +671,14 @@ final class ResultGridTableView: NSTableView {
   }
 
   @objc private func showHoveredCellDetails(_ sender: Any?) {
-    guard let hoveredCell, tableColumns.indices.contains(hoveredCell.tableColumn),
-      let column = Int(tableColumns[hoveredCell.tableColumn].identifier.rawValue)
-    else { return }
+    guard let hoveredCell, tableColumns.indices.contains(hoveredCell.tableColumn) else { return }
+    let identifier = tableColumns[hoveredCell.tableColumn].identifier
+    if identifier == ResultGridCoordinator.rowNumberIdentifier {
+      selectRowIndexes([hoveredCell.row], byExtendingSelection: false)
+      coordinator?.showRowDetails(row: hoveredCell.row)
+      return
+    }
+    guard let column = Int(identifier.rawValue) else { return }
     selectRowIndexes([hoveredCell.row], byExtendingSelection: false)
     coordinator?.showCellDetails(row: hoveredCell.row, column: column)
   }

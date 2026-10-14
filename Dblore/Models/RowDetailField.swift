@@ -96,5 +96,8 @@ struct RowDetailState: Equatable {
   /// Data viewer: `tempID` of the staged insert (its position in the change set moves when an
   /// earlier insert is reverted), nil for a loaded row
   let stagedInsertID: UUID?
+  /// Edit target of the result the row was read from: Apply sends to it, never to the shared
+  /// `cellDetailEditTarget` (a grid edit of another result replaces that one)
+  let editTarget: EditTarget?
   var fields: [RowDetailField]
 }

@@ -308,6 +308,73 @@ struct ResultGridCoordinatorTests {
     #expect(reverted == [[0, 2]])
   }
 
+  @Test("\"Show Row Details\" follows \"See More\" only when the row callback is set")
+  func cellMenuShowRowDetails() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    let plain = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(!plain.contains("Show Row Details"))
+
+    coordinator.onShowRowDetails = { _, _ in }
+    let titles = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    let seeMore = titles.firstIndex(of: "See More")
+    #expect(seeMore != nil)
+    #expect(titles.firstIndex(of: "Show Row Details") == seeMore.map { $0 + 1 })
+  }
+
+  @Test("The \"#\" gutter menu needs the row callback and a displayed row")
+  func gutterMenuWithoutStaging() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    #expect(coordinator.gutterContextMenu(row: 0) == nil)
+
+    coordinator.onShowRowDetails = { _, _ in }
+    #expect(coordinator.gutterContextMenu(row: 0)?.items.map(\.title) == ["Show Row Details"])
+    #expect(coordinator.gutterContextMenu(row: 3) == nil)
+    #expect(coordinator.gutterContextMenu(row: -1) == nil)
+  }
+
+  @Test("With staging, the gutter menu adds the row-level staging actions")
+  func gutterMenuWithStaging() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    var duplicated: [[Int]] = []
+    var deleted: [[Int]] = []
+    var reverted: [[Int]] = []
+    coordinator.onShowRowDetails = { _, _ in }
+    coordinator.onStageDuplicate = { duplicated.append($0) }
+    coordinator.onStageDelete = { deleted.append($0) }
+    coordinator.onRevertStaged = { reverted.append($0) }
+    coordinator.stagesEdits = true
+    tableView.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+
+    let menu = coordinator.gutterContextMenu(row: 0)
+    let titles = menu?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? []
+    #expect(titles == ["Show Row Details", "Duplicate Row(s)", "Delete Row(s)", "Revert Selected"])
+
+    invoke(menu?.items.first { $0.title == "Duplicate Row(s)" })
+    invoke(menu?.items.first { $0.title == "Delete Row(s)" })
+    invoke(menu?.items.first { $0.title == "Revert Selected" })
+    #expect(duplicated == [[0, 2]])
+    #expect(deleted == [[0, 2]])
+    #expect(reverted == [[0, 2]])
+  }
+
+  @Test("\"Show Row Details\" sends the displayed row and its original index under a sort")
+  func showRowDetailsUnderSort() {
+    let (coordinator, _) = makeGrid(sortColumn: "id")
+    var shown: [([CellValue], Int)] = []
+    coordinator.onShowRowDetails = { shown.append(($0, $1)) }
+
+    // Displayed row 0 is id 1 (result.rows[1]), displayed row 2 is id 3 (result.rows[0])
+    invoke(coordinator.gutterContextMenu(row: 0)?.items.first { $0.title == "Show Row Details" })
+    invoke(
+      coordinator.contextMenu(row: 2, column: 1)?.items.first { $0.title == "Show Row Details" })
+
+    #expect(shown.count == 2)
+    #expect(shown.first?.0 == [.int(1), .string("a")])
+    #expect(shown.first?.1 == 1)
+    #expect(shown.last?.0 == [.int(3), .string("c")])
+    #expect(shown.last?.1 == 0)
+  }
+
   @Test("Update applies a change set so the staged row tint and value show")
   func updateAppliesChangeSet() throws {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)

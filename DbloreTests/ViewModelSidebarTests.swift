@@ -64,4 +64,69 @@ struct ViewModelSidebarTests {
     #expect(
       viewModel.rightSidebarContent == .jsonViewer(json: "{\"a\":3}", path: "Row 2, Column 'doc'"))
   }
+
+  @Test("Row details shown from a sorted grid open the original row with its key")
+  func gridRowDetailsUseOriginalRow() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let result = makeUsersResult()
+    let cellId = UUID()
+    let coordinator = ResultGridCoordinator()
+    coordinator.update(NSTableView(), result: result, sortColumn: "id", ascending: false)
+    coordinator.onShowRowDetails = { row, originalRow in
+      viewModel.showRowDetail(row: row, originalRow: originalRow, result: result, cellId: cellId)
+    }
+    // Displayed row 0 of the descending sort is original row 1 (id 3)
+    coordinator.showRowDetails(row: 0)
+    #expect(viewModel.rightSidebarContent == .rowDetail(cellId: cellId))
+    #expect(viewModel.isRightSidebarVisible)
+    #expect(viewModel.rowDetail?.originalRow == 1)
+    #expect(viewModel.rowDetail?.rowNumber == 2)
+    #expect(viewModel.rowDetail?.keyPairs == [RowDetailKey(name: "id", value: .int(3))])
+    #expect(viewModel.rowDetail?.fields.map(\.original) == [.int(3), .string("cy")])
+  }
+
+  @Test("Row details shown on a staged insert row of the data viewer read the change set")
+  func gridRowDetailsOfStagedInsert() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    viewModel.notebook.connectionConfig = ConnectionConfig(
+      host: "localhost", port: 5432, database: "app", username: "ana", password: "x",
+      protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    viewModel.dataViewer = DataViewerState(schema: "public", name: "users", orderColumns: ["id"])
+    let result = makeUsersResult()
+    viewModel.editorResult = result
+    #expect(viewModel.stageInsert(values: ["id": .int(7), "name": .string("new")]) == nil)
+    let coordinator = ResultGridCoordinator()
+    coordinator.update(
+      NSTableView(), result: result, sortColumn: nil, ascending: true,
+      changeSet: viewModel.dataViewer?.changeSet)
+    coordinator.onShowRowDetails = { row, originalRow in
+      viewModel.showRowDetail(row: row, originalRow: originalRow, result: result, cellId: nil)
+    }
+    // The staged insert is appended after the three loaded rows
+    coordinator.showRowDetails(row: 3)
+    let insertID = viewModel.dataViewer?.changeSet?.inserts.first?.tempID
+    #expect(insertID != nil)
+    #expect(viewModel.rowDetail?.stagedInsertID == insertID)
+    #expect(viewModel.rowDetail?.originalRow == 3)
+    #expect(viewModel.rowDetail?.fields.map(\.original) == [.int(7), .string("new")])
+    #expect(viewModel.rightSidebarContent == .rowDetail(cellId: nil))
+  }
+
+  /// users(id PK, name) with an edit target, rows id 1, 3, 2
+  private func makeUsersResult() -> CellResult {
+    let usersID = TableRef("users")
+    return CellResult(
+      columns: [("id", "int4"), ("name", "text")].enumerated().map { index, column in
+        ColumnInfo(
+          name: column.0, type: column.1,
+          origin: ColumnOrigin(tableID: usersID, columnOrdinal: index + 1))
+      },
+      rows: [[.int(1), .string("ana")], [.int(3), .string("cy")], [.int(2), .string("bo")]],
+      rowCount: 3,
+      tableName: "users",
+      primaryKeyColumns: ["id"],
+      editTarget: EditTarget(
+        qualifiedName: "public.users", tableID: usersID, primaryKeyColumns: ["id"],
+        updateOnly: true, schema: "public", name: "users"))
+  }
 }

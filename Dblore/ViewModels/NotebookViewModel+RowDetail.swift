@@ -68,6 +68,7 @@ extension NotebookViewModel {
       primaryKeyColumns: primaryKey,
       originalRow: originalRow,
       stagedInsertID: stagedInsertID,
+      editTarget: target,
       fields: fields)
   }
 
@@ -117,6 +118,10 @@ extension NotebookViewModel {
 
     if let tempID = state.stagedInsertID {
       guard let result = editorResult else { return }
+      guard Self.isSameTable(result.editTarget, state.editTarget) else {
+        showToast(Self.notEditableMessage, type: .error)
+        return
+      }
       guard let insertIndex = stagedInsertIndex(of: tempID) else {
         dropRowDetailOfRemovedInsert()
         showToast(Self.removedInsertMessage, type: .error)
@@ -146,9 +151,12 @@ extension NotebookViewModel {
     }
 
     guard let connectionManager else { return }
+    // A grid edit of another result may have replaced the shared target: the confirmation
+    // sends with it, so it must be the panel's again
+    cellDetailEditTarget = state.editTarget
     submitInlineEdit(
       assignments: dirty.map { (column: $0.name, value: $0.bindText) }, rowData: state.rowData,
-      cellId: cellId, connectionManager: connectionManager)
+      target: state.editTarget, cellId: cellId, connectionManager: connectionManager)
   }
 
   /// The bound `text` of `field` as a `CellValue`. The NULL toggle decides NULL (nil text): a
@@ -166,7 +174,8 @@ extension NotebookViewModel {
   /// Details shows that row, the sent values become its originals and those drafts are clean.
   func rowDetailSent(_ edit: PendingInlineEdit, target: EditTarget) {
     guard let state = rowDetail, state.stagedInsertID == nil,
-      case .rowDetail(let cellId) = rightSidebarContent, cellId == edit.cellId
+      case .rowDetail(let cellId) = rightSidebarContent, cellId == edit.cellId,
+      Self.isSameTable(target, state.editTarget)
     else { return }
     // Same table, columns and key: the panel's row rebuilds the very statement that was sent
     let assignments = zip(edit.columnNames, edit.statement.values).map { (column: $0, value: $1) }
@@ -188,16 +197,19 @@ extension NotebookViewModel {
     rowDetail = RowDetailState(
       tableName: state.tableName, rowNumber: state.rowNumber, keyPairs: state.keyPairs,
       rowData: rowData, primaryKeyColumns: state.primaryKeyColumns,
-      originalRow: state.originalRow, stagedInsertID: nil, fields: fields)
+      originalRow: state.originalRow, stagedInsertID: nil, editTarget: state.editTarget,
+      fields: fields)
   }
 
   /// After `result` replaced the result of `cellId` (nil = editor), re-read the Row Details row
   /// from it: a staged insert by its `tempID` (dropped when it is gone), else the same row by
   /// primary key when there is one, else by position. Originals are fresh and drafts dropped;
-  /// the panel of a loaded row keeps its state when the row is gone.
+  /// the panel of a loaded row keeps its state when the row is gone. A panel of a table keeps
+  /// it too when `result` is not of that table (another statement of the same cell or editor).
   func syncRowDetail(cellId: UUID?, result: CellResult?) {
     guard let result, result.error == nil, let state = rowDetail,
-      case .rowDetail(let sidebarCellId) = rightSidebarContent, sidebarCellId == cellId
+      case .rowDetail(let sidebarCellId) = rightSidebarContent, sidebarCellId == cellId,
+      state.editTarget == nil || Self.isSameTable(result.editTarget, state.editTarget)
     else { return }
 
     if let tempID = state.stagedInsertID {

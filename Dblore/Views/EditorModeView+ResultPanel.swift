@@ -422,6 +422,10 @@ struct EditorResultGridView: View {
             viewModel.showGridCellInSidebar(
               row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
           },
+          onShowRowDetails: { row, originalRow in
+            viewModel.showRowDetail(
+              row: row, originalRow: originalRow, result: result, cellId: nil)
+          },
           onHighlightCell: canHighlight
             ? { column, value, style, color in
               guard result.columns.indices.contains(column) else { return }

@@ -98,7 +98,8 @@ struct RowDetailContent: View {
   viewModel.rowDetail = RowDetailState(
     tableName: "public.users", rowNumber: 1, keyPairs: [RowDetailKey(name: "id", value: .int(1))],
     rowData: Dictionary(uniqueKeysWithValues: columns.map { ($0.0, $0.2) }),
-    primaryKeyColumns: ["id"], originalRow: 0, stagedInsertID: nil, fields: fields)
+    primaryKeyColumns: ["id"], originalRow: 0, stagedInsertID: nil, editTarget: nil,
+    fields: fields)
   viewModel.rightSidebarContent = .rowDetail(cellId: nil)
 
   return HStack {

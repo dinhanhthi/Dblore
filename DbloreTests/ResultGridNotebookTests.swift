@@ -75,10 +75,92 @@ struct ResultGridNotebookTests {
     #expect(shown?.column == 0)
 
     tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 0).midX, y: 30))
-    #expect(button.isHidden)  // the "#" column has no details
+    #expect(button.isHidden)  // no onShowRowDetails: nothing on "#"
 
     tableView.updateDetailsButton(at: NSPoint(x: 10, y: 500))  // below the rows
     #expect(button.isHidden)
+  }
+
+  @Test("With row details, hovering \"#\" shows the button; its click shows that row's details")
+  func rowDetailsButtonHover() {
+    let coordinator = ResultGridCoordinator()
+    let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+    coordinator.update(tableView, result: result, sortColumn: "id", ascending: true)
+    tableView.frame = NSRect(x: 0, y: 0, width: 400, height: 78)
+    var shownRow: (row: [CellValue], originalRow: Int)?
+    var shownCell: (originalRow: Int, column: Int)?
+    coordinator.onShowRowDetails = { shownRow = ($0, $1) }
+    coordinator.onShowCellDetails = { shownCell = ($1, $2) }
+
+    // Row 1 of the "#" column
+    tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 0).midX, y: 30))
+    let button = tableView.detailsButton
+    #expect(!button.isHidden)
+    #expect(button.toolTip == "Show row details")
+    #expect(
+      button.frame
+        == ResultGridTableView.detailsButtonFrame(
+          cellRect: tableView.frameOfCell(atColumn: 0, row: 1), visibleRect: tableView.visibleRect))
+    button.sendAction(button.action, to: button.target)
+    // Displayed row 1 of the ascending sort is id 2 (original row 2)
+    #expect(shownRow?.row == [.int(2), .null])
+    #expect(shownRow?.originalRow == 2)
+    #expect(shownCell == nil)
+    #expect(tableView.selectedRowIndexes == [1])
+
+    // A data cell keeps the cell details
+    tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 1).midX, y: 30))
+    #expect(button.toolTip == "Show details")
+    button.sendAction(button.action, to: button.target)
+    #expect(shownCell?.originalRow == 2)
+    #expect(shownCell?.column == 0)
+  }
+
+  @Test("Right-clicking \"#\" selects the row and opens the gutter menu; a data cell its menu")
+  func gutterContextMenu() throws {
+    let coordinator = ResultGridCoordinator()
+    let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+    coordinator.update(tableView, result: result, sortColumn: nil, ascending: true)
+    tableView.frame = NSRect(x: 0, y: 0, width: 400, height: 78)
+    func rightClick(column: Int) throws -> NSMenu? {
+      let point = NSPoint(x: tableView.rect(ofColumn: column).midX, y: 30)
+      let event = try #require(
+        NSEvent.mouseEvent(
+          with: .rightMouseDown, location: tableView.convert(point, to: nil), modifierFlags: [],
+          timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1,
+          pressure: 1))
+      return tableView.menu(for: event)
+    }
+
+    // Without row details "#" has no menu and leaves the selection
+    #expect(try rightClick(column: 0) == nil)
+    #expect(tableView.selectedRowIndexes.isEmpty)
+
+    coordinator.onShowRowDetails = { _, _ in }
+    let gutter = try rightClick(column: 0)
+    #expect(gutter?.items.map(\.title).contains("Show Row Details") == true)
+    #expect(gutter?.items.map(\.title).contains("See More") == false)
+    #expect(tableView.selectedRowIndexes == [1])
+
+    let cell = try rightClick(column: 1)
+    #expect(cell?.items.map(\.title).contains("See More") == true)
+  }
+
+  @Test("With row details, \"#\" is never narrower than the details button needs")
+  func rowNumberWidthFitsDetailsButton() {
+    let minimum = ResultGridTableView.detailsButtonSize + 2 * Spacing.xs
+    func width(fontSize: CGFloat, showsRowDetails: Bool) -> CGFloat {
+      ResultGridCoordinator.rowNumberWidth(
+        rowCount: 3, showsRowDetails: showsRowDetails,
+        font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular))
+    }
+    // Smallest row-number font the settings reach (9pt)
+    let smallest = AppSettings.resultRowNumberFontSize(
+      for: CGFloat(AppSettings.fontSizeRange.lowerBound))
+    #expect(width(fontSize: smallest, showsRowDetails: true) >= minimum)
+    // Digits narrower than the button: the floor applies only with row details
+    #expect(width(fontSize: 7, showsRowDetails: false) < minimum)
+    #expect(width(fontSize: 7, showsRowDetails: true) == minimum)
   }
 
   @Test("The current search match scrolls to its displayed row and uses the current-match color")

@@ -603,6 +603,10 @@ struct NotebookResultGridView: View {
             viewModel.showGridCellInSidebar(
               row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
           },
+          onShowRowDetails: { row, originalRow in
+            viewModel.showRowDetail(
+              row: row, originalRow: originalRow, result: result, cellId: cellId)
+          },
           searchQuery: viewModel.searchState.query,
           caseSensitive: viewModel.searchState.isCaseSensitive,
           currentMatch: currentMatch,
