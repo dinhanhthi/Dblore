@@ -373,6 +373,8 @@ struct SafetyOptionMenu<Label: View>: View {
       SafetyOptionList(rows: rows, help: help) {
         isOpen = false
       }
+      // Opaque like a menu. The default popover glass turns dark over the editor.
+      .presentationBackground(Color.cardBackground)
     }
   }
 }
@@ -406,7 +408,7 @@ private struct SafetyHelpHeader: View {
       HStack(spacing: Spacing.sm) {
         Text(help.title)
           .font(.small)
-          .foregroundStyle(Color.foregroundSubtle)
+          .foregroundStyle(Color.foregroundMuted)
         Spacer(minLength: Spacing.sm)
         Button {
           showsHelp = true
@@ -460,7 +462,7 @@ private struct SafetyOptionListRow: View {
           if let subtitle = row.subtitle {
             Text(subtitle)
               .font(.small)
-              .foregroundStyle(Color.foregroundSubtle)
+              .foregroundStyle(Color.foregroundMuted)
               .fixedSize(horizontal: false, vertical: true)
           }
         }

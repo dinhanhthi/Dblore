@@ -39,8 +39,8 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
   /// When set, the track hugs its labels instead of filling the parent width.
   var fitsContent: Bool = false
 
-  /// Fill of the selected chip. The expanding track uses the accent color.
-  var selectedFill: Color = .accent
+  /// Fill of the selected chip. The expanding track uses `accentFill`.
+  var selectedFill: Color = .accentFill
 
   /// Extra inset of the selected chip inside its tab. Tightens a wide label such as a color dot.
   var selectedInset: CGFloat = 0
@@ -65,6 +65,14 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
   var contentTabPadding: CGFloat = 12
 
   @State private var tabWidths: [Int: CGFloat] = [:]
+  @ReduceMotion private var reduceMotion
+
+  /// Slides the chip on a selection change, overriding the app-wide animation kill switch.
+  /// Instant when Reduce motion is on.
+  private func chipTransaction(_ transaction: inout Transaction) {
+    transaction.disablesAnimations = false
+    transaction.animation = reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.7)
+  }
 
   func fitsContent(
     _ fits: Bool = true,
@@ -99,10 +107,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
       // Background
       Capsule()
         .fill(Color.controlBackground)
-        .overlay(
-          Capsule()
-            .stroke(Color.border, lineWidth: 1)
-        )
+        .overlay(HairlineBorder(shape: Capsule()))
 
       // Content with padding
       GeometryReader { geometry in
@@ -112,10 +117,10 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
         ZStack(alignment: .leading) {
           // Sliding indicator
           Capsule()
-            .fill(Color.accent)
+            .fill(Color.accentFill)
             .frame(width: tabWidth, height: geometry.size.height - (verticalInset * 2))
             .offset(x: inset + CGFloat(selectedIndex) * tabWidth)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selection)
+            .transaction(value: selection, chipTransaction)
 
           // Tab buttons
           HStack(spacing: 0) {
@@ -182,13 +187,13 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
       ZStack(alignment: .leading) {
         Capsule()
           .fill(Color.controlBackground)
-          .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+          .overlay(HairlineBorder(shape: Capsule()))
 
         Capsule()
           .fill(selectedFill)
           .frame(width: chipWidth, height: height - (verticalInset * 2))
           .offset(x: chipX)
-          .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selection)
+          .transaction(value: selection, chipTransaction)
           .allowsHitTesting(false)
       }
     }
@@ -233,9 +238,17 @@ struct CapsuleTabLabel: View {
   let isSelected: Bool
 
   var body: some View {
+    // Sized by the semibold text, so a selection change keeps every tab width and the chip
+    // slides instead of snapping when a content-sized picker re-measures its tabs
     Text(text)
       .font(.body)
-      .fontWeight(isSelected ? .semibold : .regular)
-      .foregroundColor(isSelected ? .onAccent : .foreground)
+      .fontWeight(.semibold)
+      .hidden()
+      .overlay {
+        Text(text)
+          .font(.body)
+          .fontWeight(isSelected ? .semibold : .regular)
+          .foregroundColor(isSelected ? .onAccentFill : .foreground)
+      }
   }
 }

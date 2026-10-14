@@ -2,7 +2,7 @@
 //  FavoriteFormModal.swift
 //  Dblore
 //
-//  Modal form to create or edit a favorite statement (name, folder, SQL)
+//  Right sidebar form to create or edit a favorite statement (name, folder, SQL)
 //
 
 import SwiftUI
@@ -23,6 +23,9 @@ struct FavoriteFormModal: View {
   @State private var placeholder: String
   @State private var textViewRef: SQLTextView?
   @State private var isEditing: Bool
+
+  /// Width of the right sidebar the form opens in
+  static let panelWidth: CGFloat = 520
 
   init(
     workspaceManager: WorkspaceManager, isPresented: Binding<Bool>, favorite: FavoriteStatement?
@@ -45,13 +48,10 @@ struct FavoriteFormModal: View {
   }
 
   var body: some View {
-    GenericModal(
-      title: isEditing ? "Edit Favorite" : "New Favorite",
-      titleIcon: "star",
-      width: 520,
-      height: 470,
-      isPresented: $isPresented
-    ) {
+    VStack(spacing: 0) {
+      GenericModalHeader(
+        title: isEditing ? "Edit Favorite" : "New Favorite", titleIcon: "star",
+        onClose: { isPresented = false })
       VStack(alignment: .leading, spacing: Spacing.md) {
         FormField(label: "Name") {
           TextField(placeholder, text: $name)
@@ -75,16 +75,16 @@ struct FavoriteFormModal: View {
       }
       .padding(Spacing.md)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    } footer: {
       GenericModalFooter {
         Spacer()
         Button("Cancel") { isPresented = false }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
         Button("Save", action: save)
           .buttonStyle(PrimaryButtonStyle())
           .disabled(!canSave)
       }
     }
+    .background(Color.cardBackground)
   }
 
   private var queryEditor: some View {

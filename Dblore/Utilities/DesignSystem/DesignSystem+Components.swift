@@ -21,7 +21,7 @@ enum ButtonStyleVariant {
   func backgroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
     switch self {
     case .primary:
-      return isPressed ? Color.accentMuted : Color.accent
+      return isPressed ? Color.accentFillPressed : Color.accentFill
     case .secondary:
       return isPressed ? Color.cellBackgroundHover : Color.clear
     case .filledSecondary:
@@ -54,7 +54,7 @@ enum ButtonStyleVariant {
     case .ghost:
       return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
     case .primary:
-      return .onAccent
+      return .onAccentFill
     case .danger:
       return .onDestructive
     default:
@@ -238,11 +238,9 @@ private struct BaseButtonStyleView: View {
       .overlay {
         if variant.hasBorder {
           if iconOnly {
-            Circle()
-              .stroke(borderColor, lineWidth: 1)
+            HairlineBorder(shape: Circle(), color: borderColor)
           } else {
-            Capsule()
-              .stroke(borderColor, lineWidth: 1)
+            HairlineBorder(shape: Capsule(), color: borderColor)
           }
         }
       }
@@ -300,8 +298,8 @@ struct FloatingPanelButtonStyle: ButtonStyle {
         .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
-        Circle()
-          .stroke(isHovering ? Color.accent.opacity(0.5) : Color.border, lineWidth: 1)
+        HairlineBorder(
+          shape: Circle(), color: isHovering ? Color.accent.opacity(0.5) : Color.border)
       )
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -343,11 +341,9 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
         .shadow(color: Color.shadow, radius: 4, x: 0, y: 2)
       )
       .overlay(
-        Circle()
-          .stroke(
-            (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.border,
-            lineWidth: 1
-          )
+        HairlineBorder(
+          shape: Circle(),
+          color: (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.border)
       )
       .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
       .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -360,28 +356,38 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
   }
 }
 
+// MARK: - Hairline Border
+
+/// Border of a control or box: one device pixel inside the shape's edge, like `Divider`. A
+/// centered 1pt `stroke` straddles the edge and reads thick and blurred.
+struct HairlineBorder<S: InsettableShape>: View {
+  let shape: S
+  var color: Color = .border
+
+  @Environment(\.pixelLength) private var pixelLength
+
+  var body: some View {
+    shape.strokeBorder(color, lineWidth: pixelLength)
+  }
+}
+
 // MARK: - View Extensions
 
 extension View {
   func cardStyle() -> some View {
     background(Color.cardBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.lg)
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.lg)))
   }
 
   func cellStyle(isSelected: Bool = false, isHovered: Bool = false) -> some View {
     background(Color.cellBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.lg)
-          .stroke(
-            isSelected
-              ? Color.accent : (isHovered ? Color.foregroundMuted.opacity(0.3) : Color.border),
-            lineWidth: isSelected ? 0.5 : 1
-          )
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.lg),
+          color: isSelected
+            ? Color.accent : (isHovered ? Color.foregroundMuted.opacity(0.3) : Color.border))
       )
   }
 
@@ -389,10 +395,7 @@ extension View {
     padding(Spacing.sm)
       .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.xxl)
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.xxl)))
   }
 
   /// Capsule style for input fields
@@ -401,10 +404,7 @@ extension View {
       .padding(.horizontal, Spacing.md)
       .background(Color.controlBackground)
       .clipShape(Capsule())
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: Capsule()))
   }
 
   /// Numeric field. `inputCapsuleStyle` adds `Spacing.sm` on top of the text
@@ -417,10 +417,7 @@ extension View {
       .frame(height: ButtonMetrics.regularHeight)
       .background(Color.controlBackground)
       .clipShape(Capsule())
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: Capsule()))
   }
 
   /// Beside a number capsule. A default `Stepper` stays at AppKit `.regular`,
@@ -437,10 +434,7 @@ extension View {
       .padding(.horizontal, Spacing.sm + 2)
       .background(Color.controlBackground)
       .clipShape(Capsule())
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: Capsule()))
   }
 
   /// Rounded style for multiline text fields with capsule-like radius
@@ -448,10 +442,7 @@ extension View {
     padding(Spacing.sm)
       .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxxl))
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.xxxl)
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.xxxl)))
   }
 
   @ViewBuilder

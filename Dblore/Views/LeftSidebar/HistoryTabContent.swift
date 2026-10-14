@@ -19,7 +19,7 @@ struct HistoryTabContent: View {
     @Bindable var historyList = workspaceManager.historyList
 
     VStack(spacing: 0) {
-      SidebarFilterField(text: $historyList.query) {
+      SidebarFilterField(text: $historyList.query, placeholder: "search") {
         HStack(spacing: Spacing.sm) {
           writesFilter
           filterMenu
@@ -44,12 +44,12 @@ struct HistoryTabContent: View {
     } label: {
       Text("Writes")
         .font(.system(size: 11))
-        .foregroundStyle(isOn ? Color.onAccent : Color.foreground)
+        .foregroundStyle(isOn ? Color.onAccentFill : Color.foreground)
         .lineLimit(1)
         .padding(.horizontal, Spacing.sm)
         .frame(height: SidebarFilterMetrics.controlHeight)
-        .background(Capsule().fill(isOn ? Color.accent : Color.inputBackground))
-        .overlay(Capsule().stroke(isOn ? Color.accent : Color.border, lineWidth: 1))
+        .background(Capsule().fill(isOn ? Color.accentFill : Color.inputBackground))
+        .overlay(Capsule().stroke(isOn ? Color.accentFill : Color.border, lineWidth: 1))
     }
     .buttonStyle(.plain)
     .linkPointer()
@@ -87,7 +87,7 @@ struct HistoryTabContent: View {
       .padding(.horizontal, Spacing.sm)
       .frame(height: SidebarFilterMetrics.controlHeight)
       .background(Capsule().fill(Color.inputBackground))
-      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
     }
     .menuStyle(.button)
     .buttonStyle(.plain)

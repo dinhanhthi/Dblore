@@ -41,11 +41,15 @@ struct PluginsSettingsSection: View {
               .foregroundColor(.foregroundMuted)
           }
 
+          Divider()
+
           Button("DuckDB is MIT licensed") {
             NSWorkspace.shared.open(Self.licenseURL)
           }
-          .buttonStyle(.link)
-          .font(.bodyText)
+          .buttonStyle(.plain)
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+          .linkPointer()
         }
       }
     }

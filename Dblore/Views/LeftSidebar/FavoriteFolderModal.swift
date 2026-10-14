@@ -50,7 +50,7 @@ struct FavoriteFolderModal: View {
       GenericModalFooter {
         Spacer()
         Button("Cancel") { isPresented = false }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
         Button("Save", action: save)
           .buttonStyle(PrimaryButtonStyle())
           .disabled(!canSave)
@@ -72,26 +72,35 @@ struct FavoriteFolderModal: View {
 // MARK: - Favorite Modals Presenter
 
 extension View {
-  /// Presents the favorite form / folder modal driven by `workspaceManager.favoriteModal`
+  /// Presents the folder modal driven by `workspaceManager.favoriteModal`
   func favoriteModals(workspaceManager: WorkspaceManager) -> some View {
     let isPresented = Binding(
-      get: { workspaceManager.favoriteModal != nil },
+      get: { workspaceManager.favoriteModal?.isFolder == true },
       set: { if !$0 { workspaceManager.favoriteModal = nil } }
     )
     return modalOverlay(isPresented: isPresented) {
-      if let route = workspaceManager.favoriteModal {
-        switch route {
-        case .favorite(let favorite):
-          FavoriteFormModal(
-            workspaceManager: workspaceManager, isPresented: isPresented, favorite: favorite
-          )
-          .id(route.id)
-        case .folder(let folder):
-          FavoriteFolderModal(
-            workspaceManager: workspaceManager, isPresented: isPresented, folder: folder
-          )
-          .id(route.id)
-        }
+      if case .folder(let folder) = workspaceManager.favoriteModal {
+        FavoriteFolderModal(
+          workspaceManager: workspaceManager, isPresented: isPresented, folder: folder
+        )
+        .id(workspaceManager.favoriteModal?.id)
+      }
+    }
+  }
+
+  /// Presents the favorite form driven by `workspaceManager.favoriteModal` in a right sidebar
+  /// that slides in from the trailing edge
+  func favoriteFormPanel(workspaceManager: WorkspaceManager) -> some View {
+    let isPresented = Binding(
+      get: { workspaceManager.favoriteModal?.isFolder == false },
+      set: { if !$0 { workspaceManager.favoriteModal = nil } }
+    )
+    return sidePanelOverlay(isPresented: isPresented, width: FavoriteFormModal.panelWidth) {
+      if case .favorite(let favorite) = workspaceManager.favoriteModal {
+        FavoriteFormModal(
+          workspaceManager: workspaceManager, isPresented: isPresented, favorite: favorite
+        )
+        .id(workspaceManager.favoriteModal?.id)
       }
     }
   }

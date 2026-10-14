@@ -119,7 +119,7 @@ struct HeaderView: View {
               .foregroundColor(.foreground)
               .padding(.horizontal, ButtonMetrics.regularHorizontalPadding)
               .padding(.vertical, Self.notebookToolbarVerticalPadding)
-              .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+              .overlay(HairlineBorder(shape: Capsule()))
               .contentShape(Capsule())
           }
           .menuStyle(.button)
@@ -152,7 +152,7 @@ struct HeaderView: View {
               }
             }
           }
-          // Flat accent fill and onAccent label, same paint as the selected sidebar tab.
+          // Flat accentFill and onAccentFill label, same paint as the selected sidebar tab.
           // glassProminent tints the glass material, so the fill reads lighter than Color.accent.
           // Spacing.xs is 2pt shorter per side than a regular primary button. editorHeaderHeight
           // drops by the same amount so the gap around Run stays put.
@@ -415,8 +415,6 @@ private struct RunSpinner: View {
       .onAppear { isSpinning = true }
   }
 }
-
-// SafeModeIndicator moved to Components/Shared/SafeModeIndicator.swift
 
 #Preview {
   HeaderView(viewModel: NotebookViewModel())

@@ -16,6 +16,8 @@ struct GenericModal<Content: View, Footer: View>: View {
   let title: String
   var titleIcon: String?
   var titleIconColor: Color = .foreground
+  /// Tag shown right after the title (e.g. the database engine)
+  var titleBadge: String? = nil
   let width: CGFloat
   let height: CGFloat
   @Binding var isPresented: Bool
@@ -29,6 +31,7 @@ struct GenericModal<Content: View, Footer: View>: View {
         title: title,
         titleIcon: titleIcon,
         titleIconColor: titleIconColor,
+        titleBadge: titleBadge,
         onClose: { isPresented = false }
       )
 
@@ -80,6 +83,9 @@ struct GenericModalHeader<Trailing: View>: View {
   let title: String
   var titleIcon: String?
   var titleIconColor: Color = .foreground
+  var titleBadge: String? = nil
+  /// Taller for side panels whose header holds a picker
+  var verticalPadding: CGFloat = Spacing.sm
   let onClose: () -> Void
   @ViewBuilder var trailing: () -> Trailing
 
@@ -94,6 +100,17 @@ struct GenericModalHeader<Trailing: View>: View {
         Text(title)
           .font(.subheading)
           .foregroundColor(.foreground)
+
+        if let titleBadge {
+          Text(titleBadge)
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xxs)
+            .background(Color.controlBackground, in: Capsule())
+            .overlay(HairlineBorder(shape: Capsule()))
+            .padding(.leading, Spacing.xs)
+        }
       }
 
       Spacer(minLength: Spacing.sm)
@@ -106,7 +123,7 @@ struct GenericModalHeader<Trailing: View>: View {
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Close (Esc)")
     }
-    .modalBarPadding(vertical: Spacing.sm)
+    .modalBarPadding(vertical: verticalPadding)
     .background(Color.cardHeaderBackground)
     .overlay(alignment: .bottom) {
       Divider()
@@ -119,13 +136,31 @@ extension GenericModalHeader where Trailing == EmptyView {
     title: String,
     titleIcon: String? = nil,
     titleIconColor: Color = .foreground,
+    titleBadge: String? = nil,
     onClose: @escaping () -> Void
   ) {
     self.title = title
     self.titleIcon = titleIcon
     self.titleIconColor = titleIconColor
+    self.titleBadge = titleBadge
     self.onClose = onClose
     self.trailing = { EmptyView() }
+  }
+}
+
+/// Label of a dropdown in a modal header (engine, import source): a white capsule in light.
+struct HeaderDropdownLabel: View {
+  let title: String
+
+  var body: some View {
+    HStack(spacing: Spacing.sm) {
+      Text(title)
+        .foregroundColor(.foreground)
+      Image(systemName: "chevron.up.chevron.down")
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+    }
+    .dropdownCapsuleStyle()
   }
 }
 
@@ -143,7 +178,7 @@ struct GenericModalFooter<Content: View>: View {
       }
       .modalBarPadding()
     }
-    .background(Color.cardBackground)
+    .background(Color.modalFooterBackground)
   }
 }
 
@@ -168,8 +203,11 @@ extension View {
 extension View {
   /// Wraps any modal content with dimmed/blurred background and zoom animation
   /// Use this to add consistent modal presentation to any custom modal view
+  /// - Parameter animated: false for keyboard-toggled overlays (the command palette) that must
+  ///   appear and disappear instantly
   func modalOverlay<ModalContent: View>(
     isPresented: Binding<Bool>,
+    animated: Bool = true,
     @ViewBuilder modal: @escaping () -> ModalContent
   ) -> some View {
     self.overlay {
@@ -193,12 +231,106 @@ extension View {
                 dismissPresentedModal(isPresented)
               }
             }
-            .transition(.scale(scale: 0.95).combined(with: .opacity))
+            .transition(.scale(scale: 0.96).combined(with: .opacity))
         }
       }
       .allowsHitTesting(isPresented.wrappedValue)
-      .animation(.easeOut(duration: 0.2), value: isPresented.wrappedValue)
+      .animation(
+        animated && !SidebarAnimation.reduceMotion ? .snappy(duration: 0.2) : nil,
+        value: isPresented.wrappedValue
+      )
+      // Opt out of the app-wide animation kill switch, only for the show/hide change
+      .transaction(value: isPresented.wrappedValue) {
+        if animated { $0.disablesAnimations = false }
+      }
     }
+  }
+}
+
+// MARK: - Side Panel Overlay
+
+extension View {
+  /// Right sidebar for forms: full height on the trailing edge, slides in from the right over
+  /// the dimmed backdrop and back out on close. Esc and a backdrop click close it.
+  /// - Parameter maxWidthFraction: caps `width` at this share of the window, so a wide panel
+  ///   never reaches the traffic lights
+  func sidePanelOverlay<PanelContent: View>(
+    isPresented: Binding<Bool>,
+    width: CGFloat,
+    maxWidthFraction: CGFloat? = nil,
+    @ViewBuilder panel: () -> PanelContent
+  ) -> some View {
+    // Built here, in the caller's body, so state the content reads updates it
+    overlay {
+      SidePanelHost(
+        isPresented: isPresented, width: width, maxWidthFraction: maxWidthFraction,
+        panel: panel())
+    }
+  }
+}
+
+private struct SidePanelHost<PanelContent: View>: View {
+  @Binding var isPresented: Bool
+  let width: CGFloat
+  let maxWidthFraction: CGFloat?
+  let panel: PanelContent
+
+  @Environment(\.pixelLength) private var pixelLength
+  @ReduceMotion private var reduceMotion
+
+  private func panelWidth(in containerWidth: CGFloat) -> CGFloat {
+    guard let maxWidthFraction else { return width }
+    return min(width, containerWidth * maxWidthFraction)
+  }
+
+  // The cap is read in the same layout pass (the host stays mounted, so the panel slides in at
+  // its final width). Measuring the width into state instead crashed a live resize with the
+  // panel open: each state write asked the window for another constraints pass.
+  var body: some View {
+    GeometryReader { proxy in
+      panelStack(panelWidth: panelWidth(in: proxy.size.width))
+    }
+    .allowsHitTesting(isPresented)
+    .animation(reduceMotion ? nil : SidebarAnimation.panel(width: width), value: isPresented)
+    // Opt out of the app-wide animation kill switch, only for the show/hide change
+    .transaction(value: isPresented) { $0.disablesAnimations = false }
+  }
+
+  private func panelStack(panelWidth: CGFloat) -> some View {
+    ZStack(alignment: .trailing) {
+      if isPresented {
+        ModalBackdrop()
+          .ignoresSafeArea()
+          .transition(.opacity)
+          .onTapGesture {
+            dismissPresentedModal($isPresented)
+          }
+      }
+
+      if isPresented {
+        panel
+          .frame(width: panelWidth)
+          .frame(maxHeight: .infinity)
+          // Panels fill with `.background(Color)`, which bleeds into the safe area by default and
+          // drew the panel over the native tab bar; keep it inside its frame
+          .clipped()
+          // Only a leaf rectangle behind the panel casts the shadow: a shadow on the panel, or a
+          // shadowed fill style as its background, also shadowed every card and field inside
+          .background {
+            Rectangle().fill(Color.cardBackground).shadow(color: .shadow, radius: 16, x: -2)
+          }
+          .overlay(alignment: .leading) {
+            Rectangle().fill(Color.border).frame(width: pixelLength)
+          }
+          .background {
+            ModalEscapeCatcher {
+              dismissPresentedModal($isPresented)
+            }
+          }
+          .transition(SidebarAnimation.trailingSlide)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
   }
 }
 
@@ -305,7 +437,7 @@ extension View {
       Button("Cancel") {
         isPresented = false
       }
-      .buttonStyle(SecondaryButtonStyle())
+      .buttonStyle(FilledSecondaryButtonStyle())
 
       Button("Save") {
         isPresented = false

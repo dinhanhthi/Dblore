@@ -13,8 +13,14 @@ import UniformTypeIdentifiers
 /// The settings-page card. The title sits on its own row, separated from the body by a rule.
 struct SettingsGroupCard<Content: View, Accessory: View>: View {
   let title: String
+  /// Fill under the title and content; a table passes `cardBackground` under its header row
+  var background: Color = .cardHeaderBackground
+  /// Inset of the content; a table passes 0 so its rows run edge to edge
+  var contentPadding: CGFloat = Spacing.md
   @ViewBuilder var accessory: () -> Accessory
   @ViewBuilder var content: () -> Content
+
+  @Environment(\.pixelLength) private var pixelLength
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -34,15 +40,17 @@ struct SettingsGroupCard<Content: View, Accessory: View>: View {
         .frame(height: 1)
 
       content()
-        .padding(Spacing.md)
+        .padding(contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.cardHeaderBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .background(background, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
+    // A hairline inside the edge, like the `Divider` beside the settings sidebar (a centered
+    // 1pt stroke straddles the edge and reads thick and blurred)
     .overlay(
       RoundedRectangle(cornerRadius: CornerRadius.lg)
-        .stroke(Color.border, lineWidth: 1)
+        .strokeBorder(Color.border, lineWidth: pixelLength)
     )
     // Scroll target for the settings search
     .id(title)
@@ -313,7 +321,7 @@ struct CapsuleDropdown<Option: Hashable>: View {
       .padding(.vertical, ButtonMetrics.regularVerticalPadding)
       .frame(maxWidth: width == nil ? nil : .infinity, alignment: .leading)
       .background(Capsule().fill(Color.controlBackground))
-      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)

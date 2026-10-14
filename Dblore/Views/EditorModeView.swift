@@ -253,7 +253,7 @@ struct EditorModeView: View {
             fillsAvailableHeight: true
           )
           .padding(Spacing.sm)
-        } else if result.rows.isEmpty && result.columns.isEmpty {
+        } else if result.showsNoResult(dialect: viewModel.sqlDialect) {
           emptyResultView()
         } else {
           resultTableSection(result: result, displayMode: resultDisplayModeBinding(for: result))
@@ -389,7 +389,7 @@ private struct ObjectSourceBanner: View {
     .foregroundColor(.foregroundMuted)
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, Spacing.xxs)
-    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .overlay(HairlineBorder(shape: Capsule()))
     .help("Source of a database object. Open an editable copy to change or run it.")
     .accessibilityElement(children: .combine)
   }
@@ -425,7 +425,7 @@ private struct ObjectSourceStatusView: View {
         .textSelection(.enabled)
       if let onRetry {
         Button("Retry", action: onRetry)
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .linkPointer()
       }
     }

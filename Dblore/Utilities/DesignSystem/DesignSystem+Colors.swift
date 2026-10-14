@@ -50,6 +50,25 @@ extension Color {
     dark: Color(hex: "3c3c3c")  // VS Code input
   )
 
+  /// Body of a side panel. White in light so its `cardHeaderBackground` section boxes stand off
+  /// it as clearly as they do in dark.
+  static let panelBackground = Color(
+    light: Color(hex: "ffffff"),
+    dark: Color(hex: "1e1e1e")  // Same as `appBackground`
+  )
+
+  /// Footer bar of a modal or side panel: the header's tint in light, so the bars match.
+  static let modalFooterBackground = Color(
+    light: Color(hex: "f5f5f5"),  // Same as `cardHeaderBackground`
+    dark: Color(hex: "252526")  // Same as `cardBackground`
+  )
+
+  /// Footer bar of the connection form, over the darker `panelBackground` body in dark.
+  static let panelFooterBackground = Color(
+    light: Color(hex: "f5f5f5"),  // Same as `cardHeaderBackground`
+    dark: Color(hex: "1e1e1e")  // Same as `appBackground`
+  )
+
   static let gutterBackground = Color(
     light: Color(hex: "f4f4f5"),  // Zinc 100, one quiet step off the white editor
     dark: Color(hex: "2d2d2d")  // One quiet step off the editor
@@ -76,6 +95,46 @@ extension Color {
   static let gridForeground = Color(
     light: Color(hex: "3f3f46"),  // Zinc 700
     dark: Color(hex: "d4d4d8")  // Zinc 300
+  )
+
+  /// Structure editor cells: `gridForeground`, one step whiter in dark mode
+  static let structureCellForeground = Color(
+    light: Color(hex: "3f3f46"),  // Zinc 700
+    dark: Color(hex: "e4e4e7")  // Zinc 200
+  )
+
+  /// Secondary structure editor cell text (details, keys): `foregroundMuted`, whiter in dark mode
+  static let structureCellMuted = Color(
+    light: Color(hex: "52525b"),  // Zinc 600
+    dark: Color(hex: "c4c4cc")  // Between Zinc 300 and Zinc 400
+  )
+
+  // Result grid values by type (Settings → Results → Color Values by Type): desaturated
+  // tones so a full grid stays calm, darker in light mode and pastel in dark mode
+  static let gridNumber = Color(
+    light: Color(hex: "9a5b2e"),  // Muted burnt orange
+    dark: Color(hex: "d9a87c")  // Soft apricot
+  )
+
+  /// Text is most of a grid, so it stays the closest to neutral
+  static let gridString = Color(
+    light: Color(hex: "4a6b55"),  // Grey green
+    dark: Color(hex: "a9c4b0")  // Soft sage
+  )
+
+  static let gridDate = Color(
+    light: Color(hex: "3d6589"),  // Slate blue
+    dark: Color(hex: "9dbad6")  // Soft steel blue
+  )
+
+  static let gridBoolean = Color(
+    light: Color(hex: "75568f"),  // Muted violet
+    dark: Color(hex: "bca6d6")  // Soft lavender
+  )
+
+  static let gridJSON = Color(
+    light: Color(hex: "7d6a2c"),  // Olive ochre
+    dark: Color(hex: "cdbf8a")  // Soft khaki
   )
 
   // Border colors
@@ -131,12 +190,28 @@ extension Color {
     )
   }
 
-  /// Label on an accent fill: white or near-black, whichever reads better on that accent
-  static var onAccent: Color {
+  /// Solid accent under a label (primary button, selected capsule tab): the accent in light
+  /// mode, its darker muted shade in dark mode, where the bright accent only took a near-black
+  /// label
+  static var accentFill: Color {
+    let accent = AppSettings.shared.accentColor
+    return Color(
+      light: Color(hex: accent.lightHex),
+      dark: Color(hex: accent.mutedDarkHex)
+    )
+  }
+
+  /// Pressed `accentFill`: one shade darker in both modes
+  static var accentFillPressed: Color {
+    Color(hex: AppSettings.shared.accentColor.mutedLightHex)
+  }
+
+  /// Label on `accentFill`: white in dark mode, as on a selected macOS segment
+  static var onAccentFill: Color {
     let accent = AppSettings.shared.accentColor
     return Color(
       light: Color(hex: ColorContrast.labelHex(on: accent.lightHex)),
-      dark: Color(hex: ColorContrast.labelHex(on: accent.darkHex))
+      dark: Color(hex: "ffffff")
     )
   }
 
@@ -245,6 +320,39 @@ extension Color {
     light: Color(hex: "09090b"),  // Very dark zinc
     dark: Color(hex: "fafafa")  // Very light gray
   )
+
+  // Database brand colors, shifted per mode so each icon keeps 3:1 against the background
+  static let brandPostgreSQL = Color(
+    light: Color(hex: "336791"),  // PostgreSQL blue
+    dark: Color(hex: "6b9fd6")
+  )
+
+  static let brandMySQL = Color(
+    light: Color(hex: "00758f"),  // MySQL dolphin teal
+    dark: Color(hex: "3fb4cf")
+  )
+
+  static let brandSQLite = Color(
+    light: Color(hex: "044a64"),  // SQLite navy
+    dark: Color(hex: "7cc6ee")  // SQLite feather blue
+  )
+
+  static let brandDuckDB = Color(
+    light: Color(hex: "a68b00"),  // Darkened DuckDB yellow, readable on white
+    dark: Color(hex: "fff000")  // DuckDB yellow
+  )
+}
+
+extension DatabaseType {
+  /// Brand tint of the database type icon
+  var brandColor: Color {
+    switch self {
+    case .postgresql: .brandPostgreSQL
+    case .mysql: .brandMySQL
+    case .sqlite: .brandSQLite
+    case .duckdb: .brandDuckDB
+    }
+  }
 }
 
 /// Opacities of the state fills, kept apart so their contrast can be checked for every accent

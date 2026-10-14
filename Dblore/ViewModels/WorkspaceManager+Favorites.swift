@@ -20,6 +20,11 @@ enum FavoriteModalRoute: Identifiable {
     case .folder(let folder): return "folder-\(folder?.id.uuidString ?? "new")"
     }
   }
+
+  var isFolder: Bool {
+    if case .folder = self { return true }
+    return false
+  }
 }
 
 // MARK: - Favorites

@@ -20,19 +20,17 @@ enum JSONSyntaxHighlighter {
     var color: Color {
       switch self {
       case .key:
-        return Color(hex: "c084fc")  // Purple for keys
+        return Color(light: Color(hex: "9333ea"), dark: Color(hex: "c084fc"))  // Purple 600 / 400
       case .string:
-        return Color(hex: "4ade80")  // Green for strings
+        return .syntaxString
       case .number:
-        return Color(hex: "fb923c")  // Orange for numbers
+        return .syntaxNumber
       case .boolean:
-        return Color(hex: "38bdf8")  // Cyan for booleans
+        return .syntaxFunction  // Sky
       case .null:
         return Color(hex: "6b7280")  // Gray for null
-      case .punctuation:
-        return Color(hex: "fafafa")  // White for {}, [], :, ,
-      case .whitespace:
-        return Color(hex: "fafafa")  // White for spaces
+      case .punctuation, .whitespace:
+        return .syntaxOperator  // Near black / near white for {}, [], :, ,
       }
     }
   }

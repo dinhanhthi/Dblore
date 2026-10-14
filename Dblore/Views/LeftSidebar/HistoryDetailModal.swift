@@ -41,7 +41,7 @@ struct HistoryDetailModal: View {
             .buttonStyle(PrimaryButtonStyle())
         }
         Button("Cancel") { isPresented = false }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .keyboardShortcut(.cancelAction)
       }
     }

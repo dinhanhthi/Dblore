@@ -34,7 +34,7 @@ struct ResultDisplayPicker: View {
       let isSelected = mode == tab
       Text(tab == .grid ? "Grid" : "Chart")
         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-        .foregroundColor(isSelected ? .onAccent : .foreground)
+        .foregroundColor(isSelected ? .onAccentFill : .foreground)
         .lineLimit(1)
     }
     .frame(width: Self.width)
@@ -122,7 +122,7 @@ struct ChartConfigBar: View {
       .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.xs)
       .background(Capsule().fill(Color.inputBackground))
-      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
     }
     .buttonStyle(.plain)
     .linkPointer()

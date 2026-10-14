@@ -11,6 +11,7 @@ import SwiftUI
 struct WorkspaceInfoModal: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Binding var isPresented: Bool
+  @Environment(\.pixelLength) private var pixelLength
   @State private var draftWorkspaceName = ""
   /// The connection form's values when the modal opened (what the live connection uses)
   @State private var appliedConfig: ConnectionConfig?
@@ -38,18 +39,14 @@ struct WorkspaceInfoModal: View {
     workspaceManager.workspaceInfoTab == .workspace
   }
 
-  private var isConnectionForm: Bool {
-    workspaceManager.workspaceInfoTab == .connection && workspace.connectionConfig != nil
-  }
+  /// Width of the right sidebar the details open in (the connection form needs 440).
+  static let panelWidth: CGFloat = 440
 
   var body: some View {
-    GenericModal(
-      title: "Details",
-      titleIcon: "info.circle",
-      width: isConnectionForm ? 440 : 420,
-      height: isConnectionForm ? 640 : 520,
-      isPresented: $isPresented
-    ) {
+    VStack(spacing: 0) {
+      GenericModalHeader(
+        title: "Details", titleIcon: "info.circle", onClose: { isPresented = false })
+
       VStack(spacing: 0) {
         CapsuleTabPicker(
           selection: $workspaceManager.workspaceInfoTab,
@@ -70,7 +67,7 @@ struct WorkspaceInfoModal: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       .onAppear(perform: resetDrafts)
-    } footer: {
+
       if showsFooter {
         GenericModalFooter {
           Spacer()
@@ -85,6 +82,7 @@ struct WorkspaceInfoModal: View {
         }
       }
     }
+    .background(Color.cardBackground)
     .sheet(
       isPresented: Binding(
         get: { workspaceManager.pendingWeakeningConnect != nil },
@@ -113,9 +111,14 @@ struct WorkspaceInfoModal: View {
           }
         }
         band(2) {
-          infoRow(label: "Tabs", value: tabsValue)
-          infoRow(label: "Favorites", value: "\(workspace.favorites.items.count)")
-          infoRow(label: "Folders", value: "\(workspace.favorites.folders.count)")
+          HStack(alignment: .top, spacing: Spacing.md) {
+            infoRow(label: "Tabs", value: tabsValue)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            infoRow(label: "Favorites", value: "\(workspace.favorites.items.count)")
+              .frame(maxWidth: .infinity, alignment: .leading)
+            infoRow(label: "Folders", value: "\(workspace.favorites.folders.count)")
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
         }
       }
       .padding(Spacing.md)
@@ -160,7 +163,8 @@ struct WorkspaceInfoModal: View {
               ? AnyView(disconnectButton) : nil,
             unlockConnectError: $workspaceManager.lastUnlockConnectError,
             onOpenPluginSettings: ConnectionErrorAction.postOpenPluginSettings,
-            draftGeneration: workspaceManager.connectionFormDraftGeneration
+            draftGeneration: workspaceManager.connectionFormDraftGeneration,
+            pairsAllSafetyFields: true
           )
         }
       }
@@ -184,33 +188,41 @@ struct WorkspaceInfoModal: View {
   }
 
   private var connectionStatusBand: some View {
-    HStack(alignment: .top, spacing: Spacing.md) {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack(alignment: .top, spacing: Spacing.md) {
         infoRow(
           label: "Status",
           value: FooterView.connectionStatusText(
             for: workspaceManager.connectionState, config: workspace.connectionConfig),
           help: FooterView.connectionFailureDetail(for: workspaceManager.connectionState)
         )
-        if isPluginMissing {
-          missingPluginRow
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         if workspaceManager.connectionState.isConnected {
-          if workspaceManager.isLoadingSchema && workspaceManager.databaseTables.isEmpty {
-            infoRow(label: "Schema", value: "Loading...")
-          } else {
-            infoRow(
-              label: "Schema",
-              value:
-                "\(workspaceManager.databaseTables.count) tables, \(workspaceManager.databaseViews.count) views"
-            )
+          Group {
+            if workspaceManager.isLoadingSchema && workspaceManager.databaseTables.isEmpty {
+              infoRow(label: "Schema", value: "Loading...")
+            } else {
+              infoRow(
+                label: "Schema",
+                value:
+                  "\(workspaceManager.databaseTables.count) tables, \(workspaceManager.databaseViews.count) views"
+              )
+            }
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
+      }
+      if isPluginMissing {
+        missingPluginRow
       }
     }
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, alignment: .topLeading)
     .background(RoundedRectangle(cornerRadius: CornerRadius.lg).fill(Color.cardHeaderBackground))
+    // Same border as the Settings section cards
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
+        .strokeBorder(Color.border, lineWidth: pixelLength))
   }
 
   /// The workspace's engine needs a plugin that is not installed (DuckDB). Read in `body`, so
@@ -300,6 +312,10 @@ struct WorkspaceInfoModal: View {
       RoundedRectangle(cornerRadius: CornerRadius.lg)
         .fill(index.isMultiple(of: 2) ? Color.cardHeaderBackground : Color.foreground.opacity(0.06))
     )
+    // Same border as the Settings section cards
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.lg)
+        .strokeBorder(Color.border, lineWidth: pixelLength))
   }
 
   @ViewBuilder
@@ -327,14 +343,14 @@ struct WorkspaceInfoModal: View {
 // MARK: - View Extension
 
 extension View {
-  /// Shows the details modal bound to a WorkspaceManager
+  /// Shows the details in a right sidebar bound to a WorkspaceManager
   func workspaceInfoModal(workspaceManager: WorkspaceManager) -> some View {
     let isPresented = Binding(
       get: { workspaceManager.isWorkspaceInfoModalVisible },
       set: { workspaceManager.isWorkspaceInfoModalVisible = $0 }
     )
 
-    return modalOverlay(isPresented: isPresented) {
+    return sidePanelOverlay(isPresented: isPresented, width: WorkspaceInfoModal.panelWidth) {
       WorkspaceInfoModal(workspaceManager: workspaceManager, isPresented: isPresented)
     }
   }
@@ -364,7 +380,7 @@ extension View {
       )
       workspaceManager.connectionState = .connected
     }
-    .modalOverlay(isPresented: $isPresented) {
+    .sidePanelOverlay(isPresented: $isPresented, width: WorkspaceInfoModal.panelWidth) {
       WorkspaceInfoModal(workspaceManager: workspaceManager, isPresented: $isPresented)
     }
 }

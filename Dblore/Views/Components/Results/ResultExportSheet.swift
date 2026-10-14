@@ -106,9 +106,7 @@ struct ResultExportSheet: View {
     .background(Color.cardHeaderBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)
-        .stroke(Color.border, lineWidth: 1)
-    )
+      HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
   }
 
   private var formatPicker: some View {

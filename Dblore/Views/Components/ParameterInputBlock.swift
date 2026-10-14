@@ -43,7 +43,7 @@ struct ParameterInputBlock<Accessory: View>: View {
         .padding(.horizontal, Spacing.md)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+        .overlay(HairlineBorder(shape: Capsule()))
         .frame(maxWidth: .infinity)
       Toggle("NULL", isOn: nullBinding)
         .font(.small)

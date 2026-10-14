@@ -61,7 +61,7 @@ struct ColumnValueFilterPopover: View {
           .padding(.horizontal, Spacing.sm)
           .background(Color.inputBackground)
           .clipShape(Capsule())
-          .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+          .overlay(HairlineBorder(shape: Capsule()))
       }
 
       // Filled and bordered: ghost buttons fade into the popover background

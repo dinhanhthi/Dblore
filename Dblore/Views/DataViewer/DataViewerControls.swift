@@ -117,16 +117,12 @@ struct DataViewerControls: View {
     .linkPointer()
     .fixedSize()
     .disabled(!viewModel.stagingEnabled)
-    .help(viewModel.rowStagingUnavailableReason ?? "Stage a new row")
+    .help(viewModel.rowStagingUnavailableReason ?? "Fill in a new row")
     .overlay { disabledStagingHelp }
   }
 
   private func stageNewRow() {
-    Task {
-      if let message = await viewModel.addStagedRow() {
-        viewModel.showToast(message, type: .error)
-      }
-    }
+    Task { await viewModel.toggleAddRowForm() }
   }
 
   private func stagedSummary(_ counts: RowChangeSet.Counts) -> some View {
@@ -193,10 +189,11 @@ struct DataViewerControls: View {
   /// Same capsule metrics as Preview SQL and Discard. Accent fill keeps it the primary action.
   private var commitButtonBase: some View {
     Button(action: { Task { await viewModel.commitStaged() } }) {
-      dataViewerCapsuleLabel(fill: .accent, bordered: false) {
+      dataViewerCapsuleLabel(fill: .accentFill, bordered: false) {
         Text("Commit")
           .font(.system(size: 11))
-          .foregroundColor(.foreground)
+          // Matches the selected slider segment
+          .foregroundColor(.onAccentFill)
       }
     }
     .buttonStyle(.plain)
@@ -396,7 +393,7 @@ private func dataViewerCapsuleLabel<Content: View>(
   .background(Capsule().fill(fill))
   .overlay {
     if bordered {
-      Capsule().stroke(Color.border, lineWidth: 1)
+      HairlineBorder(shape: Capsule())
     }
   }
 }

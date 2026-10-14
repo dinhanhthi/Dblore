@@ -127,7 +127,7 @@ extension ConnectionFormContent {
         Button(summary == nil ? "Choose Key File…" : "Replace Key File…") {
           chooseSSHKeyFile()
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
         .disabled(sshDraft.isImportingKey)
         if sshDraft.isImportingKey {
           ProgressView()
@@ -145,7 +145,7 @@ extension ConnectionFormContent {
             .inputCapsuleStyle()
             .onSubmit { unlockSSHKey() }
           Button("Unlock") { unlockSSHKey() }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
             .disabled(sshDraft.passphrase.isEmpty || sshDraft.isImportingKey)
         }
       }
@@ -177,7 +177,7 @@ extension ConnectionFormContent {
 
     if summary != nil || sshDraft.needsPassphrase {
       Button("Remove", role: .destructive) { removeSSHKey() }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
     }
 
     if let keyError = sshDraft.keyError {

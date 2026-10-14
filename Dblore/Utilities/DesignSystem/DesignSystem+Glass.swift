@@ -31,8 +31,8 @@ extension View {
   }
 
   /// Tinted edge-to-edge surface for workspace banners (pending transaction, connection lost).
-  func tintedChromeGlass(_ color: Color) -> some View {
-    background(color.opacity(0.25), in: Rectangle())
+  func tintedChromeGlass(_ color: Color, opacity: Double = 0.25) -> some View {
+    background(color.opacity(opacity), in: Rectangle())
       .background(Color.appBackground, in: Rectangle())
   }
 }

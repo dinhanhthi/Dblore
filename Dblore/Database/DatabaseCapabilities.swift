@@ -4,7 +4,7 @@
 import Foundation
 
 /// What a database engine supports. PostgreSQL matches today's behaviour.
-/// SQLite is a beta file database (`isAvailable == true`). DuckDB is a file database that
+/// SQLite is a file database (`isAvailable == true`). DuckDB is a file database that
 /// needs its plugin (`requiresPlugin`).
 nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// How a running statement is stopped.

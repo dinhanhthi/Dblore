@@ -38,7 +38,8 @@ extension ConnectionFormContent {
 
           FormField(label: "Port") {
             TextField(
-              "5432", value: $connectionConfig.port, format: .number.grouping(.never)
+              String(connectionConfig.databaseType.defaultPort), value: $connectionConfig.port,
+              format: .number.grouping(.never)
             )
             .textFieldStyle(.plain)
             .numberInputCapsuleStyle()
@@ -49,18 +50,19 @@ extension ConnectionFormContent {
 
       if capabilities.isFileBased {
         sqliteFileSection()
+        usernameField()
       } else {
-        FormField(label: "Database") {
-          TextField("database_name", text: $connectionConfig.database)
-            .textFieldStyle(.plain)
-            .inputCapsuleStyle()
-        }
-      }
+        HStack(alignment: .top, spacing: Spacing.md) {
+          FormField(label: "Database") {
+            TextField("database_name", text: $connectionConfig.database)
+              .textFieldStyle(.plain)
+              .inputCapsuleStyle()
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
 
-      FormField(label: "Username") {
-        TextField("username", text: $connectionConfig.username)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+          usernameField()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
       }
 
       if capabilities.usesPassword {
@@ -69,26 +71,42 @@ extension ConnectionFormContent {
         }
       }
 
-      if capabilities.supportsSSL {
-        sslModeMenu(selection: $connectionConfig.sslMode) {
-          connectionConfig.sslMode = $0
+      HStack(alignment: .top, spacing: Spacing.md) {
+        if capabilities.supportsSSL {
+          sslModeMenu(selection: $connectionConfig.sslMode) {
+            connectionConfig.sslMode = $0
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
+
+        FormField(label: "Timeout (seconds)") {
+          TextField(
+            "30", value: $connectionConfig.timeoutSeconds,
+            format: .number.grouping(.never)
+          )
+          .textFieldStyle(.plain)
+          .inputCapsuleStyle()  // Same height as the SSL Mode dropdown beside it
+          .frame(width: 80)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
+      if capabilities.supportsSSL {
+        sslModeHelpText()
         if usesClientCertificate(connectionConfig.sslMode) {
           clientCertificateSection()
         } else {
           removeClientCertificateButton()
         }
       }
+    }
+  }
 
-      FormField(label: "Timeout (seconds)") {
-        TextField(
-          "30", value: $connectionConfig.timeoutSeconds,
-          format: .number.grouping(.never)
-        )
+  private func usernameField() -> some View {
+    FormField(label: "Username") {
+      TextField("username", text: $connectionConfig.username)
         .textFieldStyle(.plain)
-        .numberInputCapsuleStyle()
-        .frame(width: 80)
-      }
+        .inputCapsuleStyle()
     }
   }
 
@@ -133,6 +151,7 @@ extension ConnectionFormContent {
           connectionConfig.sslMode = mode
           clearTestResult()
         }
+        sslModeHelpText()
         if usesClientCertificate(connectionStringSSLModeBinding.wrappedValue) {
           clientCertificateSection()
         } else {
@@ -169,6 +188,17 @@ extension ConnectionFormContent {
     }
   }
 
+  /// Full width under the SSL Mode row, so a long note does not stretch that row.
+  @ViewBuilder
+  private func sslModeHelpText() -> some View {
+    if let help = Self.sslModeHelp(for: connectionConfig.databaseType) {
+      Text(help)
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
   private func usesClientCertificate(_ mode: SSLMode) -> Bool {
     mode == .require || mode == .verifyCa || mode == .verifyFull
   }
@@ -181,7 +211,7 @@ extension ConnectionFormContent {
           Button(certificatePEM == nil ? "Choose certificate" : "Replace certificate") {
             chooseCertificateFile(.certificate)
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           if certificatePEM != nil {
             Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
           }
@@ -193,7 +223,7 @@ extension ConnectionFormContent {
           Button(privateKeyPEM == nil ? "Choose key" : "Replace key") {
             chooseCertificateFile(.privateKey)
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           if privateKeyPEM != nil {
             Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
           }
@@ -211,24 +241,25 @@ extension ConnectionFormContent {
           Button(caPEM == nil ? "Choose CA" : "Replace CA") {
             chooseCertificateFile(.ca)
           }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           if caPEM != nil {
             Button("Remove CA") {
               caPEM = nil
               certificateDraftChanged = true
               certificateError = nil
             }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
           }
         }
       }
 
-      if let info = certificateInfo {
+      // A custom CA alone has no subject or expiry to show.
+      if let info = certificateInfo, let subject = info.subject {
         HStack(alignment: .top, spacing: Spacing.sm) {
           Image(systemName: "checkmark.seal.fill")
             .foregroundColor(.success)
           VStack(alignment: .leading, spacing: 2) {
-            Text(info.subject)
+            Text(subject)
               .foregroundColor(.foreground)
               .textSelection(.enabled)
             if let expiry = info.expiry {
@@ -259,11 +290,13 @@ extension ConnectionFormContent {
   /// this is how the user clears it after switching to Prefer, Allow, or Disable.
   @ViewBuilder
   private func removeClientCertificateButton() -> some View {
-    if certificatePEM != nil || privateKeyPEM != nil || connectionConfig.clientCertificate != nil {
+    if certificatePEM != nil || privateKeyPEM != nil || caPEM != nil
+      || connectionConfig.clientCertificate != nil
+    {
       Button("Remove client certificate", role: .destructive) {
         removeClientCertificate()
       }
-      .buttonStyle(SecondaryButtonStyle())
+      .buttonStyle(FilledSecondaryButtonStyle())
     }
   }
 
@@ -450,7 +483,11 @@ extension ConnectionFormContent {
       return config
     }
 
-    if certificatePEM == nil && privateKeyPEM == nil {
+    guard
+      let material = Self.draftMaterial(
+        certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM, caPEM: caPEM,
+        passphrase: certificatePassphrase)
+    else {
       config.clientCertificate = nil
       return config
     }
@@ -458,30 +495,48 @@ extension ConnectionFormContent {
     guard usesClientCertificate(config.sslMode) else {
       throw CertificateFormError.tlsMode
     }
-    guard let certificatePEM, let privateKeyPEM else {
-      throw CertificateFormError.incompleteMaterial
-    }
-    let material = ClientCertificateMaterial(
-      certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM,
-      caPEM: caPEM, passphrase: certificatePassphrase.isEmpty ? nil : certificatePassphrase)
-    do {
-      _ = try PostgresSession.tlsConfiguration(sslMode: config.sslMode, material: material)
-    } catch {
-      throw CertificateFormError.invalidPEM
-    }
-    let info = try Self.certificateInfo(from: certificatePEM, hasCA: caPEM != nil)
-    config.clientCertificate = info
+    config.clientCertificate = try Self.certificateInfo(for: material, sslMode: config.sslMode)
     return config
   }
 
   func certificateMaterialForOperation(_ config: ConnectionConfig) -> ClientCertificateMaterial? {
     guard config.clientCertificate != nil else { return nil }
-    if certificateDraftChanged, let certificatePEM, let privateKeyPEM {
-      return ClientCertificateMaterial(
-        certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM,
-        caPEM: caPEM, passphrase: certificatePassphrase.isEmpty ? nil : certificatePassphrase)
+    if certificateDraftChanged,
+      let material = Self.draftMaterial(
+        certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM, caPEM: caPEM,
+        passphrase: certificatePassphrase)
+    {
+      return material
     }
     return ClientCertificateStoreFactory.load(for: config)
+  }
+
+  /// The chosen PEM files as material, or nil when none is chosen. A custom CA alone counts.
+  static func draftMaterial(
+    certificatePEM: String?, privateKeyPEM: String?, caPEM: String?, passphrase: String
+  ) -> ClientCertificateMaterial? {
+    guard certificatePEM != nil || privateKeyPEM != nil || caPEM != nil else { return nil }
+    return ClientCertificateMaterial(
+      certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM,
+      caPEM: caPEM, passphrase: passphrase.isEmpty ? nil : passphrase)
+  }
+
+  /// Validates draft material and returns its display metadata (no subject for a CA alone).
+  static func certificateInfo(
+    for material: ClientCertificateMaterial, sslMode: SSLMode
+  ) throws -> ClientCertificateInfo {
+    guard (material.certificatePEM == nil) == (material.privateKeyPEM == nil) else {
+      throw CertificateFormError.incompleteMaterial
+    }
+    do {
+      _ = try PostgresSession.tlsConfiguration(sslMode: sslMode, material: material)
+    } catch {
+      throw CertificateFormError.invalidPEM
+    }
+    guard let certificatePEM = material.certificatePEM else {
+      return ClientCertificateInfo(subject: nil, expiry: nil, hasCA: true)
+    }
+    return try certificateInfo(from: certificatePEM, hasCA: material.caPEM != nil)
   }
 
   /// Name plus Browse. The chosen path is shown under the button.
@@ -496,7 +551,7 @@ extension ConnectionFormContent {
 
       VStack(alignment: .leading, spacing: Spacing.xs) {
         Button("Browse", action: chooseSQLiteFile)
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
         if !connectionConfig.database.isEmpty {
           Text(connectionConfig.database)
             .font(.small)
@@ -520,9 +575,9 @@ extension ConnectionFormContent {
 
           HStack(spacing: Spacing.sm) {
             Button("Choose", action: chooseSQLiteFile)
-              .buttonStyle(SecondaryButtonStyle())
+              .buttonStyle(FilledSecondaryButtonStyle())
             Button("Create new file", action: createSQLiteFile)
-              .buttonStyle(SecondaryButtonStyle())
+              .buttonStyle(FilledSecondaryButtonStyle())
           }
         }
       }
@@ -546,11 +601,11 @@ extension ConnectionFormContent {
       VStack(alignment: .leading, spacing: Spacing.xs) {
         HStack(spacing: Spacing.sm) {
           Button("Open File…", action: chooseDuckDBFile)
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
           Button("New File…", action: createDuckDBFile)
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
           Button("In-Memory") { storeDuckDBChoice(.inMemory) }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
         }
         if !connectionConfig.database.isEmpty {
           Text(
@@ -790,32 +845,51 @@ extension ConnectionFormContent {
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      brakeField(
-        "Statement timeout (seconds)", global: global.statement,
-        value: $connectionConfig.statementTimeoutSeconds,
-        range: SessionBrakeLimits.statementTimeoutRange)
+      safetyRow(
+        brakeField(
+          "Statement timeout (seconds)", global: global.statement,
+          value: $connectionConfig.statementTimeoutSeconds,
+          range: SessionBrakeLimits.statementTimeoutRange),
+        brakeField(
+          "Lock timeout (seconds)", global: global.lock,
+          value: $connectionConfig.lockTimeoutSeconds,
+          range: SessionBrakeLimits.lockTimeoutRange))
 
-      brakeField(
-        "Lock timeout (seconds)", global: global.lock,
-        value: $connectionConfig.lockTimeoutSeconds,
-        range: SessionBrakeLimits.lockTimeoutRange)
+      if pairsAllSafetyFields {
+        safetyRow(idleTimeoutField(global: global.idle), rowCapField())
+      } else {
+        idleTimeoutField(global: global.idle)
+        rowCapField()
+      }
+    }
+  }
 
-      brakeField(
-        "Idle in transaction timeout (seconds)", global: global.idle,
-        value: $connectionConfig.idleInTransactionTimeoutSeconds,
-        range: SessionBrakeLimits.idleTimeoutRange)
+  /// Two equal columns, inputs aligned at the bottom when one label wraps.
+  private func safetyRow(_ leading: some View, _ trailing: some View) -> some View {
+    HStack(alignment: .bottom, spacing: Spacing.md) {
+      leading.frame(maxWidth: .infinity, alignment: .leading)
+      trailing.frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
 
-      FormField(label: "Row cap override (empty = global setting)") {
-        TextField(
-          "Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never)
-        )
-        .textFieldStyle(.plain)
-        .numberInputCapsuleStyle()
-        .frame(width: 120)
-        .onChange(of: connectionConfig.rowCapOverride) { _, newValue in
-          let clamped = SessionBrakeLimits.clampRowCap(newValue)
-          if clamped != newValue { connectionConfig.rowCapOverride = clamped }
-        }
+  private func idleTimeoutField(global: Int) -> some View {
+    brakeField(
+      "Idle in transaction timeout (seconds)", global: global,
+      value: $connectionConfig.idleInTransactionTimeoutSeconds,
+      range: SessionBrakeLimits.idleTimeoutRange)
+  }
+
+  private func rowCapField() -> some View {
+    FormField(label: "Row cap override (empty = global setting)") {
+      TextField(
+        "Global", value: $connectionConfig.rowCapOverride, format: .number.grouping(.never)
+      )
+      .textFieldStyle(.plain)
+      .numberInputCapsuleStyle()
+      .frame(width: 120)
+      .onChange(of: connectionConfig.rowCapOverride) { _, newValue in
+        let clamped = SessionBrakeLimits.clampRowCap(newValue)
+        if clamped != newValue { connectionConfig.rowCapOverride = clamped }
       }
     }
   }
@@ -862,7 +936,8 @@ enum CertificateFormError: LocalizedError {
     case .invalidPEM: "The certificate, private key, CA, or passphrase is invalid."
     case .missingMaterial: "Saved client certificate is missing. Choose the PEM files again."
     case .incompleteMaterial: "Choose both a client certificate and private key."
-    case .tlsMode: "Client certificates require Require, Verify CA, or Verify Full TLS mode."
+    case .tlsMode:
+      "Client certificates and custom CAs require Require, Verify CA, or Verify Full TLS mode."
     case .keychainSave: "Could not save the client certificate to Keychain."
     }
   }
@@ -937,7 +1012,7 @@ private struct PasswordInputField: View {
   @State private var isVisible = false
 
   var body: some View {
-    HStack(spacing: 0) {
+    Group {
       if isVisible {
         TextField("password", text: $password)
           .textFieldStyle(.plain)
@@ -945,14 +1020,19 @@ private struct PasswordInputField: View {
         SecureField("password", text: $password)
           .textFieldStyle(.plain)
       }
-
+    }
+    // Room for the eye button, which sits in an overlay so its padding does not make the
+    // capsule taller than the other fields
+    .padding(.trailing, Spacing.lg)
+    .inputCapsuleStyle()
+    .overlay(alignment: .trailing) {
       Button(action: { isVisible.toggle() }) {
         Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
       .help(isVisible ? "Hide password" : "Show password")
+      .padding(.trailing, Spacing.xs)
     }
-    .inputCapsuleStyle()
   }
 }

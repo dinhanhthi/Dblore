@@ -17,16 +17,16 @@ struct SearchPanelView: View {
   }
 
   var body: some View {
-    HStack(spacing: Spacing.sm) {
+    HStack(spacing: Spacing.xsm) {
       // Search icon
       Image(systemName: "magnifyingglass")
         .foregroundColor(.foregroundMuted)
-        .font(.system(size: 14))
+        .font(.system(size: 12))
 
       // Search text field
       TextField(searchPlaceholder, text: $viewModel.searchState.query)
         .textFieldStyle(.plain)
-        .font(.bodyText)
+        .font(.labelText)
         .focused($isSearchFieldFocused)
         .onChange(of: viewModel.searchState.query) { _, newValue in
           // Debounce search
@@ -61,65 +61,72 @@ struct SearchPanelView: View {
       }
 
       Divider()
-        .frame(height: 20)
+        .frame(height: 14)
 
       // Navigation buttons
-      Button {
-        viewModel.navigateToPreviousMatch()
-      } label: {
-        Image(systemName: "chevron.up")
-          .font(.system(size: 12))
-      }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .disabled(viewModel.searchState.matches.isEmpty)
-      .help("Previous match (⇧⌘G)")
+      HStack(spacing: 0) {
+        Button {
+          viewModel.navigateToPreviousMatch()
+        } label: {
+          Image(systemName: "chevron.up")
+            .font(.system(size: 10))
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .disabled(viewModel.searchState.matches.isEmpty)
+        .help("Previous match (⇧⌘G)")
 
-      Button {
-        viewModel.navigateToNextMatch()
-      } label: {
-        Image(systemName: "chevron.down")
-          .font(.system(size: 12))
+        Button {
+          viewModel.navigateToNextMatch()
+        } label: {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 10))
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .disabled(viewModel.searchState.matches.isEmpty)
+        .help("Next match (⌘G)")
       }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .disabled(viewModel.searchState.matches.isEmpty)
-      .help("Next match (⌘G)")
 
       Divider()
-        .frame(height: 20)
+        .frame(height: 14)
 
-      // Case sensitivity toggle
-      Button {
-        viewModel.searchState.isCaseSensitive.toggle()
-        Task {
-          await viewModel.performSearch(
-            query: viewModel.searchState.query,
-            caseSensitive: viewModel.searchState.isCaseSensitive
-          )
+      HStack(spacing: 0) {
+        // Case sensitivity toggle
+        Button {
+          viewModel.searchState.isCaseSensitive.toggle()
+          Task {
+            await viewModel.performSearch(
+              query: viewModel.searchState.query,
+              caseSensitive: viewModel.searchState.isCaseSensitive
+            )
+          }
+        } label: {
+          Image(systemName: "textformat")
+            .font(.system(size: 12))
         }
-      } label: {
-        Image(systemName: "textformat")
-          .font(.system(size: 14))
-      }
-      .buttonStyle(
-        GhostButtonStyle(
-          isActive: viewModel.searchState.isCaseSensitive,
-          iconOnly: true
+        .buttonStyle(
+          GhostButtonStyle(
+            isActive: viewModel.searchState.isCaseSensitive,
+            iconOnly: true
+          )
         )
-      )
-      .help("Case sensitive")
+        .help("Case sensitive")
 
-      // Close button
-      Button {
-        viewModel.closeSearch()
-      } label: {
-        Image(systemName: "xmark")
-          .font(.system(size: 12))
+        // Close button
+        Button {
+          viewModel.closeSearch()
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 10))
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .help("Close search (Esc)")
       }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .help("Close search (Esc)")
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
+    .controlSize(.small)
+    // Trailing padding is smaller because icon buttons carry their own padding
+    .padding(.leading, Spacing.md)
+    .padding(.trailing, Spacing.xsm)
+    .padding(.vertical, Spacing.xs)
     .background(
       RoundedRectangle(cornerRadius: CornerRadius.md)
         .fill(Color.cardBackground.opacity(0.98))

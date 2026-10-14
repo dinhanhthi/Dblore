@@ -172,10 +172,7 @@ struct OpenWorkspacesColumn: View {
       .fixedSize(horizontal: false, vertical: true)
       .background(Color.cardBackground)
       .cornerRadius(CornerRadius.md)
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md)))
     }
     .frame(width: columnWidth)
   }

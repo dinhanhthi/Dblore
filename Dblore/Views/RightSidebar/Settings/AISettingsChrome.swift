@@ -35,7 +35,7 @@ struct AITierBadge: View {
       .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.xxs)
       .background(Color.inputBackground, in: Capsule())
-      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
       .fixedSize()
   }
 }

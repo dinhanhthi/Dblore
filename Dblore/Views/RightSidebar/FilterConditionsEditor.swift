@@ -103,8 +103,7 @@ struct FilterConditionsEditor: View {
     .padding(Spacing.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.cellBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.lg).stroke(Color.border, lineWidth: 1))
+    .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.lg)))
   }
 
   /// Table columns, plus a column of a loaded saved filter that the table no longer has
