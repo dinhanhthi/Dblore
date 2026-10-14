@@ -23,6 +23,8 @@ struct TableRowView: View {
   let onColumnClick: (String) -> Void
   /// Nil hides "Import Data..." (the engine has no table import)
   let onImport: (() -> Void)?
+  /// Nil hides "Edit Structure..." ("View Structure..." on DuckDB)
+  var onEditStructure: (() -> Void)? = nil
 
   @State private var isHoveringTable = false
 
@@ -104,6 +106,11 @@ struct TableRowView: View {
       .contextMenu {
         if let onImport {
           Button("Import Data...", action: onImport)
+        }
+        if let onEditStructure {
+          Button(
+            databaseType == .duckdb ? "View Structure..." : "Edit Structure...",
+            action: onEditStructure)
         }
       }
 

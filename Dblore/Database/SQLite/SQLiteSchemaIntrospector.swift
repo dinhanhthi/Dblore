@@ -347,7 +347,7 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
     return names
   }
 
-  private func keys(
+  func keys(
     of table: String, schema: String, in session: any DatabaseSession
   ) async throws -> [ForeignKey] {
     let listed = try await rows(
@@ -451,7 +451,7 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
     return ("main", name)
   }
 
-  private func rows(
+  func rows(
     in session: any DatabaseSession, sql: String, binds: [SQLBindValue] = []
   ) async throws -> [[CellValue]] {
     let source = try await session.query(sql, binds: binds)
@@ -489,7 +489,7 @@ nonisolated extension SQLiteSchemaIntrospector {
   }
 }
 
-private nonisolated enum SQLiteCatalogValue {
+nonisolated enum SQLiteCatalogValue {
   static func string(_ row: [CellValue], _ index: Int) -> String? {
     guard index < row.count else { return nil }
     switch row[index] {

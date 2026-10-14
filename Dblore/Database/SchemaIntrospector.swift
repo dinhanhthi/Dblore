@@ -55,6 +55,11 @@ nonisolated protocol SchemaIntrospector: Sendable {
     of tableName: String, in session: any DatabaseSession
   ) async throws
     -> [String]
+
+  /// Columns, indexes, and constraints of one table. Throws when the table does not exist.
+  func tableStructure(
+    schema: String, table: String, in session: any DatabaseSession
+  ) async throws -> TableStructure
 }
 
 /// A schema object whose source can be read with `definition(of:in:)`.

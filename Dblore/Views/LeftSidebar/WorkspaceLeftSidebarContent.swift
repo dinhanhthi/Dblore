@@ -67,7 +67,7 @@ struct WorkspaceLeftSidebarContent: View {
     let label = Text(tab == .history ? "History" : tab.rawValue)
       .font(.body)
       .fontWeight(isSelected ? .semibold : .regular)
-      .foregroundColor(isSelected ? .onAccent : .foreground)
+      .foregroundColor(isSelected ? .onAccentFill : .foreground)
       .lineLimit(1)
       .minimumScaleFactor(0.7)
       .accessibilityLabel(tab.rawValue)
@@ -270,7 +270,7 @@ struct WorkspaceLeftSidebarContent: View {
             } else {
               entitySections(
                 entities, idPrefix: "", showsEmptySections: publicKeywords.isEmpty,
-                showsSchema: true)
+                showsSchema: connectionDatabaseType.namesSchema)
             }
           }
           .padding(.vertical, Spacing.sm)
@@ -317,7 +317,11 @@ struct WorkspaceLeftSidebarContent: View {
               // No active cell to insert into when no document is open
             },
             onImport: connectionDatabaseType.capabilities.supportsDataImport
-              ? { onImportTable(table.source) } : nil
+              ? { onImportTable(table.source) } : nil,
+            onEditStructure: {
+              workspaceManager.openStructureEditor(
+                schema: table.source.schema, table: table.source.name)
+            }
           )
         }
       }

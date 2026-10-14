@@ -179,7 +179,7 @@ nonisolated struct DuckDBSchemaIntrospector: SchemaIntrospector {
     return parts
   }
 
-  private func rows(
+  func rows(
     in session: any DatabaseSession, sql: String, binds: [SQLBindValue] = []
   ) async throws -> [[CellValue]] {
     let source = try await session.query(sql, binds: binds)
@@ -322,7 +322,7 @@ nonisolated enum DuckDBCatalog {
   }
 }
 
-private nonisolated enum DuckDBCatalogValue {
+nonisolated enum DuckDBCatalogValue {
   static func string(_ row: [CellValue], _ index: Int) -> String? {
     guard index < row.count else { return nil }
     switch row[index] {

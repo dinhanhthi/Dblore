@@ -87,6 +87,7 @@ extension WorkspaceManager {
       if endedTransaction, connectionState == .connected, databaseTables.isEmpty {
         startSchemaLoad()
       }
+      if endedTransaction { structureEditorTransactionEnded() }
     }
     if state.isIdle {
       transactionOpenedAt = nil

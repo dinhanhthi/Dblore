@@ -77,6 +77,11 @@ enum DatabaseError: LocalizedError {
   case batchStatementFailed(index: Int, sqlPrefix: String, reason: String, rolledBack: Bool)
   /// Cancel arrived between batch statements; the batch transaction is being rolled back.
   case batchCancelled
+  /// The structure editor's schema change was refused before anything was sent
+  case schemaChangeRefused(String)
+  /// MySQL: statement `applied + 1` of `total` failed; the `applied` before it stay committed
+  /// (each DDL commits implicitly, nothing can be rolled back)
+  case schemaChangePartiallyApplied(applied: Int, total: Int, reason: String)
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -162,6 +167,11 @@ enum DatabaseError: LocalizedError {
       return "Batch statement \(index + 1) (\(sqlPrefix)) failed: \(reason). \(outcome)"
     case .batchCancelled:
       return "Batch cancelled before the next statement."
+    case .schemaChangeRefused(let reason):
+      return "\(reason). Nothing was executed."
+    case .schemaChangePartiallyApplied(let applied, let total, let reason):
+      return "Applied \(applied) of \(total) schema changes; change \(applied + 1) failed: "
+        + "\(reason). MySQL commits each change, so the applied ones stay."
     case .queryCancelled(let pendingCount, let userTxRolledBack):
       return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
     case .sessionChanged(let count):
@@ -194,6 +204,9 @@ enum DatabaseError: LocalizedError {
         + "port, or raise the connection timeout."
     case .engineUnavailable(let type):
       let name = type.rawValue
+      guard type.capabilities.requiresPlugin else {
+        return "\(name) connections are not available in this version of Dblore."
+      }
       return "\(name) support is not installed. Install the \(name) plugin in Settings > Plugins."
     }
   }

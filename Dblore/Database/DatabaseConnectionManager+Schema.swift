@@ -10,16 +10,19 @@ import Foundation
 extension DatabaseConnectionManager {
   // MARK: - Schema Introspection
 
-  /// Fetch all tables from the database (row count is the planner estimate, nil if never analyzed)
+  /// Fetch all tables from the database (row count is the planner estimate, or the live-tuple
+  /// stats counter if never analyzed; nil when unknown)
   func fetchTables() async throws -> [DatabaseTable] {
     try await fetchCatalog("tables") { session in
       try await self.introspector.tables(in: session)
     }
   }
 
-  /// Fetch the columns of every table and view in one query, keyed by "schema.relation"
+  /// Fetch the columns of every table and view in one query, keyed by "schema.relation".
+  /// A schema reload: MySQL column origins are read again.
   func fetchAllColumns() async throws -> [String: [DatabaseColumn]] {
-    try await fetchCatalog("columns") { session in
+    mysqlTableColumns.removeAll()
+    return try await fetchCatalog("columns") { session in
       try await self.introspector.allColumns(in: session)
     }
   }
@@ -51,6 +54,15 @@ extension DatabaseConnectionManager {
     } catch {
       // If query fails (invalid name, permissions, etc.), return empty array
       return []
+    }
+  }
+
+  /// Fetch the columns, indexes, and constraints of one table for the structure editor
+  func fetchTableStructure(schema: String, table: String) async throws -> TableStructure {
+    try await PerfSignpost.interval("schema.tableStructure") {
+      try await fetchCatalog("table structure") { session in
+        try await self.introspector.tableStructure(schema: schema, table: table, in: session)
+      }
     }
   }
 
