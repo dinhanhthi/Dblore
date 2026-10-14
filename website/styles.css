@@ -454,11 +454,11 @@ section p + .list {
 }
 
 .lightbox[data-closing]::backdrop {
-  animation: lightbox-fade var(--dur-short) var(--ease-out) reverse forwards;
+  animation: lightbox-fade-out var(--dur-micro) var(--ease-out) forwards;
 }
 
 .lightbox[data-closing] img {
-  animation: lightbox-zoom var(--dur-short) var(--ease-out) reverse forwards;
+  animation: lightbox-zoom-out var(--dur-micro) var(--ease-out) forwards;
 }
 
 @keyframes lightbox-fade {
@@ -469,6 +469,19 @@ section p + .list {
 
 @keyframes lightbox-zoom {
   from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes lightbox-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes lightbox-zoom-out {
+  to {
     opacity: 0;
     transform: scale(0.96);
   }

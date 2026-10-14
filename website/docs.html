@@ -6,7 +6,7 @@
     <title>Docs · Dblore</title>
     <meta
       name="description"
-      content="Dblore docs: install, connect, notebooks, database editor, results, charts, export, Safe Mode, AI assistant and settings."
+      content="Dblore docs: install, connect to PostgreSQL, MySQL, MariaDB, SQLite or DuckDB, notebooks, database editor, results, charts, export, structure editor, Safe Mode, AI assistant, MCP server and settings."
     />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Docs · Dblore" />
@@ -91,11 +91,13 @@
               <li><a href="#editor">SQL editor</a></li>
               <li><a href="#sidebar">Sidebar</a></li>
               <li><a href="#results">Results grid</a></li>
+              <li><a href="#structure">Structure editor</a></li>
               <li><a href="#charts">Charts</a></li>
               <li><a href="#export">Export</a></li>
               <li><a href="#import">Import data</a></li>
               <li><a href="#safe-mode">Safe Mode</a></li>
               <li><a href="#ai">AI assistant</a></li>
+              <li><a href="#mcp">MCP server</a></li>
               <li><a href="#plugins">Plugins</a></li>
               <li><a href="#settings">Settings &amp; data</a></li>
             </ul>
@@ -116,15 +118,17 @@
             <h2>Connect</h2>
 <ul class="list">
             <li><strong>PostgreSQL:</strong> host, port, user, database. SSL modes from <code>disable</code> to <code>verify-full</code>, timeouts, retry on failure, read-only mode.</li>
-            <li><strong>SSH tunnel:</strong> password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
+            <li><strong>MySQL and MariaDB:</strong> host, port, user and database (required; the sidebar shows only that database). TCP only, no SSH tunnel. Users with <code>caching_sha2_password</code> or <code>mysql_native_password</code>; <code>sha256_password</code> and MariaDB ed25519 are not supported.</li>
+            <li><strong>MySQL SSL:</strong> only <strong>Verify CA</strong> and <strong>Verify Full</strong> check the server certificate. Allow, Prefer and Require encrypt the connection without checking it, so on an untrusted network an active attacker could read the traffic and the password. Allow and Prefer also fall back to plain text when the server offers no SSL. A client certificate needs Require, Verify CA or Verify Full.</li>
+            <li><strong>SSH tunnel</strong> (PostgreSQL): password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
             <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority.</li>
             <li>Statement, lock and idle-in-transaction timeouts: global in <strong>Settings &gt; Results</strong>, overridable per connection.</li>
             <li>Passwords are stored in the Keychain.</li>
             <li><strong>SQLite (beta):</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
             <li><strong>DuckDB:</strong> needs the <a href="#plugins">plugin</a>.</li>
-            <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
+            <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
             <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
-            <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted.</li>
+            <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted. A MySQL connection encrypted without a checked certificate shows <strong>Unverified SSL</strong>.</li>
 </ul>
           </section>
 
@@ -171,7 +175,7 @@
             <h2>Sidebar</h2>
 <ul class="list">
             <li>Left sidebar (<kbd>Cmd+B</kbd>) has three tabs: <strong>Schema</strong>, <strong>Favorites</strong> and <strong>History</strong>.</li>
-            <li>Schema: tables, columns, types and triggers, grouped by schema. Click a table to browse its data in a preview tab.</li>
+            <li>Schema: tables, columns, types and triggers, grouped by schema. Click a table to browse its data in a preview tab. Right-click a table for <strong>Edit Structure…</strong> (see <a href="#structure">Structure editor</a>).</li>
             <li><strong>View Source</strong> on a function, procedure or trigger opens its definition read-only, with Copy and <strong>Open as editable copy</strong>.</li>
             <li>Type in the filter field of a tab for a loose fuzzy match.</li>
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
@@ -192,6 +196,19 @@
             <li>Highlight matching cells or rows from the sidebar.</li>
             <li>Open a cell in the detail panel, with a JSON viewer and string beautifier.</li>
             <li>View Query shows the exact SQL sent, including the row limit.</li>
+</ul>
+          </section>
+
+          <section id="structure" class="doc">
+            <h2>Structure editor</h2>
+<ul class="list">
+            <li>Right-click a table in the sidebar and choose <strong>Edit Structure…</strong>.</li>
+            <li><strong>PostgreSQL and MySQL:</strong> add, rename and drop columns; change type, default and nullable; create and drop indexes; add and drop primary, foreign, unique and check constraints.</li>
+            <li><strong>SQLite:</strong> only the changes SQLite supports directly: add a column, rename a column (SQLite 3.25+), drop a column (3.35+), create and drop indexes. Constraints cannot be changed, and a key, indexed or generated column cannot be dropped; the table is never rebuilt.</li>
+            <li><strong>DuckDB:</strong> <strong>View Structure…</strong> is read-only.</li>
+            <li>Changes are staged first. The preview shows exactly the SQL that runs, and Safe Mode confirms it like other schema changes. Each Apply is recorded in History.</li>
+            <li>On PostgreSQL and SQLite the changes run together and join the pending transaction in Protected mode. On MySQL each statement commits on its own, so the editor is disabled in Protected (Review) mode, with pending changes or with your own transaction open; if a statement fails, it reports how many were applied.</li>
+            <li>Closing the editor drops staged changes that were not applied.</li>
 </ul>
           </section>
 
@@ -229,6 +246,7 @@
             <li><strong>Commit style</strong> (footer or <strong>Settings &gt; Security</strong>): Immediate, Confirm, Review or Password, for dialogs, unlocks and inline edits.</li>
             <li>Read-only connections block writes.</li>
             <li>Large reads inside transactions are capped with a server-side cursor (PostgreSQL).</li>
+            <li>MySQL commits implicitly before DDL, <code>TRUNCATE</code>, <code>LOCK TABLES</code>, grants and similar statements, so Protected mode refuses them. Turn Protected mode off for the connection to run them.</li>
 </ul>
           </section>
 
@@ -243,6 +261,21 @@
             <li>Sent only after you review and press Send: query text and error messages.</li>
             <li>Row data is never sent on its own. Generated SQL never runs automatically.</li>
             <li>For fully local use, point it at Ollama, LM Studio or <code>mlx_lm.server</code>.</li>
+</ul>
+          </section>
+
+          <section id="mcp" class="doc">
+            <h2>MCP server</h2>
+<ul class="list">
+            <li>Lets AI agents such as Claude Code and Cursor read your databases through the Model Context Protocol. Off by default: turn on <strong>Run the MCP server</strong> in <strong>Settings &gt; MCP</strong>. Dblore must be running.</li>
+            <li>The server listens on this Mac only, at <code>http://127.0.0.1:&lt;port&gt;/mcp</code> (default port 41730). Use only the port Settings shows as running.</li>
+            <li>Every request needs the Bearer token from <strong>Settings &gt; MCP</strong>. <strong>Copy Claude Code command</strong> copies a <code>claude mcp add</code> command to paste in a terminal; <strong>Copy Cursor JSON</strong> copies the entry for Cursor's <code>mcp.json</code>. <strong>Regenerate</strong> creates a new token; clients with the old one stop working until you copy the setup again.</li>
+            <li>Agents see only the connections you turn on in the list. DuckDB connections cannot be shared.</li>
+            <li>Tools: <code>list_connections</code>, <code>list_tables</code>, <code>describe_table</code> and <code>run_query</code>.</li>
+            <li>Read-only: one statement per query, checked first and then run in a read-only transaction (SQLite files open read-only). Writes, DDL, <code>SET</code>, <code>CALL</code> and several statements are refused. A query returns 200 rows by default (at most 1000), cells are cut at 2000 characters and a query stops after 30 seconds.</li>
+            <li>Use a least-privilege database user: an agent can read everything the connection's role can read, including other databases on the same server.</li>
+            <li>Query results go to the agent. Treat them as untrusted data: text stored in a table can try to give the agent instructions.</li>
+            <li>Agent queries are recorded in History (when History is on). They do not see uncommitted changes in Dblore's own open transaction.</li>
 </ul>
           </section>
 

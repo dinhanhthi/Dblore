@@ -105,12 +105,18 @@
     image.alt = slides[index].alt;
     if (counter) counter.textContent = `${index + 1} / ${slides.length}`;
     if (dir && !reduceMotion.matches) {
+      // Read the motion tokens when the slide runs; the fallbacks keep animate() from
+      // throwing on `duration: NaN` if the stylesheet is missing
+      const tokens = getComputedStyle(document.documentElement);
       image.animate(
         [
           { opacity: 0, transform: `translateX(${dir * 1.75}rem)` },
           { opacity: 1, transform: "translateX(0)" },
         ],
-        { duration: 220, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
+        {
+          duration: parseFloat(tokens.getPropertyValue("--dur-short")) || 220,
+          easing: tokens.getPropertyValue("--ease-out").trim() || "ease-out",
+        }
       );
     }
   };

@@ -7,8 +7,8 @@
 A native macOS database client: query in Jupyter-style **notebooks** or a classic
 **SQL editor**, browse and edit results and tables, explore the schema, guard production
 with Safe Mode, and get help from an AI assistant that works with your own key or a local
-model. Supports PostgreSQL, SQLite (beta) and DuckDB (as a plugin); more engines (such
-as MongoDB) are planned.
+model. Supports PostgreSQL, MySQL/MariaDB, SQLite (beta) and DuckDB (as a plugin); more
+engines (such as MongoDB) are planned.
 
 [Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
@@ -26,6 +26,10 @@ as MongoDB) are planned.
 
 - **Connections**: PostgreSQL with SSL, client certificates and SSH tunnels; import
   connections from DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
+- **MySQL and MariaDB**: TCP with TLS and client certificates (no SSH); queries, schema
+  tree, autocomplete, Safe Mode and Protected mode, history, export, staged edits by
+  primary key, foreign-key lookup, CSV import, routine and trigger source, EXPLAIN and
+  cancel. Only the Verify CA and Verify Full SSL modes check the server certificate
 - **Notebooks**: `.dblore` notebooks that mix SQL cells with inline results, like Jupyter
   for your databases; or plain `.sql` files in a classic editor
 - **Markdown notes**: jot a quick `.md` note in the workspace without saving it first
@@ -43,6 +47,10 @@ as MongoDB) are planned.
   data without writing a query
 - **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
   canvas of tables with foreign-key lines; view the source of functions and triggers
+- **Structure editor**: "Edit Structure..." on a table adds, alters, renames and drops
+  columns, indexes and keys on PostgreSQL and MySQL, with a preview of the exact SQL that
+  runs. SQLite gets only the ALTERs it supports (add column; rename and drop column on newer
+  SQLite versions; create and drop index); DuckDB is view-only
 - **Safe Mode**: protection levels, confirmation before destructive statements, and a
   Commit / Rollback banner for pending transactions, with Touch ID to unlock, and a
   commit style (Immediate, Confirm, Review or Password)
@@ -54,6 +62,10 @@ as MongoDB) are planned.
   automatically. Point it at a local model for fully local use. Detach it into a
   floating, draggable bubble at the bottom of the window, or pick the default in
   Settings > AI > Panel
+- **MCP server**: let AI agents such as Claude Code or Cursor read your databases through a
+  read-only server on `127.0.0.1`. Off by default; only the connections you allow in
+  Settings > MCP are exposed, every query is checked and run read-only, and queries are
+  recorded in History
 
 ## Plugins
 
@@ -77,7 +89,7 @@ before every load, and **Remove** deletes it again.
 
 - macOS 14 or later
 - Xcode 27 on macOS 26 (only to build from source)
-- A PostgreSQL server to connect to
+- A PostgreSQL or MySQL/MariaDB server, or a SQLite or DuckDB file, to connect to
 
 ## Build from source
 
@@ -100,7 +112,8 @@ finish.
 
 ### Local databases
 
-[`docker/`](docker/README.md) has ready-made PostgreSQL containers:
+[`docker/`](docker/README.md) has ready-made PostgreSQL and MySQL/MariaDB containers.
+PostgreSQL:
 
 - a development database with sample data, on port `5433`
   (`postgresql://dblore:dblore123@localhost:5433/dblore`);
@@ -111,6 +124,17 @@ cd docker/postgresql
 cp .env.example .env
 docker compose up -d
 ```
+
+[`docker/mysql`](docker/mysql/docker-compose.test.yml) runs MySQL 8.4 on port `3307` and
+MariaDB 11.4 on port `3308` for the opt-in MySQL test suites (`TEST_RUNNER_MYSQL_TESTS=1`):
+
+```sh
+docker compose -f docker/mysql/docker-compose.test.yml up -d
+```
+
+CI runs the integration suites against live PostgreSQL, MySQL and MariaDB containers, which
+[`scripts/ci-live-databases.sh`](scripts/ci-live-databases.sh) starts and removes again (see
+[docker/README.md](docker/README.md#ci-live-databases-scriptsci-live-databasessh)).
 
 ## Contributing
 
