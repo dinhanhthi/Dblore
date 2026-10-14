@@ -46,8 +46,8 @@ struct GenericModal<Content: View, Footer: View>: View {
     .background(Color.cardBackground)
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.xxl)
-        .stroke(Color.border.opacity(0.5), lineWidth: 1)
+      HairlineBorder(
+        shape: RoundedRectangle(cornerRadius: CornerRadius.xxl), color: .border.opacity(0.5))
     )
     .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)

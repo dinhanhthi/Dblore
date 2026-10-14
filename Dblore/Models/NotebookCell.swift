@@ -355,8 +355,7 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
   }
 
   // Cached date formatters for performance
-  // Note: DateFormatter is thread-safe for reading after initialization
-  private nonisolated(unsafe) static let displayDateFormatter: DateFormatter = {
+  private nonisolated static let displayDateFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
     formatter.timeStyle = .medium

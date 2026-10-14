@@ -46,7 +46,8 @@ struct AIAssistantPanel: View {
     VStack(spacing: 0) {
       header
       if isFloating {
-        Rectangle().fill(Color.border).frame(height: 1)
+        // Follows the foreground so it stays visible on the tinted bubble: lighter in dark, darker in light
+        Rectangle().fill(Color.foreground.opacity(0.2)).frame(height: 1)
       }
       if assistant.needsSetup {
         setupState
@@ -460,8 +461,7 @@ struct AIAssistantPanel: View {
       .background(Color.inputBackground)
       .clipShape(composerShape)
       .overlay(
-        composerShape
-          .stroke(composerFocused ? Color.borderFocus : Color.border, lineWidth: 1)
+        HairlineBorder(shape: composerShape, color: composerFocused ? .borderFocus : .border)
       )
 
       if assistant.isGenerating {

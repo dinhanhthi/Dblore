@@ -182,7 +182,7 @@ struct WorkspaceContainerView: View {
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
                 }
-                .padding(.trailing, Spacing.md)
+                .padding(.trailing, Spacing.xsm)
               }
 
             Spacer()
@@ -922,7 +922,7 @@ struct WorkspaceTitleBarTabsView: View {
           .frame(
             width: ComponentSize.trafficLightAndToggleWidth
               - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
-              + workspaceManager.connectionState.connectionButtonsWidth + 10)
+              + workspaceManager.connectionState.connectionButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
       }

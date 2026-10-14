@@ -313,7 +313,7 @@ struct ResultExportSheet: View {
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, Spacing.xxs)
     .background(tint.opacity(0.15), in: Capsule())
-    .overlay(Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1))
+    .overlay(HairlineBorder(shape: Capsule(), color: tint.opacity(0.45)))
   }
 
   private func rowCaption(_ count: Int) -> String {

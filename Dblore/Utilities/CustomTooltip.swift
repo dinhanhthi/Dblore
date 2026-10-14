@@ -87,8 +87,7 @@ private struct SmartTooltipModifier: ViewModifier {
           .clipShape(RoundedRectangle(cornerRadius: 6))
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 6)
-          .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        HairlineBorder(shape: RoundedRectangle(cornerRadius: 6), color: .primary.opacity(0.1))
       )
       .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
       .fixedSize()  // Prevent text wrapping

@@ -64,8 +64,9 @@ struct TableImportSheet: View {
                   in: RoundedRectangle(cornerRadius: CornerRadius.lg)
                 )
                 .overlay(
-                  RoundedRectangle(cornerRadius: CornerRadius.lg)
-                    .stroke(Color.destructive.opacity(0.4), lineWidth: 1)
+                  HairlineBorder(
+                    shape: RoundedRectangle(cornerRadius: CornerRadius.lg),
+                    color: .destructive.opacity(0.4))
                 )
             }
           }
@@ -210,7 +211,7 @@ struct TableImportSheet: View {
         .frame(height: min(max(previewContentHeight, 1), 172))
         .background(Color.appBackground)
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
-        .overlay(RoundedRectangle(cornerRadius: CornerRadius.md).stroke(Color.border))
+        .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md)))
       }
     }
   }

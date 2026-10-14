@@ -157,7 +157,7 @@ struct HistoryRow: View {
       .lineLimit(1)
       .padding(.horizontal, Spacing.xs)
       .background(Capsule().fill(Color.inputBackground))
-      .overlay(Capsule().strokeBorder(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
   }
 }
 

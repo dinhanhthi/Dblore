@@ -48,8 +48,8 @@ struct HistoryTabContent: View {
         .lineLimit(1)
         .padding(.horizontal, Spacing.sm)
         .frame(height: SidebarFilterMetrics.controlHeight)
-        .background(Capsule().fill(isOn ? Color.accentFill : Color.inputBackground))
-        .overlay(Capsule().stroke(isOn ? Color.accentFill : Color.border, lineWidth: 1))
+        .background(Capsule().fill(isOn ? Color.accentFill : Color.controlBackground))
+        .overlay(HairlineBorder(shape: Capsule(), color: isOn ? .accentFill : .border))
     }
     .buttonStyle(.plain)
     .linkPointer()
@@ -86,7 +86,7 @@ struct HistoryTabContent: View {
       }
       .padding(.horizontal, Spacing.sm)
       .frame(height: SidebarFilterMetrics.controlHeight)
-      .background(Capsule().fill(Color.inputBackground))
+      .background(Capsule().fill(Color.controlBackground))
       .overlay(HairlineBorder(shape: Capsule()))
     }
     .menuStyle(.button)

@@ -163,11 +163,12 @@ struct NewRowFieldEditor: View {
       .textFieldStyle(.plain)
       .font(.mono)
       .padding(Spacing.sm)
-      .background(Color.inputBackground)
+      .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(error != nil ? Color.destructive : Color.border, lineWidth: 1)
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.md),
+          color: error != nil ? .destructive : .border)
       )
     }
   }

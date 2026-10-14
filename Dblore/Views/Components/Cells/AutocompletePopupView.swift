@@ -29,8 +29,9 @@ struct AutocompletePopupView: View {
     .cornerRadius(CornerRadius.sm)
     .shadow(color: Color.shadow, radius: 8, x: 0, y: 2)
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.sm)
-        .stroke(Color.foregroundSubtle.opacity(0.2), lineWidth: 1)
+      HairlineBorder(
+        shape: RoundedRectangle(cornerRadius: CornerRadius.sm),
+        color: .foregroundSubtle.opacity(0.2))
     )
   }
 }

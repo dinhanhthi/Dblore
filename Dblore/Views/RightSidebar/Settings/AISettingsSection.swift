@@ -645,7 +645,7 @@ private struct ModelNameComboBox: View {
     .frame(height: ButtonMetrics.regularHeight)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.controlBackground, in: Capsule())
-    .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+    .overlay(HairlineBorder(shape: Capsule()))
     .accessibilityLabel("Model")
   }
 }

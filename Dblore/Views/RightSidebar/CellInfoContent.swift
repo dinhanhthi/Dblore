@@ -169,11 +169,12 @@ struct CellInfoContent: View {
         // Text editor for other types (only in edit mode)
         VStack(alignment: .leading, spacing: Spacing.xs) {
           PlainTextEditor(text: $editedValue)
-            .background(Color.inputBackground)
+            .background(Color.controlBackground)
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
             .overlay(
-              RoundedRectangle(cornerRadius: CornerRadius.md)
-                .stroke(validationError != nil ? Color.destructive : Color.border, lineWidth: 1)
+              HairlineBorder(
+                shape: RoundedRectangle(cornerRadius: CornerRadius.md),
+                color: validationError != nil ? .destructive : .border)
             )
             .frame(maxHeight: .infinity)
             .focusedValue(\.isCellValueEditing, isEditing)

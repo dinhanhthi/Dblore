@@ -45,17 +45,19 @@ struct WorkspaceInfoModal: View {
   var body: some View {
     VStack(spacing: 0) {
       GenericModalHeader(
-        title: "Details", titleIcon: "info.circle", onClose: { isPresented = false })
-
-      VStack(spacing: 0) {
+        title: "Details", titleIcon: "info.circle", onClose: { isPresented = false }
+      ) {
         CapsuleTabPicker(
           selection: $workspaceManager.workspaceInfoTab,
           tabs: Array(WorkspaceInfoTab.allCases),
           height: 28
         )
-        .padding(.horizontal, Spacing.md)
-        .padding(.vertical, Spacing.sm)
+        .fitsContent()
+        // Keeps the picker clear of the close button
+        .padding(.trailing, Spacing.md)
+      }
 
+      VStack(spacing: 0) {
         Group {
           switch workspaceManager.workspaceInfoTab {
           case .workspace:
@@ -141,6 +143,7 @@ struct WorkspaceInfoModal: View {
         VStack(spacing: 0) {
           connectionStatusBand
             .padding(.horizontal, Spacing.md)
+            .padding(.top, Spacing.md)
             .padding(.bottom, Spacing.sm)
 
           // The same form as Add connection, so every value set there is shown and editable

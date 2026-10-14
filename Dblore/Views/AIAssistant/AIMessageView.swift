@@ -53,8 +53,9 @@ struct AIMessageView: View {
       .background(bubbleBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.lg)
-          .stroke(entry.isError ? Color.destructive : Color.border, lineWidth: 1)
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.lg),
+          color: entry.isError ? .destructive : .border)
           .opacity(isUser && !entry.isError ? 0 : 1)
       )
       .overlay(alignment: .topTrailing) {
@@ -516,7 +517,7 @@ private struct AICodeBlock: View {
     }
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.md).stroke(Color.border, lineWidth: 1))
+      HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md)))
   }
 
   var modifiesBadge: some View {
@@ -581,7 +582,7 @@ private struct AICodeActionButton: View {
       // Filled so it stands off the gray code header; hover shows on the border.
       .background(Capsule().fill(Color.controlBackground))
       .overlay(
-        Capsule().stroke(isHighlighted ? Color.borderStrong : Color.border, lineWidth: 1)
+        HairlineBorder(shape: Capsule(), color: isHighlighted ? .borderStrong : .border)
       )
       .contentShape(Capsule())
       .opacity(isEnabled ? 1 : 0.5)

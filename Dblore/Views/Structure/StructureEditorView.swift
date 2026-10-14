@@ -221,8 +221,8 @@ struct StructureBanner: View {
       .padding(Spacing.md)
       .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.lg)
-          .stroke(color.opacity(0.4), lineWidth: 1)
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.lg), color: color.opacity(0.4))
       )
   }
 }

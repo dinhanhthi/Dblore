@@ -183,7 +183,7 @@ struct QueryCopyBar: View {
         .foregroundColor(.foreground)
         .frame(width: ResultDisplayPicker.height, height: ResultDisplayPicker.height)
         .background(Circle().fill(Color.controlBackground))
-        .overlay(Circle().strokeBorder(Color.border, lineWidth: 1))
+        .overlay(HairlineBorder(shape: Circle()))
         .contentShape(Circle())
     } else {
       label()

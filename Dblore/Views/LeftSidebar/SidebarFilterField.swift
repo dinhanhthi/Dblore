@@ -89,8 +89,8 @@ struct SidebarFilterField<Trailing: View>: View {
     .padding(.vertical, controlHeight == nil ? Spacing.xsm : 0)
     .frame(maxWidth: .infinity)
     .frame(height: controlHeight)
-    .background(Capsule().fill(Color.inputBackground))
-    .overlay(Capsule().strokeBorder(Color.border, lineWidth: 1))
+    .background(Capsule().fill(Color.controlBackground))
+    .overlay(HairlineBorder(shape: Capsule()))
   }
 }
 

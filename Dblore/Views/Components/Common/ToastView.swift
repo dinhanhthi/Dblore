@@ -56,8 +56,7 @@ struct ToastView: View {
     )
     // Neutral edge; the icon carries the toast type
     .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.md)
-        .strokeBorder(Color.border, lineWidth: 1)
+      HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md))
     )
     .shadow(color: Color.shadow, radius: 12, x: 0, y: 4)
     .onHover { hovering in

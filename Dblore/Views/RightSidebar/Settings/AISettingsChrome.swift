@@ -17,8 +17,9 @@ struct AIModelCard<Content: View>: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.appBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(isCurrent ? Color.accent : Color.border, lineWidth: 1)
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.md),
+          color: isCurrent ? .accent : .border)
       )
   }
 }

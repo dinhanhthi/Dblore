@@ -31,7 +31,7 @@ struct AIChipButtonStyle: ButtonStyle {
           configuration.isPressed || isHovering ? Color.cellBackgroundHover : Color.inputBackground
         )
         .clipShape(Capsule())
-        .overlay(Capsule().stroke(isActive ? Color.accent : Color.border, lineWidth: 1))
+        .overlay(HairlineBorder(shape: Capsule(), color: isActive ? .accent : .border))
         .contentShape(Capsule())
         .opacity(isEnabled ? 1 : 0.5)
         .onHover { isHovering = $0 }
