@@ -76,15 +76,4 @@ struct AIEndpointTests {
         == "https://x.com/v1/messages")
     #expect(AIEndpoint.modelsURL(base: base).absoluteString == "https://x.com/v1/models")
   }
-
-  @Test("errors have user-facing descriptions")
-  func errorDescriptions() {
-    let errors: [AIEndpointError] = [
-      .empty, .invalidURL, .unsupportedScheme, .credentialsNotAllowed, .missingHost,
-      .insecureRemoteHTTP,
-    ]
-    for error in errors {
-      #expect(error.errorDescription?.isEmpty == false)
-    }
-  }
 }

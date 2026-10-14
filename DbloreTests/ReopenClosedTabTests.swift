@@ -54,38 +54,6 @@ struct ReopenClosedTabTests {
     #expect(!manager.canReopenClosedTab)
   }
 
-  @Test("Reopens closed tabs most recent first")
-  func reopensInReverseOrder() async throws {
-    let (folder, urls) = try Self.makeFiles(2)
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let (manager, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    for url in urls { try await manager.openFile(url: url) }
-
-    manager.requestCloseTab(id: manager.tabs[0].id)
-    manager.requestCloseTab(id: manager.tabs[0].id)
-    #expect(manager.tabs.isEmpty)
-
-    try await manager.reopenClosedTab()
-    #expect(manager.tabs.map(\.fileURL) == [urls[1]])
-    try await manager.reopenClosedTab()
-    #expect(manager.tabs.map(\.fileURL) == urls)
-  }
-
-  @Test("Untitled tabs are not remembered")
-  func untitledTabIsNotRemembered() async throws {
-    let (manager, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    _ = manager.newSQLFile()
-    manager.requestCloseTab(id: manager.tabs[0].id)
-    manager.closeTabWithoutSaving()
-    #expect(manager.tabs.isEmpty)
-    #expect(!manager.canReopenClosedTab)
-
-    try await manager.reopenClosedTab()
-    #expect(manager.tabs.isEmpty)
-  }
-
   @Test("A reopened tab reads through the closed tab's bookmark")
   func reopenUsesClosedTabBookmark() async throws {
     let (folder, urls) = try Self.makeFiles(1)

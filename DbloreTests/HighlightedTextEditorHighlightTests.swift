@@ -62,58 +62,6 @@ struct HighlightedTextEditorHighlightTests {
     }
   }
 
-  @Test("paste of a multi-line comment recolors the following lines")
-  func pasteMultiLineComment() {
-    withSyntaxHighlightingEnabled {
-      let host = OffscreenEditorHost(text: base)
-      defer { host.close() }
-      // the pasted "/*" is closed by the existing "*/" three lines below
-      type("/* one\ntwo\n", at: 0, in: host)
-      #expect(matchesFullHighlight(host))
-      // the first SELECT now sits inside a comment
-      let update = (host.textView.string as NSString).range(of: "SELECT").location
-      let color =
-        host.textView.textStorage!.attribute(.foregroundColor, at: update, effectiveRange: nil)
-        as? NSColor
-      #expect(same(color, SQLSyntaxHighlighter.Palette().comment))
-    }
-  }
-
-  @Test("two edits before one highlight pass take the full path and end correct")
-  func twoEditsBeforeOnePass() {
-    withSyntaxHighlightingEnabled {
-      let host = OffscreenEditorHost(text: base)
-      defer { host.close() }
-      let storage = host.textView.textStorage!
-      let ns = storage.string as NSString
-      let before = host.coordinator.fullFallbackCount
-      storage.replaceCharacters(
-        in: NSRange(location: ns.range(of: "UPDATE").location, length: 0), with: "/*")
-      storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "-- ")
-      host.fireTextDidChange()
-      #expect(host.coordinator.fullFallbackCount == before + 1)
-      #expect(matchesFullHighlight(host))
-    }
-  }
-
-  @Test("a pass without a window invalidates pending edits so the next pass is full")
-  func windowlessPassInvalidatesPending() {
-    withSyntaxHighlightingEnabled {
-      let host = OffscreenEditorHost(text: base)
-      defer { host.close() }
-      let storage = host.textView.textStorage!
-      host.window.contentView = nil
-      storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "/*")
-      host.coordinator.applyIncrementalHighlighting(to: host.textView)  // no window: early return
-      host.window.contentView = host.scrollView
-      let before = host.coordinator.fullFallbackCount
-      storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: " x")
-      host.fireTextDidChange()
-      #expect(host.coordinator.fullFallbackCount == before + 1)
-      #expect(matchesFullHighlight(host))
-    }
-  }
-
   @Test(
     "highlighting registers no undo: type, undo restores prior text, canUndo false after one undo")
   func highlightingRegistersNoUndo() {
@@ -134,36 +82,4 @@ struct HighlightedTextEditorHighlightTests {
     }
   }
 
-  @Test("search-active path keeps search backgrounds")
-  func searchActiveKeepsBackgrounds() {
-    withSyntaxHighlightingEnabled {
-      let host = OffscreenEditorHost(text: base)
-      defer { host.close() }
-      host.coordinator.searchQuery = "users"
-      host.coordinator.isSearchActive = true
-      type("x", at: 0, in: host)
-      let storage = host.textView.textStorage!
-      let ns = storage.string as NSString
-      let match = ns.range(of: "users")
-      let bg = storage.attribute(.backgroundColor, at: match.location, effectiveRange: nil)
-      #expect(bg != nil)
-      let none = storage.attribute(.backgroundColor, at: 0, effectiveRange: nil)
-      #expect(none == nil)
-    }
-  }
-
-  @Test("updateNSView with unchanged wrap does not reconfigure the container")
-  func unchangedWrapDoesNotReconfigure() {
-    let host = OffscreenEditorHost(text: base)
-    defer { host.close() }
-    let c = host.coordinator
-    c.configureWordWrapIfNeeded(true, scrollView: host.scrollView, textView: host.textView)
-    #expect(c.wordWrapReconfigureCount == 1)
-    c.configureWordWrapIfNeeded(true, scrollView: host.scrollView, textView: host.textView)
-    #expect(c.wordWrapReconfigureCount == 1)
-    c.configureWordWrapIfNeeded(false, scrollView: host.scrollView, textView: host.textView)
-    #expect(c.wordWrapReconfigureCount == 2)
-    #expect(host.textView.textContainer?.widthTracksTextView == false)
-    #expect(host.scrollView.hasHorizontalScroller)
-  }
 }

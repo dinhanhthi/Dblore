@@ -69,13 +69,6 @@ struct DataViewerStateTests {
     #expect(viewer.pageCount == expected)
   }
 
-  @Test("Unknown total: no page count, Next allowed")
-  func unknownTotal() {
-    #expect(state().pageCount == nil)
-    #expect(state().canGoNext)
-    #expect(!state().canGoPrevious)
-  }
-
   @Test("canGoNext is false on the last page")
   func lastPage() {
     var viewer = state()
@@ -87,27 +80,12 @@ struct DataViewerStateTests {
     #expect(viewer.canGoNext)
   }
 
-  @Test("rowRange covers the loaded rows of the page")
-  func rowRange() {
-    var viewer = state()
-    viewer.page = 2
-    #expect(viewer.rowRange(loadedRows: 40) == 101...140)
-    #expect(viewer.rowRange(loadedRows: 0) == nil)
-  }
-
   @Test("total(from:) reads an int or numeric string first cell")
   func total() {
     #expect(DataViewerState.total(from: result([[.int(42)]])) == 42)
     #expect(DataViewerState.total(from: result([[.string("42")]])) == 42)
     #expect(DataViewerState.total(from: result([])) == nil)
     #expect(DataViewerState.total(from: result([[.string("abc")]])) == nil)
-  }
-
-  @Test("Title omits the public schema")
-  func title() {
-    #expect(state().title == "users")
-    #expect(state(schema: "").title == "users")
-    #expect(state(schema: "sales").title == "sales.users")
   }
 
   @Test("loadKey changes with page but not with hidden columns")

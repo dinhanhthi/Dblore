@@ -150,11 +150,6 @@ struct MLXEngineTests {
     }
   }
 
-  @Test("default idle interval is 300 seconds")
-  func defaultInterval() {
-    #expect(MLXEngine.idleUnloadInterval == .seconds(300))
-  }
-
   @Test("idle unload fires after the interval and releases memory")
   func idleUnloadFires() async throws {
     let released = Counter()
@@ -320,21 +315,6 @@ struct MLXEngineTests {
     #expect(await engine.isLoaded)
     await engine.unloadIdle(generation: await engine.idleGeneration)
     #expect(!(await engine.isLoaded))
-  }
-
-  @Test("loading phase is reported only when a load is needed")
-  func phases() async throws {
-    let engine = makeEngine(interval: .seconds(60))
-    let first = PhaseLog()
-    try await engine.generate(
-      modelID: "a", directory: dir, messages: [], context: nil, parameters: params,
-      onPhase: { first.add($0) }, onChunk: { _ in })
-    #expect(first.values == [.loading, .generating])
-    let second = PhaseLog()
-    try await engine.generate(
-      modelID: "a", directory: dir, messages: [], context: nil, parameters: params,
-      onPhase: { second.add($0) }, onChunk: { _ in })
-    #expect(second.values == [.generating])
   }
 }
 

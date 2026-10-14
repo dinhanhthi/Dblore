@@ -10,83 +10,6 @@ import Testing
 @MainActor
 struct QueryParsingDetectionTests {
 
-  // MARK: - isSelectQuery Tests
-
-  @Suite("isSelectQuery - Detection")
-  struct IsSelectQueryTests {
-
-    @Test("Simple SELECT query returns true")
-    func simpleSelectQueryReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "SELECT * FROM users"
-      let result = manager.isSelectQuery(query)
-      #expect(result == true, "Should detect SELECT query")
-    }
-
-    @Test("SELECT with leading comment returns true")
-    func selectWithLeadingCommentReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "-- comment\nSELECT * FROM users"
-      let result = manager.isSelectQuery(query)
-      #expect(result == true, "Should detect SELECT after comment")
-    }
-
-    @Test("SELECT with multi-line comment returns true")
-    func selectWithMultiLineCommentReturnsTrue() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "/* comment */ SELECT * FROM users"
-      let result = manager.isSelectQuery(query)
-      #expect(result == true, "Should detect SELECT after multi-line comment")
-    }
-
-    @Test("UPDATE query returns false")
-    func updateQueryReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "UPDATE users SET name = 'x'"
-      let result = manager.isSelectQuery(query)
-      #expect(result == false, "Should not detect UPDATE as SELECT")
-    }
-
-    @Test("DELETE query returns false")
-    func deleteQueryReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "DELETE FROM users"
-      let result = manager.isSelectQuery(query)
-      #expect(result == false, "Should not detect DELETE as SELECT")
-    }
-
-    @Test("INSERT query returns false")
-    func insertQueryReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "INSERT INTO users VALUES (1)"
-      let result = manager.isSelectQuery(query)
-      #expect(result == false, "Should not detect INSERT as SELECT")
-    }
-
-    @Test("CREATE TABLE query returns false")
-    func createTableQueryReturnsFalse() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "CREATE TABLE users (id INT)"
-      let result = manager.isSelectQuery(query)
-      #expect(result == false, "Should not detect CREATE as SELECT")
-    }
-
-    @Test("Case insensitive SELECT detection")
-    func caseInsensitiveSelectDetection() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "select * from users"
-      let result = manager.isSelectQuery(query)
-      #expect(result == true, "Should detect lowercase select")
-    }
-
-    @Test("SELECT in string literal does not trigger detection")
-    func selectInStringLiteralNotDetected() throws {
-      let manager = DatabaseConnectionManager()
-      let query = "UPDATE users SET query = 'SELECT * FROM test'"
-      let result = manager.isSelectQuery(query)
-      #expect(result == false, "Should not detect SELECT in string literal")
-    }
-  }
 
   // MARK: - Statement kind detection (classifier; replaces prefix-based isModificationQuery)
 
@@ -107,11 +30,6 @@ struct QueryParsingDetectionTests {
     @Test("SELECT is a read")
     func selectIsRead() {
       #expect(kind("SELECT * FROM users") == .read)
-    }
-
-    @Test("Modification query with leading comment is detected")
-    func modificationWithLeadingComment() {
-      #expect(kind("-- comment\nUPDATE users SET name = 'x'") == .dml)
     }
 
     @Test("CREATE, DROP, TRUNCATE and ALTER are DDL")
@@ -200,16 +118,6 @@ struct QueryParsingDetectionTests {
       }
     }
 
-    @Test("SELECT, INSERT, DROP and TRUNCATE do not use affectsAllRows")
-    func otherStatementsDoNotAffectAllRows() {
-      for query in [
-        "SELECT * FROM users", "INSERT INTO users VALUES (1)", "DROP TABLE users",
-        "TRUNCATE TABLE users",
-      ] {
-        #expect(!affectsAllRows(query), "Not DELETE/UPDATE: \(query)")
-      }
-    }
-
     @Test("WHERE in comment is ignored")
     func whereInCommentIsIgnored() {
       #expect(affectsAllRows("-- WHERE id = 1\nDELETE FROM users"))
@@ -221,78 +129,5 @@ struct QueryParsingDetectionTests {
     }
   }
 
-  // MARK: - SQL Syntax Behavior Tests
 
-  @Suite("SQL Syntax Behavior - Alias and Typos")
-  struct SQLSyntaxBehaviorTests {
-
-    @Test("Trailing word after table name is treated as table alias by SQL")
-    func trailingWordTreatedAsAlias() throws {
-      let manager = DatabaseConnectionManager()
-
-      let validQueries = [
-        "SELECT * FROM users u",
-        "SELECT * FROM users AS u",
-        "SELECT * FROM bot limi",
-        "SELECT * FROM bot whatever",
-      ]
-
-      for query in validQueries {
-        #expect(manager.isSelectQuery(query) == true, "'\(query)' should be recognized as SELECT")
-      }
-    }
-  }
-
-  // MARK: - Integration Tests - Real-world Scenarios
-
-  @Suite("Integration - Real-world Scenarios")
-  struct IntegrationTests {
-
-    @Test("Scenario: Query with inline comments and string literals")
-    func queryWithInlineCommentsAndStringLiterals() throws {
-      let manager = DatabaseConnectionManager()
-
-      let query = """
-        SELECT /* user cols */ name, email, '-- not a comment' AS note
-        FROM users -- active users only
-        WHERE status = 'active'
-        """
-
-      let stripped = manager.stripAllComments(query)
-
-      #expect(!stripped.contains("/*"), "Should remove multi-line comment marker")
-      #expect(!stripped.contains("user cols"), "Should remove comment content")
-      #expect(!stripped.contains("-- active users only"), "Should remove single-line comment")
-      #expect(stripped.contains("'-- not a comment'"), "Should preserve string literal")
-      #expect(stripped.contains("name, email"), "Should preserve column list")
-      #expect(stripped.contains("WHERE status = 'active'"), "Should preserve WHERE clause")
-    }
-
-    @Test("Scenario: Complex query with nested comments")
-    func complexQueryWithNestedComments() throws {
-      let manager = DatabaseConnectionManager()
-
-      let query = """
-        -- Start of query
-        SELECT
-          u.id,
-          u.name, /* user name */
-          u.email /* contact */
-        FROM users u
-        WHERE u.active = true
-        -- End of query
-        """
-
-      let stripped = manager.stripAllComments(query)
-
-      #expect(!stripped.contains("--"), "Should remove single-line comments")
-      #expect(!stripped.contains("/*"), "Should remove multi-line comments")
-      #expect(!stripped.contains("Start of query"), "Should remove comment text")
-      #expect(!stripped.contains("user name"), "Should remove comment text")
-      #expect(stripped.contains("SELECT"), "Should preserve SELECT")
-      #expect(stripped.contains("u.id"), "Should preserve columns")
-      #expect(stripped.contains("FROM users u"), "Should preserve FROM")
-      #expect(stripped.contains("WHERE u.active = true"), "Should preserve WHERE")
-    }
-  }
 }

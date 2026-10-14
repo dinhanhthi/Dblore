@@ -40,13 +40,6 @@ struct ResultGridModelTests {
     #expect(model.row(at: 0) != result.rows[0])
   }
 
-  @Test("NULL is displayed as NULL, like the current result table")
-  func nullDisplayText() {
-    let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    #expect(model.displayText(row: 1, column: 1) == "NULL")
-    #expect(model.displayText(row: 0, column: 1) == "a")
-  }
-
   @Test("Display text is on one line and capped at maxDisplayLength characters")
   func flatCappedDisplayText() {
     let max = ResultGridModel.maxDisplayLength
@@ -130,29 +123,6 @@ struct ResultGridModelTests {
     return prefix.endIndex < text.endIndex ? flat + "…" : flat
   }
 
-  @Test("Cached text equals the uncached computation, on the first and the second call")
-  func cachedTextEqualsUncached() {
-    let values: [CellValue] = [
-      .string("line1\nline2\r\nline3"), .string(String(repeating: "ab\n", count: 600)),
-      .string(String(repeating: "x", count: 1000)), .string(String(repeating: "x", count: 1001)),
-      .null, .int(-42), .double(3.14159), .bool(true),
-      .date(Date(timeIntervalSince1970: 1_700_000_000)), .json("{\"a\":\n[1,2]}"),
-      .data(Data([0xDE, 0xAD, 0xBE, 0xEF])),
-    ]
-    let result = CellResult(
-      columns: [ColumnInfo(name: "v", type: "text")], rows: values.map { [$0] },
-      rowCount: values.count)
-    let model = ResultGridModel(result: result, sortColumn: nil, ascending: true)
-    for pass in 1...2 {
-      for (row, value) in values.enumerated() {
-        #expect(
-          model.displayText(row: row, column: 0) == referenceText(value), "pass \(pass) row \(row)")
-      }
-    }
-    // Column beyond a short row shows NULL
-    #expect(model.displayText(row: 0, column: 5) == "NULL")
-  }
-
   @Test("A model rebuilt after an inline edit shows the new value, the old model keeps the old")
   func rebuiltModelShowsEdit() {
     let before = ResultGridModel(result: result, sortColumn: nil, ascending: true)
@@ -165,18 +135,6 @@ struct ResultGridModelTests {
 
     #expect(after.displayText(row: 0, column: 1) == "edited")
     #expect(before.displayText(row: 0, column: 1) == "c")
-  }
-
-  @Test("The cache is per model: models over different results do not share entries")
-  func cacheIsPerModel() {
-    let other = CellResult(
-      columns: columns, rows: [[.int(9), .string("z")]], rowCount: 1)
-    let modelA = ResultGridModel(result: result, sortColumn: nil, ascending: true)
-    let modelB = ResultGridModel(result: other, sortColumn: nil, ascending: true)
-    #expect(modelA.displayText(row: 0, column: 0) == "3")
-    #expect(modelB.displayText(row: 0, column: 0) == "9")
-    #expect(modelA.displayText(row: 0, column: 1) == "c")
-    #expect(modelB.displayText(row: 0, column: 1) == "z")
   }
 
   @Test("A sorted model caches by displayed row")

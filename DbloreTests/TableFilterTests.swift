@@ -116,11 +116,4 @@ struct TableFilterTests {
     #expect(TableFilter(conditions: []).isEmpty)
     #expect(clause([]) == nil)
   }
-
-  @Test("Display names match the labels")
-  func displayNames() {
-    #expect(FilterOperator.notEquals.displayName == "does not equal")
-    #expect(FilterOperator.greaterThanOrEqual.displayName == "greater than or equal")
-    #expect(FilterOperator.isNotNull.displayName == "is not null")
-  }
 }

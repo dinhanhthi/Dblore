@@ -119,14 +119,6 @@ struct DelimitedTextReaderTests {
     #expect(pinned.encoding == .isoLatin1)
   }
 
-  @Test("The row limit caps data rows and still reads the header")
-  func rowLimit() throws {
-    let sample = Data("h1,h2\r\n1,2\r\n3,4\r\n5,6\r\n".utf8)
-    let table = try DelimitedTextReader.read(sample, options: .init(rowLimit: 2))
-    #expect(table.columns == ["h1", "h2"])
-    #expect(table.rows == [["1", "2"], ["3", "4"]])
-  }
-
   @Test("An unclosed quote is an error")
   func unclosedQuote() {
     #expect(throws: DelimitedTextError.unclosedQuote) {

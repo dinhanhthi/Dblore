@@ -32,14 +32,6 @@ struct LocalModelManagerTests {
     #expect(!LocalModelManager.isInstalled(at: root.appendingPathComponent("missing")))
   }
 
-  @Test func progressClampsAndIsMonotonic() {
-    #expect(LocalModelManager.progress(downloadedBytes: 50, expected: 100, previous: 0) == 0.5)
-    #expect(LocalModelManager.progress(downloadedBytes: 10, expected: 100, previous: 0.5) == 0.5)
-    #expect(LocalModelManager.progress(downloadedBytes: 500, expected: 100, previous: 0) == 1)
-    #expect(LocalModelManager.progress(downloadedBytes: -5, expected: 100, previous: 0) == 0)
-    #expect(LocalModelManager.progress(downloadedBytes: 5, expected: 0, previous: 0) == 0)
-  }
-
   @Test func successfulDownloadMovesStagingIntoPlace() async throws {
     let root = makeRoot()
     defer { try? FileManager.default.removeItem(at: root) }

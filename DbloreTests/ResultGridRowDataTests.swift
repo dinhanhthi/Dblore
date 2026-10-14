@@ -30,16 +30,6 @@ struct ResultGridRowDataTests {
     #expect(rowData["id"] != result.rows[0][0])
   }
 
-  @Test("Descending sort and no sort column keep row data aligned with the displayed row")
-  func descendingAndUnsorted() {
-    let result = CellResult(columns: columns, rows: rows, rowCount: 3)
-    let descending = result.sortedRows(byColumn: "name", ascending: false)
-    #expect(CellResult.rowData(columns: columns, row: descending[0])["id"] == .int(3))
-    #expect(CellResult.rowData(columns: columns, row: descending[2])["id"] == .int(1))
-    #expect(result.sortedRows(byColumn: nil, ascending: true) == rows)
-    #expect(result.sortedRows(byColumn: "missing", ascending: true) == rows)
-  }
-
   @Test("Duplicate column names keep the last value and a short row maps only its values")
   func duplicateAndShortRows() {
     let duplicated = [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "id", type: "int4")]

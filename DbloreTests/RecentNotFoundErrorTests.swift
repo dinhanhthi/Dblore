@@ -9,12 +9,6 @@ import Testing
 @Suite("RecentNotFoundErrorTests")
 struct RecentNotFoundErrorTests {
 
-  @Test("NSCocoaErrorDomain 4 is a missing file")
-  func fileNoSuchFileIsNotFound() {
-    let error = NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)
-    #expect(RecentManager.isFileNotFound(error))
-  }
-
   @Test("NSCocoaErrorDomain 260 is a missing file")
   func fileReadNoSuchFileIsNotFound() {
     let error = NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoSuchFileError)

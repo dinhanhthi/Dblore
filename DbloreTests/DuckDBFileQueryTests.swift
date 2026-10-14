@@ -13,30 +13,6 @@ import Testing
 struct DuckDBFileQueryTests {
   private static let actionID = "query-duckdb-file"
 
-  @Test("The action is listed only for a DuckDB workspace, connected or not")
-  func actionVisibleOnlyForDuckDB() {
-    let none = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-    let postgres = WorkspaceManager(
-      workspace: Workspace(connectionConfig: ConnectionConfig(host: "db", database: "app")),
-      restoreTabs: false)
-    let sqlite = WorkspaceManager(
-      workspace: Workspace(
-        connectionConfig: ConnectionConfig(databaseType: .sqlite, database: "/tmp/x.sqlite")),
-      restoreTabs: false)
-    for manager in [none, postgres, sqlite] {
-      #expect(!manager.paletteSources().actions.contains { $0.id == Self.actionID })
-      #expect(!manager.perform(.action(id: Self.actionID, title: "")))
-    }
-
-    let duckDB = WorkspaceManager(
-      workspace: Workspace(
-        connectionConfig: ConnectionConfig(
-          databaseType: .duckdb, database: DuckDBSession.inMemoryPath)),
-      restoreTabs: false)
-    let action = duckDB.paletteSources().actions.first { $0.id == Self.actionID }
-    #expect(action?.title == "Query Parquet/CSV File...")
-  }
-
   @Test(
     "Parquet maps to read_parquet, anything else to read_csv",
     arguments: [

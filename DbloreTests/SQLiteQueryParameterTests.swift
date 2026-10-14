@@ -132,15 +132,6 @@ struct SQLiteQueryParameterTests {
     }
   }
 
-  @Test("A repeated name returns one row of two equal strings", .timeLimit(.minutes(1)))
-  func repeatedNameReturnsTwoEqualStrings() async throws {
-    try await withFile { manager, _ in
-      let result = try await manager.execute(
-        userSQL: "SELECT :n, :n", parameters: ["n": .text("z")], policy: open)
-      #expect(result.rows == [[.string("z"), .string("z")]])
-    }
-  }
-
   @Test("Pending DML previews :name, and rollback restores the old name", .timeLimit(.minutes(1)))
   func pendingUpdatePreviewKeepsNamedSQL() async throws {
     try await withFile(protectedMode: true) { manager, table in

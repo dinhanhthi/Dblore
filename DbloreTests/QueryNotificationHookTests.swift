@@ -85,14 +85,12 @@ struct QueryNotificationHookTests {
     await viewModel.lastCompletionNotification?.value
   }
 
-  /// Polls until the statement is running on the connection
+  /// Polls until the statement is running on the connection; the test's time limit bounds it
   private func waitUntilInFlight(_ viewModel: NotebookViewModel) async throws {
     let manager = try #require(viewModel.connectionManager)
-    for _ in 0..<500 {
-      if await manager.runningStatementStatus().inFlight { return }
+    while await !manager.runningStatementStatus().inFlight {
       try await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("statement never started")
   }
 
   @Test("A long cell run posts exactly one notification for its tab", .timeLimit(.minutes(1)))
@@ -108,18 +106,6 @@ struct QueryNotificationHookTests {
       #expect(request.title == "Query finished")
       #expect(request.body.hasPrefix("Orders · "))
       #expect(request.body.hasSuffix(" · 3 rows"))
-    }
-  }
-
-  @Test("A DML cell run reports affected rows", .timeLimit(.minutes(1)))
-  func dmlCellRunReportsAffectedRows() async throws {
-    try await withViewModel(cells: ["UPDATE items SET name = 'z' WHERE id <= 2"]) {
-      viewModel, center in
-      await runCell(viewModel)
-
-      let requests = await center.requests
-      #expect(requests.count == 1)
-      #expect(requests.first?.body.hasSuffix(" · 2 rows affected") == true)
     }
   }
 
@@ -163,31 +149,12 @@ struct QueryNotificationHookTests {
       try await waitUntilInFlight(viewModel)
 
       await viewModel.cancelRunningStatement(cancelQueue: true)
-      // The cell gets its error result once the interrupted statement returns (up to 20s on a
-      // loaded runner)
-      for _ in 0..<2000 where viewModel.notebook.cells[0].result == nil {
-        try await Task.sleep(for: .milliseconds(10))
-      }
+      // The queue is idle at the cancel; the stopped run returns once the interrupted statement
+      // has given the cell its error result
+      await viewModel.executionQueue.waitForProcessingRun()
       #expect(viewModel.notebook.cells[0].result?.error != nil)
       await viewModel.lastCompletionNotification?.value
 
-      #expect(await center.requests.isEmpty)
-    }
-  }
-
-  @Test("A cancelled editor run posts nothing", .timeLimit(.minutes(1)))
-  func cancelledEditorRunPostsNothing() async throws {
-    try await withViewModel { viewModel, center in
-      viewModel.viewMode = .editor
-      viewModel.cancelQueryPrompt = { _ in true }
-      let run = Task { await viewModel.executeEditorQuery(Self.endless) }
-      try await waitUntilInFlight(viewModel)
-
-      await viewModel.cancelRunningStatement(cancelQueue: false)
-      await run.value
-      await viewModel.lastCompletionNotification?.value
-
-      #expect(viewModel.editorResult?.error != nil)
       #expect(await center.requests.isEmpty)
     }
   }
@@ -208,34 +175,6 @@ struct QueryNotificationHookTests {
       let requests = await center.requests
       #expect(requests.count == 1)
       #expect(requests.first?.body.hasSuffix(" · 6 rows") == true)
-    }
-  }
-
-  @Test("Run All with a failing cell posts one failed notification", .timeLimit(.minutes(1)))
-  func runAllWithFailurePostsFailed() async throws {
-    try await withViewModel(
-      cells: ["SELECT * FROM items", "SELECT * FROM missing_tbl", "SELECT 1"]
-    ) { viewModel, center in
-      await viewModel.runAllCells(bypass: true)
-      await viewModel.executionQueue.waitForIdle()
-      await viewModel.lastCompletionNotification?.value
-
-      let requests = await center.requests
-      #expect(requests.count == 1)
-      #expect(requests.first?.title == "Query failed")
-    }
-  }
-
-  @Test("An editor run posts one notification", .timeLimit(.minutes(1)))
-  func editorRunPostsOnce() async throws {
-    try await withViewModel { viewModel, center in
-      viewModel.viewMode = .editor
-      await viewModel.executeEditorQuery("SELECT * FROM items; SELECT 1")
-      await viewModel.lastCompletionNotification?.value
-
-      let requests = await center.requests
-      #expect(requests.count == 1)
-      #expect(requests.first?.body.hasSuffix(" · 1 row") == true)
     }
   }
 

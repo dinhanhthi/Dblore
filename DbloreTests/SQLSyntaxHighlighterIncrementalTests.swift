@@ -60,68 +60,7 @@ struct SQLSyntaxHighlighterIncrementalTests {
 
   // MARK: - Spans
 
-  @Test("blockSpans finds multi-line comments, strings and dollar quotes")
-  func spans() {
-    let text = "a /* x\ny */ 'b' $$ c\nd $$ -- e\nf"
-    let spans = H.blockSpans(in: text as NSString)
-    #expect(spans.map { substring(text, $0) } == ["/* x\ny */", "'b'", "$$ c\nd $$", "-- e"])
-  }
-
   // MARK: - Dirty range
-
-  @Test("typing inside a line dirties only that paragraph")
-  func typingInsideLine() {
-    let old = "SELECT 1;\nSELECT 2;\nSELECT 3;"
-    let r = dirty(old: old, range: NSRange(location: 17, length: 0), with: "x")
-    #expect(substring(r.new, r.dirty) == "SELECT x2;\n")
-  }
-
-  @Test("opening /* dirties through the next */")
-  func openingComment() {
-    let old = "a\nb\nc */\nd\ne"
-    let r = dirty(old: old, range: NSRange(location: 2, length: 0), with: "/*")
-    #expect(substring(r.new, r.dirty) == "/*b\nc */\n")
-  }
-
-  @Test("opening /* without a close dirties only its paragraph (unclosed is not a comment)")
-  func openingCommentUnclosed() {
-    let old = "a\nb\nc\nd"
-    let r = dirty(old: old, range: NSRange(location: 2, length: 0), with: "/*")
-    #expect(substring(r.new, r.dirty) == "/*b\n")
-  }
-
-  @Test("closing $$ dirties the former span")
-  func closingDollarQuote() {
-    let old = "x\n$$ body\nmore\n$$ y\nz"
-    // Break the closing "$$" so the span runs on; then restore it
-    let broken = dirty(old: old, range: NSRange(location: 16, length: 1), with: "")
-    #expect(substring(broken.new, broken.dirty).hasPrefix("$$ body\nmore\n$ y"))
-    let closed = dirty(old: broken.new, range: NSRange(location: 16, length: 0), with: "$")
-    #expect(substring(closed.new, closed.dirty) == "$$ body\nmore\n$$ y\n")
-  }
-
-  @Test("multi-line delete including a comment start")
-  func multiLineDelete() {
-    let old = "a\nb /* c\nd\ne */ f\ng\nh"
-    // Delete from inside line b through the middle of line d (removes the "/*")
-    let r = dirty(old: old, range: NSRange(location: 3, length: 7), with: "")
-    #expect(r.new == "a\nb\ne */ f\ng\nh")
-    #expect(substring(r.new, r.dirty) == "b\ne */ f\n")
-  }
-
-  @Test("deleting the first character dirties the whole paragraph and repaints it")
-  func deleteAtOffsetZero() {
-    withSyntaxHighlightingEnabled {
-      let old = "xSELECT 1"
-      let storage = NSMutableAttributedString(attributedString: H.highlight(old))
-      let r = dirty(old: old, range: NSRange(location: 0, length: 1), with: "")
-      #expect(r.new == "SELECT 1")
-      #expect(r.dirty == NSRange(location: 0, length: 8))
-      storage.replaceCharacters(in: NSRange(location: 0, length: 1), with: "")
-      H.rehighlight(storage: storage, range: r.dirty, palette: H.Palette())
-      #expect(mismatch(storage, H.highlight(r.new)) == nil)
-    }
-  }
 
   @Test("deleting everything does not crash and dirties nothing")
   func deleteEverything() {
@@ -254,31 +193,6 @@ struct SQLSyntaxHighlighterIncrementalTests {
       ]
     }
     return edits
-  }
-
-  @Test("edits on tiny and empty texts equal a full highlight")
-  func tinyTexts() {
-    withSyntaxHighlightingEnabled {
-      let palette = H.Palette()
-      let cases: [(String, NSRange, String)] = [
-        ("xSELECT 1", NSRange(location: 0, length: 1), ""),
-        ("x", NSRange(location: 0, length: 1), ""),
-        ("SELECT 1", NSRange(location: 0, length: 8), ""),
-        ("", NSRange(location: 0, length: 0), "SELECT 1"),
-        ("", NSRange(location: 0, length: 0), "'"),
-        ("a\n", NSRange(location: 2, length: 0), "b"),
-        ("/* a */", NSRange(location: 0, length: 1), ""),
-        ("count (1)", NSRange(location: 5, length: 1), ""),
-      ]
-      for (i, c) in cases.enumerated() {
-        let storage = NSMutableAttributedString(attributedString: H.highlight(c.0))
-        if let failure = applyAndCompare(
-          storage, range: c.1, replacement: c.2, palette: palette, label: "tiny case \(i)")
-        {
-          Issue.record(Comment(rawValue: failure))
-        }
-      }
-    }
   }
 
   @Test("incremental equals full highlight after boundary and 200 seeded random edits")

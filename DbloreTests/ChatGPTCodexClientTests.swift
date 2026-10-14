@@ -414,14 +414,6 @@ struct ChatGPTCodexClientTests {
     #expect(result.models == AIProviderKind.chatGPT.fallbackModels)
   }
 
-  @Test("chatGPT kind is fixed, keyless and uses the responses wire")
-  func kindProperties() {
-    #expect(AIProviderKind.chatGPT.wire == .responses)
-    #expect(!AIProviderKind.chatGPT.requiresAPIKey)
-    #expect(AIProviderKind.chatGPT.defaultBaseURL == "https://chatgpt.com/backend-api/codex")
-    #expect(AIProviderKind.chatGPT.displayName == "ChatGPT (subscription, experimental)")
-  }
-
   @Test("factory builds a codex client ignoring the configured base URL")
   func factory() throws {
     let made = try AIClientFactory.make(

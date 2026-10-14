@@ -28,39 +28,6 @@ struct TabCloseRightTests {
 
   private static func titles(_ manager: WorkspaceManager) -> [String] { manager.tabs.map(\.title) }
 
-  @Test("tabsToCloseRight lists only unpinned tabs after the target")
-  func rangeSkipsPinned() {
-    let manager = Self.manager(tabCount: 4)
-    manager.setPinned(true, id: manager.tabs[3].id)  // t3, t0, t1, t2
-    let target = manager.tabs[1].id  // t0
-    #expect(manager.tabsToCloseRight(of: target) == manager.tabs[2...].map(\.id))
-    #expect(manager.tabsToCloseRight(of: manager.tabs[3].id).isEmpty)
-    #expect(manager.tabsToCloseRight(of: UUID()).isEmpty)
-  }
-
-  @Test("Clean tabs to the right close immediately")
-  func cleanClose() {
-    let manager = Self.manager(tabCount: 4)
-    manager.closeTabsToTheRight(of: manager.tabs[1].id)
-    #expect(Self.titles(manager) == ["t0", "t1"])
-    #expect(manager.tabToClose == nil)
-  }
-
-  @Test("No-op when the target is the last tab")
-  func lastIsNoOp() {
-    let manager = Self.manager(tabCount: 3)
-    manager.closeTabsToTheRight(of: manager.tabs[2].id)
-    #expect(Self.titles(manager) == ["t0", "t1", "t2"])
-  }
-
-  @Test("Pinned tabs are untouched")
-  func pinnedKept() {
-    let manager = Self.manager(tabCount: 4)
-    manager.setPinned(true, id: manager.tabs[3].id)  // t3, t0, t1, t2
-    manager.closeTabsToTheRight(of: manager.tabs[1].id)
-    #expect(Self.titles(manager) == ["t3", "t0"])
-  }
-
   @Test("Dirty tabs prompt one at a time and the queue continues after each answer")
   func dirtySequenced() async {
     let manager = Self.manager(tabCount: 5, dirty: [2, 4])

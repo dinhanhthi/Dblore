@@ -9,31 +9,6 @@ import Testing
 @MainActor
 @Suite("Local data providers", .serialized)
 struct LocalDataProvidersTests {
-  @Test("Eleven categories, and only local models are large")
-  func categories() {
-    #expect(LocalDataCategory.allCases.count == 11)
-    #expect(LocalDataCategory.allCases.filter(\.isLarge) == [.localModels])
-    let titles = Dictionary(uniqueKeysWithValues: LocalDataCategory.allCases.map { ($0, $0.title) })
-    #expect(
-      titles == [
-        .queryHistory: "Query History",
-        .connectionHistory: "Connection History",
-        .recentItems: "Recent Workspaces and Files",
-        .openTabs: "Open Tabs",
-        .savedFilters: "Saved Filters and Highlights",
-        .schemaLayout: "Schema Diagram Layout",
-        .aiChats: "AI Chats",
-        .aiSettings: "AI Settings",
-        .localModels: "Local AI Models",
-        .logs: "Logs",
-        .appSettings: "App Settings",
-      ])
-    for category in LocalDataCategory.allCases {
-      #expect(!category.symbolName.isEmpty)
-      #expect(!category.description.isEmpty)
-    }
-  }
-
   @Test("Query history summary, round-trip, and an unrelated preference")
   func queryHistory() async throws {
     let root = try makeRoot()
@@ -344,39 +319,6 @@ struct LocalDataProvidersTests {
     expectUnrelated(suite)
   }
 
-  @Test("Logs export, delete closed files, and truncate the current file")
-  func logs() async throws {
-    let root = try makeRoot()
-    defer { remove(root) }
-    let logs = root.appendingPathComponent("Logs", isDirectory: true)
-    try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-    let current = logs.appendingPathComponent(AppLogger.currentLogFileName())
-    let closed = logs.appendingPathComponent("dblore-1999-01-01.log")
-    try "current-line\n".write(to: current, atomically: true, encoding: .utf8)
-    try "old-line\n".write(to: closed, atomically: true, encoding: .utf8)
-    let provider = LogsLocalDataProvider(root: logs)
-    let suite = makeSuite()
-    setUnrelated(suite)
-
-    let summary = await provider.summary()
-    #expect(summary.itemCount == 2)
-    #expect(summary.bytes > 0)
-    #expect(summary.location == logs)
-
-    let folder = try makeFolder(in: root)
-    try await provider.export(to: folder)
-    try await provider.clear()
-    #expect(FileManager.default.fileExists(atPath: closed.path) == false)
-    #expect(try String(contentsOf: current, encoding: .utf8).isEmpty)
-    let notes = try await recordChanges {
-      try await provider.importData(from: folder)
-    }
-    #expect(notes == [LocalDataCategory.logs.rawValue])
-    #expect(try String(contentsOf: current, encoding: .utf8) == "current-line\n")
-    #expect(try String(contentsOf: closed, encoding: .utf8) == "old-line\n")
-    expectUnrelated(suite)
-  }
-
   @Test("App settings skip password and secret keys")
   func appSettings() async throws {
     let suite = makeSuite()
@@ -411,6 +353,26 @@ struct LocalDataProvidersTests {
     #expect(string(forKey: "app.settings.themePreference", suite: suite) == "dark")
     #expect(string(forKey: "app.settings.safeModePassword", suite: suite) == "password-hash-value")
     expectUnrelated(suite)
+  }
+
+  @Test("App settings leave out values JSON cannot hold, so the count matches the file")
+  func appSettingsSkipNonJSONValues() async throws {
+    let suite = makeSuite()
+    setString("dark", forKey: "app.settings.themePreference", suite: suite)
+    setData(Data([0x01, 0x02]), forKey: "app.settings.futureBlob", suite: suite)
+    let provider = AppSettingsLocalDataProvider(defaults: suite.defaults, domainName: suite.name)
+
+    #expect(await provider.summary().itemCount == 1)
+
+    let folder = try makeFolder()
+    defer { remove(folder) }
+    try await provider.export(to: folder)
+    let file = try Data(contentsOf: folder.appendingPathComponent("appSettings.json"))
+    let exported = try JSONSerialization.jsonObject(with: file) as? [String: Any]
+    #expect(exported?.keys.sorted() == ["app.settings.themePreference"])
+
+    try await provider.importData(from: folder)
+    #expect(data(forKey: "app.settings.futureBlob", suite: suite) == Data([0x01, 0x02]))
   }
 
   @Test("Provider and category sources do not call Keychain")

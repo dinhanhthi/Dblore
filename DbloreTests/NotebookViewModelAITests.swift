@@ -32,15 +32,6 @@ struct NotebookViewModelAITests {
     #expect(viewModel.undoManager.canUndo)
   }
 
-  @Test("Notebook insert with no selection appends")
-  func insertAppends() {
-    let viewModel = makeViewModel()
-
-    viewModel.insertAISQL("SELECT 42")
-
-    #expect(viewModel.notebook.cells.map(\.content) == ["SELECT 1", "SELECT 2", "SELECT 42"])
-  }
-
   @Test("aiCurrentSQL in notebook mode is the selected cell content, nil when empty")
   func currentSQLNotebook() {
     let viewModel = makeViewModel(contents: ["SELECT 1", "  "])

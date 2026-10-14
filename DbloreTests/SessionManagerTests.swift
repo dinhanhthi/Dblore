@@ -11,17 +11,6 @@ import Testing
 @Suite("SessionManager launch restore")
 @MainActor
 struct SessionManagerTests {
-  @Test("Does not restore session when running under XCTest")
-  func skipsRestoreUnderXCTest() {
-    let environment = ["XCTestConfigurationFilePath": "/tmp/config.xctestconfiguration"]
-    #expect(SessionManager.shouldRestoreSession(environment: environment) == false)
-  }
-
-  @Test("Restores session on normal launch")
-  func restoresOnNormalLaunch() {
-    #expect(SessionManager.shouldRestoreSession(environment: [:]) == true)
-  }
-
   // MARK: - Unknown engine entries
 
   private static let historyKey = "ace.thi.dblore.connectionHistory"

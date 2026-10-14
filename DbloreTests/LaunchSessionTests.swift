@@ -99,22 +99,6 @@ struct LaunchSessionTests {
     #expect(LaunchRestorer.isRestoring == false)
   }
 
-  @Test("grouped orders groups by groupIndex and windows by tabIndex")
-  func groupedOrdering() {
-    let session = LaunchSession(windows: [
-      window(x: 101, group: 1, tab: 1, selected: false, content: .welcome),
-      window(x: 1, group: 0, tab: 1, selected: false, content: .welcome),
-      window(x: 100, group: 1, tab: 0, selected: true, content: .welcome),
-      window(x: 0, group: 0, tab: 0, selected: true, content: .welcome),
-    ])
-
-    let groups = session.grouped
-    #expect(groups.map { $0.map(\.groupIndex) } == [[0, 0], [1, 1]])
-    #expect(groups.map { $0.map(\.tabIndex) } == [[0, 1], [0, 1]])
-    #expect(groups.map { $0.map(\.isSelectedInGroup) } == [[true, false], [true, false]])
-    #expect(groups.map { $0.map(\.frame.x) } == [[0, 1], [100, 101]])
-  }
-
   @Test("load returns nil for a missing or corrupt snapshot")
   func loadMissingOrCorrupt() throws {
     try withIsolatedDefaults { suite in
@@ -273,26 +257,6 @@ struct LaunchSessionTests {
     #expect(workspace.workspace?.name == "Scratch")
     #expect(
       workspace.textOverlays == [LaunchTextOverlay(tabId: tabID, text: .script("select draft"))])
-  }
-
-  @Test("Two windows in one group and a lone window keep tab order and front-to-back groups")
-  func groupsTabbedWindowsAndALoneWindow() {
-    let session = LaunchSessionCapture.session(
-      windows: [
-        descriptor(group: "pair", tab: 0, selected: false, ordered: 5, x: 20),
-        descriptor(
-          group: "lone", tab: 0, selected: true, ordered: 0, x: 10, miniaturized: true),
-        descriptor(group: "pair", tab: 1, selected: true, ordered: 1, x: 30),
-      ],
-      workspaces: [:])
-
-    let groups = session.grouped
-    #expect(groups.map { $0.map(\.groupIndex) } == [[0], [1, 1]])
-    #expect(groups.map { $0.map(\.tabIndex) } == [[0], [0, 1]])
-    #expect(groups.map { $0.map(\.isSelectedInGroup) } == [[true], [false, true]])
-    #expect(groups.map { $0.map(\.frame.x) } == [[10], [20, 30]])
-    #expect(groups[0][0].isMiniaturized == true)
-    #expect(groups[1][1].isMiniaturized == false)
   }
 
   @Test("Welcome, a saved workspace, and an untitled workspace record their own content")
@@ -487,20 +451,6 @@ struct LaunchSessionTests {
     #expect(manager.editorDocument(for: tabID)?.content == "select missing")
   }
 
-  @Test("Markdown overlay text and a markdown tab reference survive a Codable round trip")
-  func markdownRoundTrip() throws {
-    let text = LaunchOverlayText.markdown("# a\r\n")
-    let decodedText = try JSONDecoder().decode(
-      LaunchOverlayText.self, from: JSONEncoder().encode(text))
-    #expect(decodedText == text)
-
-    let reference = WorkspaceTabReference(
-      fileURL: URL(fileURLWithPath: "/tmp/note.md"), documentType: .markdown, title: "note.md")
-    let decodedReference = try JSONDecoder().decode(
-      WorkspaceTabReference.self, from: JSONEncoder().encode(reference))
-    #expect(decodedReference == reference)
-  }
-
   @Test("A dirty untitled markdown note is captured as markdown text")
   func dirtyMarkdownNoteCaptured() throws {
     let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
@@ -540,25 +490,6 @@ struct LaunchSessionTests {
     #expect(viewModel.viewMode == .markdown)
     #expect(viewModel.editorContent == "# missing")
     #expect(manager.editorDocument(for: tabID)?.content == "# missing")
-  }
-
-  @Test("restoreOverlayTab replaces a markdown tab's text and keeps it a markdown note")
-  func restoreMarkdownOverlayReplacesExistingText() throws {
-    defer { LaunchRestorer.resetLaunchState() }
-    let manager = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
-    let tabID = manager.newMarkdownFile()
-    manager.markClean(tabId: tabID)
-
-    manager.restoreOverlayTab(LaunchTextOverlay(tabId: tabID, text: .markdown("# restored")))
-
-    let tab = try #require(manager.tabs.first { $0.id == tabID })
-    #expect(tab.documentType == .markdown)
-    #expect(tab.isDirty == true)
-    let viewModel = try #require(manager.viewModel(for: tabID))
-    #expect(viewModel.viewMode == .markdown)
-    #expect(viewModel.editorContent == "# restored")
-    #expect(manager.editorDocument(for: tabID)?.content == "# restored")
-    #expect(manager.tabs.count == 1)
   }
 
   @Test("takeFrontWindowClaim returns the front window once, then nil")

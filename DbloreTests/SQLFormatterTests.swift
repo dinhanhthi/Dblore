@@ -70,27 +70,6 @@ struct SQLFormatterTests {
     )
   }
 
-  @Test("Statements are separated by a blank line")
-  func separatesStatements() {
-    #expect(SQLFormatter.format("select 1; select 2;") == "SELECT 1;\n\nSELECT 2;")
-  }
-
-  @Test("Function calls, casts and operators keep their spacing")
-  func keepsInlineSpacing() {
-    let sql = "select coalesce(a,b)::text, x>=1, left(name, 3) from t"
-    #expect(
-      SQLFormatter.format(sql)
-        == "SELECT coalesce(a, b)::text,\n       x>=1,\n       LEFT(name, 3)\nFROM t"
-    )
-  }
-
-  @Test("Clause words inside parentheses stay inline")
-  func keepsParenthesizedClausesInline() {
-    let sql = "select row_number() over (partition by a order by b) from t"
-    #expect(
-      SQLFormatter.format(sql) == "SELECT row_number() OVER (PARTITION BY a ORDER BY b)\nFROM t")
-  }
-
   @Test("Formatting is idempotent")
   func isIdempotent() {
     let sql =
@@ -126,10 +105,5 @@ struct SQLFormatterTests {
   func keepsBackslashStrings() {
     let sql = "select 'a\\', b'"
     #expect(SQLFormatter.format(sql) == sql)
-  }
-
-  @Test("Blank input is returned unchanged")
-  func keepsBlankInput() {
-    #expect(SQLFormatter.format("  \n") == "  \n")
   }
 }

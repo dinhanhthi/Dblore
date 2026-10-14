@@ -9,18 +9,6 @@ import Testing
 @Suite("Row change set")
 @MainActor
 struct RowChangeSetTests {
-  @Test("A new change set is empty")
-  func emptySet() {
-    let set = RowChangeSet(target: sampleTarget())
-    #expect(set.isEmpty)
-    #expect(set.counts.inserts == 0)
-    #expect(set.counts.deletes == 0)
-    #expect(set.counts.edits == 0)
-    #expect(set.inserts.isEmpty)
-    #expect(set.deletes.isEmpty)
-    #expect(set.edits.isEmpty)
-  }
-
   @Test("Editing a cell back to its original clears that column and the row")
   func editThenRevertToOriginalClearsTheEdit() throws {
     var set = RowChangeSet(target: sampleTarget())

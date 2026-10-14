@@ -10,12 +10,6 @@ import Testing
 @Suite("Data viewer tab type")
 @MainActor
 struct DataViewerTabTypeTests {
-  @Test("Has no file extension and a table icon")
-  func extensionAndIcon() {
-    #expect(TabDocumentType.dataViewer.fileExtension == "")
-    #expect(TabDocumentType.dataViewer.icon == "tablecells")
-  }
-
   @Test("Is never detected from a file URL")
   func neverFromURL() {
     for name in ["a.dblore", "a.sql", "a", "a.dataViewer", "a.txt"] {
@@ -34,14 +28,6 @@ struct DataViewerTabTypeTests {
 
     let decoded = try JSONDecoder().decode(TabItem.self, from: data)
     #expect(!decoded.isPreview)
-  }
-
-  @Test("dataViewer document type round-trips through Codable")
-  func documentTypeRoundTrip() throws {
-    let tab = TabItem(documentType: .dataViewer, title: "users")
-    let data = try JSONEncoder().encode(tab)
-    let decoded = try JSONDecoder().decode(TabItem.self, from: data)
-    #expect(decoded.documentType == .dataViewer)
   }
 
   @Test("Saving a data viewer tab is a no-op")

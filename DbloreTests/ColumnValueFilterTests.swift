@@ -157,17 +157,6 @@ struct ColumnValueFilterTests {
     #expect(coordinator.model?.row(at: 0) == [.int(2)])
   }
 
-  @Test("The checkbox list stops before one toggle per loaded row")
-  func listedCategoriesAreCapped() {
-    let categories = (0..<ColumnValueFilter.listedCategoryLimit + 40).map { index in
-      ColumnCategory(key: "k\(index)", label: "v\(index)", count: 1)
-    }
-    let listed = ColumnValueFilter.listedCategories(categories)
-    #expect(listed.count == ColumnValueFilter.listedCategoryLimit)
-    #expect(
-      listed.map(\.key) == categories.prefix(ColumnValueFilter.listedCategoryLimit).map(\.key))
-  }
-
   @Test("A hidden search match moves to the next row the grid can show")
   func hiddenSearchMatchMovesToNextShownRow() {
     let columns = [

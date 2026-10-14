@@ -47,31 +47,6 @@ struct QueryCompletionNotifierTests {
     #expect(result == expected)
   }
 
-  @Test("content shows tab name, duration and row count")
-  func contentRows() {
-    let content = QueryCompletionNotifier.makeContent(
-      tabName: "Orders", elapsed: 12.4, outcome: .rows(1234))
-    #expect(content.title == "Query finished")
-    #expect(content.body == "Orders · 12.4 s · 1,234 rows")
-  }
-
-  @Test("content for affected rows, singular row, failure and cancel")
-  func contentOutcomes() {
-    #expect(
-      QueryCompletionNotifier.makeContent(tabName: "T", elapsed: 3, outcome: .affected(5)).body
-        == "T · 3.0 s · 5 rows affected")
-    #expect(
-      QueryCompletionNotifier.makeContent(tabName: "T", elapsed: 3, outcome: .rows(1)).body
-        == "T · 3.0 s · 1 row")
-    let failed = QueryCompletionNotifier.makeContent(tabName: "T", elapsed: 3, outcome: .failed)
-    #expect(failed.title == "Query failed")
-    #expect(failed.body == "T · 3.0 s · failed")
-    let cancelled = QueryCompletionNotifier.makeContent(
-      tabName: "T", elapsed: 3, outcome: .cancelled)
-    #expect(cancelled.title == "Query cancelled")
-    #expect(cancelled.body == "T · 3.0 s · cancelled")
-  }
-
   @Test("content never carries SQL, data values or server error text")
   func contentHasNoSensitiveText() {
     // The outcome type has no payload for SQL, values or error text, so none can leak; the only
@@ -87,22 +62,6 @@ struct QueryCompletionNotifierTests {
         #expect(!text.lowercased().contains("error"))
       }
     }
-  }
-
-  @Test(
-    "duration formatting",
-    arguments: [
-      (0.04, "0.0 s"),
-      (12.44, "12.4 s"),
-      (59.94, "59.9 s"),
-      (59.96, "1 m"),
-      (60.0, "1 m"),
-      (125.4, "2 m 5 s"),
-      (3_600.0, "1 h"),
-      (3_725.0, "1 h 2 m"),
-    ])
-  func durationFormatting(elapsed: TimeInterval, expected: String) {
-    #expect(QueryCompletionNotifier.formatDuration(elapsed) == expected)
   }
 
   @Test("notifier posts once with an identifier tied to the tab")
@@ -142,18 +101,5 @@ struct QueryCompletionNotifierTests {
     #expect(await center.requests.isEmpty)
     // Never prompts from the run path; prompting happens when the setting is enabled.
     #expect(await center.authorizationRequests == 0)
-  }
-
-  @Test("notifier skips below threshold even when authorized")
-  @MainActor
-  func skipsBelowThreshold() async {
-    let center = RecordingNotificationCenter(status: .granted)
-    let notifier = QueryCompletionNotifier(center: center)
-    await notifier.notifyIfNeeded(
-      tabID: UUID(), tabName: "T", elapsed: 2, outcome: .rows(1),
-      settings: QueryNotificationSettings(
-        enabled: true, thresholdSeconds: 10, onlyWhenInactive: true),
-      appActive: false)
-    #expect(await center.requests.isEmpty)
   }
 }

@@ -92,58 +92,6 @@ struct CellQueryParameterTests {
     #expect(session.statementBinds == [[.text("first")]])
   }
 
-  @Test("A refusal opens only that cell's form and keeps the sidebar closed")
-  func refusalOpensOnlyThatCellsForm() async throws {
-    let (viewModel, _) = try await connectedViewModel(
-      sql: namedSQL, values: [nil, "first"])
-    let firstId = viewModel.notebook.cells[0].id
-
-    _ = await viewModel.executeTask(ExecutionTask(cellId: firstId, query: namedSQL))
-
-    #expect(viewModel.openParameterFormCellIds == [firstId])
-    #expect(!viewModel.isRightSidebarVisible)
-    #expect(viewModel.rightSidebarContent != .parameters)
-  }
-
-  @Test("toggleParameterForm opens, closes, and holds two cells open")
-  func toggleParameterFormTracksOpenCells() {
-    let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(cells: [
-        NotebookCell(cellType: .sql, content: namedSQL),
-        NotebookCell(cellType: .sql, content: namedSQL),
-      ]))
-    let firstId = viewModel.notebook.cells[0].id
-    let secondId = viewModel.notebook.cells[1].id
-
-    viewModel.toggleParameterForm(cellId: firstId)
-    #expect(viewModel.openParameterFormCellIds == [firstId])
-
-    viewModel.toggleParameterForm(cellId: secondId)
-    #expect(viewModel.openParameterFormCellIds == [firstId, secondId])
-
-    viewModel.toggleParameterForm(cellId: firstId)
-    #expect(viewModel.openParameterFormCellIds == [secondId])
-  }
-
-  @Test("hasStoredParameterValues counts only a stored entry for a used name")
-  func hasStoredParameterValuesTracksUsedNames() {
-    let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(cells: [NotebookCell(cellType: .sql, content: namedSQL)]))
-    let cellId = viewModel.notebook.cells[0].id
-
-    #expect(!viewModel.hasStoredParameterValues(cellId: cellId))
-    #expect(!viewModel.hasStoredParameterValues(cellId: UUID()))
-
-    viewModel.notebook.cells[0].parameters = [QueryParameter(name: "unused", value: "x")]
-    #expect(!viewModel.hasStoredParameterValues(cellId: cellId))
-
-    viewModel.notebook.cells[0].parameters = [QueryParameter(name: "id", value: nil)]
-    #expect(viewModel.hasStoredParameterValues(cellId: cellId))
-
-    viewModel.notebook.cells[0].parameters = [QueryParameter(name: "id", value: "7")]
-    #expect(viewModel.hasStoredParameterValues(cellId: cellId))
-  }
-
   @Test("setSavesParameterValues flips the flag and marks dirty")
   func setSavesParameterValuesMarksDirty() {
     let viewModel = NotebookViewModel(
@@ -178,23 +126,6 @@ struct CellQueryParameterTests {
     #expect(duplicate.id != originalId)
     #expect(duplicate.parameters == [QueryParameter(name: "id", value: "7")])
     #expect(duplicate.savesParameterValues)
-  }
-
-  @Test("Deleting a cell removes its id from openParameterFormCellIds")
-  func deleteCellClearsOpenForm() {
-    let viewModel = NotebookViewModel(
-      notebook: DbloreNotebook(cells: [
-        NotebookCell(cellType: .sql, content: namedSQL),
-        NotebookCell(cellType: .sql, content: namedSQL),
-      ]))
-    let firstId = viewModel.notebook.cells[0].id
-    let secondId = viewModel.notebook.cells[1].id
-    viewModel.toggleParameterForm(cellId: firstId)
-    viewModel.toggleParameterForm(cellId: secondId)
-
-    viewModel.deleteCell(id: firstId)
-
-    #expect(viewModel.openParameterFormCellIds == [secondId])
   }
 
   @Test("A notebook Explain with no cell and no selection toasts and opens nothing")

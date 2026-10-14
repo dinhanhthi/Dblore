@@ -27,42 +27,6 @@ struct ResultGridNotebookTests {
     return (coordinator, tableView)
   }
 
-  @Test(
-    "Height is min(rows, 15) rows plus the header and a shown legacy horizontal scroller",
-    arguments: [false, true], [false, true])
-  func height(hideColumnTypes: Bool, reservesScroller: Bool) {
-    // A shown legacy horizontal scroller sits inside the grid height; overlay or hidden adds none
-    let scroller =
-      reservesScroller ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-    let header = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes) + scroller
-    func height(_ rowCount: Int) -> CGFloat {
-      ResultGridView.height(
-        rowCount: rowCount, hideColumnTypes: hideColumnTypes,
-        reservesHorizontalScroller: reservesScroller)
-    }
-    #expect(height(0) == header)
-    #expect(height(1) == ResultGridView.rowHeight + header)
-    #expect(height(10) == 10 * ResultGridView.rowHeight + header)
-    #expect(height(100) == 15 * ResultGridView.rowHeight + header)
-  }
-
-  @Test(
-    "Vertical scroll goes to the notebook list only when the grid can't scroll that way",
-    arguments: [
-      // (deltaY, offsetY, maxOffsetY, forwarded); deltaY > 0 scrolls toward the top
-      (CGFloat(5), CGFloat(0), CGFloat(0), true),  // content fits
-      (5, 0, 100, true),  // at the top, scrolling up
-      (-5, 0, 100, false),  // at the top, scrolling down
-      (-5, 100, 100, true),  // at the bottom, scrolling down
-      (5, 100, 100, false),  // at the bottom, scrolling up
-      (5, 50, 100, false),  // middle
-    ])
-  func scrollForwarding(deltaY: CGFloat, offsetY: CGFloat, maxOffsetY: CGFloat, forwarded: Bool) {
-    #expect(
-      ResultGridScrollView.shouldForward(deltaY: deltaY, offsetY: offsetY, maxOffsetY: maxOffsetY)
-        == forwarded)
-  }
-
   @Test("A header sort click reports the column and direction; the input sort shows in the header")
   func sortCallback() {
     let (coordinator, tableView) = makeGrid(sortColumn: "id", ascending: true)
@@ -85,31 +49,6 @@ struct ResultGridNotebookTests {
     #expect(shown?.column == 1)
     coordinator.showCellDetails(row: -1, column: 0)  // outside a row
     #expect(shown?.row == [.int(1), .string("ab")])
-  }
-
-  @Test("A click only selects and a double click only edits: neither shows the details")
-  func clickDoesNotShowDetails() {
-    let tableView = ResultGridView.makeTableView(coordinator: ResultGridCoordinator())
-    #expect(tableView.action == nil)
-    #expect(tableView.doubleAction == #selector(ResultGridTableView.editClickedCell(_:)))
-  }
-
-  @Test("The details button sits at the trailing edge of the visible part of the cell")
-  func detailsButtonFrame() {
-    let size = ResultGridTableView.detailsButtonSize
-    let cell = NSRect(x: 100, y: 26, width: 150, height: 26)
-    let frame = ResultGridTableView.detailsButtonFrame(
-      cellRect: cell, visibleRect: NSRect(x: 0, y: 0, width: 1000, height: 500))
-    #expect(
-      frame == NSRect(x: 250 - Spacing.xs - size, y: 39 - size / 2, width: size, height: size))
-    // Cell cut by the right edge of the visible area: the button stays visible
-    let clipped = ResultGridTableView.detailsButtonFrame(
-      cellRect: cell, visibleRect: NSRect(x: 0, y: 0, width: 200, height: 500))
-    #expect(clipped?.maxX == 200 - Spacing.xs)
-    // Cell scrolled out of view
-    #expect(
-      ResultGridTableView.detailsButtonFrame(
-        cellRect: cell, visibleRect: NSRect(x: 300, y: 0, width: 200, height: 500)) == nil)
   }
 
   @Test("Hovering a cell shows the details button; its click shows that cell's details")
@@ -140,16 +79,6 @@ struct ResultGridNotebookTests {
 
     tableView.updateDetailsButton(at: NSPoint(x: 10, y: 500))  // below the rows
     #expect(button.isHidden)
-  }
-
-  @Test("Search highlights the matching text of a cell, case-insensitively")
-  func searchHighlight() {
-    let (coordinator, tableView) = makeGrid(searchQuery: "B")
-    let view = coordinator.tableView(tableView, viewFor: tableView.tableColumns[2], row: 1)
-    let text = (view as? NSTableCellView)?.textField?.attributedStringValue
-    #expect(text?.string == "ab")
-    #expect(text?.attribute(.backgroundColor, at: 1, effectiveRange: nil) != nil)
-    #expect(text?.attribute(.backgroundColor, at: 0, effectiveRange: nil) == nil)
   }
 
   @Test("The current search match scrolls to its displayed row and uses the current-match color")

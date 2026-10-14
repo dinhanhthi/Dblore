@@ -45,97 +45,6 @@ extension DatabaseConnectionManager {
     return result.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  /// Strip all comments from a query (not just leading)
-  /// Removes single-line (--) and multi-line (/* */) comments from anywhere in the query
-  /// Preserves string literals
-  nonisolated func stripAllComments(_ query: String) -> String {
-    var result = ""
-    var inSingleQuote = false
-    var inDoubleQuote = false
-    var inSingleLineComment = false
-    var inMultiLineComment = false
-
-    var i = query.startIndex
-    while i < query.endIndex {
-      let char = query[i]
-
-      // Handle single-line comment start
-      if !inSingleQuote && !inDoubleQuote && !inMultiLineComment && char == "-" {
-        let next = query.index(after: i)
-        if next < query.endIndex && query[next] == "-" {
-          inSingleLineComment = true
-          i = next
-          i = query.index(after: i)
-          continue
-        }
-      }
-
-      // End single-line comment at newline
-      if inSingleLineComment {
-        if char == "\n" {
-          inSingleLineComment = false
-          result.append(char)  // Keep the newline
-        }
-        i = query.index(after: i)
-        continue
-      }
-
-      // Handle multi-line comment start
-      if !inSingleQuote && !inDoubleQuote && !inSingleLineComment && char == "/" {
-        let next = query.index(after: i)
-        if next < query.endIndex && query[next] == "*" {
-          inMultiLineComment = true
-          i = next
-          i = query.index(after: i)
-          continue
-        }
-      }
-
-      // End multi-line comment
-      if inMultiLineComment {
-        if char == "*" {
-          let next = query.index(after: i)
-          if next < query.endIndex && query[next] == "/" {
-            inMultiLineComment = false
-            i = query.index(after: next)
-            continue
-          }
-        }
-        i = query.index(after: i)
-        continue
-      }
-
-      // Toggle quotes (outside comments)
-      if char == "'" && !inDoubleQuote {
-        let next = query.index(after: i)
-        if inSingleQuote && next < query.endIndex && query[next] == "'" {
-          // Escaped quote
-          result.append(char)
-          result.append(query[next])
-          i = query.index(after: next)
-          continue
-        }
-        inSingleQuote.toggle()
-      }
-
-      if char == "\"" && !inSingleQuote {
-        inDoubleQuote.toggle()
-      }
-
-      // Add character to result
-      result.append(char)
-      i = query.index(after: i)
-    }
-
-    return result
-  }
-
-  /// Check if a query is a SELECT statement
-  nonisolated func isSelectQuery(_ query: String) -> Bool {
-    let withoutLeadingComments = stripLeadingComments(query)
-    return withoutLeadingComments.uppercased().hasPrefix("SELECT")
-  }
-
   // MARK: - Table Name Extraction
 
   /// Extract single table name from a simple SELECT query
@@ -231,20 +140,28 @@ extension DatabaseConnectionManager {
 
   /// Split SQL string into individual statements
   /// Delegates to `SQLTokenizer.splitStatements` (quotes, E-strings, dollar quotes, comments)
+  /// with `dialect`; the actor passes `Self.dialect(of: config)`, notebooks their `sqlDialect`.
   /// Returns array of trimmed SQL statements
-  nonisolated func splitSQLStatements(_ sql: String) -> [String] {
-    SQLTokenizer.splitStatements(sql)
+  nonisolated func splitSQLStatements(
+    _ sql: String, dialect: SQLDialect
+  ) -> [String] {
+    SQLTokenizer.splitStatements(sql, dialect: dialect)
   }
 
-  /// Check if a SQL string contains multiple statements
-  nonisolated func hasMultipleStatements(_ sql: String) -> Bool {
-    return splitSQLStatements(sql).count > 1
+  /// Check if a SQL string contains multiple statements (split with `dialect`)
+  nonisolated func hasMultipleStatements(
+    _ sql: String, dialect: SQLDialect
+  ) -> Bool {
+    return splitSQLStatements(sql, dialect: dialect).count > 1
   }
 
   /// Check if a SQL statement contains only comments and whitespace
   /// Returns true if the statement has no executable SQL code.
-  /// Delegates to `SQLTokenizer.tokens`, which drops whitespace and (nested) comments.
-  nonisolated func isCommentOnlyStatement(_ sql: String) -> Bool {
-    SQLTokenizer.tokens(sql).isEmpty
+  /// Delegates to `SQLTokenizer.tokens` with `dialect`, which drops whitespace and (nested)
+  /// comments.
+  nonisolated func isCommentOnlyStatement(
+    _ sql: String, dialect: SQLDialect
+  ) -> Bool {
+    SQLTokenizer.tokens(sql, dialect: dialect).isEmpty
   }
 }

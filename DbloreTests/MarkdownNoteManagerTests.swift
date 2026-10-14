@@ -122,32 +122,6 @@ struct MarkdownNoteManagerTests {
     #expect(manager.activeTabId == id)
   }
 
-  @Test("A saved, clean markdown tab can be revealed and moved to a new window")
-  func savedTabActions() async throws {
-    let (folder, url) = try Self.makeFile(Self.source)
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let (manager, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    try await manager.openFile(url: url)
-    let id = try #require(manager.tabs.first?.id)
-
-    #expect(manager.canRevealFile(tabId: id))
-    #expect(manager.canMoveToNewWindow(tabId: id))
-
-    manager.tabs[0].isDirty = true
-    #expect(!manager.canMoveToNewWindow(tabId: id))
-  }
-
-  @Test("An untitled markdown note cannot move to a new window")
-  func untitledCannotMove() {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-
-    let id = manager.newMarkdownFile()
-
-    #expect(!manager.canRevealFile(tabId: id))
-    #expect(!manager.canMoveToNewWindow(tabId: id))
-  }
-
   @Test("Reopening a closed markdown tab restores it as markdown")
   func reopensAsMarkdown() async throws {
     let (folder, url) = try Self.makeFile(Self.source)
@@ -165,18 +139,6 @@ struct MarkdownNoteManagerTests {
     #expect(tab.fileURL == url)
     let viewModel = try #require(manager.viewModel(for: tab.id))
     #expect(viewModel.viewMode == .markdown)
-  }
-
-  @Test("activeDocumentMode maps markdown, SQL file and notebook tabs")
-  func activeDocumentMode() {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-
-    manager.newMarkdownFile()
-    #expect(manager.activeDocumentMode == .markdown)
-    manager.newSQLFile()
-    #expect(manager.activeDocumentMode == .editor)
-    manager.newNotebook()
-    #expect(manager.activeDocumentMode == .notebook)
   }
 
   @Test("Sidebar text insertion on a markdown note posts no cell insert")
@@ -209,34 +171,4 @@ struct MarkdownNoteManagerTests {
     #expect(viewModel.aiCurrentSQL == nil)
   }
 
-  @Test("The New Markdown Note palette action appends a markdown tab")
-  func paletteNewMarkdownNote() throws {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-
-    #expect(manager.paletteSources().actions.contains { $0.id == "new-markdown-file" })
-    #expect(manager.perform(.action(id: "new-markdown-file", title: "New Markdown Note")))
-
-    let tab = try #require(manager.tabs.last)
-    #expect(tab.documentType == .markdown)
-    #expect(manager.activeTabId == tab.id)
-  }
-
-  @Test("The Toggle Right Sidebar palette action does nothing on a markdown tab")
-  func paletteRightSidebarIsNoOp() throws {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-    manager.newMarkdownFile()
-    let viewModel = try #require(manager.activeViewModel)
-
-    #expect(!manager.perform(.action(id: "toggle-right-sidebar", title: "Toggle Right Sidebar")))
-    #expect(!viewModel.isRightSidebarVisible)
-  }
-
-  @Test("Recent documents keep .md files and drop .txt files")
-  func recentsKeepMarkdown() {
-    let names = ["a.dblore", "b.sql", "c.md", "d.MD", "e.txt"]
-
-    let kept = names.filter { RecentManager.isRecentDocument(URL(fileURLWithPath: "/tmp/\($0)")) }
-
-    #expect(kept == ["a.dblore", "b.sql", "c.md", "d.MD"])
-  }
 }

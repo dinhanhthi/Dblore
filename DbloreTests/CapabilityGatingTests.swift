@@ -107,17 +107,6 @@ struct CapabilityGatingTests {
     #expect(model.errorMessage == TableImportError.noFile.localizedDescription)
   }
 
-  @Test("The workspace offers Import Data only for a connected engine that supports it")
-  func workspaceImportEntryPoint() {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-    manager.workspace.connectionConfig = config(.postgresql)
-    #expect(!manager.canImportData)
-    manager.connectionState = .connected
-    #expect(manager.canImportData)
-    manager.workspace.connectionConfig = config(.duckdb)
-    #expect(!manager.canImportData)
-  }
-
   // MARK: - Foreign key lookup
 
   @Test("DuckDB hides and refuses foreign key lookup; PostgreSQL keeps it")
@@ -159,9 +148,10 @@ struct CapabilityGatingTests {
 
   private func config(_ type: DatabaseType) -> ConnectionConfig {
     switch type {
-    case .postgresql:
+    case .postgresql, .mysql:
       ConnectionConfig(
-        host: "localhost", port: 5432, database: "app", username: "ana", password: "x",
+        databaseType: type, host: "localhost", port: type == .mysql ? 3306 : 5432,
+        database: "app", username: "ana", password: "x",
         protectionLevel: .none, safeMode: .silent, protectedMode: false)
     case .sqlite, .duckdb:
       ConnectionConfig(

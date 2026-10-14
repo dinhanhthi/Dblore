@@ -10,11 +10,6 @@ import Testing
 @Suite("Commit Style Migration")
 struct CommitStyleMigrationTests {
 
-  @Test("Workspace format stays at version 1")
-  func workspaceFormatVersionStaysOne() {
-    #expect(Workspace.currentVersion == 1)
-  }
-
   @Test("Strength order is immediate, confirm, review, password")
   func strengthOrder() {
     #expect(CommitStyle.immediate.strength < CommitStyle.confirm.strength)
@@ -96,19 +91,5 @@ struct CommitStyleMigrationTests {
     #expect(CommitStyle.confirm.opensReviewTransaction == false)
     #expect(CommitStyle.review.opensReviewTransaction == true)
     #expect(CommitStyle.password.opensReviewTransaction == false)
-  }
-
-  @Test("Each style has a title and the exact summary")
-  func titlesAndSummaries() {
-    let expected: [(CommitStyle, String)] = [
-      (.immediate, "Write immediately, no dialog."),
-      (.confirm, "Ask before a write, then write."),
-      (.review, "Hold writes in a transaction until you Commit or Roll Back."),
-      (.password, "Ask for the password before a write, then write."),
-    ]
-    for (style, summary) in expected {
-      #expect(!style.title.isEmpty)
-      #expect(style.summary == summary)
-    }
   }
 }

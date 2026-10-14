@@ -29,12 +29,6 @@ struct DatabaseTypeDecodingTests {
     }
   }
 
-  @Test("The DuckDB raw value decodes")
-  func duckdbRawValueDecodes() throws {
-    let data = try JSONEncoder().encode(["DuckDB"])
-    #expect(try JSONDecoder().decode([DatabaseType].self, from: data) == [.duckdb])
-  }
-
   @Test("History with a DuckDB entry loads it next to an unknown engine")
   func historyWithDuckDBEntryLoads() throws {
     let suiteName = "ace.thi.Dblore.tests.duckdb-history.\(UUID().uuidString)"

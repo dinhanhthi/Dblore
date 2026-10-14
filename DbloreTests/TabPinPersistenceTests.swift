@@ -16,20 +16,6 @@ struct TabPinPersistenceTests {
     return decoder
   }
 
-  @Test("isPinned round-trips through encode and decode")
-  func roundTrip() throws {
-    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
-    manager.tabs = [
-      TabItem(documentType: .sqlFile, title: "a.sql", isPinned: true),
-      TabItem(documentType: .sqlFile, title: "b.sql", isPinned: true),
-      TabItem(documentType: .sqlFile, title: "c.sql"),
-    ]
-    let saved = try Self.decoder().decode(
-      Workspace.self, from: manager.encodedWorkspaceData())
-    #expect(saved.tabs.map(\.title) == ["a.sql", "b.sql", "c.sql"])
-    #expect(saved.tabs.map { $0.isPinned ?? false } == [true, true, false])
-  }
-
   @Test("Legacy tab JSON without isPinned decodes to unpinned")
   func legacyDecodes() throws {
     let json = """

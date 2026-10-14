@@ -58,21 +58,6 @@ private final class Flag: @unchecked Sendable {
 
 @Suite("Connection Close Watch")
 struct ConnectionCloseWatchTests {
-  @Test("Returns the operation's value while open")
-  func returnsValue() async throws {
-    let watch = ConnectionCloseWatch()
-    let value = try await watch.run { 42 }
-    #expect(value == 42)
-  }
-
-  @Test("Rethrows the operation's error")
-  func rethrowsError() async {
-    let watch = ConnectionCloseWatch()
-    await #expect(throws: DatabaseError.self) {
-      _ = try await watch.run { () async throws -> Int in throw DatabaseError.emptyQuery }
-    }
-  }
-
   @Test("Already closed: throws without running the operation")
   func closedBeforeRun() async {
     let watch = ConnectionCloseWatch()
@@ -87,17 +72,20 @@ struct ConnectionCloseWatchTests {
   @Test("Closing fails a hung operation promptly, even if it ignores cancellation")
   func closeFailsHungOperation() async {
     let watch = ConnectionCloseWatch()
+    let started = HeldContinuation()
     let held = HeldContinuation()
-    let start = Date()
+    // Close only once the operation is in flight
     Task {
-      try? await Task.sleep(for: .milliseconds(100))
+      await started.wait()
       watch.close()
     }
+    // The held operation never returns on its own: only the close can resume the caller
     await #expect(throws: ConnectionClosedError.self) {
-      try await watch.run { await held.wait() }
+      try await watch.run {
+        started.release()
+        await held.wait()
+      }
     }
-    // The held operation never returns on its own; the bound leaves slack for a loaded runner
-    #expect(Date().timeIntervalSince(start) < 5)
     held.release()
   }
 
@@ -162,16 +150,6 @@ struct ConnectionCloseWatchTests {
 struct SessionLostEventTests {
   private func pending(_ count: Int) -> [StatementSummary] {
     Array(repeating: StatementSummary.earlierChanges(), count: count)
-  }
-
-  @Test("Idle: asks to reconnect, nothing pending")
-  func idle() {
-    let event = SessionLostEvent(state: .idle, userTxOpen: false, epoch: 3)
-    #expect(event.pendingCount == 0)
-    #expect(!event.commitOutcomeUnknown)
-    #expect(!event.userTransactionLost)
-    #expect(event.epoch == 3)
-    #expect(event.message == "The connection to the database was lost. Reconnect to continue.")
   }
 
   @Test("Pending app transaction: its changes were rolled back by the server")

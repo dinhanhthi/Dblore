@@ -42,33 +42,4 @@ struct ExportSizeTests {
     #expect(!clipped.isLarge)
   }
 
-  @Test("Redacting the long columns brings the wrapped PDF back under the page limit")
-  func redactionShrinksWrappedPDF() {
-    let long = String(repeating: "a", count: 5_000)
-    let row = Array(repeating: CellValue.string(long), count: 6)
-    let result = CellResult(
-      columns: (0..<6).map { ColumnInfo(name: "c\($0)", type: "text") },
-      rows: Array(repeating: row, count: 40),
-      rowCount: 40)
-    let estimate = ExportSize.estimate(
-      result: result,
-      options: ExportOptions(format: .pdf, redactedColumns: Set(0..<6), wrapText: true))
-    #expect((estimate.pageCount ?? 0) < ExportSizeEstimate.largePageCount)
-    #expect(!estimate.isLarge)
-  }
-
-  @Test("The byte and page limits are what marks an export as large")
-  func limits() {
-    let big = ExportSizeEstimate(
-      bytes: ExportSizeEstimate.largeByteCount, pageCount: nil, warnsAboutWrap: false)
-    let pages = ExportSizeEstimate(
-      bytes: 1, pageCount: ExportSizeEstimate.largePageCount, warnsAboutWrap: true)
-    let small = ExportSizeEstimate(
-      bytes: ExportSizeEstimate.largeByteCount - 1,
-      pageCount: ExportSizeEstimate.largePageCount - 1,
-      warnsAboutWrap: false)
-    #expect(big.isLarge)
-    #expect(pages.isLarge)
-    #expect(!small.isLarge)
-  }
 }

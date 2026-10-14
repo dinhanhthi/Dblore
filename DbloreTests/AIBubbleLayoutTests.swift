@@ -22,62 +22,6 @@ struct AIBubbleLayoutTests {
 
   private var radius: CGFloat { L.circleDiameter / 2 }
 
-  @Test("fraction 0 and 1 map to the clamped extremes; out-of-range fractions clamp")
-  func circleCenterClampsFractionToMargins() {
-    let width: CGFloat = 1000
-    let minCenter = L.margin + radius
-    let maxCenter = width - L.margin - radius
-
-    #expect(approx(L.circleCenterX(fraction: 0, containerWidth: width), minCenter))
-    #expect(approx(L.circleCenterX(fraction: 1, containerWidth: width), maxCenter))
-    #expect(
-      approx(L.circleCenterX(fraction: 0.5, containerWidth: width), (minCenter + maxCenter) / 2))
-    #expect(approx(L.circleCenterX(fraction: -0.3, containerWidth: width), minCenter))
-    #expect(approx(L.circleCenterX(fraction: 1.7, containerWidth: width), maxCenter))
-  }
-
-  @Test("fraction -> center -> fraction round-trips, and off-range centers clamp to 0...1")
-  func fractionRoundTrips() {
-    let width: CGFloat = 900
-    for fraction in [0.0, 0.25, 0.5, 0.8, 1.0] {
-      let center = L.circleCenterX(fraction: fraction, containerWidth: width)
-      let back = L.fraction(forCenterX: center, containerWidth: width)
-      #expect(abs(back - fraction) < 0.0001)
-    }
-    #expect(L.fraction(forCenterX: 0, containerWidth: width) == 0)
-    #expect(L.fraction(forCenterX: width, containerWidth: width) == 1)
-  }
-
-  @Test("the card is horizontally centered on the circle when there is room")
-  func cardCentersOnCircle() {
-    let width: CGFloat = 1200
-    let center: CGFloat = 600
-    let minX = L.cardMinX(circleCenterX: center, containerWidth: width)
-    #expect(approx(minX, center - L.cardWidth / 2))
-    #expect(approx(minX + L.cardWidth / 2, center))
-  }
-
-  @Test("the card clamps to the leading and trailing margins")
-  func cardClampsAtLeadingAndTrailingEdges() {
-    let width: CGFloat = 1200
-    let leadingCenter = L.circleCenterX(fraction: 0, containerWidth: width)
-    let trailingCenter = L.circleCenterX(fraction: 1, containerWidth: width)
-
-    #expect(approx(L.cardMinX(circleCenterX: leadingCenter, containerWidth: width), L.margin))
-    #expect(
-      approx(
-        L.cardMinX(circleCenterX: trailingCenter, containerWidth: width),
-        width - L.margin - L.cardWidth))
-  }
-
-  @Test("the card pins to the leading margin when the container is narrower than the card")
-  func cardPinsLeadingWhenContainerNarrowerThanCard() {
-    let width = L.cardWidth + 2 * L.margin - 20
-    for center in [CGFloat(0), width / 2, width] {
-      #expect(approx(L.cardMinX(circleCenterX: center, containerWidth: width), L.margin))
-    }
-  }
-
   @Test("card height is 75% clamped to 360...640, then capped below the tab bar, never negative")
   func cardHeightWithinBoundsAndBelowTabBar() {
     func cap(_ height: CGFloat) -> CGFloat {
@@ -102,17 +46,51 @@ struct AIBubbleLayoutTests {
     #expect(L.cardHeight(containerHeight: 100) == 0)
   }
 
-  @Test("the scale anchor points at the circle center below the card")
-  func scaleAnchorPointsAtCircle() {
-    let width: CGFloat = 1200
-    let center = L.circleCenterX(fraction: 1, containerWidth: width)
-    let minX = L.cardMinX(circleCenterX: center, containerWidth: width)
-    let height = L.cardHeight(containerHeight: 800)
+  @Test("card width defaults to 320, clamps to 320...720 and fits a narrow container")
+  func cardWidthClamps() {
+    #expect(L.cardWidth(preferred: nil, containerWidth: 1200) == L.minCardWidth)
+    #expect(L.cardWidth(preferred: 200, containerWidth: 1200) == L.minCardWidth)
+    #expect(L.cardWidth(preferred: 500, containerWidth: 1200) == 500)
+    #expect(L.cardWidth(preferred: 2000, containerWidth: 1200) == L.maxCardWidth)
+    // Narrow container: the container cap wins over the minimum.
+    #expect(approx(L.cardWidth(preferred: 600, containerWidth: 400), 400 - 2 * L.margin))
+    #expect(approx(L.cardWidth(preferred: nil, containerWidth: 300), 300 - 2 * L.margin))
+    #expect(L.cardWidth(preferred: 600, containerWidth: 10) == 0)
+  }
 
-    let anchor = L.scaleAnchor(circleCenterX: center, cardMinX: minX, cardHeight: height)
+  @Test("preferred card height clamps to min...available height, never negative")
+  func preferredCardHeightClamps() {
+    func cap(_ height: CGFloat) -> CGFloat {
+      height - ComponentSize.tabBarHeight - L.circleDiameter - 2 * L.margin - L.gap
+    }
+    #expect(
+      L.cardHeight(preferred: nil, containerHeight: 600) == L.cardHeight(containerHeight: 600))
+    #expect(L.cardHeight(preferred: 500, containerHeight: 1000) == 500)
+    #expect(L.cardHeight(preferred: 100, containerHeight: 1000) == L.minCardHeight)
+    // Taller than the old 640 cap is allowed up to the available height.
+    #expect(L.cardHeight(preferred: 800, containerHeight: 1000) == 800)
+    #expect(approx(L.cardHeight(preferred: 5000, containerHeight: 1000), cap(1000)))
+    #expect(L.cardHeight(preferred: 500, containerHeight: 100) == 0)
+  }
 
-    #expect(approx(anchor.x, (center - minX) / L.cardWidth))
-    #expect(approx(anchor.y, (height + L.gap + L.circleDiameter / 2) / height))
-    #expect(anchor.y > 1)
+  @Test("a wider card stays inside the margins and its scale anchor points at the circle")
+  func wideCardPlacementAndAnchor() {
+    let width: CGFloat = 600
+    let containerWidth: CGFloat = 1000
+    let rightCenter = L.circleCenterX(fraction: 1, containerWidth: containerWidth)
+    let minX = L.cardMinX(
+      circleCenterX: rightCenter, cardWidth: width, containerWidth: containerWidth)
+    #expect(approx(minX, containerWidth - L.margin - width))
+    let leftCenter = L.circleCenterX(fraction: 0, containerWidth: containerWidth)
+    #expect(
+      L.cardMinX(circleCenterX: leftCenter, cardWidth: width, containerWidth: containerWidth)
+        == L.margin)
+    let midMinX = L.cardMinX(circleCenterX: 500, cardWidth: width, containerWidth: containerWidth)
+    #expect(approx(midMinX, 200))
+
+    let anchor = L.scaleAnchor(
+      circleCenterX: rightCenter, cardMinX: minX, cardWidth: width, cardHeight: 400)
+    #expect(approx(anchor.x, (rightCenter - minX) / width))
+    #expect(approx(anchor.y, (400 + L.gap + radius) / 400))
   }
 }

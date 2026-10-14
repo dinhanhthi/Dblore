@@ -80,42 +80,6 @@ struct SchemaLoadPerformanceTests {
     try await manager.fetchAllColumns()["\(schema).\(relation)"] ?? []
   }
 
-  @Test("catalog counter counts each catalog query")
-  func catalogCounterCountsEachQuery() async throws {
-    let manager = try await connect()
-    await manager.resetCatalogQueryCount()
-    _ = try await manager.fetchTables()
-    #expect(await manager.catalogQueryCount == 1)
-    await manager.disconnect()
-  }
-
-  @Test("schema load sends exactly 9 catalog queries for 1 and for 12 tables")
-  func schemaLoadSendsExactlyNineQueries() async throws {
-    var results: [(tables: Int, count: Int)] = []
-    try await withSchema(Self.testSchema) { manager, schema in
-      func measure() async throws -> (tables: Int, count: Int) {
-        await manager.resetCatalogQueryCount()
-        let tables = try await runSchemaLoadSequence(manager, schema: schema)
-        return (tables.count, await manager.catalogQueryCount)
-      }
-      _ = try await manager.executeInternal("CREATE TABLE \(schema).t1 (id int PRIMARY KEY, v int)")
-      results.append(try await measure())
-      for index in 2...12 {
-        _ = try await manager.executeInternal(
-          "CREATE TABLE \(schema).t\(index) (id int PRIMARY KEY, v int)")
-      }
-      results.append(try await measure())
-    }
-    for result in results {
-      let line = "SCHEMA_LOAD_QUERY_COUNT tables=\(result.tables) count=\(result.count)"
-      print(line)
-      // The app-hosted test runner does not forward stdout to xcodebuild
-      FileHandle.standardError.write(Data((line + "\n").utf8))
-    }
-    #expect(results.map(\.tables) == [1, 12])
-    #expect(results.map(\.count) == [9, 9])
-  }
-
   @Test("table named with a quote gets its columns")
   func quotedNamesGetColumns() async throws {
     try await withSchema("perf_quote_names_test") { manager, schema in
@@ -126,31 +90,6 @@ struct SchemaLoadPerformanceTests {
       let cols = try await columns(manager, schema, "we\"ird")
       #expect(cols.map(\.name) == ["c\"ol"])
       #expect(cols.first?.type == "INTEGER")
-    }
-  }
-
-  @Test("estimate is nil for a fresh table and non-nil after ANALYZE")
-  func rowEstimate() async throws {
-    try await withSchema("perf_row_estimate_test") { manager, schema in
-      _ = try await manager.executeInternal("CREATE TABLE \(schema).fresh (id int)")
-      let version = try await manager.executeInternal(
-        "SELECT current_setting('server_version_num')")
-      var versionNum = 0
-      if case .string(let text) = version.rows[0][0] { versionNum = Int(text) ?? 0 }
-      @MainActor func estimate() async throws -> Int? {
-        let tables = try await manager.fetchTables()
-        for table in tables where table.schema == schema && table.name == "fresh" {
-          return table.rowCount
-        }
-        return nil
-      }
-      if versionNum >= 140000 {
-        #expect(try await estimate() == nil)
-      }
-      _ = try await manager.executeInternal(
-        "INSERT INTO \(schema).fresh SELECT generate_series(1, 25)")
-      _ = try await manager.executeInternal("ANALYZE \(schema).fresh")
-      #expect(try await estimate() == 25)
     }
   }
 

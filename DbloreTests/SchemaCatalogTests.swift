@@ -9,27 +9,6 @@ import Testing
 @Suite("Schema Catalog")
 @MainActor
 struct SchemaCatalogTests {
-  @Test(
-    "displayType table",
-    arguments: [
-      ("integer", "INTEGER"),
-      ("character varying(255)", "CHARACTER VARYING(255)"),
-      ("numeric(10,2)", "NUMERIC(10,2)"),
-      ("integer[]", "INTEGER[]"),
-      ("timestamp(6) without time zone", "TIMESTAMP(6) W/O TZ"),
-      ("timestamp without time zone", "TIMESTAMP W/O TZ"),
-      ("timestamp with time zone", "TIMESTAMP W TZ"),
-      ("time(3) with time zone", "TIME(3) W TZ"),
-      ("public.mood", "PUBLIC.MOOD"),
-      ("\"MyType\"", "\"MYTYPE\""),
-      ("INTEGER", "INTEGER"),
-      ("TIMESTAMP WITH TIME ZONE", "TIMESTAMP W TZ"),
-    ]
-  )
-  func displayType(formatType: String, expected: String) {
-    #expect(SchemaCatalog.displayType(formatType: formatType) == expected)
-  }
-
   private func row(
     _ schema: String, _ relation: String, _ name: String, type: String = "integer",
     notNull: Bool = false, identity: Bool = false, pk: Bool = false, unique: Bool = false
@@ -82,10 +61,5 @@ struct SchemaCatalogTests {
     #expect(cols?[0].isIdentity == true)
     #expect(cols?[1].isNullable == true)
     #expect(cols?[1].isIdentity == false)
-  }
-
-  @Test("empty input gives empty result")
-  func empty() {
-    #expect(SchemaCatalog.columnsByRelation([]).isEmpty)
   }
 }

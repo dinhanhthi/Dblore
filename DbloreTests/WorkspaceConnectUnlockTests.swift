@@ -122,6 +122,22 @@ struct WorkspaceConnectUnlockTests {
         defaultCommitStyle: .password, hasPassword: true, hasTouchID: false))
   }
 
+  @Test("PostgreSQL and MySQL on the same host, port, database and user are different targets")
+  func differentEngineNoUnlock() {
+    var mysql = Self.weak
+    mysql.databaseType = .mysql
+    #expect(
+      !WorkspaceManager.connectRequiresUnlock(
+        current: Self.styled(.password), new: mysql,
+        defaultCommitStyle: .password, hasPassword: true, hasTouchID: false))
+    var mysqlStrict = Self.styled(.password)
+    mysqlStrict.databaseType = .mysql
+    #expect(
+      WorkspaceManager.connectRequiresUnlock(
+        current: mysqlStrict, new: mysql,
+        defaultCommitStyle: .password, hasPassword: true, hasTouchID: false))
+  }
+
   @Test("No password and no Touch ID: a weaker style is not gated")
   func noUnlockConfiguredNoUnlock() {
     #expect(
@@ -209,7 +225,6 @@ struct WorkspaceConnectUnlockTests {
     _ = try? await manager.connect(
       config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
     #expect(manager.pendingWeakeningConnect == Self.weak)
-    WorkspaceWindowManager.shared.dismissToast()
 
     let presenter = FakeSSHHostKeyTrustPresenter()
     let connected = await manager.completePendingWeakeningConnectReportingFailure(
@@ -224,7 +239,8 @@ struct WorkspaceConnectUnlockTests {
     // The unlock sheet closes (no pending connect); the still-open form shows the message.
     #expect(manager.pendingWeakeningConnect == nil)
     #expect(manager.lastUnlockConnectError?.contains("bastion.example:22") == true)
-    // The toast state is shared with tests running in parallel: only this failure must not toast
+    // The toast state is shared with tests running in parallel: only read it (never dismiss)
+    // and check this failure's message is not toasted
     #expect(
       WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("bastion.example")
         != true)
@@ -239,7 +255,6 @@ struct WorkspaceConnectUnlockTests {
       connectionManager: DatabaseConnectionManager(sessionFactory: factory))
     _ = try? await manager.connect(
       config: Self.weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
-    WorkspaceWindowManager.shared.dismissToast()
 
     let presenter = FakeSSHHostKeyTrustPresenter()
     let connected = await manager.completePendingWeakeningConnectReportingFailure(
@@ -249,7 +264,8 @@ struct WorkspaceConnectUnlockTests {
     #expect(presenter.changes.isEmpty)
     #expect(manager.pendingWeakeningConnect == nil)
     #expect(manager.lastUnlockConnectError?.contains("password authentication failed") == true)
-    // The toast state is shared with tests running in parallel: only this failure must not toast
+    // The toast state is shared with tests running in parallel: only read it (never dismiss)
+    // and check this failure's message is not toasted
     #expect(
       WorkspaceWindowManager.shared.toastState.currentToast?.message.contains(
         "password authentication failed") != true)
@@ -291,54 +307,64 @@ struct WorkspaceConnectUnlockIntegrationTests {
     return config
   }
 
+  /// Runs `body` on a fresh workspace and awaits its disconnect, even when `body` throws, so the
+  /// next test never races this connection's teardown on the same database
+  private static func withManager(
+    current: ConnectionConfig, _ body: (WorkspaceManager) async throws -> Void
+  ) async throws {
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: current), restoreTabs: false)
+    do {
+      try await body(manager)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
   @Test("Same DB weakened: deferred until unlock, then connects with the new config")
   func deferredThenConnects() async throws {
     let strict = Self.styled(.password, protectionLevel: .readOnly)
     let weak = Self.styled(.review, protectionLevel: .readOnly)
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: strict), restoreTabs: false)
-    defer { Task { await manager.disconnect() } }
+    try await Self.withManager(current: strict) { manager in
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
+      }
+      #expect(await !manager.connectionManager.isConnected)
+      #expect(manager.workspace.connectionConfig == strict)
 
-    await #expect(throws: WorkspaceConnectError.unlockRequired) {
-      try await manager.connect(
-        config: weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
+      try await manager.completePendingWeakeningConnect()
+      #expect(manager.pendingWeakeningConnect == nil)
+      #expect(await manager.connectionManager.isConnected)
+      #expect(manager.workspace.connectionConfig == weak)
+      #expect(await manager.connectionManager.connectedPolicy.protectionLevel == .readOnly)
     }
-    #expect(await !manager.connectionManager.isConnected)
-    #expect(manager.workspace.connectionConfig == strict)
-
-    try await manager.completePendingWeakeningConnect()
-    #expect(manager.pendingWeakeningConnect == nil)
-    #expect(await manager.connectionManager.isConnected)
-    #expect(manager.workspace.connectionConfig == weak)
-    #expect(await manager.connectionManager.connectedPolicy.protectionLevel == .readOnly)
   }
 
   @Test("Strengthening the same DB connects immediately")
   func strengtheningConnectsImmediately() async throws {
     let current = Self.styled(.confirm, protectionLevel: .schemaOnly)
     let stronger = Self.styled(.password, protectionLevel: .readOnly)
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: current), restoreTabs: false)
-    defer { Task { await manager.disconnect() } }
-
-    try await manager.connect(config: stronger, defaultCommitStyle: .immediate)
-    #expect(manager.pendingWeakeningConnect == nil)
-    #expect(await manager.connectionManager.isConnected)
-    #expect(await manager.connectionManager.connectedPolicy.protectionLevel == .readOnly)
+    try await Self.withManager(current: current) { manager in
+      try await manager.connect(config: stronger, defaultCommitStyle: .immediate)
+      #expect(manager.pendingWeakeningConnect == nil)
+      #expect(await manager.connectionManager.isConnected)
+      #expect(await manager.connectionManager.connectedPolicy.protectionLevel == .readOnly)
+    }
   }
 
   @Test("confirm → immediate connects immediately even when a password is configured")
   func confirmToImmediateConnectsImmediately() async throws {
     let current = Self.styled(.confirm, protectionLevel: .readOnly)
     let weak = Self.styled(.immediate, protectionLevel: .none)
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: current), restoreTabs: false)
-    defer { Task { await manager.disconnect() } }
-
-    try await manager.connect(
-      config: weak, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
-    #expect(await manager.connectionManager.isConnected)
-    #expect(manager.workspace.connectionConfig == weak)
+    try await Self.withManager(current: current) { manager in
+      try await manager.connect(
+        config: weak, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+      #expect(await manager.connectionManager.isConnected)
+      #expect(manager.workspace.connectionConfig == weak)
+    }
   }
 
   @Test("A different database connects immediately even when weaker")
@@ -346,13 +372,11 @@ struct WorkspaceConnectUnlockIntegrationTests {
     let current = Self.styled(
       .password, protectionLevel: .readOnly, database: "some_other_database")
     let weak = Self.styled(.immediate, protectionLevel: .none)
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: current), restoreTabs: false)
-    defer { Task { await manager.disconnect() } }
-
-    try await manager.connect(
-      config: weak, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
-    #expect(await manager.connectionManager.isConnected)
-    #expect(manager.workspace.connectionConfig == weak)
+    try await Self.withManager(current: current) { manager in
+      try await manager.connect(
+        config: weak, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+      #expect(await manager.connectionManager.isConnected)
+      #expect(manager.workspace.connectionConfig == weak)
+    }
   }
 }

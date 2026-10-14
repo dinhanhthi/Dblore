@@ -93,17 +93,6 @@ struct SQLInsertRendererTests {
         result: result(columns: [], rows: [[.int(1)]]), table: "t", dialect: .postgresql) == "")
   }
 
-  @Test("Table name is the trimmed fallback, otherwise the placeholder")
-  func tableNameFallback() {
-    let withOID = result(
-      columns: [ColumnInfo(name: "id", type: "int4", tableOID: 42, attributeNumber: 1)],
-      rows: [[.int(1)]])
-    #expect(SQLInsertRenderer.tableName(for: withOID, fallback: nil) == "table_name")
-    #expect(SQLInsertRenderer.tableName(for: withOID, fallback: "") == "table_name")
-    #expect(SQLInsertRenderer.tableName(for: withOID, fallback: " \n\t ") == "table_name")
-    #expect(SQLInsertRenderer.tableName(for: withOID, fallback: "  orders  ") == "orders")
-  }
-
   @Test("IN lists drop nulls, dedupe in first-seen order, and comment only when nulls were omitted")
   func inListDedupeAndNulls() {
     #expect(

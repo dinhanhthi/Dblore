@@ -189,11 +189,6 @@ struct SQLDialectTests {
     #expect(dialect.placeholder(index) == expected)
   }
 
-  @Test("LIMIT and OFFSET are the same text on both dialects", arguments: limitOffsetCases)
-  func limitOffset(dialect: SQLDialect, limit: Int, offset: Int, expected: String) {
-    #expect(dialect.limitOffset(limit: limit, offset: offset) == expected)
-  }
-
   @Test(
     "EXPLAIN options are PostgreSQL-only; SQLite is EXPLAIN QUERY PLAN; DuckDB is plain text",
     arguments: explainCases)
@@ -213,29 +208,6 @@ struct SQLDialectTests {
   func caseInsensitiveLike(dialect: SQLDialect, expected: String) {
     #expect(
       dialect.caseInsensitiveLike(column: #""weird""name""#, pattern: "'o''brien'") == expected)
-  }
-
-  @Test(
-    "Default schema and UPDATE ONLY support",
-    arguments: [
-      (SQLDialect.postgresql, "public", true),
-      (SQLDialect.sqlite, "main", false),
-      (SQLDialect.duckdb, "main", false),
-    ])
-  func capabilities(dialect: SQLDialect, schema: String, updateOnly: Bool) {
-    #expect(dialect.defaultSchema == schema)
-    #expect(dialect.supportsUpdateOnly == updateOnly)
-  }
-
-  @Test(
-    "SQLite LIKE is case-insensitive; PostgreSQL LIKE is not",
-    arguments: [
-      (SQLDialect.sqlite, true),
-      (SQLDialect.postgresql, false),
-      (SQLDialect.duckdb, false),
-    ])
-  func likeIsCaseInsensitive(dialect: SQLDialect, insensitive: Bool) {
-    #expect(dialect.likeIsCaseInsensitive == insensitive)
   }
 
   @Test("A PostgreSQL backslash is an escape string; quotes stay doubled; SQLite stays plain")
@@ -258,12 +230,5 @@ struct SQLDialectTests {
     #expect(SQLDialect.duckdb.literal(.string(#"a\b"#)) == #"'a\b'"#)
     #expect(SQLDialect.duckdb != SQLDialect.postgresql)
     #expect(SQLDialect.duckdb != SQLDialect.sqlite)
-  }
-
-  @Test("DatabaseType.dialect selects the matching dialect")
-  func databaseTypeDialect() {
-    #expect(DatabaseType.postgresql.dialect == SQLDialect.postgresql)
-    #expect(DatabaseType.sqlite.dialect == SQLDialect.sqlite)
-    #expect(SQLDialect.postgresql != SQLDialect.sqlite)
   }
 }

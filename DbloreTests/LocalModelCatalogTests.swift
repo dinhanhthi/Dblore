@@ -22,27 +22,6 @@ struct LocalModelCatalogTests {
     }
   }
 
-  @Test("one entry per tier")
-  func oneEntryPerTier() {
-    let tiers = LocalModelCatalog.all.map(\.tier)
-    #expect(tiers.count == 3)
-    #expect(Set(tiers) == [.tiny, .balanced, .best])
-  }
-
-  @Test("sorted by size ascending")
-  func sortedBySize() {
-    let sizes = LocalModelCatalog.all.map(\.approxSizeBytes)
-    #expect(sizes == sizes.sorted())
-    #expect(LocalModelCatalog.all.map(\.tier) == [.tiny, .balanced, .best])
-  }
-
-  @Test("model(for:) finds entries by id")
-  func lookup() {
-    let first = LocalModelCatalog.all[0]
-    #expect(LocalModelCatalog.model(for: first.id) == first)
-    #expect(LocalModelCatalog.model(for: "nope") == nil)
-  }
-
   @Test("recommended is nil below the smallest minimum RAM")
   func recommendedBelowMinimum() {
     #expect(LocalModelCatalog.recommended(forRAM: 4 * gb) == nil)

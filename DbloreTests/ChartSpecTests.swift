@@ -114,28 +114,6 @@ struct ChartSpecTests {
     #expect(wide?.yColumns == ["n"])
   }
 
-  @Test("At most five numeric columns are suggested as y")
-  func yColumnsAreCappedAtFive() {
-    let names = ["a", "b", "c", "d", "e", "f", "g"]
-    let result = queryResult(
-      columns: names.map { ColumnInfo(name: $0, type: "float8") },
-      rows: [names.map { _ in CellValue.double(1) }]
-    )
-    #expect(ChartSpec.suggested(for: result)?.yColumns == ["a", "b", "c", "d", "e"])
-    #expect(ChartSpec.suggested(for: result)?.xColumn == nil)
-    #expect(ChartSpec.suggested(for: result)?.kind == .bar)
-  }
-
-  @Test("A chart spec round-trips through JSON")
-  func codableRoundTrip() throws {
-    for kind in [ChartKind.bar, .line, .area, .point] {
-      let spec = ChartSpec(kind: kind, xColumn: "t", yColumns: ["y"], seriesColumn: "s")
-      let data = try JSONEncoder().encode(spec)
-      let decoded = try JSONDecoder().decode(ChartSpec.self, from: data)
-      #expect(decoded == spec)
-    }
-  }
-
   private func queryResult(columns: [ColumnInfo], rows: [[CellValue]]) -> QueryResult {
     QueryResult(columns: columns, rows: rows, rowCount: rows.count, executionTime: 0)
   }

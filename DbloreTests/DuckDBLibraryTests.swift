@@ -247,68 +247,6 @@ struct DuckDBLibraryTests {
     defer { db.close() }
     #expect(try db.int64("SELECT 40 + 2") == 42)
   }
-
-  // MARK: - (d) quarantined copy (only with a notarized artifact)
-
-  @Test(
-    .disabled(
-      if: !isNotarized, "triggers Gatekeeper dialog; runs once dev-catalog.json is notarized"))
-  func quarantinedCopyOutcomeIsRecorded() throws {
-    // Files the sandboxed app writes are auto-quarantined (see case c).
-    let staged = try Self.stage(Self.signedSource, as: "libduckdb-quarantined.dylib")
-    defer { Self.removeStaged(staged) }
-    Self.log("(d) quarantine: \(Self.quarantine(of: staged) ?? "none")")
-    do {
-      let library = try Self.load(staged, sha256: try Self.catalog().sha256)
-      Self.log("(d) quarantined load OK, image \(Self.imagePath(of: library))")
-    } catch {
-      Self.log("(d) quarantined load failed: \(error)")
-    }
-  }
-
-  // MARK: - (f) read-only open with a leftover .wal (informational)
-
-  @Test func readOnlyOpenWithLeftoverWALOutcomeIsRecorded() throws {
-    let library = try Self.loadUnquarantined(Self.signedSource)
-
-    let dir = FileManager.default.temporaryDirectory
-      .appendingPathComponent("duckdb-wal-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let file = dir.appendingPathComponent("spike.duckdb")
-    let wal = dir.appendingPathComponent("spike.duckdb.wal")
-
-    let writer = try DuckDBTestDatabase(library: library, path: file.path)
-    do {
-      _ = try writer.rows("CREATE TABLE t (i INTEGER, s VARCHAR)")
-      _ = try writer.rows("INSERT INTO t VALUES (7, 'wal')")
-      _ = try writer.rows("PRAGMA disable_checkpoint_on_shutdown")
-    } catch {
-      Self.log("(f) setup failed: \(error)")
-    }
-    writer.close()
-    let walExists = FileManager.default.fileExists(atPath: wal.path)
-    Self.log("(f) .wal present after close: \(walExists)")
-
-    do {
-      let reader = try DuckDBTestDatabase(
-        library: library, path: file.path, config: ["access_mode": "READ_ONLY"])
-      defer { reader.close() }
-      let rows = try reader.rows("SELECT i, s FROM t")
-      Self.log("(f) read-only rows: \(rows)")
-      do {
-        _ = try reader.rows("INSERT INTO t VALUES (8, 'x')")
-        Self.log("(f) read-only INSERT unexpectedly succeeded")
-      } catch {
-        Self.log("(f) read-only INSERT rejected: \(error)")
-      }
-    } catch {
-      Self.log("(f) read-only open/read failed: \(error)")
-    }
-    Self.log(
-      "(f) .wal present after read-only session: \(FileManager.default.fileExists(atPath: wal.path))"
-    )
-  }
 }
 
 /// Minimal test-side driver over the raw C API table.

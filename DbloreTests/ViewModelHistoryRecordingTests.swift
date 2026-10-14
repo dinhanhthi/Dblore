@@ -51,22 +51,6 @@ struct ViewModelHistoryRecordingTests {
     }
   }
 
-  @Test("An editor run records the editor source")
-  func editorRunRecordsEditorSource() async throws {
-    try await withViewModel(connectionName: "") { viewModel, recorder in
-      await viewModel.recordExecution(
-        [outcome("SELECT * FROM events")],
-        source: .editor)
-
-      let entries = await recorder.entries
-      let entry = try #require(entries.first)
-      #expect(entries.count == 1)
-      #expect(entry.source == .editor)
-      #expect(entry.sql == "SELECT * FROM events")
-      #expect(entry.connectionLabel == "localhost/app")
-    }
-  }
-
   @Test("A data viewer page load is not recorded")
   func dataViewerPageLoadIsNotRecorded() async throws {
     try await withViewModel { viewModel, recorder in

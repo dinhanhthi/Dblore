@@ -181,6 +181,22 @@ struct ResultComparePanel: View {
   }
 }
 
+// MARK: - Pane columns
+
+/// Columns a compare pane shows. Columns only on this side (added or removed) come first, so
+/// their tinted header is visible without scrolling the fixed-width columns sideways.
+nonisolated struct ResultComparePaneColumns: Sendable, Equatable {
+  let names: [String]
+  /// Columns only on this side, tinted in the header
+  let sideOnly: Set<String>
+
+  init(_ diff: ResultDiff, side: ResultDiff.Side) {
+    let only = side == .baseline ? diff.removedColumns : diff.addedColumns
+    names = only + diff.sharedColumns
+    sideOnly = Set(only)
+  }
+}
+
 // MARK: - Row compare view
 
 /// Pinned and current rows side by side, each under the query that produced it. Only
@@ -218,8 +234,7 @@ struct ResultCompareView: View {
         note: pinNote,
         query: baselineQuery,
         result: baseline,
-        columns: diff.sharedColumns + diff.removedColumns,
-        sideColumns: Set(diff.removedColumns),
+        columns: ResultComparePaneColumns(diff, side: .baseline),
         sideTint: .destructive,
         sideMarker: "\u{2212}",
         rows: diff.paneRows(side: .baseline, rowCount: baseline.rows.count),
@@ -230,8 +245,7 @@ struct ResultCompareView: View {
         title: "Current",
         query: currentQuery,
         result: current,
-        columns: diff.sharedColumns + diff.addedColumns,
-        sideColumns: Set(diff.addedColumns),
+        columns: ResultComparePaneColumns(diff, side: .current),
         sideTint: .success,
         sideMarker: "+",
         rows: diff.paneRows(side: .current, rowCount: current.rows.count),
@@ -252,9 +266,7 @@ private struct ResultComparePane: View {
   /// Comment-free SQL of this side; nil when not recorded
   let query: String?
   let result: CellResult
-  let columns: [String]
-  /// Columns only on this side
-  let sideColumns: Set<String>
+  let columns: ResultComparePaneColumns
   let sideTint: Color
   let sideMarker: String
   let rows: [ResultCompareRow]
@@ -368,15 +380,15 @@ private struct ResultComparePane: View {
   private var header: some View {
     HStack(spacing: 0) {
       Color.clear.frame(width: Self.markerWidth)
-      ForEach(Array(columns.enumerated()), id: \.offset) { _, name in
+      ForEach(Array(columns.names.enumerated()), id: \.offset) { _, name in
         Text(name)
           .font(.small.weight(.semibold))
-          .foregroundStyle(sideColumns.contains(name) ? sideTint : Color.foreground)
+          .foregroundStyle(columns.sideOnly.contains(name) ? sideTint : Color.foreground)
           .lineLimit(1)
           .truncationMode(.tail)
           .padding(.horizontal, Spacing.xs)
           .frame(width: Self.columnWidth, height: Self.rowHeight, alignment: .leading)
-          .background(sideColumns.contains(name) ? sideTint.opacity(0.15) : Color.clear)
+          .background(columns.sideOnly.contains(name) ? sideTint.opacity(0.15) : Color.clear)
       }
     }
     .background(Color.tableHeaderBackground)
@@ -390,7 +402,7 @@ private struct ResultComparePane: View {
       marker(row.kind)
         .font(.monoSmall)
         .frame(width: Self.markerWidth, height: Self.rowHeight)
-      ForEach(Array(columns.enumerated()), id: \.offset) { _, name in
+      ForEach(Array(columns.names.enumerated()), id: \.offset) { _, name in
         let value = columnIndex[name].flatMap { values.indices.contains($0) ? values[$0] : nil }
         Text(value.map(Self.text) ?? "")
           .font(.monoSmall)

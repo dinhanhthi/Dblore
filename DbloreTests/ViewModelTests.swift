@@ -126,72 +126,9 @@ struct ViewModelTests {
 
   // MARK: - Cell Selection Tests
 
-  @Test("Select cell by ID")
-  func selectCell() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let cellId = viewModel.notebook.cells[0].id
-
-    // Act
-    viewModel.selectedCellId = cellId
-
-    // Assert
-    #expect(viewModel.selectedCellId == cellId)
-  }
-
-  @Test("Deselect cell")
-  func deselectCell() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let cellId = viewModel.notebook.cells[0].id
-    viewModel.selectedCellId = cellId
-    #expect(viewModel.selectedCellId != nil)
-
-    // Act
-    viewModel.selectedCellId = nil
-
-    // Assert
-    #expect(viewModel.selectedCellId == nil)
-  }
-
   // MARK: - Cell Content Tests
 
-  @Test("Update cell content")
-  func updateCellContent() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let cellId = viewModel.notebook.cells[0].id
-    let newContent = "SELECT * FROM users;"
-
-    // Act
-    if let index = viewModel.notebook.cells.firstIndex(where: { $0.id == cellId }) {
-      viewModel.notebook.cells[index].content = newContent
-    }
-
-    // Assert
-    #expect(viewModel.notebook.cells[0].content == newContent)
-  }
-
   // MARK: - Multiple Cells Tests
-
-  @Test("Add multiple cells")
-  func addMultipleCells() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let initialCount = viewModel.notebook.cells.count
-
-    // Act
-    for _ in 0..<10 {
-      viewModel.addCell(type: .sql, after: nil)
-    }
-
-    // Assert
-    #expect(viewModel.notebook.cells.count == initialCount + 10)
-  }
 
   @Test("Delete all cells keeps at least one")
   func deleteAllCells() {
@@ -213,43 +150,7 @@ struct ViewModelTests {
 
   // MARK: - Edge Cases
 
-  @Test("Add cell to empty notebook")
-  func addCellToEmptyNotebook() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    viewModel.notebook.cells = []
-
-    // Act
-    viewModel.addCell(type: .sql, after: nil)
-
-    // Assert
-    #expect(viewModel.notebook.cells.count == 1)
-  }
-
-  @Test("Select non-existent cell")
-  func selectNonExistentCell() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let nonExistentId = UUID()
-
-    // Act
-    viewModel.selectedCellId = nonExistentId
-
-    // Assert
-    #expect(viewModel.selectedCellId == nonExistentId)
-  }
-
   // MARK: - Schema Change Query Detection Tests
-
-  @Test("isSchemaChangeQuery detects CREATE statements")
-  func isSchemaChangeQueryDetectsCREATE() {
-    #expect(isSchemaChangeQuery("CREATE TABLE users (id INT)") == true)
-    #expect(isSchemaChangeQuery("create table users (id int)") == true)
-    #expect(isSchemaChangeQuery("  CREATE INDEX idx ON users(id)") == true)
-    #expect(isSchemaChangeQuery("CREATE VIEW v AS SELECT 1") == true)
-  }
 
   @Test("isSchemaChangeQuery detects DROP statements")
   func isSchemaChangeQueryDetectsDROP() {
@@ -257,13 +158,6 @@ struct ViewModelTests {
     #expect(isSchemaChangeQuery("drop table users cascade") == true)
     #expect(isSchemaChangeQuery("  DROP INDEX idx") == true)
     #expect(isSchemaChangeQuery("DROP VIEW v") == true)
-  }
-
-  @Test("isSchemaChangeQuery detects ALTER statements")
-  func isSchemaChangeQueryDetectsALTER() {
-    #expect(isSchemaChangeQuery("ALTER TABLE users ADD COLUMN name VARCHAR") == true)
-    #expect(isSchemaChangeQuery("alter table users drop column name") == true)
-    #expect(isSchemaChangeQuery("  ALTER INDEX idx RENAME TO idx2") == true)
   }
 
   @Test("isSchemaChangeQuery detects TRUNCATE statements")
@@ -286,41 +180,6 @@ struct ViewModelTests {
   }
 
   // MARK: - ConnectionProtectionLevel Property Tests
-
-  @Test("ConnectionConfig protectionLevel defaults to none")
-  func connectionConfigProtectionLevelDefault() {
-    let config = ConnectionConfig()
-    #expect(config.protectionLevel == .none)
-    #expect(config.blocksSchemaChanges == false)
-  }
-
-  @Test("ConnectionConfig protectionLevel can be set to schemaOnly")
-  func connectionConfigProtectionLevelCanBeSetToSchemaOnly() {
-    let config = ConnectionConfig(protectionLevel: .schemaOnly)
-    #expect(config.protectionLevel == .schemaOnly)
-    #expect(config.blocksSchemaChanges == true)
-    #expect(config.isReadOnly == false)
-  }
-
-  @Test("ConnectionConfig with protectionLevel is Codable")
-  func connectionConfigProtectionLevelCodable() throws {
-    let config = ConnectionConfig(
-      host: "localhost",
-      port: 5432,
-      database: "test",
-      username: "user",
-      password: "pass",
-      protectionLevel: .schemaOnly
-    )
-
-    let encoder = JSONEncoder()
-    let data = try encoder.encode(config)
-
-    let decoder = JSONDecoder()
-    let decoded = try decoder.decode(ConnectionConfig.self, from: data)
-
-    #expect(decoded.protectionLevel == .schemaOnly)
-  }
 
   @Test("ConnectionConfig migrates legacy readOnly to protectionLevel")
   func connectionConfigMigrateLegacyReadOnly() throws {

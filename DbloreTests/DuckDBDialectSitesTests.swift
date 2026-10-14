@@ -189,20 +189,6 @@ struct DuckDBDialectSitesTests {
 
   // MARK: - Syntax highlighter
 
-  @Test("DuckDB highlighting: no backslash escape in a plain string")
-  func highlighterPlainString() {
-    let text = #"SELECT 'C:\dir\', 'x'"#
-    #expect(spans(text, .duckdb) == ["'C:\\dir\\'", "'x'"])
-    #expect(spans(text, .sqlite) == ["'C:\\dir\\'", "'x'"])
-    #expect(spans(text, .postgresql) == ["'C:\\dir\\', '"])
-  }
-
-  @Test("DuckDB highlighting: E-strings, dollar quotes and comments")
-  func highlighterOtherBlocks() {
-    let text = "SELECT E'a\\'b', $$x$$ -- c\n/* d */"
-    #expect(spans(text, .duckdb) == ["E'a\\'b'", "$$x$$", "-- c", "/* d */"])
-  }
-
   private func spans(_ text: String, _ dialect: SQLDialect) -> [String] {
     let ns = text as NSString
     return SQLSyntaxHighlighter.scanBlockSpans(

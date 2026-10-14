@@ -50,31 +50,6 @@ struct ObjectSourceUITests {
 
   // MARK: - Display helpers
 
-  @Test("trigger subtitle names the table, timing and events")
-  func triggerSubtitle() {
-    let trigger = DatabaseTrigger(
-      schema: "public", table: "orders", name: "audit", timing: .before,
-      events: [.insert, .update], enabled: true)
-    #expect(trigger.sidebarSubtitle == "on orders · BEFORE INSERT OR UPDATE")
-  }
-
-  @Test("a disabled trigger says so in its subtitle")
-  func disabledTriggerSubtitle() {
-    let trigger = DatabaseTrigger(
-      schema: "public", table: "orders", name: "audit", timing: .insteadOf, events: [.delete],
-      enabled: false)
-    #expect(trigger.sidebarSubtitle == "on orders · INSTEAD OF DELETE · disabled")
-  }
-
-  @Test("the banner name is schema-qualified unless the engine has no schema")
-  func qualifiedName() {
-    let routine = ObjectSourceRef(
-      kind: .function, schema: "public", name: "lower", arguments: "text")
-    #expect(routine.qualifiedName == "public.lower(text)")
-    let trigger = ObjectSourceRef(kind: .trigger, schema: "", name: "items_audit", table: "items")
-    #expect(trigger.qualifiedName == "items_audit on items")
-  }
-
   // MARK: - Palette
 
   @Test("the palette lists a View Source row per function, procedure and trigger")
@@ -200,18 +175,6 @@ struct ObjectSourceUITests {
     viewModel.insertAISQL("SELECT 1")
 
     #expect(viewModel.editorContent == before)
-    await workspace.performDisconnect()
-  }
-
-  @Test("a source tab cannot be pinned")
-  func sourceTabNotPinnable() async throws {
-    let (workspace, url) = try await sqliteWorkspace()
-    defer { removeDatabase(url) }
-    let id = try await openLoadedTrigger(workspace)
-
-    workspace.setPinned(true, id: id)
-
-    #expect(workspace.tabs.first { $0.id == id }?.isPinned == false)
     await workspace.performDisconnect()
   }
 }

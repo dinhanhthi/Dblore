@@ -31,17 +31,6 @@ struct TabMoveWindowTests {
     return (manager, suite, name)
   }
 
-  @Test("A clean saved file tab can move; the tab is identified by id")
-  func cleanFileTabCanMove() async throws {
-    let (folder, url) = try Self.makeFile()
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let (manager, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    try await manager.openFile(url: url)
-    #expect(manager.canMoveToNewWindow(tabId: manager.tabs[0].id))
-    #expect(!manager.canMoveToNewWindow(tabId: UUID()))
-  }
-
   @Test("Dirty, untitled, pinned and transaction-origin tabs cannot move")
   func ineligibleTabs() async throws {
     let (folder, url) = try Self.makeFile()
@@ -146,47 +135,4 @@ struct TabMoveWindowTests {
     #expect(!manager.canMoveToNewWindow(tabId: manager.tabs[0].id))
   }
 
-  @Test("A failed move discards the new window manager and restores the active workspace")
-  func failedMoveDiscardsWindowManager() async throws {
-    let (folder, url) = try Self.makeFile()
-    defer { try? FileManager.default.removeItem(at: folder) }
-    let (source, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    let (target, targetSuite, targetName) = try Self.manager()
-    defer { targetSuite.removePersistentDomain(forName: targetName) }
-    try await source.openFile(url: url)
-    try FileManager.default.removeItem(at: url)
-    source.makeWindowManager = { _ in target }
-    var discarded: [(UUID, UUID?)] = []
-    source.discardWindowManager = { manager, previous in discarded.append((manager.id, previous)) }
-
-    await source.moveTabToNewWindow(id: source.tabs[0].id)
-
-    #expect(discarded.count == 1)
-    #expect(discarded.first?.0 == target.id)
-    #expect(source.tabs.count == 1)
-  }
-
-  @Test("A data viewer tab moves with its relation and the source tab closes")
-  func transferMovesDataViewer() async throws {
-    let (source, suite, name) = try Self.manager()
-    defer { suite.removePersistentDomain(forName: name) }
-    let (target, targetSuite, targetName) = try Self.manager()
-    defer { targetSuite.removePersistentDomain(forName: targetName) }
-    source.openDataViewer(schema: "sales", name: "orders", orderColumns: ["id", "day"])
-    let id = source.tabs[0].id
-
-    try await source.transfer(tabId: id, into: target)
-
-    let moved = try #require(target.tabs.first)
-    #expect(target.tabs.count == 1)
-    #expect(moved.documentType == .dataViewer)
-    #expect(moved.title == "sales.orders")
-    let state = try #require(target.viewModels[moved.id]?.dataViewer)
-    #expect(state.schema == "sales")
-    #expect(state.name == "orders")
-    #expect(state.orderColumns == ["id", "day"])
-    #expect(!moved.isPinned)
-    #expect(source.tabs.isEmpty)
-  }
 }

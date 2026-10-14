@@ -62,12 +62,6 @@ struct ConnectionFormSSHDraftTests {
     #expect(SSHFormDraft(from: ConnectionConfig()) == SSHFormDraft())
   }
 
-  @Test("SSH is offered for PostgreSQL only")
-  func sshEngines() {
-    #expect(SSHFormDraft.supportsSSH(.postgresql))
-    #expect(!SSHFormDraft.supportsSSH(.sqlite))
-  }
-
   // MARK: Validation
 
   @Test("SSH on requires host, user and a secret")

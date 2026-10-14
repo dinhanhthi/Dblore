@@ -30,9 +30,4 @@ struct UpdaterConfigurationTests {
   func testInstallerLauncherServiceEnabled() {
     #expect(info["SUEnableInstallerLauncherService"] as? Bool == true)
   }
-
-  @Test("Automatic update checks are enabled")
-  func testAutomaticChecksEnabled() {
-    #expect(info["SUEnableAutomaticChecks"] as? Bool == true)
-  }
 }

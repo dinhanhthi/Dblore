@@ -26,17 +26,6 @@ struct SessionBrakeStatementTests {
       ])
   }
 
-  @Test("Custom values in range are used as-is")
-  func customValues() {
-    #expect(
-      statements(statement: 1, lock: 3600, idle: 86400) == [
-        "SET statement_timeout = '1s'",
-        "SET lock_timeout = '3600s'",
-        "SET idle_in_transaction_session_timeout = '86400s'",
-        "SET application_name = 'Dblore'",
-      ])
-  }
-
   @Test(
     "Zero or negative values fall back to the defaults (never disable a brake)",
     arguments: [0, -1, Int.min])

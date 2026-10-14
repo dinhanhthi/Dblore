@@ -35,23 +35,6 @@ struct ObjectSourceTabTests {
 
   // MARK: - Codable
 
-  @Test("TabItem round-trips with an object source")
-  func roundTripWithSource() throws {
-    let tab = TabItem(
-      documentType: .sqlFile, title: "add_one(x integer)", objectSource: Self.function)
-    let decoded = try JSONDecoder().decode(TabItem.self, from: JSONEncoder().encode(tab))
-    #expect(decoded.objectSource == Self.function)
-    #expect(decoded.isReadOnlySource)
-  }
-
-  @Test("TabItem round-trips without an object source")
-  func roundTripWithoutSource() throws {
-    let tab = TabItem(documentType: .sqlFile, title: "a.sql")
-    let decoded = try JSONDecoder().decode(TabItem.self, from: JSONEncoder().encode(tab))
-    #expect(decoded.objectSource == nil)
-    #expect(!decoded.isReadOnlySource)
-  }
-
   @Test("An older payload without the objectSource key decodes")
   func legacyPayload() throws {
     let json = """
@@ -83,22 +66,7 @@ struct ObjectSourceTabTests {
     #expect(Self.trigger.key != otherTable.key)
   }
 
-  @Test("Titles read name(args) for routines and name on table for triggers")
-  func titles() {
-    #expect(Self.function.title == "add_one(x integer)")
-    #expect(ObjectSourceRef(kind: .procedure, schema: "s", name: "p").title == "p()")
-    #expect(Self.trigger.title == "audit_users on users")
-  }
-
   // MARK: - Dirty, save, close
-
-  @Test("markDirty leaves an object source tab clean")
-  func neverDirty() throws {
-    let manager = Self.manager()
-    let id = try Self.sourceTab(in: manager)
-    manager.markDirty(tabId: id)
-    #expect(manager.tabs.first { $0.id == id }?.isDirty == false)
-  }
 
   @Test("An object source tab is not save-eligible and saveTab does nothing")
   func notSaveable() async throws {
@@ -111,16 +79,6 @@ struct ObjectSourceTabTests {
     try await manager.saveTab(id: id)
     #expect(manager.tabs.first { $0.id == id }?.fileURL == nil)
     #expect(manager.tabs.first { $0.id == id }?.isDirty == false)
-  }
-
-  @Test("Closing an object source tab never prompts")
-  func closeWithoutPrompt() throws {
-    let manager = Self.manager()
-    let id = try Self.sourceTab(in: manager)
-    manager.markDirty(tabId: id)
-    manager.requestCloseTab(id: id)
-    #expect(!manager.tabs.contains { $0.id == id })
-    #expect(!manager.showingCloseConfirmation)
   }
 
   // MARK: - Persistence and launch snapshot

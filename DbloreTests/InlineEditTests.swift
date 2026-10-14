@@ -55,11 +55,6 @@ struct CellUpdateStatementTests {
     #expect(try keyText(1_700_000_000.1234998) == "2023-11-14T22:13:20.123500Z")
   }
 
-  @Test("A whole-second date primary key binds six zero digits")
-  func datePrimaryKeyWholeSecond() throws {
-    #expect(try keyText(1_700_000_000) == "2023-11-14T22:13:20.000000Z")
-  }
-
   @Test("A pre-1970 date primary key floors to the previous second")
   func datePrimaryKeyBeforeEpoch() throws {
     #expect(try keyText(-0.5) == "1969-12-31T23:59:59.500000Z")

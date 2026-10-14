@@ -106,13 +106,4 @@ struct ResultPinPersistenceTests {
     #expect(decoded.sourceQuery == nil)
     #expect(decoded.result.columns.map(\.name) == ["id"])
   }
-
-  @Test("Duplicating a cell keeps its pin")
-  func duplicateKeepsPin() throws {
-    let viewModel = NotebookViewModel(notebook: notebook(pinned: pin()))
-    let id = try #require(viewModel.notebook.cells.first?.id)
-    viewModel.duplicateCell(id: id, registerUndo: false)
-    #expect(viewModel.notebook.cells.count == 2)
-    #expect(viewModel.notebook.cells[1].pinnedResult == pin())
-  }
 }

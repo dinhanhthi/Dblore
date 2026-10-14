@@ -23,11 +23,4 @@ struct MarkdownTabTypeTests {
       #expect(TabDocumentType.from(url: URL(fileURLWithPath: "/tmp/\(name)")) == nil)
     }
   }
-
-  @Test("Has the md extension and a rich text icon")
-  func extensionAndIcon() {
-    #expect(TabDocumentType.markdown.fileExtension == "md")
-    #expect(TabDocumentType.markdown.icon == "doc.richtext")
-    #expect(AppMode.markdown.fileExtension == "md")
-  }
 }

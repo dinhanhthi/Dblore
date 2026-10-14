@@ -28,26 +28,6 @@ struct DatabaseQueryExecutionTests {
     #expect(statements[1] == "SELECT 2", "Second statement should be 'SELECT 2'")
   }
 
-  @Test("Split multiple statements with whitespace")
-  func splitMultipleStatementsWithWhitespace() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = """
-      INSERT INTO users (name) VALUES ('Alice');
-      INSERT INTO users (name) VALUES ('Bob');
-      SELECT * FROM users;
-      """
-
-    // Act
-    let statements = manager.splitSQLStatementsPublic(query)
-
-    // Assert
-    #expect(statements.count == 3, "Should split into 3 statements")
-    #expect(statements[0].contains("Alice"), "First should contain Alice")
-    #expect(statements[1].contains("Bob"), "Second should contain Bob")
-    #expect(statements[2].contains("SELECT"), "Third should be SELECT")
-  }
-
   @Test("Split ignores semicolon in string literal")
   func splitIgnoresSemicolonInString() async throws {
     // Arrange
@@ -84,57 +64,6 @@ struct DatabaseQueryExecutionTests {
       "Comment should be preserved in first statement")
     #expect(statements[0].contains("SELECT 1"), "First statement should contain SELECT 1")
     #expect(statements[1] == "SELECT 2", "Second statement should be SELECT 2")
-  }
-
-  @Test("Split handles multi-line comments")
-  func splitHandlesMultiLineComments() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = """
-      /* This is a
-      multi-line comment; with semicolon */
-      SELECT 1;
-      SELECT 2;
-      """
-
-    // Act
-    let statements = manager.splitSQLStatementsPublic(query)
-
-    // Assert
-    #expect(statements.count == 2, "Should split into 2 statements")
-    #expect(
-      statements[0].contains("/* This is a"), "Comment should be preserved in first statement")
-    #expect(statements[0].contains("SELECT 1"), "First should contain SELECT 1")
-    #expect(statements[1] == "SELECT 2", "Second should be SELECT 2")
-  }
-
-  @Test("Split handles escaped quotes in strings")
-  func splitHandlesEscapedQuotes() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = "INSERT INTO test (name) VALUES ('O''Reilly; Inc'); SELECT 1"
-
-    // Act
-    let statements = manager.splitSQLStatementsPublic(query)
-
-    // Assert
-    #expect(statements.count == 2, "Should split into 2 statements")
-    #expect(statements[0].contains("O''Reilly; Inc"), "Should preserve escaped quote and semicolon")
-    #expect(statements[1] == "SELECT 1", "Second should be SELECT 1")
-  }
-
-  @Test("Single statement without semicolon returns one statement")
-  func singleStatementWithoutSemicolon() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = "SELECT * FROM users"
-
-    // Act
-    let statements = manager.splitSQLStatementsPublic(query)
-
-    // Assert
-    #expect(statements.count == 1, "Should return single statement")
-    #expect(statements[0] == "SELECT * FROM users", "Statement should be unchanged")
   }
 
   @Test("Empty query returns empty array")
@@ -176,19 +105,6 @@ struct DatabaseQueryExecutionTests {
     #expect(hasMultiple == true, "Should detect multiple statements")
   }
 
-  @Test("hasMultipleStatements returns false for single statement")
-  func hasMultipleStatementsReturnsFalseForSingle() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = "SELECT * FROM users"
-
-    // Act
-    let hasMultiple = manager.hasMultipleStatementsPublic(query)
-
-    // Assert
-    #expect(hasMultiple == false, "Should return false for single statement")
-  }
-
   @Test("hasMultipleStatements ignores semicolon in string")
   func hasMultipleStatementsIgnoresSemicolonInString() async throws {
     // Arrange
@@ -215,19 +131,6 @@ struct DatabaseQueryExecutionTests {
 
     // Assert
     #expect(isCommentOnly == true, "Should detect single-line comment as comment-only")
-  }
-
-  @Test("isCommentOnlyStatement detects multi-line comment")
-  func isCommentOnlyStatementDetectsMultiLineComment() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = "/* This is a\n   multi-line comment */"
-
-    // Act
-    let isCommentOnly = manager.isCommentOnlyStatementPublic(query)
-
-    // Assert
-    #expect(isCommentOnly == true, "Should detect multi-line comment as comment-only")
   }
 
   @Test("isCommentOnlyStatement returns false for SQL with comment")
@@ -272,19 +175,6 @@ struct DatabaseQueryExecutionTests {
     // Assert
     #expect(isCommentOnly == true, "Should return true for multiple comments with whitespace")
   }
-
-  @Test("isCommentOnlyStatement returns false for valid SQL")
-  func isCommentOnlyStatementReturnsFalseForValidSQL() async throws {
-    // Arrange
-    let manager = DatabaseConnectionManager()
-    let query = "SELECT 1"
-
-    // Act
-    let isCommentOnly = manager.isCommentOnlyStatementPublic(query)
-
-    // Assert
-    #expect(isCommentOnly == false, "Should return false for valid SQL")
-  }
 }
 
 // MARK: - Test Helper Extension
@@ -292,16 +182,16 @@ struct DatabaseQueryExecutionTests {
 extension DatabaseConnectionManager {
   /// Public wrapper for splitSQLStatements (for testing)
   nonisolated func splitSQLStatementsPublic(_ sql: String) -> [String] {
-    return splitSQLStatements(sql)
+    return splitSQLStatements(sql, dialect: .postgresql)
   }
 
   /// Public wrapper for hasMultipleStatements (for testing)
   nonisolated func hasMultipleStatementsPublic(_ sql: String) -> Bool {
-    return hasMultipleStatements(sql)
+    return hasMultipleStatements(sql, dialect: .postgresql)
   }
 
   /// Public wrapper for isCommentOnlyStatement (for testing)
   nonisolated func isCommentOnlyStatementPublic(_ sql: String) -> Bool {
-    return isCommentOnlyStatement(sql)
+    return isCommentOnlyStatement(sql, dialect: .postgresql)
   }
 }

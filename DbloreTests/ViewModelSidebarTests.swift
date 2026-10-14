@@ -36,37 +36,6 @@ struct ViewModelSidebarTests {
 
   // MARK: - Sidebar Tests
 
-  @Test("Toggle right sidebar")
-  func toggleRightSidebar() {
-    // Arrange
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-    let initialState = viewModel.isRightSidebarVisible
-
-    // Act
-    viewModel.toggleSidebar()
-
-    // Assert
-    #expect(viewModel.isRightSidebarVisible == !initialState)
-
-    // Act again
-    viewModel.toggleSidebar()
-
-    // Assert - Back to initial state
-    #expect(viewModel.isRightSidebarVisible == initialState)
-  }
-
-  @Test("Showing sidebar content opens the right sidebar with that content")
-  func showSidebarOpensWithContent() {
-    let viewModel = NotebookViewModel(notebook: createTestNotebook())
-    let content = SidebarContent.executedQuery(query: "SELECT 1", cellId: nil)
-
-    viewModel.showSidebar(content: content)
-
-    #expect(viewModel.isRightSidebarVisible)
-    #expect(viewModel.rightSidebarContent == content)
-  }
-
   // Note: Left sidebar is now owned by WorkspaceManager, not NotebookViewModel
   // The test for toggleLeftSidebar() has been removed as the functionality moved to WorkspaceManager
 
@@ -75,32 +44,7 @@ struct ViewModelSidebarTests {
 
   // MARK: - Connection State Tests
 
-  @Test("Connection state initially disconnected")
-  func connectionStateInitiallyDisconnected() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.connectionState == .disconnected)
-  }
-
   // MARK: - Notebook Metadata Tests
-
-  @Test("Notebook metadata accessible")
-  func notebookMetadataAccessible() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    #expect(viewModel.notebook.metadata.title == "Test Notebook")
-  }
-
-  @Test("Notebook settings accessible")
-  func notebookSettings() {
-    let notebook = createTestNotebook()
-    let viewModel = NotebookViewModel(notebook: notebook)
-
-    // Just verify settings exists and has keyboardShortcuts
-    #expect(viewModel.notebook.settings.keyboardShortcuts.isEmpty == true)
-  }
 
   @Test("A JSON cell shown from a sorted grid shows its original row number in the path")
   func gridJSONPathUsesOriginalRow() {

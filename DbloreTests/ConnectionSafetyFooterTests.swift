@@ -12,19 +12,6 @@ struct ConnectionSafetyFooterTests {
 
   // MARK: Tone
 
-  @Test func protectionTones() {
-    #expect(SafetyOptionStyle.footerTone(for: ConnectionProtectionLevel.none) == .neutral)
-    #expect(SafetyOptionStyle.footerTone(for: ConnectionProtectionLevel.schemaOnly) == .accent)
-    #expect(SafetyOptionStyle.footerTone(for: ConnectionProtectionLevel.readOnly) == .warning)
-  }
-
-  @Test func commitStyleTones() {
-    #expect(SafetyOptionStyle.footerTone(for: CommitStyle.immediate) == .neutral)
-    #expect(SafetyOptionStyle.footerTone(for: CommitStyle.confirm) == .warning)
-    #expect(SafetyOptionStyle.footerTone(for: CommitStyle.review) == .accent)
-    #expect(SafetyOptionStyle.footerTone(for: CommitStyle.password) == .success)
-  }
-
   // MARK: No SSL badge
 
   @Test(arguments: SSLMode.allCases)
@@ -39,15 +26,4 @@ struct ConnectionSafetyFooterTests {
     }
   }
 
-  @Test(arguments: [DatabaseType.sqlite, .duckdb])
-  func fileEnginesShowNoSSLBadge(_ type: DatabaseType) {
-    let config = ConnectionConfig(databaseType: type, sslMode: .disable)
-    #expect(FooterView.noSSLTooltip(for: config, isConnected: true) == nil)
-  }
-
-  @Test func disconnectedOrMissingConfigShowsNoSSLBadge() {
-    let config = ConnectionConfig(databaseType: .postgresql, sslMode: .disable)
-    #expect(FooterView.noSSLTooltip(for: config, isConnected: false) == nil)
-    #expect(FooterView.noSSLTooltip(for: nil, isConnected: true) == nil)
-  }
 }

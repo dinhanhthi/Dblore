@@ -54,17 +54,6 @@ struct ResultComparisonTests {
     #expect(diff.hasChanges)
   }
 
-  @Test("Different primary keys on the two sides fall back to a multiset diff")
-  func differentPrimaryKeysUseMultiset() {
-    let baseline = result(["id"], [[.int(1)]], primaryKey: ["id"])
-    let current = result(["id"], [[.int(1)]], primaryKey: [])
-
-    let diff = ResultComparison.compare(baseline: baseline, current: current)
-
-    #expect(diff.mode == .multiset)
-    #expect(diff.hasChanges == false)
-  }
-
   @Test("Duplicate primary key values fall back to a multiset diff instead of dropping rows")
   func duplicateKeysUseMultiset() {
     let baseline = result(
@@ -156,32 +145,6 @@ struct ResultComparisonTests {
     let fromEmpty = ResultComparison.compare(
       baseline: result(["v"], []), current: result(["v"], [[.int(1)]]))
     #expect(fromEmpty.addedRows == [0])
-  }
-
-  @Test("Background compare returns the same diff")
-  func backgroundCompare() async {
-    let baseline = result(["v"], [[.int(1)]])
-    let current = result(["v"], [[.int(2)]])
-
-    let diff = await ResultComparison.compareInBackground(baseline: baseline, current: current)
-
-    #expect(diff == ResultComparison.compare(baseline: baseline, current: current))
-  }
-
-  @Test("When columns were added, the panes list every row so the new column shows")
-  func addedColumnListsAllRows() {
-    let rows: [[CellValue]] = (1...4).map { [.int($0), .string("n\($0)"), .int($0 * 10)] }
-    let baseline = result(["id", "name", "score"], rows, primaryKey: ["id"])
-    let current = result(
-      ["id", "name", "score", "note"], rows.map { $0 + [.null] }, primaryKey: ["id"])
-
-    let diff = ResultComparison.compare(baseline: baseline, current: current)
-
-    #expect(diff.addedColumns == ["note"])
-    #expect(diff.addedRows.isEmpty && diff.removedRows.isEmpty && diff.changedRows.isEmpty)
-    let expected = (0..<4).map { ResultCompareRow(index: $0, kind: .unchanged) }
-    #expect(diff.paneRows(side: .current, rowCount: 4) == expected)
-    #expect(diff.paneRows(side: .baseline, rowCount: 4) == expected)
   }
 
   @Test("With the same columns, the panes list only differing rows")

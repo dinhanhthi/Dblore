@@ -88,35 +88,4 @@ struct DataViewerFilterTests {
     #expect(viewModel.savedFilters.isEmpty)
   }
 
-  @Test("A blank saved filter name is rejected")
-  func blankNameRejected() {
-    let viewModel = makeViewModel()
-    #expect(viewModel.saveCurrentFilter(named: " \n ") == false)
-    #expect(viewModel.savedFilters.isEmpty)
-  }
-
-  @Test("Filter columns come from the schema table, else the loaded result")
-  func filterColumns() {
-    let viewModel = makeViewModel()
-    #expect(viewModel.filterColumns.isEmpty)
-    viewModel.databaseTables = [
-      DatabaseTable(
-        schema: "public", name: "users",
-        columns: [
-          DatabaseColumn(name: "id", type: "int"), DatabaseColumn(name: "name", type: "text"),
-        ])
-    ]
-    #expect(viewModel.filterColumns == ["id", "name"])
-  }
-
-  @Test("The draft restarts from the applied filter when the viewer shows another table")
-  func draftResetsPerRelation() {
-    let viewModel = makeViewModel()
-    viewModel.prepareFilterDraft()
-    #expect(viewModel.filterDraft.conditions.count == 1)
-    viewModel.filterDraft.conditions[0].column = "id"
-    viewModel.dataViewer?.name = "orders"
-    viewModel.prepareFilterDraft()
-    #expect(viewModel.filterDraft.conditions.map(\.column) == [""])
-  }
 }

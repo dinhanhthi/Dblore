@@ -190,7 +190,7 @@ struct ConnectionImportModelTests {
     let model = Self.productionModel()
     model.source = .uri
 
-    await model.loadText("mysql://bob:hunter2@host/db")
+    await model.loadText("sqlserver://bob:hunter2@host/db")
 
     let message = try #require(model.errorMessage)
     #expect(!message.contains("hunter2"))
@@ -342,6 +342,24 @@ struct ConnectionImportModelTests {
     #expect(model.rows.map(\.isSelected) == [true, false, true])
   }
 
+  @Test("PostgreSQL and MySQL on the same host, port, database and user are not duplicates")
+  func engineSeparatesDuplicates() async {
+    var mysql = Self.imported("MySQL")
+    mysql.config.databaseType = .mysql
+    let model = Self.model(
+      result: ([Self.imported("PG"), mysql, Self.imported("PG again")], []))
+
+    await model.load(url: URL(fileURLWithPath: "/tmp/none"))
+
+    #expect(model.rows.map(\.duplicateReason) == [nil, nil, .duplicateInFile])
+    #expect(model.rows.map(\.engine) == ["PostgreSQL", "MySQL / MariaDB", "PostgreSQL"])
+
+    // A saved PostgreSQL row does not hide the MySQL import.
+    let saved = Self.model(result: ([mysql], []), history: [Self.entry(database: "app")])
+    await saved.load(url: URL(fileURLWithPath: "/tmp/none"))
+    #expect(saved.rows.map(\.duplicateReason) == [nil])
+  }
+
   @Test("Already saved rows cannot be selected, by toggle or select all")
   func alreadySavedNotSelectable() async {
     let model = Self.model(
@@ -353,30 +371,6 @@ struct ConnectionImportModelTests {
     #expect(model.rows.map(\.isSelected) == [false, true])
     model.selectAll()
     #expect(model.rows.map(\.isSelected) == [false, true])
-  }
-
-  @Test("Select all, deselect all and toggle")
-  func selection() async throws {
-    let model = Self.model(
-      result: ([Self.imported("A", database: "a"), Self.imported("B", database: "b")], []))
-    await model.load(url: URL(fileURLWithPath: "/tmp/none"))
-
-    model.deselectAll()
-    #expect(model.selectedCount == 0)
-    let first = try #require(model.rows.first?.id)
-    model.toggle(first)
-    #expect(model.rows.map(\.isSelected) == [true, false])
-    model.toggle(first)
-    #expect(model.selectedCount == 0)
-    model.selectAll()
-    #expect(model.selectedCount == 2)
-  }
-
-  @Test("Free slots come from the saved history before any load")
-  func freeSlotsBeforeLoad() {
-    let model = Self.model(history: (1...48).map { Self.entry(database: "saved\($0)") })
-
-    #expect(model.freeSlots == 2)
   }
 
   @Test("Selecting more rows than free history slots is over the limit")

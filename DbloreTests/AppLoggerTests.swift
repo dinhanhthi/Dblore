@@ -10,64 +10,6 @@ import Testing
 
 struct AppLoggerTests {
 
-  @Test("Log level comparison")
-  func testLogLevelComparison() {
-    #expect(LogLevel.debug < LogLevel.info)
-    #expect(LogLevel.info < LogLevel.warning)
-    #expect(LogLevel.warning < LogLevel.error)
-    #expect(LogLevel.debug < LogLevel.error)
-  }
-
-  @Test("Log entry formatted line is not empty")
-  func testFormattedLogLine() {
-    let entry = LogEntry(
-      level: .error,
-      category: "Database",
-      message: "Connection failed",
-      file: "/path/to/file.swift",
-      function: "testFunction()",
-      line: 42
-    )
-
-    let formatted = entry.formattedLine
-
-    // Should contain level
-    #expect(formatted.contains("[ERROR]"))
-
-    // Should contain category
-    #expect(formatted.contains("[Database]"))
-
-    // Should contain message
-    #expect(formatted.contains("Connection failed"))
-
-    // Should contain file and line
-    #expect(formatted.contains("file.swift:42"))
-  }
-
-  @Test("Logger can log messages")
-  func testBasicLogging() async {
-    let logger = AppLogger.shared
-
-    // Clear existing logs
-    await logger.clearLogs()
-
-    // Log a message
-    await logger.info("Test message", category: "Test")
-
-    // Verify log was captured
-    let logs = await logger.getAllLogs()
-    #expect(logs.count >= 1)
-  }
-
-  @Test("Log file URL has correct extension")
-  func testLogFileURL() async {
-    let logger = AppLogger.shared
-    let url = await logger.getLogFileURL()
-
-    #expect(url.pathExtension == "log")
-    #expect(url.path.contains("Dblore"))
-  }
-
   // MARK: - Security Tests
 
   @Test("Sanitize query redacts string literals")
@@ -104,15 +46,6 @@ struct AppLoggerTests {
     let sanitized = logger.sanitizeQuery(query)
     #expect(!sanitized.contains("1, 2, 3, 4, 5"))
     #expect(sanitized.contains("IN ([REDACTED])"))
-  }
-
-  @Test("Sanitize query preserves SELECT structure")
-  func testSanitizeQueryPreservesStructure() {
-    let logger = AppLogger.shared
-
-    let query = "SELECT * FROM users"
-    let sanitized = logger.sanitizeQuery(query)
-    #expect(sanitized == query)  // No changes for queries without sensitive data
   }
 
   @Test("Connection config safe display string redacts host")

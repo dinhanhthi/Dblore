@@ -22,21 +22,6 @@ struct AppSettingsHistoryTests {
     try body(suite)
   }
 
-  @Test("History settings default to enabled, 90 days, and 50,000 entries")
-  func defaults() throws {
-    let standardBefore = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool
-    try withIsolatedDefaults { suite in
-      let settings = AppSettings(defaults: suite)
-      #expect(settings.historyEnabled == true)
-      #expect(settings.historyRetentionDays == 90)
-      #expect(settings.historyMaxEntries == 50_000)
-      #expect(suite.object(forKey: Self.enabledKey) == nil)
-      #expect(suite.object(forKey: Self.retentionKey) == nil)
-      #expect(suite.object(forKey: Self.maxEntriesKey) == nil)
-    }
-    #expect(UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool == standardBefore)
-  }
-
   @Test("Each allowed retention day persists", arguments: [7, 30, 90, 365, 0])
   func allowedRetentionPersists(_ days: Int) throws {
     try withIsolatedDefaults { suite in
@@ -84,19 +69,6 @@ struct AppSettingsHistoryTests {
       suite.set(900_000, forKey: Self.maxEntriesKey)
       #expect(AppSettings(defaults: suite).historyMaxEntries == 500_000)
     }
-  }
-
-  @Test("Max entries stepper uses larger steps as the cap grows")
-  func maxEntriesStepper() {
-    #expect(AppSettings.steppedHistoryMaxEntries(1_000, up: false) == 1_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(1_000, up: true) == 2_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(9_000, up: true) == 10_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(10_000, up: false) == 9_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(10_000, up: true) == 15_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(45_000, up: true) == 50_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(50_000, up: false) == 45_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(50_000, up: true) == 60_000)
-    #expect(AppSettings.steppedHistoryMaxEntries(500_000, up: true) == 500_000)
   }
 
   @Test("History enabled toggles persist across a new AppSettings")

@@ -29,19 +29,6 @@ struct CellResultCapNoticeTests {
     ).withCapInfo(from: result)
   }
 
-  @Test("No notice when the result is complete")
-  func completeResultHasNoNotice() {
-    let cell = cellResult(queryResult(rows: 2, truncated: false))
-    #expect(cell.capNotice == nil)
-    #expect(!cell.sessionReset)
-  }
-
-  @Test("Truncated inside a kept session: only the row notice")
-  func truncatedKeptSession() {
-    let cell = cellResult(queryResult(rows: 100, truncated: true))
-    #expect(cell.capNotice == "Showing first 100 rows")
-  }
-
   @Test("Session reset: temp tables / SET / search_path lost")
   func sessionResetNotice() {
     let cell = cellResult(queryResult(rows: 100, truncated: true, reset: true))

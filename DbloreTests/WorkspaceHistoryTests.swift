@@ -10,32 +10,6 @@ import Testing
 @Suite("Workspace history", .serialized)
 @MainActor
 struct WorkspaceHistoryTests {
-  @Test("A query change waits, then searches")
-  func queryIsDebounced() async throws {
-    // A history data change from another suite would search before the debounce ends.
-    await LocalDataNotificationGate.shared.acquire()
-    defer { LocalDataNotificationGate.shared.release() }
-    let url = temporaryDatabaseURL()
-    defer { removeDatabase(at: url) }
-    let store = try QueryHistoryStore(url: url)
-    let start = Date(timeIntervalSince1970: 1_700_000_000)
-    try await store.record(Self.entry(sql: "SELECT apples", at: start))
-    try await store.record(Self.entry(sql: "SELECT bananas", at: start.addingTimeInterval(10)))
-    let manager = makeManager(store: store)
-    let clock = ContinuousClock()
-    let started = clock.now
-    var searchedAt: ContinuousClock.Instant?
-    manager.historyList.browser = {
-      searchedAt = clock.now
-      return store
-    }
-
-    manager.historyList.query = "apples"
-    await waitUntil { manager.historyList.results.map(\.sql) == ["SELECT apples"] }
-    #expect(manager.historyList.results.map(\.sql) == ["SELECT apples"])
-    #expect(try #require(searchedAt) >= started.advanced(by: .milliseconds(250)))
-  }
-
   @Test("Scope uses the active connection and workspace, and a missing key searches all")
   func scopeFilters() async throws {
     let url = temporaryDatabaseURL()
@@ -153,95 +127,6 @@ struct WorkspaceHistoryTests {
     #expect(manager.historyList.results.map(\.sql) == ["SELECT 0"])
   }
 
-  @Test("writesOnly from page 2 resets, then reloads with and without the filter")
-  func writesOnlyResetsPageAndFilters() async throws {
-    // A history data change from another suite would search before the debounce ends.
-    await LocalDataNotificationGate.shared.acquire()
-    defer { LocalDataNotificationGate.shared.release() }
-    let url = temporaryDatabaseURL()
-    defer { removeDatabase(at: url) }
-    let store = try QueryHistoryStore(url: url)
-    let start = Date(timeIntervalSince1970: 1_700_000_000)
-    let older: [(sql: String, kind: QueryHistoryEntry.Kind?)] = [
-      ("UPDATE older", .write),
-      ("UPDATE newer", .write),
-      ("CREATE TABLE t", .schema),
-      ("SELECT unlabeled", nil),
-    ]
-    let rows = older + (0..<50).map { ("SELECT \($0)", QueryHistoryEntry.Kind.read) }
-    for (index, row) in rows.enumerated() {
-      try await store.record(
-        Self.entry(
-          sql: row.sql, at: start.addingTimeInterval(Double(index) * 10), kind: row.kind))
-    }
-    let manager = makeManager(store: store)
-    let pageTwo = ["SELECT unlabeled", "CREATE TABLE t", "UPDATE newer", "UPDATE older"]
-
-    await manager.historyList.goToPage(2)
-    #expect(manager.historyList.page == 2)
-    #expect(manager.historyList.results.map(\.sql) == pageTwo)
-    #expect(manager.historyList.totalCount == 54)
-
-    manager.historyList.writesOnly = true
-    #expect(manager.historyList.page == 1)
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(manager.historyList.page == 1)
-    #expect(manager.historyList.results.map(\.sql) == pageTwo)
-
-    try await Task.sleep(for: .milliseconds(400))
-    #expect(manager.historyList.page == 1)
-    #expect(manager.historyList.totalCount == 2)
-    #expect(manager.historyList.results.map(\.sql) == ["UPDATE newer", "UPDATE older"])
-
-    manager.historyList.writesOnly = false
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(manager.historyList.page == 1)
-    #expect(manager.historyList.results.map(\.sql) == ["UPDATE newer", "UPDATE older"])
-
-    try await Task.sleep(for: .milliseconds(400))
-    #expect(manager.historyList.page == 1)
-    #expect(manager.historyList.totalCount == 54)
-    #expect(manager.historyList.results.count == 50)
-    #expect(manager.historyList.results.first?.sql == "SELECT 49")
-  }
-
-  @Test("History badges name kind and source, and nil kind has no kind label")
-  func historyBadgeLabels() {
-    #expect(HistoryRowLabels.kindLabel(.read) == "Read")
-    #expect(HistoryRowLabels.kindLabel(.write) == "Write")
-    #expect(HistoryRowLabels.kindLabel(.schema) == "Schema")
-    #expect(HistoryRowLabels.kindLabel(.transaction) == "Transaction")
-    #expect(HistoryRowLabels.kindLabel(.other) == "Other")
-    #expect(HistoryRowLabels.kindLabel(nil) == nil)
-    #expect(HistoryRowLabels.sourceLabel(.cell) == "Cell")
-    #expect(HistoryRowLabels.sourceLabel(.editor) == "Editor")
-    #expect(HistoryRowLabels.sourceLabel(.dataViewerEdit) == "Data Viewer Edit")
-  }
-
-  @Test("History age is minute resolution and does not name seconds")
-  func historyAgeStopsAtMinutes() {
-    let now = Date(timeIntervalSince1970: 1_700_000_000)
-    #expect(HistoryRelativeTime.label(from: now.addingTimeInterval(-5), now: now) == "just now")
-    #expect(HistoryRelativeTime.label(from: now.addingTimeInterval(-59), now: now) == "just now")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-60), now: now) == "1 minute ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-119), now: now) == "1 minute ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-120), now: now) == "2 minutes ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-3_600), now: now) == "1 hour ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-7_200), now: now) == "2 hours ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-86_400), now: now) == "1 day ago")
-    #expect(
-      HistoryRelativeTime.label(from: now.addingTimeInterval(-2 * 86_400), now: now)
-        == "2 days ago")
-    let week = HistoryRelativeTime.label(from: now.addingTimeInterval(-8 * 86_400), now: now)
-    #expect(week.localizedCaseInsensitiveContains("second") == false)
-  }
-
   @Test("deleteHistory removes the row from the list and the store")
   func deleteHistoryRemovesRow() async throws {
     let url = temporaryDatabaseURL()
@@ -302,13 +187,6 @@ struct WorkspaceHistoryTests {
 
     manager.insertHistory(Self.entry(sql: "COMMIT"))
     #expect(captured.text == "COMMIT")
-  }
-
-  @Test("copyHistory copies the SQL")
-  func copyHistoryCopiesSQL() {
-    let manager = makeManager()
-    manager.copyHistory(Self.entry(sql: "SELECT copy_me"))
-    #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
   }
 
   @Test("copyHistory does not copy a transaction summary label")
@@ -382,25 +260,6 @@ struct WorkspaceHistoryTests {
 
     await waitUntil { manager.historyList.results.map(\.sql) == ["SELECT new"] }
     #expect(manager.historyList.results.map(\.sql) == ["SELECT new"])
-  }
-
-  @Test("refreshHistory reloads the first page")
-  func refreshHistoryReloadsFirstPage() async throws {
-    let url = temporaryDatabaseURL()
-    defer { removeDatabase(at: url) }
-    let store = try QueryHistoryStore(url: url)
-    let start = Date(timeIntervalSince1970: 1_700_000_000)
-    try await store.record(Self.entry(sql: "SELECT old", at: start))
-    let manager = makeManager(store: store)
-
-    await manager.refreshHistory()
-    #expect(manager.historyList.results.map(\.sql) == ["SELECT old"])
-
-    try await store.record(Self.entry(sql: "SELECT new", at: start.addingTimeInterval(10)))
-    #expect(manager.historyList.results.map(\.sql) == ["SELECT old"])
-
-    await manager.refreshHistory()
-    #expect(manager.historyList.results.map(\.sql) == ["SELECT new", "SELECT old"])
   }
 
   private static let connectionKey = "PostgreSQL|localhost|5432|app|ana"

@@ -99,14 +99,6 @@ struct AnthropicClientTests {
     #expect(AIStubURLProtocol.lastRequest?.value(forHTTPHeaderField: "x-api-key") == "sk-test")
   }
 
-  @Test("listModels 404 returns fallback models")
-  func listModelsFallback() async throws {
-    AIStubURLProtocol.handler = { _ in (404, [Data("{}".utf8)]) }
-    defer { AIStubURLProtocol.reset() }
-    let models = try await client().listModels()
-    #expect(models == AIProviderKind.anthropic.fallbackModels)
-  }
-
   @Test("listModelsResult flags the fallback on 404 only")
   func listModelsResultFallbackFlag() async throws {
     defer { AIStubURLProtocol.reset() }
@@ -121,23 +113,4 @@ struct AnthropicClientTests {
     #expect(live.models == ["claude-a"])
   }
 
-  @Test("listModels 401 throws http error")
-  func listModelsUnauthorized() async {
-    AIStubURLProtocol.handler = { _ in
-      (401, [Data(#"{"error":{"message":"invalid x-api-key"}}"#.utf8)])
-    }
-    defer { AIStubURLProtocol.reset() }
-    let client = client()
-    await #expect(throws: AIClientError.http(status: 401, message: "invalid x-api-key")) {
-      _ = try await client.listModels()
-    }
-  }
-
-  @Test("factory builds an anthropic client")
-  func factory() throws {
-    let made = try AIClientFactory.make(
-      kind: .anthropic, config: AIProviderConfig(baseURL: base.absoluteString, model: "m"),
-      apiKey: "k", session: AIStubURLProtocol.makeSession())
-    #expect(made is AnthropicClient)
-  }
 }

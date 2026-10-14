@@ -32,12 +32,6 @@ struct AppSettingsIsolationTests {
     #expect(UserDefaults.standard.object(forKey: Self.simpleModeKey) as? Bool == standardBefore)
   }
 
-  @Test("Shared settings under XCTest are not backed by UserDefaults.standard")
-  func sharedUsesTestSuite() {
-    #expect(SessionManager.isRunningAsTestHost)
-    #expect(AppSettings.sharedDefaults !== UserDefaults.standard)
-  }
-
   @Test("Missing commit style and Safe Mode load as review and write neither key")
   func commitStyleDefaultsToReviewWithoutWriting() throws {
     let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
@@ -119,55 +113,79 @@ struct AppSettingsIsolationTests {
     #expect(suite.object(forKey: Self.safeModeKey) as? Int == 0)
   }
 
-  @Test("AI panel open mode defaults to sidebar and persists")
-  func aiPanelOpenModeDefaultsToSidebarAndPersists() throws {
+  @Test("MCP settings default off, clamp port and row cap, persist and reset")
+  func mcpSettings() throws {
     let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
     let suite = try #require(UserDefaults(suiteName: name))
     defer { suite.removePersistentDomain(forName: name) }
 
     let settings = AppSettings(defaults: suite)
-    #expect(settings.aiPanelOpenMode == .sidebar)
-    settings.aiPanelOpenMode = .bubble
+    #expect(!settings.mcpEnabled)
+    #expect(settings.mcpPort == 41730)
+    #expect(settings.mcpAllowedConnectionIDs.isEmpty)
+    #expect(settings.mcpRowCap == 200)
 
-    #expect(suite.string(forKey: Self.aiPanelOpenModeKey) == AIPanelMode.bubble.rawValue)
+    let id = UUID()
+    settings.mcpEnabled = true
+    settings.mcpPort = 80
+    #expect(settings.mcpPort == 1024)
+    settings.mcpPort = 70_000
+    #expect(settings.mcpPort == 65535)
+    settings.mcpPort = 50_000
+    settings.mcpAllowedConnectionIDs = [id]
+    settings.mcpRowCap = 0
+    #expect(settings.mcpRowCap == 1)
+    settings.mcpRowCap = 5_000
+    #expect(settings.mcpRowCap == 1_000)
+    settings.mcpRowCap = 300
+
     let reloaded = AppSettings(defaults: suite)
-    #expect(reloaded.aiPanelOpenMode == .bubble)
+    #expect(reloaded.mcpEnabled)
+    #expect(reloaded.mcpPort == 50_000)
+    #expect(reloaded.mcpAllowedConnectionIDs == [id])
+    #expect(reloaded.mcpRowCap == 300)
+
+    reloaded.resetToDefaults()
+    let reset = AppSettings(defaults: suite)
+    #expect(!reset.mcpEnabled)
+    #expect(reset.mcpPort == 41730)
+    #expect(reset.mcpAllowedConnectionIDs.isEmpty)
+    #expect(reset.mcpRowCap == 200)
   }
 
-  @Test("AI bubble position defaults to 1, clamps to 0...1 and persists")
-  func aiBubblePositionDefaultsToOneAndClamps() throws {
+  @Test("AI sidebar width and bubble card size default, clamp, persist and reset")
+  func aiAssistantSizes() throws {
     let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
     let suite = try #require(UserDefaults(suiteName: name))
     defer { suite.removePersistentDomain(forName: name) }
 
     let settings = AppSettings(defaults: suite)
-    #expect(settings.aiBubblePosition == 1.0)
-    settings.aiBubblePosition = 1.7
-    #expect(settings.aiBubblePosition == 1.0)
-    settings.aiBubblePosition = -0.2
-    #expect(settings.aiBubblePosition == 0.0)
-    settings.aiBubblePosition = 0.3
+    #expect(settings.aiSidebarWidth == ComponentSize.sidebarWidth)
+    #expect(settings.aiBubbleCardWidth == nil)
+    #expect(settings.aiBubbleCardHeight == nil)
 
-    #expect(suite.double(forKey: Self.aiBubblePositionKey) == 0.3)
+    settings.aiSidebarWidth = 100
+    #expect(settings.aiSidebarWidth == ComponentSize.sidebarWidth)
+    settings.aiSidebarWidth = 480
+    settings.aiBubbleCardWidth = 10
+    #expect(settings.aiBubbleCardWidth == Double(AIBubbleLayout.minCardWidth))
+    settings.aiBubbleCardWidth = 500
+    settings.aiBubbleCardHeight = 10
+    #expect(settings.aiBubbleCardHeight == Double(AIBubbleLayout.minCardHeight))
+    settings.aiBubbleCardHeight = 700
+
     let reloaded = AppSettings(defaults: suite)
-    #expect(reloaded.aiBubblePosition == 0.3)
-  }
+    #expect(reloaded.aiSidebarWidth == 480)
+    #expect(reloaded.aiBubbleCardWidth == 500)
+    #expect(reloaded.aiBubbleCardHeight == 700)
 
-  @Test("resetToDefaults restores AI panel open mode and bubble position")
-  func resetToDefaultsRestoresAIPanelSettings() throws {
-    let name = "AppSettingsIsolationTests.\(UUID().uuidString)"
-    let suite = try #require(UserDefaults(suiteName: name))
-    defer { suite.removePersistentDomain(forName: name) }
+    reloaded.aiBubbleCardHeight = nil
+    #expect(suite.object(forKey: "app.settings.aiBubbleCardHeight") == nil)
 
-    let settings = AppSettings(defaults: suite)
-    settings.aiPanelOpenMode = .bubble
-    settings.aiBubblePosition = 0.3
-    settings.resetToDefaults()
-
-    #expect(settings.aiPanelOpenMode == .sidebar)
-    #expect(settings.aiBubblePosition == 1.0)
-    let reloaded = AppSettings(defaults: suite)
-    #expect(reloaded.aiPanelOpenMode == .sidebar)
-    #expect(reloaded.aiBubblePosition == 1.0)
+    reloaded.resetToDefaults()
+    let reset = AppSettings(defaults: suite)
+    #expect(reset.aiSidebarWidth == ComponentSize.sidebarWidth)
+    #expect(reset.aiBubbleCardWidth == nil)
+    #expect(reset.aiBubbleCardHeight == nil)
   }
 }

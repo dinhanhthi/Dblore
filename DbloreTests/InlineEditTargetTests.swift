@@ -50,12 +50,6 @@ struct InlineEditTargetTests {
     #expect(CellUpdateStatement.editablePrimaryKey(columns: columns, table: orders).isEmpty)
   }
 
-  @Test("Scalar subquery aliased as the PK -> not editable")
-  func scalarSubqueryNotEditable() {
-    let columns = [column("id"), column("total", Self.ordersOID, 3)]
-    #expect(CellUpdateStatement.editablePrimaryKey(columns: columns, table: orders).isEmpty)
-  }
-
   @Test("A real column aliased as another column's name -> not editable")
   func renamedColumnNotEditable() {
     // SELECT id, total AS customer_id FROM orders

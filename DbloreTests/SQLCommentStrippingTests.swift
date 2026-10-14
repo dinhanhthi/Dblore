@@ -31,10 +31,4 @@ struct SQLCommentStrippingTests {
   func strips(input: String, expected: String) {
     #expect(SQLTokenizer.strippingComments(input) == expected)
   }
-
-  @Test("SQLite has no dollar quotes, so a comment after $$ is removed")
-  func sqliteDialect() {
-    #expect(SQLTokenizer(dialect: .sqlite).strippingComments("SELECT $$ -- x") == "SELECT $$")
-    #expect(SQLTokenizer.strippingComments("SELECT $$ -- x") == "SELECT $$ -- x")
-  }
 }

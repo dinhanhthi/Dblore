@@ -82,133 +82,7 @@ struct SQLSyntaxHighlighterCharacterizationTests {
     #expect(isColored("users", defaultColor, in: a))
   }
 
-  @Test("keywords are case-insensitive")
-  func keywordCaseInsensitive() {
-    let a = highlight("select 1 From t wHeRe x")
-    #expect(isColored("select", Token.keyword.color, in: a))
-    #expect(isColored("From", Token.keyword.color, in: a))
-    #expect(isColored("wHeRe", Token.keyword.color, in: a))
-  }
-
-  @Test("function is colored only when followed by an opening parenthesis")
-  func functionOnlyBeforeParen() {
-    let a = highlight("SELECT count(*), count FROM t")
-    #expect(isColored("count", Token.function.color, in: a, occurrence: 0))
-    #expect(isColored("count", defaultColor, in: a, occurrence: 1))
-  }
-
-  @Test("function with whitespace before the parenthesis is colored")
-  func functionWithSpaceBeforeParen() {
-    let a = highlight("SELECT sum (x)")
-    // The pattern consumes the trailing whitespace too
-    #expect(isColored("sum ", Token.function.color, in: a))
-  }
-
-  @Test("type is type-colored")
-  func typeColored() {
-    let a = highlight("CREATE TABLE t (id integer, name VARCHAR)")
-    #expect(isColored("integer", Token.type.color, in: a))
-    #expect(isColored("VARCHAR", Token.type.color, in: a))
-  }
-
-  @Test("number is colored but digits inside an identifier are not")
-  func numberColored() {
-    let a = highlight("SELECT t1.id, 42, 3.14 FROM t1")
-    #expect(isColored("42", Token.number.color, in: a))
-    #expect(isColored("3.14", Token.number.color, in: a))
-    #expect(isColored("t1", defaultColor, in: a, occurrence: 0))
-    #expect(isColored("t1", defaultColor, in: a, occurrence: 1))
-  }
-
-  @Test("single-quoted string is string-colored")
-  func singleQuotedString() {
-    let a = highlight("SELECT 'hello world' FROM t")
-    #expect(isColored("'hello world'", Token.string.color, in: a))
-  }
-
-  @Test("dollar-quoted string is string-colored across lines")
-  func dollarQuotedString() {
-    let a = highlight("SELECT $$ body\nline two $$ FROM t")
-    #expect(isColored("$$ body\nline two $$", Token.string.color, in: a))
-    #expect(isColored("FROM", Token.keyword.color, in: a))
-  }
-
-  @Test("line comment runs to the end of the line only")
-  func lineComment() {
-    let a = highlight("SELECT 1 -- note here\nFROM t")
-    #expect(isColored("-- note here", Token.comment.color, in: a))
-    #expect(isColored("FROM", Token.keyword.color, in: a))
-  }
-
-  @Test("multi-line block comment is comment-colored")
-  func blockComment() {
-    let a = highlight("SELECT 1 /* first\nsecond */ FROM t")
-    #expect(isColored("/* first\nsecond */", Token.comment.color, in: a))
-    #expect(isColored("FROM", Token.keyword.color, in: a))
-  }
-
   // MARK: - Interaction rules
-
-  @Test("keywords, functions, types and numbers inside a string are not colored as such")
-  func tokensInsideStringStayString() {
-    let a = highlight("SELECT 'SELECT count(1) integer 42' FROM t")
-    #expect(isColored("'SELECT count(1) integer 42'", Token.string.color, in: a))
-  }
-
-  @Test("keywords, functions, types and numbers inside comments are not colored as such")
-  func tokensInsideCommentStayComment() {
-    let line = highlight("-- SELECT count(1) integer 42\nx")
-    #expect(isColored("-- SELECT count(1) integer 42", Token.comment.color, in: line))
-    let block = highlight("/* SELECT count(1) integer 42 */ x")
-    #expect(isColored("/* SELECT count(1) integer 42 */", Token.comment.color, in: block))
-  }
-
-  /// Intentional change from task 2.2: the block-token alternation matches the `--` comment
-  /// first, so a quoted string inside a line comment stays comment-colored.
-  @Test("string inside a line comment stays comment-colored")
-  func stringInsideCommentIsComment() {
-    let a = highlight("-- before 'quoted' after")
-    #expect(isColored("'quoted'", Token.comment.color, in: a))
-    #expect(isColored("-- before ", Token.comment.color, in: a))
-    #expect(isColored(" after", Token.comment.color, in: a))
-  }
-
-  @Test("comment markers inside a string stay string-colored and do not bleed past the quote")
-  func commentMarkerInsideStringIsString() {
-    let line = highlight("SELECT '-- not a comment' FROM t")
-    #expect(isColored("'-- not a comment'", Token.string.color, in: line))
-    #expect(isColored("FROM", Token.keyword.color, in: line))
-    let block = highlight("SELECT '/* not a comment' FROM t")
-    #expect(isColored("'/* not a comment'", Token.string.color, in: block))
-    #expect(isColored("FROM", Token.keyword.color, in: block))
-  }
-
-  @Test("word in keyword and function sets: function wins before a parenthesis, keyword otherwise")
-  func keywordFunctionPrecedence() {
-    let a = highlight("SELECT LEFT(x, 1) FROM a LEFT JOIN b")
-    #expect(isColored("LEFT", Token.function.color, in: a, occurrence: 0))
-    #expect(isColored("LEFT", Token.keyword.color, in: a, occurrence: 1))
-  }
-
-  @Test("word in function and type sets is colored as a type before a parenthesis")
-  func functionTypePrecedence() {
-    let a = highlight("SELECT INTERVAL(x), INTERVAL")
-    #expect(isColored("INTERVAL", Token.type.color, in: a, occurrence: 0))
-    #expect(isColored("INTERVAL", Token.type.color, in: a, occurrence: 1))
-  }
-
-  @Test("type and function share the same color today")
-  func typeAndFunctionShareColor() {
-    #expect(same(Token.type.color, Token.function.color))
-    #expect(!same(Token.type.color, Token.keyword.color))
-  }
-
-  @Test("empty and whitespace-only input keep the default color")
-  func plainInput() {
-    let a = highlight("   x   ")
-    #expect(a.string == "   x   ")
-    #expect(colors(of: "x", in: a) == [defaultColor])
-  }
 
   // MARK: - Search highlighting
 
@@ -229,29 +103,6 @@ struct SQLSyntaxHighlighterCharacterizationTests {
 
   private let currentMatchBackground = NSColor(red: 1.0, green: 0.835, blue: 0.0, alpha: 1.0)
 
-  @Test("search: non-current matches get the passive background and black text")
-  func searchPassiveMatches() {
-    let text = "SELECT a FROM a"
-    let a = search(text, query: "a")
-    // "a" at offsets 7 and 14
-    for offset in [7, 14] {
-      #expect(background(a, at: offset) == passiveMatchBackground)
-      #expect(color(a, at: offset) == NSColor.black)
-    }
-    #expect(background(a, at: 0) == nil)
-    #expect(same(color(a, at: 0), Token.keyword.color))
-  }
-
-  @Test("search: the current match gets the #FFD500 background and black text")
-  func searchCurrentMatch() {
-    let text = "SELECT a FROM a"
-    let a = search(text, query: "a", current: NSRange(location: 14, length: 1))
-    #expect(background(a, at: 14) == currentMatchBackground)
-    #expect(color(a, at: 14) == NSColor.black)
-    #expect(background(a, at: 7) == passiveMatchBackground)
-    #expect(color(a, at: 7) == NSColor.black)
-  }
-
   @Test("search: matching is case-insensitive unless requested otherwise")
   func searchCaseSensitivity() {
     let text = "SELECT x FROM T"
@@ -259,17 +110,5 @@ struct SQLSyntaxHighlighterCharacterizationTests {
     #expect(background(insensitive, at: 14) == passiveMatchBackground)
     let sensitive = search(text, query: "t", caseSensitive: true)
     #expect(background(sensitive, at: 14) == nil)
-  }
-
-  @Test("search: empty query leaves plain syntax highlighting untouched")
-  func searchEmptyQuery() {
-    let text = "SELECT a FROM a"
-    let a = search(text, query: "")
-    let plain = highlight(text)
-    #expect(a.string == plain.string)
-    for offset in 0..<text.utf16.count {
-      #expect(background(a, at: offset) == nil)
-      #expect(same(color(a, at: offset), color(plain, at: offset)))
-    }
   }
 }

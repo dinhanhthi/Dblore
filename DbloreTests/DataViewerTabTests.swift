@@ -70,22 +70,6 @@ struct DataViewerTabTests {
     #expect(viewModel.dataViewer?.totalRows == nil)
   }
 
-  @Test("A pinned tab is kept and the next table opens a new preview")
-  func pinnedTabIsKept() throws {
-    let manager = Self.manager()
-    manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
-    let pinnedId = try #require(manager.tabs.first?.id)
-    manager.pinTab(id: pinnedId)
-    #expect(manager.tabs.first?.isPreview == false)
-
-    manager.openDataViewer(schema: "public", name: "orders", orderColumns: [])
-    #expect(manager.tabs.count == 2)
-    #expect(manager.tabs[0].title == "users")
-    #expect(manager.tabs[1].title == "orders")
-    #expect(manager.tabs[1].isPreview)
-    #expect(manager.activeTabId == manager.tabs[1].id)
-  }
-
   @Test("The transaction origin preview is pinned instead of replaced")
   func transactionOriginIsPinned() throws {
     let manager = Self.manager()
@@ -163,35 +147,6 @@ struct DataViewerTabTests {
     let workspace = try Self.decode(manager.encodedWorkspaceData())
     #expect(workspace.tabs.map(\.id) == [sqlId])
     #expect(workspace.activeTabId == sqlId)
-  }
-
-  @Test("Encoded workspace with only a data viewer has no tabs and no active tab")
-  func persistenceOnlyViewer() throws {
-    let manager = Self.manager()
-    manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
-
-    let workspace = try Self.decode(manager.encodedWorkspaceData())
-    #expect(workspace.tabs.isEmpty)
-    #expect(workspace.activeTabId == nil)
-  }
-
-  @Test("A closed data viewer cannot be reopened")
-  func closedViewerNotReopenable() throws {
-    let manager = Self.manager()
-    manager.openDataViewer(schema: "public", name: "users", orderColumns: [])
-    let id = try #require(manager.tabs.first?.id)
-
-    manager.requestCloseTab(id: id)
-    #expect(manager.tabs.isEmpty)
-    #expect(!manager.showingCloseConfirmation)
-    #expect(!manager.canReopenClosedTab)
-  }
-
-  @Test("A non-public schema is part of the title")
-  func schemaInTitle() {
-    let manager = Self.manager()
-    manager.openDataViewer(schema: "sales", name: "orders", orderColumns: [])
-    #expect(manager.tabs.first?.title == "sales.orders")
   }
 
   private static func decode(_ data: Data) throws -> Workspace {

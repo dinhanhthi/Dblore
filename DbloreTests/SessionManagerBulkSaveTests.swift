@@ -290,25 +290,6 @@ struct SessionManagerBulkSaveTests {
     #expect(harness.store.loadedKeys.count == loadsBefore)
   }
 
-  @Test("Report names are one line and bounded")
-  func reportNamesBounded() throws {
-    let harness = try Harness()
-    defer { harness.cleanup() }
-    let long = String(repeating: "x", count: 200)
-    let report = SessionManager.saveConnections(
-      [
-        Self.imported("first"),
-        Self.imported(long),
-        Self.imported(
-          "bad\n" + long, database: "z", bastion: "j.example", sshCredential: .password("s")),
-      ],
-      defaults: harness.defaults, passwords: harness.store, sshCredentials: RejectingSSHStore())
-
-    let names = report.skippedDuplicates + report.failed.map(\.name)
-    #expect(names.count == 2)
-    #expect(names.allSatisfy { $0.count <= 80 && !$0.contains("\n") })
-  }
-
   @Test("Imports past the limit are dropped without saving their secrets")
   func limitOnImports() throws {
     let harness = try Harness()

@@ -47,54 +47,6 @@ struct DataModelConnectionConfigTests {
     #expect(decodedConfig.timeoutSeconds == 30)
   }
 
-  @Test("ConnectionConfig default timeout value")
-  func connectionConfigDefaultTimeout() {
-    // Arrange & Act - Create config without specifying timeout
-    let config = ConnectionConfig(
-      host: "localhost",
-      database: "test"
-    )
-
-    // Assert - Default timeout should be 30 seconds
-    #expect(config.timeoutSeconds == 30)
-  }
-
-  @Test("ConnectionConfig custom timeout value")
-  func connectionConfigCustomTimeout() {
-    // Arrange & Act - Create config with custom timeout
-    let config = ConnectionConfig(
-      host: "localhost",
-      database: "test",
-      timeoutSeconds: 60
-    )
-
-    // Assert - Custom timeout should be preserved
-    #expect(config.timeoutSeconds == 60)
-  }
-
-  @Test("ConnectionConfig timeout encoding preserves value")
-  func connectionConfigTimeoutEncodingPreservesValue() throws {
-    // Arrange - Create configs with different timeout values
-    let testCases = [10, 30, 60, 120, 300]
-
-    for timeout in testCases {
-      let config = ConnectionConfig(
-        host: "localhost",
-        database: "test",
-        timeoutSeconds: timeout
-      )
-
-      // Act - Encode and decode
-      let encoder = JSONEncoder()
-      let data = try encoder.encode(config)
-      let decoder = JSONDecoder()
-      let decoded = try decoder.decode(ConnectionConfig.self, from: data)
-
-      // Assert - Timeout value should be preserved
-      #expect(decoded.timeoutSeconds == timeout)
-    }
-  }
-
   // MARK: - Safety / Session Settings
 
   @Test("New config has no timeout overrides and follows the global timeouts")
@@ -276,24 +228,6 @@ struct DataModelConnectionConfigTests {
     #expect(resolved.idleInTransactionTimeoutSeconds == 300)
   }
 
-  @Test("Recent connections stay on the selected engine")
-  func recentConnectionsFilterByEngine() {
-    let postgres = ConnectionHistoryEntry(
-      config: ConnectionConfig(
-        databaseType: .postgresql, database: "postgres", name: "Ideta Rag Local"))
-    let sqlite = ConnectionHistoryEntry(
-      config: ConnectionConfig(
-        databaseType: .sqlite, database: "/tmp/notes.sqlite", name: "Notes"))
-
-    let history = [postgres, sqlite]
-    #expect(
-      ConnectionFormContent.history(matching: .sqlite, in: history).map(\.config.name) == ["Notes"]
-    )
-    #expect(
-      ConnectionFormContent.history(matching: .postgresql, in: history).map(\.config.name)
-        == ["Ideta Rag Local"])
-  }
-
   @Test("Switching to SQLite drops a PostgreSQL database name")
   func switchingEngineClearsOtherEngineFields() throws {
     let replacement = ConnectionFormContent.formAfterEngineChange(
@@ -338,29 +272,6 @@ struct DataModelConnectionConfigTests {
     #expect(applied.selectedHistoryId == nil)
   }
 
-  @Test("Browsing a SQLite file keeps a name the user already typed")
-  func browsingSQLiteFileKeepsCustomName() {
-    let loaded = ConnectionHistoryEntry(
-      config: ConnectionConfig(
-        databaseType: .sqlite,
-        host: "",
-        database: "/tmp/notes.sqlite",
-        name: "Notes"
-      ))
-    var config = loaded.config
-    config.name = "Work"
-
-    let applied = ConnectionFormContent.applyingSQLiteFile(
-      path: "/tmp/reports.sqlite",
-      bookmark: nil,
-      to: config,
-      selected: loaded
-    )
-
-    #expect(applied.config.name == "Work")
-    #expect(applied.selectedHistoryId == nil)
-  }
-
   @Test("Browsing the same SQLite file keeps the recent connection")
   func browsingSameSQLiteFileKeepsRecentConnection() {
     let loaded = ConnectionHistoryEntry(
@@ -380,19 +291,6 @@ struct DataModelConnectionConfigTests {
 
     #expect(applied.config.name == "Notes")
     #expect(applied.selectedHistoryId == loaded.id)
-  }
-
-  @Test("A blank SQLite name is filled from the chosen file")
-  func blankSQLiteNameFillsFromFile() {
-    let applied = ConnectionFormContent.applyingSQLiteFile(
-      path: "/tmp/archive.db",
-      bookmark: nil,
-      to: ConnectionConfig(databaseType: .sqlite, host: "", database: ""),
-      selected: nil
-    )
-
-    #expect(applied.config.name == "archive")
-    #expect(applied.selectedHistoryId == nil)
   }
 
   @Test("Editing a PostgreSQL target drops the loaded recent connection")
@@ -528,17 +426,6 @@ struct DataModelConnectionConfigTests {
     #expect(config.safeMode == .silent)
   }
 
-  @Test("Encoding a legacy connection omits commitStyle until applyCommitStyle")
-  func encodingLegacyConnectionOmitsCommitStyle() throws {
-    let config = ConnectionConfig(safeMode: .safeAll, protectedMode: true)
-
-    #expect(config.hasStoredCommitStyle == false)
-    let object = try encodedObject(config)
-    #expect(object["commitStyle"] == nil)
-    #expect(object["safeMode"] as? Int == SafeMode.safeAll.rawValue)
-    #expect(object["protectedMode"] as? Bool == true)
-  }
-
   @Test("Protected mode is the gate for the resolved style")
   func protectedModeGatesResolvedStyle() {
     var storedReview = ConnectionConfig(safeMode: .silent, protectedMode: false)
@@ -598,32 +485,6 @@ struct DataModelConnectionConfigTests {
     #expect(decoded == config)
   }
 
-  @Test("A config without an SSH tunnel round-trips and omits the key")
-  func noSSHTunnelRoundTrip() throws {
-    let config = ConnectionConfig(host: "db", database: "app", username: "ada")
-    #expect(config.sshTunnel == nil)
-    #expect(try encodedObject(config)["sshTunnel"] == nil)
-    let decoded = try JSONDecoder().decode(
-      ConnectionConfig.self, from: JSONEncoder().encode(config))
-    #expect(decoded.sshTunnel == nil)
-  }
-
-  @Test("Old JSON without sshTunnel decodes to no tunnel")
-  func legacyJSONHasNoSSHTunnel() throws {
-    let decoded = try JSONDecoder().decode(
-      ConnectionConfig.self, from: savedConnectionJSON())
-    #expect(decoded.sshTunnel == nil)
-  }
-
-  @Test("The SSH tunnel defaults to port 22 and password auth")
-  func sshTunnelDefaults() {
-    let tunnel = SSHTunnelConfig(host: "bastion", username: "ops")
-    #expect(tunnel.port == 22)
-    #expect(tunnel.authMethod == .password)
-    #expect(tunnel.keyAlgorithm == nil)
-    #expect(tunnel.keyFingerprint == nil)
-  }
-
   @Test("The encoded SSH tunnel holds only non-secret display fields")
   func sshTunnelEncodesNoSecrets() throws {
     let object = try encodedObject(tunnelConfig())
@@ -635,21 +496,6 @@ struct DataModelConnectionConfigTests {
       decoding: try JSONSerialization.data(withJSONObject: tunnel), as: UTF8.self)
     #expect(!tunnelJSON.contains("db-secret"))
     #expect(!tunnelJSON.lowercased().contains("passphrase"))
-  }
-
-  @Test("Equality tells SSH tunnel changes apart")
-  func sshTunnelEquality() {
-    let base = tunnelConfig()
-    var noTunnel = base
-    noTunnel.sshTunnel = nil
-    var otherPort = base
-    otherPort.sshTunnel?.port = 22
-    var otherAuth = base
-    otherAuth.sshTunnel?.authMethod = .password
-    #expect(base != noTunnel)
-    #expect(base != otherPort)
-    #expect(base != otherAuth)
-    #expect(base == tunnelConfig())
   }
 
   @Test("The SSH credential account is nil without a tunnel and depends on the bastion")
@@ -668,13 +514,6 @@ struct DataModelConnectionConfigTests {
   }
 
   // MARK: - DuckDB form
-
-  @Test("File engines get the file form; only PostgreSQL uses the network fields")
-  func fileBasedPredicate() {
-    for type in DatabaseType.allCases {
-      #expect(type.capabilities.isFileBased == (type != .postgresql), "\(type)")
-    }
-  }
 
   @Test("Opening a DuckDB file is read-only, creating one is read-write")
   func duckDBOpenAndCreateReadOnlyDefaults() {

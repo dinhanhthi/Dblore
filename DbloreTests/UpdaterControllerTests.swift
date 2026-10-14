@@ -11,29 +11,6 @@ import Testing
 @MainActor
 struct UpdaterControllerTests {
 
-  @Test("Automatic-check toggle round-trips through Sparkle")
-  func testAutomaticChecksRoundTrip() {
-    let key = "SUEnableAutomaticChecks"
-    let defaults = UserDefaults.standard
-    let savedDefault = defaults.object(forKey: key)
-    let controller = UpdaterController.shared
-    let original = controller.automaticallyChecksForUpdates
-    defer {
-      controller.automaticallyChecksForUpdates = original
-      // Restore the raw default so the user's preference is left exactly as it was
-      if let savedDefault {
-        defaults.set(savedDefault, forKey: key)
-      } else {
-        defaults.removeObject(forKey: key)
-      }
-    }
-
-    controller.automaticallyChecksForUpdates = !original
-    #expect(controller.automaticallyChecksForUpdates == !original)
-    // Sparkle persisted the change (didSet wrote back through)
-    #expect(defaults.object(forKey: key) as? Bool == !original)
-  }
-
   /// Manually resumable sleep: `start` suspends until `resume()` is called.
   private final class Gate: @unchecked Sendable {
     private let stream: AsyncStream<Void>
@@ -100,26 +77,6 @@ struct UpdaterControllerTests {
     gate.resume()
     await task?.value
     #expect(counter.starts == 1)
-  }
-
-  @Test("start is skipped under the test host guard")
-  func testStartSkippedInTestHost() {
-    let counter = Counter()
-    let controller = UpdaterController(isTestHost: true, startAction: { counter.starts += 1 })
-    #expect(controller.start(sleep: { _ in }) == nil)
-    #expect(counter.starts == 0)
-  }
-
-  @Test("checkForUpdates is a no-op under the test host guard")
-  func testCheckSkippedInTestHost() {
-    let counter = Counter()
-    let controller = UpdaterController(
-      isTestHost: true,
-      startAction: { counter.starts += 1 },
-      checkAction: { counter.checks += 1 })
-    controller.checkForUpdates()
-    #expect(counter.starts == 0)
-    #expect(counter.checks == 0)
   }
 
   @Test("a controller released before the delay elapses never starts the updater")

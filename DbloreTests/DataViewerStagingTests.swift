@@ -10,16 +10,6 @@ import Testing
 @Suite("Data Viewer Staging Tests")
 @MainActor
 struct DataViewerStagingTests {
-  @Test("Summary text includes insert, edit, and delete counts")
-  func summaryIncludesCounts() {
-    let text = DataViewerControls.stagedChangesSummary(
-      RowChangeSet.Counts(inserts: 2, deletes: 8, edits: 4))
-    #expect(text.contains("14 changes"))
-    #expect(text.contains("2 inserts"))
-    #expect(text.contains("4 edits"))
-    #expect(text.contains("8 deletes"))
-  }
-
   @Test("Preview sheet text equals previewStagedSQL")
   func previewSheetMatchesStagedSQL() {
     let viewModel = viewer(primaryKey: ["id"], protection: .none)

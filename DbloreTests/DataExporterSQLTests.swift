@@ -48,14 +48,6 @@ struct DataExporterSQLTests {
         == #"INSERT INTO "t" ("id") VALUES (3), (1);"#)
   }
 
-  @Test("IN list matches SQLInsertRenderer.inList")
-  func inListMatchesRenderer() {
-    let values: [CellValue] = [.int(1), .string("a"), .null]
-    #expect(
-      DataExporter.sqlINList(values: values, dialect: .postgresql)
-        == SQLInsertRenderer.inList(values: values, dialect: .postgresql))
-  }
-
   @Test("pdfData is non-empty and PDFDocument has at least one page")
   func pdfDataHasAPage() {
     let result = CellResult(

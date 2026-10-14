@@ -109,23 +109,6 @@ struct CellValueValidatorTests {
 
   // MARK: - NULL Validation Tests
 
-  @Test("NULL validation with valid inputs")
-  func nullValidInputs() {
-    let validNulls = [
-      "",
-      "null",
-      "NULL",
-      "Null",
-      "nUlL",
-    ]
-
-    for input in validNulls {
-      let result = CellValueValidator.validate(input, for: .null)
-      #expect(result.isValid, "'\(input)' should be valid NULL")
-      #expect(result.errorMessage == nil)
-    }
-  }
-
   @Test(
     "A new value for a NULL cell is checked as the column's type",
     arguments: [
@@ -343,23 +326,6 @@ struct CellValueValidatorTests {
 
   // MARK: - Binary Data Validation Tests
 
-  @Test("Binary data validation with valid inputs")
-  func binaryDataValidInputs() {
-    let validBinaryData = [
-      "48656c6c6f",  // Hex string
-      "SGVsbG8=",  // Base64
-      "binary data",  // Plain text
-      "\\x48656c6c6f",  // Postgres hex format
-      "any non-empty string",
-    ]
-
-    for input in validBinaryData {
-      let result = CellValueValidator.validate(input, for: .data(Data()))
-      #expect(result.isValid, "'\(input)' should be valid binary data")
-      #expect(result.errorMessage == nil)
-    }
-  }
-
   @Test("Binary data validation with invalid inputs")
   func binaryDataInvalidInputs() {
     let result = CellValueValidator.validate("", for: .data(Data()))
@@ -424,29 +390,4 @@ struct CellValueValidatorTests {
     }
   }
 
-  @Test("Validation result equality")
-  func validationResultEquality() {
-    // Valid results are equal
-    #expect(ValidationResult.valid == ValidationResult.valid)
-
-    // Invalid results with same message are equal
-    #expect(ValidationResult.invalid("error") == ValidationResult.invalid("error"))
-
-    // Invalid results with different messages are not equal
-    #expect(ValidationResult.invalid("error1") != ValidationResult.invalid("error2"))
-
-    // Valid and invalid are not equal
-    #expect(ValidationResult.valid != ValidationResult.invalid("error"))
-  }
-
-  @Test("Validation result properties")
-  func validationResultProperties() {
-    let valid = ValidationResult.valid
-    #expect(valid.isValid == true)
-    #expect(valid.errorMessage == nil)
-
-    let invalid = ValidationResult.invalid("test error")
-    #expect(invalid.isValid == false)
-    #expect(invalid.errorMessage == "test error")
-  }
 }

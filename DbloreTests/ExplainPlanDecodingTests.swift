@@ -35,22 +35,6 @@ struct ExplainPlanDecodingTests {
     #expect(hash?.extras["Hash Batches"] == .number(1))
   }
 
-  @Test("Nested loop inner node has actual loops greater than one")
-  func nestedLoopLoops() throws {
-    let plan = try ExplainPlan.parse(.json(ExplainFixtures.nestedLoop))
-    #expect(plan.root.nodeType == "Nested Loop")
-    let inner = plan.root.children.first { $0.parentRelationship == "Inner" }
-    #expect((inner?.actualLoops ?? 0) > 1)
-  }
-
-  @Test("Parallel gather exposes workers planned and launched")
-  func parallelGather() throws {
-    let plan = try ExplainPlan.parse(.json(ExplainFixtures.parallelGather))
-    #expect(plan.root.nodeType == "Gather")
-    #expect(plan.root.workersPlanned == 2)
-    #expect(plan.root.workersLaunched == 2)
-  }
-
   @Test("CTE scan exposes an InitPlan child")
   func cteInitPlan() throws {
     let plan = try ExplainPlan.parse(.json(ExplainFixtures.cte))

@@ -107,51 +107,6 @@ struct DataModelCellResultTests {
     }
   }
 
-  @Test("CellResult error result factory method")
-  func cellResultErrorFactory() {
-    // Act
-    let errorResult = CellResult.errorResult(
-      "Connection timeout",
-      executionTime: 30.0,
-      sourceQuery: "SELECT * FROM slow_table"
-    )
-
-    // Assert
-    #expect(errorResult.error == "Connection timeout")
-    #expect(errorResult.executionTime == 30.0)
-    #expect(errorResult.sourceQuery == "SELECT * FROM slow_table")
-    #expect(errorResult.columns.count == 0)
-    #expect(errorResult.rows.count == 0)
-  }
-
-  @Test("CellResult with modification query metadata")
-  func cellResultModificationQuery() throws {
-    // Arrange - Test UPDATE/DELETE metadata
-    let result = CellResult(
-      columns: [],
-      rows: [],
-      executionTime: 0.05,
-      rowCount: 0,
-      timestamp: Date(),
-      sourceQuery: "UPDATE users SET active = true WHERE id > 100",
-      affectedRows: 42
-    )
-
-    // Act - Encode and decode
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-    let data = try encoder.encode(result)
-
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    let decoded = try decoder.decode(CellResult.self, from: data)
-
-    // Assert
-    #expect(decoded.affectedRows == 42)
-    #expect(decoded.columns.count == 0)
-    #expect(decoded.rows.count == 0)
-  }
-
   @Test("CellResult drops the LIMIT-rewrite / ctid fields but still decodes JSON carrying them")
   func cellResultLegacyLimitKeys() throws {
     let legacyKeys = [

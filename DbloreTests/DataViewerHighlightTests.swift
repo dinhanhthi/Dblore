@@ -48,40 +48,4 @@ struct DataViewerHighlightTests {
     #expect(viewModel.dataViewer?.pageSQL == before.pageSQL)
   }
 
-  @Test("A blank draft applies as an empty highlight")
-  func blankDraft() {
-    let viewModel = makeViewModel()
-    viewModel.prepareHighlightDraft()
-    #expect(viewModel.highlightDraft.filter.conditions.count == 1)
-    viewModel.applyHighlight()
-    #expect(viewModel.dataViewer?.highlight.isEmpty == true)
-  }
-
-  @Test("Saved highlights round-trip, replace by name and delete")
-  func savedRoundTrip() {
-    let viewModel = makeViewModel()
-    viewModel.highlightDraft = draft()
-    #expect(viewModel.saveCurrentHighlight(named: "  ") == false)
-    #expect(viewModel.saveCurrentHighlight(named: "bobs"))
-    #expect(viewModel.savedHighlights.count == 1)
-    #expect(viewModel.savedHighlights[0].highlight == draft())
-    viewModel.highlightDraft.color = .red
-    viewModel.saveCurrentHighlight(named: "bobs")
-    #expect(viewModel.savedHighlights.count == 1)
-    #expect(viewModel.savedHighlights[0].highlight.color == .red)
-    viewModel.highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
-    viewModel.loadSavedHighlight(viewModel.savedHighlights[0])
-    #expect(viewModel.highlightDraft.color == .red)
-    viewModel.deleteSavedHighlight(viewModel.savedHighlights[0])
-    #expect(viewModel.savedHighlights.isEmpty)
-  }
-
-  @Test("Saved highlights do not mix with saved filters")
-  func separateFromFilters() {
-    let viewModel = makeViewModel()
-    viewModel.highlightDraft = draft()
-    viewModel.saveCurrentHighlight(named: "h")
-    viewModel.refreshSavedFilters()
-    #expect(viewModel.savedFilters.isEmpty)
-  }
 }

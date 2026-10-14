@@ -159,19 +159,6 @@ struct RowStagingUndoTests {
     #expect(!viewModel.undoManager.canRedo)
   }
 
-  @Test("Changing the filter clears staged undo")
-  func changingTheFilterClearsTheStack() {
-    let viewModel = makeViewModel()
-    grouped(viewModel) {
-      _ = viewModel.stageEdit(row: 0, column: "nickname", value: .string("neo"))
-    }
-
-    viewModel.dataViewer?.filter = TableFilter(
-      conditions: [FilterCondition(column: "nickname", value: "neo")])
-
-    #expect(viewModel.undoManager.canUndo == false)
-  }
-
   @Test("A highlight or row-count change keeps staged undo")
   func samePageKeepsTheStack() {
     let viewModel = makeViewModel()

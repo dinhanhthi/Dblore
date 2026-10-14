@@ -27,40 +27,28 @@ struct ConnectionTimeoutTests {
 
   @Test("Fast operation completes before timeout")
   func fastOperationCompletesBeforeTimeout() async throws {
-    // Arrange - Create a fast operation (completes in 100ms)
+    // Arrange - The operation returns at once; the timeout is far away
     let expectedResult = "Success"
-    let startTime = Date()
 
-    // Act - Simulate withTimeout behavior with fast operation
-    let result = try await withTestTimeout(of: .seconds(2)) {
-      try await Task.sleep(for: .milliseconds(100))
-      return expectedResult
+    // Act - A TimeoutError would have thrown before the result came back
+    let result = try await withTestTimeout(of: .seconds(60)) {
+      expectedResult
     }
-    let elapsedTime = Date().timeIntervalSince(startTime)
 
     // Assert
     #expect(result == expectedResult)
-    // Should complete before the 2s timeout, with slack for a loaded runner
-    #expect(elapsedTime < 2.0)
   }
 
   @Test("Slow operation times out correctly")
   func slowOperationTimesOut() async {
-    // Arrange - Create a slow operation (would take 5 seconds)
-    let startTime = Date()
-
-    // Act & Assert
+    // Act & Assert - The operation only ends when cancelled, so the timeout always wins
     await #expect(throws: TimeoutError.self) {
-      try await withTestTimeout(of: .milliseconds(500)) {
-        // Simulate a slow operation
-        try await Task.sleep(for: .seconds(5))
+      try await withTestTimeout(of: .milliseconds(10)) {
+        // Task.sleep honors cancellation, so the group can finish after the timeout
+        try await Task.sleep(for: .seconds(3600))
         return "Should not reach here"
       }
     }
-
-    let elapsedTime = Date().timeIntervalSince(startTime)
-    // Should timeout around 500ms, not wait full 5 seconds (slack for a loaded runner)
-    #expect(elapsedTime < 3.0)
   }
 
   @Test("Timeout cancels running tasks")

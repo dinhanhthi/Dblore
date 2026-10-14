@@ -22,11 +22,6 @@ struct DataViewerLoadTests {
     return viewModel
   }
 
-  @Test("Normal tabs have no data viewer state")
-  func nilByDefault() {
-    #expect(NotebookViewModel().dataViewer == nil)
-  }
-
   @Test("Loading without a connection manager runs nothing")
   func loadWithoutConnection() async {
     let viewModel = makeViewModel()
@@ -80,17 +75,5 @@ struct DataViewerLoadTests {
     let viewModel = makeViewModel(totalRows: 250)
     await viewModel.refreshDataViewer()
     #expect(viewModel.dataViewer?.totalRows == nil)
-  }
-
-  @Test("Columns can be hidden and all shown again")
-  func hideAndShowColumns() {
-    let viewModel = makeViewModel()
-    viewModel.setColumnHidden("email", true)
-    viewModel.setColumnHidden("name", true)
-    #expect(viewModel.dataViewer?.hiddenColumns == ["email", "name"])
-    viewModel.setColumnHidden("email", false)
-    #expect(viewModel.dataViewer?.hiddenColumns == ["name"])
-    viewModel.showAllColumns()
-    #expect(viewModel.dataViewer?.hiddenColumns.isEmpty == true)
   }
 }

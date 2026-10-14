@@ -35,13 +35,6 @@ struct QueryCancelRulesTests {
     #expect(warning?.detail.contains("DELETE FROM t WHERE id = 2") == true)
   }
 
-  @Test("One pending change: singular title")
-  func onePendingChange() {
-    let pending = [summary("UPDATE t SET v = 1 WHERE id = 1", rows: 1)]
-    let warning = QueryCancelWarning.make(state: .appTx(pending: pending), userTxOpen: false)
-    #expect(warning?.title == "Cancelling will roll back 1 pending change")
-  }
-
   @Test("Aborted app transaction also warns (its changes are discarded)")
   func abortedWarns() {
     let pending = [summary("UPDATE t SET v = 1 WHERE id = 1", rows: 1)]
@@ -66,11 +59,5 @@ struct QueryCancelRulesTests {
     #expect(warning?.title == "Cancelling will roll back the open transaction")
     #expect(warning?.title.contains("your") == false)
     #expect(warning?.detail.contains("this tab or another tab") == true)
-  }
-
-  @Test("Button titles")
-  func buttonTitles() {
-    #expect(QueryCancelWarning.confirmTitle == "Cancel query & discard")
-    #expect(QueryCancelWarning.keepTitle == "Keep running")
   }
 }

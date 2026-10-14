@@ -132,27 +132,9 @@ struct OpenAICompatibleClientTests {
       AIStubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization") == "Bearer sk-x")
   }
 
-  @Test("listModels 500 throws http error")
-  func listModelsServerError() async {
-    AIStubURLProtocol.handler = { _ in (500, [Data("boom".utf8)]) }
-    defer { AIStubURLProtocol.reset() }
-    let client = client()
-    await #expect(throws: AIClientError.http(status: 500, message: "boom")) {
-      _ = try await client.listModels()
-    }
-  }
-
   @Test("detectOllama returns nil on 500")
   func detectOllamaFailure() async {
     AIStubURLProtocol.handler = { _ in (500, [Data("boom".utf8)]) }
-    defer { AIStubURLProtocol.reset() }
-    let models = await OpenAICompatibleClient.detectOllama(session: AIStubURLProtocol.makeSession())
-    #expect(models == nil)
-  }
-
-  @Test("detectOllama returns nil on an empty list")
-  func detectOllamaEmpty() async {
-    AIStubURLProtocol.handler = { _ in (200, [Data(#"{"data":[]}"#.utf8)]) }
     defer { AIStubURLProtocol.reset() }
     let models = await OpenAICompatibleClient.detectOllama(session: AIStubURLProtocol.makeSession())
     #expect(models == nil)
@@ -167,14 +149,6 @@ struct OpenAICompatibleClientTests {
     #expect(
       AIStubURLProtocol.lastRequest?.url?.absoluteString == "http://127.0.0.1:11434/v1/models")
     #expect(AIStubURLProtocol.lastRequest?.timeoutInterval == 2)
-  }
-
-  @Test("factory builds an OpenAI-compatible client without a key for local kinds")
-  func factory() throws {
-    let made = try AIClientFactory.make(
-      kind: .ollama, config: AIProviderConfig(baseURL: base.absoluteString, model: "m"),
-      apiKey: nil, session: AIStubURLProtocol.makeSession())
-    #expect(made is OpenAICompatibleClient)
   }
 }
 

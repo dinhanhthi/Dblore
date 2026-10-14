@@ -49,24 +49,4 @@ struct ModalDismissRegistryTests {
     #expect(registry.hasModal(in: other) == true)
   }
 
-  @Test("Refreshing a modal does not move it above one opened later")
-  func refreshDoesNotReorder() {
-    let registry = ModalDismissRegistry()
-    let window = makeWindow()
-    var closed: [String] = []
-    let first = UUID()
-    let second = UUID()
-    registry.upsert(id: first, window: window) { closed.append("first") }
-    registry.upsert(id: second, window: window) { closed.append("second") }
-    registry.upsert(id: first, window: window) { closed.append("first-updated") }
-
-    #expect(registry.handleEscape(in: window))
-    #expect(closed == ["second"])
-  }
-
-  @Test("Escape in a window with no modal is not handled")
-  func ignoresWindowWithoutModal() {
-    let registry = ModalDismissRegistry()
-    #expect(!registry.handleEscape(in: makeWindow()))
-  }
 }

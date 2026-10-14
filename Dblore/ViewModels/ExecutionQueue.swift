@@ -171,6 +171,12 @@ class ExecutionQueue {
     }
   }
 
+  /// Wait for the processing run to return, including one stopped by `cancelAll` whose
+  /// statement is still finishing (`waitForIdle` already returns at the cancel)
+  func waitForProcessingRun() async {
+    await processingTask?.value
+  }
+
   /// Wait for a specific task to complete and return its final state
   /// Returns nil if the task doesn't exist
   func waitForTask(cellId: UUID) async -> ExecutionState? {

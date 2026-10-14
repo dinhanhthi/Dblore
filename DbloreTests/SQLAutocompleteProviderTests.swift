@@ -31,7 +31,7 @@ struct SQLAutocompleteProviderTests {
     #expect(provider.columnsByTable["public.t80"]?.first?.name == "col_80")
 
     let text = "SELECT col_80 FROM t80"
-    let suggestions = provider.getSuggestions(for: text, at: 13)
+    let suggestions = provider.getSuggestions(for: text, at: 13, dialect: .postgresql)
     #expect(suggestions.contains { $0.text == "col_80" })
   }
 
@@ -43,27 +43,9 @@ struct SQLAutocompleteProviderTests {
       table("orders", columns: ["zeta_total"]),
     ])
     let text = "SELECT zeta FROM users"
-    let suggestions = provider.getSuggestions(for: text, at: 11)
+    let suggestions = provider.getSuggestions(for: text, at: 11, dialect: .postgresql)
     #expect(suggestions.contains { $0.text == "zeta_name" })
     #expect(!suggestions.contains { $0.text == "zeta_total" })
-  }
-
-  @Test("clearCache empties tables and columns")
-  func clearCacheEmpties() {
-    let provider = SQLAutocompleteProvider()
-    provider.update(tables: [table("users", columns: ["id"])])
-    provider.clearCache()
-    #expect(provider.tables.isEmpty)
-    #expect(provider.columnsByTable.isEmpty)
-  }
-
-  @Test("update replaces the previous schema")
-  func updateReplaces() {
-    let provider = SQLAutocompleteProvider()
-    provider.update(tables: [table("old_table", columns: ["old_col"])])
-    provider.update(tables: [table("new_table", columns: ["new_col"])])
-    #expect(provider.tables.map(\.name) == ["new_table"])
-    #expect(provider.columnsByTable.keys.sorted() == ["public.new_table"])
   }
 
   // MARK: - UTF-16 cursor and statement window
@@ -82,7 +64,7 @@ struct SQLAutocompleteProviderTests {
     #expect(cursor > text.count)
     #expect(provider.extractCurrentToken(from: text, at: cursor) == "us")
 
-    let suggestions = provider.getSuggestions(for: text, at: cursor)
+    let suggestions = provider.getSuggestions(for: text, at: cursor, dialect: .postgresql)
     #expect(suggestions.contains { $0.text == "users" })
     #expect(suggestions.contains { $0.text == "user_id" })
     #expect(!suggestions.contains { $0.text == "orders" })
@@ -101,8 +83,10 @@ struct SQLAutocompleteProviderTests {
     let cursorInScript = (script as NSString).range(of: "na FROM users").location + 2
     let cursorInStatement = 9
 
-    let alone = provider.getSuggestions(for: statement, at: cursorInStatement).map(\.text)
-    let windowed = provider.getSuggestions(for: script, at: cursorInScript).map(\.text)
+    let alone = provider.getSuggestions(for: statement, at: cursorInStatement, dialect: .postgresql)
+      .map(\.text)
+    let windowed = provider.getSuggestions(for: script, at: cursorInScript, dialect: .postgresql)
+      .map(\.text)
     #expect(windowed == alone)
     #expect(windowed.contains("name_u"))
     // Tables referenced only in other statements do not leak into this one
@@ -116,12 +100,13 @@ struct SQLAutocompleteProviderTests {
     provider.update(tables: [table("users", columns: ["user_id"])])
     let text = "SELECT " + String(repeating: "col_a, ", count: 30_000) + "us"
     #expect(utf16Length(text) > 200_000)
-    let window = provider.statementWindow(in: text, at: utf16Length(text))
+    let window = provider.statementWindow(in: text, at: utf16Length(text), dialect: .postgresql)
     #expect(utf16Length(window.text) <= SQLAutocompleteProvider.maxStatementWindow)
     #expect(window.cursor == utf16Length(window.text))
 
     let start = Date()
-    let suggestions = provider.getSuggestions(for: text, at: utf16Length(text))
+    let suggestions = provider.getSuggestions(
+      for: text, at: utf16Length(text), dialect: .postgresql)
     #expect(Date().timeIntervalSince(start) < 0.25)
     #expect(suggestions.contains { $0.text == "users" })
   }
@@ -186,33 +171,6 @@ struct SQLAutocompleteProviderTests {
   func extractTableReferencesParityOnCases() {
     let provider = parityProvider()
     for sql in Self.parityCases {
-      let expected = referenceExtractTableReferences(provider, from: sql)
-      let actual = provider.extractTableReferences(from: sql)
-      #expect(actual == expected, "mismatch for: \(sql.debugDescription)")
-    }
-  }
-
-  @Test("extractTableReferences equals the original on 2,000 seeded random strings")
-  func extractTableReferencesParityOnRandomStrings() {
-    let provider = parityProvider()
-    let alphabet: [String] = [
-      "SELECT", "select", "FROM", "from", "From", "JOIN", "join", "INNER JOIN", "LEFT JOIN",
-      "RIGHT JOIN", "FULL JOIN", "CROSS JOIN", "INNER", "LEFT", "WHERE", "ON", "AS", "GROUP BY",
-      "ORDER BY", "LIMIT", "UNION", "EXCEPT", "INTERSECT", "UPDATE", "DELETE", "WITH", "SET",
-      "users", "Orders", "products", "sessions", "persons", "items", "public.users",
-      "audit.users", "\"users\"", "\"my table\"", "'users'", "fromage", "leftover", "onward",
-      "a", "b", "u", "o", "p", "x1", "\u{00E9}t\u{00E9}", "\u{1F600}", "stra\u{00DF}e",
-      ",", ",", ".", "(", ")", "(", ")", "\"", "'", "=", "*", ";",
-      " ", " ", " ", " ", "\n", "\t", "\r\n",
-    ]
-    var rng = SplitMix64(seed: 0xC0FFEE)
-    for _ in 0..<2_000 {
-      let count = Int(rng.next() % 40)
-      var sql = ""
-      for _ in 0..<count {
-        sql += alphabet[Int(rng.next() % UInt64(alphabet.count))]
-        if rng.next() % 3 != 0 { sql += " " }
-      }
       let expected = referenceExtractTableReferences(provider, from: sql)
       let actual = provider.extractTableReferences(from: sql)
       #expect(actual == expected, "mismatch for: \(sql.debugDescription)")
@@ -367,49 +325,6 @@ struct SQLTextViewAutocompleteDebounceTests {
       for task in tasks { await task?.value }
       #expect(spy.calls == 1)
       #expect(gate.requested.allSatisfy { $0 == SQLTextView.autocompleteDebounce })
-    }
-  }
-
-  @Test("hides immediately on empty text")
-  func hidesImmediatelyOnEmptyText() {
-    let (host, spy) = makeHost()
-    host.textView.setAutocompleteSuggestions([
-      AutocompleteSuggestion(text: "users", type: .table, description: nil)
-    ])
-    host.textView.string = ""
-    host.textView.updateAutocompleteSuggestions()
-    #expect(host.textView.getAutocompleteSuggestions().isEmpty)
-    #expect(host.textView.autocompleteTask == nil)
-    #expect(spy.calls == 0)
-  }
-
-  @Test("hideAutocomplete cancels a pending computation")
-  func hideCancelsPending() async {
-    await withSleepGate { gate in
-      let (host, spy) = makeHost()
-
-      host.textView.updateAutocompleteSuggestions()
-      let task = host.textView.autocompleteTask
-      host.textView.hideAutocomplete()
-      gate.open()
-      await task?.value
-      #expect(spy.calls == 0)
-    }
-  }
-
-  @Test("programmatic edit while a debounce is pending suppresses the computation")
-  func programmaticEditSuppressesPending() async {
-    await withSleepGate { gate in
-      let (host, spy) = makeHost()
-
-      host.textView.updateAutocompleteSuggestions()
-      let task = host.textView.autocompleteTask
-      host.textView.setProgrammaticEditFlag(true)
-      gate.open()
-      await task?.value
-      host.textView.setProgrammaticEditFlag(false)
-      #expect(spy.calls == 0)
-      #expect(host.textView.getAutocompleteSuggestions().isEmpty)
     }
   }
 

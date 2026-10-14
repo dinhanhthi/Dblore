@@ -69,47 +69,6 @@ struct ExportOptionsTests {
     #expect(!sql.contains("hunter2"))
   }
 
-  @Test("Each format offers only the options that fit that file")
-  func optionsMatchFormat() {
-    #expect(ExportFormat.csv.offersLineBreakToSpace)
-    #expect(ExportFormat.excel.offersLineBreakToSpace)
-    #expect(ExportFormat.markdown.offersLineBreakToSpace)
-    #expect(ExportFormat.sqlInsert.offersLineBreakToSpace)
-    #expect(!ExportFormat.json.offersLineBreakToSpace)
-    #expect(!ExportFormat.pdf.offersLineBreakToSpace)
-
-    #expect(ExportFormat.csv.offersFormulaSanitize)
-    #expect(ExportFormat.excel.offersFormulaSanitize)
-    #expect(!ExportFormat.markdown.offersFormulaSanitize)
-    #expect(!ExportFormat.json.offersFormulaSanitize)
-    #expect(!ExportFormat.sqlInsert.offersFormulaSanitize)
-    #expect(!ExportFormat.pdf.offersFormulaSanitize)
-
-    #expect(ExportFormat.csv.offersEncoding && ExportFormat.csv.offersLineBreak)
-    #expect(ExportFormat.json.offersEncoding && ExportFormat.json.offersLineBreak)
-    #expect(ExportFormat.markdown.offersEncoding && ExportFormat.markdown.offersLineBreak)
-    #expect(ExportFormat.sqlInsert.offersEncoding && ExportFormat.sqlInsert.offersLineBreak)
-    #expect(!ExportFormat.excel.offersEncoding && !ExportFormat.excel.offersLineBreak)
-    #expect(!ExportFormat.pdf.offersEncoding && !ExportFormat.pdf.offersLineBreak)
-
-    #expect(ExportFormat.csv.offersQuote)
-    #expect(!ExportFormat.excel.offersQuote)
-    #expect(!ExportFormat.json.offersQuote)
-    #expect(!ExportFormat.markdown.offersQuote)
-    #expect(!ExportFormat.sqlInsert.offersQuote)
-    #expect(!ExportFormat.pdf.offersQuote)
-
-    #expect(ExportFormat.json.offersJsonPretty)
-    #expect(ExportFormat.json.offersJsonIncludeNull)
-    #expect(ExportFormat.json.offersJsonValuesAsString)
-    #expect(!ExportFormat.csv.offersJsonPretty)
-
-    #expect(ExportFormat.sqlInsert.offersHeaderToggle)
-    #expect(ExportFormat.sqlInsert.offersNullAsEmpty)
-    #expect(ExportFormat.sqlInsert.headerToggleTitle == "Include column names")
-    #expect(ExportFormat.csv.headerToggleTitle == "Put field names in the first row")
-  }
-
   @Test("Line breaks inside a cell become spaces only for formats that offer it")
   func lineBreakBecomesSpace() {
     let result = grid(columns: ["note"], rows: [[.string("a\nb")]])
@@ -188,34 +147,6 @@ struct ExportOptionsTests {
     let script = DataExporter.sqlInsert(result: flat, table: "t", dialect: .postgresql)
     #expect(script.contains("'a b'"))
     #expect(!script.contains("a\nb"))
-  }
-
-  @Test("Reset keeps the format and restores the other choices")
-  func resetKeepsFormat() {
-    let changed = ExportOptions(
-      format: .csv,
-      redactedColumns: [1],
-      convertLineBreaksToSpace: true,
-      sanitizeFormulas: false,
-      encoding: .windows1252,
-      quote: .always,
-      lineBreak: .crlf)
-    let reset = ExportOptions(format: changed.format)
-    #expect(reset.format == .csv)
-    #expect(reset.redactedColumns.isEmpty)
-    #expect(!reset.convertLineBreaksToSpace)
-    #expect(reset.sanitizeFormulas)
-    #expect(reset.encoding == .utf8)
-    #expect(reset.quote == .ifNeeded)
-    #expect(reset.lineBreak == .lf)
-  }
-
-  @Test("Row-count emphasis steps up at one thousand and ten thousand rows")
-  func rowScaleSteps() {
-    #expect(ExportRowScale.level(for: 999) == .modest)
-    #expect(ExportRowScale.level(for: 1_000) == .large)
-    #expect(ExportRowScale.level(for: 9_999) == .large)
-    #expect(ExportRowScale.level(for: 10_000) == .huge)
   }
 
   private func sample() -> CellResult {

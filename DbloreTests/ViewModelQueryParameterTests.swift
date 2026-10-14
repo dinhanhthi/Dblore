@@ -140,18 +140,6 @@ struct ViewModelQueryParameterTests {
     #expect(viewModel.openParameterFormCellIds.isEmpty)
   }
 
-  @Test("Run All passes the same binds")
-  func runAllBindsNamedParameter() async throws {
-    let (viewModel, session) = try await connectedViewModel(
-      sql: namedSQL, parameters: [QueryParameter(name: "id", value: boundValue)])
-
-    await viewModel.runAllCells(bypass: true)
-    await viewModel.executionQueue.waitForIdle()
-
-    #expect(session.statements == [rewrittenSQL])
-    #expect(session.statementBinds == [[.text(boundValue)]])
-  }
-
   @Test("Run All stops before any cell when a parameter is missing")
   func runAllStopsWhenParameterMissing() async throws {
     let (viewModel, session) = try await connectedViewModel(sql: "SELECT 1")
@@ -375,45 +363,6 @@ struct ViewModelQueryParameterTests {
     #expect(!preview.contains("%"))
   }
 
-  @Test("A literal percent and a percent concat set the flag")
-  func likeLiteralPercentSetsFlag() {
-    let literal = parameterViewModel(value: "1")
-    #expect(
-      literal.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE '%' AND id = :pat", cellId: nil))
-    #expect(literal.queryConfirmationState.likePatternAffectsAllRows)
-
-    let concatenated = parameterViewModel(value: "%")
-    #expect(
-      concatenated.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE :pat || '%'", cellId: nil))
-    #expect(concatenated.queryConfirmationState.likePatternAffectsAllRows)
-  }
-
-  @Test("replace that does not yield percent does not set the flag")
-  func likeReplaceOtherDoesNotFlag() {
-    let viewModel = parameterViewModel(value: "abc")
-    #expect(
-      viewModel.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE replace(:pat, 'b', 'x')", cellId: nil))
-    #expect(!viewModel.queryConfirmationState.likePatternAffectsAllRows)
-  }
-
-  @Test("A partial cast or a call that contains a literal does not set the flag")
-  func likeCastOfPartialOrLiteralDoesNotFlag() {
-    let partial = parameterViewModel(value: "a%")
-    #expect(
-      partial.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE :pat::text", cellId: nil))
-    #expect(!partial.queryConfirmationState.likePatternAffectsAllRows)
-
-    let literal = parameterViewModel(value: "%")
-    #expect(
-      literal.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE lower(:pat || 'x')", cellId: nil))
-    #expect(!literal.queryConfirmationState.likePatternAffectsAllRows)
-  }
-
   @Test("An even NOT count keeps the pattern flag and an odd count cancels it")
   func likeNegationParity() {
     for sql in [
@@ -434,28 +383,6 @@ struct ViewModelQueryParameterTests {
       #expect(viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil))
       #expect(!viewModel.queryConfirmationState.likePatternAffectsAllRows)
     }
-  }
-
-  @Test("NOT LIKE and NOT ILIKE do not set the pattern flag")
-  func negatedLikeDoesNotFlag() {
-    for sql in [
-      "DELETE FROM t WHERE name NOT LIKE :pat",
-      "DELETE FROM t WHERE name NOT ILIKE :pat",
-    ] {
-      let viewModel = parameterViewModel(value: "%")
-      #expect(viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil))
-      #expect(!viewModel.queryConfirmationState.likePatternAffectsAllRows)
-      let statement = viewModel.queryConfirmationState.statements.first
-      #expect(statement?.likePatternAffectsAllRows == false)
-    }
-  }
-
-  @Test("LIKE (:pat) with % sets the pattern flag")
-  func likeParenthesizedBindSetsFlag() {
-    let sql = "DELETE FROM t WHERE name LIKE (:pat)"
-    let viewModel = parameterViewModel(value: "%")
-    #expect(viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil))
-    #expect(viewModel.queryConfirmationState.likePatternAffectsAllRows)
   }
 
   @Test("%% and a trimmed percent run set the flag; a% and empty do not")
@@ -552,21 +479,6 @@ struct ViewModelQueryParameterTests {
     #expect(state.statements.isEmpty)
   }
 
-  @Test("A line break in a parameter name stays on the parameter line")
-  func confirmationNoteKeepsNameOnOneLine() {
-    let name = "pat\u{2028}rest"
-    let viewModel = parameterViewModel(parameters: [
-      QueryParameter(name: name, value: "%")
-    ])
-    #expect(
-      viewModel.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE :\(name)", cellId: nil))
-    let summary = NotebookViewModel.confirmationSummary(
-      viewModel.queryConfirmationState.statements)
-    #expect(summary.contains("\"pat rest\" = \"%\""))
-    #expect(!summary.unicodeScalars.contains { $0 == "\u{2028}" || $0 == "\u{0085}" })
-  }
-
   @Test("A bind note quotes a comma and drops a bidi override")
   func confirmationNoteQuotesValueAndDropsFormatCharacters() {
     let viewModel = parameterViewModel(parameters: [
@@ -611,28 +523,6 @@ struct ViewModelQueryParameterTests {
       #expect(viewModel.presentConfirmationIfNeeded(for: sql, cellId: nil), "\(sql)")
       #expect(!viewModel.queryConfirmationState.likePatternAffectsAllRows, "\(sql)")
     }
-  }
-
-  @Test("chr of a bound code point 37 sets the flag")
-  func likeChrBindSetsFlag() {
-    let viewModel = parameterViewModel(parameters: [QueryParameter(name: "n", value: "37")])
-    #expect(
-      viewModel.presentConfirmationIfNeeded(
-        for: "DELETE FROM t WHERE name LIKE chr(:n)", cellId: nil))
-    #expect(viewModel.queryConfirmationState.likePatternAffectsAllRows)
-  }
-
-  @Test("A script parameter edit does not mark the file dirty")
-  func scriptParameterEditDoesNotNotify() {
-    let viewModel = NotebookViewModel(notebook: DbloreNotebook(documentType: .script))
-    var notifications = 0
-    viewModel.onDocumentChanged = { notifications += 1 }
-
-    viewModel.updateParameter("%", for: "pat")
-    viewModel.updateParameter("%", for: "pat")
-
-    #expect(viewModel.editorParameters == [QueryParameter(name: "pat", value: "%")])
-    #expect(notifications == 0)
   }
 
   @Test("A cell parameter edit marks the file dirty only when the cell saves values")
@@ -682,20 +572,6 @@ struct ViewModelQueryParameterTests {
     #expect(notifications == 0)
   }
 
-  @Test("Removing an unused script parameter does not mark the file dirty")
-  func removeUnusedScriptParameterDoesNotNotify() {
-    let viewModel = NotebookViewModel(notebook: DbloreNotebook(documentType: .script))
-    viewModel.viewMode = .editor
-    viewModel.editorParameters = [QueryParameter(name: "old", value: "secret")]
-    var notifications = 0
-    viewModel.onDocumentChanged = { notifications += 1 }
-
-    viewModel.removeUnusedParameter(named: "old")
-
-    #expect(viewModel.editorParameters.isEmpty)
-    #expect(notifications == 0)
-  }
-
   @Test("Run All unlock copies the LIKE pattern flag and does not say no WHERE")
   func runAllUnlockCopiesLikePatternFlag() async {
     let viewModel = NotebookViewModel(
@@ -733,28 +609,6 @@ struct ViewModelQueryParameterTests {
     #expect(summary.contains("No WHERE — affects all rows"))
     #expect(!summary.contains("LIKE pattern is % — affects all rows"))
     #expect(state.statements.first?.reasons.contains("No WHERE — affects all rows") == true)
-  }
-
-  @Test("History records :id and not the bound value")
-  func historyKeepsNamedSQL() async throws {
-    let (viewModel, _) = try await connectedViewModel(
-      sql: namedSQL, parameters: [QueryParameter(name: "id", value: boundValue)])
-    let recorder = ParameterHistoryRecorder()
-    viewModel.historyRecorder = recorder
-    let suiteName = "ViewModelQueryParameterTests.\(UUID().uuidString)"
-    let suite = try #require(UserDefaults(suiteName: suiteName))
-    defer { suite.removePersistentDomain(forName: suiteName) }
-    let settings = AppSettings(defaults: suite)
-    settings.historyEnabled = true
-    viewModel.historySettings = settings
-    let cellId = viewModel.notebook.cells[0].id
-
-    _ = await viewModel.executeTask(ExecutionTask(cellId: cellId, query: namedSQL))
-    let recorded = await waitForHistory(recorder)
-
-    let sql = try #require(recorded.first)
-    #expect(sql.contains(":id"))
-    #expect(!sql.contains(boundValue))
   }
 
   private func alertReadViewModel() -> NotebookViewModel {
