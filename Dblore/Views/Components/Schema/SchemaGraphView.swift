@@ -356,16 +356,24 @@ class SchemaGraphNSView: NSView {
 
   /// Start or stop column connection animation based on showColumnConnections state
   func updateColumnConnectionAnimation() {
-    if showColumnConnections {
+    if showColumnConnections, window != nil {
       startColumnConnectionAnimation()
     } else {
       stopColumnConnectionAnimation()
     }
   }
 
+  /// Closing the visualizer removes the view from its window: the timer stops then, or it
+  /// keeps firing for the app's lifetime
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    updateColumnConnectionAnimation()
+  }
+
   private func startColumnConnectionAnimation() {
-    // Reduce motion: keep the dashes static
-    guard columnConnectionAnimationTimer == nil, !SidebarAnimation.reduceMotion else { return }
+    // Reduce motion: keep the dashes static. Out of a window nothing is drawn.
+    guard columnConnectionAnimationTimer == nil, window != nil, !SidebarAnimation.reduceMotion
+    else { return }
     columnConnectionAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
       [weak self] _ in
       Task { @MainActor in
