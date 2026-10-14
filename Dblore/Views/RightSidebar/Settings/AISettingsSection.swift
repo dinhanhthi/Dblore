@@ -11,6 +11,7 @@ import SwiftUI
 struct AISettingsSection: View {
   @Bindable var appSettings: AppSettings
   private let settings = AISettings.shared
+  private let localModels = LocalModelManager.shared
 
   @State private var kind: AIProviderKind = .anthropic
   @State private var baseURL = ""
@@ -65,6 +66,10 @@ struct AISettingsSection: View {
         }
       }
 
+      if localModels.unusedBytes > 0 || localModels.isRemovingUnused {
+        AIUnusedModelFilesCard()
+      }
+
       if kind != .localMLX {
         connectionCard
       }
@@ -74,6 +79,8 @@ struct AISettingsSection: View {
     }
     .onAppear(perform: loadInitial)
     .task { await detectOllamaIfNeeded() }
+    // Sizes unused model files off the main thread; again whenever a download or delete ends
+    .task(id: localModels.isBusy) { await localModels.refreshUnused() }
     .onDisappear {
       runningTask?.cancel()
       cancelSignIn()

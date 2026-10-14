@@ -12,7 +12,6 @@ struct AILocalModelsSection: View {
   private let manager = LocalModelManager.shared
 
   @State private var pendingDelete: LocalModel?
-  @State private var confirmRemoveUnused = false
 
   private var recommendedID: String? {
     LocalModelCatalog.recommended(forRAM: ProcessInfo.processInfo.physicalMemory)?.id
@@ -27,11 +26,7 @@ struct AILocalModelsSection: View {
       ForEach(LocalModelCatalog.all) { model in
         row(for: model)
       }
-      if manager.unusedBytes > 0 || manager.isRemovingUnused {
-        unusedRow
-      }
     }
-    .task(id: manager.isBusy) { await manager.refreshUnused() }
     .confirmationDialog(
       "Delete model?",
       isPresented: Binding(
@@ -89,52 +84,6 @@ struct AILocalModelsSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         AITierBadge(text: tierLabel(model))
       }
-    }
-  }
-
-  /// Files under the models folder that no offered model uses
-  private var unusedRow: some View {
-    let size = ByteCountFormatter.string(fromByteCount: manager.unusedBytes, countStyle: .file)
-
-    return AIModelCard(isCurrent: false) {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        Text("Unused model files")
-          .font(.bodyText)
-          .foregroundColor(.foreground)
-        Text("\(size) · models no longer offered and unfinished downloads")
-          .font(.bodyText)
-          .foregroundColor(.foregroundSubtle)
-
-        if manager.isRemovingUnused {
-          HStack(spacing: Spacing.sm) {
-            ProgressView().controlSize(.small)
-            Text("Removing…")
-              .font(.small)
-              .foregroundColor(.foregroundMuted)
-          }
-        } else {
-          Button("Remove") { confirmRemoveUnused = true }
-            .buttonStyle(DangerButtonStyle())
-            .controlSize(.small)
-            .disabled(manager.isBusy)
-            .linkPointer()
-        }
-      }
-    }
-    .confirmationDialog(
-      "Remove unused model files?",
-      isPresented: $confirmRemoveUnused,
-      titleVisibility: .visible
-    ) {
-      Button("Remove \(size)", role: .destructive) {
-        Task { await manager.removeUnused() }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "This deletes \(size) of files from models no longer offered and unfinished downloads."
-          + " This can't be undone."
-      )
     }
   }
 
@@ -208,5 +157,55 @@ struct AILocalModelsSection: View {
 
   private static func ramText(_ model: LocalModel) -> String {
     ByteCountFormatter.string(fromByteCount: model.minRAMBytes, countStyle: .memory)
+  }
+}
+
+/// Files under the models folder that no offered model uses. Shown under the provider card
+/// whatever the provider, since the files take disk space either way.
+struct AIUnusedModelFilesCard: View {
+  private let manager = LocalModelManager.shared
+
+  @State private var confirmRemove = false
+
+  var body: some View {
+    let size = ByteCountFormatter.string(fromByteCount: manager.unusedBytes, countStyle: .file)
+
+    SettingsGroupCard(title: "Unused model files") {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Text("\(size) · on-device models no longer offered and unfinished downloads")
+          .font(.bodyText)
+          .foregroundColor(.foregroundSubtle)
+
+        if manager.isRemovingUnused {
+          HStack(spacing: Spacing.sm) {
+            ProgressView().controlSize(.small)
+            Text("Removing…")
+              .font(.small)
+              .foregroundColor(.foregroundMuted)
+          }
+        } else {
+          Button("Remove") { confirmRemove = true }
+            .buttonStyle(DangerButtonStyle())
+            .controlSize(.small)
+            .disabled(manager.isBusy)
+            .linkPointer()
+        }
+      }
+    }
+    .confirmationDialog(
+      "Remove unused model files?",
+      isPresented: $confirmRemove,
+      titleVisibility: .visible
+    ) {
+      Button("Remove \(size)", role: .destructive) {
+        Task { await manager.removeUnused() }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        "This deletes \(size) of files from models no longer offered and unfinished downloads."
+          + " This can't be undone."
+      )
+    }
   }
 }
