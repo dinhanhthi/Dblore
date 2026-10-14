@@ -215,7 +215,7 @@ final class AIAssistantViewModel {
     let context = TurnContext(
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
-      dialect: sqlDialect)
+      compactPrompt: provider == .localMLX, dialect: sqlDialect)
     let history = makeHistory()
     isGenerating = true
     generation += 1
@@ -320,7 +320,7 @@ final class AIAssistantViewModel {
   /// Builds the request off the main actor: table selection and rendering are O(tables)
   nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
-    history: [AIChatMessage], runsQueries: Bool
+    history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -331,7 +331,7 @@ final class AIAssistantViewModel {
         model: model,
         system: AIPrompts.system(
           databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
-          runsQueries: runsQueries),
+          runsQueries: runsQueries, compact: compactPrompt),
         messages: history)
     }.value
   }

@@ -254,14 +254,9 @@ nonisolated struct MLXChatClient: AIChatClient {
 
   // MARK: Pure helpers
 
-  static let defaultTemperature: Float = 0.2
+  /// Greedy decoding for repeatable SQL (mlx-swift-lm picks `ArgMaxSampler` at 0).
+  static let temperature: Float = 0
   static let maxTokensLimit = 4096
-
-  /// NaN, infinite and negative values fall back to 0.2; values above 1.0 are capped.
-  nonisolated static func sanitizeTemperature(_ value: Double) -> Float {
-    guard value.isFinite, value >= 0 else { return defaultTemperature }
-    return Float(min(value, 1.0))
-  }
 
   static func clampMaxTokens(_ value: Int) -> Int {
     max(1, min(value, maxTokensLimit))
@@ -301,7 +296,7 @@ nonisolated struct MLXChatClient: AIChatClient {
           }
           let parameters = GenerateParameters(
             maxTokens: Self.clampMaxTokens(request.maxTokens),
-            temperature: Self.sanitizeTemperature(0.2))
+            temperature: Self.temperature)
           try await engine.generate(
             modelID: model.id, directory: directory, messages: Self.chatMessages(for: request),
             context: Self.additionalContext(forModel: model.id), parameters: parameters,

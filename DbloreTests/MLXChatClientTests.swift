@@ -9,14 +9,9 @@ import Testing
 
 @Suite("MLXChatClient")
 struct MLXChatClientTests {
-  @Test("sanitizeTemperature rejects NaN and negatives, caps at 1.0")
+  @Test("temperature is 0 for greedy decoding")
   func temperature() {
-    #expect(MLXChatClient.sanitizeTemperature(.nan) == 0.2)
-    #expect(MLXChatClient.sanitizeTemperature(-1) == 0.2)
-    #expect(MLXChatClient.sanitizeTemperature(.infinity) == 0.2)
-    #expect(MLXChatClient.sanitizeTemperature(0) == 0)
-    #expect(MLXChatClient.sanitizeTemperature(0.5) == 0.5)
-    #expect(MLXChatClient.sanitizeTemperature(5) == 1.0)
+    #expect(MLXChatClient.temperature == 0)
   }
 
   @Test("maxTokens is clamped to 1...4096")

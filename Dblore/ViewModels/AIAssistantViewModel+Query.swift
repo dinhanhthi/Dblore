@@ -15,6 +15,8 @@ extension AIAssistantViewModel {
     let explicit: Set<String>
     let snapshot: AISchemaSnapshot
     let runsQueries: Bool
+    /// The shorter system prompt, for the on-device model
+    let compactPrompt: Bool
     /// Dialect at send time; a query runs only while the connection still has it
     let dialect: SQLDialect
   }
@@ -46,7 +48,8 @@ extension AIAssistantViewModel {
   ) async {
     let request = await Self.buildRequest(
       model: context.model, question: context.question, explicit: context.explicit,
-      snapshot: context.snapshot, history: history, runsQueries: context.runsQueries)
+      snapshot: context.snapshot, history: history, runsQueries: context.runsQueries,
+      compactPrompt: context.compactPrompt)
     guard await streamReply(request, from: context.client, into: entryId),
       context.runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,

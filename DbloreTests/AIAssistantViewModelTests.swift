@@ -303,7 +303,25 @@ struct AIAssistantViewModelTests {
     #expect(!system.contains("public.users("))
     #expect(!system.contains("public.secrets("))
     #expect(system.contains("shop"))
+    #expect(system.contains("Only the schema is provided automatically"))
     #expect(client.requests.first?.model == "m1")
+  }
+
+  @Test("the on-device provider gets the compact system prompt")
+  func localMLXCompactPrompt() async {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let settings = makeSettings()
+    settings.configuration = AIConfiguration(
+      activeProvider: .localMLX,
+      configs: [.localMLX: AIProviderConfig(baseURL: "", model: "qwen3.5-4b")],
+      runsQueries: false)
+    let vm = makeVM(client, settings: settings, tables: [table("orders")])
+    vm.draft = "show orders"
+    vm.send()
+    await finish(vm)
+    let system = client.requests.first?.system ?? ""
+    #expect(system.contains("Use only tables and columns from the schema."))
+    #expect(!system.contains("Only the schema is provided automatically"))
   }
 
   @Test("history sent to the client is capped at 20 non-error entries")
