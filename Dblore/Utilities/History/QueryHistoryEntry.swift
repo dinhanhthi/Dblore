@@ -11,20 +11,36 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
     case cancelled
   }
 
-  nonisolated enum Source: String, Sendable, Codable, Equatable {
+  nonisolated enum Source: String, Sendable, Codable, Equatable, CaseIterable {
     case cell
     case editor
     case dataViewerEdit
     case dataImport
+    case mcp
+    case structure
+    case ai
+
+    /// JSON from a newer version may hold an unknown source: it reads as editor, as the
+    /// database read does, instead of failing the whole import. Encoding keeps the raw value.
+    init(from decoder: Decoder) throws {
+      let raw = try decoder.singleValueContainer().decode(String.self)
+      self = Source(rawValue: raw) ?? .editor
+    }
   }
 
   /// Classified effect of the SQL. Nil when the row has not been classified.
-  nonisolated enum Kind: String, Sendable, Codable, Equatable {
+  nonisolated enum Kind: String, Sendable, Codable, Equatable, CaseIterable {
     case read
     case write
     case schema
     case transaction
     case other
+
+    /// An unknown kind from newer JSON reads as `.other` (never a write), so the import goes on.
+    init(from decoder: Decoder) throws {
+      let raw = try decoder.singleValueContainer().decode(String.self)
+      self = Kind(rawValue: raw) ?? .other
+    }
   }
 
   var id: Int64

@@ -14,7 +14,8 @@
 // - any other read (SHOW, EXPLAIN, calling a function, a row lock such as FOR UPDATE / FOR
 //   SHARE that a cursor would apply to fetched rows only, another tab's statement in flight
 //   with no transaction open): the loop breaks and PostgresNIO drains the rest (bounded by
-//   statement_timeout), the session, its transaction and pending changes survive;
+//   statement_timeout), the session, its transaction and pending changes survive. MySQL kills
+//   a read left at the cap (KILL QUERY), so there a read calling a function is read to the end;
 // - a statement that may write (RETURNING, utility, data-modifying WITH): read to the end,
 //   rows past the cap counted but not kept. Closing mid-stream would roll back its changes.
 
@@ -58,19 +59,74 @@ struct CollectedRows: Sendable {
   var truncated = false
 }
 
+/// Bounds on what a capped read keeps, applied to each row as it arrives (MCP managers): text
+/// longer than `maxCellCharacters` keeps `maxCellCharacters + 1` characters and binary longer
+/// than its base64 would be keeps `maxCellCharacters / 4 * 3 + 1` bytes (one past, so the reader
+/// can still tell it was cut), and the read stops, truncated, once the kept cells would pass
+/// `maxResultBytes`. A row is held whole only while it is cut.
+nonisolated struct CappedReadLimits: Sendable, Equatable {
+  let maxCellCharacters: Int
+  let maxResultBytes: Int
+
+  /// `row` with long cells cut, and the bytes it keeps (UTF-8 text, binary, 8 per scalar).
+  func cut(_ row: [CellValue]) -> (row: [CellValue], bytes: Int) {
+    var bytes = 0
+    let cells = row.map { cell -> CellValue in
+      let kept: CellValue =
+        switch cell {
+        case .string(let text): .string(cutText(text))
+        case .json(let text): .json(cutText(text))
+        case .data(let data):
+          .data(data.count > maxBinaryBytes ? Data(Array(data.prefix(maxBinaryBytes))) : data)
+        default: cell
+        }
+      switch kept {
+      case .string(let text), .json(let text): bytes += text.utf8.count
+      case .data(let data): bytes += data.count
+      default: bytes += 8
+      }
+      return kept
+    }
+    return (cells, bytes)
+  }
+
+  private var maxBinaryBytes: Int { maxCellCharacters / 4 * 3 + 1 }
+
+  /// `text` cut to `maxCellCharacters + 1` characters, without counting the rest.
+  private func cutText(_ text: String) -> String {
+    guard
+      let end = text.index(
+        text.startIndex, offsetBy: maxCellCharacters + 1, limitedBy: text.endIndex),
+      end < text.endIndex
+    else { return text }
+    return String(text[..<end])
+  }
+}
+
 extension DatabaseConnectionManager {
   /// Read at most `maxRows` rows of `source`, taking column names / types from the first row
   /// that is kept. One row past the cap is looked at to know whether the result was truncated.
   /// Then the loop breaks (the session stops reading and PostgresNIO drains the rest on the
   /// next query, unless the session is closed), or, with `readToEnd`, keeps counting rows
-  /// without keeping them.
+  /// without keeping them. MySQL keeps the column list of a zero-row result too (the session
+  /// reads its headers), so the result keeps its column origins. With `readLimits`, rows are cut
+  /// as they arrive and a row past the byte budget ends the read like a row past the cap.
   func readCapped(
     _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
   ) async throws -> CollectedRows {
     var collected = CollectedRows()
+    var keptBytes = 0
+    if config?.databaseType == .mysql { collected.columns = source.columns }
     for try await row in source.rows {
       collected.total += 1
-      if collected.rows.count >= maxRows {
+      var kept = row
+      if !collected.truncated, let readLimits {
+        let cut = readLimits.cut(row)
+        keptBytes += cut.bytes
+        if keptBytes > readLimits.maxResultBytes { collected.truncated = true }
+        kept = cut.row
+      }
+      if collected.truncated || collected.rows.count >= maxRows {
         collected.truncated = true
         if readToEnd { continue }
         break
@@ -78,7 +134,7 @@ extension DatabaseConnectionManager {
       if collected.total == 1 {
         collected.columns = source.columns
       }
-      collected.rows.append(row)
+      collected.rows.append(kept)
     }
     return collected
   }
@@ -92,15 +148,19 @@ extension DatabaseConnectionManager {
   ///   rolls it back, after confirmation); the statement may write (EXPLAIN
   ///   ANALYZE, or it calls a function: `SQLStatementClassifier.mayCallFunctions`); or another
   ///   caller shares the connection right now (another gated script / edit, or any query waiting
-  ///   in `send(on:)`): closing would roll back or drop its work.
+  ///   in `send(on:)`): closing would roll back or drop its work; or the manager is closed right
+  ///   after the read (`resetsSessionAfterCappedRead` false).
   ///   If reconnecting fails the session is reported lost (`SessionLostEvent`), rows kept.
   func resetSessionIfCapped(
     _ result: QueryResult, statement: ClassifiedStatement
   ) async -> QueryResult {
-    guard result.truncated, StatementRoute.route(for: statement) == .read else { return result }
+    let dialect = Self.dialect(of: config)
+    guard resetsSessionAfterCappedRead, result.truncated,
+      StatementRoute.route(for: statement, dialect: dialect) == .read
+    else { return result }
     await scriptCheckpointHook?(.beforeCapReset)
     // `inFlight == 1`: only this script (its own count); its own send already returned
-    guard !Self.mustDrain(statement), txState.isIdle, txOwner == nil, !userTxOpen,
+    guard !Self.mustDrain(statement, dialect: dialect), txState.isIdle, txOwner == nil, !userTxOpen,
       commitGuard.inFlight == 1, activeSends == 0, let config,
       config.databaseType.capabilities.cappedReadResetsSession
     else { return result }
@@ -183,13 +243,16 @@ extension DatabaseConnectionManager {
   }
 
   /// A plain read a cursor can run: SELECT / VALUES / TABLE / WITH (not SHOW or EXPLAIN) that
-  /// calls no function (its side effects would stop at the cap) and locks no rows.
-  nonisolated static func usesCursor(_ statement: ClassifiedStatement) -> Bool {
+  /// calls no function (its side effects would stop at the cap) and locks no rows. Lexed with
+  /// `dialect`.
+  nonisolated static func usesCursor(
+    _ statement: ClassifiedStatement, dialect: SQLDialect
+  ) -> Bool {
     guard statement.kind == .read else { return false }
-    let tokens = SQLTokenizer.tokens(statement.text)
+    let tokens = SQLTokenizer.tokens(statement.text, dialect: dialect)
     let first = tokens.first { $0.kind == .word }?.keyword ?? ""
     return ["SELECT", "VALUES", "TABLE", "WITH"].contains(first)
-      && !SQLStatementClassifier.mayCallFunctions(statement.text)
+      && !SQLStatementClassifier.mayCallFunctions(statement.text, dialect: dialect)
       && !hasLockingClause(tokens)
   }
 
@@ -204,10 +267,22 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// MySQL stops a read left at the cap with KILL QUERY (the session stays), which would abort a
+  /// read that must drain (`mustDrain`) and roll back what it wrote: that read is read to the
+  /// end instead, rows past the cap counted but not kept. Other engines break at the cap.
+  nonisolated static func readsToEndAtCap(
+    _ statement: ClassifiedStatement?, databaseType: DatabaseType?
+  ) -> Bool {
+    guard databaseType == .mysql, let statement else { return false }
+    return mustDrain(statement, dialect: .mysql)
+  }
+
   /// EXPLAIN ANALYZE runs its statement, and a called function may write: closing before the
   /// result completes would abort the statement and roll back what it changed in autocommit.
-  private nonisolated static func mustDrain(_ statement: ClassifiedStatement) -> Bool {
+  private nonisolated static func mustDrain(
+    _ statement: ClassifiedStatement, dialect: SQLDialect
+  ) -> Bool {
     if case .explain(_, analyze: true) = statement.kind { return true }
-    return SQLStatementClassifier.mayCallFunctions(statement.text)
+    return SQLStatementClassifier.mayCallFunctions(statement.text, dialect: dialect)
   }
 }

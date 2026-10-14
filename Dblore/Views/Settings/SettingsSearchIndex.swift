@@ -100,6 +100,9 @@ extension SettingsModal.SettingsTab {
         .init(
           card: "Accent color", title: "Accent color",
           detail: "Choose the main color for buttons, links, and syntax highlighting."),
+        .init(
+          card: "Animations", title: "Animations",
+          detail: "Turn interface animations on or off. System follows macOS Reduce motion."),
       ]
     case .editor:
       return [
@@ -165,6 +168,11 @@ extension SettingsModal.SettingsTab {
         .init(
           card: "Text", title: "Font Size",
           detail: "Size of the text in result tables. Column headers stay the same."),
+        .init(
+          card: "Text", title: "Color Values by Type",
+          detail:
+            "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style."
+        ),
         .init(
           card: "Table", title: "Hide Column Types",
           detail:
@@ -236,6 +244,33 @@ extension SettingsModal.SettingsTab {
           card: "DuckDB", title: "DuckDB",
           detail:
             "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB).")
+      ]
+    case .mcp:
+      return [
+        .init(
+          card: "Server", title: "Run the MCP server",
+          detail:
+            "Lets AI agents such as Claude Code and Cursor read the connections you allow below, through a server on 127.0.0.1. Dblore must be running."
+        ),
+        .init(card: "Server", title: "Port", detail: "Status, port in use"),
+        .init(
+          card: "Connections", title: "Connections",
+          detail:
+            "Agents can use only the connections turned on here. Use a least-privilege database user."
+        ),
+        .init(
+          card: "Queries", title: "Default row cap",
+          detail: "Rows an agent query returns. History is off: MCP queries are not recorded."),
+        .init(card: "Clients", title: "Copy Claude Code command"),
+        .init(card: "Clients", title: "Copy Cursor JSON"),
+        .init(
+          card: "Clients", title: "Regenerate token",
+          detail: "Clients that use the old token stop working until you copy the setup again."),
+        .init(
+          card: "About MCP", title: "About MCP",
+          detail:
+            "Read-only. Agent reads do not see uncommitted changes. Query results are sent to the agent as untrusted data."
+        ),
       ]
     case .developer:
       return [

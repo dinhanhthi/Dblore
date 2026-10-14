@@ -74,6 +74,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private var slowContinuation: CheckedContinuation<Void, Error>?
   private var startedContinuation: CheckedContinuation<Void, Never>?
   private var queryDidStart = false
+  private var failingCommand: String?
 
   private(set) var didOpen = false
   private(set) var didClose = false
@@ -147,7 +148,23 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
 
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     record(sql, binds: binds, query: false)
+    if takeFailingCommand(sql) { throw FakeQueryError() }
     return Self.commandResult(sql)
+  }
+
+  /// The next `command` whose SQL contains `text` throws `FakeQueryError` (once).
+  func failNextCommand(containing text: String) {
+    lock.lock()
+    failingCommand = text
+    lock.unlock()
+  }
+
+  private func takeFailingCommand(_ sql: String) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let text = failingCommand, sql.contains(text) else { return false }
+    failingCommand = nil
+    return true
   }
 
   func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {

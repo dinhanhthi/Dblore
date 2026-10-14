@@ -29,6 +29,22 @@ enum ThemePreference: String, CaseIterable {
   }
 }
 
+/// Whether the app animates. System follows macOS Reduce motion.
+enum AnimationPreference: String, CaseIterable {
+  case system = "System"
+  case on = "On"
+  case off = "Off"
+
+  /// True when motion should be dropped, given macOS Reduce motion
+  func reducesMotion(system systemReduceMotion: Bool) -> Bool {
+    switch self {
+    case .system: return systemReduceMotion
+    case .on: return false
+    case .off: return true
+    }
+  }
+}
+
 /// Type of tab created by default by the new tab action
 enum NewTabType: String, CaseIterable {
   case notebook
@@ -290,13 +306,18 @@ class AppSettings {
     static let openWindowsAsTabs = "app.settings.openWindowsAsTabs"
     static let defaultNewTabType = "app.settings.defaultNewTabType"
     static let launchBehavior = "app.settings.launchBehavior"
+    static let confirmBeforeQuit = "app.settings.confirmBeforeQuit"
     static let aiPanelOpenMode = "app.settings.aiPanelOpenMode"
     static let aiBubblePosition = "app.settings.aiBubblePosition"
+    static let aiSidebarWidth = "app.settings.aiSidebarWidth"
+    static let aiBubbleCardWidth = "app.settings.aiBubbleCardWidth"
+    static let aiBubbleCardHeight = "app.settings.aiBubbleCardHeight"
     static let editorSideBySideDefault = "app.settings.editorSideBySideDefault"
     static let hideRunWithQuerySection = "app.settings.hideRunWithQuerySection"
     static let editorSimpleMode = "app.settings.editorSimpleMode"
     static let syntaxHighlightingEnabled = "app.settings.syntaxHighlightingEnabled"
     static let accentColor = "app.settings.accentColor"
+    static let animationPreference = "app.settings.animationPreference"
     static let hideColumnTypes = "app.settings.hideColumnTypes"
     static let safeMode = "app.settings.safeMode"
     static let commitStyle = "app.settings.commitStyle"
@@ -305,10 +326,15 @@ class AppSettings {
     static let historyMaxEntries = "app.settings.historyMaxEntries"
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
+    static let colorValuesByType = "app.settings.colorValuesByType"
     static let editorFontSize = "app.settings.editorFontSize"
     static let notifyLongQueries = "app.settings.notifyLongQueries"
     static let longQueryThresholdSeconds = "app.settings.longQueryThresholdSeconds"
     static let notifyOnlyWhenInactive = "app.settings.notifyOnlyWhenInactive"
+    static let mcpEnabled = "app.settings.mcpEnabled"
+    static let mcpPort = "app.settings.mcpPort"
+    static let mcpAllowedConnectionIDs = "app.settings.mcpAllowedConnectionIDs"
+    static let mcpRowCap = "app.settings.mcpRowCap"
   }
 
   /// Seconds a query must run before it notifies, when none is stored.
@@ -493,6 +519,14 @@ class AppSettings {
     }
   }
 
+  /// Ask before quitting when Quit comes from the keyboard (Cmd+Q)
+  /// Default: false
+  var confirmBeforeQuit: Bool = false {
+    didSet {
+      defaults.set(confirmBeforeQuit, forKey: Keys.confirmBeforeQuit)
+    }
+  }
+
   /// Type of tab created by the new tab action
   /// Default: notebook
   var defaultNewTabType: NewTabType = .notebook {
@@ -530,6 +564,52 @@ class AppSettings {
         return  // Avoid triggering didSet again
       }
       defaults.set(aiBubblePosition, forKey: Keys.aiBubblePosition)
+    }
+  }
+
+  /// Width of the AI assistant sidebar in points
+  /// Default: 320, Min: 320, Max: 35% of window width (clamped by the view)
+  var aiSidebarWidth: CGFloat = ComponentSize.sidebarWidth {
+    didSet {
+      let clampedValue = max(aiSidebarWidth, ComponentSize.sidebarWidth)
+      if clampedValue != aiSidebarWidth {
+        aiSidebarWidth = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(Double(aiSidebarWidth), forKey: Keys.aiSidebarWidth)
+    }
+  }
+
+  /// Width of the AI bubble card in points; nil = default. Min clamped here, the max
+  /// depends on the window and is clamped by `AIBubbleLayout`.
+  var aiBubbleCardWidth: Double? {
+    didSet {
+      if let width = aiBubbleCardWidth, width < Double(AIBubbleLayout.minCardWidth) {
+        aiBubbleCardWidth = Double(AIBubbleLayout.minCardWidth)
+        return  // Avoid triggering didSet again
+      }
+      Self.setOptional(aiBubbleCardWidth, forKey: Keys.aiBubbleCardWidth, in: defaults)
+    }
+  }
+
+  /// Height of the AI bubble card in points; nil = default (follows the window height).
+  /// Min clamped here, the max depends on the window and is clamped by `AIBubbleLayout`.
+  var aiBubbleCardHeight: Double? {
+    didSet {
+      if let height = aiBubbleCardHeight, height < Double(AIBubbleLayout.minCardHeight) {
+        aiBubbleCardHeight = Double(AIBubbleLayout.minCardHeight)
+        return  // Avoid triggering didSet again
+      }
+      Self.setOptional(aiBubbleCardHeight, forKey: Keys.aiBubbleCardHeight, in: defaults)
+    }
+  }
+
+  /// Stores `value`, or removes the key when nil
+  private static func setOptional(_ value: Double?, forKey key: String, in defaults: UserDefaults) {
+    if let value {
+      defaults.set(value, forKey: key)
+    } else {
+      defaults.removeObject(forKey: key)
     }
   }
 
@@ -575,6 +655,14 @@ class AppSettings {
     }
   }
 
+  /// Animations on, off, or following macOS Reduce motion
+  /// Default: system
+  var animationPreference: AnimationPreference = .system {
+    didSet {
+      defaults.set(animationPreference.rawValue, forKey: Keys.animationPreference)
+    }
+  }
+
   /// Accent color preference for the app UI
   /// Default: blue
   var accentColor: AccentColor = .blue {
@@ -604,6 +692,14 @@ class AppSettings {
         return
       }
       defaults.set(Double(resultFontSize), forKey: Keys.resultFontSize)
+    }
+  }
+
+  /// Color result-table values by type (numbers, text, dates, booleans, JSON)
+  /// Default: true
+  var colorValuesByType: Bool = true {
+    didSet {
+      defaults.set(colorValuesByType, forKey: Keys.colorValuesByType)
     }
   }
 
@@ -721,6 +817,61 @@ class AppSettings {
       }
       defaults.set(historyMaxEntries, forKey: Keys.historyMaxEntries)
       QueryHistoryPrune.schedule()
+    }
+  }
+
+  // MARK: - MCP Server
+
+  /// Default MCP port, the same across launches
+  static let defaultMCPPort = 41730
+  /// Ports the MCP server may bind (no privileged ports)
+  static let mcpPortRange: ClosedRange<Int> = 1024...65535
+  /// Default and allowed MCP run_query row caps
+  static let defaultMCPRowCap = MCPToolService.defaultMaxRows
+  static let mcpRowCapRange: ClosedRange<Int> = 1...MCPToolService.maxRowsLimit
+
+  /// Run the MCP server on 127.0.0.1 (`MCPServerController`).
+  /// Default: false
+  var mcpEnabled: Bool = false {
+    didSet {
+      defaults.set(mcpEnabled, forKey: Keys.mcpEnabled)
+    }
+  }
+
+  /// MCP server port, clamped to `mcpPortRange`.
+  /// Default: 41730
+  var mcpPort: Int = AppSettings.defaultMCPPort {
+    didSet {
+      let clampedValue = min(
+        max(mcpPort, Self.mcpPortRange.lowerBound), Self.mcpPortRange.upperBound)
+      if clampedValue != mcpPort {
+        mcpPort = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(mcpPort, forKey: Keys.mcpPort)
+    }
+  }
+
+  /// Ids (`ConnectionHistoryEntry.id`) of the saved connections MCP may use.
+  /// Default: none
+  var mcpAllowedConnectionIDs: Set<UUID> = [] {
+    didSet {
+      defaults.set(
+        mcpAllowedConnectionIDs.map(\.uuidString).sorted(), forKey: Keys.mcpAllowedConnectionIDs)
+    }
+  }
+
+  /// Default rows of an MCP run_query without max_rows, clamped to `mcpRowCapRange`.
+  /// Default: 200
+  var mcpRowCap: Int = AppSettings.defaultMCPRowCap {
+    didSet {
+      let clampedValue = min(
+        max(mcpRowCap, Self.mcpRowCapRange.lowerBound), Self.mcpRowCapRange.upperBound)
+      if clampedValue != mcpRowCap {
+        mcpRowCap = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(mcpRowCap, forKey: Keys.mcpRowCap)
     }
   }
 
@@ -871,6 +1022,10 @@ class AppSettings {
       openWindowsAsTabs = defaults.bool(forKey: Keys.openWindowsAsTabs)
     }
 
+    if defaults.object(forKey: Keys.confirmBeforeQuit) != nil {
+      confirmBeforeQuit = defaults.bool(forKey: Keys.confirmBeforeQuit)
+    }
+
     if let raw = defaults.string(forKey: Keys.defaultNewTabType),
       let type = NewTabType(rawValue: raw)
     {
@@ -891,6 +1046,17 @@ class AppSettings {
 
     if defaults.object(forKey: Keys.aiBubblePosition) != nil {
       aiBubblePosition = min(max(defaults.double(forKey: Keys.aiBubblePosition), 0), 1)
+    }
+
+    let savedAISidebarWidth = defaults.double(forKey: Keys.aiSidebarWidth)
+    if savedAISidebarWidth > 0 {
+      aiSidebarWidth = max(CGFloat(savedAISidebarWidth), ComponentSize.sidebarWidth)
+    }
+    if defaults.object(forKey: Keys.aiBubbleCardWidth) != nil {
+      aiBubbleCardWidth = defaults.double(forKey: Keys.aiBubbleCardWidth)
+    }
+    if defaults.object(forKey: Keys.aiBubbleCardHeight) != nil {
+      aiBubbleCardHeight = defaults.double(forKey: Keys.aiBubbleCardHeight)
     }
 
     if defaults.object(forKey: Keys.editorFontSize) != nil {
@@ -924,6 +1090,13 @@ class AppSettings {
       accentColor = accent
     }
 
+    // Load animation preference
+    if let animationString = defaults.string(forKey: Keys.animationPreference),
+      let animation = AnimationPreference(rawValue: animationString)
+    {
+      animationPreference = animation
+    }
+
     // Load hide column types setting
     if defaults.object(forKey: Keys.hideColumnTypes) != nil {
       hideColumnTypes = defaults.bool(forKey: Keys.hideColumnTypes)
@@ -936,6 +1109,10 @@ class AppSettings {
         defaults.set(Double(clamped), forKey: Keys.resultFontSize)
       }
       resultFontSize = clamped
+    }
+
+    if defaults.object(forKey: Keys.colorValuesByType) != nil {
+      colorValuesByType = defaults.bool(forKey: Keys.colorValuesByType)
     }
 
     if defaults.object(forKey: Keys.historyEnabled) != nil {
@@ -981,6 +1158,22 @@ class AppSettings {
       notifyOnlyWhenInactive = defaults.bool(forKey: Keys.notifyOnlyWhenInactive)
     }
 
+    if defaults.object(forKey: Keys.mcpEnabled) != nil {
+      mcpEnabled = defaults.bool(forKey: Keys.mcpEnabled)
+    }
+
+    if defaults.object(forKey: Keys.mcpPort) != nil {
+      mcpPort = defaults.integer(forKey: Keys.mcpPort)
+    }
+
+    if let ids = defaults.stringArray(forKey: Keys.mcpAllowedConnectionIDs) {
+      mcpAllowedConnectionIDs = Set(ids.compactMap(UUID.init(uuidString:)))
+    }
+
+    if defaults.object(forKey: Keys.mcpRowCap) != nil {
+      mcpRowCap = defaults.integer(forKey: Keys.mcpRowCap)
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -1013,20 +1206,26 @@ class AppSettings {
     showLineNumbers = true
     wordWrapEnabled = true
     openWindowsAsTabs = false
+    confirmBeforeQuit = false
     defaultNewTabType = .notebook
     launchBehavior = .welcome
     // Same-value assignment may not run didSet, so remove the snapshot here too.
     LaunchSessionStore(defaults: defaults).clear()
     aiPanelOpenMode = .sidebar
     aiBubblePosition = 1.0
+    aiSidebarWidth = ComponentSize.sidebarWidth
+    aiBubbleCardWidth = nil
+    aiBubbleCardHeight = nil
     editorFontSize = Self.defaultEditorFontSize
     editorSideBySideDefault = false
     hideRunWithQuerySection = false
     editorSimpleMode = false
     syntaxHighlightingEnabled = true
     accentColor = .blue
+    animationPreference = .system
     hideColumnTypes = false
     resultFontSize = Self.defaultResultFontSize
+    colorValuesByType = true
     // Same-value assignment does not run didSet, so write the review projection first.
     defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
     safeMode = CommitStyle.review.legacyProjection.safeMode
@@ -1038,6 +1237,10 @@ class AppSettings {
     notifyLongQueries = false
     longQueryThresholdSeconds = Self.defaultLongQueryThresholdSeconds
     notifyOnlyWhenInactive = true
+    mcpEnabled = false
+    mcpPort = Self.defaultMCPPort
+    mcpAllowedConnectionIDs = []
+    mcpRowCap = Self.defaultMCPRowCap
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()
