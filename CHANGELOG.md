@@ -2,6 +2,22 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.7.1 (2026-10-14)
+
+### Added
+
+- **Row Details.** Hover the "#" cell of a result row and click its details button, or choose "Show Row Details" in the right-click menu of a cell or of the "#" column, to open the whole row in the right sidebar: the table, the row number and key, then one field per column. In an editable result you change values there; edits stay drafts (a dot marks each one) until Apply, and Cancel drops them. Key, generated and read-only columns are shown but not editable, and a row you staged as an insert in the data viewer opens too. [#cc5c0368](https://github.com/dinhanhthi/Dblore/commit/cc5c0368) [#ee611092](https://github.com/dinhanhthi/Dblore/commit/ee611092)
+
+### Improved
+
+- **Typing and tabs.** Typing in a notebook cell or SQL editor no longer re-renders the tab bar and every view that reads the tabs on each keystroke. [#386ed125](https://github.com/dinhanhthi/Dblore/commit/386ed125)
+- **Search stays responsive.** Searching a large result (10,000 rows by 30 columns) no longer freezes the window while it scans; the scan runs off the main thread. [#a1d0ae43](https://github.com/dinhanhthi/Dblore/commit/a1d0ae43)
+- **JSON viewer.** The right sidebar no longer pretty-prints and highlights a large JSON value again each time the sidebar re-renders, so it opens and animates without stalling on big cells. [#923e8f98](https://github.com/dinhanhthi/Dblore/commit/923e8f98)
+
+### Fixed
+
+- **Schema visualizer idle CPU.** Closing the schema visualizer with column connections on left its dash animation timer running; it now stops with the view. [#7589025f](https://github.com/dinhanhthi/Dblore/commit/7589025f)
+
 ## v0.7.0 (2026-10-14)
 
 ### Added
