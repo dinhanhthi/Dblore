@@ -215,7 +215,10 @@ nonisolated enum SQLiteFileAccess {
       removePresenter: hooks.removePresenter)
   }
 
-  /// Opens `url` read-write and runs `BEGIN IMMEDIATE; ROLLBACK`. Does not create the file.
+  /// Opens `url` read-write, runs `BEGIN IMMEDIATE`, creates `<db>-journal` (then removes it)
+  /// while that lock keeps other writers out, then rolls back. Does not create the database.
+  /// The journal step matters in rollback-journal mode, where the transaction alone writes no
+  /// sidecar and a denied journal would only fail at the first write (SQLITE_CANTOPEN).
   /// A permission-style failure after the main file is present is a sidecar denial.
   /// The error text is SQLite's message only: file bytes are never read into it.
   static func probeWritable(_ url: URL) throws {
@@ -235,7 +238,7 @@ nonisolated enum SQLiteFileAccess {
     sqlite3_extended_result_codes(opened, 1)
 
     var errorMessage: UnsafeMutablePointer<CChar>?
-    let execCode = sqlite3_exec(opened, "BEGIN IMMEDIATE; ROLLBACK;", nil, nil, &errorMessage)
+    let execCode = sqlite3_exec(opened, "BEGIN IMMEDIATE;", nil, nil, &errorMessage)
     let message = errorMessage.map { String(cString: $0) }
     sqlite3_free(errorMessage)
     guard execCode == SQLITE_OK else {
@@ -243,22 +246,29 @@ nonisolated enum SQLiteFileAccess {
       throw SQLiteSessionError(
         extendedCode: execCode, message: message ?? "BEGIN IMMEDIATE failed")
     }
+    defer { sqlite3_exec(opened, "ROLLBACK;", nil, nil, nil) }
+    try probeCreatable(url.path + "-journal")
   }
 
   /// Creates `<db>.wal` (then removes it), or opens an existing one for writing without
   /// changing it. A permission error is a sidecar denial. The database file is not touched.
   static func probeDuckDBWAL(_ url: URL) throws {
-    let wal = url.path + duckDBSidecarSuffixes[0]
-    var fd = Darwin.open(wal, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+    try probeCreatable(url.path + duckDBSidecarSuffixes[0])
+  }
+
+  /// Creates `path` (then removes it), or opens an existing one for writing without changing
+  /// it. A permission error is a sidecar denial.
+  private static func probeCreatable(_ path: String) throws {
+    var fd = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
     let created = fd >= 0
-    if fd < 0, errno == EEXIST { fd = Darwin.open(wal, O_WRONLY) }
+    if fd < 0, errno == EEXIST { fd = Darwin.open(path, O_WRONLY) }
     guard fd >= 0 else {
       let code = errno
       if code == EPERM || code == EACCES { throw SidecarDenied() }
       throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
     Darwin.close(fd)
-    if created { unlink(wal) }
+    if created { unlink(path) }
   }
 
   @MainActor

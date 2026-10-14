@@ -2,14 +2,15 @@ import Foundation
 import Security
 
 /// PEM bytes live only in the Keychain, never in ConnectionConfig or backup providers.
+/// Certificate and key come together or not at all (a custom CA alone has neither).
 nonisolated struct ClientCertificateMaterial: Codable, Equatable, Sendable {
-  var certificatePEM: String
-  var privateKeyPEM: String
+  var certificatePEM: String?
+  var privateKeyPEM: String?
   var caPEM: String?
   var passphrase: String?
 
   init(
-    certificatePEM: String, privateKeyPEM: String,
+    certificatePEM: String? = nil, privateKeyPEM: String? = nil,
     caPEM: String? = nil, passphrase: String? = nil
   ) {
     self.certificatePEM = certificatePEM
@@ -137,7 +138,7 @@ nonisolated enum ClientCertificateStoreFactory {
   }
 
   static func account(for config: ConnectionConfig) -> String {
-    KeychainAccount.v2([config.host, String(config.port), config.database, config.username])
+    ConnectionKeychainKey.certificateAccount(for: config)
   }
 
   static func load(

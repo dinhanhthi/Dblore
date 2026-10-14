@@ -58,6 +58,11 @@ extension PostgresSession {
           message += "\n\nPosition: \(positionStr)"
         }
       }
+    } else if error.code == .messageDecodingFailure {
+      // Not a PostgreSQL message, e.g. the greeting of a MySQL server on this port
+      message =
+        "The server did not answer with the PostgreSQL protocol. Check the database type and "
+        + "the port: another database, such as MySQL, may be listening there."
     } else {
       message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
       if let underlying = error.underlying {

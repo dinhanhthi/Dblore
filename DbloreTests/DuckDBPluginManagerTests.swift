@@ -265,6 +265,18 @@ struct DuckDBPluginManagerTests {
     #expect(fresh.isInstalledOrPending)
   }
 
+  @Test func connectDuringLaunchCheckWaitsForIt() async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    PluginStubURLProtocol.mode = .respond([Self.payload])
+    await Self.manager(Self.catalog(), root: root).install()
+
+    let fresh = Self.unchecked(Self.catalog(), root: root)
+    fresh.startLaunchCheck()
+    #expect(fresh.state == .checking)
+    #expect(await fresh.isInstalledAfterLaunchCheck(), "a connect at launch must not see no plugin")
+  }
+
   @Test func refreshWithoutCatalogEndsChecking() async {
     let manager = Self.unchecked(nil, root: Self.tempRoot())
     await manager.refresh()

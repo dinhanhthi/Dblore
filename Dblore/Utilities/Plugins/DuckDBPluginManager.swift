@@ -47,7 +47,7 @@ final class DuckDBPluginManager {
 
   static let shared: DuckDBPluginManager = {
     let manager = DuckDBPluginManager(catalog: try? DuckDBPluginCatalog.bundled())
-    Task { await manager.refresh() }
+    manager.startLaunchCheck()
     return manager
   }()
 
@@ -72,6 +72,8 @@ final class DuckDBPluginManager {
   private var cancelRequested = false
   /// Cheap existence check from init, used only while `.checking`.
   @ObservationIgnored private var hasInstalledFile = false
+  /// The launch `refresh()`, awaited by connects that start before it ends.
+  @ObservationIgnored private var launchCheck: Task<Void, Never>?
 
   init(
     catalog: DuckDBPluginCatalog?,
@@ -128,6 +130,13 @@ final class DuckDBPluginManager {
     }
   }
 
+  /// `isInstalled` once the launch check is done: a connect made while `.checking` (a workspace
+  /// auto-connecting at launch) waits for the hash instead of reporting the plugin as missing.
+  func isInstalledAfterLaunchCheck() async -> Bool {
+    if state == .checking { await launchCheck?.value }
+    return isInstalled
+  }
+
   var isBusy: Bool {
     switch state {
     case .checking, .downloading, .verifying: true
@@ -140,6 +149,11 @@ final class DuckDBPluginManager {
     case .downloading, .verifying: true
     default: false
     }
+  }
+
+  /// Starts the launch `refresh()` that `isInstalledAfterLaunchCheck()` waits for.
+  func startLaunchCheck() {
+    launchCheck = Task { await refresh() }
   }
 
   /// Hashes the installed file off the main actor and publishes installed/notInstalled.

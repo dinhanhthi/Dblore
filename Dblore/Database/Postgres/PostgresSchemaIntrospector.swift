@@ -24,12 +24,15 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     """
 
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
+    // Never analyzed (reltuples -1 on PG 14+, 0/0 before): fall back to the stats counter,
+    // 0 there stays unknown (empty table, track_counts off or stats reset)
     let query = """
       SELECT
         n.nspname::text,
         c.relname::text,
         CASE WHEN c.reltuples < 0 OR (c.reltuples = 0 AND c.relpages = 0)
-          THEN NULL ELSE c.reltuples::bigint END AS row_estimate
+          THEN NULLIF(pg_stat_get_live_tuples(c.oid), 0)
+          ELSE c.reltuples::bigint END AS row_estimate
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relkind IN ('r', 'p')
@@ -543,7 +546,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     return columns
   }
 
-  private func rows(
+  func rows(
     in session: any DatabaseSession, sql: String, binds: [SQLBindValue] = []
   ) async throws -> [[CellValue]] {
     let source = try await session.query(sql, binds: binds)
@@ -585,7 +588,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
 private nonisolated struct CatalogRowError: Error {}
 
 /// Cell values from a catalog query. `name[]` stays on the normal cell decoder.
-private nonisolated enum CatalogValue {
+nonisolated enum CatalogValue {
   static func string(_ value: CellValue) -> String? {
     // `name` values that look like JSON are stored as `.json` by parseCellValue. The text is
     // still the original identifier.

@@ -135,6 +135,23 @@ struct ClientCertificateStoreTests {
     #expect(try JSONDecoder().decode(ClientCertificateMaterial.self, from: data) == material)
   }
 
+  @Test("A custom CA alone round-trips without a certificate or key")
+  func customCAOnlyPayload() throws {
+    let caOnly = ClientCertificateMaterial(caPEM: material.caPEM)
+    let data = try JSONEncoder().encode(caOnly)
+    let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+    #expect(object["certificatePEM"] == nil)
+    #expect(object["privateKeyPEM"] == nil)
+    #expect(object["caPEM"] == material.caPEM)
+    let decoded = try JSONDecoder().decode(ClientCertificateMaterial.self, from: data)
+    #expect(decoded == caOnly)
+    #expect(decoded.certificatePEM == nil)
+    #expect(decoded.privateKeyPEM == nil)
+    let store = InMemoryClientCertificateStore()
+    #expect(store.save(caOnly, account: "ca-only"))
+    #expect(store.load(account: "ca-only") == caOnly)
+  }
+
   @Test("In-memory store replaces and deletes one account without affecting another")
   func inMemoryRoundTrip() {
     let store = InMemoryClientCertificateStore()

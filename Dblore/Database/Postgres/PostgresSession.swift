@@ -460,7 +460,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
         || config.sslMode == .verifyFull
     else {
       throw DatabaseError.connectionFailed(
-        "Client certificate requires Require, Verify CA, or Verify Full TLS mode")
+        "Client certificate or custom CA requires Require, Verify CA, or Verify Full TLS mode")
     }
     guard let material = ClientCertificateStoreFactory.load(for: config) else {
       throw DatabaseError.connectionFailed("Client certificate is missing from the Keychain")
@@ -494,8 +494,10 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   ) throws -> TLSConfiguration {
     var tls = TLSConfiguration.makeClientConfiguration()
     if sslMode == .verifyCa { tls.certificateVerification = .noHostnameVerification }
-    if let material {
-      let certificates = try NIOSSLCertificate.fromPEMBytes(Array(material.certificatePEM.utf8))
+    guard let material else { return tls }
+    switch (material.certificatePEM, material.privateKeyPEM) {
+    case (let certificatePEM?, let privateKeyPEM?):
+      let certificates = try NIOSSLCertificate.fromPEMBytes(Array(certificatePEM.utf8))
       guard !certificates.isEmpty else {
         throw DatabaseError.connectionFailed("Client certificate is empty")
       }
@@ -503,15 +505,19 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       let passphrase = Array((material.passphrase ?? "").utf8)
       tls.privateKey = .privateKey(
         try NIOSSLPrivateKey(
-          bytes: Array(material.privateKeyPEM.utf8), format: .pem,
+          bytes: Array(privateKeyPEM.utf8), format: .pem,
           passphraseCallback: { setPassphrase in setPassphrase(passphrase) }))
-      if let caPEM = material.caPEM {
-        let roots = try NIOSSLCertificate.fromPEMBytes(Array(caPEM.utf8))
-        guard !roots.isEmpty else {
-          throw DatabaseError.connectionFailed("Certificate authority is empty")
-        }
-        tls.trustRoots = .certificates(roots)
+    case (nil, nil):
+      break  // Custom CA only.
+    default:
+      throw DatabaseError.connectionFailed("Client certificate and private key must both be set")
+    }
+    if let caPEM = material.caPEM {
+      let roots = try NIOSSLCertificate.fromPEMBytes(Array(caPEM.utf8))
+      guard !roots.isEmpty else {
+        throw DatabaseError.connectionFailed("Certificate authority is empty")
       }
+      tls.trustRoots = .certificates(roots)
     }
     return tls
   }

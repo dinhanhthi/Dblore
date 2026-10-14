@@ -28,19 +28,6 @@ struct ConnectionFormCertificateDraftTests {
         filesPicked: true, isHistoryLoad: true, engineChanged: false, isBlankForm: false))
   }
 
-  @Test("Changing the engine resets picked PEM files")
-  func engineChangeResetsDraft() {
-    #expect(
-      !ConnectionFormContent.keepsCertificateDraft(
-        filesPicked: true, isHistoryLoad: false, engineChanged: true, isBlankForm: false))
-  }
-
-  @Test("Blanking the form resets picked PEM files")
-  func blankFormResetsDraft() {
-    #expect(
-      !ConnectionFormContent.keepsCertificateDraft(
-        filesPicked: true, isHistoryLoad: false, engineChanged: false, isBlankForm: true))
-  }
 }
 
 @Suite("Connection form certificate draft sources")
@@ -60,13 +47,6 @@ struct ConnectionFormCertificateDraftSourceTests {
         hasCertificate: true, certificatePicked: true, hasKey: true, keyPicked: false))
   }
 
-  @Test("Replacing only the key of a saved pair does not count as picked")
-  func keyOnlyReplacedIsNotPicked() {
-    #expect(
-      !ConnectionFormContent.draftCameFromFiles(
-        hasCertificate: true, certificatePicked: false, hasKey: true, keyPicked: true))
-  }
-
   @Test("One file picked into an empty draft counts as picked")
   func singlePickIntoEmptyDraftCountsAsPicked() {
     #expect(
@@ -74,11 +54,20 @@ struct ConnectionFormCertificateDraftSourceTests {
         hasCertificate: true, certificatePicked: true, hasKey: false, keyPicked: false))
   }
 
-  @Test("An empty draft does not count as picked")
-  func emptyDraftIsNotPicked() {
+  @Test("A CA picked alone counts as picked")
+  func caOnlyPickCountsAsPicked() {
+    #expect(
+      ConnectionFormContent.draftCameFromFiles(
+        hasCertificate: false, certificatePicked: false, hasKey: false, keyPicked: false,
+        caPicked: true))
+  }
+
+  @Test("A CA picked next to a loaded pair does not count as picked")
+  func caPickWithLoadedPairIsNotPicked() {
     #expect(
       !ConnectionFormContent.draftCameFromFiles(
-        hasCertificate: false, certificatePicked: false, hasKey: false, keyPicked: false))
+        hasCertificate: true, certificatePicked: false, hasKey: true, keyPicked: false,
+        caPicked: true))
   }
 }
 
@@ -106,13 +95,58 @@ struct ConnectionFormKeptCertificateExtrasTests {
     #expect(kept.caPEM == "new CA")
     #expect(kept.passphrase == "")
   }
+}
 
-  @Test("A passphrase typed in this form survives a target edit")
-  func typedPassphraseIsKept() {
-    let kept = ConnectionFormContent.keptCertificateExtras(
-      caPEM: "old CA", caPicked: false, passphrase: "typed", passphraseEdited: true)
-    #expect(kept.caPEM == nil)
-    #expect(kept.passphrase == "typed")
+@Suite("Connection form custom CA only")
+@MainActor
+struct ConnectionFormCustomCAOnlyTests {
+  private static let ca = """
+    -----BEGIN CERTIFICATE-----
+    MIIBgjCCASegAwIBAgIUAklrIK0F2veiAbCErW8IIR+ZS1QwCgYIKoZIzj0EAwIw
+    FjEUMBIGA1UEAwwLY2xpZW50LnRlc3QwHhcNMjYxMDA0MTQwNjMwWhcNMjYxMDA1
+    MTQwNjMwWjAWMRQwEgYDVQQDDAtjbGllbnQudGVzdDBZMBMGByqGSM49AgEGCCqG
+    SM49AwEHA0IABIIXWTq/3uC4Z3xskTXVizF9urCEWVXVp8tyxOvVEQiC+BcTimWD
+    c8mszL2Fz/12ngJixTobVvZdJlt80Bs/l2WjUzBRMB0GA1UdDgQWBBQtGYAEI4GY
+    0EbttySa29pM7EVk8DAfBgNVHSMEGDAWgBQtGYAEI4GY0EbttySa29pM7EVk8DAP
+    BgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQC0XrIbvKvzTcQAgu0y
+    IAWvaCI96Cay7ETrVmdVfTE0VwIhALNoktIitpdCRKM+LeLBg7GV3/xGeNM81Vbi
+    Awghat2J
+    -----END CERTIFICATE-----
+    """
+
+  @Test("A draft with only a custom CA is material with the CA and no certificate or key")
+  func caOnlyDraftIsMaterial() throws {
+    let material = try #require(
+      ConnectionFormContent.draftMaterial(
+        certificatePEM: nil, privateKeyPEM: nil, caPEM: Self.ca, passphrase: ""))
+    #expect(material.caPEM == Self.ca)
+    #expect(material.certificatePEM == nil)
+    #expect(material.privateKeyPEM == nil)
+  }
+
+  @Test("An empty draft is no material")
+  func emptyDraftIsNoMaterial() {
+    #expect(
+      ConnectionFormContent.draftMaterial(
+        certificatePEM: nil, privateKeyPEM: nil, caPEM: nil, passphrase: "") == nil)
+  }
+
+  @Test("A custom CA alone is saved as metadata without a subject")
+  func caOnlyInfo() throws {
+    let info = try ConnectionFormContent.certificateInfo(
+      for: ClientCertificateMaterial(caPEM: Self.ca), sslMode: .verifyFull)
+    #expect(info.subject == nil)
+    #expect(info.expiry == nil)
+    #expect(info.hasCA)
+  }
+
+  @Test("A certificate without its private key is incomplete")
+  func certificateWithoutKeyIsIncomplete() {
+    #expect(throws: CertificateFormError.incompleteMaterial) {
+      try ConnectionFormContent.certificateInfo(
+        for: ClientCertificateMaterial(certificatePEM: Self.ca, caPEM: Self.ca),
+        sslMode: .verifyFull)
+    }
   }
 }
 

@@ -47,6 +47,32 @@ struct PostgresTLSConfigurationTests {
     _ = try NIOSSLContext(configuration: tls)
   }
 
+  @Test("A custom CA alone sets the trust roots without a client certificate")
+  func customCAOnly() throws {
+    let material = ClientCertificateMaterial(caPEM: Self.certificate)
+    let tls = try PostgresSession.tlsConfiguration(sslMode: .verifyFull, material: material)
+    #expect(tls.certificateChain.isEmpty)
+    #expect(tls.privateKey == nil)
+    guard case .certificates(let roots) = tls.trustRoots else {
+      Issue.record("Expected PEM CA trust roots")
+      return
+    }
+    #expect(roots.count == 1)
+    _ = try NIOSSLContext(configuration: tls)
+  }
+
+  @Test("A client certificate without its key, or a key without its certificate, is refused")
+  func incompletePair() {
+    for material in [
+      ClientCertificateMaterial(certificatePEM: Self.certificate, caPEM: Self.certificate),
+      ClientCertificateMaterial(privateKeyPEM: Self.privateKey, caPEM: Self.certificate),
+    ] {
+      #expect(throws: DatabaseError.self) {
+        try PostgresSession.tlsConfiguration(sslMode: .verifyFull, material: material)
+      }
+    }
+  }
+
   @Test("Encrypted private key uses the stored passphrase")
   func encryptedKey() throws {
     let material = ClientCertificateMaterial(
@@ -106,7 +132,7 @@ struct PostgresTLSConfigurationTests {
   @Test("Connection form extracts display metadata from PEM without retaining bytes")
   func formCertificateMetadata() throws {
     let info = try ConnectionFormContent.certificateInfo(from: Self.certificate, hasCA: true)
-    #expect(info.subject.contains("client.test"))
+    #expect(info.subject?.contains("client.test") == true)
     #expect(info.expiry != nil)
     #expect(info.hasCA)
     let encoded = try #require(String(data: JSONEncoder().encode(info), encoding: .utf8))
