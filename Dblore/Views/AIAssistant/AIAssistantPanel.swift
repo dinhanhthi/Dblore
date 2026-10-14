@@ -506,7 +506,7 @@ struct AIRunQueriesToggle: View {
     Button {
       isOn.toggle()
     } label: {
-      Image(systemName: isOn ? "play.circle.fill" : "play.slash")
+      Image(systemName: isOn ? "bolt.fill" : "bolt.slash")
         .font(.system(size: 11))
         .foregroundColor(isOn ? .accent : .foregroundSubtle)
         // Same width on and off, so the row does not shift when it is toggled
