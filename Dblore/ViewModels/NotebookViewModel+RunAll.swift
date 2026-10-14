@@ -128,7 +128,8 @@ extension NotebookViewModel {
         kindLabel: statement.kindLabel, affectsAllRows: statement.affectsAllRows,
         touchesBrake: statement.touchesBrake, changesPrivileges: statement.changesPrivileges,
         parameterNote: statement.parameterNote,
-        likePatternAffectsAllRows: statement.likePatternAffectsAllRows)
+        likePatternAffectsAllRows: statement.likePatternAffectsAllRows,
+        allDocumentsCollection: statement.allDocumentsCollection)
     }
     queryConfirmationState.affectsAllRows = listed.contains { $0.1.affectsAllRows }
     queryConfirmationState.likePatternAffectsAllRows = cells.contains { cell in

@@ -6,7 +6,8 @@ import Foundation
 /// Rewrites `:name` into PostgreSQL and DuckDB `$n`, SQLite `?n`, or MySQL `?`.
 /// One placeholder per distinct name, in first-occurrence order; MySQL binds are positional,
 /// so it gets one `?` per occurrence. The name keeps the source spelling. A statement with no
-/// `:name` is returned unchanged.
+/// `:name` is returned unchanged. MongoDB has no parameters: mongosh text is never scanned, so
+/// `{a :b}` is not `:b` and `$set` is not a placeholder.
 nonisolated enum SQLParameterRewriter: Sendable {
 
   /// `statement` with each `:name` replaced, plus the distinct names in first-seen order
@@ -14,6 +15,7 @@ nonisolated enum SQLParameterRewriter: Sendable {
   static func rewrite(
     statement: String, dialect: SQLDialect
   ) -> (text: String, names: [String]) {
+    if dialect == .mongodb { return (statement, []) }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     let hits = namedParameters(in: lexemes, scalars: scalars)
     guard !hits.isEmpty else { return (statement, []) }
@@ -22,6 +24,7 @@ nonisolated enum SQLParameterRewriter: Sendable {
 
   /// Distinct `:name` values in `script`, in first-occurrence order.
   static func parameterNames(in script: String, dialect: SQLDialect) -> [String] {
+    if dialect == .mongodb { return [] }
     let (scalars, lexemes) = scan(script, dialect: dialect)
     var names: [String] = []
     var seen: Set<String> = []
@@ -36,6 +39,7 @@ nonisolated enum SQLParameterRewriter: Sendable {
   /// `:name`, and nothing binds them. DuckDB `@` is an operator, not a placeholder, and MySQL
   /// `@name` is a user variable.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
+    if dialect == .mongodb { return false }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .postgresql {
       for index in lexemes.indices {
@@ -48,6 +52,8 @@ nonisolated enum SQLParameterRewriter: Sendable {
       switch dialect {
       case .duckdb: ["$"]
       case .mysql: []
+      // Unreachable: MongoDB returned above.
+      case .mongodb: []
       default: ["@", "$"]
       }
     for index in lexemes.indices {

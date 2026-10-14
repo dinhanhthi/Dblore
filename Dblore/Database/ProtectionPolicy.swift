@@ -24,13 +24,20 @@ nonisolated struct ProtectionPolicy: Sendable {
 
   /// A missing config means no protection (same as before the gate existed).
   init(config: ConnectionConfig?) {
+    self.init(
+      config: config,
+      supportsTransactions: config?.databaseType.capabilities.supportsTransactions ?? true)
+  }
+
+  /// Without transactions (MongoDB) Protected mode cannot hold a change, so it is ignored.
+  init(config: ConnectionConfig?, supportsTransactions: Bool) {
     guard let config else {
       self.init(protectionLevel: .none)
       return
     }
     self.init(
       protectionLevel: Self.gatingLevel(of: config), safeMode: config.safeMode,
-      protectedMode: config.protectedMode)
+      protectedMode: supportsTransactions && config.protectedMode)
   }
 
   /// The level the gate enforces, which can be stricter than the configured (displayed) one.

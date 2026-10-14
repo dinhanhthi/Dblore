@@ -326,6 +326,11 @@ extension Color {
     dark: Color(hex: "3fb4cf")
   )
 
+  static let brandMongoDB = Color(
+    light: Color(hex: "00684a"),  // MongoDB forest green
+    dark: Color(hex: "00ed64")  // MongoDB spring green
+  )
+
   static let brandSQLite = Color(
     light: Color(hex: "044a64"),  // SQLite navy
     dark: Color(hex: "7cc6ee")  // SQLite feather blue
@@ -343,6 +348,7 @@ extension DatabaseType {
     switch self {
     case .postgresql: .brandPostgreSQL
     case .mysql: .brandMySQL
+    case .mongodb: .brandMongoDB
     case .sqlite: .brandSQLite
     case .duckdb: .brandDuckDB
     }

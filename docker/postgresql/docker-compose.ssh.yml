@@ -7,6 +7,12 @@ name: dblore-ssh
 # User dblore: password dblore-ssh-123 or the ed25519/ecdsa/encrypted ed25519 keys.
 # Tunnel target: postgres:5432 (db dblore_ssh, user dblore_ssh, password dblore123),
 # TLS optional with the self-signed data/ssh/postgres/server.crt (CN/SAN postgres).
+# Tunnel target: mysql-ssh:3306 (MySQL 8.4; db dblore_ssh, user dblore_ssh, password
+# dblore123, caching_sha2_password; root password dblore123), TLS optional with
+# data/ssh/mysql/server.crt (CN/SAN DNS:mysql-ssh) issued by data/ssh/ca.crt.
+# Tunnel target: mongo-ssh:27017 (MongoDB 8.0 standalone; user root, password dblore123,
+# authSource admin), preferTLS with data/ssh/mongo/server.pem (CN/SAN DNS:mongo-ssh)
+# issued by data/ssh/ca.crt. Neither target publishes a port: only sshd reaches them.
 
 x-sshd: &sshd
   build:
@@ -88,6 +94,84 @@ services:
       timeout: 2s
       retries: 15
 
+  mysql-ssh:
+    image: mysql:8.4
+    container_name: dblore-mysql-ssh
+    hostname: mysql-ssh
+    environment:
+      MYSQL_DATABASE: dblore_ssh
+      MYSQL_USER: dblore_ssh
+      MYSQL_PASSWORD: dblore123
+      MYSQL_ROOT_PASSWORD: dblore123
+    volumes:
+      - mysql_ssh_data:/var/lib/mysql
+      - ./data/ssh:/fixtures:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /fixtures/ca.crt ] || [ ! -f /fixtures/mysql/server.crt ] \
+          || [ ! -f /fixtures/mysql/server.key ]; then
+          echo "Missing MySQL TLS fixtures in docker/postgresql/data/ssh: run docker/postgresql/scripts/gen-ssh-fixtures.sh" >&2
+          exit 1
+        fi
+        mkdir -p /tmp/dblore-ssh-tls
+        cp /fixtures/ca.crt /fixtures/mysql/server.crt /fixtures/mysql/server.key /tmp/dblore-ssh-tls/
+        chown -R mysql:mysql /tmp/dblore-ssh-tls
+        chmod 600 /tmp/dblore-ssh-tls/server.key
+        exec docker-entrypoint.sh mysqld \
+          --ssl-ca=/tmp/dblore-ssh-tls/ca.crt \
+          --ssl-cert=/tmp/dblore-ssh-tls/server.crt \
+          --ssl-key=/tmp/dblore-ssh-tls/server.key
+    networks:
+      ssh_internal:
+        aliases:
+          - mysql-ssh
+    healthcheck:
+      # TCP ping fails while the init server runs socket-only.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  mongo-ssh:
+    image: mongo:8.0
+    container_name: dblore-mongo-ssh
+    hostname: mongo-ssh
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: dblore123
+    volumes:
+      - mongo_ssh_data:/data/db
+      - ./data/ssh:/fixtures:ro
+    # mongod 8.0 refuses TLS without --tlsCAFile (SERVER-72839);
+    # --tlsAllowConnectionsWithoutCertificates keeps client certificates optional and
+    # preferTLS keeps plain connections working next to TLS ones.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /fixtures/ca.crt ] || [ ! -f /fixtures/mongo/server.pem ]; then
+          echo "Missing MongoDB TLS fixtures in docker/postgresql/data/ssh: run docker/postgresql/scripts/gen-ssh-fixtures.sh" >&2
+          exit 1
+        fi
+        mkdir -p /tmp/dblore-ssh-tls
+        cp /fixtures/ca.crt /fixtures/mongo/server.pem /tmp/dblore-ssh-tls/
+        chown -R mongodb:mongodb /tmp/dblore-ssh-tls
+        chmod 600 /tmp/dblore-ssh-tls/server.pem
+        exec docker-entrypoint.sh mongod --tlsMode preferTLS \
+          --tlsCertificateKeyFile /tmp/dblore-ssh-tls/server.pem \
+          --tlsCAFile /tmp/dblore-ssh-tls/ca.crt --tlsAllowConnectionsWithoutCertificates
+    networks:
+      ssh_internal:
+        aliases:
+          - mongo-ssh
+    healthcheck:
+      # Pings the container hostname: the entrypoint's init mongod listens on 127.0.0.1 only,
+      # so healthy means the root user exists.
+      test: ["CMD-SHELL", "mongosh --quiet --host \"$$(hostname)\" --eval 'db.runCommand({ping:1})'"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
   sshd:
     <<: *sshd
     container_name: dblore-sshd
@@ -112,3 +196,7 @@ networks:
 volumes:
   postgres_ssh_data:
     name: dblore-postgres-ssh-data
+  mysql_ssh_data:
+    name: dblore-mysql-ssh-data
+  mongo_ssh_data:
+    name: dblore-mongo-ssh-data

@@ -20,6 +20,7 @@
 		D3E0FC482EF71234009A0E5A /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC492EF71234009A0E5A /* NIOHTTP1 */; };
 		D3E0FC4A2EF71234009A0E5A /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC4B2EF71234009A0E5A /* NIOPosix */; };
 		D3E0FC4C2EF71234009A0E5A /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC4F2EF71234009A0E5A /* MCP */; };
+		D3E0FC502EF71234009A0E5A /* MongoKitten in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC522EF71234009A0E5A /* MongoKitten */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +91,7 @@
 				D3E0FC482EF71234009A0E5A /* NIOHTTP1 in Frameworks */,
 				D3E0FC4A2EF71234009A0E5A /* NIOPosix in Frameworks */,
 				D3E0FC4C2EF71234009A0E5A /* MCP in Frameworks */,
+				D3E0FC502EF71234009A0E5A /* MongoKitten in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -180,6 +182,7 @@
 				D3E0FC492EF71234009A0E5A /* NIOHTTP1 */,
 				D3E0FC4B2EF71234009A0E5A /* NIOPosix */,
 				D3E0FC4F2EF71234009A0E5A /* MCP */,
+				D3E0FC522EF71234009A0E5A /* MongoKitten */,
 			);
 			productName = Dblore;
 			productReference = D3E0FB932EF70DBB009A0E5A /* Dblore.app */;
@@ -223,6 +226,7 @@
 				D3E0FC442EF71234009A0E5A /* XCRemoteSwiftPackageReference "mysql-nio" */,
 				D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */,
 				D3E0FC4E2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-sdk" */,
+				D3E0FC512EF71234009A0E5A /* XCRemoteSwiftPackageReference "MongoKitten" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D3E0FB942EF70DBB009A0E5A /* Products */;
@@ -638,7 +642,7 @@
 			repositoryURL = "https://github.com/dinhanhthi/mysql-nio";
 			requirement = {
 				kind = revision;
-				revision = ba130af51effec1d98fe6da343f9eae24c6078a6;
+				revision = 60c88607c4aa4b553955cb3351e522527bd33325;
 			};
 		};
 		D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */ = {
@@ -655,6 +659,14 @@
 			requirement = {
 				kind = upToNextMinorVersion;
 				minimumVersion = 0.12.1;
+			};
+		};
+		D3E0FC512EF71234009A0E5A /* XCRemoteSwiftPackageReference "MongoKitten" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/MongoKitten";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 7.16.3;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -724,6 +736,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC4E2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-sdk" */;
 			productName = MCP;
+		};
+		D3E0FC522EF71234009A0E5A /* MongoKitten */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC512EF71234009A0E5A /* XCRemoteSwiftPackageReference "MongoKitten" */;
+			productName = MongoKitten;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

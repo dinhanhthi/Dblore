@@ -15,6 +15,12 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
     case interrupt
   }
 
+  /// The language the editor and sessions speak.
+  nonisolated enum QueryLanguage: Sendable, Equatable {
+    case sql
+    case mongosh
+  }
+
   let usesNetwork: Bool
   let usesPassword: Bool
   let supportsSSL: Bool
@@ -40,6 +46,14 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   let requiresPlugin: Bool
   /// False means the engine is not a working database in the app.
   let isAvailable: Bool
+  /// SQL or the mongosh subset. Drives editor and view-model branching.
+  let queryLanguage: QueryLanguage
+  /// Writes can run inside a transaction (Review commit style, Protected mode).
+  let supportsTransactions: Bool
+  /// The structure editor opens. DuckDB stays view-only by type, not by this flag.
+  let supportsStructure: Bool
+  /// SQL backup and restore. False for DuckDB.
+  let supportsSQLDump: Bool
 
   /// A local file (or in-memory) database: the connection form shows the file picker
   /// instead of host, port, user, password, SSL and SSH.

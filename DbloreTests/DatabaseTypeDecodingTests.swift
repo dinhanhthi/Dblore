@@ -15,6 +15,12 @@ struct DatabaseTypeDecodingTests {
     #expect(try JSONDecoder().decode([DatabaseType].self, from: data) == [type])
   }
 
+  @Test("The saved name \"MongoDB\" decodes to MongoDB")
+  func mongoDBRawValueDecodes() throws {
+    let data = Data(#"["MongoDB"]"#.utf8)
+    #expect(try JSONDecoder().decode([DatabaseType].self, from: data) == [.mongodb])
+  }
+
   @Test("An unknown engine throws when decoding its history entry")
   func unknownRawValueThrowsAtEntryLevel() throws {
     let entry = ConnectionHistoryEntry(config: ConnectionConfig(host: "h", database: "d"))

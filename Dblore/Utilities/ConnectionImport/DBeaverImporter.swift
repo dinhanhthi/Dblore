@@ -198,7 +198,7 @@ nonisolated enum DBeaverImporter {
     let defaultPort: Int
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
-    case .postgresql, .sqlite, .duckdb: defaultPort = PostgresURIParser.defaultPort
+    case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
     }
     guard let port = port(configuration["port"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
@@ -215,7 +215,7 @@ nonisolated enum DBeaverImporter {
       // DBeaver allows a MySQL connection without a database; flag it in the preview.
       database = configuredDatabase ?? ""
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
-    case .postgresql, .sqlite, .duckdb:
+    case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
     }
     if let authModel = string(configuration["auth-model"]), !authModel.isEmpty,
@@ -232,7 +232,7 @@ nonisolated enum DBeaverImporter {
     case .mysql:
       sslMode = mysqlSSLMode(
         handlers: handlers, isMariaDB: driver.lowercased() == "mariadb", warnings: &warnings)
-    case .postgresql, .sqlite, .duckdb:
+    case .postgresql, .sqlite, .duckdb, .mongodb:
       sslMode = self.sslMode(handlers: handlers, warnings: &warnings)
     }
 

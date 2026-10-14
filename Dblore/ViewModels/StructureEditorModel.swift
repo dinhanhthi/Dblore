@@ -598,6 +598,8 @@ final class StructureEditorModel {
     case .mysql: connection.mysqlServerInfo.map { .mysql($0) }
     case .sqlite: .sqlite(libraryVersion: SQLiteLibraryVersion.current)
     case .duckdb: .duckdb
+    // No structure editing: no engine, so no preview and nothing to apply
+    case .mongodb: nil
     }
   }
 

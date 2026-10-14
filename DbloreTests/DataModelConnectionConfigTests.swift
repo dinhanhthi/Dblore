@@ -560,6 +560,88 @@ struct DataModelConnectionConfigTests {
     #expect(!toSQLite.readOnlyFile)
   }
 
+  // MARK: - MongoDB URI
+
+  /// A config the way the form hands it on: parsed URI fields plus the in-memory password.
+  private func mongoConfig(_ text: String) throws -> ConnectionConfig {
+    let uri = try MongoURIParser.parse(text)
+    var config = uri.applied(to: ConnectionConfig(databaseType: .mongodb, name: "Mongo"))
+    config.password = uri.password ?? ""
+    return config
+  }
+
+  private static let mongoSecret = "s3cr%40t%2Fpw"
+
+  @Test("A MongoDB config round-trips +srv, tls, authSource and replicaSet")
+  func mongoURIRoundTrip() throws {
+    let config = try mongoConfig(
+      "mongodb+srv://ada:\(Self.mongoSecret)@cluster0.example.net/app?tls=true"
+        + "&authSource=admin&replicaSet=rs0&retryWrites=true")
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded == config)
+
+    let uri = try MongoURIParser.parse(try #require(decoded.mongoURI))
+    #expect(uri.isSRV)
+    #expect(uri.tls == true)
+    #expect(uri.authSource == "admin")
+    #expect(uri.replicaSet == "rs0")
+    #expect(decoded.sslMode == .verifyFull)
+  }
+
+  @Test("The encoded mongoURI has no userinfo and no unknown options")
+  func mongoURIEncodesNoSecrets() throws {
+    let object = try encodedObject(
+      try mongoConfig("mongodb://ada:\(Self.mongoSecret)@h1,h2/app?w=majority&appName=x"))
+    let stored = try #require(object["mongoURI"] as? String)
+    #expect(stored == "mongodb://h1,h2/app?appName=x")
+    #expect(!stored.contains("ada"))
+    #expect(!stored.contains("s3cr"))
+    #expect(!stored.contains("majority"))
+  }
+
+  @Test("A config without mongoURI encodes without the key and legacy JSON decodes to nil")
+  func mongoURIAbsent() throws {
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["mongoURI"] == nil)
+    let legacy = try JSONDecoder().decode(ConnectionConfig.self, from: savedConnectionJSON())
+    #expect(legacy.mongoURI == nil)
+  }
+
+  @Test("History, workspace and launch session strip a MongoDB password")
+  func mongoPasswordStripPoints() throws {
+    let config = try mongoConfig(
+      "mongodb://ada:\(Self.mongoSecret)@db.example.com/app?authSource=admin")
+    #expect(config.password == "s3cr@t/pw")
+    let secrets = ["s3cr@t/pw", "s3cr@t\\/pw", Self.mongoSecret]
+
+    func expectNoSecret(_ data: Data) {
+      let json = String(decoding: data, as: UTF8.self)
+      for secret in secrets { #expect(!json.contains(secret)) }
+    }
+
+    let history = ConnectionHistoryEntry(config: config)
+    #expect(history.config.password == "")
+    #expect(history.config.mongoURI == config.mongoURI)
+    expectNoSecret(try JSONEncoder().encode(history))
+
+    let workspace = Workspace(connectionConfig: config)
+    expectNoSecret(try JSONEncoder().encode(workspace))
+
+    let session = LaunchSession(windows: [
+      LaunchWindow(
+        frame: WindowFrame(x: 0, y: 0, width: 800, height: 600), isMiniaturized: false,
+        groupIndex: 0, tabIndex: 0, isSelectedInGroup: true,
+        content: .workspace(LaunchWorkspace(workspace: workspace)))
+    ]).clearingPasswords()
+    guard case .workspace(let launched) = try #require(session.windows.first).content else {
+      Issue.record("Expected a workspace window")
+      return
+    }
+    #expect(launched.workspace?.connectionConfig?.password == "")
+    #expect(launched.workspace?.connectionConfig?.mongoURI == config.mongoURI)
+    expectNoSecret(try JSONEncoder().encode(session))
+  }
+
   private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {
     let data = try JSONEncoder().encode(config)
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])

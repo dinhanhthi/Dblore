@@ -69,10 +69,12 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
   let changesPrivileges: Bool  // SET ROLE / SESSION AUTHORIZATION / DISCARD ALL
   let parameterNote: String?  // "name = value" for this statement, nil when it has no :name
   let likePatternAffectsAllRows: Bool  // LIKE/ILIKE/~~ operand trims to % only
+  let allDocumentsCollection: String?  // MongoDB: the collection an empty filter affects in full
 
   nonisolated init(
     index: Int, preview: String, kindLabel: String, affectsAllRows: Bool, touchesBrake: Bool,
-    changesPrivileges: Bool, parameterNote: String? = nil, likePatternAffectsAllRows: Bool = false
+    changesPrivileges: Bool, parameterNote: String? = nil, likePatternAffectsAllRows: Bool = false,
+    allDocumentsCollection: String? = nil
   ) {
     self.index = index
     self.preview = preview
@@ -82,6 +84,7 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
     self.changesPrivileges = changesPrivileges
     self.parameterNote = parameterNote
     self.likePatternAffectsAllRows = likePatternAffectsAllRows
+    self.allDocumentsCollection = allDocumentsCollection
   }
 
   var id: Int { index }
@@ -89,7 +92,11 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
   /// Badge texts explaining why the statement needs attention
   var reasons: [String] {
     var reasons: [String] = []
-    if affectsAllRows { reasons.append("No WHERE — affects all rows") }
+    if affectsAllRows {
+      reasons.append(
+        allDocumentsCollection.map { "Empty filter — affects every document in \($0)" }
+          ?? "No WHERE — affects all rows")
+    }
     if likePatternAffectsAllRows { reasons.append(Self.likePatternAllRowsReason) }
     if touchesBrake { reasons.append("Changes session safety settings") }
     if changesPrivileges { reasons.append("Changes role/privileges") }

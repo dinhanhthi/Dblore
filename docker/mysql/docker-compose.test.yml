@@ -40,7 +40,7 @@ services:
           chmod 600 /tmp/dblore-tls/server.key
           ssl_args="--ssl-ca=/tmp/dblore-tls/ca.crt --ssl-cert=/tmp/dblore-tls/server.crt --ssl-key=/tmp/dblore-tls/server.key"
         fi
-        exec docker-entrypoint.sh mysqld $$ssl_args
+        exec docker-entrypoint.sh mysqld --max-allowed-packet=64M $$ssl_args
 
     healthcheck:
       # TCP ping fails while the init server runs socket-only.
@@ -71,6 +71,9 @@ services:
     volumes:
       - mariadb_test_data:/var/lib/mysql
       - ./init:/docker-entrypoint-initdb.d:ro
+
+    # MySQLLargePacketTests sends 34 MiB statements (MariaDB defaults to 16M).
+    command: ["--max-allowed-packet=64M"]
 
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]

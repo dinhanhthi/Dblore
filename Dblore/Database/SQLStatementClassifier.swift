@@ -76,9 +76,11 @@ nonisolated enum SQLStatementClassifier {
 
   /// Split `sql` into statements and classify each. Empty / comment-only statements are dropped.
   /// `dialect` defaults to PostgreSQL, which keeps every existing caller on today's rules.
+  /// MongoDB text goes to `MongoCommandClassifier` and is never lexed as SQL.
   static func classify(
     _ sql: String, dialect: SQLDialect = .postgresql
   ) -> [ClassifiedStatement] {
+    if dialect == .mongodb { return MongoCommandClassifier.classify(sql) }
     let tokenizer = SQLTokenizer(dialect: dialect)
     return tokenizer.splitStatements(sql).compactMap { classifyStatement($0, dialect: dialect) }
   }
@@ -88,9 +90,11 @@ nonisolated enum SQLStatementClassifier {
   /// a `;` token (the splitter and the tokenizer disagree on a statement boundary), a
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
   /// or a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content).
+  /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
   static func classifyStatement(
     _ text: String, dialect: SQLDialect = .postgresql
   ) -> ClassifiedStatement? {
+    if dialect == .mongodb { return MongoCommandClassifier.classifyStatement(text) }
     let tokens = SQLTokenizer(dialect: dialect).tokens(text)
     guard !tokens.isEmpty else { return nil }
     let analysis = analyze(tokens[...], dialect: dialect)
@@ -133,9 +137,11 @@ nonisolated enum SQLStatementClassifier {
   /// `START` statement, a `CONNECTION '...'` or password-bearing `OPTION_LIST '...'` table
   /// option, and `IDENTIFIED VIA` / `USING` / `AS` / `WITH <plugin> AS`.
   /// Otherwise a SELECT is never a match, even when a column or a comment contains PASSWORD.
+  /// Always false on MongoDB (mongosh text is not SQL).
   nonisolated static func containsPasswordLiteral(
     _ sql: String, dialect: SQLDialect = .postgresql
   ) -> Bool {
+    if dialect == .mongodb { return false }
     let tokens = SQLTokenizer.tokens(sql, dialect: dialect)
     let words = tokens.compactMap(\.keyword)
     if words.starts(with: ["SET", "PASSWORD"]) || identifiesByPassword(words) { return true }
@@ -473,6 +479,8 @@ nonisolated enum SQLStatementClassifier {
     case .sqlite: sqliteAdjusted(analysis, body: body)
     case .duckdb: duckdbAdjusted(analysis, body: body)
     case .mysql: mysqlAdjusted(analysis, body: body)
+    // Unreachable: `classifyStatement` hands MongoDB text to `MongoCommandClassifier`.
+    case .mongodb: analysis
     default: analysis
     }
   }

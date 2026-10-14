@@ -122,6 +122,7 @@ extension NotebookViewModel {
     index: Int, statement: ClassifiedStatement, parameters: [String: SQLBindValue],
     dialect: SQLDialect
   ) -> StatementConfirmation {
+    if dialect == .mongodb { return mongoConfirmation(index: index, statement: statement) }
     return StatementConfirmation(
       index: index, preview: preview(statement.text, dialect: dialect),
       kindLabel: DatabaseConnectionManager.describe(statement.kind),
@@ -130,6 +131,28 @@ extension NotebookViewModel {
       parameterNote: parameterNote(for: statement.text, parameters: parameters, dialect: dialect),
       likePatternAffectsAllRows: likeWildcardBindsAllRows(
         statement.text, kind: statement.kind, parameters: parameters, dialect: dialect))
+  }
+
+  /// A mongosh command, previewed as its rendered text (comments dropped, `db.c` access), or
+  /// its first line when it does not parse. An empty-filter `updateMany`/`deleteMany` names its
+  /// collection in the warning. No `:name` binds or LIKE checks: those are SQL only.
+  private nonisolated static func mongoConfirmation(
+    index: Int, statement: ClassifiedStatement
+  ) -> StatementConfirmation {
+    let command = try? MongoshParser.parse(statement.text)
+    let line =
+      (command?.render() ?? statement.text).split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .first { !$0.isEmpty } ?? ""
+    let limit = 80
+    let preview = line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+    return StatementConfirmation(
+      index: index, preview: preview,
+      kindLabel: DatabaseConnectionManager.describe(statement.kind),
+      affectsAllRows: statement.affectsAllRows, touchesBrake: statement.resetsSessionBrakes,
+      changesPrivileges: statement.changesPrivileges,
+      allDocumentsCollection: statement.affectsAllRows
+        ? command?.collection.map(confirmationValue) : nil)
   }
 
   /// `"name" = "value"` or `"name" = NULL` for each `:name`, in first-seen order.
@@ -188,6 +211,8 @@ extension NotebookViewModel {
   private nonisolated static func likeWildcardBindsAllRows(
     _ text: String, kind: StatementKind, parameters: [String: SQLBindValue], dialect: SQLDialect
   ) -> Bool {
+    // mongosh has no LIKE; the SQL lexer would misread its text.
+    guard dialect != .mongodb else { return false }
     let isUnknown = SQLStatementClassifier.effectiveKind(kind) == .unknown
     guard likePatternApplies(to: kind) || (dialect == .mysql && isUnknown) else { return false }
     let pieces = likeLexemes(text, dialect: dialect)

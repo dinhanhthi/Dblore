@@ -25,6 +25,8 @@ actor DatabaseConnectionManager {
       DuckDBSchemaIntrospector()
     case .mysql:
       MySQLSchemaIntrospector(database: config?.database ?? "")
+    case .mongodb:
+      MongoSchemaIntrospector()
     }
   }
   private(set) var config: ConnectionConfig?
@@ -274,6 +276,8 @@ actor DatabaseConnectionManager {
       return try await probeFile(config)
     case .mysql:
       return try await MySQLSession(config: config).probe()
+    case .mongodb:
+      return try await MongoSession.probe(config: config)
     }
   }
 
@@ -468,7 +472,8 @@ private struct PreparedSQLiteOpen: Sendable {
 }
 
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
-/// after the caller has resolved sandbox access. MySQL / MariaDB is `MySQLSession`.
+/// after the caller has resolved sandbox access. MySQL / MariaDB is `MySQLSession`, MongoDB
+/// `MongoSession`.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   /// The DuckDB plugin's loader, or nil when the plugin is not installed. Read on the main actor
   /// before each DuckDB session, after the launch check: a removed plugin stays loaded (and
@@ -502,6 +507,8 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       return DuckDBSession(config: config, extraAllowedPaths: extraAllowedPaths, loadLibrary: load)
     case .mysql:
       return MySQLSession(config: config)
+    case .mongodb:
+      return MongoSession(config: config)
     }
   }
 }

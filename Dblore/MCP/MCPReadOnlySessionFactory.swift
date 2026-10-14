@@ -2,7 +2,7 @@
 // Sessions for MCP connections. PostgreSQL and MySQL run every query inside a server-side
 // read-only transaction that is always rolled back; SQLite opens the file read-only. DuckDB is
 // refused: a second in-process instance is a frozen snapshot, and closing it drops the
-// writer's file lock (spike 2.4).
+// writer's file lock (spike 2.4). MongoDB is refused (`engineUnavailable`) until it ships.
 //
 // MCP read path: `DatabaseConnectionManager.execute(userSQL:policy:maxRows:)` with a read-only
 // policy and no caller. MCP sends only `.read` statements and never opens a transaction, so a
@@ -73,6 +73,8 @@ nonisolated struct MCPReadOnlySessionFactory: DatabaseSessionFactory {
       return try await inner.makeSession(config: readOnly)
     case .duckdb:
       throw MCPConnectionError.duckDBNotSupported
+    case .mongodb:
+      throw DatabaseError.engineUnavailable(.mongodb)
     }
   }
 }

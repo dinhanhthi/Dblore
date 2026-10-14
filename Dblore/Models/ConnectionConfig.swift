@@ -11,6 +11,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case sqlite = "SQLite"
   case duckdb = "DuckDB"
   case mysql = "MySQL"
+  case mongodb = "MongoDB"
 
   var displayName: String {
     switch self {
@@ -18,6 +19,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .sqlite: rawValue
     case .duckdb: rawValue
     case .mysql: "MySQL / MariaDB"
+    case .mongodb: rawValue
     }
   }
 
@@ -32,6 +34,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "duckdb"
     case .mysql:
       return "mysql"
+    case .mongodb:
+      return "mongodb"
     }
   }
 
@@ -39,6 +43,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var defaultPort: Int {
     switch self {
     case .mysql: 3306
+    case .mongodb: 27017
     case .postgresql, .sqlite, .duckdb: 5432
     }
   }
@@ -50,6 +55,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .sqlite: .sqlite
     case .duckdb: .duckdb
     case .mysql: .mysql
+    case .mongodb: .mongodb
     }
   }
 
@@ -58,17 +64,17 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var keychainScope: String? {
     switch self {
     case .postgresql, .sqlite, .duckdb: nil
-    case .mysql: rawValue
+    case .mysql, .mongodb: rawValue
     }
   }
 
   /// An interrupt cancel (`CancelStrategy.interrupt`) stops only the statement: the session and
   /// its open transaction survive, so the cancel reports nothing rolled back. MySQL
-  /// `KILL QUERY` does. SQLite and DuckDB may roll back an explicit transaction on interrupt;
-  /// PostgreSQL reconnects.
+  /// `KILL QUERY` and MongoDB `killOp` do. SQLite and DuckDB may roll back an explicit
+  /// transaction on interrupt; PostgreSQL reconnects.
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
-    case .mysql: true
+    case .mysql, .mongodb: true
     case .postgresql, .sqlite, .duckdb: false
     }
   }
@@ -76,7 +82,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
-  /// statement with `KILL QUERY` and keep the session.
+  /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
+  /// without transactions, structure editing or SQL dump; hidden until it is complete.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -98,7 +105,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
         requiresPlugin: false,
-        isAvailable: true
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: true,
+        supportsStructure: true,
+        supportsSQLDump: true
       )
     case .sqlite:
       DatabaseCapabilities(
@@ -119,7 +130,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
         requiresPlugin: false,
-        isAvailable: true
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: true,
+        supportsStructure: true,
+        supportsSQLDump: true
       )
     case .duckdb:
       DatabaseCapabilities(
@@ -140,7 +155,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: false,
         supportsForeignKeyLookup: false,
         requiresPlugin: true,
-        isAvailable: true
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: true,
+        supportsStructure: true,
+        supportsSQLDump: false
       )
     case .mysql:
       DatabaseCapabilities(
@@ -161,7 +180,36 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
         requiresPlugin: false,
-        isAvailable: true
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: true,
+        supportsStructure: true,
+        supportsSQLDump: true
+      )
+    case .mongodb:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: false,
+        isAvailable: false,
+        queryLanguage: .mongosh,
+        supportsTransactions: false,
+        supportsStructure: false,
+        supportsSQLDump: false
       )
     }
   }
@@ -172,7 +220,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var namesSchema: Bool {
     switch self {
     case .postgresql, .sqlite, .duckdb: true
-    case .mysql: false
+    case .mysql, .mongodb: false
     }
   }
 
@@ -309,6 +357,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   /// Open a file database without writing. Distinct from `protectionLevel` and from `readOnly`.
   /// Defaults to true for DuckDB files (the brief: read-only by default), false otherwise.
   var readOnlyFile: Bool
+  /// MongoDB connection string rebuilt by `MongoURIParser` from allow-listed fields only: never
+  /// userinfo or unknown options. TLS lives in `sslMode`.
+  var mongoURI: String?
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
@@ -324,6 +375,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case protectionLevel
     // File database (absent on connections saved before SQLite config)
     case fileBookmark, readOnlyFile
+    // MongoDB connection string (absent on other engines and on older connections)
+    case mongoURI
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -375,6 +428,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
     readOnlyFile =
       try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? (databaseType == .duckdb)
+    mongoURI = try container.decodeIfPresent(String.self, forKey: .mongoURI)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -424,6 +478,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(rowCapOverride, forKey: .rowCapOverride)
     try container.encodeIfPresent(fileBookmark, forKey: .fileBookmark)
     try container.encode(readOnlyFile, forKey: .readOnlyFile)
+    try container.encodeIfPresent(mongoURI, forKey: .mongoURI)
   }
 
   nonisolated init(
@@ -492,6 +547,15 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   }
 
   nonisolated func resolvedCommitStyle(fallback: CommitStyle) -> CommitStyle {
+    resolvedCommitStyle(
+      fallback: fallback, supportsTransactions: databaseType.capabilities.supportsTransactions)
+  }
+
+  /// Without transactions (MongoDB) Review becomes Confirm, and Protected mode raises a weaker
+  /// style to Confirm (a stronger one, Password, is kept).
+  nonisolated func resolvedCommitStyle(
+    fallback: CommitStyle, supportsTransactions: Bool
+  ) -> CommitStyle {
     let candidate: CommitStyle
     if let commitStyle {
       candidate = commitStyle
@@ -499,13 +563,14 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       candidate = CommitStyle.migrate(protectedMode: protectedMode, safeMode: safeMode) ?? fallback
     }
     // protectedMode is the gate's source of truth.
-    if protectedMode {
+    if protectedMode, supportsTransactions {
       return .review
     }
-    if candidate == .review {
+    let resolved: CommitStyle = candidate == .review ? .confirm : candidate
+    if protectedMode, resolved.strength < CommitStyle.confirm.strength {
       return .confirm
     }
-    return candidate
+    return resolved
   }
 
   // MARK: - Convenience accessors (for easier migration)

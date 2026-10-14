@@ -16,13 +16,16 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let failingQuery: String?
   /// Every `open` throws this when set (a failed connect).
   let openError: (any Error)?
+  /// `formatError` text when set (else `localizedDescription`).
+  let errorFormatter: (@Sendable (any Error) -> String)?
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo] = [], rows: [[CellValue]] = [],
-    slowQueries: Bool = false, failingQuery: String? = nil, openError: (any Error)? = nil
+    slowQueries: Bool = false, failingQuery: String? = nil, openError: (any Error)? = nil,
+    errorFormatter: (@Sendable (any Error) -> String)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -30,12 +33,13 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
     self.openError = openError
+    self.errorFormatter = errorFormatter
   }
 
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
     let session = FakeDatabaseSession(
       capabilities: capabilities, columns: columns, rows: rows, slowQueries: slowQueries,
-      failingQuery: failingQuery, openError: openError)
+      failingQuery: failingQuery, openError: openError, errorFormatter: errorFormatter)
     lock.lock()
     made.append(session)
     lock.unlock()
@@ -65,6 +69,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private let slowQueries: Bool
   private let failingQuery: String?
   private let openError: (any Error)?
+  private let errorFormatter: (@Sendable (any Error) -> String)?
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
@@ -85,7 +90,8 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo], rows: [[CellValue]],
-    slowQueries: Bool, failingQuery: String? = nil, openError: (any Error)? = nil
+    slowQueries: Bool, failingQuery: String? = nil, openError: (any Error)? = nil,
+    errorFormatter: (@Sendable (any Error) -> String)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -93,6 +99,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
     self.openError = openError
+    self.errorFormatter = errorFormatter
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -193,7 +200,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   }
 
   func formatError(_ error: Error) -> String {
-    error.localizedDescription
+    errorFormatter?(error) ?? error.localizedDescription
   }
 
   /// Resumes once `query` is waiting inside a slow read, so cancel can call `interrupt`.
@@ -335,7 +342,11 @@ extension DatabaseCapabilities {
       supportsDataImport: true,
       supportsForeignKeyLookup: true,
       requiresPlugin: false,
-      isAvailable: true
+      isAvailable: true,
+      queryLanguage: .sql,
+      supportsTransactions: true,
+      supportsStructure: true,
+      supportsSQLDump: true
     )
   }
 }

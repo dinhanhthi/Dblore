@@ -1,6 +1,24 @@
 {
-  "originHash" : "ea18927216d4ff26edc3e3cd13daf0decf4508dccc560028770893129ad2a0b0",
+  "originHash" : "bd83b6513240241b3cbc176c9343c36496a39999dc926795aeb63c74bfe3fc29",
   "pins" : [
+    {
+      "identity" : "bson",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/orlandos-nl/BSON.git",
+      "state" : {
+        "revision" : "aaaa20dedb5c1bc1beead3d45d2eb1a5db62678d",
+        "version" : "8.2.2"
+      }
+    },
+    {
+      "identity" : "dnsclient",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/orlandos-nl/DNSClient.git",
+      "state" : {
+        "revision" : "b869f3175a66eb518924b66e2598faeee5862af6",
+        "version" : "2.7.0"
+      }
+    },
     {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
@@ -29,11 +47,20 @@
       }
     },
     {
+      "identity" : "mongokitten",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/orlandos-nl/MongoKitten",
+      "state" : {
+        "revision" : "e3ba79a943e6751a4903d831f861fb85211a495e",
+        "version" : "7.16.3"
+      }
+    },
+    {
       "identity" : "mysql-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/dinhanhthi/mysql-nio",
       "state" : {
-        "revision" : "ba130af51effec1d98fe6da343f9eae24c6078a6"
+        "revision" : "60c88607c4aa4b553955cb3351e522527bd33325"
       }
     },
     {
@@ -115,6 +142,15 @@
       "state" : {
         "revision" : "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
         "version" : "4.5.2"
+      }
+    },
+    {
+      "identity" : "swift-distributed-tracing",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-distributed-tracing.git",
+      "state" : {
+        "revision" : "3d6a296e8fc61f5c3a22ba23b6c786cefdb2ebb9",
+        "version" : "1.7.1"
       }
     },
     {

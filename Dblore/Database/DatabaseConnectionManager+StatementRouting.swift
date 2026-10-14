@@ -8,7 +8,8 @@ import PostgresNIO
 /// How `executeSingleStatement` sends one statement.
 nonisolated enum StatementRoute: Sendable, Equatable {
   /// Reads and EXPLAIN: row stream, text unchanged, stops at the row cap (see
-  /// `DatabaseConnectionManager+CappedRead.swift`)
+  /// `DatabaseConnectionManager+CappedRead.swift`). A mongosh read is the one rewrite: it is sent
+  /// with a limit of `maxRows + 1` (`MongoCommandRewriter`); mongosh writes take `.command`.
   case read
   /// Row stream, text unchanged; affected rows = rows read (INSERT / UPDATE / DELETE / MERGE
   /// with its own, top-level RETURNING)
@@ -116,13 +117,18 @@ extension DatabaseConnectionManager {
     return queryFailure(error, query: fallbackSQL, startTime: startTime)
   }
 
-  /// The error thrown for a failed statement (PostgreSQL details when available; a lost
-  /// session keeps its `connectionLost` message).
+  /// The error thrown for a failed statement (PostgreSQL details when available, MongoDB driver
+  /// errors in the session's text; a lost session keeps its `connectionLost` message).
   func queryFailure(_ error: Error, query: String, startTime: Date) -> DatabaseError {
     if let lost = error as? DatabaseError, case .connectionLost = lost { return lost }
     let executionTime = Date().timeIntervalSince(startTime)
     if let error = error as? PSQLError {
       return .queryFailed(formatPostgresError(error, query: query), executionTime)
+    }
+    if config?.databaseType.capabilities.queryLanguage == .mongosh, !(error is DatabaseError),
+      let session
+    {
+      return .queryFailed(session.formatError(error), executionTime)
     }
     return .queryFailed(error.localizedDescription, executionTime)
   }

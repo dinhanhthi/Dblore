@@ -22,7 +22,9 @@ nonisolated extension SQLStatementClassifier {
   /// Blind spots: functions called without parentheses (`t.fn` functional notation), inside
   /// views, operators and triggers.
   /// `dialect` picks the tokenizer; capped-read callers pass the connection's dialect.
+  /// Always false on MongoDB (mongosh text is not SQL).
   static func mayCallFunctions(_ sql: String, dialect: SQLDialect = .postgresql) -> Bool {
+    if dialect == .mongodb { return false }
     let tokens = SQLTokenizer(dialect: dialect).tokens(sql)
     return zip(tokens, tokens.dropFirst()).contains { token, next in
       guard next.isSymbol("(") else { return false }

@@ -199,7 +199,7 @@ nonisolated enum PostgresURIParser {
     mutating func apply(key: String, value: String) throws {
       switch engine {
       case .mysql: try applyMySQL(key: key, value: value)
-      case .postgresql, .sqlite, .duckdb: try applyPostgres(key: key, value: value)
+      case .postgresql, .sqlite, .duckdb, .mongodb: try applyPostgres(key: key, value: value)
       }
     }
 
@@ -277,7 +277,7 @@ nonisolated enum PostgresURIParser {
       case .mysql:
         // MySQL has no default database; the row is kept and flagged in the preview.
         if database.isEmpty { warnings.append(PostgresURIParser.missingDatabaseWarning) }
-      case .postgresql, .sqlite, .duckdb:
+      case .postgresql, .sqlite, .duckdb, .mongodb:
         // libpq: dbname defaults to the user name.
         if database.isEmpty { database = username.isEmpty ? "postgres" : username }
       }
@@ -324,7 +324,7 @@ nonisolated enum PostgresURIParser {
     if text.isEmpty {
       switch engine {
       case .mysql: return engine.defaultPort
-      case .postgresql, .sqlite, .duckdb: return defaultPort
+      case .postgresql, .sqlite, .duckdb, .mongodb: return defaultPort
       }
     }
     guard text.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(text),

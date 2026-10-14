@@ -1,8 +1,8 @@
 // CancelMessageTests.swift
 // The cancel message and record depend on the engine: an interrupt that keeps the session and
-// its transaction (MySQL KILL QUERY) says the connection was kept and reports nothing rolled
-// back. SQLite, DuckDB (interrupt) and PostgreSQL (reconnect) keep the reset text. Fake
-// sessions, no server.
+// its transaction (MySQL KILL QUERY, MongoDB killOp) says the connection was kept and reports
+// nothing rolled back. SQLite, DuckDB (interrupt) and PostgreSQL (reconnect) keep the reset
+// text. Fake sessions, no server.
 
 import Foundation
 import Testing
@@ -15,10 +15,10 @@ struct CancelMessageTests {
     "Query cancelled — connection was reset (temp tables, SET, search_path lost)."
 
   @Test(
-    "interruptKeepsTransaction is true only for MySQL",
+    "interruptKeepsTransaction is true only for MySQL and MongoDB",
     arguments: DatabaseType.allCases)
   func interruptKeepsTransactionPerEngine(type: DatabaseType) {
-    #expect(type.interruptKeepsTransaction == (type == .mysql))
+    #expect(type.interruptKeepsTransaction == (type == .mysql || type == .mongodb))
   }
 
   @Test("A kept connection says so and nothing else")
@@ -40,9 +40,12 @@ struct CancelMessageTests {
         + "Your open transaction was rolled back.")
   }
 
+  /// Only engines with transactions: without them (MongoDB) Protected mode never holds a
+  /// pending change, and the gate refuses the write this test stages.
   @Test(
     "Cancel with one pending Protected change builds the engine's record",
-    .timeLimit(.minutes(1)), arguments: DatabaseType.allCases)
+    .timeLimit(.minutes(1)),
+    arguments: DatabaseType.allCases.filter { $0.capabilities.supportsTransactions })
   func recordPerEngine(type: DatabaseType) async throws {
     let strategy = type.capabilities.cancelStrategy
     let factory = FakeDatabaseSessionFactory(

@@ -1,5 +1,6 @@
-// Keychain scope: only MySQL keys carry the engine. PostgreSQL, SQLite and DuckDB keep the
-// legacy password key and certificate account byte for byte (existing items, no migration).
+// Keychain scope: only MySQL and MongoDB keys carry the engine. PostgreSQL, SQLite and DuckDB
+// keep the legacy password key and certificate account byte for byte (existing items, no
+// migration).
 
 import Foundation
 import Testing
@@ -26,12 +27,13 @@ struct KeychainScopeTests {
     ]
   }
 
-  @Test("Only MySQL has a Keychain scope")
+  @Test("Only MySQL and MongoDB have a Keychain scope")
   func scopes() {
     #expect(DatabaseType.postgresql.keychainScope == nil)
     #expect(DatabaseType.sqlite.keychainScope == nil)
     #expect(DatabaseType.duckdb.keychainScope == nil)
     #expect(DatabaseType.mysql.keychainScope == "MySQL")
+    #expect(DatabaseType.mongodb.keychainScope == "MongoDB")
   }
 
   @Test(
@@ -62,6 +64,15 @@ struct KeychainScopeTests {
     #expect(
       Self.passwordKeys(Self.config(.mysql, port: 3306))
         == ["v2|5:MySQL|10:db.example|4:3306|3:app|3:ada"])
+  }
+
+  @Test("MongoDB password key and certificate account carry the scope")
+  func mongoDBKeys() {
+    let config = Self.config(.mongodb, port: 27017)
+    #expect(Self.passwordKeys(config) == ["v2|7:MongoDB|10:db.example|5:27017|3:app|3:ada"])
+    #expect(
+      ClientCertificateStoreFactory.account(for: config)
+        == "v2|7:MongoDB|10:db.example|5:27017|3:app|3:ada")
   }
 
   @Test("Colons in a field never make a MySQL key equal a legacy key")

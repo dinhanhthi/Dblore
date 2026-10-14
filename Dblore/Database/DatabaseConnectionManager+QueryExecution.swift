@@ -207,11 +207,15 @@ extension DatabaseConnectionManager {
 
     // Reads are sent as written (no LIMIT / ctid rewrite): the capped reader stops after
     // `maxRows` rows and breaks; the caller decides whether the session is reset
-    // (`resetSessionIfCapped`) or drained.
+    // (`resetSessionIfCapped`) or drained. A mongosh read is the exception: it is sent with a
+    // limit of `maxRows + 1` (re-rendered text; callers keep `query` for display).
     let readToEnd = Self.readsToEndAtCap(statement, databaseType: config?.databaseType)
     do {
+      let sent =
+        config?.databaseType.capabilities.queryLanguage == .mongosh
+        ? try MongoCommandRewriter.withLimit(text: query, maxRows: maxRows) : query
       let collected = try await withSession { current in
-        let source = try await current.query(query, binds: binds)
+        let source = try await current.query(sent, binds: binds)
         return try await self.readCapped(source, maxRows: maxRows, readToEnd: readToEnd)
       }
       let executionTime = Date().timeIntervalSince(startTime)

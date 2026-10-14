@@ -166,6 +166,7 @@ extension DatabaseConnectionManager {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
+    try refuseIfRowEditsUnsupported()
     let (statements, protectedMode) = try authorize(statement.sql, policy: policy)
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
@@ -196,6 +197,7 @@ extension DatabaseConnectionManager {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
+    try refuseIfRowEditsUnsupported()
     let effective = effectivePolicy(for: policy)
     // Decision is pure and finishes before any await that could send SQL.
     if case .blocked(let index, let kind, let reason) = Self.evaluateBatch(
@@ -216,6 +218,15 @@ extension DatabaseConnectionManager {
     return try await runStagedBatch(
       statements, caller: caller, protectedMode: effective.protectedMode,
       cancellationGeneration: cancellationGeneration)
+  }
+
+  /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits
+  /// (`supportsRowStaging` false: DuckDB, MongoDB), before anything is sent or the owner is
+  /// claimed. The UI already refuses them; this keeps the SQL edit paths off such a session.
+  private func refuseIfRowEditsUnsupported() throws {
+    guard let type = config?.databaseType, !type.capabilities.supportsRowStaging else { return }
+    throw DatabaseError.notEditable(
+      "row edits are not available for \(type.rawValue) connections")
   }
 
   /// One result for a whole script: a single statement's result as is; otherwise the last
@@ -283,8 +294,8 @@ extension DatabaseConnectionManager {
   ///   (also under EXPLAIN ANALYZE); DML, SET and transaction control are allowed.
   /// - `.none`: everything (Safe Mode confirmation lives in the ViewModel).
   /// - Protected mode (any level): no transaction control and no statement that cannot run in
-  ///   a transaction (the app owns the transaction); `dialect` only picks the MySQL wording
-  ///   for an implicit commit.
+  ///   a transaction (the app owns the transaction); `dialect` picks the MySQL wording for an
+  ///   implicit commit, and refuses every MongoDB write (no transactions).
   nonisolated static func evaluate(
     _ statements: [ClassifiedStatement], policy: ProtectionPolicy,
     dialect: SQLDialect = .postgresql
@@ -358,6 +369,10 @@ extension DatabaseConnectionManager {
   private nonisolated static func protectedModeViolation(
     _ statement: ClassifiedStatement, dialect: SQLDialect
   ) -> String? {
+    // Backstop: Protected mode should never reach a MongoDB write (it has no transactions).
+    if dialect == .mongodb, !statement.isReadOnlySafe {
+      return "MongoDB has no transactions, so Protected mode cannot hold this change. Use Confirm."
+    }
     if statement.kind == .tcl {
       return "Transaction control is managed by Protected mode — use Commit / Rollback"
     }

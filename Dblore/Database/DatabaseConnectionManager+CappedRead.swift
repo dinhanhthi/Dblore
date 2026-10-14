@@ -109,14 +109,19 @@ extension DatabaseConnectionManager {
   /// Then the loop breaks (the session stops reading and PostgresNIO drains the rest on the
   /// next query, unless the session is closed), or, with `readToEnd`, keeps counting rows
   /// without keeping them. MySQL keeps the column list of a zero-row result too (the session
-  /// reads its headers), so the result keeps its column origins. With `readLimits`, rows are cut
-  /// as they arrive and a row past the byte budget ends the read like a row past the cap.
+  /// reads its headers), so the result keeps its column origins; so does MongoDB (the session
+  /// buffers the documents first), so an empty find keeps its `_id` column. With `readLimits`,
+  /// rows are cut as they arrive and a row past the byte budget ends the read like a row past
+  /// the cap.
   func readCapped(
     _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
   ) async throws -> CollectedRows {
     var collected = CollectedRows()
     var keptBytes = 0
-    if config?.databaseType == .mysql { collected.columns = source.columns }
+    if config?.databaseType == .mysql || config?.databaseType.capabilities.queryLanguage == .mongosh
+    {
+      collected.columns = source.columns
+    }
     for try await row in source.rows {
       collected.total += 1
       var kept = row

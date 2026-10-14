@@ -392,7 +392,7 @@ struct ConnectionFormContent: View {
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql: true
-    case .mysql, .sqlite, .duckdb: false
+    case .mysql, .sqlite, .duckdb, .mongodb: false
     }
   }
 
@@ -408,7 +408,7 @@ struct ConnectionFormContent: View {
         + "plain, unencrypted connection when the server offers no SSL. On untrusted networks, "
         + "use Verify CA or Verify Full. A picked CA certificate is used only by Verify CA and "
         + "Verify Full."
-    case .postgresql, .sqlite, .duckdb: nil
+    case .postgresql, .sqlite, .duckdb, .mongodb: nil
     }
   }
 

@@ -1,6 +1,7 @@
 // DatabaseCapabilitiesTests.swift
 // DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
-// DuckDB is a file engine offered only when its plugin is installed.
+// DuckDB is a file engine offered only when its plugin is installed. MongoDB is hidden until
+// experimental engines are shown.
 
 import Foundation
 import Testing
@@ -37,8 +38,16 @@ struct DatabaseCapabilitiesTests {
     #expect(!types.contains(.duckdb))
   }
 
+  @Test("MongoDB is listed only when experimental engines are shown")
+  func pickerListsMongoDBOnlyWhenExperimental() {
+    #expect(!DatabaseType.connectionPickerTypes(showExperimental: false).contains(.mongodb))
+    #expect(
+      DatabaseType.connectionPickerTypes(showExperimental: true)
+        == [.postgresql, .sqlite, .mysql, .mongodb])
+  }
+
   private static let expected: [DatabaseType: DatabaseCapabilities] = [
-    .postgresql: postgresql, .sqlite: sqlite, .duckdb: duckdb, .mysql: mysql,
+    .postgresql: postgresql, .sqlite: sqlite, .duckdb: duckdb, .mysql: mysql, .mongodb: mongodb,
   ]
 
   private static let postgresql = DatabaseCapabilities(
@@ -59,7 +68,11 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
     requiresPlugin: false,
-    isAvailable: true
+    isAvailable: true,
+    queryLanguage: .sql,
+    supportsTransactions: true,
+    supportsStructure: true,
+    supportsSQLDump: true
   )
 
   private static let sqlite = DatabaseCapabilities(
@@ -80,7 +93,11 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
     requiresPlugin: false,
-    isAvailable: true
+    isAvailable: true,
+    queryLanguage: .sql,
+    supportsTransactions: true,
+    supportsStructure: true,
+    supportsSQLDump: true
   )
 
   private static let duckdb = DatabaseCapabilities(
@@ -101,7 +118,11 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
     requiresPlugin: true,
-    isAvailable: true
+    isAvailable: true,
+    queryLanguage: .sql,
+    supportsTransactions: true,
+    supportsStructure: true,
+    supportsSQLDump: false
   )
 
   private static let mysql = DatabaseCapabilities(
@@ -122,6 +143,35 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
     requiresPlugin: false,
-    isAvailable: true
+    isAvailable: true,
+    queryLanguage: .sql,
+    supportsTransactions: true,
+    supportsStructure: true,
+    supportsSQLDump: true
+  )
+
+  private static let mongodb = DatabaseCapabilities(
+    usesNetwork: true,
+    usesPassword: true,
+    supportsSSL: true,
+    supportsSchemas: false,
+    supportsRolesAndUsers: false,
+    supportsFunctions: false,
+    supportsServerCursor: false,
+    supportsSessionBrakes: true,
+    cancelStrategy: .interrupt,
+    cappedReadResetsSession: false,
+    supportsExplainJSON: false,
+    supportsExplainAnalyze: false,
+    supportsUpdateOnly: false,
+    supportsRowStaging: false,
+    supportsDataImport: false,
+    supportsForeignKeyLookup: false,
+    requiresPlugin: false,
+    isAvailable: false,
+    queryLanguage: .mongosh,
+    supportsTransactions: false,
+    supportsStructure: false,
+    supportsSQLDump: false
   )
 }

@@ -22,7 +22,7 @@ extension DatabaseConnectionManager {
   /// Apply structure editor DDL (`StructureDDLBuilder` output, unchanged from the preview).
   /// Refused before anything is sent (`DatabaseError.schemaChangeRefused`) when
   /// `connectionEpoch` is not `epoch`, a string is not exactly one DDL statement, the engine is
-  /// DuckDB, or (MySQL) a transaction is open; `DatabaseError.blockedByProtection` when the
+  /// DuckDB or MongoDB, or (MySQL) a transaction is open; `DatabaseError.blockedByProtection` when the
   /// merged policy forbids a statement (read-only, schema-only, MySQL under Protected mode).
   /// PostgreSQL / SQLite: `runStagedBatch` with no row-count check, so a failure rolls every
   /// statement back (`DatabaseError.batchStatementFailed`). MySQL: one by one; a failure of the
@@ -82,7 +82,8 @@ extension DatabaseConnectionManager {
       insideUserTransaction: insideUserTransaction, duration: Date().timeIntervalSince(start))
   }
 
-  /// Why the structure editor may not send `statements`, or nil. DuckDB is view-only. MySQL
+  /// Why the structure editor may not send `statements`, or nil. DuckDB is view-only. MongoDB
+  /// is refused before any classification (an `aggregate` with `$out` classifies as DDL). MySQL
   /// DDL would commit an open transaction (the app's pending changes or the user's own). Each
   /// string must classify as exactly one DDL statement in the connection's dialect.
   nonisolated static func schemaChangeRefusal(
@@ -91,6 +92,8 @@ extension DatabaseConnectionManager {
     switch databaseType {
     case .duckdb:
       return "DuckDB table structure cannot be changed in Dblore"
+    case .mongodb:
+      return "MongoDB collections have no table structure to change in Dblore"
     case .mysql where transactionOpen:
       return "MySQL commits a schema change immediately, together with the open transaction; "
         + "commit or roll back first"

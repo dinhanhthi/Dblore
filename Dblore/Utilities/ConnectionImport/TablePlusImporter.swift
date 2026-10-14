@@ -97,7 +97,7 @@ nonisolated enum TablePlusImporter {
     let defaultPort: Int
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
-    case .postgresql, .sqlite, .duckdb: defaultPort = PostgresURIParser.defaultPort
+    case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
     }
     guard let port = port(entry["DatabasePort"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
@@ -112,7 +112,7 @@ nonisolated enum TablePlusImporter {
       // TablePlus allows a MySQL connection without a database; flag it in the preview.
       database = configuredDatabase ?? ""
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
-    case .postgresql, .sqlite, .duckdb:
+    case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
     }
     let sslMode = sslMode(entry["tLSMode"], warnings: &warnings)

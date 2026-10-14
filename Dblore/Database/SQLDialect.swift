@@ -1,5 +1,6 @@
 // SQLDialect.swift
-// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, and MySQL.
+// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, and MySQL,
+// plus the MongoDB marker: no SQL identifiers, every other member PostgreSQL-shaped.
 
 import Foundation
 
@@ -7,15 +8,22 @@ import Foundation
 nonisolated enum SQLDialectError: Error, Equatable, Sendable {
   /// `name` contains a NUL (`U+0000`) and cannot be placed in SQL text.
   case nulInIdentifier
+  /// The dialect is `SQLDialect.mongodb`, which has no SQL identifiers.
+  case notSQL
 }
 
 /// How one database spells identifiers, literals, and a few statement fragments.
+/// `mongodb` is a marker, not a SQL dialect: the text entry points (classifier, splitter,
+/// tokenizer, parameter rewriter) delegate to the mongosh code, `quoteIdentifier` and
+/// `qualified` throw `notSQL`, and the other members return the PostgreSQL value; capability
+/// guards keep those SQL paths unreachable for MongoDB.
 nonisolated struct SQLDialect: Sendable, Equatable {
   private enum Engine: Sendable, Equatable {
     case postgresql
     case sqlite
     case duckdb
     case mysql
+    case mongodb
   }
 
   private let engine: Engine
@@ -24,11 +32,12 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   static let sqlite = SQLDialect(engine: .sqlite)
   static let duckdb = SQLDialect(engine: .duckdb)
   static let mysql = SQLDialect(engine: .mysql)
+  static let mongodb = SQLDialect(engine: .mongodb)
 
   /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB", "MySQL").
   var promptName: String {
     switch engine {
-    case .postgresql: "PostgreSQL"
+    case .postgresql, .mongodb: "PostgreSQL"
     case .sqlite: "SQLite"
     case .duckdb: "DuckDB"
     case .mysql: "MySQL"
@@ -39,7 +48,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// MySQL has none: its schema is the connected database, so any named schema stays.
   var defaultSchema: String {
     switch engine {
-    case .postgresql: "public"
+    case .postgresql, .mongodb: "public"
     case .sqlite, .duckdb: "main"
     case .mysql: ""
     }
@@ -47,22 +56,33 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   /// Whether `UPDATE ONLY` is meaningful (PostgreSQL inheritance).
   var supportsUpdateOnly: Bool {
-    engine == .postgresql
+    switch engine {
+    case .postgresql, .mongodb: true
+    case .sqlite, .duckdb, .mysql: false
+    }
   }
 
   /// SQLite and MySQL (default `_ci` collations) `LIKE` fold case, and neither has `ILIKE`.
   /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
   var likeIsCaseInsensitive: Bool {
-    engine == .sqlite || engine == .mysql
+    switch engine {
+    case .sqlite, .mysql: true
+    case .postgresql, .duckdb, .mongodb: false
+    }
   }
 
   /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled.
-  /// Rejects a NUL anywhere in `name`.
+  /// Rejects a NUL anywhere in `name`, and every name on MongoDB (`notSQL`).
   func quoteIdentifier(_ name: String) throws -> String {
+    let quote: String
+    switch engine {
+    case .postgresql, .sqlite, .duckdb: quote = "\""
+    case .mysql: quote = "`"
+    case .mongodb: throw SQLDialectError.notSQL
+    }
     guard !name.contains("\0") else {
       throw SQLDialectError.nulInIdentifier
     }
-    let quote = engine == .mysql ? "`" : "\""
     return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
   }
 
@@ -99,7 +119,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// MySQL is a bare `?`: binds are positional, so `index` is ignored.
   func placeholder(_ index: Int) -> String {
     switch engine {
-    case .postgresql, .duckdb: "$\(index)"
+    case .postgresql, .duckdb, .mongodb: "$\(index)"
     case .sqlite: "?\(index)"
     case .mysql: "?"
     }
@@ -123,7 +143,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       if analyze { return "EXPLAIN ANALYZE" }
       if let format { return "EXPLAIN FORMAT=\(format.uppercased())" }
       return "EXPLAIN"
-    case .postgresql:
+    case .postgresql, .mongodb:
       var options: [String] = []
       if analyze { options.append("ANALYZE") }
       if buffers { options.append("BUFFERS") }
@@ -139,7 +159,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// SQLite unchanged.
   func likeSubject(_ column: String) -> String {
     switch engine {
-    case .postgresql: "\(column)::text"
+    case .postgresql, .mongodb: "\(column)::text"
     case .sqlite: column
     case .duckdb: "\(column)::VARCHAR"
     case .mysql: "CAST(\(column) AS CHAR)"
@@ -149,7 +169,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// `column` and `pattern` are SQL fragments, inserted unchanged.
   func caseInsensitiveLike(column: String, pattern: String) -> String {
     switch engine {
-    case .postgresql: "\(column)::text ILIKE \(pattern)"
+    case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
     case .sqlite: "\(column) LIKE \(pattern)"
     case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
     case .mysql: "CAST(\(column) AS CHAR) LIKE \(pattern)"
@@ -163,11 +183,15 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// with no prefix.
   private func quoteLiteral(_ text: String) -> String {
     let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
-    guard engine == .postgresql || engine == .mysql, text.contains("\\") else {
+    guard text.contains("\\") else {
       return "'\(doubledQuotes)'"
     }
     let escaped = doubledQuotes.replacingOccurrences(of: "\\", with: "\\\\")
-    return engine == .mysql ? "'\(escaped)'" : "E'\(escaped)'"
+    switch engine {
+    case .postgresql, .mongodb: return "E'\(escaped)'"
+    case .mysql: return "'\(escaped)'"
+    case .sqlite, .duckdb: return "'\(doubledQuotes)'"
+    }
   }
 
   private func doubleLiteral(_ number: Double) -> String {
@@ -175,7 +199,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     switch engine {
     case .sqlite, .mysql:
       return "NULL"
-    case .postgresql:
+    case .postgresql, .mongodb:
       if number.isNaN { return "'NaN'::float8" }
       return number > 0 ? "'Infinity'::float8" : "'-Infinity'::float8"
     case .duckdb:
@@ -186,7 +210,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   private func dataLiteral(_ data: Data) -> String {
     switch engine {
-    case .postgresql:
+    case .postgresql, .mongodb:
       let hex = data.map { String(format: "%02x", $0) }.joined()
       return "'\\x\(hex)'"
     case .sqlite, .mysql:

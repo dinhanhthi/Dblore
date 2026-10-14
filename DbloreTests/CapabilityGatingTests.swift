@@ -148,9 +148,9 @@ struct CapabilityGatingTests {
 
   private func config(_ type: DatabaseType) -> ConnectionConfig {
     switch type {
-    case .postgresql, .mysql:
+    case .postgresql, .mysql, .mongodb:
       ConnectionConfig(
-        databaseType: type, host: "localhost", port: type == .mysql ? 3306 : 5432,
+        databaseType: type, host: "localhost", port: type.defaultPort,
         database: "app", username: "ana", password: "x",
         protectionLevel: .none, safeMode: .silent, protectedMode: false)
     case .sqlite, .duckdb:

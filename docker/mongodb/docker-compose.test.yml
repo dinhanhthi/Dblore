@@ -1,0 +1,92 @@
+# MongoDB 8.0 standalone (27018) for the opt-in Mongo suites
+# (TEST_RUNNER_MONGO_TESTS=1). Users come from init/01-users.js (authSource=admin).
+# TLS (TEST_RUNNER_MONGO_TLS_TESTS=1): run scripts/gen-mongo-tls.sh, then
+# `--profile tls up -d --wait` adds mongo-tls-test (requireTLS, 27019). A plain
+# `up` never starts it, so it never needs the certs.
+# Published ports and names are overridable (DBLORE_MONGO_TEST_PORT,
+# DBLORE_MONGO_TLS_TEST_PORT, DBLORE_TEST_NAME_PREFIX).
+# The healthchecks ping the container hostname, not localhost: the entrypoint's
+# temporary init mongod listens on 127.0.0.1 only, so "healthy" means init is done.
+name: dblore-mongodb-test
+
+services:
+  mongo-test:
+    image: mongo:8.0
+    container_name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mongo-test
+    restart: unless-stopped
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: dblore123
+
+    ports:
+      - "127.0.0.1:${DBLORE_MONGO_TEST_PORT:-27018}:27017"
+
+    volumes:
+      - mongo_test_data:/data/db
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --host \"$$(hostname)\" --eval 'db.runCommand({ping:1})'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - dblore-mongodb-test
+
+  mongo-tls-test:
+    image: mongo:8.0
+    container_name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mongo-tls-test
+    restart: unless-stopped
+    profiles: ["tls"]
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: dblore123
+
+    ports:
+      - "127.0.0.1:${DBLORE_MONGO_TLS_TEST_PORT:-27019}:27017"
+
+    volumes:
+      - mongo_tls_test_data:/data/db
+      - ./init:/docker-entrypoint-initdb.d:ro
+      # Created empty by Docker when the gen script has not run yet.
+      - ./tls:/tls:ro
+
+    # Server-auth TLS only: mongod 8.0 refuses TLS without --tlsCAFile (SERVER-72839),
+    # and --tlsAllowConnectionsWithoutCertificates keeps client certificates optional.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /tls/server.pem ]; then
+          echo "Missing docker/mongodb/tls/server.pem: run docker/mongodb/scripts/gen-mongo-tls.sh" >&2
+          exit 1
+        fi
+        mkdir -p /tmp/dblore-tls
+        cp /tls/ca.crt /tls/server.pem /tmp/dblore-tls/
+        chown -R mongodb:mongodb /tmp/dblore-tls
+        chmod 600 /tmp/dblore-tls/server.pem
+        exec docker-entrypoint.sh mongod --tlsMode requireTLS \
+          --tlsCertificateKeyFile /tmp/dblore-tls/server.pem \
+          --tlsCAFile /tmp/dblore-tls/ca.crt --tlsAllowConnectionsWithoutCertificates
+
+    healthcheck:
+      # The certificate names localhost, not the container hostname.
+      test: ["CMD-SHELL", "mongosh --quiet --tls --tlsCAFile /tmp/dblore-tls/ca.crt --tlsAllowInvalidHostnames --host \"$$(hostname)\" --eval 'db.runCommand({ping:1})'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - dblore-mongodb-test
+
+volumes:
+  mongo_test_data:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mongo-test-data
+  mongo_tls_test_data:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mongo-tls-test-data
+
+networks:
+  dblore-mongodb-test:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mongodb-test-network

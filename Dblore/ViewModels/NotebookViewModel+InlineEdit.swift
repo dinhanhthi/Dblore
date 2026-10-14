@@ -65,10 +65,17 @@ extension NotebookViewModel {
   /// `editTarget(for:)` plus the read-only lookup relation from the same resolved table: columns
   /// with an origin must all name that table, aliased and expression columns allowed
   /// (`CellUpdateStatement.lookupRelation`). The edit target keeps its own stricter checks.
+  /// MongoDB never takes the SQL lookup (`mongoResultTarget`).
   func resultTargets(
     for query: String, result: QueryResult, connectionManager: DatabaseConnectionManager,
     epoch: UInt64
   ) async -> ResultTargets {
+    if let config = notebook.connectionConfig,
+      config.databaseType.capabilities.queryLanguage == .mongosh
+    {
+      return (mongoResultTarget(for: query, result: result, config: config, epoch: epoch), nil)
+    }
+    assert(sqlDialect != .mongodb, "mongosh text must not reach CellUpdateStatement")
     guard !result.columns.isEmpty,
       let relation = CellUpdateStatement.singleRelation(in: query, dialect: sqlDialect),
       let tableID = Self.originTableID(result.columns),
@@ -85,6 +92,45 @@ extension NotebookViewModel {
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
       name: table.name, generatedColumns: table.generatedColumns)
     return (target, lookup)
+  }
+
+  /// The collection of a result read by exactly one `find`, keyed by `_id`, or nil. Nil for
+  /// other reads (`aggregate`, `distinct`, `countDocuments`, `listCollections`: their `_id` need
+  /// not name a document of one collection), a find on a view (`databaseViews`, the cached
+  /// catalog), a projection that excludes `_id` or sets it to an expression, and a result
+  /// without an `_id` column or whose `_id` type is `mixed`. No lookup relation (no foreign keys).
+  private func mongoResultTarget(
+    for query: String, result: QueryResult, config: ConnectionConfig, epoch: UInt64
+  ) -> EditTarget? {
+    guard MongoshSplitter.split(query).count == 1,
+      case .find(let collection, _, let projection, _, _, _)? = try? MongoshParser.parse(query),
+      !databaseViews.contains(where: { $0.name == collection }),
+      Self.keepsPlainID(projection),
+      let idColumn = result.columns.first(where: { $0.name == "_id" }), idColumn.type != "mixed"
+    else { return nil }
+    let database = config.database.isEmpty ? MongoSession.defaultDatabase : config.database
+    return EditTarget(
+      qualifiedName: collection, tableID: .mongodb(database: database, collection: collection),
+      primaryKeyColumns: ["_id"], connectionEpoch: epoch, updateOnly: false, schema: nil,
+      name: collection, generatedColumns: [])
+  }
+
+  /// True when a find projection leaves `_id` as the stored value: no `_id` key, or `1`/`true`.
+  /// `0`/`false` drop the column; any other value (`"$other"`, `{$toString: "$_id"}`) computes
+  /// it, and a `_id.<path>` key keeps only part of it.
+  private nonisolated static func keepsPlainID(_ projection: MongoValue?) -> Bool {
+    guard case .document(let fields)? = projection else { return true }
+    if fields.contains(where: { $0.key.hasPrefix("_id.") }) { return false }
+    let ids = fields.filter { $0.key == "_id" }
+    guard let value = ids.first?.value else { return true }
+    guard ids.count == 1 else { return false }
+    switch value {
+    case .bool(let flag): return flag
+    case .int32(let number): return number != 0
+    case .int64(let number): return number != 0
+    case .double(let number): return number != 0
+    default: return false
+    }
   }
 
   /// The one table identity shared by every column, or nil when any column came from elsewhere.

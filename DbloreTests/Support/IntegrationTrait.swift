@@ -1,7 +1,7 @@
 // IntegrationTrait.swift
 // Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, MySQL,
-// MySQL TLS). SKIP_INTEGRATION_TESTS or TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1,
-// or yes) turns them all off.
+// MySQL TLS, MongoDB, MongoDB TLS). SKIP_INTEGRATION_TESTS or
+// TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them all off.
 
 import Foundation
 import Testing
@@ -88,6 +88,28 @@ nonisolated enum MySQLTLSIntegrationGate {
   }
 }
 
+nonisolated enum MongoIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["MONGO_TESTS"] ?? env["TEST_RUNNER_MONGO_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum MongoTLSIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["MONGO_TLS_TESTS"] ?? env["TEST_RUNNER_MONGO_TLS_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 extension Trait where Self == ConditionTrait {
   /// The PostgreSQL test container is opt-in.
   static var requiresPostgres: Self {
@@ -134,6 +156,22 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: MySQLTLSIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_MYSQL_TLS_TESTS=1, run docker/mysql/scripts/gen-mysql-tls.sh and recreate the MySQL container"
+    )
+  }
+
+  /// The MongoDB container is opt-in.
+  static var requiresMongo: Self {
+    .enabled(
+      if: MongoIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_MONGO_TESTS=1 and start docker/mongodb/docker-compose.test.yml to run"
+    )
+  }
+
+  /// The MongoDB TLS container (compose profile tls) is opt-in.
+  static var requiresMongoTLS: Self {
+    .enabled(
+      if: MongoTLSIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_MONGO_TLS_TESTS=1, run docker/mongodb/scripts/gen-mongo-tls.sh and start the compose profile tls"
     )
   }
 }

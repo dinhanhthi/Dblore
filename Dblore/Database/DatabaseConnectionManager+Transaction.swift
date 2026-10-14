@@ -286,6 +286,11 @@ extension DatabaseConnectionManager {
   /// `suspendIdleTimeoutSQL`); if that fails the transaction is rolled back and the error thrown,
   /// so the user statement is never sent.
   func beginAppTransaction(caller: UUID?) async throws {
+    // MongoDB has no transactions: `appOwnedBeginSQL` is a sentinel that is never sent.
+    guard config?.databaseType.capabilities.supportsTransactions != false else {
+      throw DatabaseError.transactionAborted(
+        "This database has no transactions, so nothing was sent. Use Confirm instead of Review.")
+    }
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     txOwner = caller
@@ -451,13 +456,15 @@ extension DatabaseConnectionManager {
 
   /// App-owned transaction start. SQLite takes the writer lock immediately. DuckDB uses the
   /// standard form. MySQL uses `START TRANSACTION` (`BEGIN` is ambiguous inside compound
-  /// statements). A user-typed `BEGIN` is never rewritten.
+  /// statements). A user-typed `BEGIN` is never rewritten. MongoDB has no transactions: its
+  /// sentinel is never sent (`beginAppTransaction` refuses first) and is no mongosh command.
   var appOwnedBeginSQL: String {
     switch config?.databaseType {
     case .postgresql, nil: "BEGIN"
     case .sqlite: "BEGIN IMMEDIATE"
     case .duckdb: "BEGIN TRANSACTION"
     case .mysql: "START TRANSACTION"
+    case .mongodb: "-- dblore: MongoDB has no transactions"
     }
   }
 
@@ -475,7 +482,7 @@ extension DatabaseConnectionManager {
   private var suspendIdleTimeoutSQLForEngine: String? {
     switch config?.databaseType {
     case .postgresql, nil: Self.suspendIdleTimeoutSQL
-    case .sqlite, .duckdb, .mysql: nil
+    case .sqlite, .duckdb, .mysql, .mongodb: nil
     }
   }
 

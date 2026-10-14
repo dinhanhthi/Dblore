@@ -26,9 +26,13 @@ nonisolated struct SQLTokenizer: Sendable {
   /// SQLite strings are `'…'` with doubled quotes only, identifiers may use `"…"`, `[…]`,
   /// or backticks, block comments do not nest, and `$` is not a quote.
   /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
+  /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped).
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
   func splitStatements(_ sql: String) -> [String] {
+    if dialect == .mongodb {
+      return MongoshSplitter.split(sql)
+    }
     let scalars = Array(sql.unicodeScalars)
     if dialect == .mysql {
       return mysqlSplitStatements(scalars)
@@ -119,7 +123,12 @@ nonisolated struct SQLTokenizer: Sendable {
   /// between them carry outer + 1.
   /// On PostgreSQL, block comments nest and line comments end at CR or LF.
   /// MySQL executable comments (`/*! */`, `/*M! */`) are kept as `.executableComment` tokens.
+  /// MongoDB is never lexed as SQL: one opaque `.string` token (depth 0) per
+  /// `MongoshSplitter` piece, so comment-only text has no tokens and no keyword matches.
   func tokens(_ sql: String) -> [SQLToken] {
+    if dialect == .mongodb {
+      return MongoshSplitter.split(sql).map { SQLToken(kind: .string, text: $0, depth: 0) }
+    }
     let scalars = Array(sql.unicodeScalars)
     var result: [SQLToken] = []
     var depth = 0

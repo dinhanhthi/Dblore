@@ -13,6 +13,7 @@ extension NotebookViewModel {
   /// Explain the statement the Run action would run: the editor selection (or the current
   /// line / file), or the selected notebook cell.
   func explainSelectedStatement(analyze: Bool) async {
+    if refuseMongoExplain() { return }
     if analyze, !canExplainAnalyze {
       if let reason = explainAnalyzeUnavailableReason { showToast(reason, type: .error) }
       return
@@ -40,6 +41,7 @@ extension NotebookViewModel {
     rollbackAfterAnalyze: Bool = true,
     cellId: UUID? = nil
   ) async {
+    if refuseMongoExplain() { return }
     if viewMode == .markdown { return }
     ConfirmedParameterSnapshot.disarmExplain(self)
     // Asked of the open session: the version the request is checked against is the live one.
@@ -75,10 +77,19 @@ extension NotebookViewModel {
     await runExplained(sql, cellId: targetCell)
   }
 
+  /// MongoDB has no Explain in Dblore: refused before any request is built (so no SQL
+  /// `explainPrefix` is ever applied to mongosh text). True when refused.
+  private func refuseMongoExplain() -> Bool {
+    guard notebook.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
+    else { return false }
+    showToast("EXPLAIN is not available for MongoDB connections", type: .error)
+    return true
+  }
+
   /// Protected mode owns the transaction even before the first statement opens it.
   /// An open user transaction is the same: do not send another BEGIN / ROLLBACK.
   private func protectedTransactionOpen() async -> Bool {
-    if notebook.connectionConfig?.protectedMode == true { return true }
+    if protectionPolicy.protectedMode { return true }
     guard let connectionManager else { return false }
     let snapshot = await connectionManager.transactionSnapshot()
     if !snapshot.isIdle { return true }
