@@ -1270,9 +1270,11 @@ class WorkspaceManager: Identifiable {
   }
 
   func markDirty(tabId: UUID) {
-    // Data viewer and object source tabs have no document to save
+    // Data viewer and object source tabs have no document to save. Called per keystroke: an
+    // already dirty tab is not written again, so `tabs` readers are not re-evaluated
     guard let index = tabs.firstIndex(where: { $0.id == tabId }),
-      tabs[index].documentType != .dataViewer, !tabs[index].isReadOnlySource
+      tabs[index].documentType != .dataViewer, !tabs[index].isReadOnlySource,
+      !tabs[index].isDirty
     else { return }
     tabs[index].isDirty = true
   }
