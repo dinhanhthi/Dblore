@@ -29,7 +29,8 @@ enum ButtonStyleVariant {
       // The border carries the hover instead (see `borderColor`).
       return Color.controlBackground
     case .danger:
-      return isPressed ? Color.destructive.opacity(0.85) : Color.destructive
+      // Same fill as `filledSecondary`; the red border and label carry the danger
+      return Color.controlBackground
     case .ghost:
       if isPressed {
         return Color.cellBackgroundHover
@@ -42,7 +43,7 @@ enum ButtonStyleVariant {
   }
 
   var hasBorder: Bool {
-    self == .secondary || self == .filledSecondary
+    self == .secondary || self == .filledSecondary || self == .danger
   }
 
   var foregroundColor: Color {
@@ -56,7 +57,7 @@ enum ButtonStyleVariant {
     case .primary:
       return .onAccentFill
     case .danger:
-      return .onDestructive
+      return .destructive
     default:
       return isActive ? .accent : .foreground
     }
@@ -212,7 +213,10 @@ private struct BaseButtonStyleView: View {
   }
 
   private var borderColor: Color {
-    variant == .filledSecondary && (isHovering || isActive) ? .borderStrong : .border
+    if variant == .danger {
+      return isHovering ? .destructive : .destructive.opacity(0.6)
+    }
+    return variant == .filledSecondary && (isHovering || isActive) ? .borderStrong : .border
   }
 
   var body: some View {

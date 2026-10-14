@@ -264,12 +264,6 @@ extension Color {
     dark: Color(hex: "f87171")  // Red 400
   )
 
-  /// Label on a `destructive` fill
-  static let onDestructive = Color(
-    light: Color(hex: "ffffff"),
-    dark: Color(hex: "09090b")
-  )
-
   // Light gray in both modes so the light-blue AI bubble icon stays visible
   static let aiBubbleBackground = Color(
     light: Color(hex: "e5e7eb"),  // Gray 200
