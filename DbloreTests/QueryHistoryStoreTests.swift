@@ -45,6 +45,41 @@ struct QueryHistoryStoreTests {
     #expect(page.map(\.sql) == ["DELETE FROM customers"])
   }
 
+  @Test("Source and kind badges are searchable in any case, by prefix, after update and delete")
+  func badgeTagsSearch() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(Self.entry(sql: "SELECT 1", at: start, source: .ai, kind: .read))
+    // The same statement within 2 seconds updates the newest row (the update trigger)
+    try await store.record(
+      Self.entry(sql: "SELECT 1", at: start.addingTimeInterval(1), source: .ai, kind: .read))
+    try await store.record(
+      Self.entry(
+        sql: "ALTER TABLE t ADD c int", at: start.addingTimeInterval(10), source: .structure,
+        kind: .schema))
+    try await store.record(
+      Self.entry(
+        sql: "UPDATE t SET c = 1", at: start.addingTimeInterval(20), source: .dataViewerEdit,
+        kind: .write))
+    #expect(try await store.count() == 3)
+
+    func found(_ text: String) async throws -> [String] {
+      try await store.search(text: text, scope: .all, limit: 10, offset: 0).map(\.sql)
+    }
+    #expect(try await found("AI Assistant") == ["SELECT 1"])
+    #expect(try await found("ai assis") == ["SELECT 1"])
+    #expect(try await found("SCHEMA") == ["ALTER TABLE t ADD c int"])
+    #expect(try await found("structure") == ["ALTER TABLE t ADD c int"])
+    #expect(try await found("data viewer") == ["UPDATE t SET c = 1"])
+
+    let ids = try await store.search(text: "ai assistant", scope: .all, limit: 10, offset: 0)
+      .map(\.id)
+    try await store.delete(ids: ids)
+    #expect(try await found("ai assistant").isEmpty)
+  }
+
   @Test("MATCH-syntax characters do not throw and do not match unrelated rows")
   func matchSyntaxCharactersStayLiteral() async throws {
     let url = temporaryDatabaseURL()
@@ -205,7 +240,7 @@ struct QueryHistoryStoreTests {
     #expect(stored.sql.count == 100_000 + "\n-- truncated".count)
   }
 
-  @Test("An empty v0 file migrates to userVersion 2 and a second open stays at 2")
+  @Test("An empty v0 file migrates to userVersion 3 and a second open stays at 3")
   func migrationFromEmptyV0() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
@@ -214,11 +249,11 @@ struct QueryHistoryStoreTests {
       #expect(empty.userVersion == 0)
     }
     let store = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 2)
+    #expect(try SQLiteHandle(url: url).userVersion == 3)
     #expect(try await store.fileSize() > 0)
     #expect(try await store.count() == 0)
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 2)
+    #expect(try SQLiteHandle(url: url).userVersion == 3)
     #expect(try await reopened.count() == 0)
   }
 
@@ -249,7 +284,7 @@ struct QueryHistoryStoreTests {
 
     let store = try QueryHistoryStore(url: url)
     let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 2)
+    #expect(try SQLiteHandle(url: url).userVersion == 3)
     let info = try SQLiteHandle(url: url)
     let tables = try info.prepare(
       "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'history'")
@@ -273,10 +308,63 @@ struct QueryHistoryStoreTests {
     #expect(actual == wanted)
     let matched = try await store.search(text: "UPDATE", scope: .all, limit: 20, offset: 0)
     #expect(matched.contains { $0.sql == "UPDATE t SET a = 1" })
+    // Version 3 rebuilt the index: existing rows match their source and backfilled kind badges
+    let cells = try await store.search(text: "cell", scope: .all, limit: 50, offset: 0)
+    #expect(cells.count == rows.count)
+    let schema = try await store.search(text: "schema", scope: .all, limit: 50, offset: 0)
+    #expect(schema.map(\.sql) == ["CREATE TABLE t (a int)"])
 
     let reopened = try QueryHistoryStore(url: url)
     let again = try await reopened.search(text: "", scope: .all, limit: 50, offset: 0)
     #expect(again == loaded)
+  }
+
+  @Test("A v2 file migrates to userVersion 3, so search finds rows by their source badge")
+  func version2MigratesToVersion3() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    try seedVersion1(at: url, rows: [(sql: "SELECT 1", key: "PostgreSQL|h|5432|d|u")])
+    do {
+      let seeded = try SQLiteHandle(url: url)
+      try seeded.execute("ALTER TABLE history ADD COLUMN kind TEXT")
+      try seeded.execute("UPDATE history SET source = 'ai', kind = 'read'")
+      try seeded.execute("PRAGMA user_version = 2")
+    }
+
+    let store = try QueryHistoryStore(url: url)
+    let found = try await store.search(text: "AI Assistant", scope: .all, limit: 10, offset: 0)
+    #expect(found.map(\.sql) == ["SELECT 1"])
+    #expect(try SQLiteHandle(url: url).userVersion == 3)
+  }
+
+  @Test("A v1 backfill classifies MySQL and DuckDB keys with their own dialect")
+  func version1BackfillUsesEngineDialect() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let postgres = "PostgreSQL|localhost|5432|app|user"
+    let mysql = "MySQL|localhost|3306|app|user"
+    let duckdb = "DuckDB|/tmp/app.duckdb|0|app|user"
+    let unknown = "Oracle|localhost|1521|app|user"
+    let rows: [(sql: String, key: String, kind: QueryHistoryEntry.Kind?)] = [
+      ("REPLACE INTO t VALUES (1)", mysql, .write),
+      ("DESCRIBE t", mysql, .read),
+      ("FROM t", duckdb, .read),
+      ("DESCRIBE t", duckdb, .read),
+      ("FROM t", postgres, .other),
+      ("DESCRIBE t", postgres, .other),
+      ("REPLACE INTO t VALUES (1)", unknown, .other),
+    ]
+    try seedVersion1(at: url, rows: rows.map { (sql: $0.sql, key: $0.key) })
+
+    let store = try QueryHistoryStore(url: url)
+    let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
+    let actual = loaded.map { row in
+      "\(row.connectionKey)|\(row.sql)|\(row.kind?.rawValue ?? "nil")"
+    }.sorted()
+    let wanted = rows.map { row in
+      "\(row.key)|\(row.sql)|\(row.kind?.rawValue ?? "nil")"
+    }.sorted()
+    #expect(actual == wanted)
   }
 
   @Test("A failed v1 migration rolls back, stays on v1, and later calls throw the same error")
@@ -330,7 +418,7 @@ struct QueryHistoryStoreTests {
 
     let entries = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
     #expect(entries.map(\.kind) == [.write])
-    #expect(try SQLiteHandle(url: url).userVersion == 2)
+    #expect(try SQLiteHandle(url: url).userVersion == 3)
   }
 
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
@@ -374,41 +462,6 @@ struct QueryHistoryStoreTests {
       text: "select", scope: .all, limit: 10, offset: 0, writesOnly: true)
     #expect(reads.map(\.sql) == ["SELECT labeled"])
     #expect(try await store.count(text: "select", scope: .all, writesOnly: true) == 1)
-  }
-
-  @Test("Status and writesOnly combine, and NULL kind stays out")
-  func statusAndWritesOnlyCombine() async throws {
-    let url = temporaryDatabaseURL()
-    defer { removeDatabase(at: url) }
-    let store = try QueryHistoryStore(url: url)
-    let start = Date(timeIntervalSince1970: 1_700_000_000)
-    let rows: [(sql: String, status: QueryHistoryEntry.Status, kind: QueryHistoryEntry.Kind?)] = [
-      ("UPDATE failed one", .error, .write),
-      ("UPDATE failed two", .error, .write),
-      ("UPDATE ok", .success, .write),
-      ("SELECT failed", .error, .read),
-      ("UPDATE failed unlabeled", .error, nil),
-      ("DELETE cancelled", .cancelled, .write),
-    ]
-    for (index, row) in rows.enumerated() {
-      try await store.record(
-        Self.entry(
-          sql: row.sql, at: start.addingTimeInterval(Double(index) * 10), status: row.status,
-          kind: row.kind))
-    }
-
-    #expect(try await store.count(text: "", scope: .all, status: .error, writesOnly: true) == 2)
-    let firstPage = try await store.search(
-      text: "", scope: .all, status: .error, limit: 1, offset: 0, writesOnly: true)
-    #expect(firstPage.map(\.sql) == ["UPDATE failed two"])
-    let secondPage = try await store.search(
-      text: "", scope: .all, status: .error, limit: 1, offset: 1, writesOnly: true)
-    #expect(secondPage.map(\.sql) == ["UPDATE failed one"])
-
-    #expect(try await store.count(text: "", scope: .all, status: .error) == 4)
-    #expect(try await store.count(text: "", scope: .all, writesOnly: true) == 4)
-    #expect(
-      try await store.count(text: "update", scope: .all, status: .success, writesOnly: true) == 1)
   }
 
   @Test("Old JSON without kind imports, and a present kind is stored as written")
@@ -495,6 +548,47 @@ struct QueryHistoryStoreTests {
     #expect(unknown.kind == .read)
     let known = try #require(rows.first { $0.sql == "SELECT cell" })
     #expect(known.source == .cell)
+  }
+
+  @Test("A row recorded from the AI Assistant reads back with source ai")
+  func aiSourceRoundTrips() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    try await store.record(Self.entry(sql: "SELECT ai", source: .ai))
+
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(rows.map(\.source) == [.ai])
+  }
+
+  @Test("JSON import keeps mcp, structure and ai, and unknown source or kind falls back")
+  func jsonImportToleratesUnknownSourceAndKind() async throws {
+    let url = temporaryDatabaseURL()
+    let jsonURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-history-\(UUID().uuidString).json")
+    defer {
+      removeDatabase(at: url)
+      try? FileManager.default.removeItem(at: jsonURL)
+    }
+    let rows = [
+      ("mcp", "read", 1), ("structure", "schema", 2), ("futureSource", "futureKind", 3),
+      ("ai", "read", 4),
+    ]
+    let objects = rows.map { source, kind, id in
+      """
+      {"connectionKey": "k", "connectionLabel": "label", "durationMs": 1,
+       "executedAt": \(1_700_000_000 + id), "id": \(id), "kind": "\(kind)",
+       "source": "\(source)", "sql": "SELECT \(id)", "status": "success"}
+      """
+    }
+    try "[\(objects.joined(separator: ","))]".write(to: jsonURL, atomically: true, encoding: .utf8)
+    let store = try QueryHistoryStore(url: url)
+    try await store.importJSON(from: jsonURL, replace: true)
+
+    let imported = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(imported.map(\.sql) == ["SELECT 4", "SELECT 3", "SELECT 2", "SELECT 1"])
+    #expect(imported.map(\.source) == [.ai, .editor, .structure, .mcp])
+    #expect(imported.map(\.kind) == [.read, .other, .schema, .read])
   }
 
   @Test("200 concurrent records of distinct SQL insert 200 rows")

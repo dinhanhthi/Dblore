@@ -144,8 +144,11 @@ nonisolated enum LocalDataJSON {
     return lower.contains("apikey") || lower.contains("api_key") || lower.contains("api-key")
   }
 
+  /// `app.settings.aiConfiguration` belongs to AI settings (stored as `Data`, which JSON cannot hold).
   static func managesAppSetting(_ key: String) -> Bool {
-    guard key.hasPrefix("app.settings.") else { return false }
+    guard key.hasPrefix("app.settings."), key != "app.settings.aiConfiguration" else {
+      return false
+    }
     let lower = key.lowercased()
     return !lower.contains("password") && !lower.contains("secret")
   }
@@ -560,7 +563,7 @@ nonisolated struct AppSettingsLocalDataProvider: LocalDataProvider {
     let imported =
       data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
     var domain = client.domain()
-    for key in domain.keys where LocalDataJSON.managesAppSetting(key) {
+    for (key, value) in domain where Self.backsUp(key, value) {
       domain.removeValue(forKey: key)
     }
     for (key, value) in imported where LocalDataJSON.managesAppSetting(key) {
@@ -580,6 +583,15 @@ nonisolated struct AppSettingsLocalDataProvider: LocalDataProvider {
   }
 
   private func managedSettings() -> [String: Any] {
-    client.domain().filter { LocalDataJSON.managesAppSetting($0.key) }
+    client.domain().filter { Self.backsUp($0.key, $0.value) }
+  }
+
+  /// A managed value JSON cannot hold (`Data`, `Date`) stays out of the count and the file, so
+  /// the manifest matches what was written, and import leaves it alone.
+  private static func backsUp(_ key: String, _ value: Any) -> Bool {
+    guard LocalDataJSON.managesAppSetting(key) else { return false }
+    return JSONSerialization.isValidJSONObject([
+      LocalDataJSON.propertyList(value, omitting: { _ in false })
+    ])
   }
 }

@@ -118,6 +118,7 @@ private struct HistoryRetentionControls: View {
   let onClear: () -> Void
 
   @Bindable private var appSettings = AppSettings.shared
+  @Environment(\.pixelLength) private var pixelLength
 
   private var entryRange: ClosedRange<Int> { AppSettings.historyMaxEntriesRange }
 
@@ -184,7 +185,12 @@ private struct HistoryRetentionControls: View {
     }
     .padding(Spacing.sm)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.appBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
+    // White in light so the box stands off the tinted card; same as before in dark
+    .background(Color.panelBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .strokeBorder(Color.border, lineWidth: pixelLength)
+    )
   }
 
   private static let retentionOptions = [7, 30, 90, 365, 0]

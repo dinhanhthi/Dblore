@@ -1,5 +1,5 @@
 // QueryHistoryStore.swift
-// App-wide query history in SQLite, with an FTS5 index over SQL and labels.
+// App-wide query history in SQLite, with an FTS5 index over SQL, labels and row tags.
 
 import Foundation
 import SQLite3
@@ -56,14 +56,14 @@ actor QueryHistoryStore {
     }
   }
 
-  /// Finishes the version-2 migration on this actor. A failure is logged and rethrown; the
-  /// file stays on version 1 and the process keeps running. SQLITE_BUSY or SQLITE_LOCKED
-  /// (another connection held the file past the busy timeout) is not stored, so the next call
-  /// tries again. Any other error is stored and later calls rethrow it without another
+  /// Finishes the version-2 and version-3 migrations on this actor. A failure is logged and
+  /// rethrown; the file stays on its version and the process keeps running. SQLITE_BUSY or
+  /// SQLITE_LOCKED (another connection held the file past the busy timeout) is not stored, so the
+  /// next call tries again. Any other error is stored and later calls rethrow it without another
   /// attempt, so history stays unavailable for the session.
   private func prepare() throws {
     if let migrationError { throw migrationError }
-    guard database.userVersion < 2 else { return }
+    guard database.userVersion < 3 else { return }
     do {
       try Self.migrate(database)
     } catch {
@@ -248,7 +248,8 @@ actor QueryHistoryStore {
   }
 
   /// Version 1 creates the original table. Version 2 adds `kind` and backfills it in one
-  /// transaction. If that fails, the file stays on version 1 with no second table.
+  /// transaction. If that fails, the file stays on version 1 with no second table. Version 3
+  /// indexes the row's source and kind badges (`tags`), so "AI Assistant" finds those rows.
   private static func migrate(_ database: SQLiteHandle) throws {
     if database.userVersion < 1 {
       try createVersion1(database)
@@ -256,15 +257,18 @@ actor QueryHistoryStore {
     if database.userVersion < 2 {
       try migrateToVersion2(database)
     }
+    if database.userVersion < 3 {
+      try migrateToVersion3(database)
+    }
   }
 
   private static func createVersion1(_ database: SQLiteHandle) throws {
     try database.transaction {
       try database.execute(createTable)
-      try database.execute(createFTS)
-      try database.execute(insertTrigger)
-      try database.execute(deleteTrigger)
-      try database.execute(updateTrigger)
+      try database.execute(createFTSVersion1)
+      try database.execute(insertTriggerVersion1)
+      try database.execute(deleteTriggerVersion1)
+      try database.execute(updateTriggerVersion1)
       try database.execute("CREATE INDEX history_executed_at ON history(executed_at)")
       try database.execute("CREATE INDEX history_connection_key ON history(connection_key)")
       try database.execute("PRAGMA user_version = 1")
@@ -279,9 +283,47 @@ actor QueryHistoryStore {
       try database.execute("ALTER TABLE history ADD COLUMN kind TEXT")
       try database.execute("DROP TRIGGER IF EXISTS history_au")
       try backfillKinds(database)
-      try database.execute(updateTrigger)
+      try database.execute(updateTriggerVersion1)
       try database.execute("PRAGMA user_version = 2")
     }
+  }
+
+  /// `tags` is a virtual generated column, so FTS reads it from `history` like the others and
+  /// nothing writes it. The index is created again with the column and rebuilt from every row.
+  private static func migrateToVersion3(_ database: SQLiteHandle) throws {
+    try database.transaction {
+      try database.execute(
+        "ALTER TABLE history ADD COLUMN tags TEXT GENERATED ALWAYS AS (\(tagsExpression)) VIRTUAL")
+      try database.execute("DROP TRIGGER IF EXISTS history_ai")
+      try database.execute("DROP TRIGGER IF EXISTS history_ad")
+      try database.execute("DROP TRIGGER IF EXISTS history_au")
+      try database.execute("DROP TABLE history_fts")
+      try database.execute(createFTS)
+      try database.execute(insertTrigger)
+      try database.execute(deleteTrigger)
+      try database.execute(updateTrigger)
+      try database.execute("INSERT INTO history_fts(history_fts) VALUES ('rebuild')")
+      try database.execute("PRAGMA user_version = 3")
+    }
+  }
+
+  /// The badges a row shows (`HistoryRowLabels`): source, then kind when there is one. An
+  /// unknown source reads as editor, as the row read does. Fixed in the file when it migrates.
+  private static var tagsExpression: String {
+    func literal(_ text: String) -> String {
+      "'" + text.replacingOccurrences(of: "'", with: "''") + "'"
+    }
+    let sources = QueryHistoryEntry.Source.allCases.map {
+      "WHEN \(literal($0.rawValue)) THEN \(literal(HistoryRowLabels.sourceLabel($0)))"
+    }
+    let kinds = QueryHistoryEntry.Kind.allCases.compactMap { kind in
+      HistoryRowLabels.kindLabel(kind).map {
+        "WHEN \(literal(kind.rawValue)) THEN \(literal($0))"
+      }
+    }
+    return "(CASE source \(sources.joined(separator: " ")) ELSE "
+      + "\(literal(HistoryRowLabels.sourceLabel(.editor))) END) || "
+      + "COALESCE(' ' || (CASE kind \(kinds.joined(separator: " ")) END), '')"
   }
 
   private static func backfillKinds(_ database: SQLiteHandle) throws {
@@ -310,12 +352,12 @@ actor QueryHistoryStore {
     return classified
   }
 
-  /// `databaseType|host|port|database|username`. Only a SQLite prefix changes the classifier.
+  /// `databaseType|host|port|database|username`: the prefix picks that engine's dialect. An
+  /// unknown prefix (a row from a newer build, or a hand-edited file) keeps PostgreSQL, the
+  /// classifier's default and the rule every row used before engines had their own dialect.
   private static func dialect(for connectionKey: String) -> SQLDialect {
-    guard connectionKey.split(separator: "|", maxSplits: 1).first == "SQLite" else {
-      return .postgresql
-    }
-    return .sqlite
+    let prefix = connectionKey.split(separator: "|", maxSplits: 1).first.map(String.init) ?? ""
+    return DatabaseType(rawValue: prefix)?.dialect ?? .postgresql
   }
 
   /// No statement (blank or comment-only) stays nil. Several statements keep a write over
@@ -583,7 +625,9 @@ actor QueryHistoryStore {
     )
     """
 
-  private static let createFTS = """
+  // Version 1 index and triggers, kept as written: the v1 and v2 steps run them as they were.
+
+  private static let createFTSVersion1 = """
     CREATE VIRTUAL TABLE history_fts USING fts5(
       sql,
       error_message,
@@ -595,14 +639,14 @@ actor QueryHistoryStore {
     )
     """
 
-  private static let insertTrigger = """
+  private static let insertTriggerVersion1 = """
     CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
       INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name)
       VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name);
     END
     """
 
-  private static let deleteTrigger = """
+  private static let deleteTriggerVersion1 = """
     CREATE TRIGGER history_ad AFTER DELETE ON history BEGIN
       INSERT INTO history_fts(
         history_fts, rowid, sql, error_message, connection_label, workspace_name
@@ -613,7 +657,7 @@ actor QueryHistoryStore {
     END
     """
 
-  private static let updateTrigger = """
+  private static let updateTriggerVersion1 = """
     CREATE TRIGGER history_au AFTER UPDATE ON history BEGIN
       INSERT INTO history_fts(
         history_fts, rowid, sql, error_message, connection_label, workspace_name
@@ -623,6 +667,56 @@ actor QueryHistoryStore {
       );
       INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name)
       VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name);
+    END
+    """
+
+  // Version 3: the same index with the `tags` column.
+
+  private static let createFTS = """
+    CREATE VIRTUAL TABLE history_fts USING fts5(
+      sql,
+      error_message,
+      connection_label,
+      workspace_name,
+      tags,
+      content='history',
+      content_rowid='id',
+      tokenize='unicode61 remove_diacritics 2'
+    )
+    """
+
+  private static let insertTrigger = """
+    CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
+      INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name, tags)
+      VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name,
+        new.tags);
+    END
+    """
+
+  private static let deleteTrigger = """
+    CREATE TRIGGER history_ad AFTER DELETE ON history BEGIN
+      INSERT INTO history_fts(
+        history_fts, rowid, sql, error_message, connection_label, workspace_name, tags
+      )
+      VALUES (
+        'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name,
+        old.tags
+      );
+    END
+    """
+
+  private static let updateTrigger = """
+    CREATE TRIGGER history_au AFTER UPDATE ON history BEGIN
+      INSERT INTO history_fts(
+        history_fts, rowid, sql, error_message, connection_label, workspace_name, tags
+      )
+      VALUES (
+        'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name,
+        old.tags
+      );
+      INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name, tags)
+      VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name,
+        new.tags);
     END
     """
 }

@@ -258,6 +258,52 @@ struct LocalDataBackupTests {
     }
   }
 
+  @Test("Export reports one step per category, then the secret check")
+  func exportReportsProgress() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let providers = [
+      TextProvider(category: .openTabs, memory: TextMemory("a"), contents: "a"),
+      TextProvider(category: .logs, memory: TextMemory("b"), contents: "b"),
+    ]
+    let steps = ProgressLog()
+    try await LocalDataBackup.export(
+      categories: [.openTabs, .logs], providers: providers,
+      to: root.appendingPathComponent("Progress.dblorebackup", isDirectory: true),
+      appVersion: "9.2.0", created: created, progress: { steps.append($0) })
+    #expect(
+      steps.values == [
+        BackupExportProgress(completed: 0, total: 3, category: .openTabs),
+        BackupExportProgress(completed: 1, total: 3, category: .logs),
+        BackupExportProgress(completed: 2, total: 3, category: nil),
+      ])
+  }
+
+  @Test("Cancelling an export stops before the next category and deletes the package")
+  func cancelledExportDeletesPackage() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let providers = [
+      TextProvider(category: .openTabs, memory: TextMemory("a"), contents: "a"),
+      TextProvider(category: .logs, memory: TextMemory("b"), contents: "b"),
+    ]
+    let package = root.appendingPathComponent("Cancelled.dblorebackup", isDirectory: true)
+    let steps = ProgressLog()
+    let task = Task {
+      try await LocalDataBackup.export(
+        categories: [.openTabs, .logs], providers: providers, to: package, appVersion: "9.2.0",
+        created: created,
+        progress: { step in
+          steps.append(step)
+          // Cancel while the first category is being written
+          if step.completed == 0 { withUnsafeCurrentTask { $0?.cancel() } }
+        })
+    }
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(steps.values.map(\.category) == [.openTabs])
+    #expect(!FileManager.default.fileExists(atPath: package.path))
+  }
+
   @Test("A backup round trip never contains planted client certificate PEM")
   func plantedClientCertificateStaysOutOfBackup() async throws {
     let root = try makeRoot()
@@ -286,7 +332,7 @@ struct LocalDataBackupTests {
       else { continue }
       let data = try Data(contentsOf: url)
       for secret in [
-        material.certificatePEM, material.privateKeyPEM, material.caPEM!, material.passphrase!,
+        material.certificatePEM!, material.privateKeyPEM!, material.caPEM!, material.passphrase!,
       ] {
         #expect(data.range(of: Data(secret.utf8)) == nil)
       }
@@ -492,6 +538,17 @@ final class LocalDataNotificationGate: @unchecked Sendable {
       state.unlock()
       next.resume()
     }
+  }
+}
+
+private final class ProgressLog: @unchecked Sendable {
+  private var steps: [BackupExportProgress] = []
+  private let lock = NSLock()
+
+  var values: [BackupExportProgress] { lock.withLock { steps } }
+
+  func append(_ step: BackupExportProgress) {
+    lock.withLock { steps.append(step) }
   }
 }
 

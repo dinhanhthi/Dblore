@@ -24,6 +24,8 @@ struct DataSettingsSection: View {
   @State private var pendingSecret: SecretItem?
   @State private var busy = false
   @State private var notice: DataNotice?
+  @State private var exportTask: Task<Void, Never>?
+  @State private var showsExportProgress = false
 
   init(model: DataSettingsModel = DataSettingsProduction.model) {
     self.model = model
@@ -52,12 +54,15 @@ struct DataSettingsSection: View {
         Task { @MainActor in
           await Task.yield()
           presentSavePanel(named: "Dblore Backup.dblorebackup") { url in
-            await writeExportAll(chosen, to: url)
+            writeExportAll(chosen, to: url)
           }
         }
       } onCancel: {
         exportSheet = nil
       }
+    }
+    .sheet(isPresented: $showsExportProgress) {
+      DataExportProgressSheet(model: model) { exportTask?.cancel() }
     }
     .sheet(item: $importRequest) { request in
       DataImportSheet(
@@ -71,7 +76,12 @@ struct DataSettingsSection: View {
         onImported: {
           request.access.release()
           importRequest = nil
-          notice = DataNotice(text: "Import finished.", isError: false)
+          WorkspaceWindowManager.shared.showToast("Import finished.", type: .success)
+        },
+        onFailed: { message in
+          request.access.release()
+          importRequest = nil
+          WorkspaceWindowManager.shared.showToast(message, type: .error)
         }
       )
     }
@@ -261,33 +271,18 @@ struct DataSettingsSection: View {
   private func export(_ category: LocalDataCategory) {
     let name = "\(category.title).dblorebackup"
     presentSavePanel(named: name) { url in
-      await writeExport(category, to: url)
-    }
-  }
-
-  private func writeExport(_ category: LocalDataCategory, to url: URL) async {
-    let access = SecurityScopedAccessToken(url: url)
-    defer { access.release() }
-    busy = true
-    defer { busy = false }
-    do {
-      try await model.export(category, to: url)
-      notice = DataNotice(text: "Exported \(category.title).", isError: false)
-    } catch {
-      notice = DataNotice(text: dataBackupMessage(error), isError: true)
+      runExport(to: url, finished: "Exported \(category.title).") {
+        try await model.export(category, to: url)
+      }
     }
   }
 
   /// Full selection uses `exportAll` so local models follow the checkbox (off by default).
-  private func writeExportAll(_ selected: Set<LocalDataCategory>, to url: URL) async {
-    let access = SecurityScopedAccessToken(url: url)
-    defer { access.release() }
-    busy = true
-    defer { busy = false }
+  private func writeExportAll(_ selected: Set<LocalDataCategory>, to url: URL) {
     let includeModels = selected.contains(.localModels)
     let others = selected.subtracting([.localModels])
     let availableOthers = Set(model.rows.map(\.category)).subtracting([.localModels])
-    do {
+    runExport(to: url, finished: "Export finished.") {
       if others == availableOthers {
         try await model.exportAll(includeModels: includeModels, to: url)
       } else {
@@ -295,9 +290,43 @@ struct DataSettingsSection: View {
         if includeModels { categories.append(.localModels) }
         try await model.export(categories, to: url)
       }
-      notice = DataNotice(text: "Export finished.", isError: false)
-    } catch {
-      notice = DataNotice(text: dataBackupMessage(error), isError: true)
+    }
+  }
+
+  /// Runs an export that the progress sheet can cancel. The sheet waits a moment so a quick
+  /// export does not flash it. Success and cancel toast; an error stays under the buttons.
+  private func runExport(
+    to url: URL, finished: String, work: @escaping @MainActor () async throws -> Void
+  ) {
+    let access = SecurityScopedAccessToken(url: url)
+    busy = true
+    notice = nil
+    exportTask = Task {
+      let reveal = Task {
+        try? await Task.sleep(for: .milliseconds(300))
+        if !Task.isCancelled { showsExportProgress = true }
+      }
+      var failure: Error?
+      do {
+        try await work()
+      } catch {
+        failure = error
+      }
+      // Close the progress sheet first so it does not cover the toast
+      reveal.cancel()
+      showsExportProgress = false
+      if let failure {
+        if Task.isCancelled {
+          WorkspaceWindowManager.shared.showToast("Export cancelled.", type: .info)
+        } else {
+          notice = DataNotice(text: failure.localizedDescription, isError: true)
+        }
+      } else {
+        WorkspaceWindowManager.shared.showToast(finished, type: .success)
+      }
+      access.release()
+      busy = false
+      exportTask = nil
     }
   }
 
@@ -318,7 +347,7 @@ struct DataSettingsSection: View {
           notice = nil
         } catch {
           access.release()
-          notice = DataNotice(text: dataBackupMessage(error), isError: true)
+          notice = DataNotice(text: error.localizedDescription, isError: true)
         }
       }
     }
@@ -443,22 +472,6 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   }
 }
 
-private func dataBackupMessage(_ error: Error) -> String {
-  guard let backup = error as? LocalDataBackupError else { return error.localizedDescription }
-  switch backup {
-  case .unsupportedVersion(let version):
-    return "This backup uses format \(version), which this version of Dblore cannot read."
-  case .missingCategory(let category):
-    return "The backup is missing \(category.title)."
-  case .corruptCategory(let category):
-    return "The backup’s \(category.title) data is unreadable."
-  case .missingProvider(let category):
-    return "This app cannot restore \(category.title)."
-  case .secretDetected:
-    return "The backup was not written because it contained a saved password or key."
-  }
-}
-
 /// Category checkboxes. Local models start unchecked and are labeled with their size.
 private struct DataExportAllSheet: View {
   @Bindable var model: DataSettingsModel
@@ -550,6 +563,66 @@ private struct DataExportAllSheet: View {
         }
       }
     )
+  }
+}
+
+/// Shown while an export runs: the current step, a bar over all steps, and Cancel.
+/// Cancel stops after the step in progress and deletes the partial package.
+private struct DataExportProgressSheet: View {
+  var model: DataSettingsModel
+  var onCancel: () -> Void
+
+  @State private var cancelling = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("Exporting")
+        .font(.subheading)
+        .foregroundColor(.foreground)
+        .modalBarPadding(vertical: Spacing.sm)
+
+      Divider()
+
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        ProgressView(value: fraction)
+          .progressViewStyle(.linear)
+        Text(stepText)
+          .font(.bodyText)
+          .foregroundColor(.foregroundSubtle)
+          .lineLimit(1)
+      }
+      .padding(Spacing.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      Divider()
+
+      HStack {
+        Spacer()
+        Button(cancelling ? "Cancelling…" : "Cancel") {
+          cancelling = true
+          onCancel()
+        }
+        .buttonStyle(GhostButtonStyle())
+        .disabled(cancelling)
+        .keyboardShortcut(.cancelAction)
+      }
+      .modalBarPadding()
+    }
+    .frame(width: 400)
+    .background(Color.appBackground)
+    .interactiveDismissDisabled()
+  }
+
+  private var fraction: Double {
+    guard let progress = model.exportProgress, progress.total > 0 else { return 0 }
+    return Double(progress.completed) / Double(progress.total)
+  }
+
+  private var stepText: String {
+    if cancelling { return "Stopping after the current step…" }
+    guard let progress = model.exportProgress else { return "Finishing…" }
+    guard let category = progress.category else { return "Checking the backup for secrets…" }
+    return "\(category.title) (\(progress.completed + 1) of \(progress.total - 1))"
   }
 }
 

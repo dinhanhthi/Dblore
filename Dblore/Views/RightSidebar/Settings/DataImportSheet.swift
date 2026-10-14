@@ -14,23 +14,27 @@ struct DataImportSheet: View {
   @Bindable var model: DataSettingsModel
   var onCancel: () -> Void
   var onImported: () -> Void
+  /// Called with the message when the import fails; the caller closes the sheet and toasts it.
+  var onFailed: (String) -> Void
 
   @State private var selected: Set<LocalDataCategory>
   @State private var working = false
-  @State private var failure: String?
+  @Environment(\.pixelLength) private var pixelLength
 
   init(
     url: URL,
     manifest: BackupManifest,
     model: DataSettingsModel,
     onCancel: @escaping () -> Void,
-    onImported: @escaping () -> Void
+    onImported: @escaping () -> Void,
+    onFailed: @escaping (String) -> Void
   ) {
     self.url = url
     self.manifest = manifest
     self.model = model
     self.onCancel = onCancel
     self.onImported = onImported
+    self.onFailed = onFailed
     let known = manifest.categories.compactMap { LocalDataCategory(rawValue: $0.id) }
     _selected = State(initialValue: Set(known))
   }
@@ -75,12 +79,6 @@ struct DataImportSheet: View {
             )
             .font(.small)
             .foregroundColor(.destructive)
-          }
-          if let failure {
-            Text(failure)
-              .font(.small)
-              .foregroundColor(.destructive)
-              .textSelection(.enabled)
           }
         }
         .padding(Spacing.md)
@@ -128,6 +126,14 @@ struct DataImportSheet: View {
         .font(.small)
         .foregroundColor(.foregroundSubtle)
     }
+    .padding(Spacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    // Own box, so the file details read apart from the category list
+    .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .strokeBorder(Color.border, lineWidth: pixelLength)
+    )
   }
 
   private var categories: some View {
@@ -172,7 +178,6 @@ struct DataImportSheet: View {
     let categories = orderedSelection
     guard !categories.isEmpty else { return }
     working = true
-    failure = nil
     let token = model.prepareImport(url: url, selected: categories)
     Task {
       let results = await model.importBackup(url: url, selected: categories, confirmed: token)
@@ -182,9 +187,7 @@ struct DataImportSheet: View {
         return
       }
       let failed = Set(results.filter { !$0.succeeded }.map(\.category))
-      failure =
-        model.rows.first { failed.contains($0.category) }?.error
-        ?? "Import failed."
+      onFailed(model.rows.first { failed.contains($0.category) }?.error ?? "Import failed.")
     }
   }
 }

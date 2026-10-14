@@ -32,6 +32,8 @@ final class DataSettingsModel {
   private(set) var secrets: [SecretItem] = []
   /// Set when clearing every secret fails. Category failures stay on the row.
   private(set) var error: String?
+  /// Set while an export runs, nil otherwise.
+  private(set) var exportProgress: BackupExportProgress?
 
   var totalBytes: Int64 {
     rows.reduce(0) { $0 + ($1.summary?.bytes ?? 0) }
@@ -65,13 +67,13 @@ final class DataSettingsModel {
   }
 
   func export(_ category: LocalDataCategory, to url: URL) async throws {
-    try await Self.writePackage([category], providers: providers, to: url)
+    try await write([category], to: url)
   }
 
   /// Writes one package containing these categories, in order.
   /// `.localModels` is written only when it is listed.
   func export(_ categories: [LocalDataCategory], to url: URL) async throws {
-    try await Self.writePackage(categories, providers: providers, to: url)
+    try await write(categories, to: url)
   }
 
   /// Exports every category this model can reach. Local models are included only when asked.
@@ -80,7 +82,17 @@ final class DataSettingsModel {
       including: includeModels ? [.localModels] : [])
     let available = Set(providers.map(\.category))
     let categories = wanted.filter { available.contains($0) }
-    try await Self.writePackage(categories, providers: providers, to: url)
+    try await write(categories, to: url)
+  }
+
+  /// Publishes `exportProgress` while the package is written. Cancelling the task deletes it.
+  private func write(_ categories: [LocalDataCategory], to url: URL) async throws {
+    exportProgress = BackupExportProgress(
+      completed: 0, total: categories.count + 1, category: categories.first)
+    defer { exportProgress = nil }
+    try await Self.writePackage(categories, providers: providers, to: url) { [weak self] step in
+      await MainActor.run { self?.exportProgress = step }
+    }
   }
 
   func prepareClear(_ category: LocalDataCategory) -> ConfirmationToken {
@@ -268,9 +280,11 @@ final class DataSettingsModel {
   }
 
   @concurrent private static func writePackage(
-    _ categories: [LocalDataCategory], providers: [any LocalDataProvider], to url: URL
+    _ categories: [LocalDataCategory], providers: [any LocalDataProvider], to url: URL,
+    progress: @escaping @Sendable (BackupExportProgress) async -> Void
   ) async throws {
-    try await LocalDataBackup.export(categories: categories, providers: providers, to: url)
+    try await LocalDataBackup.export(
+      categories: categories, providers: providers, to: url, progress: progress)
   }
 
   @concurrent private static func readPackage(

@@ -17,7 +17,7 @@ nonisolated struct BackupManifest: Codable, Equatable, Sendable {
   }
 }
 
-nonisolated enum LocalDataBackupError: Error, Equatable, Sendable {
+nonisolated enum LocalDataBackupError: LocalizedError, Equatable, Sendable {
   /// The package's `formatVersion` is not 1.
   case unsupportedVersion(Int)
   /// A selected category has no directory in the package.
@@ -28,6 +28,29 @@ nonisolated enum LocalDataBackupError: Error, Equatable, Sendable {
   case missingProvider(LocalDataCategory)
   /// A file in the package matched a secret pattern. The package was removed.
   case secretDetected
+
+  var errorDescription: String? {
+    switch self {
+    case .unsupportedVersion(let version):
+      "This backup uses format \(version), which this version of Dblore cannot read."
+    case .missingCategory(let category):
+      "The backup is missing \(category.title)."
+    case .corruptCategory(let category):
+      "The backup’s \(category.title) data is unreadable."
+    case .missingProvider(let category):
+      "This app cannot restore \(category.title)."
+    case .secretDetected:
+      "The backup was not written because it contained a saved password or key."
+    }
+  }
+}
+
+/// How far `LocalDataBackup.export` is: `completed` of `total` steps, one per category plus the
+/// final secret check. `category` is the one being written, nil during the secret check.
+nonisolated struct BackupExportProgress: Equatable, Sendable {
+  var completed: Int
+  var total: Int
+  var category: LocalDataCategory?
 }
 
 /// Writes and reads a `.dblorebackup` directory package.
@@ -48,12 +71,14 @@ nonisolated enum LocalDataBackup {
   /// Writes `packageURL` as a directory package: `manifest.json` plus one folder per category.
   /// Category counts come from `summary()` after that category's export.
   /// If any file contains a secret, the package is deleted and this throws `secretDetected`.
+  /// Cancelling the task stops it before the next step and deletes the package.
   static func export(
     categories: [LocalDataCategory],
     providers: [any LocalDataProvider],
     to packageURL: URL,
     appVersion: String? = nil,
-    created: Date = Date()
+    created: Date = Date(),
+    progress: @Sendable (BackupExportProgress) async -> Void = { _ in }
   ) async throws {
     let selected = unique(categories)
     let indexed = try index(providers, required: selected)
@@ -69,7 +94,10 @@ nonisolated enum LocalDataBackup {
     }
     let package = try LocalDataBackupPackage(url: packageURL)
     var entries: [BackupManifest.Category] = []
-    for category in selected {
+    let total = selected.count + 1
+    for (index, category) in selected.enumerated() {
+      try Task.checkCancellation()
+      await progress(BackupExportProgress(completed: index, total: total, category: category))
       let provider = indexed[category]!
       try await provider.export(to: package.folder(category))
       let summary = await provider.summary()
@@ -77,6 +105,8 @@ nonisolated enum LocalDataBackup {
         BackupManifest.Category(
           id: category.rawValue, itemCount: summary.itemCount, byteSize: summary.bytes))
     }
+    try Task.checkCancellation()
+    await progress(BackupExportProgress(completed: selected.count, total: total, category: nil))
     let manifest = BackupManifest(
       formatVersion: formatVersion,
       appVersion: version,
@@ -85,6 +115,7 @@ nonisolated enum LocalDataBackup {
     )
     try package.write(manifest)
     try package.scanForSecrets()
+    try Task.checkCancellation()
     committed = true
   }
 
