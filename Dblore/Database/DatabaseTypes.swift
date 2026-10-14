@@ -95,8 +95,9 @@ enum DatabaseError: LocalizedError {
   case connectionLost(String)
   /// The user cancelled the running statement: the connection was closed (stopping the server
   /// work) and reopened. `pendingCount` app-transaction changes / the user's open transaction
-  /// were rolled back with the old session.
-  case queryCancelled(pendingCount: Int, userTxRolledBack: Bool)
+  /// were rolled back with the old session. `connectionKept`: the engine's interrupt stopped
+  /// only the statement (`DatabaseType.interruptKeepsTransaction`), nothing was rolled back.
+  case queryCancelled(pendingCount: Int, userTxRolledBack: Bool, connectionKept: Bool = false)
   /// The connection was closed and reopened (another tab's capped read, a cancel, a reconnect)
   /// while a script was between statements: its remaining `skippedStatements` were not run
   case sessionChanged(skippedStatements: Int)
@@ -172,8 +173,10 @@ enum DatabaseError: LocalizedError {
     case .schemaChangePartiallyApplied(let applied, let total, let reason):
       return "Applied \(applied) of \(total) schema changes; change \(applied + 1) failed: "
         + "\(reason). MySQL commits each change, so the applied ones stay."
-    case .queryCancelled(let pendingCount, let userTxRolledBack):
-      return Self.cancelMessage(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
+    case .queryCancelled(let pendingCount, let userTxRolledBack, let connectionKept):
+      return Self.cancelMessage(
+        pendingCount: pendingCount, userTxRolledBack: userTxRolledBack,
+        connectionKept: connectionKept)
     case .sessionChanged(let count):
       return "The connection was reset by another tab or action — the remaining \(count) "
         + "statement\(count == 1 ? " was" : "s were") not run."
@@ -211,8 +214,12 @@ enum DatabaseError: LocalizedError {
     }
   }
 
-  /// "Query cancelled — connection was reset (…)" plus what the reset rolled back
-  nonisolated static func cancelMessage(pendingCount: Int, userTxRolledBack: Bool) -> String {
+  /// "Query cancelled — connection was reset (…)" plus what the reset rolled back, or the
+  /// kept-connection text when only the statement was stopped
+  nonisolated static func cancelMessage(
+    pendingCount: Int, userTxRolledBack: Bool, connectionKept: Bool = false
+  ) -> String {
+    if connectionKept { return "Query cancelled. The connection was kept." }
     var parts = ["Query cancelled — connection was reset (temp tables, SET, search_path lost)."]
     if pendingCount > 0 {
       let verb = pendingCount == 1 ? "was" : "were"

@@ -196,11 +196,12 @@ struct RowStagingViewModelTests {
     changed?.editTarget = EditTarget(
       qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: ["id"],
       connectionEpoch: 5, updateOnly: true)
-    let commit = Task { await viewModel.commitStaged() }
-    await Task.yield()
-    viewModel.editorResult = changed
+    // The table changes at the key lookup's await point, not after a scheduler-dependent yield.
+    viewModel.keyLookupCheckpointForTesting = { [weak viewModel, changed] in
+      viewModel?.editorResult = changed
+    }
 
-    await commit.value
+    await viewModel.commitStaged()
 
     #expect(viewModel.dataViewer?.changeSet == nil)
     #expect(toasts.contains { $0.contains("table changed") })

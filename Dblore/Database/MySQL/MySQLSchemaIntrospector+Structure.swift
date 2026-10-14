@@ -4,10 +4,10 @@
 // table are always binds. A view or a missing table throws.
 //
 // Defaults are raw SQL text on both engines (see `MySQLCatalog.defaultExpression`). Generated
-// expressions and check clauses stay as the server prints them (MySQL wraps them in parentheses,
-// MariaDB does not), except that MySQL's escaped quotes in expression defaults and generated
-// expressions are undone (`MySQLCatalog.unescapedExpression`). A check has no columns: neither
-// engine lists the columns it references.
+// expressions, check clauses and functional index keys stay as the server prints them (MySQL
+// wraps the first two in parentheses, MariaDB does not), except that MySQL's escaped quotes in
+// them and in expression defaults are undone (`MySQLCatalog.unescapedExpression`). A check has
+// no columns: neither engine lists the columns it references.
 // Functional index keys (EXPRESSION) are read on MySQL 8.0.13+; MariaDB has none. A prefix key
 // (`name(5)`) reads as the whole column. Checks come from CHECK_CONSTRAINTS on MySQL 8.0.16+
 // (matched to the table through TABLE_CONSTRAINTS) and MariaDB 10.2+ (its own TABLE_NAME column:
@@ -111,7 +111,7 @@ nonisolated extension MySQLSchemaIntrospector {
       guard let name = MySQLCatalogValue.string(row, 0) else { continue }
       let key: TableStructure.Index.Key =
         MySQLCatalogValue.string(row, 1).map { .column($0) }
-        ?? .expression(MySQLCatalogValue.string(row, 2))
+        ?? .expression(MySQLCatalogValue.string(row, 2).map(MySQLCatalog.unescapedExpression))
       if indexes.last?.name == name {
         indexes[indexes.count - 1].keys.append(key)
         continue
@@ -215,7 +215,10 @@ nonisolated extension MySQLSchemaIntrospector {
       guard let name = MySQLCatalogValue.string(row, 0),
         let clause = MySQLCatalogValue.string(row, 1)
       else { return nil }
-      return TableStructure.Constraint(name: name, kind: .check(clause), columns: [])
+      return TableStructure.Constraint(
+        name: name,
+        kind: .check(server.flavor == .mariadb ? clause : MySQLCatalog.unescapedExpression(clause)),
+        columns: [])
     }
   }
 }
@@ -249,9 +252,10 @@ nonisolated extension MySQLCatalog {
     return "'\(escaped)'"
   }
 
-  /// MySQL prints an expression default or a generated expression with every `\` and `'`
-  /// escaped (`concat(_utf8mb4\'it\\\'s\')`); this undoes that, so the text is SQL again
-  /// (`concat(_utf8mb4'it\'s')`). Text with a bare `'` is not in that form and is kept.
+  /// MySQL prints an expression default, a generated expression, a check clause or a functional
+  /// index key with every `\` and `'` escaped (`concat(_utf8mb4\'it\\\'s\')`); this undoes that,
+  /// so the text is SQL again (`concat(_utf8mb4'it\'s')`). Text with a bare `'` is not in that
+  /// form and is kept.
   static func unescapedExpression(_ text: String) -> String {
     var result = String.UnicodeScalarView()
     var scalars = text.unicodeScalars.makeIterator()

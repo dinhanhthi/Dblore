@@ -9,7 +9,7 @@ import Foundation
 
 /// What a statement that was running when the user cancelled reports (see `lastCancel`)
 nonisolated struct QueryCancelRecord: Sendable, Equatable {
-  /// `connectionEpoch` of the closed connection
+  /// `connectionEpoch` of the closed (or interrupted) connection
   let epoch: UInt64
   /// App transaction changes rolled back with the closed session
   let pendingCount: Int
@@ -19,9 +19,14 @@ nonisolated struct QueryCancelRecord: Sendable, Equatable {
   /// change, so a script started at this generation (after the cancel) is not cancelled.
   /// Nil for a reconnect cancel: the new connection has a new epoch.
   var interruptGeneration: UInt64? = nil
+  /// The interrupt kept the session and its transaction (`interruptKeepsTransaction`):
+  /// `pendingCount` is 0 and `userTxRolledBack` false
+  var connectionKept = false
 
   var error: DatabaseError {
-    .queryCancelled(pendingCount: pendingCount, userTxRolledBack: userTxRolledBack)
+    .queryCancelled(
+      pendingCount: pendingCount, userTxRolledBack: userTxRolledBack,
+      connectionKept: connectionKept)
   }
 }
 
@@ -75,11 +80,13 @@ extension DatabaseConnectionManager {
     }
     let stateBefore = txState
     let interrupts = session?.capabilities.cancelStrategy == .interrupt
+    // MySQL KILL QUERY: the pending changes and the user's transaction stay
+    let kept = interrupts && config.databaseType.interruptKeepsTransaction
     batchCancellationGeneration &+= 1
     let record = QueryCancelRecord(
-      epoch: connectionEpoch, pendingCount: stateBefore.pending.count,
-      userTxRolledBack: userTxOpen,
-      interruptGeneration: interrupts ? batchCancellationGeneration : nil)
+      epoch: connectionEpoch, pendingCount: kept ? 0 : stateBefore.pending.count,
+      userTxRolledBack: kept ? false : userTxOpen,
+      interruptGeneration: interrupts ? batchCancellationGeneration : nil, connectionKept: kept)
     lastCancel = record
     await AppLogger.shared.info("Cancelling the running statement", category: "Database")
     if interrupts {

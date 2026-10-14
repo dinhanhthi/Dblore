@@ -194,6 +194,8 @@ struct MySQLCatalogTests {
     arguments: [
       // An escaped literal holding a quote: _latin1'it\'s'
       (#"concat(_latin1\'it\\\'s\',_latin1\' \')"#, #"concat(_latin1'it\'s',_latin1' ')"#),
+      // A check clause as CHECK_CONSTRAINTS prints it
+      (#"(`a` <> _latin1\'it\\\'s\')"#, #"(`a` <> _latin1'it\'s')"#),
       // An escaped backslash: 'a\\b'
       (#"concat(_utf8mb4\'a\\\\b\')"#, #"concat(_utf8mb4'a\\b')"#),
       // A bare quote: already SQL

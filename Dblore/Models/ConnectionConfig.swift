@@ -62,6 +62,17 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
+  /// An interrupt cancel (`CancelStrategy.interrupt`) stops only the statement: the session and
+  /// its open transaction survive, so the cancel reports nothing rolled back. MySQL
+  /// `KILL QUERY` does. SQLite and DuckDB may roll back an explicit transaction on interrupt;
+  /// PostgreSQL reconnects.
+  nonisolated var interruptKeepsTransaction: Bool {
+    switch self {
+    case .mysql: true
+    case .postgresql, .sqlite, .duckdb: false
+    }
+  }
+
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the

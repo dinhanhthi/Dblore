@@ -473,6 +473,28 @@ struct StructureDDLBuilderTests {
     #expect(throws: StructureDDLError.self) { try build(add, Self.mysql, .mysql(old)) }
   }
 
+  @Test("MySQL: MariaDB refuses NOT NULL on a generated column; other edits still build")
+  func mariadbGeneratedNotNullRefused() throws {
+    let mariadb = MySQLServerInfo(flavor: .mariadb, major: 11, minor: 4, patch: 0)
+    for changes: [StructureChange] in [
+      [.setNotNull(column: "total")],
+      [.renameColumn(column: "total", newName: "sum"), .setNotNull(column: "total")],
+    ] {
+      #expect(
+        throws: StructureDDLError.unsupported(
+          "MariaDB does not allow NOT NULL on a generated column.")
+      ) {
+        try build(changes, Self.mysql, .mysql(mariadb))
+      }
+    }
+    #expect(
+      try build([.alterColumnType(column: "total", type: "bigint")], Self.mysql, .mysql(mariadb))
+        == [
+          "ALTER TABLE `shop`.`orders` MODIFY COLUMN `total` bigint "
+            + "GENERATED ALWAYS AS ((`id` * 2)) STORED"
+        ])
+  }
+
   @Test("MySQL: an EXTRA attribute the builder cannot restate fails closed")
   func mysqlUnknownExtra() {
     var structure = Self.mysql

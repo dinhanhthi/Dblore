@@ -213,10 +213,10 @@ struct SSHHostKeyTrustFlowTests {
             host: "127.0.0.1", port: port, hostKey: key, fingerprint: fingerprint)
         }, group: group, handshakeTimeout: .seconds(30))
     }
-    try await waitFor { presenter.presented.count == 1 }
+    await presenter.wait { presenter.presented.count == 1 }
     connect.cancel()
     await #expect(throws: (any Error).self) { _ = try await connect.value }
-    try await waitFor { presenter.dismissCount == 1 }
+    await presenter.wait { presenter.dismissCount == 1 }
     // A late Trust on the withdrawn sheet changes nothing.
     presenter.answer(true)
     #expect(try store.lookup(host: "127.0.0.1", port: port) == nil)
@@ -253,6 +253,26 @@ struct SSHHostKeyTrustFlowTests {
     "The server closing while the prompt is open fails with a clear error",
     .timeLimit(.minutes(1)))
   func serverClosesDuringPrompt() async throws {
+    let error = try await closeServerDuringPrompt(handshakeTimeout: .seconds(30), hold: .zero)
+    #expect(error as? SSHTunnelError == .closedWhileConfirmingHostKey)
+  }
+
+  @Test(
+    "Time in the host-key prompt does not count against the handshake timeout",
+    .timeLimit(.minutes(1)))
+  func promptTimeDoesNotCountAgainstHandshakeTimeout() async throws {
+    // The prompt stays open past the timeout; without the pause the deadline would fire and
+    // fail with handshakeTimedOut. The timeout leaves room for key exchange under load.
+    let error = try await closeServerDuringPrompt(
+      handshakeTimeout: .seconds(2), hold: .seconds(3))
+    #expect(error as? SSHTunnelError == .closedWhileConfirmingHostKey)
+  }
+
+  /// Connects to a local SSH server, keeps the host-key prompt open for `hold`, then closes
+  /// the server side. Returns what `SSHTunnel.connect` threw.
+  private func closeServerDuringPrompt(
+    handshakeTimeout: TimeAmount, hold: Duration
+  ) async throws -> (any Error)? {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let accepted = AcceptedChannels()
     let hostKey = NIOSSHPrivateKey(ed25519Key: Curve25519.Signing.PrivateKey())
@@ -276,23 +296,24 @@ struct SSHHostKeyTrustFlowTests {
         host: "127.0.0.1", port: port, username: "dblore", authentication: .password("x"),
         hostKeyValidator: { _, _ in
           prompting.set()
-          try await Task.sleep(for: .seconds(60))
-        }, group: group, handshakeTimeout: .milliseconds(300))
+          // Only the server closing ends it: the close cancels the validator.
+          try await Task.sleep(for: .seconds(3600))
+        }, group: group, handshakeTimeout: handshakeTimeout)
     }
-    let end = ContinuousClock.now + .seconds(5)
-    while !prompting.isSet, ContinuousClock.now < end {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(prompting.isSet)
-    // Longer than the handshake timeout: the prompt time is not counted.
-    try await Task.sleep(for: .milliseconds(800))
+    // The validator sets the flag after the deadline is paused.
+    await prompting.wait()
+    try await Task.sleep(for: hold)
     accepted.closeAll()
 
-    await #expect(throws: SSHTunnelError.closedWhileConfirmingHostKey) {
+    var thrown: (any Error)?
+    do {
       _ = try await connect.value
+    } catch {
+      thrown = error
     }
     try await server.close()
     try await group.shutdownGracefully()
+    return thrown
   }
 
   @Test("The handshake deadline does not run while paused")
@@ -338,6 +359,8 @@ final class FakeSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
   private(set) var dismissCount = 0
   private(set) var changes: [SSHHostKeyChange] = []
   private var decide: ((Bool) -> Void)?
+  private var waiters: [(condition: () -> Bool, continuation: CheckedContinuation<Void, Never>)] =
+    []
 
   init(autoAnswer: (answer: Bool, delay: Duration)? = nil) {
     self.autoAnswer = autoAnswer
@@ -355,12 +378,31 @@ final class FakeSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
         self.answer(autoAnswer.answer)
       }
     }
+    resumeWaiters()
     return true
   }
 
   func dismissTrust() {
     dismissCount += 1
     decide = nil
+    resumeWaiters()
+  }
+
+  /// Returns once `condition` holds; checked again after every present and dismiss.
+  func wait(until condition: @escaping () -> Bool) async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      if condition() {
+        continuation.resume()
+      } else {
+        waiters.append((condition, continuation))
+      }
+    }
+  }
+
+  private func resumeWaiters() {
+    let met = waiters.filter { $0.condition() }
+    waiters.removeAll { $0.condition() }
+    for waiter in met { waiter.continuation.resume() }
   }
 
   func presentHostKeyChanged(_ change: SSHHostKeyChange) {
@@ -459,10 +501,29 @@ extension SSHHostKeyTrustFlowTests {
 private final class FiredFlag: @unchecked Sendable {
   private let lock = NSLock()
   private var fired = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
 
   var isSet: Bool { lock.withLock { fired } }
 
-  func set() { lock.withLock { fired = true } }
+  func set() {
+    let waiting = lock.withLock {
+      fired = true
+      defer { waiters.removeAll() }
+      return waiters
+    }
+    for waiter in waiting { waiter.resume() }
+  }
+
+  /// Returns once `set()` was called.
+  func wait() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let done = lock.withLock {
+        if !fired { waiters.append(continuation) }
+        return fired
+      }
+      if done { continuation.resume() }
+    }
+  }
 }
 
 private final class AcceptedChannels: @unchecked Sendable {

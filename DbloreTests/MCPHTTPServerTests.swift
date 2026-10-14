@@ -66,12 +66,29 @@ struct MCPHTTPServerTests {
     return port
   }
 
+  /// A host stall can hold the main actor for a long time, so waits and requests get 120 s.
+  private static let stallTolerance: Duration = .seconds(120)
+
+  /// Waits on the status changes (no polling) until `expected` holds or the deadline passes.
   private func waitFor(
     _ controller: MCPServerController, _ expected: (MCPServerController.Status) -> Bool
   ) async throws {
-    let deadline = ContinuousClock.now + .seconds(30)
-    while !expected(controller.status), ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(20))
+    let deadline = ContinuousClock.now + Self.stallTolerance
+    while ContinuousClock.now < deadline {
+      // Reading inside the tracking subscribes before the check, so no change is missed
+      let (changes, continuation) = AsyncStream<Void>.makeStream()
+      let current = withObservationTracking {
+        controller.status
+      } onChange: {
+        continuation.finish()
+      }
+      if expected(current) { break }
+      let timer = Task {
+        try? await ContinuousClock().sleep(until: deadline)
+        continuation.finish()
+      }
+      for await _ in changes {}
+      timer.cancel()
     }
     #expect(expected(controller.status), "status: \(controller.status)")
   }
@@ -86,7 +103,11 @@ struct MCPHTTPServerTests {
     request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
     if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
     if let origin { request.setValue(origin, forHTTPHeaderField: "Origin") }
-    let session = URLSession(configuration: .ephemeral)
+    let timeout = TimeInterval(Self.stallTolerance.components.seconds)
+    request.timeoutInterval = timeout
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = timeout
+    let session = URLSession(configuration: configuration)
     defer { session.invalidateAndCancel() }
     let (data, response) = try await session.data(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? -1

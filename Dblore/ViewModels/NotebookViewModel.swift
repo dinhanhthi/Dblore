@@ -98,6 +98,9 @@ class NotebookViewModel {
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
+  /// Test hook: awaited where the commit's integer key lookup suspends, so a test can change the
+  /// page at that exact point. Nil in production.
+  @ObservationIgnored var keyLookupCheckpointForTesting: (@MainActor () async -> Void)?
   /// Global result row cap source (tests pin a value without touching the shared settings)
   @ObservationIgnored var globalRowCap: @MainActor () -> Int = { AppSettings.shared.resultRowCap }
   /// Current Run All batch and the connection epoch its first cell started on (see

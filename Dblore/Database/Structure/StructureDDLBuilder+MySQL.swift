@@ -11,7 +11,8 @@
 // rather than being lost. A rename alone is RENAME COLUMN on MySQL 8+ and MariaDB 10.5.2+.
 // Catalog text restated as is (COLUMN_TYPE, DEFAULT, generated expression, ON UPDATE) goes
 // through `checkedText` like typed text; text that fails throws rather than being sent. A spatial
-// column is never restated: its SRID is not loaded and MODIFY would drop it.
+// column is never restated: its SRID is not loaded and MODIFY would drop it. MariaDB refuses NOT
+// NULL on a generated column, so such a definition is refused there.
 // New constraints and indexes name columns as loaded; renamed ones are written with the new name.
 // A new CHECK naming a column renamed in the same batch is refused: the one ALTER TABLE checks
 // it against the new names.
@@ -177,7 +178,13 @@ nonisolated extension StructureDDLBuilder {
       try checkedCatalogText(expression, "generation expression", column: column)
       parts.append(
         "GENERATED ALWAYS AS (\(expression)) \(generated.isStored ? "STORED" : "VIRTUAL")")
-      if !isNullable { parts.append("NOT NULL") }
+      if !isNullable {
+        guard server.flavor == .mysql else {
+          throw StructureDDLError.unsupported(
+            "MariaDB does not allow NOT NULL on a generated column.")
+        }
+        parts.append("NOT NULL")
+      }
     } else {
       // Explicit NULL: a TIMESTAMP column is otherwise NOT NULL on some servers
       parts.append(isNullable ? "NULL" : "NOT NULL")

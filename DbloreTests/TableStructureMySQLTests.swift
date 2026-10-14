@@ -98,6 +98,8 @@ struct TableStructureMySQLTests {
       #expect(byName["ts_prefix"]?.keys == [.column("name")])
       if server == .mysql {
         #expect(byName["ts_expr"]?.keys == [.expression("(`m` + 1)")])
+        // MySQL's escaped quotes are undone
+        #expect(byName["ts_expr_q"]?.keys == [.expression(#"concat(`bs`,_utf8mb4'x\'y')"#)])
       }
     }
   }
@@ -140,8 +142,13 @@ struct TableStructureMySQLTests {
         }
         return nil
       }
-      #expect(checks.count == 2)
+      #expect(checks.count == 3)
       #expect(checks.contains { $0.0 == "ts_ck" && $0.1.contains("`n` > 0") })
+      // MySQL's escaped quotes are undone; MariaDB prints plain SQL
+      let quoted = checks.first { $0.0 == "ts_ck_q" }?.1
+      #expect(
+        quoted
+          == (server == .mysql ? #"(`bs` <> _utf8mb4'x\'y')"# : #"`bs` <> 'x\'y'"#))
       #expect(checks.contains { $0.0 != "ts_ck" && $0.1.contains("`m` >= 0") })
 
       let parent = try await introspector.tableStructure(
@@ -234,6 +241,7 @@ struct TableStructureMySQLTests {
         CONSTRAINT `ts fk` FOREIGN KEY (pb, pa) REFERENCES ts_parent (b, a)
           ON DELETE CASCADE ON UPDATE SET NULL,
         CONSTRAINT ts_ck CHECK (n > 0),
+        CONSTRAINT ts_ck_q CHECK (bs <> 'x''y'),
         INDEX ts_q (q),
         UNIQUE KEY `ts k` (n),
         CONSTRAINT `ts k` FOREIGN KEY (q) REFERENCES `ts child` (id)
@@ -245,6 +253,7 @@ struct TableStructureMySQLTests {
     ]
     if server == .mysql {
       statements.append("CREATE INDEX ts_expr ON \(db).`ts child` ((m + 1))")
+      statements.append("CREATE INDEX ts_expr_q ON \(db).`ts child` ((concat(bs, 'x''y')))")
     }
     return statements
   }

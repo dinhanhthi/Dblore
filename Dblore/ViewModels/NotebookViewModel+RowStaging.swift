@@ -335,6 +335,7 @@ extension NotebookViewModel {
   /// Fills integer keys that + Row could not, just before the batch is sent.
   private func fillMissingIntegerKeys() async {
     guard let column = integerPrimaryKeyColumn(), missingIntegerKey(column) else { return }
+    if let keyLookupCheckpointForTesting { await keyLookupCheckpointForTesting() }
     guard let start = await nextIntegerPrimaryKeyValue(column: column) else { return }
     _ = changeSet { $0.assignMissingIntegerKey(column, startingAt: start) }
   }
