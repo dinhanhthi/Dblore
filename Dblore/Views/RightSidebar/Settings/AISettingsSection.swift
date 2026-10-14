@@ -91,31 +91,49 @@ struct AISettingsSection: View {
   // MARK: - Cards
 
   private var providerControls: some View {
-    HStack(alignment: .center, spacing: Spacing.md) {
-      CapsuleDropdown(
-        title: kind.displayName,
-        width: 300,
-        accessibilityLabel: "Provider",
-        options: Array(AIProviderKind.allCases),
-        optionTitle: \.displayName,
-        isSelected: { $0 == kind },
-        onSelect: { kind = $0 }
-      )
-
-      if isActive {
-        HStack(spacing: Spacing.xs) {
-          Image(systemName: "checkmark.circle.fill")
-          Text("Active")
-        }
-        .font(.small)
-        .foregroundColor(.success)
-      } else {
-        Button("Set as active") {
-          settings.configuration.activeProvider = kind
-        }
-        .buttonStyle(FilledSecondaryButtonStyle())
-        .linkPointer()
+    // Wrap the status below the dropdown when the card is too narrow, so
+    // "Set as active" never word-wraps.
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .center, spacing: Spacing.md) {
+        providerDropdown
+        activeStatus
       }
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        providerDropdown
+        activeStatus
+      }
+    }
+  }
+
+  private var providerDropdown: some View {
+    CapsuleDropdown(
+      title: kind.displayName,
+      width: 300,
+      accessibilityLabel: "Provider",
+      options: Array(AIProviderKind.allCases),
+      optionTitle: \.displayName,
+      isSelected: { $0 == kind },
+      onSelect: { kind = $0 }
+    )
+  }
+
+  @ViewBuilder
+  private var activeStatus: some View {
+    if isActive {
+      HStack(spacing: Spacing.xs) {
+        Image(systemName: "checkmark.circle.fill")
+        Text("Active")
+      }
+      .font(.small)
+      .foregroundColor(.success)
+      .fixedSize()
+    } else {
+      Button("Set as active") {
+        settings.configuration.activeProvider = kind
+      }
+      .buttonStyle(FilledSecondaryButtonStyle())
+      .linkPointer()
+      .fixedSize()
     }
   }
 
