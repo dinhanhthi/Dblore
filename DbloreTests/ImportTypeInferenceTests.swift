@@ -54,5 +54,13 @@ struct ImportTypeInferenceTests {
       kinds.map { $0.sqlType(dialect: .sqlite) } == [
         "INTEGER", "REAL", "INTEGER", "TEXT", "TEXT", "TEXT",
       ])
+    #expect(
+      kinds.map { $0.sqlType(dialect: .mysql) } == [
+        "BIGINT", "DOUBLE", "BOOLEAN", "DATE", "DATETIME(6)", "LONGTEXT",
+      ])
+    #expect(
+      kinds.map { $0.sqlType(dialect: .duckdb) } == [
+        "bigint", "numeric", "boolean", "date", "timestamptz", "text",
+      ])
   }
 }

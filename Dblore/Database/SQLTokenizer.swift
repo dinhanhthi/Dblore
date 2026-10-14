@@ -25,10 +25,14 @@ nonisolated struct SQLTokenizer: Sendable {
   /// - Comments (single-line -- and nested multi-line /* */)
   /// SQLite strings are `'…'` with doubled quotes only, identifiers may use `"…"`, `[…]`,
   /// or backticks, block comments do not nest, and `$` is not a quote.
+  /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
   func splitStatements(_ sql: String) -> [String] {
     let scalars = Array(sql.unicodeScalars)
+    if dialect == .mysql {
+      return mysqlSplitStatements(scalars)
+    }
     var statements: [String] = []
     var start = 0
     var i = 0
@@ -44,9 +48,68 @@ nonisolated struct SQLTokenizer: Sendable {
     return statements
   }
 
-  /// PostgreSQL `splitStatements`. Callers that have no dialect keep this path.
-  static func splitStatements(_ sql: String) -> [String] {
-    SQLTokenizer().splitStatements(sql)
+  /// `splitStatements` using `dialect`. Callers that have no dialect keep PostgreSQL.
+  static func splitStatements(_ sql: String, dialect: SQLDialect = .postgresql) -> [String] {
+    SQLTokenizer(dialect: dialect).splitStatements(sql)
+  }
+
+  /// MySQL split: at the active delimiter (`;` until a `DELIMITER` line changes it), found
+  /// at any scalar of a word, number or symbol, as the `mysql` client does (so `END$$` ends at
+  /// `$$`). A `DELIMITER x` line at the start of a statement sets it and is not emitted.
+  private func mysqlSplitStatements(_ scalars: [Unicode.Scalar]) -> [String] {
+    var statements: [String] = []
+    var delimiter: [Unicode.Scalar] = [";"]
+    var start = 0
+    var hasContent = false
+    var i = 0
+    scan: while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      switch lexeme.kind {
+      case .whitespace, .comment:
+        i = lexeme.range.upperBound
+        continue scan
+      case .word, .number, .symbol:
+        if !hasContent, let directive = Self.delimiterDirective(scalars, lexeme.range) {
+          Self.appendTrimmed(scalars, start..<i, to: &statements)
+          delimiter = directive.delimiter
+          start = directive.end
+          i = directive.end
+          continue scan
+        }
+        for p in lexeme.range where scalars[p...].starts(with: delimiter) {
+          Self.appendTrimmed(scalars, start..<p, to: &statements)
+          start = p + delimiter.count
+          i = start
+          hasContent = false
+          continue scan
+        }
+      case .quoted, .dollarString, .executableComment:
+        break
+      }
+      hasContent = true
+      i = lexeme.range.upperBound
+    }
+    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
+    return statements
+  }
+
+  /// If the word at `range` is `DELIMITER` (any case) followed by spaces and a delimiter,
+  /// returns that delimiter (up to the next whitespace) and the offset after the line.
+  private static func delimiterDirective(
+    _ scalars: [Unicode.Scalar], _ range: Range<Int>
+  ) -> (delimiter: [Unicode.Scalar], end: Int)? {
+    guard asciiUppercased(text(scalars, range)) == "DELIMITER" else { return nil }
+    var j = range.upperBound
+    while j < scalars.count, scalars[j] == " " || scalars[j] == "\t" { j += 1 }
+    guard j > range.upperBound else { return nil }
+    var delimiter: [Unicode.Scalar] = []
+    while j < scalars.count, !isWhitespace(scalars[j]) {
+      delimiter.append(scalars[j])
+      j += 1
+    }
+    guard !delimiter.isEmpty else { return nil }
+    while j < scalars.count, scalars[j] != "\n" { j += 1 }
+    return (delimiter, min(j + 1, scalars.count))
   }
 
   /// Lex a single SQL statement into tokens, dropping whitespace and comments.
@@ -55,6 +118,7 @@ nonisolated struct SQLTokenizer: Sendable {
   /// `depth` is the parenthesis nesting level: `(`/`)` carry the outer depth, tokens
   /// between them carry outer + 1.
   /// On PostgreSQL, block comments nest and line comments end at CR or LF.
+  /// MySQL executable comments (`/*! */`, `/*M! */`) are kept as `.executableComment` tokens.
   func tokens(_ sql: String) -> [SQLToken] {
     let scalars = Array(sql.unicodeScalars)
     var result: [SQLToken] = []
@@ -72,6 +136,8 @@ nonisolated struct SQLTokenizer: Sendable {
         result.append(SQLToken(kind: kind, text: content, depth: depth))
       case .dollarString:
         result.append(SQLToken(kind: .string, text: raw, depth: depth))
+      case .executableComment:
+        result.append(SQLToken(kind: .executableComment, text: raw, depth: depth))
       case .symbol:
         if scalars[i] == ")" { depth = max(0, depth - 1) }
         result.append(SQLToken(kind: .symbol, text: raw, depth: depth))
@@ -82,9 +148,9 @@ nonisolated struct SQLTokenizer: Sendable {
     return result
   }
 
-  /// PostgreSQL `tokens`. Callers that have no dialect keep this path.
-  static func tokens(_ sql: String) -> [SQLToken] {
-    SQLTokenizer().tokens(sql)
+  /// `tokens` using `dialect`. Callers that have no dialect keep PostgreSQL.
+  static func tokens(_ sql: String, dialect: SQLDialect = .postgresql) -> [SQLToken] {
+    SQLTokenizer(dialect: dialect).tokens(sql)
   }
 
   /// `text` with only ASCII `a`-`z` mapped to `A`-`Z`, as PostgreSQL folds identifiers
@@ -139,6 +205,9 @@ nonisolated struct SQLToken: Sendable, Equatable {
     /// so where the string ends is ambiguous and the classifier must fail closed.
     /// PostgreSQL only: SQLite and DuckDB plain strings have no backslash escapes.
     case backslashString
+    /// MySQL `/*! ... */` or `/*M! ... */` (raw text). The server runs its content, so the
+    /// classifier must fail closed.
+    case executableComment
     /// Any other single (ASCII) scalar, including `(`, `)`, `,`, `=`
     case symbol
   }

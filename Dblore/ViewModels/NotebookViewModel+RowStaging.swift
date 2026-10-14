@@ -193,15 +193,19 @@ extension NotebookViewModel {
   /// Confirms the preview in Safe Mode when needed, then sends the bound batch.
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
   func commitStaged() async {
-    guard let target = stagedEditTarget else { return }
-    if let set = dataViewer?.changeSet, let reason = set.invalidated(by: target) {
-      dataViewer?.changeSet = nil
-      undoManager.removeAllActions()
-      showToast(reason, type: .warning)
+    guard discardsInvalidatedStagedSet() == false else { return }
+    await fillMissingIntegerKeys()
+    // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
+    // changed (discard with the warning). Only a live, valid set may clear silently below.
+    guard discardsInvalidatedStagedSet() == false else { return }
+    guard let batch = stagedBatch() else {
+      // MySQL skips edits that write the loaded value: nothing left to send is a commit.
+      if hasPendingStagedChanges {
+        dataViewer?.changeSet = nil
+        undoManager.removeAllActions()
+      }
       return
     }
-    await fillMissingIntegerKeys()
-    guard let batch = stagedBatch() else { return }
     if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
       pendingExplainSQL = nil
       pendingStagedBatch = batch
@@ -209,6 +213,19 @@ extension NotebookViewModel {
     }
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
+  }
+
+  /// Nil without a live target (nothing to do, the set stays). True when the set no longer
+  /// matches the target: it is dropped with a warning. False: the set can be sent.
+  private func discardsInvalidatedStagedSet() -> Bool? {
+    guard let target = stagedEditTarget else { return nil }
+    guard let set = dataViewer?.changeSet, let reason = set.invalidated(by: target) else {
+      return false
+    }
+    dataViewer?.changeSet = nil
+    undoManager.removeAllActions()
+    showToast(reason, type: .warning)
+    return true
   }
 
   /// Sends a batch the user already confirmed, or one that Safe Mode did not need to confirm.
@@ -308,7 +325,7 @@ extension NotebookViewModel {
   }
 
   /// Values for one new row: the next integer key, or empty when the database fills that column.
-  private func automaticIntegerKeyValues() async -> [String: CellValue] {
+  func automaticIntegerKeyValues() async -> [String: CellValue] {
     guard let column = integerPrimaryKeyColumn(),
       let value = await nextIntegerPrimaryKeyValue(column: column)
     else { return [:] }

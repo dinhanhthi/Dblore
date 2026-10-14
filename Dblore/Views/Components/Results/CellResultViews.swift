@@ -7,6 +7,14 @@
 
 import SwiftUI
 
+extension CellResult {
+  /// No rows to show as a grid: the no-result message. PostgreSQL keeps no columns without a
+  /// row; MySQL keeps them (column origins), so its zero-row result shows the same message.
+  nonisolated func showsNoResult(dialect: SQLDialect) -> Bool {
+    rows.isEmpty && (columns.isEmpty || dialect == .mysql)
+  }
+}
+
 // MARK: - Result Area Container
 
 struct ResultAreaView: View {
@@ -50,7 +58,8 @@ struct ResultAreaView: View {
           result: result,
           isQueryCopied: $isQueryCopied,
           viewModel: viewModel,
-          cellId: cellId
+          cellId: cellId,
+          dialect: viewModel.sqlDialect
         )
 
         if let error = result.error {
@@ -65,8 +74,8 @@ struct ResultAreaView: View {
         } else if let affectedRows = result.affectedRows, affectedRows > 0, result.rows.isEmpty {
           // Success message for UPDATE/DELETE/INSERT (only when no result table)
           SuccessResultView(affectedRows: affectedRows, executionTime: result.executionTime)
-        } else if result.rows.isEmpty && result.columns.isEmpty {
-          // Empty result (no rows and no columns) - e.g., comment-only queries
+        } else if result.showsNoResult(dialect: viewModel.sqlDialect) {
+          // Empty result (no rows) - e.g., comment-only queries
           EmptyResultView()
         } else {
           // Result table with metadata footer
@@ -84,6 +93,7 @@ struct ResultAreaView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.tableRowAlternate)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md)))
       .padding(.bottom, Spacing.sm)
       .padding(.trailing, Spacing.md)
     }
@@ -242,16 +252,17 @@ struct ResultMetadataView: View {
   /// Determine color for affected rows text based on query type
   /// - Green for INSERT/UPDATE queries with affected rows > 0
   /// - Red for DELETE queries with affected rows > 0
-  /// - Subtle gray for SELECT, 0 affected rows, or when no query info available
+  /// - Subtle gray for SELECT, 0 affected rows, or when no query info or view model (and so no
+  ///   dialect) is available
   private func affectedRowsColor(for result: CellResult) -> Color {
     let affectedRows = result.affectedRows ?? 0
 
     // If no rows affected, use default gray color
-    guard affectedRows > 0, let query = result.sourceQuery else {
+    guard affectedRows > 0, let query = result.sourceQuery, let viewModel else {
       return .foregroundSubtle
     }
 
-    switch SQLTokenizer.tokens(query).first?.keyword {
+    switch SQLTokenizer.tokens(query, dialect: viewModel.sqlDialect).first?.keyword {
     case "DELETE": return .red
     case "INSERT", "UPDATE": return .green
     default: return .foregroundSubtle
@@ -324,10 +335,7 @@ struct ResultMetadataView: View {
               Capsule()
                 .fill(Color.inputBackground)
             )
-            .overlay(
-              Capsule()
-                .stroke(Color.border, lineWidth: 1)
-            )
+            .overlay(HairlineBorder(shape: Capsule()))
           }
           .id(statementResults.map { $0.id })
           .buttonStyle(.plain)
@@ -404,6 +412,8 @@ struct ResultQueryFooterView: View {
   @Binding var isQueryCopied: Bool
   var viewModel: NotebookViewModel?
   var cellId: UUID?
+  /// Connection dialect of the copy bar's INSERT export.
+  let dialect: SQLDialect
 
   var body: some View {
     // Don't show if setting is enabled to hide this section (the query is sent as written)
@@ -414,6 +424,7 @@ struct ResultQueryFooterView: View {
         viewModel: viewModel,
         cellId: cellId,
         queryIndex: nil,  // Notebook mode always uses nil
+        dialect: dialect,
         iconOnlyActions: true
       )
       .frame(height: ResultDisplayPicker.height)

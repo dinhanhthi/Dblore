@@ -174,6 +174,35 @@ struct DatabaseSessionContractTests {
     #expect(current.statements.contains("SELECT * FROM t"))
   }
 
+  @Test("MySQL: a capped read keeps the session (no cursor, no reset, same epoch)")
+  func mySQLCappedReadKeepsSession() async throws {
+    let columns = [ColumnInfo(name: "id", type: "INT")]
+    let rows = (1...5).map { [CellValue.int($0)] }
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: DatabaseType.mysql.capabilities, columns: columns, rows: rows)
+    let connection = manager(factory)
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: .mysql, host: "fake", port: 1, database: "db", username: "u",
+        password: "p", sslMode: .disable, safeMode: .silent, protectedMode: false))
+    let epoch = await connection.connectionEpoch
+
+    let capped = try await connection.execute(
+      userSQL: "SELECT * FROM t", policy: open, maxRows: 2)
+    #expect(capped.rows.count == 2)
+    #expect(capped.truncated)
+    #expect(capped.sessionReset == false)
+
+    _ = try await connection.execute(userSQL: "START TRANSACTION", policy: open)
+    let inside = try await connection.execute(
+      userSQL: "SELECT * FROM t", policy: open, maxRows: 2)
+    #expect(inside.truncated)
+    #expect(await connection.connectionEpoch == epoch)
+    #expect(factory.sessions.count == 1)
+    #expect(factory.sessions[0].openCursorCount == 0)
+    #expect(factory.sessions[0].didClose == false)
+  }
+
   @Test("Protected commit and rollback send no SQL until confirmed")
   func protectedCommitAndRollbackWaitUntilConfirmed() async throws {
     let factory = FakeDatabaseSessionFactory(capabilities: .contract())

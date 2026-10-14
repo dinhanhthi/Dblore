@@ -297,7 +297,8 @@ struct AffectedRowsTests {
 @Suite("Statement route (unit)")
 struct StatementRouteTests {
   private func route(_ sql: String) -> StatementRoute {
-    StatementRoute.route(for: SQLStatementClassifier.classifyStatement(sql))
+    StatementRoute.route(
+      for: SQLStatementClassifier.classifyStatement(sql), dialect: .postgresql)
   }
 
   @Test("Routes by classified kind and RETURNING")

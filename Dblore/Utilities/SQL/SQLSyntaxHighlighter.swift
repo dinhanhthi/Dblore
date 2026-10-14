@@ -74,6 +74,17 @@ enum SQLSyntaxHighlighter {
     "EXPLAIN", "ANALYZE", "VERBOSE", "GRANT", "REVOKE", "TO", "ROLE",
   ]
 
+  /// MySQL-only keywords, highlighted only for the MySQL dialect. `REPLACE` stays a function
+  /// when followed by `(`.
+  static let mysqlKeywords: Set<String> = [
+    "SHOW", "DESCRIBE", "REPLACE", "IGNORE", "DUPLICATE", "USE", "DELIMITER",
+    "AUTO_INCREMENT", "ENGINE", "UNSIGNED", "ZEROFILL", "CHARSET", "COLLATE",
+    "MODIFY", "CHANGE", "RENAME", "COLUMN", "COLUMNS", "TABLES", "DATABASES", "STATUS",
+    "VARIABLES", "PROCESSLIST", "LOCK", "UNLOCK", "STRAIGHT_JOIN", "SQL_CALC_FOUND_ROWS",
+    "HIGH_PRIORITY", "LOW_PRIORITY", "DELAYED", "QUICK", "FORCE", "IF", "PROCEDURE",
+    "FUNCTION", "TRIGGER", "EVENT", "CALL", "DIV", "XOR", "REGEXP", "RLIKE",
+  ]
+
   static let functions: Set<String> = [
     // Aggregate
     "COUNT", "SUM", "AVG", "MIN", "MAX", "ARRAY_AGG", "STRING_AGG",
@@ -263,13 +274,21 @@ enum SQLSyntaxHighlighter {
 
   // MARK: - Block Scanner
 
+  /// What a block span is: comments and strings are colored, quoted identifiers (MySQL
+  /// backticks) are only protected from keyword coloring.
+  enum BlockKind: Equatable {
+    case comment
+    case string
+    case identifier
+  }
+
   /// Comments and strings inside `range`, in order. Linear replacement of the regex
   /// `--[^\n]*|/\*[\s\S]*?\*/|'(?:[^'\\]|\\.)*'|\$\$[\s\S]*?\$\$` (leftmost match wins, scanning
   /// resumes after each match); an unterminated `/*`, `'` or `$$` matches nothing.
   static func scanBlockSpans(
     in text: NSString, range: NSRange, dialect: SQLDialect = .postgresql
-  ) -> [(range: NSRange, isComment: Bool)] {
-    if dialect == .sqlite || dialect == .duckdb {
+  ) -> [(range: NSRange, kind: BlockKind)] {
+    if dialect == .sqlite || dialect == .duckdb || dialect == .mysql {
       return lexedBlockSpans(in: text, range: range, dialect: dialect)
     }
     guard range.length > 0 else { return [] }
@@ -277,7 +296,7 @@ enum SQLSyntaxHighlighter {
     text.getCharacters(&buffer, range: range)
     let n = buffer.count
     let base = range.location
-    var result: [(range: NSRange, isComment: Bool)] = []
+    var result: [(range: NSRange, kind: BlockKind)] = []
 
     // A failed closer search from i also fails from every later start, so remember it
     var noBlockCloser = false
@@ -337,7 +356,8 @@ enum SQLSyntaxHighlighter {
       }
 
       if let end {
-        result.append((NSRange(location: base + i, length: end - i), isComment))
+        result.append(
+          (NSRange(location: base + i, length: end - i), isComment ? .comment : .string))
         i = max(end, i + 1)
       } else {
         i += 1
@@ -348,10 +368,13 @@ enum SQLSyntaxHighlighter {
 
   /// Comments and strings from the `dialect` tokenizer. SQLite: `'…'` only (dollar quotes are
   /// not strings). DuckDB: `'…'`, `E'…'` and dollar quotes. Neither lets a backslash escape a
-  /// quote in a plain string. Ranges are UTF-16, matching `scanBlockSpans`.
+  /// quote in a plain string. MySQL: `'…'` and `"…"` with backslash escapes, `#` and `-- `
+  /// comments, backtick identifiers (`.identifier`); the content of an executable comment
+  /// (`/*!…*/`) runs on the server, so it is scanned as SQL (only its opener is skipped).
+  /// Ranges are UTF-16, matching `scanBlockSpans`.
   private static func lexedBlockSpans(
     in text: NSString, range: NSRange, dialect: SQLDialect
-  ) -> [(range: NSRange, isComment: Bool)] {
+  ) -> [(range: NSRange, kind: BlockKind)] {
     guard range.length > 0 else { return [] }
     let substring = text.substring(with: range)
     let scalars = Array(substring.unicodeScalars)
@@ -364,27 +387,41 @@ enum SQLSyntaxHighlighter {
     utf16At[scalars.count] = unit
 
     let tokenizer = SQLTokenizer(dialect: dialect)
-    var result: [(range: NSRange, isComment: Bool)] = []
+    var result: [(range: NSRange, kind: BlockKind)] = []
     var i = 0
     while i < scalars.count {
       let lexeme = tokenizer.lexeme(in: scalars, at: i)
       let end = lexeme.range.upperBound
-      let isString: Bool
+      let kind: BlockKind
       switch lexeme.kind {
       case .comment:
-        isString = false
+        kind = .comment
       case .quoted(.string, _), .quoted(.backslashString, _), .dollarString:
-        isString = true
+        kind = .string
+      case .quoted(.quotedIdentifier, _) where dialect == .mysql:
+        kind = .identifier
+      case .executableComment:
+        i = executableCommentOpenerEnd(scalars, at: i)
+        continue
       default:
         i = end > i ? end : i + 1
         continue
       }
       let location = range.location + utf16At[lexeme.range.lowerBound]
       let length = utf16At[end] - utf16At[lexeme.range.lowerBound]
-      result.append((NSRange(location: location, length: length), !isString))
+      result.append((NSRange(location: location, length: length), kind))
       i = end > i ? end : i + 1
     }
     return result
+  }
+
+  /// Offset after `/*!` or `/*M!` and its optional version digits
+  private static func executableCommentOpenerEnd(_ s: [Unicode.Scalar], at i: Int) -> Int {
+    var j = i + 2
+    if j < s.count, s[j] == "M" { j += 1 }
+    j += 1  // "!"
+    while j < s.count, ("0"..."9").contains(s[j]) { j += 1 }
+    return min(j, s.count)
   }
 
   // MARK: - Token Highlighting
@@ -403,9 +440,14 @@ enum SQLSyntaxHighlighter {
     // 1. Block tokens, colored first and remembered as protected spans (sorted, disjoint)
     var spans: [NSRange] = []
     for block in scanBlockSpans(in: ns, range: range, dialect: dialect) {
-      storage.addAttribute(
-        .foregroundColor, value: block.isComment ? palette.comment : palette.string,
-        range: block.range)
+      switch block.kind {
+      case .comment:
+        storage.addAttribute(.foregroundColor, value: palette.comment, range: block.range)
+      case .string:
+        storage.addAttribute(.foregroundColor, value: palette.string, range: block.range)
+      case .identifier:
+        break
+      }
       spans.append(block.range)
     }
 
@@ -417,6 +459,7 @@ enum SQLSyntaxHighlighter {
 
     // 3. Words: type > function followed by "(" > keyword
     let rangeEnd = NSMaxRange(range)
+    let isMySQL = dialect == .mysql
     wordRegex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
       guard let r = match?.range, !isProtected(r.location, in: spans) else { return }
       let upper = ns.substring(with: r).uppercased()
@@ -432,7 +475,7 @@ enum SQLSyntaxHighlighter {
       }
       if isType {
         storage.addAttribute(.foregroundColor, value: palette.function, range: r)
-      } else if keywords.contains(upper) {
+      } else if keywords.contains(upper) || (isMySQL && mysqlKeywords.contains(upper)) {
         storage.addAttribute(.foregroundColor, value: palette.keyword, range: r)
       }
     }

@@ -38,15 +38,66 @@ extension DatabaseConnectionManager {
 
   /// Same lookup as `fetchEditTable(tableName:)`. A SQLite `tableID` supplies the real schema
   /// and table: unquoted names in the SQL text are folded to uppercase by the tokenizer, and
-  /// SQLite's catalog match is case-sensitive.
+  /// SQLite's catalog match is case-sensitive. A MySQL `tableID` supplies the exact names its
+  /// origins were resolved with (`mysqlTableColumns`); only the connected database is editable,
+  /// and a table that resolves to another identity is not editable.
   func fetchEditTable(tableName: String, tableID: TableRef) async throws -> EditTable? {
     let named: String
     if let parts = tableID.sqliteComponents {
       named = "\(parts.schema).\(parts.table)"
+    } else if config?.databaseType == .mysql {
+      guard let names = mysqlTableColumns[tableID], names.database == config?.database else {
+        return nil
+      }
+      let table = try await fetchEditTable(named: names.table)
+      return table?.resolvedTableRef == tableID ? table : nil
     } else {
       named = tableName
     }
     return try await fetchEditTable(named: named)
+  }
+
+  /// Whether `relation` (`CellUpdateStatement.singleRelation` text) names the table of
+  /// `tableID`. Always true for engines whose origin identity is the table the server read.
+  /// MySQL: the identity comes from the column definition, and MariaDB reports a view's
+  /// columns with the BASE table's database and the VIEW's name, so a view in another
+  /// database can name a same-named base table of the connected one. The table part must
+  /// equal the identity's table, and the database part (or the current database, `USE` may
+  /// have changed it) its database. Backticked parts compare exactly, unquoted ones without
+  /// ASCII case (the tokenizer uppercases words). Fails closed.
+  func relationNamesTable(_ relation: String, tableID: TableRef) async -> Bool {
+    guard config?.databaseType == .mysql else { return true }
+    guard let names = mysqlTableColumns[tableID] else { return false }
+    let tokens = SQLTokenizer.tokens(relation, dialect: .mysql)
+    func matches(_ token: SQLToken, _ name: String) -> Bool {
+      switch token.kind {
+      case .quotedIdentifier:
+        return Array(token.text.unicodeScalars) == Array(name.unicodeScalars)
+      case .word:
+        let folded = SQLTokenizer.asciiUppercased(name)
+        return Array(token.text.unicodeScalars) == Array(folded.unicodeScalars)
+      default:
+        return false
+      }
+    }
+    switch tokens.count {
+    case 1:
+      guard matches(tokens[0], names.table) else { return false }
+      let current = try? await withSession { session in
+        var database: String?
+        for try await row in try await session.query("SELECT DATABASE()", binds: []).rows {
+          if case .string(let name) = row.first { database = name }
+        }
+        return database
+      }
+      guard let current else { return false }
+      return Array(current.unicodeScalars) == Array(names.database.unicodeScalars)
+    case 3:
+      return tokens[1].isSymbol(".") && matches(tokens[0], names.database)
+        && matches(tokens[2], names.table)
+    default:
+      return false
+    }
   }
 
   private func fetchEditTable(named tableName: String) async throws -> EditTable? {

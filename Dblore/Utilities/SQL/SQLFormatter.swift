@@ -119,6 +119,9 @@ nonisolated enum SQLFormatter {
         // Where it ends depends on standard_conforming_strings: fail closed (no items, so
         // `format` returns its input unchanged)
         return []
+      case .executableComment:
+        // MySQL runs its content: leave the text unformatted
+        return []
       case .quoted, .dollarString:
         kind = .literal
       case .symbol:

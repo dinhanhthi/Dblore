@@ -169,6 +169,43 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet == nil)
   }
 
+  @Test("A page reload during the commit's key lookup keeps the staged set")
+  func reloadDuringKeyLookupKeepsTheSet() async {
+    let viewModel = makeViewModel(primaryKey: ["id"])
+    #expect(viewModel.stageInsert() == nil)
+    let loaded = viewModel.editorResult
+    // The commit runs until the key lookup awaits the connection manager; the page then reloads.
+    let commit = Task { await viewModel.commitStaged() }
+    await Task.yield()
+    viewModel.editorResult = nil
+
+    await commit.value
+
+    #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
+    viewModel.editorResult = loaded
+    #expect(viewModel.hasPendingStagedChanges)
+  }
+
+  @Test("A table change during the commit's key lookup discards with a warning")
+  func tableChangeDuringKeyLookupWarns() async {
+    let viewModel = makeViewModel(primaryKey: ["id"])
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    #expect(viewModel.stageInsert() == nil)
+    var changed = viewModel.editorResult
+    changed?.editTarget = EditTarget(
+      qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: ["id"],
+      connectionEpoch: 5, updateOnly: true)
+    let commit = Task { await viewModel.commitStaged() }
+    await Task.yield()
+    viewModel.editorResult = changed
+
+    await commit.value
+
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    #expect(toasts.contains { $0.contains("table changed") })
+  }
+
   private static let usersID = TableRef.postgresql(oid: 1)
 
   private func makeViewModel(

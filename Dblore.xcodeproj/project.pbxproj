@@ -15,6 +15,11 @@
 		D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC392EF71234009A0E5A /* Tokenizers */; };
 		D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */; };
 		D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC422EF71234009A0E5A /* NIOSSH */; };
+		D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC452EF71234009A0E5A /* MySQLNIO */; };
+		D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC472EF71234009A0E5A /* NIOCore */; };
+		D3E0FC482EF71234009A0E5A /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC492EF71234009A0E5A /* NIOHTTP1 */; };
+		D3E0FC4A2EF71234009A0E5A /* NIOPosix in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC4B2EF71234009A0E5A /* NIOPosix */; };
+		D3E0FC4C2EF71234009A0E5A /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC4F2EF71234009A0E5A /* MCP */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +85,11 @@
 				D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */,
 				D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */,
 				D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */,
+				D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */,
+				D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */,
+				D3E0FC482EF71234009A0E5A /* NIOHTTP1 in Frameworks */,
+				D3E0FC4A2EF71234009A0E5A /* NIOPosix in Frameworks */,
+				D3E0FC4C2EF71234009A0E5A /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -165,6 +175,11 @@
 				D3E0FC392EF71234009A0E5A /* Tokenizers */,
 				D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */,
 				D3E0FC422EF71234009A0E5A /* NIOSSH */,
+				D3E0FC452EF71234009A0E5A /* MySQLNIO */,
+				D3E0FC472EF71234009A0E5A /* NIOCore */,
+				D3E0FC492EF71234009A0E5A /* NIOHTTP1 */,
+				D3E0FC4B2EF71234009A0E5A /* NIOPosix */,
+				D3E0FC4F2EF71234009A0E5A /* MCP */,
 			);
 			productName = Dblore;
 			productReference = D3E0FB932EF70DBB009A0E5A /* Dblore.app */;
@@ -205,6 +220,9 @@
 				D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */,
 				D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */,
 				D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+				D3E0FC442EF71234009A0E5A /* XCRemoteSwiftPackageReference "mysql-nio" */,
+				D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */,
+				D3E0FC4E2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D3E0FB942EF70DBB009A0E5A /* Products */;
@@ -615,6 +633,30 @@
 				minimumVersion = 0.15.0;
 			};
 		};
+		D3E0FC442EF71234009A0E5A /* XCRemoteSwiftPackageReference "mysql-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/dinhanhthi/mysql-nio";
+			requirement = {
+				kind = revision;
+				revision = ba130af51effec1d98fe6da343f9eae24c6078a6;
+			};
+		};
+		D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-nio";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 2.103.0;
+			};
+		};
+		D3E0FC4E2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.12.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -657,6 +699,31 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
 			productName = NIOSSH;
+		};
+		D3E0FC452EF71234009A0E5A /* MySQLNIO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC442EF71234009A0E5A /* XCRemoteSwiftPackageReference "mysql-nio" */;
+			productName = MySQLNIO;
+		};
+		D3E0FC472EF71234009A0E5A /* NIOCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOCore;
+		};
+		D3E0FC492EF71234009A0E5A /* NIOHTTP1 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOHTTP1;
+		};
+		D3E0FC4B2EF71234009A0E5A /* NIOPosix */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */;
+			productName = NIOPosix;
+		};
+		D3E0FC4F2EF71234009A0E5A /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D3E0FC4E2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

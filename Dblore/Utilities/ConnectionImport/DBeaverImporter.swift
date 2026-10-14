@@ -2,7 +2,7 @@
 //  DBeaverImporter.swift
 //  Dblore
 //
-//  Imports PostgreSQL connections from a DBeaver `.dbeaver` workspace folder: `data-sources.json`
+//  Imports PostgreSQL and MySQL/MariaDB connections from a DBeaver `.dbeaver` workspace folder: `data-sources.json`
 //  plus the optional encrypted `credentials-config.json`. Both files are external input: sizes are
 //  bounded, decrypted content is never logged, and warnings never carry secret values.
 //
@@ -13,6 +13,9 @@
 //    "network/<handlerId>": {user, password} } }`; handlers may also store user/password inline.
 //  - `SSHConstants`: `authType` is PASSWORD, PUBLIC_KEY or AGENT. `PostgreConstants.PROP_SSL_MODE`
 //    is `sslMode` on the `postgre_ssl` handler.
+//  - MySQL plugin: provider `mysql` for every driver (`mysql8`, `mysql5`, `mysql3`, `mysql_ndb`,
+//    `mariaDB`). `MySQLConstants.HANDLER_SSL` is `mysql_ssl`, with the booleans `ssl.require` and
+//    `ssl.verify.server`; `MySQLDataSource.initSSL` turns them into Connector/J settings.
 //
 
 import CommonCrypto
@@ -180,7 +183,7 @@ nonisolated enum DBeaverImporter {
 
     let provider = string(entry["provider"]) ?? ""
     let driver = string(entry["driver"]) ?? ""
-    guard provider.lowercased() == "postgresql", driver.lowercased().contains("postgres") else {
+    guard let engine = engine(provider: provider, driver: driver) else {
       return .failure(
         Skipped(
           message:
@@ -192,15 +195,29 @@ nonisolated enum DBeaverImporter {
     guard !host.isEmpty else {
       return .failure(Skipped(message: "Skipped \(label): no host (URL-only connection)."))
     }
-    guard let port = port(configuration["port"], default: PostgresURIParser.defaultPort) else {
+    let defaultPort: Int
+    switch engine {
+    case .mysql: defaultPort = engine.defaultPort
+    case .postgresql, .sqlite, .duckdb: defaultPort = PostgresURIParser.defaultPort
+    }
+    guard let port = port(configuration["port"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
     }
-    let database = string(configuration["database"]).flatMap { $0.isEmpty ? nil : $0 } ?? "postgres"
+    let configuredDatabase = string(configuration["database"]).flatMap { $0.isEmpty ? nil : $0 }
     let login = secrets["#connection"]
     let username = nonEmpty(login?.user) ?? string(configuration["user"]) ?? ""
     let password = nonEmpty(login?.password) ?? nonEmpty(configuration["password"] as? String)
 
     var warnings: [String] = []
+    let database: String
+    switch engine {
+    case .mysql:
+      // DBeaver allows a MySQL connection without a database; flag it in the preview.
+      database = configuredDatabase ?? ""
+      if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
+    case .postgresql, .sqlite, .duckdb:
+      database = configuredDatabase ?? "postgres"
+    }
     if let authModel = string(configuration["auth-model"]), !authModel.isEmpty,
       authModel != "native"
     {
@@ -210,7 +227,14 @@ nonisolated enum DBeaverImporter {
     }
 
     let handlers = configuration["handlers"] as? [String: Any] ?? [:]
-    let sslMode = sslMode(handlers: handlers, warnings: &warnings)
+    let sslMode: SSLMode
+    switch engine {
+    case .mysql:
+      sslMode = mysqlSSLMode(
+        handlers: handlers, isMariaDB: driver.lowercased() == "mariadb", warnings: &warnings)
+    case .postgresql, .sqlite, .duckdb:
+      sslMode = self.sslMode(handlers: handlers, warnings: &warnings)
+    }
 
     var sshTunnel: SSHTunnelConfig?
     var sshCredential: SSHStoredCredential?
@@ -227,12 +251,44 @@ nonisolated enum DBeaverImporter {
       ? ImportedConnection.defaultName(username: username, host: host, database: database)
       : rawName
     let config = ConnectionConfig(
-      databaseType: .postgresql, host: host, port: port, database: database, username: username,
+      databaseType: engine, host: host, port: port, database: database, username: username,
       sslMode: sslMode, sshTunnel: sshTunnel, name: name)
     return .success(
       ImportedConnection(
         config: config, password: password, sshCredential: sshCredential, source: .dbeaver,
         warnings: warnings))
+  }
+
+  /// PostgreSQL drivers, or MySQL plugin drivers (StarRocks and other derived engines are
+  /// skipped). Nil for anything else.
+  private static func engine(provider: String, driver: String) -> DatabaseType? {
+    let driver = driver.lowercased()
+    switch provider.lowercased() {
+    case "postgresql" where driver.contains("postgres"): return .postgresql
+    case "mysql" where driver.hasPrefix("mysql") || driver == "mariadb": return .mysql
+    default: return nil
+    }
+  }
+
+  /// Mirrors `MySQLDataSource.initSSL`: Connector/J maps `verifyServerCertificate` to VERIFY_CA
+  /// and `requireSSL` to REQUIRED; MariaDB's driver requires TLS and verifies the host unless
+  /// it trusts the server certificate. No enabled handler keeps the app default.
+  private static func mysqlSSLMode(
+    handlers: [String: Any], isMariaDB: Bool, warnings: inout [String]
+  ) -> SSLMode {
+    guard let handler = handlers["mysql_ssl"] as? [String: Any], bool(handler["enabled"]) ?? true
+    else { return .prefer }
+    let properties = handler["properties"] as? [String: Any] ?? [:]
+    let hasCertificate = ["ssl.ca.cert", "ssl.client.cert", "ssl.client.key"].contains {
+      !(string(properties[$0]) ?? "").isEmpty
+    }
+    if hasCertificate {
+      warnings.append("SSL certificates not imported; choose them again after import.")
+    }
+    let verify = bool(properties["ssl.verify.server"]) ?? false
+    if isMariaDB { return verify ? .verifyFull : .require }
+    if verify { return .verifyCa }
+    return bool(properties["ssl.require"]) == true ? .require : .prefer
   }
 
   private static func sslMode(handlers: [String: Any], warnings: inout [String]) -> SSLMode {

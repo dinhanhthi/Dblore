@@ -96,6 +96,7 @@ extension DatabaseConnectionManager {
       // edit tables (see `cachedEditTable`)
       if ProtectedTransactionRules.invalidatesEditTables(statement) {
         editTableCache.removeAll()
+        mysqlTableColumns.removeAll()
       }
       // BEGIN suspended: the connection may have changed meanwhile
       try refuseIfSessionChanged(
@@ -113,6 +114,7 @@ extension DatabaseConnectionManager {
         }
         if !protectedMode {
           noteUserTransaction(after: statement, succeeded: false)
+          await confirmUserTransactionWithServer(after: statement, succeeded: false)
         }
         throw await transactionFailure(error, openedHere: openedHere)
       }
@@ -127,10 +129,12 @@ extension DatabaseConnectionManager {
               nonTransactional: statement.nonTransactional,
               resetsSessionBrakes: statement.resetsSessionBrakes,
               changesPrivileges: statement.changesPrivileges, createsTable: statement.createsTable),
-            affectedRows: statement.kind == .dml ? result.affectedRows : nil))
+            affectedRows: statement.kind == .dml ? result.affectedRows : nil,
+            dialect: Self.dialect(of: config)))
       }
       if !protectedMode {
         noteUserTransaction(after: statement, succeeded: true)
+        await confirmUserTransactionWithServer(after: statement, succeeded: true)
       }
       noteSchemaChange(statement)
       result = await resetSessionIfCapped(result, statement: statement)
@@ -312,15 +316,41 @@ extension DatabaseConnectionManager {
   /// sidebar to reload. `ROLLBACK` drops those changes instead.
   func noteUserTransaction(after statement: ClassifiedStatement, succeeded: Bool) {
     let wasOpen = userTxOpen
+    let dialect = Self.dialect(of: config)
     userTxOpen = ProtectedTransactionRules.userTxOpen(
-      after: statement, current: userTxOpen, succeeded: succeeded)
+      after: statement, current: userTxOpen, succeeded: succeeded, dialect: dialect)
     guard wasOpen else { return }
-    if succeeded && ProtectedTransactionRules.committedUserTransaction(statement) {
+    if succeeded && ProtectedTransactionRules.committedUserTransaction(statement, dialect: dialect)
+    {
       if schemaDirtyInUserTx { schemaRefreshPending = true }
       schemaDirtyInUserTx = false
     } else if !userTxOpen {
       schemaDirtyInUserTx = false
     }
+  }
+
+  /// MySQL: after a statement whose effect on the transaction is uncertain
+  /// (`ProtectedTransactionRules.commitIsUncertain`), `userTxOpen` is what the server reports.
+  /// A transaction the server no longer has was committed implicitly: its schema changes are
+  /// visible now. Unchanged when the server cannot be asked or the connection changed meanwhile.
+  func confirmUserTransactionWithServer(
+    after statement: ClassifiedStatement, succeeded: Bool
+  ) async {
+    guard
+      ProtectedTransactionRules.commitIsUncertain(
+        statement, succeeded: succeeded, dialect: Self.dialect(of: config)),
+      session is MySQLSession
+    else { return }
+    let epoch = connectionEpoch
+    let reported = try? await withSession { session in
+      try await (session as? MySQLSession)?.isInTransaction()
+    }
+    guard let open = reported ?? nil, epoch == connectionEpoch else { return }
+    if userTxOpen && !open {
+      if schemaDirtyInUserTx { schemaRefreshPending = true }
+      schemaDirtyInUserTx = false
+    }
+    userTxOpen = open
   }
 
   /// Remember a successful statement that changes tables, views, or routines.
@@ -420,20 +450,33 @@ extension DatabaseConnectionManager {
   }
 
   /// App-owned transaction start. SQLite takes the writer lock immediately. DuckDB uses the
-  /// standard form. A user-typed `BEGIN` is never rewritten.
+  /// standard form. MySQL uses `START TRANSACTION` (`BEGIN` is ambiguous inside compound
+  /// statements). A user-typed `BEGIN` is never rewritten.
   var appOwnedBeginSQL: String {
     switch config?.databaseType {
     case .postgresql, nil: "BEGIN"
     case .sqlite: "BEGIN IMMEDIATE"
     case .duckdb: "BEGIN TRANSACTION"
+    case .mysql: "START TRANSACTION"
     }
   }
 
   /// PostgreSQL suspends the idle-in-transaction timeout for the app transaction.
-  /// SQLite has no session brake, so nothing is sent.
+  /// SQLite and DuckDB have no session brake, so nothing is sent.
   func suspendIdleTimeoutIfSupported() async throws {
-    guard session?.capabilities.supportsSessionBrakes == true else { return }
-    _ = try await sendTransactionControl(Self.suspendIdleTimeoutSQL)
+    guard session?.capabilities.supportsSessionBrakes == true,
+      let sql = suspendIdleTimeoutSQLForEngine
+    else { return }
+    _ = try await sendTransactionControl(sql)
+  }
+
+  /// The statement that suspends the idle-in-transaction timeout, or nil when the engine has
+  /// none. MySQL's `wait_timeout` is session-level and never ends a transaction on its own.
+  private var suspendIdleTimeoutSQLForEngine: String? {
+    switch config?.databaseType {
+    case .postgresql, nil: Self.suspendIdleTimeoutSQL
+    case .sqlite, .duckdb, .mysql: nil
+    }
   }
 
   private var isConnectionLost: Bool {

@@ -13,6 +13,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
   case editor
   case dataViewerEdit
   case dataImport
+  case structure
   case `internal`
 
   var stored: QueryHistoryEntry.Source? {
@@ -21,6 +22,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
     case .editor: .editor
     case .dataViewerEdit: .dataViewerEdit
     case .dataImport: .dataImport
+    case .structure: .structure
     case .internal: nil
     }
   }
@@ -65,7 +67,9 @@ extension NotebookViewModel {
     let dialect = sqlDialect
     var recorded = false
     for outcome in outcomes {
-      guard !SQLStatementClassifier.containsPasswordLiteral(outcome.sql) else { continue }
+      guard !SQLStatementClassifier.containsPasswordLiteral(outcome.sql, dialect: dialect) else {
+        continue
+      }
       let entry = QueryHistoryEntry(
         id: 0,
         sql: outcome.sql,

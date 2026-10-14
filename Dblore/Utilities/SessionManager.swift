@@ -275,7 +275,10 @@ class SessionManager {
       let database = config["database"] as? String,
       let username = config["username"] as? String
     else { return nil }
-    return "\(host):\(port):\(database):\(username)"
+    // A missing or unknown engine keeps the legacy (unscoped) key
+    let scope = (config["databaseType"] as? String).flatMap(DatabaseType.init)?.keychainScope
+    return ConnectionKeychainKey.password(
+      scope: scope, host: host, port: port, database: database, username: username)
   }
 
   /// One line of at most 80 characters, for names shown in a bulk save report.
@@ -434,15 +437,14 @@ class SessionManager {
   // MARK: - Keychain Helpers
 
   /// Get password from keychain for a specific key
-  /// - Parameter key: The keychain key (format: host:port:database:username)
+  /// - Parameter key: The keychain key (`ConnectionKeychainKey.password(for:)`)
   /// - Returns: The password if found, nil otherwise
   static func getPasswordFromKeychain(for key: String) -> String? {
     return KeychainConnectionPasswordStore().loadPassword(forKey: key)
   }
 
   private static func keychainKey(for config: ConnectionConfig) -> String {
-    // Create a unique key based on host, port, database, and username
-    return "\(config.host):\(config.port):\(config.database):\(config.username)"
+    ConnectionKeychainKey.password(for: config)
   }
 
   /// Deletes a stored password only when this engine uses one.
@@ -592,6 +594,11 @@ struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
   }
 
   func loadPassword(forKey key: String) -> String? {
+    Self.loadPassword(forKey: key)
+  }
+
+  /// `loadPassword(forKey:)` callable off the main actor (the MCP pool).
+  nonisolated static func loadPassword(forKey key: String) -> String? {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: SessionManager.keychainService,

@@ -19,9 +19,12 @@ enum SchemaPositionsStore {
     "\(host):\(port)/\(database)"
   }
 
-  /// Generate connection key from ConnectionConfig
+  /// Generate connection key from ConnectionConfig. Engines with a Keychain scope (MySQL) prefix
+  /// it (`MySQL|host:port/database`), so they never share positions with PostgreSQL on the same
+  /// tuple; PostgreSQL, SQLite and DuckDB keep the legacy key.
   static func connectionKey(from config: ConnectionConfig) -> String {
-    connectionKey(host: config.host, port: config.port, database: config.database)
+    let key = connectionKey(host: config.host, port: config.port, database: config.database)
+    return config.databaseType.keychainScope.map { "\($0)|\(key)" } ?? key
   }
 
   /// Save positions for a specific database connection

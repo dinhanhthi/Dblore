@@ -295,7 +295,8 @@ final class ConnectionImportModel {
       }
     case let error as PostgresURIParser.ParseError:
       switch error {
-      case .unsupportedScheme: return "Only postgresql:// and postgres:// URIs are supported."
+      case .unsupportedScheme:
+        return "Only postgresql://, postgres://, mysql:// and mariadb:// URIs are supported."
       case .invalidPort: return "The connection string has an invalid port."
       case .missingHost: return "The connection string has no host."
       case .multipleHostsNotSupported:
@@ -316,7 +317,7 @@ final class ConnectionImportModel {
 }
 
 /// Returns no passwords, so loading history for the preview reads nothing from the Keychain.
-private struct NoPasswordStore: ConnectionPasswordStore {
+struct NoPasswordStore: ConnectionPasswordStore {
   func savePassword(_ password: String, forKey key: String) {}
   func loadPassword(forKey key: String) -> String? { nil }
   func deletePassword(forKey key: String) {}

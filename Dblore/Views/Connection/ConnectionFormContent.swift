@@ -14,6 +14,8 @@ struct ConnectionFormContent: View {
   /// Connection configuration binding - the single source of truth
   @Binding var connectionConfig: ConnectionConfig
 
+  @Environment(\.pixelLength) private var pixelLength
+
   /// Callback to test connection - returns true if successful
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
 
@@ -51,6 +53,9 @@ struct ConnectionFormContent: View {
 
   /// Changes when the owner replaces `connectionConfig` with a new draft (a Finder file).
   var draftGeneration: Int = 0
+
+  /// Safety shows all four fields as two pairs (Details); otherwise only the two timeouts pair up.
+  var pairsAllSafetyFields: Bool = false
 
   @State private var isTesting = false
   @State private var testResult: TestResult?
@@ -139,7 +144,8 @@ struct ConnectionFormContent: View {
     footerLeading: AnyView? = nil,
     unlockConnectError: Binding<String?>? = nil,
     onOpenPluginSettings: (@MainActor () -> Void)? = nil,
-    draftGeneration: Int = 0
+    draftGeneration: Int = 0,
+    pairsAllSafetyFields: Bool = false
   ) {
     self._connectionConfig = connectionConfig
     self.onTestConnection = onTestConnection
@@ -154,6 +160,7 @@ struct ConnectionFormContent: View {
     self.unlockConnectError = unlockConnectError
     self.onOpenPluginSettings = onOpenPluginSettings
     self.draftGeneration = draftGeneration
+    self.pairsAllSafetyFields = pairsAllSafetyFields
   }
 
   // MARK: - Body
@@ -181,7 +188,7 @@ struct ConnectionFormContent: View {
           } else {
             sectionCard {
               sectionTitle("Connection")
-              if connectionConfig.databaseType.capabilities.usesNetwork {
+              if Self.supportsConnectionString(connectionConfig.databaseType) {
                 customTabPicker()
                   .onChange(of: inputMode) { _, newMode in
                     parseError = nil
@@ -197,7 +204,8 @@ struct ConnectionFormContent: View {
                     }
                   }
               }
-              if inputMode == .form || !connectionConfig.databaseType.capabilities.usesNetwork {
+              if inputMode == .form || !Self.supportsConnectionString(connectionConfig.databaseType)
+              {
                 formFields()
               } else {
                 connectionStringFields()
@@ -226,13 +234,14 @@ struct ConnectionFormContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.appBackground)
+      .background(Color.panelBackground)
       .onAppear {
         if fieldsEngine == nil {
           fieldsEngine = connectionConfig.databaseType
         }
         seenDraftGeneration = draftGeneration
-        loadConnectionHistory()
+        // Without the Recent menu the form keeps the draft it was opened with
+        if showsRecentHistory { loadConnectionHistory() }
         restoreCertificateDraft()
         restoreSSHDraft()
         refreshSQLiteFileBookmark()
@@ -243,7 +252,7 @@ struct ConnectionFormContent: View {
       )
       .onChange(of: connectionConfig.databaseType) { _, newType in
         clearParseErrorAndTestResult()
-        if !newType.capabilities.usesNetwork {
+        if !Self.supportsConnectionString(newType) {
           inputMode = .form
         }
         // Loading a history row sets `fieldsEngine` before `databaseType`, so this
@@ -275,7 +284,8 @@ struct ConnectionFormContent: View {
           keepingPendingDraft: Self.keepsCertificateDraft(
             filesPicked: Self.draftCameFromFiles(
               hasCertificate: certificatePEM != nil, certificatePicked: certificateFilePicked,
-              hasKey: privateKeyPEM != nil, keyPicked: privateKeyFilePicked),
+              hasKey: privateKeyPEM != nil, keyPicked: privateKeyFilePicked,
+              caPicked: caFilePicked),
             isHistoryLoad: retained != nil,
             engineChanged: Self.engineChanged(oldKey: oldKey, newKey: newKey),
             isBlankForm: Self.isBlankForm(connectionConfig)))
@@ -321,16 +331,16 @@ struct ConnectionFormContent: View {
       .foregroundColor(.foreground)
   }
 
-  /// Bordered group, same chrome as the export sheet sections.
+  /// Bordered group, same border as the Settings section cards.
   func sectionCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm, content: content)
       .padding(Spacing.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.cardHeaderBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
       .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)
-          .stroke(Color.border, lineWidth: 1)
+        RoundedRectangle(cornerRadius: CornerRadius.lg)
+          .strokeBorder(Color.border, lineWidth: pixelLength)
       )
   }
 
@@ -378,10 +388,34 @@ struct ConnectionFormContent: View {
     return newFormDraft(databaseType: newType)
   }
 
+  /// The Connection String tab parses and builds `postgresql://` URIs only.
+  static func supportsConnectionString(_ type: DatabaseType) -> Bool {
+    switch type {
+    case .postgresql: true
+    case .mysql, .sqlite, .duckdb: false
+    }
+  }
+
+  /// Note under the SSL mode menu (nil = none). For MySQL only Verify CA and Verify Full check
+  /// the server certificate (`MySQLSession.tlsConfiguration`), so only they use a picked CA;
+  /// Prefer and Allow reconnect in plain text when the server offers no SSL.
+  static func sslModeHelp(for type: DatabaseType) -> String? {
+    switch type {
+    case .mysql:
+      "Only Verify CA and Verify Full check the server certificate. With Require, Prefer or "
+        + "Allow the connection is encrypted but not authenticated: an active man in the middle "
+        + "can intercept the connection and the password. Prefer and Allow also fall back to a "
+        + "plain, unencrypted connection when the server offers no SSL. On untrusted networks, "
+        + "use Verify CA or Verify Full. A picked CA certificate is used only by Verify CA and "
+        + "Verify Full."
+    case .postgresql, .sqlite, .duckdb: nil
+    }
+  }
+
   /// Blank connection form. Stores the Default commit style explicitly.
   /// `ConnectionConfig()` stays the unstyled default tests use.
   static func newFormDraft(databaseType: DatabaseType = .postgresql) -> ConnectionConfig {
-    var config = ConnectionConfig(databaseType: databaseType)
+    var config = ConnectionConfig(databaseType: databaseType, port: databaseType.defaultPort)
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config
   }
@@ -410,11 +444,13 @@ struct ConnectionFormContent: View {
   }
 
   /// Every half in the draft was picked from a file in this form. Replacing only one half of a
-  /// keychain-loaded pair still holds the old target's material, so it does not count.
+  /// keychain-loaded pair still holds the old target's material, so it does not count. A CA
+  /// picked alone (no pair) counts too.
   static func draftCameFromFiles(
-    hasCertificate: Bool, certificatePicked: Bool, hasKey: Bool, keyPicked: Bool
+    hasCertificate: Bool, certificatePicked: Bool, hasKey: Bool, keyPicked: Bool,
+    caPicked: Bool = false
   ) -> Bool {
-    (certificatePicked || keyPicked) && (!hasCertificate || certificatePicked)
+    (certificatePicked || keyPicked || caPicked) && (!hasCertificate || certificatePicked)
       && (!hasKey || keyPicked)
   }
 
@@ -633,7 +669,7 @@ struct ConnectionFormContent: View {
             Text("Test Connection")
           }
         }
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
         .disabled(isTesting || !isFormValid)
 
         Button(action: connect) {
@@ -650,9 +686,9 @@ struct ConnectionFormContent: View {
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isConnecting || !isFormValid || isUnchanged)
       }
-      .modalBarPadding()
+      .modalBarPadding(vertical: Spacing.md)
     }
-    .background(Color.appBackground)
+    .background(Color.panelFooterBackground)
   }
 
   // MARK: - Validation
@@ -675,7 +711,9 @@ struct ConnectionFormContent: View {
 
   private var isFormValid: Bool {
     guard sshDraftIsValid else { return false }
-    if inputMode == .connectionString && connectionConfig.databaseType.capabilities.usesNetwork {
+    if inputMode == .connectionString
+      && Self.supportsConnectionString(connectionConfig.databaseType)
+    {
       return !connectionString.isEmpty && parseError == nil
     }
     return Self.isFormInputValid(connectionConfig)

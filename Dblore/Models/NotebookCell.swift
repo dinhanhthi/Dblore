@@ -267,6 +267,14 @@ nonisolated struct ColumnOrigin: Hashable, Sendable, Codable {
   let columnOrdinal: Int
 }
 
+/// Exact schema, table and column names of a result column (MySQL `schema`, `org_table`,
+/// `org_name`). The `mysql:` table identity is built from these, never split back.
+nonisolated struct ColumnSourceName: Hashable, Sendable {
+  let schema: String
+  let table: String
+  let column: String
+}
+
 nonisolated extension CellResult: Equatable {}
 
 /// Information about a result column
@@ -276,11 +284,17 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   nonisolated let type: String
   /// Source table and column from the server's row description. nil when unknown.
   nonisolated let origin: ColumnOrigin?
+  /// MySQL: source names from the column definition, until the manager resolves `origin`.
+  /// Never persisted.
+  nonisolated let sourceName: ColumnSourceName?
 
-  nonisolated init(name: String, type: String, origin: ColumnOrigin? = nil) {
+  nonisolated init(
+    name: String, type: String, origin: ColumnOrigin? = nil, sourceName: ColumnSourceName? = nil
+  ) {
     self.name = name
     self.type = type
     self.origin = origin
+    self.sourceName = sourceName
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -301,6 +315,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     } else {
       self.origin = nil
     }
+    sourceName = nil
   }
 
   nonisolated func encode(to encoder: Encoder) throws {

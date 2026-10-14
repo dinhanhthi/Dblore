@@ -3,12 +3,14 @@
 
 import Foundation
 
-/// Rewrites `:name` into PostgreSQL and DuckDB `$n`, or SQLite `?n`.
-/// One placeholder per distinct name, in first-occurrence order. The name keeps the
-/// source spelling. A statement with no `:name` is returned unchanged.
+/// Rewrites `:name` into PostgreSQL and DuckDB `$n`, SQLite `?n`, or MySQL `?`.
+/// One placeholder per distinct name, in first-occurrence order; MySQL binds are positional,
+/// so it gets one `?` per occurrence. The name keeps the source spelling. A statement with no
+/// `:name` is returned unchanged.
 nonisolated enum SQLParameterRewriter: Sendable {
 
-  /// `statement` with each `:name` replaced, plus the distinct names in first-seen order.
+  /// `statement` with each `:name` replaced, plus the distinct names in first-seen order
+  /// (MySQL: one name per occurrence, in order, so each `?` has its bind).
   static func rewrite(
     statement: String, dialect: SQLDialect
   ) -> (text: String, names: [String]) {
@@ -29,9 +31,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
     return names
   }
 
-  /// PostgreSQL `$n`, DuckDB `?` / `$n` / `$name`, or SQLite `?` / `?n` / `@name` / `$name`.
-  /// Does not rewrite. SQLite numbers `@name` and `$name` after the `?n` from `:name`, and
-  /// nothing binds them. DuckDB `@` is an operator, not a placeholder.
+  /// PostgreSQL `$n`, DuckDB `?` / `$n` / `$name`, SQLite `?` / `?n` / `@name` / `$name`, or
+  /// MySQL `?`. Does not rewrite. SQLite numbers `@name` and `$name` after the `?n` from
+  /// `:name`, and nothing binds them. DuckDB `@` is an operator, not a placeholder, and MySQL
+  /// `@name` is a user variable.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .postgresql {
@@ -41,7 +44,12 @@ nonisolated enum SQLParameterRewriter: Sendable {
       }
       return false
     }
-    let namePrefixes = dialect == .duckdb ? ["$"] : ["@", "$"]
+    let namePrefixes: [String] =
+      switch dialect {
+      case .duckdb: ["$"]
+      case .mysql: []
+      default: ["@", "$"]
+      }
     for index in lexemes.indices {
       if isSymbol(lexemes[index], scalars, "?") { return true }
       guard namePrefixes.contains(where: { isSymbol(lexemes[index], scalars, $0) }),
@@ -97,7 +105,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
     for hit in hits {
       output.append(contentsOf: scalars[cursor..<hit.range.lowerBound])
       let index: Int
-      if let existing = indexByName[hit.name] {
+      if dialect == .mysql {
+        names.append(hit.name)
+        index = names.count
+      } else if let existing = indexByName[hit.name] {
         index = existing
       } else {
         names.append(hit.name)
@@ -135,7 +146,7 @@ nonisolated enum SQLParameterRewriter: Sendable {
     case .symbol:
       let symbol = SQLTokenizer.text(scalars, lexeme.range)
       return symbol == ")" || symbol == "]"
-    case .whitespace, .comment, .quoted, .dollarString:
+    case .whitespace, .comment, .quoted, .dollarString, .executableComment:
       return false
     }
   }

@@ -25,10 +25,15 @@ nonisolated enum StatementRoute: Sendable, Equatable {
   /// `nil` (empty / comment-only text) keeps the read path. A WITH that is not a plain read
   /// (a data-modifying CTE, or fail-closed on a column named like a DML keyword) returns the
   /// rows of its outer statement, and neither the rows read nor its command tag are the
-  /// affected rows: row stream, count unknown.
-  static func route(for statement: ClassifiedStatement?) -> StatementRoute {
+  /// affected rows: row stream, count unknown. `dialect` lexes the first keyword (the
+  /// actor passes the connection's dialect).
+  static func route(
+    for statement: ClassifiedStatement?, dialect: SQLDialect
+  ) -> StatementRoute {
     guard let statement else { return .read }
-    let first = SQLTokenizer.tokens(statement.text).first { $0.kind == .word }?.keyword ?? ""
+    let first =
+      SQLTokenizer.tokens(statement.text, dialect: dialect).first { $0.kind == .word }?.keyword
+      ?? ""
     return switch statement.kind {
     case .read, .explain: .read
     case _ where first == "WITH": .unwrappedRows

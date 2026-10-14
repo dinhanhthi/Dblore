@@ -1,6 +1,9 @@
 // RowChangeSQLBuilder.swift
 // DELETE, UPDATE, and INSERT statements for one staged row change set.
 // Bound statements keep values out of the SQL. Preview text inlines literals for display.
+// MySQL: backticks, `?`, no ONLY, `() VALUES ()`, bytes through `UNHEX(?)`; an UPDATE skips
+// columns whose bind text equals the loaded value and carries a row check (0 affected rows
+// is either a same-value write or a missing row: CLIENT_FOUND_ROWS is off).
 
 import Foundation
 
@@ -9,6 +12,8 @@ nonisolated struct BoundStatement: Equatable, Sendable {
   var sql: String
   var values: [String?]
   var expectedRows: Int? = 1
+  /// MySQL UPDATE: run when it affects 0 rows; a row found counts as the 1 expected
+  var rowCheck: RowExistenceCheck? = nil
 
   /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
   var binds: [SQLBindValue] {
@@ -23,7 +28,9 @@ nonisolated enum RowChangeSQLBuilder {
     for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
   ) -> [BoundStatement] {
     drafts(for: set, target: target, columns: columns, dialect: dialect).map {
-      $0.bound(dialect: dialect)
+      var statement = $0.bound(dialect: dialect)
+      statement.rowCheck = $0.rowCheck
+      return statement
     }
   }
 
@@ -42,13 +49,15 @@ nonisolated enum RowChangeSQLBuilder {
     let only = target.updateOnly && dialect.supportsUpdateOnly
     var result: [StatementDraft] = []
     result.reserveCapacity(set.deletes.count + set.edits.count + set.inserts.count)
-    for row in set.deletes {
+    // Without a key a WHERE would match every row: no UPDATE or DELETE (no ctid-style edits).
+    let keyed = !target.primaryKeyColumns.isEmpty
+    for row in set.deletes where keyed {
       result.append(delete(row, relation: relation, only: only, target: target, dialect: dialect))
     }
-    for (row, changes) in set.edits {
+    for (row, changes) in set.edits where keyed {
       if let update = update(
-        row, changes: changes, relation: relation, only: only, target: target, columns: columns,
-        dialect: dialect)
+        row, changes: changes, originals: set.originals[row] ?? [:], relation: relation,
+        only: only, target: target, columns: columns, dialect: dialect)
       {
         result.append(update)
       }
@@ -77,13 +86,15 @@ nonisolated enum RowChangeSQLBuilder {
   }
 
   private static func update(
-    _ row: RowChangeSet.RowKey, changes: [String: CellValue], relation: String, only: Bool,
-    target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
+    _ row: RowChangeSet.RowKey, changes: [String: CellValue], originals: [String: CellValue],
+    relation: String, only: Bool, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
   ) -> StatementDraft? {
     let keys = Set(target.primaryKeyColumns)
     let edited = columns.filter { column in
-      changes[column.name] != nil && !keys.contains(column.name)
-        && !target.generatedColumns.contains(column.name)
+      guard let value = changes[column.name], !keys.contains(column.name),
+        !target.generatedColumns.contains(column.name)
+      else { return false }
+      return !(dialect == .mysql && sameBindText(value, originals[column.name], dialect: dialect))
     }
     guard !edited.isEmpty else { return nil }
 
@@ -101,7 +112,25 @@ nonisolated enum RowChangeSQLBuilder {
       draft.value(changes[column.name] ?? .null)
     }
     appendWhere(row.values, columns: target.primaryKeyColumns, to: &draft, dialect: dialect)
+    if dialect == .mysql {
+      var check = StatementDraft()
+      check.text("SELECT 1 FROM \(relation)")
+      appendWhere(row.values, columns: target.primaryKeyColumns, to: &check, dialect: dialect)
+      check.text(" FOR UPDATE")
+      let bound = check.bound(dialect: dialect)
+      draft.rowCheck = RowExistenceCheck(sql: bound.sql, values: bound.values)
+    }
     return draft
+  }
+
+  /// True when `original` is loaded and binds the same text as `value` (the server would
+  /// store the same value).
+  private static func sameBindText(
+    _ value: CellValue, _ original: CellValue?, dialect: SQLDialect
+  ) -> Bool {
+    guard let original else { return false }
+    return CellUpdateStatement.inputText(value, dialect: dialect)
+      == CellUpdateStatement.inputText(original, dialect: dialect)
   }
 
   private static func insertStatement(
@@ -112,7 +141,7 @@ nonisolated enum RowChangeSQLBuilder {
     var draft = StatementDraft()
     draft.text("INSERT INTO \(relation)")
     guard !included.isEmpty else {
-      draft.text(" DEFAULT VALUES")
+      draft.text(dialect == .mysql ? " () VALUES ()" : " DEFAULT VALUES")
       return draft
     }
     let names = included.map { quote($0.name, dialect: dialect) }.joined(separator: ", ")
@@ -148,13 +177,9 @@ nonisolated enum RowChangeSQLBuilder {
     target.qualifiedName
   }
 
-  /// `dialect.quoteIdentifier`, or doubled quotes when the name contains a NUL.
+  /// `dialect.quoteIdentifier`, or the dialect's quote doubled when the name contains a NUL.
   private static func quote(_ name: String, dialect: SQLDialect) -> String {
-    do {
-      return try dialect.quoteIdentifier(name)
-    } catch {
-      return "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
-    }
+    CellUpdateStatement.quoteIdentifier(name, dialect: dialect)
   }
 }
 
@@ -166,6 +191,8 @@ private nonisolated struct StatementDraft {
   }
 
   private var segments: [Segment] = []
+  /// The row check of a MySQL UPDATE (`BoundStatement.rowCheck`)
+  var rowCheck: RowExistenceCheck? = nil
 
   mutating func text(_ text: String) {
     segments.append(.text(text))
@@ -184,9 +211,10 @@ private nonisolated struct StatementDraft {
       case .text(let text):
         sql += text
       case .value(let value):
-        sql += dialect.placeholder(index)
+        sql += CellUpdateStatement.bindPlaceholder(
+          dialect.placeholder(index), value, dialect: dialect)
         index += 1
-        values.append(bindText(value))
+        values.append(CellUpdateStatement.inputText(value, dialect: dialect))
       }
     }
     return BoundStatement(sql: sql, values: values)
@@ -203,25 +231,5 @@ private nonisolated struct StatementDraft {
       }
     }
     return sql + ";"
-  }
-
-  /// PostgreSQL input text. Nil is SQL NULL. Matches `CellUpdateStatement` cell input.
-  private func bindText(_ value: CellValue) -> String? {
-    switch value {
-    case .null:
-      nil
-    case .int(let number):
-      String(number)
-    case .double(let number):
-      String(number)
-    case .bool(let flag):
-      flag ? "true" : "false"
-    case .string(let text), .json(let text):
-      text
-    case .date(let date):
-      DateBindText.string(from: date)
-    case .data(let data):
-      "\\x" + data.map { String(format: "%02x", $0) }.joined()
-    }
   }
 }

@@ -17,13 +17,14 @@ extension SQLAutocompleteProvider {
   /// (the `;` themselves excluded), each side capped so the window is at most
   /// `maxStatementWindow` UTF-16 units. A `;` inside a string literal or comment may
   /// split the statement early; this is accepted for autocomplete purposes.
+  /// SQLite and MySQL use the dialect lexer instead (see `lexedStatementWindow`).
   /// - Parameter position: cursor as a UTF-16 offset
   /// - Returns: the window text and the cursor as a UTF-16 offset inside it
   func statementWindow(
-    in text: String, at position: Int, dialect: SQLDialect = .postgresql
+    in text: String, at position: Int, dialect: SQLDialect
   ) -> (text: String, cursor: Int) {
-    if dialect == .sqlite {
-      return sqliteStatementWindow(in: text, at: position)
+    if dialect == .sqlite || dialect == .mysql {
+      return lexedStatementWindow(in: text, at: position, dialect: dialect)
     }
     let nsText = text as NSString
     let length = nsText.length
@@ -66,9 +67,11 @@ extension SQLAutocompleteProvider {
   }
 
   /// Same window as `statementWindow`, but a `;` inside a string, comment, or quoted
-  /// identifier is not a statement boundary. The scan is still capped at `maxStatementWindow`.
-  private func sqliteStatementWindow(
-    in text: String, at position: Int
+  /// identifier is not a statement boundary (per the `dialect` lexer, so MySQL `#` comments and
+  /// backticks count). A MySQL `DELIMITER` directive is ignored: only `;` splits. The scan is
+  /// still capped at `maxStatementWindow`.
+  private func lexedStatementWindow(
+    in text: String, at position: Int, dialect: SQLDialect
   ) -> (text: String, cursor: Int) {
     let nsText = text as NSString
     let length = nsText.length
@@ -96,7 +99,7 @@ extension SQLAutocompleteProvider {
     utf16At[scalars.count] = unit
 
     let localCursor = cursor - start
-    let tokenizer = SQLTokenizer(dialect: .sqlite)
+    let tokenizer = SQLTokenizer(dialect: dialect)
     var splitBefore: Int?
     var splitAfter: Int?
     var i = 0

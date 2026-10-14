@@ -42,6 +42,77 @@ nonisolated extension SQLStatementClassifier {
     "RESET", "USE",
   ]
 
+  /// DuckDB pragmas (uppercase) that only read the catalog or the version. `PRAGMA name` or
+  /// `PRAGMA name(...)` of one of them is a read; every other PRAGMA stays a utility.
+  static let duckdbReadPragmas: Set<String> = [
+    "TABLE_INFO", "VERSION", "DATABASE_LIST", "SHOW_TABLES",
+  ]
+
+  /// MySQL commands whose effects are not visible from the text: handlers, kills, flushes, file
+  /// loads (`LOAD DATA`, `LOAD XML`, `LOAD INDEX`), table maintenance, replication control and
+  /// plugin installs. `DO`, `CALL`, `LOCK`, `GRANT`, `REVOKE` and `ANALYZE` are already on
+  /// `utilityKeywords`. `RESET` (`RESET MASTER`, `RESET REPLICA`, `RESET PERSIST`) changes
+  /// server state, not a session setting.
+  static let mysqlUtilityKeywords: Set<String> = [
+    "HANDLER", "KILL", "FLUSH", "LOAD", "UNLOCK", "OPTIMIZE", "REPAIR", "CHECK", "STOP",
+    "CHANGE", "RESET", "CACHE", "INSTALL", "UNINSTALL",
+  ]
+
+  /// Leading MySQL keywords that commit the open transaction implicitly (besides DDL, which
+  /// `mysqlAdjusted` checks by kind, and the `SET` / `START` / `LOAD` / `RESET` forms).
+  /// `CALL`, `EXECUTE` and `PREPARE` run SQL the text does not show (a procedure body or a
+  /// prepared DDL commits), so they fail closed; `DEALLOCATE`, `CLONE`, `IMPORT` (TABLE),
+  /// `BINLOG` and `SHUTDOWN` too. All but `CALL` are also unrecognized (`.unknown`).
+  static let mysqlImplicitCommitKeywords: Set<String> = [
+    "LOCK", "UNLOCK", "GRANT", "REVOKE", "ANALYZE", "OPTIMIZE", "REPAIR", "CHECK", "FLUSH",
+    "STOP", "CHANGE", "CACHE", "INSTALL", "UNINSTALL", "CALL", "EXECUTE", "PREPARE",
+    "DEALLOCATE", "CLONE", "IMPORT", "BINLOG", "SHUTDOWN",
+  ]
+
+  /// MySQL / MariaDB functions a read must not call (compared uppercased): `LOAD_FILE` reads a
+  /// server file, `GET_LOCK` / `RELEASE_LOCK` / `RELEASE_ALL_LOCKS` take or drop user locks,
+  /// `SLEEP`, `BENCHMARK` and the replication waits stall the session, `SYS_EXEC` /
+  /// `SYS_EVAL` / `SYS_BIN_EVAL` run shell commands and `SYS_GET` / `SYS_SET` read or set
+  /// environment variables (lib_mysqludf_sys), and MariaDB `NEXTVAL` / `SETVAL` advance a
+  /// sequence. `IS_FREE_LOCK`, `IS_USED_LOCK` and `LASTVAL` only read. Checked in every
+  /// statement but a plain EXPLAIN (data changes too, which schema protection allows).
+  static let mysqlSideEffectFunctions: Set<String> = [
+    "LOAD_FILE", "GET_LOCK", "RELEASE_LOCK", "RELEASE_ALL_LOCKS", "SLEEP", "BENCHMARK",
+    "MASTER_POS_WAIT", "SOURCE_POS_WAIT", "WAIT_FOR_EXECUTED_GTID_SET", "MASTER_GTID_WAIT",
+    "WAIT_UNTIL_SQL_THREAD_AFTER_GTIDS", "SYS_EXEC", "SYS_EVAL", "SYS_BIN_EVAL", "SYS_GET",
+    "SYS_SET", "NEXTVAL", "SETVAL",
+  ]
+
+  /// Name prefixes (uppercase) of MySQL functions a read must not call: group replication and
+  /// connection failover control, keyring keys, audit log filters, version tokens and Spider
+  /// storage engine remote SQL.
+  static let mysqlSideEffectFunctionPrefixes: [String] = [
+    "GROUP_REPLICATION_", "ASYNCHRONOUS_CONNECTION_FAILOVER_", "KEYRING_", "AUDIT_LOG_",
+    "VERSION_TOKENS_", "SPIDER_",
+  ]
+
+  /// MySQL / MariaDB session variables (lowercase) that act as safety brakes: statement and
+  /// lock timeouts, idle timeouts and the transaction read-only flag.
+  static let mysqlBrakeSettings: Set<String> = [
+    "max_execution_time", "max_statement_time", "innodb_lock_wait_timeout", "lock_wait_timeout",
+    "wait_timeout", "interactive_timeout", "net_read_timeout", "net_write_timeout",
+    "transaction_read_only", "tx_read_only",
+  ]
+
+  /// MySQL `SET` targets (lowercase) that change how the server lexes SQL text: the SQL mode
+  /// and the connection charset (`SET NAMES`, `SET CHARSET`; `SET CHARACTER SET` is matched
+  /// as two words).
+  static let mysqlLexerSensitiveVariables: Set<String> = [
+    "sql_mode", "names", "charset", "character_set_client", "character_set_connection",
+    "character_set_results", "collation_connection",
+  ]
+
+  /// Words after MySQL `DESCRIBE` / `DESC` that make it an EXPLAIN (or not a table name).
+  static let mysqlExplainableKeywords: Set<String> = [
+    "SELECT", "TABLE", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE", "REPLACE", "FORMAT",
+    "ANALYZE", "EXTENDED", "PARTITIONS", "FOR",
+  ]
+
   /// DuckDB functions a read must not call (compared uppercased): `GETENV` reads the app's
   /// environment, `CHECKPOINT` / `FORCE_CHECKPOINT` write the database file, `NEXTVAL` /
   /// `SETVAL` advance a sequence, `LOAD_AWS_CREDENTIALS` reads credentials into a secret,

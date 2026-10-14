@@ -60,7 +60,7 @@ extension NotebookViewModel {
     guard !trimmed.isEmpty else { return nil }
 
     // Check if the line contains only comments
-    if connectionManager?.isCommentOnlyStatement(trimmed) == true {
+    if connectionManager?.isCommentOnlyStatement(trimmed, dialect: sqlDialect) == true {
       return nil
     }
 

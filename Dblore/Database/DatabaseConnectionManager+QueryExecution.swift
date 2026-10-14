@@ -35,7 +35,7 @@ extension DatabaseConnectionManager {
     }
 
     // Check if query contains multiple statements
-    if hasMultipleStatements(query) {
+    if hasMultipleStatements(query, dialect: Self.dialect(of: config)) {
       return try await executeMultipleStatements(query, maxRows: maxRows)
     }
 
@@ -54,10 +54,13 @@ extension DatabaseConnectionManager {
   )
     async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval)
   {
-    let statements = splitSQLStatements(query)
+    let dialect = Self.dialect(of: config)
+    let statements = splitSQLStatements(query, dialect: dialect)
 
     // Filter out comment-only statements
-    let executableStatements = statements.filter { !isCommentOnlyStatement($0) }
+    let executableStatements = statements.filter {
+      !isCommentOnlyStatement($0, dialect: dialect)
+    }
 
     guard !executableStatements.isEmpty else {
       throw DatabaseError.emptyQuery
@@ -94,7 +97,7 @@ extension DatabaseConnectionManager {
   ) async throws
     -> QueryResult
   {
-    let statements = splitSQLStatements(query)
+    let statements = splitSQLStatements(query, dialect: Self.dialect(of: config))
 
     guard !statements.isEmpty else {
       throw DatabaseError.emptyQuery
@@ -182,9 +185,9 @@ extension DatabaseConnectionManager {
     let startTime = Date()
 
     // Everything but reads is sent unchanged (affected rows from the command tag or RETURNING)
-    let statement = SQLStatementClassifier.classifyStatement(
-      query, dialect: Self.dialect(of: config))
-    switch StatementRoute.route(for: statement) {
+    let dialect = Self.dialect(of: config)
+    let statement = SQLStatementClassifier.classifyStatement(query, dialect: dialect)
+    switch StatementRoute.route(for: statement, dialect: dialect) {
     case .command:
       return try await executeCommand(query, startTime: startTime, binds: binds)
     case .returningRows:
@@ -194,7 +197,7 @@ extension DatabaseConnectionManager {
       return try await executeUnwrapped(
         query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds)
     case .read:
-      if inTransaction, let statement, Self.usesCursor(statement),
+      if inTransaction, let statement, Self.usesCursor(statement, dialect: dialect),
         session?.capabilities.supportsServerCursor == true
       {
         return try await executeCursorRead(
@@ -205,16 +208,18 @@ extension DatabaseConnectionManager {
     // Reads are sent as written (no LIMIT / ctid rewrite): the capped reader stops after
     // `maxRows` rows and breaks; the caller decides whether the session is reset
     // (`resetSessionIfCapped`) or drained.
+    let readToEnd = Self.readsToEndAtCap(statement, databaseType: config?.databaseType)
     do {
       let collected = try await withSession { current in
         let source = try await current.query(query, binds: binds)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
+        return try await self.readCapped(source, maxRows: maxRows, readToEnd: readToEnd)
       }
       let executionTime = Date().timeIntervalSince(startTime)
       // Try to enrich column type information with modifiers. Not after a truncated read: the
-      // catalog query would first wait for the rest of the result to drain.
+      // catalog query would first wait for the rest of the result to drain. MySQL column
+      // origins resolve either way (the capped statement was already killed or drained).
       let enrichedColumns =
-        collected.truncated
+        collected.truncated && config?.databaseType != .mysql
         ? collected.columns : await enrichColumnTypes(columns: collected.columns, query: query)
       var result = QueryResult(
         columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,

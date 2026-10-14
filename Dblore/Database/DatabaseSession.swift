@@ -77,7 +77,7 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
     statementTimeoutSeconds: Int, lockTimeoutSeconds: Int, idleTimeoutSeconds: Int
   ) async throws
 
-  /// Stop the running statement in this process. Callers use this when
+  /// Stop the running statement without closing the session. Callers use this when
   /// `capabilities.cancelStrategy` is `.interrupt`. A reconnect cancel closes the
   /// session instead.
   func interrupt() async

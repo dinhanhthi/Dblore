@@ -40,8 +40,15 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager: DatabaseConnectionManager
-  /// AI chat state shared by the workspace (schema structure only, never row data)
+  /// AI chat state shared by the workspace: schema structure, plus the rows of the read-only
+  /// queries it runs (shown to the user only, never sent to the AI provider)
   let aiAssistant = AIAssistantViewModel()
+  /// Sessions the AI Assistant's read-only sessions wrap (`runAIQuery`); nil: the app's, with
+  /// the workspace connection's SSH host-key policy
+  @ObservationIgnored var aiReadSessionFactory: (any DatabaseSessionFactory)?
+  /// Where the AI Assistant's queries are recorded
+  @ObservationIgnored var aiHistoryRecorder: any QueryHistoryRecording =
+    NotebookViewModel.defaultHistoryRecorder()
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
 
@@ -68,6 +75,11 @@ class WorkspaceManager: Identifiable {
   var connectionLostMessage: String?
   /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
   var readOnlyFileNotice: String?
+  /// MySQL or MariaDB version of the last MySQL connect, shared with the tabs (Explain Analyze)
+  var mysqlServerInfo: MySQLServerInfo?
+  /// How the last MySQL connect is protected (nil for other engines): the footer shows "No SSL"
+  /// for a plaintext session and "Unverified SSL" for TLS without a checked certificate.
+  var mysqlTransport: MySQLTransport?
 
   // MARK: - Protected Transaction (see WorkspaceManager+Transaction.swift)
 
@@ -78,6 +90,8 @@ class WorkspaceManager: Identifiable {
   var transactionOriginTabId: UUID?
   var isCommitConfirmationVisible = false
   var isCommitUnlockVisible = false
+  /// The banner's View Details modal with every pending statement in full
+  var isTransactionDetailsVisible = false
   /// Actor generation of `pendingTransaction`, and the one the Commit confirmation showed
   @ObservationIgnored var pendingTransactionGeneration: UInt64 = 0
   @ObservationIgnored var commitReviewedGeneration: UInt64?
@@ -182,6 +196,11 @@ class WorkspaceManager: Identifiable {
   /// Injected store. Nil uses `QueryHistoryStore.shared`, except in the test host.
   @ObservationIgnored var historyBrowser: QueryHistoryStore?
 
+  // MARK: - Structure Editor
+
+  /// Table shown in the structure editor panel. Nil hides it.
+  var structureEditor: StructureEditorModel?
+
   // MARK: - Command Palette
 
   /// Open palette. Nil hides it.
@@ -250,6 +269,13 @@ class WorkspaceManager: Identifiable {
         tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
         databaseName: name?.isEmpty == false ? name : nil,
         dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
+    }
+    aiAssistant.dialectSource = { [weak self] in
+      self?.workspace.connectionConfig?.databaseType.dialect ?? .postgresql
+    }
+    aiAssistant.queryRunner = { [weak self] sql in
+      guard let self else { throw AIAssistantViewModel.QueryRunError.notConnected }
+      return try await self.runAIQuery(sql)
     }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
     historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
@@ -411,12 +437,14 @@ class WorkspaceManager: Identifiable {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
       }
-      workspace.connectionKeychainKey =
-        "\(config.host):\(config.port):\(config.database):\(config.username)"
+      workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
       editingConnectionConfig = config
+      // Before `.connected`, so the footer never shows the previous connection's TLS state
+      mysqlTransport = await connectionManager.mysqlTransport
       connectionState = .connected
       connectionLostMessage = nil
       readOnlyFileNotice = await connectionManager.sqliteReadOnlyReason
+      mysqlServerInfo = await connectionManager.mysqlServerInfo
       await refreshPendingTransaction()
       markDirtyAndScheduleAutoSave()
 
@@ -534,6 +562,7 @@ class WorkspaceManager: Identifiable {
     for (_, viewModel) in viewModels {
       viewModel.connectionState = connectionState
       viewModel.connectionManager = connectionManager
+      viewModel.mysqlServerInfo = mysqlServerInfo
       viewModel.applyWorkspaceConnectionConfig(workspace.connectionConfig)
       viewModel.databaseTables = databaseTables
       viewModel.databaseViews = databaseViews
@@ -942,6 +971,7 @@ class WorkspaceManager: Identifiable {
 
     // Share workspace's connection manager so ViewModels can execute queries
     viewModel.connectionManager = connectionManager
+    viewModel.mysqlServerInfo = mysqlServerInfo
     // Share workspace's autocomplete provider so editors get table/column suggestions
     viewModel.autocompleteProvider = autocompleteProvider
     // Protection level / Safe Mode come from the workspace connection config

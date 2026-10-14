@@ -90,7 +90,7 @@ extension NotebookViewModel {
 
     do {
       // Check if this is a multi-statement query
-      if connectionManager.hasMultipleStatements(query) {
+      if connectionManager.hasMultipleStatements(query, dialect: sqlDialect) {
         // Connection identity before the query: edit targets must resolve on the same one
         let epoch = await connectionManager.connectionEpoch
         // Execute all statements and get detailed results

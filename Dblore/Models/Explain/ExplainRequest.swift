@@ -9,11 +9,14 @@ nonisolated enum ExplainRequestError: Error, Equatable, Sendable {
   case multipleStatements
   /// The statement already begins with EXPLAIN.
   case alreadyExplain
+  /// The connected server has no EXPLAIN ANALYZE (`analyzeUnavailableReason`).
+  case analyzeUnavailable(String)
 
   var message: String {
     switch self {
     case .multipleStatements: "Explain one statement at a time"
     case .alreadyExplain: "This statement is already an EXPLAIN"
+    case .analyzeUnavailable(let reason): reason
     }
   }
 }
@@ -26,6 +29,8 @@ nonisolated struct ExplainRequest: Sendable {
   let statement: String
   let analyze: Bool
   let buffers: Bool
+  /// MySQL: `EXPLAIN FORMAT=JSON` (shown as JSON text) instead of the tabular `EXPLAIN`.
+  let jsonFormat: Bool
   /// When true, ANALYZE of INSERT/UPDATE/DELETE/MERGE rolls back unless a transaction is open.
   let rollbackAfterAnalyze: Bool
   /// Connection dialect: splits and classifies `statement`, and is the `wrappedSQL` prefix.
@@ -34,21 +39,49 @@ nonisolated struct ExplainRequest: Sendable {
 
   init(
     statement: String, analyze: Bool, buffers: Bool, rollbackAfterAnalyze: Bool = true,
-    dialect: SQLDialect = .postgresql
+    jsonFormat: Bool = false, dialect: SQLDialect = .postgresql,
+    mysqlServer: MySQLServerInfo? = nil
   ) throws {
+    if analyze,
+      let reason = Self.analyzeUnavailableReason(dialect: dialect, mysqlServer: mysqlServer)
+    {
+      throw ExplainRequestError.analyzeUnavailable(reason)
+    }
     let body = try Self.singleStatement(statement, dialect: dialect)
     self.statement = body
     self.analyze = analyze
     self.buffers = buffers
+    self.jsonFormat = jsonFormat
     self.rollbackAfterAnalyze = rollbackAfterAnalyze
     self.dialect = dialect
     self.changesData = Self.statementChangesData(body, dialect: dialect)
   }
 
-  /// `dialect.explainPrefix` plus the statement. Format is JSON on PostgreSQL; SQLite and
-  /// DuckDB ignore it (grid / text plan).
+  /// `dialect.explainPrefix` plus the statement. Format is JSON on PostgreSQL (plan view);
+  /// SQLite and DuckDB ignore it (grid / text plan). MySQL is the tabular plan unless
+  /// `jsonFormat`; its ANALYZE is a text tree.
   var sql: String {
-    dialect.explainPrefix(analyze: analyze, buffers: buffers, format: "json") + " " + statement
+    let format = dialect == .mysql && !jsonFormat ? nil : "json"
+    return dialect.explainPrefix(analyze: analyze, buffers: buffers, format: format) + " "
+      + statement
+  }
+
+  /// Why Explain Analyze cannot run on this connection, nil when it can. MySQL needs 8.0.18 or
+  /// later; MariaDB (which has `ANALYZE <statement>` instead) and an unknown server are refused.
+  /// Other engines follow `DatabaseCapabilities.supportsExplainAnalyze`.
+  static func analyzeUnavailableReason(
+    dialect: SQLDialect, mysqlServer: MySQLServerInfo?
+  ) -> String? {
+    guard dialect == .mysql else { return nil }
+    guard let server = mysqlServer else {
+      return "Explain Analyze needs the MySQL server version. Reconnect and try again"
+    }
+    if server.supportsExplainAnalyze { return nil }
+    if server.flavor == .mariadb {
+      return "Explain Analyze is not available on MariaDB"
+    }
+    let version = "\(server.major).\(server.minor).\(server.patch)"
+    return "Explain Analyze needs MySQL 8.0.18 or later (server is \(version))"
   }
 
   /// Explain text with the rollback wrapper when this request would use it, in `dialect`.

@@ -61,16 +61,10 @@ class SQLAutocompleteProvider {
 
   /// Get autocomplete suggestions based on current input
   /// - Parameters:
-  ///   - text: Full text content
-  ///   - cursorPosition: Current cursor position in text (UTF-16 offset)
+  ///   - fullText: Full text content
+  ///   - fullCursorPosition: Current cursor position in text (UTF-16 offset)
+  ///   - dialect: connection dialect, used to find the statement around the cursor
   /// - Returns: Array of suggestions
-  func getSuggestions(for fullText: String, at fullCursorPosition: Int) -> [AutocompleteSuggestion]
-  {
-    getSuggestions(for: fullText, at: fullCursorPosition, dialect: .postgresql)
-  }
-
-  /// Suggestions for `dialect`. The two-argument method stays PostgreSQL so existing callers,
-  /// including overrides, keep that path until they pass a dialect.
   func getSuggestions(
     for fullText: String, at fullCursorPosition: Int, dialect: SQLDialect
   ) -> [AutocompleteSuggestion] {

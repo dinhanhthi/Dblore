@@ -29,6 +29,7 @@ enum SidebarContent: Equatable {
   case tableFilter  // Filter form of the data viewer tab
   case tableHighlight  // Highlight form of the data viewer tab
   case parameters  // Named SQL parameters of the editor tab
+  case addRow  // Add Row form of the data viewer tab
 }
 
 /// Persists one history row. A failure stays inside the recorder and never fails the query.
@@ -78,6 +79,9 @@ class NotebookViewModel {
   // Connection manager reference from workspace (synced from WorkspaceManager)
   // This allows NotebookViewModel extensions to execute queries without refactoring
   var connectionManager: DatabaseConnectionManager?
+  /// MySQL or MariaDB version of the workspace connection, for the Explain Analyze gate.
+  /// Set by `WorkspaceManager` on connect.
+  var mysqlServerInfo: MySQLServerInfo?
   /// Workspace mode: another tab opened the pending Protected transaction, so this tab runs
   /// nothing until Commit / Rollback (the actor refuses this tab's `id` too). Set by
   /// `WorkspaceManager`.
@@ -220,6 +224,8 @@ class NotebookViewModel {
   var savedFilters: [SavedFilter] = []
   /// Relation (`schema.name`) the draft belongs to, to reset it when the viewer shows another
   @ObservationIgnored var filterDraftRelation: String?
+  /// Add Row form of the data viewer: one field per result column
+  var addRowFields: [NewRowField] = []
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
   /// Query history. The app uses the SQLite store; the test host uses memory so unit tests
@@ -392,10 +398,16 @@ class NotebookViewModel {
     notebook.connectionConfig?.databaseType.dialect ?? .postgresql
   }
 
-  /// Explain Analyze: PostgreSQL (JSON plan) and DuckDB (text plan). SQLite has no ANALYZE
-  /// and shows `EXPLAIN QUERY PLAN` as a grid instead.
+  /// Explain Analyze: PostgreSQL (JSON plan), DuckDB and MySQL 8.0.18+ (text plan). SQLite has
+  /// no ANALYZE and shows `EXPLAIN QUERY PLAN` as a grid instead; MariaDB has no EXPLAIN ANALYZE.
   var canExplainAnalyze: Bool {
     (notebook.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsExplainAnalyze
+      && explainAnalyzeUnavailableReason == nil
+  }
+
+  /// Why the connected server has no Explain Analyze (MySQL older than 8.0.18, MariaDB).
+  var explainAnalyzeUnavailableReason: String? {
+    ExplainRequest.analyzeUnavailableReason(dialect: sqlDialect, mysqlServer: mysqlServerInfo)
   }
 
   /// Nil when this tab's engine supports `feature`, else "<action> is not available for
@@ -414,7 +426,7 @@ class NotebookViewModel {
   /// Same pure check the actor runs before sending, used here to fail fast (no dialog).
   func protectionBlockMessage(for query: String) -> String? {
     let decision = DatabaseConnectionManager.evaluate(
-      classifiedStatements(for: query), policy: protectionPolicy)
+      classifiedStatements(for: query), policy: protectionPolicy, dialect: sqlDialect)
     guard case .blocked(let index, let kind, let reason) = decision else { return nil }
     return DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
       .localizedDescription

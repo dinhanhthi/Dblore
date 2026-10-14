@@ -10,12 +10,14 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case postgresql = "PostgreSQL"
   case sqlite = "SQLite"
   case duckdb = "DuckDB"
+  case mysql = "MySQL"
 
   var displayName: String {
     switch self {
     case .postgresql: rawValue
-    case .sqlite: "SQLite (Beta)"
+    case .sqlite: rawValue
     case .duckdb: rawValue
+    case .mysql: "MySQL / MariaDB"
     }
   }
 
@@ -28,6 +30,16 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "sqlite"
     case .duckdb:
       return "duckdb"
+    case .mysql:
+      return "mysql"
+    }
+  }
+
+  /// Port of a new connection form. File engines keep the struct default; they have no port.
+  nonisolated var defaultPort: Int {
+    switch self {
+    case .mysql: 3306
+    case .postgresql, .sqlite, .duckdb: 5432
     }
   }
 
@@ -37,11 +49,23 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .postgresql: .postgresql
     case .sqlite: .sqlite
     case .duckdb: .duckdb
+    case .mysql: .mysql
     }
   }
 
-  /// Feature set for this engine. SQLite is a beta file database. DuckDB is a file database
-  /// shipped as a plugin: no staged edits, import, or foreign key lookup.
+  /// Engine part of Keychain password keys and certificate accounts. Nil keeps the legacy
+  /// format: PostgreSQL, SQLite and DuckDB items predate MySQL and are never migrated.
+  nonisolated var keychainScope: String? {
+    switch self {
+    case .postgresql, .sqlite, .duckdb: nil
+    case .mysql: rawValue
+    }
+  }
+
+  /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
+  /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
+  /// network engine without schemas or a server cursor: cancel and capped reads stop the
+  /// statement with `KILL QUERY` and keep the session.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -107,6 +131,37 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         requiresPlugin: true,
         isAvailable: true
       )
+    case .mysql:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: true,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: true,
+        supportsExplainAnalyze: true,
+        supportsUpdateOnly: false,
+        supportsRowStaging: true,
+        supportsDataImport: true,
+        supportsForeignKeyLookup: true,
+        requiresPlugin: false,
+        isAvailable: true
+      )
+    }
+  }
+
+  /// Whether tab titles and sidebar rows name a non-default schema. A MySQL "schema" is the
+  /// connected database, the only one shown, so it is never named. SQLite keeps naming attached
+  /// and temp databases.
+  nonisolated var namesSchema: Bool {
+    switch self {
+    case .postgresql, .sqlite, .duckdb: true
+    case .mysql: false
     }
   }
 
@@ -178,7 +233,8 @@ enum ConnectionProtectionLevel: String, Codable, CaseIterable, Sendable {
 
 /// Configuration for database connection
 nonisolated struct ClientCertificateInfo: Codable, Equatable, Sendable {
-  var subject: String
+  /// Nil when only a custom CA is saved (no client certificate).
+  var subject: String?
   var expiry: Date?
   var hasCA: Bool
 }

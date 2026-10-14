@@ -123,7 +123,7 @@ extension NotebookViewModel {
     dialect: SQLDialect
   ) -> StatementConfirmation {
     return StatementConfirmation(
-      index: index, preview: preview(statement.text),
+      index: index, preview: preview(statement.text, dialect: dialect),
       kindLabel: DatabaseConnectionManager.describe(statement.kind),
       affectsAllRows: statement.affectsAllRows, touchesBrake: statement.resetsSessionBrakes,
       changesPrivileges: statement.changesPrivileges,
@@ -181,19 +181,35 @@ extension NotebookViewModel {
   /// DML whose LIKE, ILIKE, `~~`, or `~~*` operand trims to `%` only, including a literal
   /// with no `:name`. An odd number of `NOT` or `!` cancels that operator, including
   /// `NOT (name NOT LIKE ...)`. Casts, parentheses, `||`, and calls of the same kind of
-  /// operand still count. Values stay out of the SQL text.
+  /// operand still count. Values stay out of the SQL text. On MySQL `||` is OR, not
+  /// concatenation, and an operand followed by `||`/`OR`/`XOR`, a hex/bit literal, or an
+  /// executable comment counts; `BINARY` is skipped, and `REGEXP`/`RLIKE` warn on a
+  /// match-all or unreadable pattern.
   private nonisolated static func likeWildcardBindsAllRows(
     _ text: String, kind: StatementKind, parameters: [String: SQLBindValue], dialect: SQLDialect
   ) -> Bool {
-    guard likePatternApplies(to: kind) else { return false }
+    let isUnknown = SQLStatementClassifier.effectiveKind(kind) == .unknown
+    guard likePatternApplies(to: kind) || (dialect == .mysql && isUnknown) else { return false }
     let pieces = likeLexemes(text, dialect: dialect)
+    // MySQL fails an executable comment closed as `.unknown`; its LIKE is still checked.
+    if !likePatternApplies(to: kind) {
+      guard pieces.contains(where: { if case .executableComment = $0 { true } else { false } })
+      else { return false }
+    }
     var index = 0
     while index < pieces.count {
+      if dialect == .mysql, let start = mysqlRegexOperandStart(pieces, at: index) {
+        let parsed = parseLikeConcat(pieces, from: start, parameters: parameters, dialect: dialect)
+        if regexMayMatchAll(parsed.text), !likeOperatorIsNegated(pieces, at: index) { return true }
+        index = max(parsed.next, index + 1)
+        continue
+      }
       guard let start = likeOperandStart(pieces, at: index) else {
         index += 1
         continue
       }
-      let (matches, next) = operandIsAllPercent(pieces, from: start, parameters: parameters)
+      let (matches, next) = operandIsAllPercent(
+        pieces, from: start, parameters: parameters, dialect: dialect)
       if matches, !likeOperatorIsNegated(pieces, at: index) { return true }
       index = max(next, index + 1)
     }
@@ -212,6 +228,8 @@ extension NotebookViewModel {
     case number(String)
     case space
     case other
+    /// MySQL `/*! ... */`: the server runs its body.
+    case executableComment
 
     nonisolated func isSymbol(_ symbol: String) -> Bool {
       if case .symbol(let text) = self { return text == symbol }
@@ -232,6 +250,7 @@ extension NotebookViewModel {
       case .word: pieces.append(.word(raw))
       case .symbol: pieces.append(.symbol(raw))
       case .number: pieces.append(.number(raw))
+      case .executableComment: pieces.append(.executableComment)
       case .dollarString:
         if let body = dollarBody(raw) {
           pieces.append(.literal(body))
@@ -263,8 +282,9 @@ extension NotebookViewModel {
     return String(String.UnicodeScalarView(scalars[tagCount..<(scalars.count - tagCount)]))
   }
 
-  /// A PostgreSQL or DuckDB `E'...'` escape string is decoded. A plain or ambiguous string
-  /// stays raw: DuckDB plain strings have no backslash escapes, and SQLite has no `E'...'`.
+  /// A PostgreSQL or DuckDB `E'...'` escape string is decoded, and so is every MySQL string
+  /// (`'...'` or `"..."`, backslash-escaped). Any other plain or ambiguous string stays raw:
+  /// DuckDB plain strings have no backslash escapes, and SQLite has no `E'...'`.
   /// A quoted identifier is not a pattern literal.
   private nonisolated static func quotedLikeLexeme(
     _ kind: SQLToken.Kind, content: String, isEscapeString: Bool, dialect: SQLDialect
@@ -274,10 +294,43 @@ extension NotebookViewModel {
     {
       return .literal(eStringText(content))
     }
+    if kind == .string, dialect == .mysql, content.contains("\\") {
+      return .literal(mysqlStringText(content))
+    }
     if kind == .string || kind == .backslashString {
       return .literal(content)
     }
     return .other
+  }
+
+  /// MySQL string escapes. `\%` and `\_` keep the backslash, so LIKE still sees an escaped
+  /// wildcard. Any other unknown escape keeps only the escaped character; there is no hex or
+  /// octal escape.
+  private nonisolated static func mysqlStringText(_ content: String) -> String {
+    let scalars = Array(content.unicodeScalars)
+    var out = String.UnicodeScalarView()
+    var index = 0
+    while index < scalars.count {
+      let scalar = scalars[index]
+      guard scalar == "\\", index + 1 < scalars.count else {
+        out.append(scalar)
+        index += 1
+        continue
+      }
+      let escaped = scalars[index + 1]
+      index += 2
+      switch escaped {
+      case "0": out.append("\u{00}")
+      case "b": out.append("\u{08}")
+      case "n": out.append("\n")
+      case "r": out.append("\r")
+      case "t": out.append("\t")
+      case "Z": out.append("\u{1A}")
+      case "%", "_": out.append(contentsOf: [scalar, escaped])
+      default: out.append(escaped)
+      }
+    }
+    return String(out)
   }
 
   /// PostgreSQL `E'...'` escapes. An unknown escape keeps the escaped character.
@@ -401,6 +454,37 @@ extension NotebookViewModel {
     }
   }
 
+  /// Index of the pattern after MySQL `REGEXP` / `RLIKE`, or the second argument of
+  /// `REGEXP_LIKE(`. Nil when this token is not one.
+  private nonisolated static func mysqlRegexOperandStart(
+    _ pieces: [LikeLexeme], at index: Int
+  ) -> Int? {
+    guard case .word(let text) = pieces[index] else { return nil }
+    switch SQLTokenizer.asciiUppercased(text) {
+    case "REGEXP", "RLIKE":
+      return index + 1
+    case "REGEXP_LIKE":
+      let open = skipLikeSpace(pieces, index + 1)
+      guard open < pieces.count, pieces[open].isSymbol("(") else { return nil }
+      let comma = skipLikeUntilParen(pieces, from: open + 1, orComma: true)
+      guard comma < pieces.count, pieces[comma].isSymbol(",") else { return nil }
+      return comma + 1
+    default:
+      return nil
+    }
+  }
+
+  /// A regex that matches every non-NULL string, an operand that may be one (`mayMatchAll`,
+  /// which also makes a literal `'%'` warn), or one that cannot be read (fails closed).
+  /// MySQL 8 regex is an unanchored ICU search, so a pattern matching the empty string
+  /// (`a*`, `x?`, `|`) matches every row; a pattern that does not compile fails closed.
+  private nonisolated static func regexMayMatchAll(_ pattern: String?) -> Bool {
+    guard let pattern, pattern != mayMatchAll,
+      let regex = try? NSRegularExpression(pattern: pattern)
+    else { return true }
+    return regex.firstMatch(in: "", range: NSRange(location: 0, length: 0)) != nil
+  }
+
   /// True when an odd number of `NOT` or `!` negate this operator.
   /// Counts the `NOT`/`!` on the operator and each `NOT` wrapped around its parentheses,
   /// so `NOT (name NOT LIKE :pat)` stays positive. Stops at any other token.
@@ -453,7 +537,7 @@ extension NotebookViewModel {
         return open
       }
       return startOfDottedName(pieces, at: name)
-    case .word, .other:
+    case .word, .other, .executableComment:
       return startOfDottedName(pieces, at: end)
     default:
       return end
@@ -472,7 +556,7 @@ extension NotebookViewModel {
 
   private nonisolated static func isLikeName(_ piece: LikeLexeme) -> Bool {
     switch piece {
-    case .word, .other: true
+    case .word, .other, .executableComment: true
     default: false
     }
   }
@@ -523,22 +607,26 @@ extension NotebookViewModel {
   private struct LikePiece {
     var text: String?
     var next: Int
+    /// A known MySQL `NULL` (literal or bind). `text` is nil.
+    var isNull = false
   }
 
   /// The operand is binds, percent literals, `||`, parentheses, casts, and calls of those.
   /// `replace` is applied when every argument is known text. Any other call matches only when
   /// every argument trims to `%`.
   private nonisolated static func operandIsAllPercent(
-    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> (Bool, Int) {
-    let parsed = parseLikeConcat(pieces, from: start, parameters: parameters)
+    let parsed = parseLikeConcat(pieces, from: start, parameters: parameters, dialect: dialect)
     let matches = parsed.text.map { isPercentOnly(.text($0)) } ?? false
     return (matches, parsed.next)
   }
 
   /// One or more values joined by `||`. `requireValue` is set again after each `||`.
   private nonisolated static func parseLikeConcat(
-    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> LikePiece {
     var index = start
     var combined = ""
@@ -546,10 +634,12 @@ extension NotebookViewModel {
     var requireValue = true
     while true {
       let lead = skipLikeSpace(pieces, index)
-      if !requireValue, lead >= pieces.count || isLikeValueBoundary(pieces, at: lead) {
+      if !requireValue,
+        lead >= pieces.count || isLikeValueBoundary(pieces, at: lead, dialect: dialect)
+      {
         return LikePiece(text: saw ? combined : nil, next: lead)
       }
-      let part = parseLikeCastable(pieces, from: lead, parameters: parameters)
+      let part = parseLikeCastable(pieces, from: lead, parameters: parameters, dialect: dialect)
       guard let text = part.text, part.next != lead else {
         return LikePiece(text: nil, next: part.next)
       }
@@ -557,7 +647,10 @@ extension NotebookViewModel {
       saw = true
       requireValue = false
       let after = skipLikeSpace(pieces, part.next)
-      let width = after < pieces.count ? concatWidth(pieces, at: after) : 0
+      if dialect == .mysql, after < pieces.count, isMySQLOrOperator(pieces, at: after) {
+        return LikePiece(text: mayMatchAll, next: after)
+      }
+      let width = after < pieces.count ? concatWidth(pieces, at: after, dialect: dialect) : 0
       guard width > 0 else { return LikePiece(text: combined, next: after) }
       index = after + width
       requireValue = true
@@ -566,9 +659,10 @@ extension NotebookViewModel {
 
   /// A value, then any number of `::type` casts. A cast keeps the value text.
   private nonisolated static func parseLikeCastable(
-    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> LikePiece {
-    let primary = parseLikePrimary(pieces, from: start, parameters: parameters)
+    let primary = parseLikePrimary(pieces, from: start, parameters: parameters, dialect: dialect)
     guard primary.text != nil else { return primary }
     var index = primary.next
     while true {
@@ -584,57 +678,151 @@ extension NotebookViewModel {
 
   /// `:name`, a string literal, `(value)`, `CAST(value AS type)`, or `name(args)`.
   private nonisolated static func parseLikePrimary(
-    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> LikePiece {
     let index = skipLikeSpace(pieces, start)
     guard index < pieces.count else { return LikePiece(text: nil, next: index) }
     switch pieces[index] {
     case .symbol("("):
-      let inner = parseLikeConcat(pieces, from: index + 1, parameters: parameters)
+      let inner = parseLikeConcat(pieces, from: index + 1, parameters: parameters, dialect: dialect)
       let close = skipLikeSpace(pieces, inner.next)
       guard inner.text != nil, close < pieces.count, pieces[close].isSymbol(")") else {
         return LikePiece(text: nil, next: close)
       }
       return LikePiece(text: inner.text, next: close + 1)
-    case .literal(let text), .number(let text):
+    case .literal(let text):
+      let piece = LikePiece(text: text, next: index + 1)
+      return dialect == .mysql ? mysqlJoinedLiterals(piece, pieces) : piece
+    case .number(let text):
+      // MySQL `0x25` / `0b1` lex as a number glued to a word: a hex or bit literal.
+      if dialect == .mysql, index + 1 < pieces.count, case .word = pieces[index + 1] {
+        return LikePiece(text: mayMatchAll, next: index + 2)
+      }
       return LikePiece(text: text, next: index + 1)
     case .symbol(":"):
-      guard let name = bindName(pieces, at: index), case .text(let text) = parameters[name] else {
-        return LikePiece(text: nil, next: index)
+      guard let name = bindName(pieces, at: index) else { return LikePiece(text: nil, next: index) }
+      switch parameters[name] {
+      case .text(let text): return LikePiece(text: text, next: index + 2)
+      case .null where dialect == .mysql: return LikePiece(text: nil, next: index + 2, isNull: true)
+      default: return LikePiece(text: nil, next: index)
       }
-      return LikePiece(text: text, next: index + 2)
+    case .executableComment where dialect == .mysql:
+      return LikePiece(text: mayMatchAll, next: index + 1)
     case .word(let text):
       let next = skipLikeSpace(pieces, index + 1)
+      if dialect == .mysql, let prefixed = mysqlPrefixedLiteral(text, pieces, at: next) {
+        return prefixed
+      }
+      let upper = SQLTokenizer.asciiUppercased(text)
+      if dialect == .mysql, upper == "BINARY" {
+        return parseLikePrimary(pieces, from: next, parameters: parameters, dialect: dialect)
+      }
+      if dialect == .mysql, upper == "NULL" {
+        return LikePiece(text: nil, next: index + 1, isNull: true)
+      }
       guard next < pieces.count, pieces[next].isSymbol("(") else {
         return LikePiece(text: nil, next: index)
       }
-      if SQLTokenizer.asciiUppercased(text) == "CAST" {
-        return parseLikeCastCall(pieces, from: next + 1, parameters: parameters)
+      if upper == "CAST" {
+        return parseLikeCastCall(pieces, from: next + 1, parameters: parameters, dialect: dialect)
       }
-      return parseLikeCall(pieces, name: text, from: next + 1, parameters: parameters)
+      return parseLikeCall(
+        pieces, name: text, from: next + 1, parameters: parameters, dialect: dialect)
     default:
       return LikePiece(text: nil, next: index)
     }
   }
 
+  /// Stand-in operand text for a MySQL operand that may match every row but cannot be read.
+  private nonisolated static let mayMatchAll = "%"
+
+  /// MySQL `N'...'` and `_charset'...'` are that string. `X'...'` / `B'...'` (hex and bit
+  /// literals) and an introducer before a number, `X'...'`, or `B'...'` may equal `%`, so they
+  /// fail closed.
+  /// Nil when `word` is not such a prefix.
+  private nonisolated static func mysqlPrefixedLiteral(
+    _ word: String, _ pieces: [LikeLexeme], at next: Int
+  ) -> LikePiece? {
+    guard next < pieces.count else { return nil }
+    let upper = SQLTokenizer.asciiUppercased(word)
+    switch pieces[next] {
+    case .literal(let text):
+      if upper == "N" || upper.hasPrefix("_") {
+        return mysqlJoinedLiterals(LikePiece(text: text, next: next + 1), pieces)
+      }
+      if upper == "X" || upper == "B" { return LikePiece(text: mayMatchAll, next: next + 1) }
+      return nil
+    case .number:
+      guard upper.hasPrefix("_") else { return nil }
+      return LikePiece(text: mayMatchAll, next: next + 1)
+    case .word(let radix):
+      // `_binary X'25'`: an introducer before a hex or bit literal.
+      let kind = SQLTokenizer.asciiUppercased(radix)
+      guard upper.hasPrefix("_"), kind == "X" || kind == "B", next + 1 < pieces.count,
+        case .literal = pieces[next + 1]
+      else { return nil }
+      return LikePiece(text: mayMatchAll, next: next + 2)
+    default:
+      return nil
+    }
+  }
+
+  /// MySQL joins adjacent string literals at parse time: `'' '%'` is `'%'` and `'a' '*'` is
+  /// `'a*'`. Only the first literal may carry an introducer; comments between them are spaces.
+  private nonisolated static func mysqlJoinedLiterals(
+    _ first: LikePiece, _ pieces: [LikeLexeme]
+  ) -> LikePiece {
+    var joined = first
+    while true {
+      let next = skipLikeSpace(pieces, joined.next)
+      guard next < pieces.count, case .literal(let text) = pieces[next] else { return joined }
+      joined = LikePiece(text: (joined.text ?? "") + text, next: next + 1)
+    }
+  }
+
+  /// MySQL `||`, `OR`, `XOR`, or an executable comment (which may hold an OR) after a LIKE
+  /// operand: `||` is logical OR in the default sql_mode, and an OR can make the whole
+  /// condition true for every row.
+  private nonisolated static func isMySQLOrOperator(_ pieces: [LikeLexeme], at index: Int) -> Bool {
+    switch pieces[index] {
+    case .word(let text):
+      let upper = SQLTokenizer.asciiUppercased(text)
+      return upper == "OR" || upper == "XOR"
+    case .symbol("||"), .executableComment:
+      return true
+    case .symbol("|"):
+      let second = skipLikeSpace(pieces, index + 1)
+      return second < pieces.count && pieces[second].isSymbol("|")
+    default:
+      return false
+    }
+  }
+
   /// `replace` is evaluated. Any other call matches only when every argument trims to `%`.
   private nonisolated static func parseLikeCall(
-    _ pieces: [LikeLexeme], name: String, from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], name: String, from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> LikePiece {
     var index = start
-    var arguments: [String] = []
+    var arguments: [String?] = []
     while true {
       let lead = skipLikeSpace(pieces, index)
       if lead < pieces.count, pieces[lead].isSymbol(")") {
-        return LikePiece(text: callText(name, arguments: arguments), next: lead + 1)
+        return LikePiece(
+          text: callText(name, arguments: arguments, dialect: dialect), next: lead + 1)
       }
-      let argument = parseLikeConcat(pieces, from: lead, parameters: parameters)
-      guard let text = argument.text else {
+      var argument = parseLikeConcat(pieces, from: lead, parameters: parameters, dialect: dialect)
+      if argument.text == nil {
+        let null = parseLikePrimary(pieces, from: lead, parameters: parameters, dialect: dialect)
+        if null.isNull { argument = null }
+      }
+      guard argument.text != nil || argument.isNull else {
         let end = skipLikeUntilParen(pieces, from: start)
         let next = end < pieces.count ? end + 1 : end
         return LikePiece(text: nil, next: next)
       }
-      arguments.append(text)
+      arguments.append(argument.text)
       let after = skipLikeSpace(pieces, argument.next)
       guard after < pieces.count else { return LikePiece(text: nil, next: after) }
       if pieces[after].isSymbol(",") {
@@ -642,13 +830,22 @@ extension NotebookViewModel {
         continue
       }
       guard pieces[after].isSymbol(")") else { return LikePiece(text: nil, next: after) }
-      return LikePiece(text: callText(name, arguments: arguments), next: after + 1)
+      return LikePiece(
+        text: callText(name, arguments: arguments, dialect: dialect), next: after + 1)
     }
   }
 
-  /// Text of a call, or nil when this call is not a pattern of `%`.
-  private nonisolated static func callText(_ name: String, arguments: [String]) -> String? {
+  /// Text of a call, or nil when this call is not a pattern of `%`. A nil argument is a known
+  /// MySQL `NULL`; only the MySQL string functions below read past it.
+  private nonisolated static func callText(
+    _ name: String, arguments: [String?], dialect: SQLDialect
+  ) -> String? {
     let upper = SQLTokenizer.asciiUppercased(name)
+    if dialect == .mysql, let text = mysqlStringCall(upper, arguments: arguments) {
+      return text
+    }
+    guard !arguments.contains(nil) else { return nil }
+    let arguments = arguments.compactMap { $0 }
     if upper == "REPLACE", arguments.count == 3 {
       return replaced(arguments[0], arguments[1], arguments[2])
     }
@@ -659,6 +856,27 @@ extension NotebookViewModel {
       return nil
     }
     return "%"
+  }
+
+  /// MySQL `CONCAT`, `CONCAT_WS`, `IFNULL`, and `COALESCE`. Nil when the call is not one of
+  /// these or its result is NULL.
+  private nonisolated static func mysqlStringCall(_ upper: String, arguments: [String?]) -> String?
+  {
+    switch upper {
+    case "CONCAT":
+      guard !arguments.isEmpty, !arguments.contains(nil) else { return nil }
+      return arguments.compactMap { $0 }.joined()
+    case "CONCAT_WS":
+      guard let separator = arguments.first ?? nil else { return nil }
+      return arguments.dropFirst().compactMap { $0 }.joined(separator: separator)
+    case "IFNULL":
+      guard arguments.count == 2 else { return nil }
+      return arguments.compactMap { $0 }.first
+    case "COALESCE":
+      return arguments.compactMap { $0 }.first
+    default:
+      return nil
+    }
   }
 
   /// `chr(37)` / `char(37)` when every argument is a decimal code point. One argument.
@@ -681,9 +899,10 @@ extension NotebookViewModel {
 
   /// `CAST(value AS type)`. The type is skipped; the value text is unchanged.
   private nonisolated static func parseLikeCastCall(
-    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue]
+    _ pieces: [LikeLexeme], from start: Int, parameters: [String: SQLBindValue],
+    dialect: SQLDialect
   ) -> LikePiece {
-    let value = parseLikeConcat(pieces, from: start, parameters: parameters)
+    let value = parseLikeConcat(pieces, from: start, parameters: parameters, dialect: dialect)
     let asWord = skipLikeSpace(pieces, value.next)
     guard value.text != nil, asWord < pieces.count, case .word(let text) = pieces[asWord],
       SQLTokenizer.asciiUppercased(text) == "AS"
@@ -697,7 +916,7 @@ extension NotebookViewModel {
   }
 
   private nonisolated static func isLikeValueBoundary(
-    _ pieces: [LikeLexeme], at index: Int
+    _ pieces: [LikeLexeme], at index: Int, dialect: SQLDialect
   )
     -> Bool
   {
@@ -708,7 +927,7 @@ extension NotebookViewModel {
       let next = skipLikeSpace(pieces, index + 1)
       return next >= pieces.count || !pieces[next].isSymbol("(")
     case .symbol:
-      return concatWidth(pieces, at: index) == 0
+      return concatWidth(pieces, at: index, dialect: dialect) == 0
     default:
       return true
     }
@@ -718,7 +937,7 @@ extension NotebookViewModel {
   private nonisolated static func skipLikeType(_ pieces: [LikeLexeme], from start: Int) -> Int {
     guard start < pieces.count else { return start }
     switch pieces[start] {
-    case .word, .other: break
+    case .word, .other, .executableComment: break
     default: return start
     }
     var index = start + 1
@@ -728,7 +947,7 @@ extension NotebookViewModel {
       let name = skipLikeSpace(pieces, dot + 1)
       guard name < pieces.count else { return index }
       switch pieces[name] {
-      case .word, .other: index = name + 1
+      case .word, .other, .executableComment: index = name + 1
       default: return index
       }
     }
@@ -787,8 +1006,9 @@ extension NotebookViewModel {
   }
 
   /// Index of the `)` that closes the current `CAST(`, ignoring typmod parentheses.
+  /// With `orComma`, a top-level `,` also stops the scan.
   private nonisolated static func skipLikeUntilParen(
-    _ pieces: [LikeLexeme], from start: Int
+    _ pieces: [LikeLexeme], from start: Int, orComma: Bool = false
   )
     -> Int
   {
@@ -797,7 +1017,8 @@ extension NotebookViewModel {
     while index < pieces.count {
       if pieces[index].isSymbol("(") {
         depth += 1
-      } else if pieces[index].isSymbol(")"), depth == 0 {
+      } else if depth == 0, pieces[index].isSymbol(")") || (orComma && pieces[index].isSymbol(","))
+      {
         return index
       } else if pieces[index].isSymbol(")") {
         depth -= 1
@@ -820,7 +1041,11 @@ extension NotebookViewModel {
   }
 
   /// 2 for adjacent `|` `|`, 1 for a single `||` symbol, 0 when this is not concatenation.
-  private nonisolated static func concatWidth(_ pieces: [LikeLexeme], at index: Int) -> Int {
+  private nonisolated static func concatWidth(
+    _ pieces: [LikeLexeme], at index: Int, dialect: SQLDialect
+  ) -> Int {
+    // MySQL's default sql_mode has no PIPES_AS_CONCAT: `||` is logical OR.
+    guard dialect != .mysql else { return 0 }
     if pieces[index].isSymbol("||") { return 1 }
     guard pieces[index].isSymbol("|"), index + 1 < pieces.count, pieces[index + 1].isSymbol("|")
     else { return 0 }
@@ -836,7 +1061,7 @@ extension NotebookViewModel {
   /// A `:name` glued to a word, number, `:`, `)`, or `]` is not a placeholder.
   private nonisolated static func blocksBind(_ piece: LikeLexeme) -> Bool {
     switch piece {
-    case .word(_), .number, .other: true
+    case .word(_), .number, .other, .executableComment: true
     case .symbol(let symbol): symbol == ":" || symbol == ")" || symbol == "]"
     case .literal, .space: false
     }
@@ -850,21 +1075,23 @@ extension NotebookViewModel {
 
   /// First non-empty line of the statement after any leading comments, truncated to 80
   /// characters.
-  private nonisolated static func preview(_ text: String) -> String {
+  private nonisolated static func preview(_ text: String, dialect: SQLDialect) -> String {
     let line =
-      withoutLeadingComments(text).split(whereSeparator: \.isNewline)
+      withoutLeadingComments(text, dialect: dialect).split(whereSeparator: \.isNewline)
       .map { $0.trimmingCharacters(in: .whitespaces) }
       .first { !$0.isEmpty } ?? ""
-    return previewLine(line)
+    return previewLine(line, dialect: dialect)
   }
 
   /// First 79 characters plus an ellipsis. A later `%` inside a LIKE operand is appended
   /// after that prefix. The head is not shortened, and a `%` in a comment or elsewhere is not.
-  private nonisolated static func previewLine(_ line: String) -> String {
+  private nonisolated static func previewLine(_ line: String, dialect: SQLDialect) -> String {
     let limit = 80
     guard line.count > limit else { return line }
     let head = String(line.prefix(limit - 1)) + "…"
-    guard let mark = likeOperandPercent(in: line, past: limit - 1) else { return head }
+    guard let mark = likeOperandPercent(in: line, past: limit - 1, dialect: dialect) else {
+      return head
+    }
     let tailBudget = 24
     let tailStart =
       line.index(mark, offsetBy: -8, limitedBy: line.startIndex) ?? line.startIndex
@@ -876,18 +1103,19 @@ extension NotebookViewModel {
   }
 
   /// Scalar index of the last `%` at or past `cut` that sits in a LIKE, ILIKE, `~~`, or `~~*`
-  /// operand. Comments and any `%` outside that operand are ignored.
+  /// operand. Comments (lexed with `dialect`) and any `%` outside that operand are ignored.
   private nonisolated static func likeOperandPercent(
-    in line: String, past cut: Int
+    in line: String, past cut: Int, dialect: SQLDialect
   ) -> String.Index? {
     let scalars = Array(line.unicodeScalars)
+    let tokenizer = SQLTokenizer(dialect: dialect)
     var offset = 0
     var depth = 0
     var operand = false
     var sawTilde = false
     var last: Int?
     while offset < scalars.count {
-      let lexeme = SQLTokenizer.lexeme(in: scalars, at: offset)
+      let lexeme = tokenizer.lexeme(in: scalars, at: offset)
       let raw = SQLTokenizer.text(scalars, lexeme.range)
       switch lexeme.kind {
       case .whitespace, .comment:
@@ -946,13 +1174,16 @@ extension NotebookViewModel {
     }
   }
 
-  /// `text` from its first token on (leading whitespace, `--` and `/* */` comments dropped);
+  /// `text` from its first token on (leading whitespace and `dialect` comments dropped);
   /// `text` unchanged if it holds only comments.
-  private nonisolated static func withoutLeadingComments(_ text: String) -> String {
+  private nonisolated static func withoutLeadingComments(
+    _ text: String, dialect: SQLDialect
+  ) -> String {
     let scalars = Array(text.unicodeScalars)
+    let tokenizer = SQLTokenizer(dialect: dialect)
     var offset = 0
     while offset < scalars.count {
-      let lexeme = SQLTokenizer.lexeme(in: scalars, at: offset)
+      let lexeme = tokenizer.lexeme(in: scalars, at: offset)
       switch lexeme.kind {
       case .whitespace, .comment: offset = lexeme.range.upperBound
       default: return SQLTokenizer.text(scalars, offset..<scalars.count)

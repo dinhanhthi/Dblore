@@ -3,6 +3,8 @@
 // transaction behind an app-owned savepoint; without Protected mode the edit gets its own
 // app-owned BEGIN ... COMMIT, or runs inside the transaction the user opened.
 // A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement.
+// MySQL counts changed rows (CLIENT_FOUND_ROWS is off): an UPDATE with a row check that
+// affects 0 rows counts as 1 when a locking read still finds the row (a same-value write).
 
 import Foundation
 
@@ -49,7 +51,11 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
-    if let classified { recordPending(StatementSummary(statement: classified, affectedRows: rows)) }
+    if let classified {
+      recordPending(
+        StatementSummary(
+          statement: classified, affectedRows: rows, dialect: Self.dialect(of: config)))
+    }
     return rows
   }
 
@@ -200,7 +206,9 @@ extension DatabaseConnectionManager {
           index, sql: statement.sql, reason: reason, rolledBack: rolledBack)
       }
       // SQLite's sqlite3_changes64 can retain the previous DML count after CREATE TABLE.
-      let isDDL = SQLStatementClassifier.classify(statement.sql).first?.kind == .ddl
+      let isDDL =
+        SQLStatementClassifier.classify(statement.sql, dialect: Self.dialect(of: config)).first?
+        .kind == .ddl
       counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
     }
     return counts
@@ -213,9 +221,12 @@ extension DatabaseConnectionManager {
   }
 
   private func recordBatch(_ statements: [BoundStatement], counts: [Int]) {
+    let dialect = Self.dialect(of: config)
     for (index, statement) in statements.enumerated() {
-      guard let classified = SQLStatementClassifier.classify(statement.sql).first else { continue }
-      recordPending(StatementSummary(statement: classified, affectedRows: counts[index]))
+      guard let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect).first
+      else { continue }
+      recordPending(
+        StatementSummary(statement: classified, affectedRows: counts[index], dialect: dialect))
     }
   }
 
@@ -247,14 +258,36 @@ extension DatabaseConnectionManager {
 
   /// Send the app-built UPDATE (values as bind parameters) and return the command tag row count.
   private func sendEdit(_ statement: CellUpdateStatement) async throws -> Int {
-    try await affectedRows(sql: statement.sql, binds: statement.binds)
+    let rows = try await affectedRows(sql: statement.sql, binds: statement.binds)
+    return try await confirmedRows(rows, check: statement.rowCheck)
   }
 
   private func sendBound(_ statement: BoundStatement) async throws -> Int {
-    try await affectedRows(sql: statement.sql, binds: statement.binds)
+    let rows = try await affectedRows(sql: statement.sql, binds: statement.binds)
+    return try await confirmedRows(rows, check: statement.rowCheck)
   }
 
-  private func affectedRows(sql: String, binds: [SQLBindValue]) async throws -> Int {
+  /// `rows`, or 1 when the statement affected none and `check` still finds its row.
+  private func confirmedRows(_ rows: Int, check: RowExistenceCheck?) async throws -> Int {
+    guard rows == 0, let check else { return rows }
+    let startTime = Date()
+    do {
+      let found = try await withSession { session in
+        var found = false
+        for try await _ in try await session.query(check.sql, binds: check.binds).rows {
+          found = true
+        }
+        return found
+      }
+      return found ? 1 : 0
+    } catch let error as DatabaseError {
+      throw error
+    } catch {
+      throw queryFailure(error, query: check.sql, startTime: startTime)
+    }
+  }
+
+  func affectedRows(sql: String, binds: [SQLBindValue]) async throws -> Int {
     let startTime = Date()
     do {
       return try await withSession { try await $0.command(sql, binds: binds) }.affectedRows

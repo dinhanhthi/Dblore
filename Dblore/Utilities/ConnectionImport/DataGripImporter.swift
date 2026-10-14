@@ -2,7 +2,7 @@
 //  DataGripImporter.swift
 //  Dblore
 //
-//  Imports PostgreSQL connections from a DataGrip (JetBrains) project `.idea` folder:
+//  Imports PostgreSQL and MySQL/MariaDB connections from a DataGrip (JetBrains) project `.idea` folder:
 //  `dataSources.xml` (name, driver, JDBC URL) and the optional `dataSources.local.xml`
 //  (user name, SSH settings), joined by data source `uuid`. Passwords live in the JetBrains
 //  secret storage and are never imported. Both files are external input: sizes are bounded,
@@ -28,7 +28,8 @@ nonisolated enum DataGripImporter {
   static let localDataSourcesFileName = "dataSources.local.xml"
   static let sshWarning = "SSH settings not imported; set up the SSH tunnel after import."
 
-  private static let jdbcPrefix = "jdbc:postgresql:"
+  /// JDBC URL prefixes, each with the URI scheme `PostgresURIParser` reads.
+  private static let jdbcSchemes = ["postgresql", "mysql", "mariadb"]
 
   static func importConnections(
     fromIdeaFolder url: URL
@@ -218,23 +219,28 @@ nonisolated enum DataGripImporter {
   private static func mapConnection(_ source: DataSource) -> Result<ImportedConnection, Skipped> {
     let label = "\"\(sanitized(source.name.isEmpty ? "unnamed" : source.name))\""
     let url = source.jdbcURL ?? ""
-    let isPostgresURL = url.lowercased().hasPrefix(jdbcPrefix)
-    guard isPostgresURL || source.driverRef?.lowercased() == "postgresql" else {
+    // The URL decides the engine; the driver-ref only picks the skip message.
+    let scheme = jdbcSchemes.first { url.lowercased().hasPrefix("jdbc:\($0):") }
+    guard let scheme else {
+      let driverRef = source.driverRef?.lowercased() ?? ""
+      if driverRef == "postgresql" {
+        return .failure(Skipped(message: "Skipped \(label): no PostgreSQL JDBC URL."))
+      }
+      if driverRef.hasPrefix("mysql") || driverRef.hasPrefix("mariadb") {
+        return .failure(Skipped(message: "Skipped \(label): no MySQL JDBC URL."))
+      }
       return .failure(
         Skipped(
           message: "Skipped \(label): unsupported driver \(sanitized(source.driverRef ?? ""))."))
     }
-    guard isPostgresURL else {
-      return .failure(Skipped(message: "Skipped \(label): no PostgreSQL JDBC URL."))
-    }
-    let rest = url.dropFirst(jdbcPrefix.count)
+    let rest = url.dropFirst("jdbc:\(scheme):".count)
     guard rest.hasPrefix("//") else {
       return .failure(Skipped(message: "Skipped \(label): the JDBC URL has no host."))
     }
 
     var connection: ImportedConnection
     do {
-      connection = try PostgresURIParser.parse("postgresql:" + rest)
+      connection = try PostgresURIParser.parse(scheme + ":" + rest)
     } catch PostgresURIParser.ParseError.multipleHostsNotSupported {
       return .failure(Skipped(message: "Skipped \(label): multiple hosts are not supported."))
     } catch {

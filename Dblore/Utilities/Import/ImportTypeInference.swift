@@ -10,21 +10,36 @@ nonisolated enum ImportTypeInference {
     case text
 
     func sqlType(dialect: SQLDialect) -> String {
-      if dialect == .sqlite {
+      switch dialect {
+      case .sqlite:
         switch self {
         case .integer, .boolean: "INTEGER"
         case .decimal: "REAL"
         case .date, .timestamp, .text: "TEXT"
         }
-      } else {
+      case .mysql:
+        // DOUBLE, not bare DECIMAL (which is DECIMAL(10,0) and drops fractions)
         switch self {
-        case .integer: "bigint"
-        case .decimal: "numeric"
-        case .boolean: "boolean"
-        case .date: "date"
-        case .timestamp: "timestamptz"
-        case .text: "text"
+        case .integer: "BIGINT"
+        case .decimal: "DOUBLE"
+        case .boolean: "BOOLEAN"
+        case .date: "DATE"
+        case .timestamp: "DATETIME(6)"
+        case .text: "LONGTEXT"
         }
+      case .postgresql, .duckdb: postgresSQLType
+      default: postgresSQLType
+      }
+    }
+
+    private var postgresSQLType: String {
+      switch self {
+      case .integer: "bigint"
+      case .decimal: "numeric"
+      case .boolean: "boolean"
+      case .date: "date"
+      case .timestamp: "timestamptz"
+      case .text: "text"
       }
     }
   }
@@ -36,14 +51,29 @@ nonisolated enum ImportTypeInference {
     return value
   }
 
-  static func infer(rows: [[String?]], columnCount: Int) -> [Kind] {
+  /// The ISO 8601 forms `infer` accepts as `.timestamp`: a full date (UTC midnight), or a date
+  /// and time with `Z` or an offset, with or without fractional seconds.
+  struct TimestampParser {
     let dateFormatter = ISO8601DateFormatter()
-    dateFormatter.formatOptions = [.withFullDate]
-    dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)!
     let timestampFormatter = ISO8601DateFormatter()
-    timestampFormatter.formatOptions = [.withInternetDateTime]
     let fractionalFormatter = ISO8601DateFormatter()
-    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+    init() {
+      dateFormatter.formatOptions = [.withFullDate]
+      dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)!
+      timestampFormatter.formatOptions = [.withInternetDateTime]
+      fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    }
+
+    func date(from value: String) -> Date? {
+      if isDate(value, formatter: dateFormatter) { return dateFormatter.date(from: value) }
+      return timestampFormatter.date(from: value) ?? fractionalFormatter.date(from: value)
+    }
+  }
+
+  static func infer(rows: [[String?]], columnCount: Int) -> [Kind] {
+    let parser = TimestampParser()
+    let dateFormatter = parser.dateFormatter
 
     return (0..<max(columnCount, 0)).map { column in
       let values = rows.compactMap { row -> String? in
@@ -60,11 +90,7 @@ nonisolated enum ImportTypeInference {
         return .boolean
       }
       if values.allSatisfy({ isDate($0, formatter: dateFormatter) }) { return .date }
-      if values.allSatisfy({
-        isDate($0, formatter: dateFormatter)
-          || timestampFormatter.date(from: $0) != nil
-          || fractionalFormatter.date(from: $0) != nil
-      }) {
+      if values.allSatisfy({ parser.date(from: $0) != nil }) {
         return .timestamp
       }
       return .text

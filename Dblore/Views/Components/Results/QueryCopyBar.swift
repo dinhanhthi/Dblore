@@ -23,7 +23,8 @@ import SwiftUI
 ///   query: "SELECT * FROM users",
 ///   result: cellResult,
 ///   viewModel: viewModel,
-///   cellId: cellId
+///   cellId: cellId,
+///   dialect: viewModel.sqlDialect
 /// )
 /// ```
 struct QueryCopyBar: View {
@@ -42,10 +43,10 @@ struct QueryCopyBar: View {
   /// Optional query index for multi-statement downloads (nil for single statement)
   var queryIndex: Int?
 
-  /// Dialect of INSERT export and clipboard copy. Notebook call sites keep PostgreSQL.
-  var dialect: SQLDialect = .postgresql
+  /// Connection dialect of INSERT export and clipboard copy.
+  let dialect: SQLDialect
 
-  /// When set, the Grid / Chart slider sits left of View Query (editor result footer).
+  /// When set, the Grid / Chart slider sits at the trailing end (editor result footer).
   var displayMode: Binding<ResultDisplayMode>? = nil
 
   /// Icon-only circle for View Query and Download. Notebook cells pass true.
@@ -118,15 +119,15 @@ struct QueryCopyBar: View {
           .help(isQueryCopied ? "Copied!" : "Click to copy query")
         }
 
-        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
-          ResultDisplayPicker(mode: displayMode)
-        }
-
         // View Query button (left of Download button)
         viewQueryButton(query: query, mode: currentMode)
 
         // Download dropdown button (right-aligned)
         downloadButton(result: result, mode: currentMode)
+
+        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
+          ResultDisplayPicker(mode: displayMode)
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       .sheet(item: $exportRequest) { request in
@@ -181,7 +182,7 @@ struct QueryCopyBar: View {
       label()
         .foregroundColor(.foreground)
         .frame(width: ResultDisplayPicker.height, height: ResultDisplayPicker.height)
-        .background(Circle().fill(Color.inputBackground))
+        .background(Circle().fill(Color.controlBackground))
         .overlay(Circle().strokeBorder(Color.border, lineWidth: 1))
         .contentShape(Circle())
     } else {
@@ -189,8 +190,8 @@ struct QueryCopyBar: View {
         .foregroundColor(.foreground)
         .padding(.horizontal, Spacing.sm)
         .padding(.vertical, Spacing.xs)
-        .background(Capsule().fill(Color.inputBackground))
-        .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+        .background(Capsule().fill(Color.controlBackground))
+        .overlay(HairlineBorder(shape: Capsule()))
     }
   }
 
@@ -455,7 +456,8 @@ private struct QueryBarDownloadMenuChrome: ViewModifier {
         "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10",
       result: result,
       viewModel: NotebookViewModel(),
-      cellId: UUID()
+      cellId: UUID(),
+      dialect: .postgresql
     )
     .frame(width: 700, height: 24)
     .padding(.horizontal, Spacing.md)
@@ -476,7 +478,8 @@ private struct QueryBarDownloadMenuChrome: ViewModifier {
         "SELECT id, name, email FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 10",
       result: result,
       viewModel: NotebookViewModel(),
-      cellId: UUID()
+      cellId: UUID(),
+      dialect: .postgresql
     )
     .frame(width: 450, height: 24)
     .padding(.horizontal, Spacing.md)
@@ -496,7 +499,8 @@ private struct QueryBarDownloadMenuChrome: ViewModifier {
       query: "SELECT * FROM users",
       result: result,
       viewModel: NotebookViewModel(),
-      cellId: nil
+      cellId: nil,
+      dialect: .postgresql
     )
     .frame(width: 250, height: 24)
     .padding(.horizontal, Spacing.md)

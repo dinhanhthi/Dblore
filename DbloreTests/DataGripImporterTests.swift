@@ -130,7 +130,7 @@ struct DataGripImporterTests {
       Self.dataSources([
         Self.source(name: "Cluster", url: "jdbc:postgresql://h1:5432,h2:5433/db"),
         Self.source(name: "Short", url: "jdbc:postgresql:db"),
-        Self.source(name: "Shop", driver: "mysql.8", url: "jdbc:mysql://m:3306/shop"),
+        Self.source(name: "Oracle", driver: "oracle", url: "jdbc:oracle:thin:@o:1521:XE"),
         Self.source(name: "Empty", url: nil),
         Self.source(name: "Kept", driver: "postgresql", url: "jdbc:postgresql://k/db"),
       ]))
@@ -142,8 +142,55 @@ struct DataGripImporterTests {
     #expect(
       result.warnings.contains { $0.contains("\"Cluster\"") && $0.contains("multiple hosts") })
     #expect(result.warnings.contains { $0.contains("\"Short\"") })
-    #expect(result.warnings.contains { $0.contains("\"Shop\"") })
+    #expect(result.warnings.contains { $0.contains("\"Oracle\"") && $0.contains("oracle") })
     #expect(result.warnings.contains { $0.contains("\"Empty\"") })
+  }
+
+  @Test("maps jdbc:mysql:// and jdbc:mariadb:// URLs with their parameters")
+  func mapsMySQLAndMariaDB() throws {
+    let folder = try Folder()
+    try folder.write(
+      Self.dataSources([
+        Self.source(
+          name: "Shop", uuid: "m1", driver: "mysql.8",
+          url:
+            "jdbc:mysql://mysql.example.com:3307/shop?sslMode=VERIFY_IDENTITY&amp;password=url-secret"
+        ),
+        Self.source(
+          name: "Maria", uuid: "m2", driver: "mariadb",
+          url: "jdbc:mariadb://[::1]/app?useSSL=false"),
+        Self.source(name: "Server", driver: "mysql", url: "jdbc:mysql://localhost"),
+        Self.source(name: "NoURL", driver: "mysql.8", url: nil),
+      ]))
+    try folder.write(
+      Self.local([("m1", "<user-name>root</user-name>"), ("m2", "<user-name>maria</user-name>")]),
+      to: DataGripImporter.localDataSourcesFileName)
+
+    let result = try DataGripImporter.importConnections(fromIdeaFolder: folder.url)
+
+    #expect(result.connections.map(\.config.name) == ["Maria", "Server", "Shop"])
+    #expect(result.warnings.count == 1)
+    #expect(result.warnings.contains { $0.contains("\"NoURL\"") && $0.contains("MySQL") })
+    let shop = try #require(result.connections.first { $0.config.name == "Shop" })
+    #expect(shop.config.databaseType == .mysql)
+    #expect(shop.config.host == "mysql.example.com")
+    #expect(shop.config.port == 3307)
+    #expect(shop.config.database == "shop")
+    #expect(shop.config.username == "root")
+    #expect(shop.config.sslMode == .verifyFull)
+    #expect(shop.password == nil)
+    #expect(shop.source == .dataGrip)
+    let maria = try #require(result.connections.first { $0.config.name == "Maria" })
+    #expect(maria.config.databaseType == .mysql)
+    #expect(maria.config.host == "::1")
+    #expect(maria.config.port == 3306)
+    #expect(maria.config.username == "maria")
+    #expect(maria.config.sslMode == .disable)
+    let server = try #require(result.connections.first { $0.config.name == "Server" })
+    #expect(server.config.database == "")
+    #expect(server.warnings.contains(PostgresURIParser.missingDatabaseWarning))
+    let text = (result.warnings + result.connections.flatMap(\.warnings)).joined()
+    #expect(!text.contains("url-secret"))
   }
 
   @Test("keeps a source whose driver-ref differs when the URL is PostgreSQL")

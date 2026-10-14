@@ -13,7 +13,10 @@ extension NotebookViewModel {
   /// Explain the statement the Run action would run: the editor selection (or the current
   /// line / file), or the selected notebook cell.
   func explainSelectedStatement(analyze: Bool) async {
-    if analyze, !canExplainAnalyze { return }
+    if analyze, !canExplainAnalyze {
+      if let reason = explainAnalyzeUnavailableReason { showToast(reason, type: .error) }
+      return
+    }
     if viewMode == .editor {
       guard dataViewer == nil, !isReadOnlySource, let text = getEditorQueryText(), !text.isEmpty
       else { return }
@@ -39,11 +42,14 @@ extension NotebookViewModel {
   ) async {
     if viewMode == .markdown { return }
     ConfirmedParameterSnapshot.disarmExplain(self)
+    // Asked of the open session: the version the request is checked against is the live one.
+    let mysqlServer = await connectionManager?.mysqlServerInfo
     let request: ExplainRequest
     do {
       request = try ExplainRequest(
         statement: statement, analyze: analyze, buffers: buffers,
-        rollbackAfterAnalyze: rollbackAfterAnalyze, dialect: explainDialect)
+        rollbackAfterAnalyze: rollbackAfterAnalyze, dialect: explainDialect,
+        mysqlServer: mysqlServer)
     } catch let error as ExplainRequestError {
       showToast(error.message, type: .error)
       return

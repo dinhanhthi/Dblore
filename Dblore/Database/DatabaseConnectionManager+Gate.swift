@@ -87,7 +87,8 @@ extension DatabaseConnectionManager {
     let rewritten = Self.rewriteNamedParameters(original, dialect: dialect)
     let effective = effectivePolicy(for: policy)
     let statements = rewritten.map(\.statement)
-    if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
+    if case .blocked(let index, let kind, let reason) = Self.evaluate(
+      statements, policy: effective, dialect: dialect)
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
@@ -238,7 +239,7 @@ extension DatabaseConnectionManager {
 
   /// The stricter of `policy` and the connected config. A pending app transaction keeps
   /// Protected mode rules until Commit / Rollback, even if the toggle was turned off.
-  private func effectivePolicy(for policy: ProtectionPolicy) -> ProtectionPolicy {
+  func effectivePolicy(for policy: ProtectionPolicy) -> ProtectionPolicy {
     let merged = policy.stricter(connectedPolicy)
     return ProtectionPolicy(
       protectionLevel: merged.protectionLevel, safeMode: merged.safeMode,
@@ -255,7 +256,8 @@ extension DatabaseConnectionManager {
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
     let effective = effectivePolicy(for: policy)
     let statements = Self.classifyUserSQL(sql, config: config)
-    if case .blocked(let index, let kind, let reason) = Self.evaluate(statements, policy: effective)
+    if case .blocked(let index, let kind, let reason) = Self.evaluate(
+      statements, policy: effective, dialect: Self.dialect(of: config))
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
@@ -281,13 +283,15 @@ extension DatabaseConnectionManager {
   ///   (also under EXPLAIN ANALYZE); DML, SET and transaction control are allowed.
   /// - `.none`: everything (Safe Mode confirmation lives in the ViewModel).
   /// - Protected mode (any level): no transaction control and no statement that cannot run in
-  ///   a transaction (the app owns the transaction).
+  ///   a transaction (the app owns the transaction); `dialect` only picks the MySQL wording
+  ///   for an implicit commit.
   nonisolated static func evaluate(
-    _ statements: [ClassifiedStatement], policy: ProtectionPolicy
+    _ statements: [ClassifiedStatement], policy: ProtectionPolicy,
+    dialect: SQLDialect = .postgresql
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {
       if let reason = violation(statement, level: policy.protectionLevel)
-        ?? (policy.protectedMode ? protectedModeViolation(statement) : nil)
+        ?? (policy.protectedMode ? protectedModeViolation(statement, dialect: dialect) : nil)
       {
         return .blocked(statementIndex: index, kind: statement.kind, reason: reason)
       }
@@ -304,7 +308,8 @@ extension DatabaseConnectionManager {
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {
       if case .blocked(_, let kind, let reason) = evaluate(
-        SQLStatementClassifier.classify(statement.sql, dialect: dialect), policy: policy)
+        SQLStatementClassifier.classify(statement.sql, dialect: dialect), policy: policy,
+        dialect: dialect)
       {
         return .blocked(statementIndex: index, kind: kind, reason: reason)
       }
@@ -323,6 +328,13 @@ extension DatabaseConnectionManager {
         && !statement.changesPrivileges
       {
         return nil
+      }
+      if statement.isReadOnlySafe && statement.resetsSessionBrakes
+        && !statement.changesPrivileges
+      {
+        return "This statement lifts a session safety limit (a timeout or read-only setting, "
+          + "for example through an optimizer hint), which is not allowed on a read-only "
+          + "connection"
       }
       return "\(describe(statement.kind)) is not allowed on a read-only connection"
     case .schemaOnly:
@@ -344,10 +356,14 @@ extension DatabaseConnectionManager {
   }
 
   private nonisolated static func protectedModeViolation(
-    _ statement: ClassifiedStatement
+    _ statement: ClassifiedStatement, dialect: SQLDialect
   ) -> String? {
     if statement.kind == .tcl {
       return "Transaction control is managed by Protected mode — use Commit / Rollback"
+    }
+    if statement.nonTransactional, dialect == .mysql {
+      return "This statement commits implicitly on MySQL, which would end the Protected mode "
+        + "transaction; turn Protected mode off for this connection to run it"
     }
     if statement.nonTransactional {
       return "This statement cannot run inside a transaction; turn Protected mode off for this "

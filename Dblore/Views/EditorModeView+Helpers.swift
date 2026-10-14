@@ -68,7 +68,7 @@ extension EditorModeView {
       return .foregroundSubtle
     }
 
-    switch SQLTokenizer.tokens(query).first?.keyword {
+    switch SQLTokenizer.tokens(query, dialect: viewModel.sqlDialect).first?.keyword {
     case "DELETE": return .red
     case "INSERT", "UPDATE": return .green
     default: return .foregroundSubtle
@@ -91,6 +91,7 @@ extension EditorModeView {
         Task { await viewModel.explainSelectedStatement(analyze: true) }
       }
       .disabled(!viewModel.canExplainAnalyze)
+      .help(viewModel.explainAnalyzeUnavailableReason ?? "")
     } label: {
       HStack(spacing: Spacing.xs) {
         Text("Explain")
@@ -103,7 +104,7 @@ extension EditorModeView {
       .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.xs)
       .background(Capsule().fill(Color.inputBackground))
-      .overlay(Capsule().stroke(Color.border, lineWidth: 1))
+      .overlay(HairlineBorder(shape: Capsule()))
     }
     .buttonStyle(.plain)
     .linkPointer()

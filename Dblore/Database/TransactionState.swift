@@ -8,6 +8,8 @@ import Foundation
 nonisolated struct StatementSummary: Sendable, Equatable {
   static let maxPreviewLength = 200
 
+  /// Full statement text (the pending-transaction details modal shows it)
+  let sql: String
   /// Statement text with whitespace collapsed, cut at `maxPreviewLength` (plus an ellipsis)
   let sqlPreview: String
   /// First keyword of the statement (UPDATE, CREATE, SET, ...)
@@ -23,13 +25,18 @@ nonisolated struct StatementSummary: Sendable, Equatable {
   let isEarlierChanges: Bool
   let executedAt: Date
 
-  init(statement: ClassifiedStatement, affectedRows: Int?, executedAt: Date = Date()) {
+  /// `dialect` lexes the label (callers pass the connection's; the default serves tests)
+  init(
+    statement: ClassifiedStatement, affectedRows: Int?, executedAt: Date = Date(),
+    dialect: SQLDialect = .postgresql
+  ) {
+    sql = statement.text.trimmingCharacters(in: .whitespacesAndNewlines)
     let collapsed = statement.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     sqlPreview =
       collapsed.count > Self.maxPreviewLength
       ? String(collapsed.prefix(Self.maxPreviewLength)) + "…" : collapsed
     kindLabel =
-      SQLTokenizer.tokens(statement.text).first { $0.kind == .word }?.keyword
+      SQLTokenizer(dialect: dialect).tokens(statement.text).first { $0.kind == .word }?.keyword
       ?? DatabaseConnectionManager.describe(statement.kind)
     self.affectedRows = affectedRows
     rowsUnknown =
@@ -40,6 +47,7 @@ nonisolated struct StatementSummary: Sendable, Equatable {
   }
 
   private init(earlierChangesAt executedAt: Date) {
+    sql = ""
     sqlPreview = "Transaction opened before Protected mode was enabled — contents unknown"
     kindLabel = "EARLIER"
     affectedRows = nil
@@ -156,10 +164,15 @@ nonisolated enum ProtectedTransactionRules {
 
   /// `COMMIT` / `END` that persisted the user transaction. `ROLLBACK`, `ABORT`, and `PREPARE`
   /// do not. The caller already saw the transaction close, or a `COMMIT AND CHAIN` that
-  /// committed and opened the next one.
-  static func committedUserTransaction(_ statement: ClassifiedStatement) -> Bool {
+  /// committed and opened the next one. On MySQL an implicit-commit statement persists it too.
+  static func committedUserTransaction(
+    _ statement: ClassifiedStatement, dialect: SQLDialect = .postgresql
+  ) -> Bool {
+    if commitsImplicitly(statement, dialect: dialect) { return true }
     guard statement.kind == .tcl else { return false }
-    let first = SQLTokenizer.tokens(statement.text).first { $0.kind == .word }?.keyword ?? ""
+    let first =
+      SQLTokenizer(dialect: dialect).tokens(statement.text).first { $0.kind == .word }?.keyword
+      ?? ""
     return first == "COMMIT" || first == "END"
   }
 
@@ -177,11 +190,14 @@ nonisolated enum ProtectedTransactionRules {
   /// `... AND CHAIN` (not `AND NO CHAIN`) starts a new transaction right away: still open.
   /// A failed statement changes nothing, except a failed COMMIT / END, which ends the
   /// transaction on the server (the chained transaction is not started).
+  /// On MySQL a successful implicit-commit statement (DDL, LOCK TABLES, ...) closes it too.
   static func userTxOpen(
-    after statement: ClassifiedStatement, current: Bool, succeeded: Bool
+    after statement: ClassifiedStatement, current: Bool, succeeded: Bool,
+    dialect: SQLDialect = .postgresql
   ) -> Bool {
+    if succeeded && commitsImplicitly(statement, dialect: dialect) { return false }
     guard statement.kind == .tcl else { return current }
-    let words = SQLTokenizer.tokens(statement.text).map { $0.keyword ?? "" }
+    let words = SQLTokenizer(dialect: dialect).tokens(statement.text).map { $0.keyword ?? "" }
     let first = words.first ?? ""
     guard succeeded else { return first == "COMMIT" || first == "END" ? false : current }
     let chains = zip(words, words.dropFirst()).contains { $0 == "AND" && $1 == "CHAIN" }
@@ -192,6 +208,63 @@ nonisolated enum ProtectedTransactionRules {
     // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] name
     case "ROLLBACK": return words.contains("TO") ? current : chains
     default: return current
+    }
+  }
+
+  /// MySQL: whether `statement` may have committed or opened a transaction without
+  /// `userTxOpen(after:...)` knowing it, so the caller asks the server: a statement the gate
+  /// fails closed on (CALL, unknown statements and executable comments, SET autocommit, UNLOCK
+  /// TABLES, ...) or a failed implicit-commit statement (MySQL commits before running the DDL).
+  /// Transaction control and statements that surely committed are tracked without asking.
+  static func commitIsUncertain(
+    _ statement: ClassifiedStatement, succeeded: Bool, dialect: SQLDialect
+  ) -> Bool {
+    guard dialect == .mysql, statement.nonTransactional, statement.kind != .tcl else {
+      return false
+    }
+    return !(succeeded && commitsImplicitly(statement, dialect: dialect))
+  }
+
+  /// MySQL statements that surely commit the open transaction: non-TEMPORARY DDL, LOCK
+  /// TABLES, GRANT / REVOKE, user and role DDL, SET PASSWORD, SET DEFAULT ROLE, ANALYZE /
+  /// OPTIMIZE / REPAIR / CHECK TABLE, CACHE / LOAD INDEX, FLUSH, replication control and
+  /// plugin installs. `SET autocommit = 1` and `UNLOCK TABLES` commit only conditionally
+  /// (autocommit was 0 / tables are locked), so they do not count. Narrower than the gate's
+  /// `nonTransactional` (which fails closed on CALL, EXECUTE, executable comments, unknown
+  /// statements, ...): here a wrong "committed" would let the app send its own BEGIN or reset
+  /// the session over the user's open work, so anything uncertain keeps the tracking as is.
+  private static func commitsImplicitly(
+    _ statement: ClassifiedStatement, dialect: SQLDialect
+  ) -> Bool {
+    guard dialect == .mysql, statement.nonTransactional else { return false }
+    switch statement.kind {
+    case .tcl, .unknown: return false
+    default: break
+    }
+    let tokens = SQLTokenizer(dialect: .mysql).tokens(statement.text)
+    guard !tokens.contains(where: { $0.kind == .executableComment }),
+      let depth = tokens.first?.depth
+    else { return false }
+    let words = tokens.filter { $0.kind == .word && $0.depth == depth }.compactMap(\.keyword)
+    let first = words.first ?? ""
+    let second = words.dropFirst().first ?? ""
+    if statement.kind == .ddl {
+      // CREATE [OR REPLACE] TEMPORARY TABLE / DROP TEMPORARY TABLE do not commit
+      return !(["CREATE", "DROP"].contains(first) && words.prefix(4).contains("TEMPORARY"))
+    }
+    switch first {
+    case "SET":
+      return second == "PASSWORD" || words.starts(with: ["SET", "DEFAULT", "ROLE"])
+    case "START", "STOP": return ["REPLICA", "SLAVE"].contains(second)
+    case "RESET": return ["REPLICA", "SLAVE", "MASTER"].contains(second)
+    case "CHANGE": return ["REPLICATION", "MASTER"].contains(second)
+    case "LOAD", "CACHE": return second == "INDEX"
+    // Not LOCK INSTANCE FOR BACKUP
+    case "LOCK": return ["TABLE", "TABLES"].contains(second)
+    // [NO_WRITE_TO_BINLOG | LOCAL] TABLE; not MariaDB ANALYZE SELECT
+    case "ANALYZE", "OPTIMIZE", "REPAIR", "CHECK": return words.prefix(3).contains("TABLE")
+    case "GRANT", "REVOKE", "FLUSH", "INSTALL", "UNINSTALL": return true
+    default: return false
     }
   }
 }

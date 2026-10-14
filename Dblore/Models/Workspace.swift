@@ -146,10 +146,7 @@ struct Workspace: Codable, Identifiable, Sendable {
 
   /// Returns the keychain key for the connection
   var keychainKey: String? {
-    connectionKeychainKey
-      ?? connectionConfig.map {
-        "\($0.host):\($0.port):\($0.database):\($0.username)"
-      }
+    connectionKeychainKey ?? connectionConfig.map(ConnectionKeychainKey.password(for:))
   }
 
   /// Display string for the workspace
@@ -170,9 +167,7 @@ struct Workspace: Codable, Identifiable, Sendable {
     Workspace(
       name: "Untitled",
       connectionConfig: connection,
-      connectionKeychainKey: connection.map {
-        "\($0.host):\($0.port):\($0.database):\($0.username)"
-      }
+      connectionKeychainKey: connection.map(ConnectionKeychainKey.password(for:))
     )
   }
 }

@@ -2,13 +2,13 @@
 //  TablePlusImporter.swift
 //  Dblore
 //
-//  Imports PostgreSQL connections from TablePlus's `Connections.plist`
+//  Imports PostgreSQL and MySQL/MariaDB connections from TablePlus's `Connections.plist`
 //  (`~/Library/Application Support/com.tinyapp.TablePlus/Data/`), a plist array of dictionaries.
 //  Passwords stay in TablePlus's Keychain and are never imported. The file is external input:
 //  its size is bounded and warnings never carry secret values.
 //
 //  Key names (cross-checked in the open-source TablePlus importers of TablePro, Gridex, Tabularis
-//  and the Raycast TablePlus extension): `ConnectionName`, `Driver` ("PostgreSQL"), `DatabaseHost`,
+//  and the Raycast TablePlus extension): `ConnectionName`, `Driver` ("PostgreSQL", "MySQL", "MariaDB"), `DatabaseHost`,
 //  `DatabasePort` (string), `DatabaseName`, `DatabaseUser`, `isUseSocket`, `tLSMode` (integer),
 //  `isOverSSH`, `ServerAddress`, `ServerPort` (string), `ServerUser`, `isUsePrivateKey`.
 //  The `.tableplusconnection` export is RNCryptor-encrypted with a user passphrase: not supported.
@@ -81,7 +81,11 @@ nonisolated enum TablePlusImporter {
     let label = "\"\(sanitized(rawName.isEmpty ? "unnamed" : rawName))\""
 
     let driver = string(entry["Driver"]) ?? ""
-    guard driver.lowercased() == "postgresql" else {
+    let engine: DatabaseType
+    switch driver.lowercased() {
+    case "postgresql": engine = .postgresql
+    case "mysql", "mariadb": engine = .mysql
+    default:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
@@ -90,13 +94,27 @@ nonisolated enum TablePlusImporter {
     }
     let host = string(entry["DatabaseHost"]) ?? ""
     guard !host.isEmpty else { return .failure(Skipped(message: "Skipped \(label): no host.")) }
-    guard let port = port(entry["DatabasePort"], default: PostgresURIParser.defaultPort) else {
+    let defaultPort: Int
+    switch engine {
+    case .mysql: defaultPort = engine.defaultPort
+    case .postgresql, .sqlite, .duckdb: defaultPort = PostgresURIParser.defaultPort
+    }
+    guard let port = port(entry["DatabasePort"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
     }
-    let database = string(entry["DatabaseName"]).flatMap { $0.isEmpty ? nil : $0 } ?? "postgres"
+    let configuredDatabase = string(entry["DatabaseName"]).flatMap { $0.isEmpty ? nil : $0 }
     let username = string(entry["DatabaseUser"]) ?? ""
 
     var warnings = [passwordWarning]
+    let database: String
+    switch engine {
+    case .mysql:
+      // TablePlus allows a MySQL connection without a database; flag it in the preview.
+      database = configuredDatabase ?? ""
+      if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
+    case .postgresql, .sqlite, .duckdb:
+      database = configuredDatabase ?? "postgres"
+    }
     let sslMode = sslMode(entry["tLSMode"], warnings: &warnings)
 
     var sshTunnel: SSHTunnelConfig?
@@ -113,12 +131,12 @@ nonisolated enum TablePlusImporter {
       ? ImportedConnection.defaultName(username: username, host: host, database: database)
       : rawName
     let config = ConnectionConfig(
-      databaseType: .postgresql, host: host, port: port, database: database, username: username,
+      databaseType: engine, host: host, port: port, database: database, username: username,
       sslMode: sslMode, sshTunnel: sshTunnel, name: name)
     return .success(ImportedConnection(config: config, source: .tablePlus, warnings: warnings))
   }
 
-  /// TablePlus stores the TLS picker index. Importers disagree on the PostgreSQL index table,
+  /// TablePlus stores the TLS picker index. Importers disagree on the index table (per driver),
   /// so only 0 (the default, "preferred") is mapped; a mode name string is accepted too.
   private static func sslMode(_ value: Any?, warnings: inout [String]) -> SSLMode {
     switch value {

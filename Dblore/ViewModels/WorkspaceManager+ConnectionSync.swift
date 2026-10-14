@@ -71,7 +71,7 @@ extension WorkspaceManager {
   // MARK: - Connect (weakening needs the Safe Mode unlock)
 
   /// True if connecting with `new` needs the Safe Mode unlock: `new` targets the same database
-  /// as `current` (host, port, database, username; strings trimmed and compared
+  /// as `current` (engine, host, port, database, username; strings trimmed and compared
   /// case-insensitively, so a case variant cannot dodge the check) and the resolved commit
   /// style weakens under the same rule as a runtime change
   /// (`NotebookViewModel.requiresUnlockForChange`). A different target is a new connection.
@@ -99,7 +99,8 @@ extension WorkspaceManager {
       let host = normalized(value)
       return host.hasSuffix(".") ? String(host.dropLast()) : host
     }
-    return lhs.port == rhs.port && normalizedHost(lhs.host) == normalizedHost(rhs.host)
+    return lhs.databaseType == rhs.databaseType && lhs.port == rhs.port
+      && normalizedHost(lhs.host) == normalizedHost(rhs.host)
       && normalized(lhs.database) == normalized(rhs.database)
       && normalized(lhs.username) == normalized(rhs.username)
   }

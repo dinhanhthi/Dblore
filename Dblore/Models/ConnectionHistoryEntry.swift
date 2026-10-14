@@ -48,9 +48,34 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     return formatter.string(from: lastUsedAt)
   }
 
-  /// Keychain key for password storage
-  /// Format: "host:port:database:username"
+  /// Keychain key for password storage (see `ConnectionKeychainKey`)
   var keychainKey: String {
-    "\(config.host):\(config.port):\(config.database):\(config.username)"
+    ConnectionKeychainKey.password(for: config)
+  }
+}
+
+/// The one formula for a connection's Keychain identity: the password key and the client
+/// certificate account. Only engines with a `DatabaseType.keychainScope` (MySQL) carry the engine;
+/// PostgreSQL, SQLite and DuckDB keep the legacy strings byte for byte.
+nonisolated enum ConnectionKeychainKey {
+  /// `host:port:database:username` for an engine without a scope; a length-prefixed account
+  /// with the scope first otherwise, so colons in a field never make it equal a legacy key.
+  static func password(
+    scope: String?, host: String, port: Int, database: String, username: String
+  ) -> String {
+    guard let scope else { return "\(host):\(port):\(database):\(username)" }
+    return KeychainAccount.v2([scope, host, String(port), database, username])
+  }
+
+  static func password(for config: ConnectionConfig) -> String {
+    password(
+      scope: config.databaseType.keychainScope, host: config.host, port: config.port,
+      database: config.database, username: config.username)
+  }
+
+  /// Length-prefixed account; the scope is an extra leading part only when the engine has one.
+  static func certificateAccount(for config: ConnectionConfig) -> String {
+    let parts = [config.host, String(config.port), config.database, config.username]
+    return KeychainAccount.v2((config.databaseType.keychainScope.map { [$0] } ?? []) + parts)
   }
 }

@@ -23,6 +23,8 @@ actor DatabaseConnectionManager {
       SQLiteSchemaIntrospector()
     case .duckdb:
       DuckDBSchemaIntrospector()
+    case .mysql:
+      MySQLSchemaIntrospector(database: config?.database ?? "")
     }
   }
   private(set) var config: ConnectionConfig?
@@ -33,6 +35,11 @@ actor DatabaseConnectionManager {
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
+  /// What a capped read keeps per cell and in total (MCP managers); nil: whole rows
+  let readLimits: CappedReadLimits?
+  /// A capped read closes and reopens the session (`resetSessionIfCapped`); false for a
+  /// single-use manager disconnected right after its read, which closes the session anyway
+  let resetsSessionAfterCappedRead: Bool
   /// Protected mode transaction state (see `DatabaseConnectionManager+Transaction.swift`)
   var txState: TransactionState = .idle {
     didSet {
@@ -83,11 +90,24 @@ actor DatabaseConnectionManager {
   /// Inline edit tables resolved outside any app transaction, by table identity
   /// (see `cachedEditTable`)
   var editTableCache: [TableRef: EditTable] = [:]
+  /// MySQL result column origins: column ordinals by table identity, read from
+  /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
+  /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).
+  var mysqlTableColumns = MySQLTableColumnsCache()
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
   /// Why a SQLite file was opened read-only by the app (a sidecar could not be written); nil
   /// otherwise. Set on connect, cleared when the connection is forgotten.
   private(set) var sqliteReadOnlyReason: String?
+  /// MySQL or MariaDB and its version while a MySQL session is open, else nil.
+  var mysqlServerInfo: MySQLServerInfo? {
+    (session as? MySQLSession)?.serverInfo
+  }
+  /// How the open MySQL session is protected (plaintext after a Prefer / Allow fallback); nil
+  /// without a MySQL session. Feeds the footer SSL badges.
+  var mysqlTransport: MySQLTransport? {
+    (session as? MySQLSession)?.transport
+  }
   /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
   /// `DatabaseError.queryCancelled`
   var lastCancel: QueryCancelRecord?
@@ -105,8 +125,11 @@ actor DatabaseConnectionManager {
   /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
   init(
     sessionFactory: (any DatabaseSessionFactory)? = nil,
-    sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt()
+    sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
+    readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true
   ) {
+    self.readLimits = readLimits
+    self.resetsSessionAfterCappedRead = resetsSessionAfterCappedRead
     let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
     sshHostKeyPolicy = policy
     self.sessionFactory = sessionFactory ?? AppDatabaseSessionFactory(hostKeyValidator: policy)
@@ -249,6 +272,8 @@ actor DatabaseConnectionManager {
         .probe()
     case .sqlite, .duckdb:
       return try await probeFile(config)
+    case .mysql:
+      return try await MySQLSession(config: config).probe()
     }
   }
 
@@ -358,6 +383,7 @@ actor DatabaseConnectionManager {
     schemaDirtyInAppTx = false
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
+    mysqlTableColumns.removeAll()
     return ForgottenSession(
       session: forgotten, connection: resources.connection, group: resources.group,
       tunnel: resources.tunnel)
@@ -442,19 +468,18 @@ private struct PreparedSQLiteOpen: Sendable {
 }
 
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
-/// after the caller has resolved sandbox access.
+/// after the caller has resolved sandbox access. MySQL / MariaDB is `MySQLSession`.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   /// The DuckDB plugin's loader, or nil when the plugin is not installed. Read on the main actor
-  /// before each DuckDB session: a removed plugin stays loaded (and cached) until the app quits.
+  /// before each DuckDB session, after the launch check: a removed plugin stays loaded (and
+  /// cached) until the app quits.
   typealias DuckDBLibraryLoader = @Sendable () async -> (@Sendable () throws -> DuckDBLibrary)?
 
   var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
-  var duckDBLibraryLoader: DuckDBLibraryLoader = {
-    await MainActor.run {
-      let manager = DuckDBPluginManager.shared
-      guard manager.isInstalled else { return nil }
-      return { try manager.loadLibrary() }
-    }
+  var duckDBLibraryLoader: DuckDBLibraryLoader = { @MainActor in
+    let manager = DuckDBPluginManager.shared
+    guard await manager.isInstalledAfterLaunchCheck() else { return nil }
+    return { try manager.loadLibrary() }
   }
 
   func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {
@@ -475,51 +500,8 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       }
       // `open()` runs the loader (hash, signature check, dlopen) on the session's own queue.
       return DuckDBSession(config: config, extraAllowedPaths: extraAllowedPaths, loadLibrary: load)
+    case .mysql:
+      return MySQLSession(config: config)
     }
-  }
-}
-
-/// Catalog for an engine that cannot run in this build. Every read throws
-/// `DatabaseError.engineUnavailable`; column enrichment keeps the driver types.
-nonisolated struct UnavailableSchemaIntrospector: SchemaIntrospector {
-  let engine: DatabaseType
-
-  private var unavailable: DatabaseError { .engineUnavailable(engine) }
-
-  func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
-    throw unavailable
-  }
-
-  func views(in session: any DatabaseSession) async throws -> [DatabaseView] {
-    throw unavailable
-  }
-
-  func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
-    throw unavailable
-  }
-
-  func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
-    throw unavailable
-  }
-
-  func editTable(named name: String, in session: any DatabaseSession) async throws -> EditTable? {
-    throw unavailable
-  }
-
-  func enrichColumnTypes(
-    _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
-  ) async -> [ColumnInfo] {
-    columns
-  }
-
-  func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int
-  {
-    throw unavailable
-  }
-
-  func primaryKeyColumns(
-    of tableName: String, in session: any DatabaseSession
-  ) async throws -> [String] {
-    throw unavailable
   }
 }

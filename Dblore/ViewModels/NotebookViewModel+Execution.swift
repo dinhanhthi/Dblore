@@ -248,7 +248,7 @@ extension NotebookViewModel {
     let maxRows = effectiveRowCap
     do {
       // Check if this is a multi-statement query
-      if connectionManager.hasMultipleStatements(task.query) {
+      if connectionManager.hasMultipleStatements(task.query, dialect: sqlDialect) {
         let detailed = try await Task {
           try await connectionManager.executeDetailed(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,

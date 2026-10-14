@@ -50,19 +50,20 @@ struct TablePlusImporterTests {
 
   // MARK: - Mapping
 
-  @Test("maps PostgreSQL connections and skips other drivers and sockets with a warning")
+  @Test("maps PostgreSQL and MySQL connections and skips other drivers and sockets with a warning")
   func mapsPostgresAndSkipsOthers() throws {
     let folder = try Folder()
     let file = try folder.writePlist([
       Self.postgres(),
       Self.postgres(name: "", host: "localhost", port: "", database: "", user: "bob"),
       ["ConnectionName": "Shop", "Driver": "MySQL", "DatabaseHost": "m"],
+      ["ConnectionName": "Cache", "Driver": "Redis", "DatabaseHost": "r"],
       Self.postgres(name: "Local socket", extra: ["isUseSocket": 1]),
     ])
 
     let result = try TablePlusImporter.importConnections(fromFile: file)
 
-    #expect(result.connections.count == 2)
+    #expect(result.connections.count == 3)
     let prod = try #require(result.connections.first { $0.config.name == "Prod" })
     #expect(prod.config.databaseType == .postgresql)
     #expect(prod.config.host == "db.example.com")
@@ -77,17 +78,48 @@ struct TablePlusImporterTests {
     let unnamed = try #require(result.connections.first { $0.config.host == "localhost" })
     #expect(unnamed.config.name == "bob@localhost/postgres")
     #expect(unnamed.config.port == 5432)
+    let shop = try #require(result.connections.first { $0.config.name == "Shop" })
+    #expect(shop.config.databaseType == .mysql)
+    #expect(shop.config.port == 3306)
+    #expect(shop.config.database == "")
+    #expect(shop.warnings.contains(PostgresURIParser.missingDatabaseWarning))
     #expect(result.warnings.count == 2)
-    #expect(result.warnings.contains { $0.contains("\"Shop\"") && $0.contains("MySQL") })
+    #expect(result.warnings.contains { $0.contains("\"Cache\"") && $0.contains("Redis") })
     #expect(result.warnings.contains { $0.contains("\"Local socket\"") })
   }
 
-  @Test("reads a binary plist")
-  func binaryPlist() throws {
+  @Test("maps MySQL and MariaDB entries with their database, port and SSH tunnel")
+  func mapsMySQLAndMariaDB() throws {
     let folder = try Folder()
-    let file = try folder.writePlist([Self.postgres()], format: .binary)
+    let file = try folder.writePlist([
+      Self.postgres(
+        name: "Shop", host: "mysql.example.com", port: "3307", database: "shop", user: "root",
+        extra: [
+          "Driver": "MySQL", "tLSMode": 0, "isOverSSH": 1, "ServerAddress": "bastion",
+          "ServerPort": "22", "ServerUser": "jump", "isUsePrivateKey": 0,
+        ]),
+      Self.postgres(
+        name: "Maria", host: "maria.local", port: "", database: "app", user: "app",
+        extra: ["Driver": "MariaDB"]),
+    ])
+
     let result = try TablePlusImporter.importConnections(fromFile: file)
-    #expect(result.connections.first?.config.host == "db.example.com")
+
+    #expect(result.warnings.isEmpty)
+    let shop = try #require(result.connections.first { $0.config.name == "Shop" })
+    #expect(shop.config.databaseType == .mysql)
+    #expect(shop.config.host == "mysql.example.com")
+    #expect(shop.config.port == 3307)
+    #expect(shop.config.database == "shop")
+    #expect(shop.config.username == "root")
+    #expect(shop.config.sslMode == .prefer)
+    #expect(shop.config.sshTunnel?.host == "bastion")
+    #expect(shop.password == nil)
+    #expect(!shop.warnings.contains(PostgresURIParser.missingDatabaseWarning))
+    let maria = try #require(result.connections.first { $0.config.name == "Maria" })
+    #expect(maria.config.databaseType == .mysql)
+    #expect(maria.config.port == 3306)
+    #expect(maria.warnings == [TablePlusImporter.passwordWarning])
   }
 
   @Test("maps tLSMode 0 to prefer and warns on a mode it cannot map")

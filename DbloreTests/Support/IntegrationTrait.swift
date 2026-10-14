@@ -1,6 +1,7 @@
 // IntegrationTrait.swift
 // Skips PostgreSQL integration suites when SKIP_INTEGRATION_TESTS or
-// TEST_RUNNER_SKIP_INTEGRATION_TESTS is true, 1, or yes.
+// TEST_RUNNER_SKIP_INTEGRATION_TESTS is true, 1, or yes. The other gates
+// (mTLS, SSH, DuckDB plugin, MySQL, MySQL TLS) are opt-in.
 
 import Foundation
 import Testing
@@ -54,6 +55,28 @@ nonisolated enum DuckDBPluginGate {
   }
 }
 
+nonisolated enum MySQLIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["MYSQL_TESTS"] ?? env["TEST_RUNNER_MYSQL_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum MySQLTLSIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["MYSQL_TLS_TESTS"] ?? env["TEST_RUNNER_MYSQL_TLS_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 extension Trait where Self == ConditionTrait {
   /// Skip a suite when integration tests are turned off in the environment.
   static var requiresPostgres: Self {
@@ -84,6 +107,22 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: DuckDBPluginGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 and run scripts/release-plugin.sh --install-dev"
+    )
+  }
+
+  /// The MySQL and MariaDB containers are opt-in.
+  static var requiresMySQL: Self {
+    .enabled(
+      if: MySQLIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_MYSQL_TESTS=1 and start docker/mysql/docker-compose.test.yml to run"
+    )
+  }
+
+  /// MySQL TLS fixtures (docker/mysql/scripts/gen-mysql-tls.sh) are opt-in.
+  static var requiresMySQLTLS: Self {
+    .enabled(
+      if: MySQLTLSIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_MYSQL_TLS_TESTS=1, run docker/mysql/scripts/gen-mysql-tls.sh and recreate the MySQL container"
     )
   }
 }

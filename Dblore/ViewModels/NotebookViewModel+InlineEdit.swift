@@ -69,11 +69,12 @@ extension NotebookViewModel {
     for query: String, result: QueryResult, connectionManager: DatabaseConnectionManager,
     epoch: UInt64
   ) async -> ResultTargets {
-    guard !result.columns.isEmpty, let relation = CellUpdateStatement.singleRelation(in: query),
+    guard !result.columns.isEmpty,
+      let relation = CellUpdateStatement.singleRelation(in: query, dialect: sqlDialect),
       let tableID = Self.originTableID(result.columns),
       let table = await editTable(relation, tableID: tableID, connectionManager),
       table.connectionEpoch == epoch,
-      CellUpdateStatement.isServerQualifiedName(table.qualifiedName)
+      CellUpdateStatement.isServerQualifiedName(table.qualifiedName, dialect: sqlDialect)
     else { return (nil, nil) }
     let lookup = CellUpdateStatement.lookupRelation(columns: result.columns, table: table)
     guard Self.columnTableID(result.columns) == tableID else { return (nil, lookup) }
@@ -102,10 +103,14 @@ extension NotebookViewModel {
   }
 
   /// `relation` resolved by the server, or, while the app transaction is pending (no catalog
-  /// query is sent), the table cached under the result columns' `tableID`.
+  /// query is sent), the table cached under the result columns' `tableID`. Nil when
+  /// `relation` does not name that table (`relationNamesTable`).
   private func editTable(
     _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager
   ) async -> EditTable? {
+    guard await connectionManager.relationNamesTable(relation, tableID: tableID) else {
+      return nil
+    }
     if await connectionManager.isMetadataPaused {
       return await connectionManager.cachedEditTable(id: tableID)
     }
@@ -233,7 +238,7 @@ extension NotebookViewModel {
       statement = try CellUpdateStatement.make(
         qualifiedName: target.qualifiedName, columnName: columnName, newValue: bindText,
         primaryKeyColumns: target.primaryKeyColumns, rowData: rowData,
-        updateOnly: target.updateOnly)
+        updateOnly: target.updateOnly, dialect: sqlDialect)
     } catch {
       showToast(error.localizedDescription, type: .error)
       return
@@ -327,7 +332,8 @@ extension NotebookViewModel {
                 let statement = try? CellUpdateStatement.make(
                   qualifiedName: target.qualifiedName, columnName: edit.columnName,
                   newValue: edit.statement.values[0], primaryKeyColumns: target.primaryKeyColumns,
-                  rowData: CellResult.rowData(columns: result.columns, row: values))
+                  rowData: CellResult.rowData(columns: result.columns, row: values),
+                  dialect: sqlDialect)
               else { return false }
               return statement.values.dropFirst() == edit.statement.values.dropFirst()
             })

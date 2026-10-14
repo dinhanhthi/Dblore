@@ -1,5 +1,5 @@
 // SQLDialect.swift
-// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, and DuckDB.
+// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, and MySQL.
 
 import Foundation
 
@@ -15,6 +15,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case postgresql
     case sqlite
     case duckdb
+    case mysql
   }
 
   private let engine: Engine
@@ -22,21 +23,25 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   static let postgresql = SQLDialect(engine: .postgresql)
   static let sqlite = SQLDialect(engine: .sqlite)
   static let duckdb = SQLDialect(engine: .duckdb)
+  static let mysql = SQLDialect(engine: .mysql)
 
-  /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB").
+  /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB", "MySQL").
   var promptName: String {
     switch engine {
     case .postgresql: "PostgreSQL"
     case .sqlite: "SQLite"
     case .duckdb: "DuckDB"
+    case .mysql: "MySQL"
     }
   }
 
   /// Schema omitted by `qualified` when the caller passes it explicitly.
+  /// MySQL has none: its schema is the connected database, so any named schema stays.
   var defaultSchema: String {
     switch engine {
     case .postgresql: "public"
     case .sqlite, .duckdb: "main"
+    case .mysql: ""
     }
   }
 
@@ -45,17 +50,20 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     engine == .postgresql
   }
 
-  /// SQLite `LIKE` folds case. PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
+  /// SQLite and MySQL (default `_ci` collations) `LIKE` fold case, and neither has `ILIKE`.
+  /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
   var likeIsCaseInsensitive: Bool {
-    engine == .sqlite
+    engine == .sqlite || engine == .mysql
   }
 
-  /// `"name"`, with embedded `"` doubled. Rejects a NUL anywhere in `name`.
+  /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled.
+  /// Rejects a NUL anywhere in `name`.
   func quoteIdentifier(_ name: String) throws -> String {
     guard !name.contains("\0") else {
       throw SQLDialectError.nulInIdentifier
     }
-    return "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    let quote = engine == .mysql ? "`" : "\""
+    return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
   }
 
   /// `quoteIdentifier(name)`, or `schema.name` when `schema` is not the default.
@@ -88,10 +96,12 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// PostgreSQL and DuckDB `$n`, SQLite `?n`. `index` is written as given (1-based).
+  /// MySQL is a bare `?`: binds are positional, so `index` is ignored.
   func placeholder(_ index: Int) -> String {
     switch engine {
     case .postgresql, .duckdb: "$\(index)"
     case .sqlite: "?\(index)"
+    case .mysql: "?"
     }
   }
 
@@ -101,13 +111,18 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT.
   /// SQLite is always `EXPLAIN QUERY PLAN`. DuckDB is text only: `EXPLAIN` or `EXPLAIN ANALYZE`,
-  /// with `buffers` and `format` ignored.
+  /// with `buffers` and `format` ignored. MySQL is `EXPLAIN ANALYZE` (format ignored),
+  /// `EXPLAIN FORMAT=<format>`, or `EXPLAIN`, with `buffers` ignored.
   func explainPrefix(analyze: Bool, buffers: Bool, format: String?) -> String {
     switch engine {
     case .sqlite:
       return "EXPLAIN QUERY PLAN"
     case .duckdb:
       return analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"
+    case .mysql:
+      if analyze { return "EXPLAIN ANALYZE" }
+      if let format { return "EXPLAIN FORMAT=\(format.uppercased())" }
+      return "EXPLAIN"
     case .postgresql:
       var options: [String] = []
       if analyze { options.append("ANALYZE") }
@@ -120,12 +135,14 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
-  /// `column` as text for `LIKE`: PostgreSQL `::text`, DuckDB `::VARCHAR`, SQLite unchanged.
+  /// `column` as text for `LIKE`: PostgreSQL `::text`, DuckDB `::VARCHAR`, MySQL `CAST(.. AS CHAR)`,
+  /// SQLite unchanged.
   func likeSubject(_ column: String) -> String {
     switch engine {
     case .postgresql: "\(column)::text"
     case .sqlite: column
     case .duckdb: "\(column)::VARCHAR"
+    case .mysql: "CAST(\(column) AS CHAR)"
     }
   }
 
@@ -135,26 +152,28 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .postgresql: "\(column)::text ILIKE \(pattern)"
     case .sqlite: "\(column) LIKE \(pattern)"
     case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
+    case .mysql: "CAST(\(column) AS CHAR) LIKE \(pattern)"
     }
   }
 
   /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:
   /// every `\` becomes `\\` and every `'` becomes `''`, so those characters stay
   /// data with `standard_conforming_strings` on or off. SQLite and DuckDB never use `E`: their
-  /// plain strings have no backslash escapes.
+  /// plain strings have no backslash escapes. MySQL plain strings do: every `\` becomes `\\`
+  /// with no prefix.
   private func quoteLiteral(_ text: String) -> String {
     let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
-    guard engine == .postgresql, text.contains("\\") else {
+    guard engine == .postgresql || engine == .mysql, text.contains("\\") else {
       return "'\(doubledQuotes)'"
     }
     let escaped = doubledQuotes.replacingOccurrences(of: "\\", with: "\\\\")
-    return "E'\(escaped)'"
+    return engine == .mysql ? "'\(escaped)'" : "E'\(escaped)'"
   }
 
   private func doubleLiteral(_ number: Double) -> String {
     if number.isFinite { return String(number) }
     switch engine {
-    case .sqlite:
+    case .sqlite, .mysql:
       return "NULL"
     case .postgresql:
       if number.isNaN { return "'NaN'::float8" }
@@ -170,7 +189,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .postgresql:
       let hex = data.map { String(format: "%02x", $0) }.joined()
       return "'\\x\(hex)'"
-    case .sqlite:
+    case .sqlite, .mysql:
       let hex = data.map { String(format: "%02X", $0) }.joined()
       return "X'\(hex)'"
     case .duckdb:

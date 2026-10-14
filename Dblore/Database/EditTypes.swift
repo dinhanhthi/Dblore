@@ -5,12 +5,27 @@
 
 import Foundation
 
+/// `SELECT 1 FROM <table> WHERE <pk> = ? ... FOR UPDATE`: does the row an UPDATE targeted
+/// still exist. MySQL reports changed rows, not matched ones (CLIENT_FOUND_ROWS is off), so an
+/// UPDATE that writes the stored value affects 0 rows; the locking read (current, not the
+/// transaction snapshot) tells that apart from a row deleted elsewhere. Nil text binds NULL.
+nonisolated struct RowExistenceCheck: Sendable, Equatable {
+  let sql: String
+  let values: [String?]
+
+  var binds: [SQLBindValue] {
+    values.map(SQLBindValue.init(optionalText:))
+  }
+}
+
 /// `UPDATE [ONLY] <table> SET <column> = $1 WHERE <pk1> = $2 [AND ...]` for one grid cell.
-/// Identifiers are quoted; values never appear in the SQL text.
+/// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
   /// `$1` is the new value, `$2...` the primary-key values in key order; nil binds NULL
   let values: [String?]
+  /// MySQL: checks a 0-affected UPDATE against the row (see `RowExistenceCheck`)
+  var rowCheck: RowExistenceCheck? = nil
 
   /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
   var binds: [SQLBindValue] {
@@ -19,55 +34,70 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
 
   /// Builds the UPDATE for one cell of `rowData`, keyed by `primaryKeyColumns` only.
   /// - Parameters:
-  ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target,
-  ///     inserted verbatim (never user text; see `isServerQualifiedName`)
-  ///   - newValue: the new value as PostgreSQL input text; nil sets NULL
-  ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children)
+  ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target
+  ///     (MySQL: two backtick-quoted names), inserted verbatim (never user text; see
+  ///     `isServerQualifiedName`)
+  ///   - newValue: the new value as input text; nil sets NULL
+  ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children); only
+  ///     where `dialect.supportsUpdateOnly`
   /// - Throws: `DatabaseError.notEditable` when the row cannot be targeted by its primary key
   static func make(
     qualifiedName: String, columnName: String, newValue: String?, primaryKeyColumns: [String],
-    rowData: [String: CellValue], updateOnly: Bool = false
+    rowData: [String: CellValue], updateOnly: Bool = false, dialect: SQLDialect = .postgresql
   ) throws -> CellUpdateStatement {
-    guard isServerQualifiedName(qualifiedName) else {
+    guard isServerQualifiedName(qualifiedName, dialect: dialect) else {
       throw DatabaseError.notEditable("unsupported table name \"\(qualifiedName)\"")
     }
     guard !primaryKeyColumns.isEmpty else {
       throw DatabaseError.notEditable("the table has no primary key")
     }
     var keyValues: [String] = []
-    for column in primaryKeyColumns {
+    var conditions: [String] = []
+    for (index, column) in primaryKeyColumns.enumerated() {
       guard let value = rowData[column] else {
         throw DatabaseError.notEditable("primary key column \"\(column)\" is not in the result")
       }
-      guard let text = inputText(value) else {
+      guard let text = inputText(value, dialect: dialect) else {
         throw DatabaseError.notEditable("primary key column \"\(column)\" is NULL")
       }
       keyValues.append(text)
+      let placeholder = bindPlaceholder(dialect.placeholder(index + 2), value, dialect: dialect)
+      conditions.append("\(quoteIdentifier(column, dialect: dialect)) = \(placeholder)")
     }
-    let conditions = primaryKeyColumns.enumerated().map { index, column in
-      "\(quoteIdentifier(column)) = $\(index + 2)"
-    }
+    let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
+    let condition = conditions.joined(separator: " AND ")
     let sql =
-      "UPDATE \(updateOnly ? "ONLY " : "")\(qualifiedName) SET \(quoteIdentifier(columnName)) = $1"
-      + " WHERE \(conditions.joined(separator: " AND "))"
-    return CellUpdateStatement(sql: sql, values: [newValue] + keyValues)
+      "UPDATE \(only)\(qualifiedName) SET \(quoteIdentifier(columnName, dialect: dialect))"
+      + " = \(dialect.placeholder(1)) WHERE \(condition)"
+    var statement = CellUpdateStatement(sql: sql, values: [newValue] + keyValues)
+    if dialect == .mysql {
+      statement.rowCheck = RowExistenceCheck(
+        sql: "SELECT 1 FROM \(qualifiedName) WHERE \(condition) FOR UPDATE", values: keyValues)
+    }
+    return statement
   }
 
   /// True if `name` has the shape of `format('%I.%I', ...)` output: exactly two identifiers
   /// joined by `.`, each either `[a-z_][a-z0-9_]*` or a non-empty `"..."` with `""` escapes.
-  static func isServerQualifiedName(_ name: String) -> Bool {
+  /// MySQL: each a non-empty `` `...` `` with doubled backticks (`MySQLSchemaIntrospector`).
+  static func isServerQualifiedName(_ name: String, dialect: SQLDialect = .postgresql) -> Bool {
+    let quote: Unicode.Scalar = dialect == .mysql ? "`" : "\""
     let scalars = Array(name.unicodeScalars)
-    guard let dot = identifierEnd(scalars, from: 0), dot < scalars.count, scalars[dot] == ".",
-      let end = identifierEnd(scalars, from: dot + 1)
+    guard let dot = identifierEnd(scalars, from: 0, quote: quote), dot < scalars.count,
+      scalars[dot] == ".",
+      let end = identifierEnd(scalars, from: dot + 1, quote: quote)
     else { return false }
     return end == scalars.count
   }
 
-  /// End offset of the `%I` identifier starting at `start`, or nil if there is none.
-  private static func identifierEnd(_ s: [Unicode.Scalar], from start: Int) -> Int? {
+  /// End offset of the `%I` identifier starting at `start`, or nil if there is none. A MySQL
+  /// (backtick) identifier is always quoted.
+  private static func identifierEnd(
+    _ s: [Unicode.Scalar], from start: Int, quote: Unicode.Scalar
+  ) -> Int? {
     guard start < s.count else { return nil }
-    guard s[start] == "\"" else {
-      guard s[start] == "_" || ("a"..."z").contains(s[start]) else { return nil }
+    guard s[start] == quote else {
+      guard quote == "\"", s[start] == "_" || ("a"..."z").contains(s[start]) else { return nil }
       var i = start + 1
       while i < s.count, s[i] == "_" || ("a"..."z").contains(s[i]) || ("0"..."9").contains(s[i]) {
         i += 1
@@ -76,8 +106,8 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     }
     var i = start + 1
     while i < s.count {
-      if s[i] == "\"" {
-        guard i + 1 < s.count, s[i + 1] == "\"" else { return i > start + 1 ? i + 1 : nil }
+      if s[i] == quote {
+        guard i + 1 < s.count, s[i + 1] == quote else { return i > start + 1 ? i + 1 : nil }
         i += 2
       } else {
         i += 1
@@ -98,8 +128,9 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// as text for `to_regclass` (`name` or `schema.name`, quoted parts re-quoted), or nil for
   /// anything else (fail closed): a comma or `(` after the relation, JOIN, subquery, CTE, set
   /// operation, other clauses, several statements or an ambiguous backslash string.
-  static func singleRelation(in sql: String) -> String? {
-    var tokens = SQLTokenizer.tokens(sql)
+  /// `dialect` lexes the query and re-quotes quoted parts.
+  static func singleRelation(in sql: String, dialect: SQLDialect = .postgresql) -> String? {
+    var tokens = SQLTokenizer(dialect: dialect).tokens(sql)
     if tokens.last?.isSymbol(";") == true { tokens.removeLast() }
     guard let first = tokens.first, first.isWord("SELECT") else { return nil }
     let forbidden = tokens.dropFirst().contains { token in
@@ -113,7 +144,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       guard index < tokens.count else { return nil }
       switch tokens[index].kind {
       case .word: return tokens[index].text
-      case .quotedIdentifier: return quoteIdentifier(tokens[index].text)
+      case .quotedIdentifier: return quoteIdentifier(tokens[index].text, dialect: dialect)
       default: return nil
       }
     }
@@ -160,6 +191,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// Read-only relation of a single-table result for the referenced-row lookup, or nil. Every
   /// column with an origin must come from `table`; a column of another table (a join) gives
   /// nil. A column with no origin (an expression) or an unknown ordinal maps to no base column.
+  /// A MySQL column whose ordinal names another column than its source name gives nil.
   /// Never an edit target: editing keeps `editablePrimaryKey`.
   static func lookupRelation(columns: [ColumnInfo], table: EditTable?) -> LookupRelation? {
     guard let table, let schema = table.schema, let name = table.name else { return nil }
@@ -171,8 +203,10 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
         continue
       }
       guard origin.tableID == tableID else { return nil }
-      baseColumns.append(
-        Int16(exactly: origin.columnOrdinal).flatMap { table.attributeNames[$0] })
+      let base = Int16(exactly: origin.columnOrdinal).flatMap { table.attributeNames[$0] }
+      // MySQL ordinals come from a cache: one that now names another column is stale.
+      if let source = column.sourceName, base != source.column { return nil }
+      baseColumns.append(base)
     }
     guard baseColumns.contains(where: { $0 != nil }) else { return nil }
     return LookupRelation(
@@ -180,27 +214,46 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       connectionEpoch: table.connectionEpoch)
   }
 
-  /// `"name"` with embedded double quotes doubled. A NUL cannot be quoted by the dialect,
-  /// so it keeps the historical quote-and-double-quotes text.
-  static func quoteIdentifier(_ name: String) -> String {
+  /// `name` quoted by `dialect` (`"name"` with embedded double quotes doubled for PostgreSQL).
+  /// A NUL cannot be quoted by the dialect, so it keeps the historical quote-and-double-quotes
+  /// text; MySQL keeps backticks (a double-quoted MySQL name is a string literal). The server
+  /// then refuses the name.
+  static func quoteIdentifier(_ name: String, dialect: SQLDialect = .postgresql) -> String {
     do {
-      return try SQLDialect.postgresql.quoteIdentifier(name)
+      return try dialect.quoteIdentifier(name)
     } catch {
-      return "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+      let quote = dialect == .mysql ? "`" : "\""
+      return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
     }
   }
 
-  /// PostgreSQL input text for a result value (nil for NULL)
-  private static func inputText(_ value: CellValue) -> String? {
+  /// Input text for a result value (nil for NULL). PostgreSQL: `true`/`false`, ISO 8601 dates,
+  /// `\x` hex bytes. MySQL: `1`/`0`, `YYYY-MM-DD HH:MM:SS.ffffff` (the session is UTC), and
+  /// bare hex bytes for `bindPlaceholder`'s `UNHEX(?)` (every MySQL bind is sent as a string).
+  static func inputText(_ value: CellValue, dialect: SQLDialect) -> String? {
+    let mysql = dialect == .mysql
     switch value {
-    case .null: nil
-    case .int(let number): String(number)
-    case .double(let number): String(number)
-    case .bool(let flag): flag ? "true" : "false"
-    case .string(let text), .json(let text): text
-    case .date(let date): DateBindText.string(from: date)
-    case .data(let data): "\\x" + data.map { String(format: "%02x", $0) }.joined()
+    case .null: return nil
+    case .int(let number): return String(number)
+    case .double(let number): return String(number)
+    case .bool(let flag): return mysql ? (flag ? "1" : "0") : (flag ? "true" : "false")
+    case .string(let text), .json(let text): return text
+    case .date(let date):
+      let text = DateBindText.string(from: date)
+      guard mysql else { return text }
+      return String(text.dropLast()).replacingOccurrences(of: "T", with: " ")
+    case .data(let data):
+      let hex = data.map { String(format: "%02x", $0) }.joined()
+      return mysql ? hex : "\\x" + hex
     }
+  }
+
+  /// `placeholder` for `value`'s bind, or MySQL `UNHEX(placeholder)` for bytes (`inputText`).
+  static func bindPlaceholder(
+    _ placeholder: String, _ value: CellValue, dialect: SQLDialect
+  ) -> String {
+    if dialect == .mysql, case .data = value { return "UNHEX(\(placeholder))" }
+    return placeholder
   }
 }
 

@@ -45,9 +45,11 @@ struct DataViewerState: Equatable {
     LoadKey(schema: schema, name: name, page: page, pageSize: pageSize, filter: filter)
   }
 
-  /// Tab title: `name` for the default (or no) schema, else `schema.name`
+  /// Tab title: `name` for the default (or no) schema or an engine that never names it
+  /// (MySQL), else `schema.name`
   var title: String {
-    schema.isEmpty || schema == databaseType.dialect.defaultSchema ? name : "\(schema).\(name)"
+    !databaseType.namesSchema || schema.isEmpty || schema == databaseType.dialect.defaultSchema
+      ? name : "\(schema).\(name)"
   }
 
   /// Quoted `"schema"."name"` when `schema` is non-empty, including the default schema.

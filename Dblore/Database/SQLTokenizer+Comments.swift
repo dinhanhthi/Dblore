@@ -4,9 +4,10 @@
 import Foundation
 
 nonisolated extension SQLTokenizer {
-  /// `sql` without `--` and `/* */` comments, using `dialect` (strings, quoted identifiers and
-  /// dollar-quoted bodies are kept verbatim). Lines left empty are dropped, trailing spaces are
-  /// trimmed, and the result is trimmed. A block comment between two tokens becomes one space.
+  /// `sql` without `--` and `/* */` comments, using `dialect` (strings, quoted identifiers,
+  /// dollar-quoted bodies and MySQL executable comments are kept verbatim). Lines left empty
+  /// are dropped, trailing spaces are trimmed, and the result is trimmed. A block comment
+  /// between two tokens becomes one space.
   func strippingComments(_ sql: String) -> String {
     let scalars = Array(sql.unicodeScalars)
     var lines: [String.UnicodeScalarView] = []
@@ -51,8 +52,8 @@ nonisolated extension SQLTokenizer {
     return joined.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  /// PostgreSQL `strippingComments`
-  static func strippingComments(_ sql: String) -> String {
-    SQLTokenizer().strippingComments(sql)
+  /// `strippingComments` using `dialect` (PostgreSQL by default)
+  static func strippingComments(_ sql: String, dialect: SQLDialect = .postgresql) -> String {
+    SQLTokenizer(dialect: dialect).strippingComments(sql)
   }
 }

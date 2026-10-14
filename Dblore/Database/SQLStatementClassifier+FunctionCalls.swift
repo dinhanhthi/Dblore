@@ -21,7 +21,7 @@ nonisolated extension SQLStatementClassifier {
   /// (`AS t(a, b)`) count too; they only make a capped read drain instead of reset.
   /// Blind spots: functions called without parentheses (`t.fn` functional notation), inside
   /// views, operators and triggers.
-  /// `dialect` picks the tokenizer; the capped-read callers are PostgreSQL-only.
+  /// `dialect` picks the tokenizer; capped-read callers pass the connection's dialect.
   static func mayCallFunctions(_ sql: String, dialect: SQLDialect = .postgresql) -> Bool {
     let tokens = SQLTokenizer(dialect: dialect).tokens(sql)
     return zip(tokens, tokens.dropFirst()).contains { token, next in

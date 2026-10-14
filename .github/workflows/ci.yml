@@ -2,7 +2,9 @@ name: CI
 
 # Unit tests on pull requests and by hand. Ordinary pushes to main do not run it; releases are
 # built locally (scripts/release-local.sh), which runs the unit tests on that Mac first.
-# Integration suites stay off (SKIP_INTEGRATION_TESTS); they need the local PostgreSQL container.
+# The test job keeps the integration suites off (SKIP_INTEGRATION_TESTS); the integration job runs
+# them against PostgreSQL, MySQL and MariaDB containers that scripts/ci-live-databases.sh starts
+# on their own ports (the runner may be a Mac that also runs the local test containers).
 
 on:
   pull_request:
@@ -71,4 +73,67 @@ jobs:
         with:
           name: xcresult-${{ github.sha }}
           path: ${{ runner.temp }}/Dblore.xcresult
+          retention-days: 7
+
+  integration:
+    # Docker on this runner is host-level access: never run it for a pull request from a fork.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: xcode-27
+    timeout-minutes: 60
+    # Host ports of the dblore-ci containers, read by scripts/ci-live-databases.sh and the tests.
+    env:
+      DBLORE_PG_TEST_PORT: '15435'
+      DBLORE_MYSQL_TEST_PORT: '13307'
+      DBLORE_MARIADB_TEST_PORT: '13308'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/select-xcode
+
+      - name: Cache DerivedData
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: derived-debug-${{ hashFiles('.xcode-version', 'Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: derived-debug-
+
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      # Compose project dblore-ci: own containers, volumes, networks and ports.
+      - name: Start live databases
+        run: scripts/ci-live-databases.sh start postgres mysql
+
+      # xcodebuild passes TEST_RUNNER_<NAME> to the tests as <NAME>. The MySQL TLS, mTLS, SSH
+      # and DuckDB plugin gates stay off (local only).
+      - name: Test
+        run: |
+          TEST_RUNNER_MYSQL_TESTS=1 \
+          TEST_RUNNER_TEST_DB_PORT="$DBLORE_PG_TEST_PORT" \
+          TEST_RUNNER_TEST_MYSQL_PORT="$DBLORE_MYSQL_TEST_PORT" \
+          TEST_RUNNER_TEST_MARIADB_PORT="$DBLORE_MARIADB_TEST_PORT" \
+          xcodebuild test \
+            -scheme Dblore \
+            -destination 'platform=macOS,arch=arm64' \
+            -enableCodeCoverage NO \
+            -parallel-testing-enabled NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -resultBundlePath "$RUNNER_TEMP/DbloreIntegration.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Stop live databases
+        if: always()
+        run: scripts/ci-live-databases.sh stop postgres mysql
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: xcresult-integration-${{ github.sha }}
+          path: ${{ runner.temp }}/DbloreIntegration.xcresult
           retention-days: 7

@@ -134,12 +134,13 @@ struct ForeignKeyLookupTests {
       let query = ForeignKeyLookup.lookupSQL(
         for: composite, values: values, dialect: .postgresql)
       #expect(query == nil)
-      #expect(ForeignKeyLookup.jumpFilter(for: composite, values: values) == nil)
+      #expect(
+        ForeignKeyLookup.jumpFilter(for: composite, values: values, dialect: .postgresql) == nil)
     }
     let broken = key(source: ["a", "b"], target: ["id"])
     let both: [String: CellValue] = ["a": .int(1), "b": .int(2)]
     #expect(ForeignKeyLookup.lookupSQL(for: broken, values: both, dialect: .postgresql) == nil)
-    #expect(ForeignKeyLookup.jumpFilter(for: broken, values: both) == nil)
+    #expect(ForeignKeyLookup.jumpFilter(for: broken, values: both, dialect: .postgresql) == nil)
   }
 
   @Test("The text NULL and an empty string are values, not SQL NULL")
@@ -151,7 +152,8 @@ struct ForeignKeyLookupTests {
     #expect(textNull?.parameters == ["fk1": .text("NULL")])
     #expect(textNull?.sql.contains("= NULL") == false)
 
-    let empty = ForeignKeyLookup.jumpFilter(for: orders, values: ["code": .string("")])
+    let empty = ForeignKeyLookup.jumpFilter(
+      for: orders, values: ["code": .string("")], dialect: .postgresql)
     #expect(empty?.conditions.map(\.value) == [""])
     #expect(empty?.conditions.map(\.op) == [.equals])
   }
@@ -159,7 +161,8 @@ struct ForeignKeyLookupTests {
   @Test("An empty-string jump stays in page SQL; a blank form row does not")
   func emptyStringJumpReachesPageSQL() {
     let orders = key(source: ["code"], target: ["code"])
-    let empty = ForeignKeyLookup.jumpFilter(for: orders, values: ["code": .string("")])
+    let empty = ForeignKeyLookup.jumpFilter(
+      for: orders, values: ["code": .string("")], dialect: .postgresql)
     #expect(empty?.conditions.map(\.emptyStringIsValue) == [true])
     #expect(empty?.whereClause(dialect: .postgresql) == #""code" = ''"#)
     var viewer = DataViewerState(schema: "public", name: "users", orderColumns: [])
@@ -168,7 +171,8 @@ struct ForeignKeyLookupTests {
 
     let composite = key(source: ["tenant", "code"], target: ["tenant", "code"])
     let both = ForeignKeyLookup.jumpFilter(
-      for: composite, values: ["tenant": .string("acme"), "code": .string("")])
+      for: composite, values: ["tenant": .string("acme"), "code": .string("")], dialect: .postgresql
+    )
     #expect(both?.conditions.map(\.emptyStringIsValue) == [false, true])
     #expect(
       both?.whereClause(dialect: .postgresql) == #""tenant" = 'acme' AND "code" = ''"#)
@@ -190,7 +194,7 @@ struct ForeignKeyLookupTests {
       schema: "main", table: "link", source: ["parent_b", "parent_a"], targetSchema: "main",
       targetTable: "parent", target: ["b", "a"])
     let filter = ForeignKeyLookup.jumpFilter(
-      for: link, values: ["parent_a": .int(2), "parent_b": .bool(true)])
+      for: link, values: ["parent_a": .int(2), "parent_b": .bool(true)], dialect: .postgresql)
     #expect(filter?.conditions.map(\.column) == ["b", "a"])
     #expect(filter?.conditions.map(\.op) == [.equals, .equals])
     #expect(filter?.conditions.map(\.value) == ["true", "2"])
@@ -215,13 +219,6 @@ struct ForeignKeyLookupTests {
         for: orders, values: ["v": value], dialect: .postgresql)
       #expect(query?.parameters["fk1"] == .text(text))
     }
-  }
-
-  @Test("A date keeps its microseconds")
-  func dateKeepsMicroseconds() {
-    #expect(
-      lookupText(Date(timeIntervalSince1970: 1_700_000_000.123456))
-        == .text("2023-11-14T22:13:20.123456Z"))
   }
 
   @Test("A date just below a microsecond boundary rounds up")

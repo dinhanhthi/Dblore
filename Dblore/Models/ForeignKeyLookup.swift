@@ -36,14 +36,18 @@ nonisolated enum ForeignKeyLookup: Sendable {
     values: [String: CellValue],
     dialect: SQLDialect
   ) -> (sql: String, parameters: [String: SQLBindValue])? {
-    guard let pairs = components(of: foreignKey, values: values) else { return nil }
+    guard let pairs = components(of: foreignKey, values: values, dialect: dialect) else {
+      return nil
+    }
     var parameters: [String: SQLBindValue] = [:]
     var terms: [String] = []
     for (offset, pair) in pairs.enumerated() {
       let name = "fk\(offset + 1)"
       parameters[name] = .text(pair.text)
       let column = quotedIdentifier(pair.column, dialect: dialect)
-      terms.append("\(column) = :\(name)")
+      let placeholder = CellUpdateStatement.bindPlaceholder(
+        ":\(name)", pair.value, dialect: dialect)
+      terms.append("\(column) = \(placeholder)")
     }
     let relation = quotedRelation(
       schema: foreignKey.targetSchema, table: foreignKey.targetTable, dialect: dialect)
@@ -54,9 +58,11 @@ nonisolated enum ForeignKeyLookup: Sendable {
   /// Equals conditions on the target columns, in source-column order.
   /// Nil when a component is missing or NULL, or the two column lists differ.
   static func jumpFilter(
-    for foreignKey: ForeignKey, values: [String: CellValue]
+    for foreignKey: ForeignKey, values: [String: CellValue], dialect: SQLDialect
   ) -> TableFilter? {
-    guard let pairs = components(of: foreignKey, values: values) else { return nil }
+    guard let pairs = components(of: foreignKey, values: values, dialect: dialect) else {
+      return nil
+    }
     let conditions = pairs.map { pair in
       FilterCondition(
         column: pair.column, op: .equals, value: pair.text, connector: .and,
@@ -65,40 +71,23 @@ nonisolated enum ForeignKeyLookup: Sendable {
     return TableFilter(conditions: conditions)
   }
 
-  /// Target column plus untyped bind text, in source-column order.
-  /// Nil if any source value is missing or NULL. Does not emit `= NULL`.
+  /// Target column plus untyped bind text (`CellUpdateStatement.inputText`) and the source
+  /// value, in source-column order. Nil if any source value is missing or NULL. Does not emit
+  /// `= NULL`.
   private static func components(
-    of foreignKey: ForeignKey, values: [String: CellValue]
-  ) -> [(column: String, text: String)]? {
+    of foreignKey: ForeignKey, values: [String: CellValue], dialect: SQLDialect
+  ) -> [(column: String, text: String, value: CellValue)]? {
     guard !foreignKey.sourceColumns.isEmpty,
       foreignKey.sourceColumns.count == foreignKey.targetColumns.count
     else { return nil }
-    var pairs: [(column: String, text: String)] = []
+    var pairs: [(column: String, text: String, value: CellValue)] = []
     for (index, source) in foreignKey.sourceColumns.enumerated() {
-      guard let value = values[source], let text = inputText(value) else { return nil }
-      pairs.append((foreignKey.targetColumns[index], text))
+      guard let value = values[source],
+        let text = CellUpdateStatement.inputText(value, dialect: dialect)
+      else { return nil }
+      pairs.append((foreignKey.targetColumns[index], text, value))
     }
     return pairs
-  }
-
-  /// Untyped input text. Nil is SQL NULL.
-  private static func inputText(_ value: CellValue) -> String? {
-    switch value {
-    case .null:
-      nil
-    case .int(let number):
-      String(number)
-    case .double(let number):
-      String(number)
-    case .bool(let flag):
-      flag ? "true" : "false"
-    case .string(let text), .json(let text):
-      text
-    case .date(let date):
-      DateBindText.string(from: date)
-    case .data(let data):
-      "\\x" + data.map { String(format: "%02x", $0) }.joined()
-    }
   }
 
   /// `"schema"."name"` when schema is non-empty, including the default schema.
@@ -111,12 +100,8 @@ nonisolated enum ForeignKeyLookup: Sendable {
     return quotedIdentifier(schema, dialect: dialect) + "." + quotedTable
   }
 
-  /// Dialect quoting, or the historical non-throwing quote when the name contains NUL.
+  /// Dialect quoting, or the dialect's non-throwing quote when the name contains NUL.
   private static func quotedIdentifier(_ name: String, dialect: SQLDialect) -> String {
-    do {
-      return try dialect.quoteIdentifier(name)
-    } catch {
-      return CellUpdateStatement.quoteIdentifier(name)
-    }
+    CellUpdateStatement.quoteIdentifier(name, dialect: dialect)
   }
 }

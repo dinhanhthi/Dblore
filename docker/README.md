@@ -14,7 +14,10 @@ docker/
 │   ├── scripts/          # Helper scripts
 │   ├── migrations/       # Incremental schema changes
 │   └── backups/          # Database backups (created by backup script)
-├── mysql/                # Coming soon
+├── mysql/                # MySQL 8.4 (3307) + MariaDB 11.4 (3308) test servers
+│   ├── docker-compose.test.yml
+│   ├── init/             # Test users and grants (runs on first start)
+│   └── scripts/          # gen-mysql-tls.sh (TLS/mTLS test certificates)
 └── sqlite/               # Coming soon
 ```
 
@@ -429,9 +432,52 @@ lsof -i :5435
 
 ---
 
+## CI Live Databases (`scripts/ci-live-databases.sh`)
+
+The `integration` job of `.github/workflows/ci.yml` runs the PostgreSQL and MySQL/MariaDB
+integration suites on the self-hosted `xcode-27` runner, which may be a Mac that also runs the
+local test containers. The script starts a separate copy of the test databases next to them:
+
+```bash
+scripts/ci-live-databases.sh start postgres mysql   # docker compose -p dblore-ci ... up -d --wait
+scripts/ci-live-databases.sh stop postgres mysql    # docker compose -p dblore-ci ... down -v
+```
+
+- Compose project `dblore-ci`; containers, volumes and networks are named `dblore-ci-*`
+  (`dblore-ci-postgres-test`, `dblore-ci-mysql-test`, `dblore-ci-mariadb-test`), so the local
+  `dblore-*-test` containers and their data are never touched. `stop` removes the containers,
+  networks and volumes.
+- `mysql` starts both MySQL 8.4 and MariaDB 11.4 (one compose file).
+- `start` fails with a clear message when Docker is not reachable or a CI port is taken.
+- Each service is one `start_<name>` / `stop_<name>` pair in the script plus its name on the
+  command line.
+
+| Database | Local port | CI port | Override (compose and script) | Test env (via xcodebuild) |
+|----------|------------|---------|-------------------------------|---------------------------|
+| PostgreSQL 16 | 5435 | 15435 | `DBLORE_PG_TEST_PORT` | `TEST_RUNNER_TEST_DB_PORT` |
+| MySQL 8.4 | 3307 | 13307 | `DBLORE_MYSQL_TEST_PORT` | `TEST_RUNNER_TEST_MYSQL_PORT` |
+| MariaDB 11.4 | 3308 | 13308 | `DBLORE_MARIADB_TEST_PORT` | `TEST_RUNNER_TEST_MARIADB_PORT` |
+
+The test compose files read these overrides, plus `DBLORE_TEST_NAME_PREFIX` (default `dblore`)
+for the container, volume and network names. Without them nothing changes for local use.
+
+To reproduce the CI job locally (with or without the local containers running):
+
+```bash
+scripts/ci-live-databases.sh start postgres mysql
+TEST_RUNNER_MYSQL_TESTS=1 TEST_RUNNER_TEST_DB_PORT=15435 \
+  TEST_RUNNER_TEST_MYSQL_PORT=13307 TEST_RUNNER_TEST_MARIADB_PORT=13308 \
+  xcodebuild test -project Dblore.xcodeproj -scheme Dblore -destination 'platform=macOS,arch=arm64' \
+  -skipPackagePluginValidation -skipMacroValidation
+scripts/ci-live-databases.sh stop postgres mysql
+```
+
+The MySQL TLS, mTLS, SSH and DuckDB plugin suites stay local-only.
+
+---
+
 ## 🔮 Coming Soon
 
-- **MySQL:** Similar Docker setup
 - **SQLite:** Portable database files with sample data
 
 ---

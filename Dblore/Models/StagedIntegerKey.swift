@@ -14,7 +14,8 @@ nonisolated enum StagedIntegerKey {
     return name
   }
 
-  /// `int4`, `INTEGER`, `bigint`, and the serial aliases. `numeric` and floats are not.
+  /// `int4`, `INTEGER`, `bigint`, the serial aliases, and MySQL `tinyint`/`mediumint`
+  /// (display widths and `UNSIGNED` ignored). `numeric` and floats are not.
   static func isIntegerType(_ type: String) -> Bool {
     let base =
       type.lowercased()
@@ -23,7 +24,7 @@ nonisolated enum StagedIntegerKey {
       .map(String.init) ?? ""
     switch base {
     case "int", "int2", "int4", "int8", "int32", "int64", "integer", "bigint", "smallint",
-      "serial", "bigserial", "smallserial":
+      "serial", "bigserial", "smallserial", "tinyint", "mediumint":
       return true
     default:
       return false
@@ -55,6 +56,7 @@ nonisolated enum StagedIntegerKey {
   }
 
   /// Catalog lookup: whether the column has a default, and `MAX(column)` of the table.
+  /// MySQL `AUTO_INCREMENT` has no COLUMN_DEFAULT; it is read from COLUMNS.EXTRA.
   /// Nil when a name cannot be quoted.
   static func lookupSQL(
     schema: String, table: String, column: String, dialect: SQLDialect
@@ -84,6 +86,14 @@ nonisolated enum StagedIntegerKey {
       return """
         SELECT (dflt_value IS NOT NULL) AS has_default, \(maxSQL) AS max_id \
         FROM \(pragma) WHERE name = \(columnLiteral)
+        """
+    }
+    if dialect == .mysql {
+      return """
+        SELECT (c.COLUMN_DEFAULT IS NOT NULL OR c.EXTRA LIKE '%auto_increment%') AS has_default, \
+        \(maxSQL) AS max_id FROM information_schema.COLUMNS AS c \
+        WHERE c.TABLE_SCHEMA = \(schemaLiteral) AND c.TABLE_NAME = \(tableLiteral) \
+        AND c.COLUMN_NAME = \(columnLiteral)
         """
     }
     return """

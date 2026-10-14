@@ -36,6 +36,8 @@ struct FooterView: View {
   var viewModel: NotebookViewModel?
   var connectionState: ConnectionState
   var connectionConfig: ConnectionConfig?
+  /// How the session is protected, when the engine reports it (MySQL); nil = unknown.
+  var transport: MySQLTransport?
   @Environment(\.pixelLength) private var pixelLength
 
   var body: some View {
@@ -63,9 +65,13 @@ struct FooterView: View {
         }
 
         if let tooltip = Self.noSSLTooltip(
-          for: connectionConfig, isConnected: connectionState.isConnected)
+          for: connectionConfig, isConnected: connectionState.isConnected, transport: transport)
         {
-          noSSLBadge(tooltip: tooltip)
+          sslBadge("No SSL", icon: "lock.open", tooltip: tooltip)
+        } else if let tooltip = Self.unverifiedSSLTooltip(
+          for: connectionConfig, isConnected: connectionState.isConnected, transport: transport)
+        {
+          sslBadge("Unverified SSL", icon: "lock", tooltip: tooltip)
         }
 
         // Window dimensions (for debugging)
@@ -176,20 +182,43 @@ struct FooterView: View {
   }
 
   /// Tooltip for the "No SSL" badge, or nil to hide it: only a live network connection whose
-  /// SSL mode may fall back to plain text. File engines have no SSL to report.
-  static func noSSLTooltip(for config: ConnectionConfig?, isConnected: Bool) -> String? {
+  /// SSL mode may fall back to plain text. File engines have no SSL to report. `transport` is
+  /// how the session is actually protected (MySQL); nil keeps the SSL-mode-only wording.
+  static func noSSLTooltip(
+    for config: ConnectionConfig?, isConnected: Bool, transport: MySQLTransport? = nil
+  ) -> String? {
     guard isConnected, let config, config.databaseType.capabilities.supportsSSL,
       config.sslMode.mayBeUnencrypted
     else { return nil }
-    return "SSL mode \(config.sslMode.displayName): the connection may be unencrypted"
+    let mode = "SSL mode \(config.sslMode.displayName)"
+    switch transport {
+    case .encryptedUnverified?, .verified?:
+      return nil
+    case .plaintext? where config.sslMode == .disable:
+      return "\(mode): the connection is unencrypted"
+    case .plaintext?:
+      return "\(mode): the server offered no SSL, so the connection is unencrypted"
+    case nil:
+      return "\(mode): the connection may be unencrypted"
+    }
+  }
+
+  /// Tooltip for the "Unverified SSL" badge, or nil to hide it: a live session encrypted without
+  /// checking the server certificate (MySQL Allow, Prefer and Require).
+  static func unverifiedSSLTooltip(
+    for config: ConnectionConfig?, isConnected: Bool, transport: MySQLTransport?
+  ) -> String? {
+    guard isConnected, let config, transport == .encryptedUnverified else { return nil }
+    return "SSL mode \(config.sslMode.displayName): encrypted, but the server certificate is not "
+      + "verified, so an active man in the middle can intercept the connection and the password"
   }
 
   /// Faint and neutral: a hint, not an alarm
-  private func noSSLBadge(tooltip: String) -> some View {
+  private func sslBadge(_ label: String, icon: String, tooltip: String) -> some View {
     HStack(spacing: Spacing.xxs) {
-      Image(systemName: "lock.open")
+      Image(systemName: icon)
         .font(.system(size: 9, weight: .semibold))
-      Text("No SSL")
+      Text(label)
         .font(.smallest)
         .lineLimit(1)
     }

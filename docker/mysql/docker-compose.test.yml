@@ -1,0 +1,92 @@
+# MySQL 8.4 (3307) and MariaDB 11.4 (3308) for the opt-in MySQL suites
+# (TEST_RUNNER_MYSQL_TESTS=1). Tests create their own tables in dblore_test.
+# TLS: run scripts/gen-mysql-tls.sh, then `up -d --force-recreate mysql-test`.
+# Without the certs MySQL starts with its auto-generated ones and the X509 user
+# exists but cannot log in.
+# Published ports and names are overridable (DBLORE_MYSQL_TEST_PORT,
+# DBLORE_MARIADB_TEST_PORT, DBLORE_TEST_NAME_PREFIX) for scripts/ci-live-databases.sh.
+name: dblore-mysql-test
+
+services:
+  mysql-test:
+    image: mysql:8.4
+    container_name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mysql-test
+    restart: unless-stopped
+
+    environment:
+      MYSQL_DATABASE: dblore_test
+      # Created with the server default plugin, caching_sha2_password.
+      MYSQL_USER: dblore_test
+      MYSQL_PASSWORD: dblore123
+      MYSQL_ROOT_PASSWORD: dblore123
+
+    ports:
+      - "127.0.0.1:${DBLORE_MYSQL_TEST_PORT:-3307}:3306"
+
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d:ro
+      # Created empty by Docker when the gen script has not run yet.
+      - ./data/tls:/tls:ro
+
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        ssl_args=""
+        if [ -f /tls/server.crt ]; then
+          mkdir -p /tmp/dblore-tls
+          cp /tls/ca.crt /tls/server.crt /tls/server.key /tmp/dblore-tls/
+          chown -R mysql:mysql /tmp/dblore-tls
+          chmod 600 /tmp/dblore-tls/server.key
+          ssl_args="--ssl-ca=/tmp/dblore-tls/ca.crt --ssl-cert=/tmp/dblore-tls/server.crt --ssl-key=/tmp/dblore-tls/server.key"
+        fi
+        exec docker-entrypoint.sh mysqld $$ssl_args
+
+    healthcheck:
+      # TCP ping fails while the init server runs socket-only.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - dblore-mysql-test
+
+  mariadb-test:
+    image: mariadb:11.4
+    container_name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mariadb-test
+    restart: unless-stopped
+
+    environment:
+      MARIADB_DATABASE: dblore_test
+      # Pinned to mysql_native_password by init/01-users.sql.
+      MARIADB_USER: dblore_test
+      MARIADB_PASSWORD: dblore123
+      MARIADB_ROOT_PASSWORD: dblore123
+      MARIADB_MYSQL_LOCALHOST_USER: "1"
+
+    ports:
+      - "127.0.0.1:${DBLORE_MARIADB_TEST_PORT:-3308}:3306"
+
+    volumes:
+      - mariadb_test_data:/var/lib/mysql
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    networks:
+      - dblore-mysql-test
+
+volumes:
+  mysql_test_data:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mysql-test-data
+  mariadb_test_data:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mariadb-test-data
+
+networks:
+  dblore-mysql-test:
+    name: ${DBLORE_TEST_NAME_PREFIX:-dblore}-mysql-test-network

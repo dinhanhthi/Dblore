@@ -24,6 +24,7 @@ import SwiftUI
 ///   selectedIndex: cell.selectedStatementIndex,
 ///   cellId: cell.id,
 ///   viewModel: viewModel,
+///   dialect: viewModel.sqlDialect,
 ///   onSelect: { index in
 ///     viewModel.selectCellStatement(cellId: cell.id, at: index)
 ///   }
@@ -35,6 +36,7 @@ import SwiftUI
 ///   selectedIndex: viewModel.selectedStatementIndex,
 ///   cellId: nil,
 ///   viewModel: viewModel,
+///   dialect: viewModel.sqlDialect,
 ///   onSelect: { index in
 ///     viewModel.selectEditorStatement(at: index)
 ///   }
@@ -52,6 +54,9 @@ struct StatementSelectorView: View {
 
   /// View model for query actions (View Query, Download)
   let viewModel: NotebookViewModel?
+
+  /// Connection dialect of the copy bar's INSERT export
+  let dialect: SQLDialect
 
   /// Callback when a statement is selected
   let onSelect: (Int) -> Void
@@ -118,10 +123,7 @@ struct StatementSelectorView: View {
           Capsule()
             .fill(Color.inputBackground)
         )
-        .overlay(
-          Capsule()
-            .stroke(Color.border, lineWidth: 1)
-        )
+        .overlay(HairlineBorder(shape: Capsule()))
       }
       .id(statementResults.map { $0.id })
       .buttonStyle(.plain)
@@ -138,7 +140,8 @@ struct StatementSelectorView: View {
           result: result,
           viewModel: viewModel,
           cellId: cellId,
-          queryIndex: cellId == nil ? (selectedIndex + 1) : nil  // Only show index in editor mode
+          queryIndex: cellId == nil ? (selectedIndex + 1) : nil,  // Only show index in editor mode
+          dialect: dialect
         )
       }
     }
@@ -211,6 +214,7 @@ struct StatementSelectorView: View {
       selectedIndex: 0,
       cellId: UUID(),
       viewModel: NotebookViewModel(),
+      dialect: .postgresql,
       onSelect: { index in
         print("Selected statement \(index + 1)")
       }
@@ -224,6 +228,7 @@ struct StatementSelectorView: View {
       selectedIndex: 1,
       cellId: nil,
       viewModel: NotebookViewModel(),
+      dialect: .postgresql,
       onSelect: { index in
         print("Selected statement \(index + 1)")
       }

@@ -23,6 +23,19 @@ struct StagedIntegerKeyTests {
     #expect(!StagedIntegerKey.isIntegerType("numeric"))
   }
 
+  @Test("MySQL integer types, with display widths and UNSIGNED, are integers")
+  func mysqlIntegerTypes() {
+    for type in [
+      "tinyint", "SMALLINT", "mediumint", "int", "INTEGER", "bigint", "INT(11)",
+      "BIGINT UNSIGNED", "int(10) unsigned zerofill", "mediumint(8) unsigned",
+    ] {
+      #expect(StagedIntegerKey.isIntegerType(type), "\(type)")
+    }
+    for type in ["decimal(10,2)", "double", "float", "numeric", "varchar(11)"] {
+      #expect(!StagedIntegerKey.isIntegerType(type), "\(type)")
+    }
+  }
+
   @Test("The next value is one past the highest known key, or 1")
   func nextValue() {
     #expect(StagedIntegerKey.nextValue(known: []) == 1)

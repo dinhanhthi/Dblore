@@ -73,13 +73,39 @@ struct DBeaverImporterTests {
     ]
   }
 
+  /// A MySQL plugin entry as DBeaver 24+ writes it (provider `mysql` for every driver).
+  private static func mysql(
+    name: String = "Shop", driver: String = "mysql8", host: String = "mysql.example.com",
+    port: Any = "3306", database: String? = "shop", handlers: [String: Any]? = nil
+  ) -> [String: Any] {
+    var configuration: [String: Any] = [
+      "host": host, "port": port, "url": "jdbc:mysql://\(host):\(port)/",
+      "configurationType": "MANUAL", "home": "mysql_client", "type": "dev",
+      "closeIdleConnection": true, "provider-properties": [:], "auth-model": "native",
+    ]
+    if let database { configuration["database"] = database }
+    if let handlers { configuration["handlers"] = handlers }
+    return [
+      "provider": "mysql", "driver": driver, "name": name, "save-password": true,
+      "configuration": configuration,
+    ]
+  }
+
+  private static func mysqlSSL(_ properties: [String: Any], enabled: Bool = true) -> [String: Any] {
+    [
+      "mysql_ssl": [
+        "type": "CONFIG", "enabled": enabled, "save-password": false, "properties": properties,
+      ]
+    ]
+  }
+
   private static func dataSources(_ connections: [String: Any]) -> [String: Any] {
     ["folders": [:], "connections": connections]
   }
 
   // MARK: - data-sources.json
 
-  @Test("maps PostgreSQL connections and skips other providers with a warning")
+  @Test("maps PostgreSQL and MySQL connections and skips other providers with a warning")
   func mapsPostgresAndSkipsOthers() throws {
     let folder = try Folder()
     try folder.writeJSON(
@@ -99,7 +125,6 @@ struct DBeaverImporterTests {
 
     let result = try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url)
 
-    #expect(result.connections.count == 2)
     let prod = try #require(result.connections.first { $0.config.name == "Prod" })
     #expect(prod.config.databaseType == .postgresql)
     #expect(prod.config.host == "db.example.com")
@@ -113,8 +138,10 @@ struct DBeaverImporterTests {
     let unnamed = try #require(result.connections.first { $0.config.host == "localhost" })
     #expect(unnamed.config.name == "bob@localhost/app")
     #expect(unnamed.config.port == 5432)
-    #expect(result.warnings.count == 2)
-    #expect(result.warnings.contains { $0.contains("mysql") })
+    let shop = try #require(result.connections.first { $0.config.name == "Shop" })
+    #expect(shop.config.databaseType == .mysql)
+    #expect(result.connections.count == 3)
+    #expect(result.warnings.count == 1)
     #expect(result.warnings.contains { $0.contains("redshift") })
   }
 
@@ -284,6 +311,152 @@ struct DBeaverImporterTests {
     #expect(allWarnings.allSatisfy { !$0.contains("Secret") })
     #expect(result.connections.allSatisfy { $0.config.password.isEmpty })
     #expect(result.connections.allSatisfy { !$0.description.contains("Secret") })
+  }
+
+  // MARK: - MySQL / MariaDB
+
+  @Test("maps MySQL and MariaDB drivers with their password and default port")
+  func mapsMySQLDrivers() throws {
+    let folder = try Folder()
+    try folder.writeJSON(
+      Self.dataSources([
+        "mysql8-18f2a": Self.mysql(),
+        "mysql5-1": Self.mysql(name: "Legacy", driver: "mysql5", port: "", database: "old"),
+        "mariaDB-1": Self.mysql(name: "Maria", driver: "mariaDB", host: "maria.local", port: 3307),
+        "starrocks-1": Self.mysql(name: "Stars", driver: "starRocks"),
+      ]), to: Self.dataSourcesFileName)
+    try folder.writeSecrets([
+      "mysql8-18f2a": ["#connection": ["user": "root", "password": "MyPass!"]],
+      "mariaDB-1": ["#connection": ["user": "maria", "password": "MariaPass"]],
+    ])
+
+    let result = try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url)
+
+    #expect(result.connections.map(\.config.name) == ["Legacy", "Maria", "Shop"])
+    #expect(result.warnings.count == 1)
+    #expect(result.warnings.contains { $0.contains("\"Stars\"") && $0.contains("starRocks") })
+    let shop = try #require(result.connections.first { $0.config.name == "Shop" })
+    #expect(shop.config.databaseType == .mysql)
+    #expect(shop.config.host == "mysql.example.com")
+    #expect(shop.config.port == 3306)
+    #expect(shop.config.database == "shop")
+    #expect(shop.config.username == "root")
+    #expect(shop.config.sslMode == .prefer)
+    #expect(shop.password == "MyPass!")
+    #expect(shop.config.password == "")
+    #expect(shop.source == .dbeaver)
+    #expect(shop.warnings.isEmpty)
+    let legacy = try #require(result.connections.first { $0.config.name == "Legacy" })
+    #expect(legacy.config.port == 3306)
+    #expect(legacy.password == nil)
+    let maria = try #require(result.connections.first { $0.config.name == "Maria" })
+    #expect(maria.config.databaseType == .mysql)
+    #expect(maria.config.port == 3307)
+    #expect(maria.config.username == "maria")
+    #expect(maria.password == "MariaPass")
+  }
+
+  @Test("a MySQL connection without a database is kept and flagged")
+  func mysqlMissingDatabase() throws {
+    let folder = try Folder()
+    try folder.writeJSON(
+      Self.dataSources([
+        "a": Self.mysql(name: "Server", database: nil),
+        "b": Self.mysql(name: "Blank", database: ""),
+      ]), to: Self.dataSourcesFileName)
+
+    let result = try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url)
+
+    #expect(result.connections.count == 2)
+    for connection in result.connections {
+      #expect(connection.config.database == "")
+      #expect(connection.warnings == [PostgresURIParser.missingDatabaseWarning])
+    }
+  }
+
+  @Test(
+    "maps the mysql_ssl handler like DBeaver's Connector/J settings",
+    arguments: [
+      ("mysql8", [String: String](), true, SSLMode.prefer),
+      ("mysql8", ["ssl.require": "true"], true, .require),
+      ("mysql8", ["ssl.require": "true", "ssl.verify.server": "true"], true, .verifyCa),
+      ("mysql8", ["ssl.require": "true", "ssl.verify.server": "true"], false, .prefer),
+      ("mariaDB", [:], true, .require),
+      ("mariaDB", ["ssl.verify.server": "true"], true, .verifyFull),
+    ])
+  func mysqlSSLHandler(
+    driver: String, properties: [String: String], enabled: Bool, expected: SSLMode
+  ) throws {
+    let folder = try Folder()
+    try folder.writeJSON(
+      Self.dataSources([
+        "m": Self.mysql(driver: driver, handlers: Self.mysqlSSL(properties, enabled: enabled))
+      ]), to: Self.dataSourcesFileName)
+
+    let connection = try #require(
+      try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url).connections.first)
+
+    #expect(connection.config.sslMode == expected)
+    #expect(connection.warnings.isEmpty)
+  }
+
+  @Test("a mysql_ssl handler with certificates warns that they are not imported")
+  func mysqlSSLCertificates() throws {
+    let folder = try Folder()
+    try folder.writeJSON(
+      Self.dataSources([
+        "m": Self.mysql(
+          handlers: Self.mysqlSSL([
+            "ssl.require": true, "ssl.verify.server": true, "ssl.ca.cert": "/Users/x/ca.pem",
+          ]))
+      ]), to: Self.dataSourcesFileName)
+
+    let connection = try #require(
+      try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url).connections.first)
+
+    #expect(connection.config.sslMode == .verifyCa)
+    #expect(connection.warnings.count == 1)
+    #expect(connection.warnings.allSatisfy { !$0.contains("ca.pem") })
+  }
+
+  @Test(
+    "an imported MySQL password is saved under the MySQL-scoped Keychain key, apart from PostgreSQL"
+  )
+  func mysqlPasswordUsesScopedKeychainKey() throws {
+    let folder = try Folder()
+    try folder.writeJSON(
+      Self.dataSources([
+        "m": Self.mysql(),
+        "p": Self.postgres(host: "mysql.example.com", port: "3306", database: "shop"),
+      ]),
+      to: Self.dataSourcesFileName)
+    try folder.writeSecrets([
+      "m": ["#connection": ["user": "alice", "password": "MyPass!"]],
+      "p": ["#connection": ["user": "alice", "password": "PgPass!"]],
+    ])
+    let imported = try DBeaverImporter.importConnections(fromWorkspaceFolder: folder.url)
+    let mysql = try #require(imported.connections.first { $0.config.databaseType == .mysql })
+    let postgres = try #require(
+      imported.connections.first { $0.config.databaseType == .postgresql })
+    let suiteName = "ace.thi.Dblore.tests.dbeaver-mysql-keychain.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = RecordingConnectionPasswordStore()
+
+    let report = SessionManager.saveConnections(
+      [mysql, postgres], defaults: defaults, passwords: store,
+      sshCredentials: InMemorySSHCredentialStore())
+
+    // Same host, port, database and user: two connections, two Keychain items.
+    #expect(report.added == 2)
+    #expect(report.skippedDuplicates.isEmpty)
+    let scoped = ConnectionKeychainKey.password(for: mysql.config)
+    let legacy = ConnectionKeychainKey.password(
+      scope: nil, host: "mysql.example.com", port: 3306, database: "shop", username: "alice")
+    #expect(scoped != legacy)
+    #expect(store.savedKeys == [scoped, legacy])
+    #expect(store.loadPassword(forKey: scoped) == "MyPass!")
+    #expect(store.loadPassword(forKey: legacy) == "PgPass!")
   }
 
   // MARK: - Errors

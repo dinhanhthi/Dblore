@@ -253,7 +253,7 @@ struct WorkspaceSchemaLoadTests {
 
   /// Removes a Keychain entry the test added under its own unique key (never the shared docker key)
   private func removeSavedConnection(_ config: ConnectionConfig) {
-    let key = "\(config.host):\(config.port):\(config.database):\(config.username)"
+    let key = ConnectionKeychainKey.password(for: config)
     for entry in SessionManager.loadHistory() where entry.keychainKey == key {
       SessionManager.removeConnection(id: entry.id)
     }

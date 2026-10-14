@@ -83,9 +83,9 @@ struct SQLClassifierBypassTests {
   @Test("Nested block comments are comment-only")
   func nestedCommentOnly() {
     let manager = DatabaseConnectionManager()
-    #expect(manager.isCommentOnlyStatement("/* a /* b */ c */"))
-    #expect(!manager.isCommentOnlyStatement("/* a /* b */ c */ SELECT 1"))
-    #expect(manager.isCommentOnlyStatement("/* a /* b */ SELECT 1"))
+    #expect(manager.isCommentOnlyStatement("/* a /* b */ c */", dialect: .postgresql))
+    #expect(!manager.isCommentOnlyStatement("/* a /* b */ c */ SELECT 1", dialect: .postgresql))
+    #expect(manager.isCommentOnlyStatement("/* a /* b */ SELECT 1", dialect: .postgresql))
   }
 
   // MARK: - 2. Dollar-quote tags with non-ASCII characters
@@ -233,8 +233,8 @@ struct SQLClassifierBypassTests {
   @Test("CRLF ends a line comment in isCommentOnlyStatement")
   func crlfCommentOnly() {
     let manager = DatabaseConnectionManager()
-    #expect(manager.isCommentOnlyStatement("-- c\r\n"))
-    #expect(!manager.isCommentOnlyStatement("-- c\r\nSELECT 1"))
+    #expect(manager.isCommentOnlyStatement("-- c\r\n", dialect: .postgresql))
+    #expect(!manager.isCommentOnlyStatement("-- c\r\nSELECT 1", dialect: .postgresql))
   }
 
   @Test("A statement containing an unsplit semicolon is never read")

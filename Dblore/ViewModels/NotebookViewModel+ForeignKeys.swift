@@ -46,7 +46,7 @@ extension NotebookViewModel {
     guard
       let key = referencedKey(
         column: column, schema: schema, table: table, rowColumns: rowColumns),
-      let filter = ForeignKeyLookup.jumpFilter(for: key, values: values),
+      let filter = ForeignKeyLookup.jumpFilter(for: key, values: values, dialect: sqlDialect),
       let onOpenDataViewer
     else { return false }
     let order = referencedOrderColumns(schema: key.targetSchema, name: key.targetTable)

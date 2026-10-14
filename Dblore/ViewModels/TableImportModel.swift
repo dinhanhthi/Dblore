@@ -170,8 +170,10 @@ final class TableImportModel {
   }
 
   /// Reparse off the main actor so the preview does not keep the whole file in memory.
-  func prepareBatch(dialect: SQLDialect, connectionEpoch: UInt64) async throws -> PendingStagedBatch
-  {
+  /// `maxChunkBytes` caps each INSERT's bind bytes (MySQL `max_allowed_packet`).
+  func prepareBatch(
+    dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil
+  ) async throws -> PendingStagedBatch {
     guard let fileURL else { throw TableImportError.noFile }
     guard !destination.table.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw TableImportError.noTable
@@ -207,7 +209,7 @@ final class TableImportModel {
     let build = Task.detached(priority: .userInitiated) {
       try Self.buildBatch(
         parsed: parsed, mappings: mappings, destination: destination, tables: tables,
-        dialect: dialect, connectionEpoch: connectionEpoch)
+        dialect: dialect, connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes)
     }
     batchTask = build
     let batch = try await build.value
@@ -236,9 +238,13 @@ final class TableImportModel {
     defer { isImporting = false }
     do {
       let epoch = await manager.connectionEpoch
+      let dialect = viewModel.sqlDialect
+      let maxChunkBytes =
+        dialect == .mysql
+        ? ImportSQLBuilder.mysqlChunkByteCap(
+          maxAllowedPacket: await manager.mysqlServerInfo?.maxAllowedPacket) : nil
       let batch = try await prepareBatch(
-        dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql,
-        connectionEpoch: epoch)
+        dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes)
       try Task.checkCancellation()
       isExecutingBatch = true
       defer { isExecutingBatch = false }
@@ -363,6 +369,12 @@ final class TableImportModel {
     return type.contains("CHAR") || type.contains("CLOB") || type.contains("TEXT")
   }
 
+  /// MySQL DATE, DATETIME(n) and TIMESTAMP(n) (COLUMN_TYPE text)
+  nonisolated static func isMySQLDateTimeType(_ declaredType: String) -> Bool {
+    let type = declaredType.uppercased()
+    return type.hasPrefix("DATE") || type.hasPrefix("TIMESTAMP")
+  }
+
   /// Lowercased column name to declared type for an existing destination. Empty when unknown.
   private nonisolated static func declaredTypes(
     destination: TableImportDestination, tables: [DatabaseTable]
@@ -380,18 +392,31 @@ final class TableImportModel {
   private nonisolated static func buildBatch(
     parsed: ParsedImportFile, mappings: [TableImportColumnMapping],
     destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect,
-    connectionEpoch: UInt64
+    connectionEpoch: UInt64, maxChunkBytes: Int?
   ) throws -> PendingStagedBatch {
     try Task.checkCancellation()
     let selected = mappings.enumerated().filter { $0.element.included }
     guard !selected.isEmpty else { throw TableImportError.noColumns }
-    // SQLite booleans become 1/0 unless an existing column has TEXT affinity, which may
-    // hold "true"/"false" text and so gets the file value unchanged.
-    let types = dialect == .sqlite ? declaredTypes(destination: destination, tables: tables) : [:]
+    // SQLite and MySQL booleans become 1/0 unless an existing column has TEXT affinity, which
+    // gets the file value unchanged. MySQL timestamps become UTC DATETIME text only for a new
+    // table, an unlisted column, or a DATE / DATETIME / TIMESTAMP column (JSON, ENUM, SET,
+    // binary and text columns keep the file text).
+    let types: [String: String]
+    switch dialect {
+    case .sqlite, .mysql: types = declaredTypes(destination: destination, tables: tables)
+    default: types = [:]
+    }
     let columns = selected.map {
-      let keepsText =
-        $0.element.kind == .boolean
-        && types[$0.element.targetName.lowercased()].map(hasTextAffinity) == true
+      let type = types[$0.element.targetName.lowercased()]
+      let keepsText: Bool
+      switch $0.element.kind {
+      case .timestamp where dialect == .mysql:
+        keepsText = type.map { !isMySQLDateTimeType($0) } == true
+      case .boolean, .timestamp:
+        keepsText = type.map(hasTextAffinity) == true
+      default:
+        keepsText = false
+      }
       return ImportSQLBuilder.Column(
         name: $0.element.targetName, kind: keepsText ? .text : $0.element.kind)
     }
@@ -408,7 +433,7 @@ final class TableImportModel {
       : nil
     let inserts = try ImportSQLBuilder.insertStatements(
       schema: destination.schema, table: destination.table, columns: columns, rows: rows,
-      dialect: dialect)
+      dialect: dialect, maxChunkBytes: maxChunkBytes)
     let summary = try ImportSQLBuilder.summaryText(
       createTable: create, schema: destination.schema, table: destination.table,
       columns: columns.map(\.name), rowCount: rows.count, dialect: dialect)

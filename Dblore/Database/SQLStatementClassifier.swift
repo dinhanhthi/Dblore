@@ -85,30 +85,116 @@ nonisolated enum SQLStatementClassifier {
 
   /// Classify one already-split statement; nil if it is empty / comment-only.
   /// Fails closed (`.unknown`) when the text may be lexed differently by the server:
-  /// a `;` token (the splitter and the tokenizer disagree on a statement boundary) or a
-  /// plain string containing a backslash (escape under `standard_conforming_strings = off`).
+  /// a `;` token (the splitter and the tokenizer disagree on a statement boundary), a
+  /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
+  /// or a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content).
   static func classifyStatement(
     _ text: String, dialect: SQLDialect = .postgresql
   ) -> ClassifiedStatement? {
     let tokens = SQLTokenizer(dialect: dialect).tokens(text)
     guard !tokens.isEmpty else { return nil }
     let analysis = analyze(tokens[...], dialect: dialect)
-    let ambiguous = tokens.contains { $0.isSymbol(";") || $0.kind == .backslashString }
+    let ambiguous = tokens.contains {
+      $0.isSymbol(";") || $0.kind == .backslashString || $0.kind == .executableComment
+    }
+    let kind = ambiguous ? .unknown : analysis.kind
+    // MySQL: an unrecognized statement may commit implicitly (see `mysqlAdjusted`)
+    let mysqlUnknown = dialect == .mysql && kind == .unknown
     return ClassifiedStatement(
-      text: text, kind: ambiguous ? .unknown : analysis.kind, hasReturning: analysis.hasReturning,
+      text: text, kind: kind, hasReturning: analysis.hasReturning,
       hasTopLevelReturning: analysis.hasTopLevelReturning,
-      affectsAllRows: analysis.affectsAllRows, nonTransactional: analysis.nonTransactional,
-      resetsSessionBrakes: analysis.resetsSessionBrakes,
+      affectsAllRows: analysis.affectsAllRows,
+      nonTransactional: analysis.nonTransactional || mysqlUnknown,
+      resetsSessionBrakes: analysis.resetsSessionBrakes
+        || (dialect == .mysql && hintsMySQLBrake(text)),
       changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
+  }
+
+  /// A MySQL optimizer hint (`/*+ ... */`, anywhere) naming a `mysqlBrakeSettings` variable:
+  /// `MAX_EXECUTION_TIME(n)` or `SET_VAR(innodb_lock_wait_timeout = n)` lifts a brake for one
+  /// statement. ASCII case-insensitive substring match; over-matches, which only asks for more
+  /// confirmation. Index and join hints (`INDEX(t i)`, `JOIN_ORDER(a, b)`) do not match.
+  private static func hintsMySQLBrake(_ text: String) -> Bool {
+    SQLTokenizer(dialect: .mysql).optimizerHints(text).contains { hint in
+      let lowered = SQLTokenizer.asciiLowercased(hint)
+      return mysqlBrakeSettings.contains { lowered.contains($0) }
+    }
   }
 
   /// True when `sql` is a CREATE/ALTER ROLE or CREATE/ALTER USER (not `USER MAPPING`) whose
   /// text contains the word PASSWORD, including `WITH ENCRYPTED PASSWORD`. ASCII
   /// case-insensitive, and PASSWORD does not have to be the first clause.
-  /// A SELECT is never a match, even when a column or a comment contains PASSWORD.
-  nonisolated static func containsPasswordLiteral(_ sql: String) -> Bool {
-    guard isRoleOrUserAdmin(sql) else { return false }
+  /// Also true, in every dialect, for MySQL `SET PASSWORD ...` and for any statement with the
+  /// words `IDENTIFIED BY` or `IDENTIFIED WITH <plugin> BY` (outside strings and comments).
+  /// On MySQL (tokenized with `dialect`, so backslash escapes in strings hide nothing) also true
+  /// for any executable comment (`/*! ... */`: its content is not checked), a
+  /// `SOURCE_PASSWORD =` / `MASTER_PASSWORD =` option, a `PASSWORD '...'` option
+  /// (`CREATE SERVER ... OPTIONS (PASSWORD 'x')`), `PASSWORD('...')`, `PASSWORD =` in a
+  /// `START` statement, a `CONNECTION '...'` or password-bearing `OPTION_LIST '...'` table
+  /// option, and `IDENTIFIED VIA` / `USING` / `AS` / `WITH <plugin> AS`.
+  /// Otherwise a SELECT is never a match, even when a column or a comment contains PASSWORD.
+  nonisolated static func containsPasswordLiteral(
+    _ sql: String, dialect: SQLDialect = .postgresql
+  ) -> Bool {
+    let tokens = SQLTokenizer.tokens(sql, dialect: dialect)
+    let words = tokens.compactMap(\.keyword)
+    if words.starts(with: ["SET", "PASSWORD"]) || identifiesByPassword(words) { return true }
+    if dialect == .mysql, hasMySQLPasswordOption(tokens, words: words) { return true }
+    guard isRoleOrUserAdmin(words) else { return false }
     return sql.range(of: #"\bPASSWORD\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+  }
+
+  /// An executable comment, `SOURCE_PASSWORD =` / `MASTER_PASSWORD =`, `PASSWORD '...'`,
+  /// `PASSWORD('...')`, `PASSWORD =` in a `START` statement (`START REPLICA ... PASSWORD='p'`),
+  /// a `connectionOption`, or `IDENTIFIED VIA` / `USING` / `AS` / `WITH <plugin> AS`.
+  private static func hasMySQLPasswordOption(_ tokens: [SQLToken], words: [String]) -> Bool {
+    if tokens.contains(where: { $0.kind == .executableComment }) { return true }
+    let starts = words.first == "START"
+    let option = tokens.indices.contains { index in
+      let word = tokens[index]
+      let next = tokens.dropFirst(index + 1).first
+      let afterNext = tokens.dropFirst(index + 2).first
+      return
+        ((word.isWord("SOURCE_PASSWORD") || word.isWord("MASTER_PASSWORD"))
+        && next?.isSymbol("=") == true)
+        || (word.isWord("PASSWORD")
+          && (next?.kind == .string || (starts && next?.isSymbol("=") == true)
+            || (next?.isSymbol("(") == true && afterNext?.kind == .string)))
+        || connectionOption(tokens, at: index)
+    }
+    return option || identifiesByHash(words)
+  }
+
+  /// FEDERATED / CONNECT `CONNECTION [=] '...'` (a URL that may hold a password), or CONNECT
+  /// `OPTION_LIST [=] '...'` whose text contains `password` (case-insensitive).
+  private static func connectionOption(_ tokens: [SQLToken], at index: Int) -> Bool {
+    let word = tokens[index]
+    guard word.isWord("CONNECTION") || word.isWord("OPTION_LIST") else { return false }
+    var value = tokens.dropFirst(index + 1).first
+    if value?.isSymbol("=") == true { value = tokens.dropFirst(index + 2).first }
+    guard let value, value.kind == .string else { return false }
+    return word.isWord("CONNECTION")
+      || value.text.range(of: "password", options: .caseInsensitive) != nil
+  }
+
+  /// MySQL / MariaDB `IDENTIFIED VIA`, `IDENTIFIED USING`, `IDENTIFIED AS`, or
+  /// `IDENTIFIED WITH plugin AS` (the plugin a word or a string).
+  private static func identifiesByHash(_ words: [String]) -> Bool {
+    words.indices.contains { index in
+      guard words[index] == "IDENTIFIED" else { return false }
+      let next = words.dropFirst(index + 1).prefix(3)
+      return ["VIA", "USING", "AS"].contains(next.first ?? "")
+        || (next.first == "WITH" && next.dropFirst().contains("AS"))
+    }
+  }
+
+  /// `IDENTIFIED BY`, or `IDENTIFIED WITH plugin BY` (the plugin a word or a string).
+  private static func identifiesByPassword(_ words: [String]) -> Bool {
+    words.indices.contains { index in
+      guard words[index] == "IDENTIFIED" else { return false }
+      let next = words.dropFirst(index + 1).prefix(3)
+      return next.first == "BY" || (next.first == "WITH" && next.dropFirst().contains("BY"))
+    }
   }
 
   /// Aggregate flags. `EXPLAIN ANALYZE` counts as its inner statement; plain EXPLAIN as a read.
@@ -185,6 +271,9 @@ nonisolated enum SQLStatementClassifier {
     if dialect == .duckdb, let duckdb = duckdbKind(of: body, keyword: keyword) {
       return duckdb
     }
+    if dialect == .mysql, let mysql = mysqlKind(of: body, keyword: keyword, topWords: topWords) {
+      return mysql
+    }
     return switch keyword {
     case "SELECT", "VALUES", "TABLE": selectKind(body)
     case "WITH": hasDataModifyingPart(body) || body.contains { $0.isWord("INTO") } ? .dml : .read
@@ -213,10 +302,10 @@ nonisolated enum SQLStatementClassifier {
 
   /// DuckDB commands that PostgreSQL classifies differently. Nil leaves the shared rules.
   /// Extension, file, catalog and setting commands are utilities, so read-only, schema
-  /// protection and Safe Mode confirmation all stop them. Every PRAGMA and SET / RESET counts,
-  /// because some write (`PRAGMA enable_profiling`, `SET GLOBAL ...`), and so does
-  /// `UPDATE EXTENSIONS` (it replaces extension binaries; a table named `extensions` fails
-  /// closed). Table functions that read a local file inside a SELECT (`read_csv`,
+  /// protection and Safe Mode confirmation all stop them. Every PRAGMA (except the catalog reads
+  /// on `duckdbReadPragmas`) and SET / RESET counts, because some write
+  /// (`PRAGMA enable_profiling`, `SET GLOBAL ...`), and so does `UPDATE EXTENSIONS` (it replaces
+  /// extension binaries; a table named `extensions` fails closed). Table functions that read a local file inside a SELECT (`read_csv`,
   /// `read_parquet`, `read_json`) stay reads: the sandbox limits which files they can open, and
   /// the phase-15 session hardening turns off extension autoload and locks the configuration.
   /// A remote URL or a side-effecting function in a read fails closed (`duckdbAdjusted`).
@@ -229,8 +318,103 @@ nonisolated enum SQLStatementClassifier {
     case "UPDATE" where body.dropFirst().first?.isWord("EXTENSIONS") == true: .utility
     case "DESCRIBE", "SUMMARIZE": describedKind(body)
     case "FROM", "PIVOT", "UNPIVOT": selectKind(withoutUnpivotInto(body))
+    case "PRAGMA" where isDuckDBReadPragma(body): .read
     case _ where duckdbUtilityKeywords.contains(keyword): .utility
     default: nil
+    }
+  }
+
+  /// `PRAGMA name` or `PRAGMA name(...)` with `name` on `duckdbReadPragmas`. An assignment, a
+  /// schema-qualified name or anything after the call is not. Arguments are checked later
+  /// like any read (`duckdbAdjusted`: side-effect functions, remote URLs).
+  private static func isDuckDBReadPragma(_ body: ArraySlice<SQLToken>) -> Bool {
+    let depth = body.first?.depth ?? 0
+    let top = Array(body.dropFirst().filter { $0.depth == depth })
+    guard let name = top.first, name.kind == .word, duckdbReadPragmas.contains(name.text)
+    else { return false }
+    return top.count == 1 || (top.count == 3 && top[1].isSymbol("(") && top[2].isSymbol(")"))
+  }
+
+  /// MySQL commands that PostgreSQL classifies differently. Nil leaves the shared rules.
+  /// `SET` of `sql_mode` or of the connection charset in any form is a utility: the session pins
+  /// both so the lexer matches the server (no `NO_BACKSLASH_ESCAPES` / `ANSI_QUOTES`, and no
+  /// GBK / BIG5 / SJIS whose multibyte characters can swallow a backslash). `START` other than `START TRANSACTION`
+  /// (`START REPLICA`, ...) is not transaction control. A query that writes a file
+  /// (`INTO OUTFILE` / `INTO DUMPFILE`) is a utility. MariaDB `SET STATEMENT ... FOR <stmt>`
+  /// runs the trailing statement, so it fails closed; `SET DEFAULT ROLE` changes an account
+  /// (like `ALTER USER ... DEFAULT ROLE`), so it is a utility.
+  private static func mysqlKind(
+    of body: ArraySlice<SQLToken>, keyword: String, topWords: [String]
+  ) -> StatementKind? {
+    switch keyword {
+    case "DESCRIBE", "DESC": mysqlDescribedKind(body)
+    case "SET" where topWords.dropFirst().first == "STATEMENT": .unknown
+    case "SET" where setsDefaultRole(topWords): .utility
+    case "SET" where setsLexerSensitiveVariable(body) || setsServerVariable(topWords): .utility
+    case "SET" where setsMySQLBrake(body): .sessionSet(touchesBrake: true)
+    case "START" where topWords.dropFirst().first != "TRANSACTION": .utility
+    case "XA": .tcl
+    case "USE": .sessionSet(touchesBrake: false)
+    case "RENAME": .ddl
+    case "REPLACE": .dml
+    case _ where ["SELECT", "VALUES", "TABLE", "WITH"].contains(keyword) && writesFile(body):
+      .utility
+    case _ where mysqlUtilityKeywords.contains(keyword): .utility
+    default: nil
+    }
+  }
+
+  /// MySQL `DESCRIBE` / `DESC` of a table is a read. `DESC SELECT ...` and the other
+  /// EXPLAIN forms, or no target, are unrecognized, so they fail closed.
+  private static func mysqlDescribedKind(_ body: ArraySlice<SQLToken>) -> StatementKind {
+    guard let target = body.dropFirst().first, isIdentifier(target),
+      !mysqlExplainableKeywords.contains(target.keyword ?? "")
+    else { return .unknown }
+    return .read
+  }
+
+  /// A word or quoted identifier from `mysqlLexerSensitiveVariables` (`sql_mode`, `NAMES`,
+  /// `CHARSET`, `character_set_client`, ...) or the words `CHARACTER SET`, anywhere in the
+  /// statement (ASCII case-insensitive). Over-matches (`SET @sql_mode = 1`), which only blocks
+  /// more.
+  private static func setsLexerSensitiveVariable(_ body: ArraySlice<SQLToken>) -> Bool {
+    let namesVariable = body.contains { token in
+      guard isIdentifier(token), let text = token.asciiText else { return false }
+      return mysqlLexerSensitiveVariables.contains(SQLTokenizer.asciiLowercased(text))
+    }
+    return namesVariable
+      || zip(body, body.dropFirst()).contains { $0.isWord("CHARACTER") && $1.isWord("SET") }
+  }
+
+  /// A top-level word or quoted identifier from `mysqlBrakeSettings` (`max_execution_time`,
+  /// `wait_timeout`, ...), ASCII case-insensitive. Over-matches (`SET @x = wait_timeout`), which
+  /// only asks for more confirmation.
+  private static func setsMySQLBrake(_ body: ArraySlice<SQLToken>) -> Bool {
+    let depth = body.first?.depth ?? 0
+    return body.contains { token in
+      guard token.depth == depth, isIdentifier(token), let text = token.asciiText else {
+        return false
+      }
+      return mysqlBrakeSettings.contains(SQLTokenizer.asciiLowercased(text))
+    }
+  }
+
+  /// `SET DEFAULT ROLE ...` (MySQL `TO user`, MariaDB `FOR user`).
+  private static func setsDefaultRole(_ topWords: [String]) -> Bool {
+    topWords.starts(with: ["SET", "DEFAULT", "ROLE"])
+  }
+
+  /// `GLOBAL`, `PERSIST` or `PERSIST_ONLY` anywhere at the top level of a `SET`: the scope word
+  /// or the `@@global.` / `@@persist.` / `@@persist_only.` prefix. These change the server, not
+  /// the session. Over-matches (`SET @x = global`), which only blocks more.
+  private static func setsServerVariable(_ topWords: [String]) -> Bool {
+    topWords.contains { ["GLOBAL", "PERSIST", "PERSIST_ONLY"].contains($0) }
+  }
+
+  /// `INTO OUTFILE` or `INTO DUMPFILE` anywhere in the statement.
+  private static func writesFile(_ body: ArraySlice<SQLToken>) -> Bool {
+    zip(body, body.dropFirst()).contains { into, target in
+      into.isWord("INTO") && (target.isWord("OUTFILE") || target.isWord("DUMPFILE"))
     }
   }
 
@@ -288,6 +472,7 @@ nonisolated enum SQLStatementClassifier {
     switch dialect {
     case .sqlite: sqliteAdjusted(analysis, body: body)
     case .duckdb: duckdbAdjusted(analysis, body: body)
+    case .mysql: mysqlAdjusted(analysis, body: body)
     default: analysis
     }
   }
@@ -306,6 +491,88 @@ nonisolated enum SQLStatementClassifier {
     }
     if isVacuumInto(body) { analysis.nonTransactional = true }
     return analysis
+  }
+
+  /// MySQL statements that commit the open transaction implicitly cannot run inside the
+  /// Protected mode transaction: all DDL (`CREATE TABLE ... AS` and `CREATE TEMPORARY TABLE`
+  /// too, which over-blocks), LOCK / UNLOCK TABLES, GRANT / REVOKE, SET PASSWORD,
+  /// SET autocommit, ANALYZE / OPTIMIZE / REPAIR / CHECK TABLE, LOAD INDEX, CACHE INDEX, FLUSH,
+  /// replication control (START / STOP REPLICA, CHANGE ..., RESET ...) and plugin
+  /// installs, and SET DEFAULT ROLE (which also changes privileges). A plain EXPLAIN of one
+  /// does not run it. Statements whose body the text does not
+  /// show (CALL, EXECUTE, PREPARE, ...) and every unrecognized statement fail closed as an
+  /// implicit commit, and so does an executable comment (`/*! ... */`) anywhere, which may run
+  /// any of these.
+  /// Any statement but a plain EXPLAIN (data changes too) that calls a `mysqlSideEffectFunctions`
+  /// function (or one named with a `mysqlSideEffectFunctionPrefixes` prefix) or uses
+  /// `NEXT VALUE FOR` becomes a utility, and so does a read, a session `SET`, or any query
+  /// starting with SELECT / WITH / VALUES / TABLE (`SELECT ... INTO @var` is a `.dml`) that
+  /// locks rows (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`), so read-only and schema
+  /// protection both block it. Best-effort: functions inside views or stored routines are not
+  /// seen, and table or index names are not calls (see `mysqlCalls`).
+  private static func mysqlAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>
+  ) -> Analysis {
+    var analysis = analysis
+    if body.contains(where: { $0.kind == .executableComment }) || analysis.kind == .unknown {
+      analysis.nonTransactional = true
+      return analysis
+    }
+    let isQuery = ["SELECT", "WITH", "VALUES", "TABLE"].contains(body.first?.keyword ?? "")
+    // A plain EXPLAIN is a utility already when its inner statement calls one (see `explain`).
+    var isPlainExplain = false
+    if case .explain(_, analyze: false) = analysis.kind { isPlainExplain = true }
+    let callsSideEffect =
+      !isPlainExplain
+      && (mysqlCalls(body) || hasMySQLPhrase(body, in: [["NEXT", "VALUE", "FOR"]]))
+    let locksRows =
+      (analysis.kind == .read || isSessionSet(analysis.kind) || isQuery)
+      && hasMySQLPhrase(body, in: mysqlLockingPhrases)
+    if let first = body.first?.keyword, first != "EXPLAIN" {
+      let depth = body.first?.depth ?? 0
+      let topWords = body.filter { $0.kind == .word && $0.depth == depth }.compactMap(\.keyword)
+      let second = topWords.dropFirst().first ?? ""
+      if setsDefaultRole(topWords) { analysis.changesPrivileges = true }
+      let commits =
+        switch first {
+        case _ where analysis.kind == .ddl: true
+        case "SET": second == "PASSWORD" || namesAutocommit(body) || setsDefaultRole(topWords)
+        case "START": analysis.kind == .utility
+        case "LOAD": second == "INDEX"
+        case "RESET": second != "PERSIST"
+        default: mysqlImplicitCommitKeywords.contains(first)
+        }
+      if commits { analysis.nonTransactional = true }
+    }
+    // Last, so the checks above still see the statement's own kind.
+    if callsSideEffect || locksRows { analysis.kind = .utility }
+    return analysis
+  }
+
+  private static func isSessionSet(_ kind: StatementKind) -> Bool {
+    if case .sessionSet = kind { return true }
+    return false
+  }
+
+  /// A word or quoted identifier `autocommit` (ASCII case-insensitive) anywhere in the statement.
+  private static func namesAutocommit(_ body: ArraySlice<SQLToken>) -> Bool {
+    body.contains { token in
+      guard isIdentifier(token), let text = token.asciiText else { return false }
+      return SQLTokenizer.asciiLowercased(text) == "autocommit"
+    }
+  }
+
+  /// Row-locking clauses: `FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`.
+  private static let mysqlLockingPhrases: [[String]] = [
+    ["FOR", "UPDATE"], ["FOR", "SHARE"], ["LOCK", "IN", "SHARE", "MODE"],
+  ]
+
+  /// One of `phrases` (uppercase keyword sequences) at any depth.
+  private static func hasMySQLPhrase(_ body: ArraySlice<SQLToken>, in phrases: [[String]]) -> Bool {
+    let words = body.map { $0.keyword ?? "" }
+    return words.indices.contains { index in
+      phrases.contains { words[index...].starts(with: $0) }
+    }
   }
 
   /// A DuckDB read that calls a `duckdbSideEffectFunctions` function (or one named with a
@@ -346,6 +613,64 @@ nonisolated enum SQLStatementClassifier {
       else { return false }
       return names.contains(name) || prefixes.contains { name.hasPrefix($0) }
     }
+  }
+
+  /// `calls` with the MySQL side-effect lists, skipping a name that cannot be a built-in or
+  /// UDF call: a schema-qualified name (`db.name(`: built-ins and UDFs live in the global
+  /// namespace) and a table or index name followed by a column list (after `INTO`, `TABLE`,
+  /// `UPDATE`, `REFERENCES`, `INDEX`, `KEY`, after the leading
+  /// `INSERT` / `REPLACE` words, and after `ON` in `CREATE ... INDEX`).
+  private static func mysqlCalls(_ body: ArraySlice<SQLToken>) -> Bool {
+    let leading = mysqlInsertLeadingWords(body)
+    let createsIndex = isMySQLCreateIndex(body)
+    return body.indices.contains { index in
+      let next = body.index(after: index)
+      guard next < body.endIndex, body[next].isSymbol("("),
+        let name = functionName(body[index])
+      else { return false }
+      if index > body.startIndex {
+        let previousIndex = body.index(before: index)
+        let previous = body[previousIndex]
+        if previous.isSymbol(".") || previousIndex < leading { return false }
+        let word = previous.keyword ?? ""
+        if mysqlTableNameContextWords.contains(word) || (createsIndex && word == "ON") {
+          return false
+        }
+      }
+      return mysqlSideEffectFunctions.contains(name)
+        || mysqlSideEffectFunctionPrefixes.contains { name.hasPrefix($0) }
+    }
+  }
+
+  /// Words after which a name followed by `(` is a table or index name, not a call.
+  private static let mysqlTableNameContextWords: Set<String> = [
+    "INTO", "TABLE", "UPDATE", "REFERENCES", "INDEX", "KEY",
+  ]
+
+  /// The end of the leading `INSERT` / `REPLACE` words and modifiers (`INSERT IGNORE`,
+  /// `REPLACE LOW_PRIORITY`, ...) before the table name, which may follow without `INTO`.
+  /// The start index when the statement is no INSERT / REPLACE.
+  private static func mysqlInsertLeadingWords(_ body: ArraySlice<SQLToken>) -> Int {
+    guard ["INSERT", "REPLACE"].contains(body.first?.keyword ?? "") else {
+      return body.startIndex
+    }
+    let modifiers: Set<String> = ["LOW_PRIORITY", "DELAYED", "HIGH_PRIORITY", "IGNORE"]
+    var end = body.index(after: body.startIndex)
+    while end < body.endIndex, modifiers.contains(body[end].keyword ?? "") {
+      end = body.index(after: end)
+    }
+    return end
+  }
+
+  /// `CREATE [OR REPLACE] [UNIQUE | FULLTEXT | SPATIAL] [ONLINE | OFFLINE] INDEX ...`, which
+  /// has no joins, so the name after its `ON` is the indexed table.
+  private static func isMySQLCreateIndex(_ body: ArraySlice<SQLToken>) -> Bool {
+    guard body.first?.isWord("CREATE") == true else { return false }
+    let modifiers: Set<String> = [
+      "OR", "REPLACE", "UNIQUE", "FULLTEXT", "SPATIAL", "ONLINE", "OFFLINE",
+    ]
+    let words = body.dropFirst().prefix { $0.kind == .word }.compactMap(\.keyword)
+    return words.first { !modifiers.contains($0) } == "INDEX"
   }
 
   /// The uppercased name of a word or quoted-identifier token, else nil.
@@ -647,9 +972,18 @@ nonisolated enum SQLStatementClassifier {
         rest = rest.dropFirst()
       }
     }
+    // MySQL `EXPLAIN [ANALYZE] FORMAT = name stmt`
+    if dialect == .mysql, rest.first?.isWord("FORMAT") == true,
+      rest.dropFirst().first?.isSymbol("=") == true, rest.count > 3
+    {
+      rest = rest.dropFirst(3)
+    }
     let inner = analyze(rest, dialect: dialect)
     // DuckDB may bind or run an extension, file or setting command while planning it.
-    if dialect == .duckdb, !isAnalyze, inner.kind == .utility { return Analysis(kind: .utility) }
+    // MySQL evaluates cheap uncorrelated subqueries (and their function calls) while planning.
+    if [.duckdb, .mysql].contains(dialect), !isAnalyze, inner.kind == .utility {
+      return Analysis(kind: .utility)
+    }
     guard isAnalyze else { return Analysis(kind: .explain(inner: inner.kind, analyze: false)) }
     return Analysis(
       kind: .explain(inner: inner.kind, analyze: true), hasReturning: inner.hasReturning,
@@ -671,8 +1005,7 @@ nonisolated enum SQLStatementClassifier {
   }
 
   /// Leading verb is CREATE/ALTER ROLE or CREATE/ALTER USER, and not USER MAPPING.
-  private static func isRoleOrUserAdmin(_ sql: String) -> Bool {
-    let words = SQLTokenizer.tokens(sql).compactMap(\.keyword)
+  private static func isRoleOrUserAdmin(_ words: [String]) -> Bool {
     guard words.count >= 2 else { return false }
     let createsOrAlters = words[0] == "CREATE" || words[0] == "ALTER"
     let roleOrUser = words[1] == "ROLE" || words[1] == "USER"
