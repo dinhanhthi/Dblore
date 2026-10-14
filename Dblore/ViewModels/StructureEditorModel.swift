@@ -240,7 +240,7 @@ final class StructureEditorModel {
   func rename(_ ref: ColumnRef, to newName: String) {
     switch ref {
     case .loaded(let name):
-      stageLoaded(name, replacing: { if case .renameColumn = $0 { true } else { false } }) {
+      stageLoaded(name, replacing: Self.isRenameChange) {
         newName == name ? nil : .renameColumn(column: name, newName: newName)
       }
     case .added(let name):
@@ -257,7 +257,7 @@ final class StructureEditorModel {
     switch ref {
     case .loaded(let name):
       let loaded = loadedColumn(name).map(Self.displayedType)
-      stageLoaded(name, replacing: { if case .alterColumnType = $0 { true } else { false } }) {
+      stageLoaded(name, replacing: Self.isTypeChange) {
         type == loaded ? nil : .alterColumnType(column: name, type: type)
       }
     case .added(let name):
@@ -299,7 +299,7 @@ final class StructureEditorModel {
   func dropColumn(_ ref: ColumnRef) {
     switch ref {
     case .loaded(let name):
-      stageLoaded(name, replacing: { _ in true }) { .dropColumn(column: name) }
+      stageLoaded(name, replacing: Self.isAnyChange) { .dropColumn(column: name) }
       stage { $0.removeAll { Self.stagedKeyColumns(of: $0).contains(name) } }
     case .added(let name):
       stage { changes in
@@ -609,6 +609,17 @@ final class StructureEditorModel {
   private static func displayedType(_ column: TableStructure.Column) -> String {
     column.columnType ?? column.dataType
   }
+
+  private static func isRenameChange(_ change: StructureChange) -> Bool {
+    if case .renameColumn = change { true } else { false }
+  }
+
+  private static func isTypeChange(_ change: StructureChange) -> Bool {
+    if case .alterColumnType = change { true } else { false }
+  }
+
+  /// Dropping a loaded column replaces all of its staged edits
+  private static func isAnyChange(_ change: StructureChange) -> Bool { true }
 
   private static func isDefaultChange(_ change: StructureChange) -> Bool {
     switch change {

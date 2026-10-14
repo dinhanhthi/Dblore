@@ -37,8 +37,8 @@ extension NSScrollView {
   /// `SoftScroller`. A scroll view creates its scroller the first time `hasVerticalScroller` /
   /// `hasHorizontalScroller` turns on, so the swap hooks those setters. Call once at launch.
   static func installSoftScrollers() {
-    exchange(#selector(setter: hasVerticalScroller), #selector(soft_setHasVerticalScroller))
-    exchange(#selector(setter: hasHorizontalScroller), #selector(soft_setHasHorizontalScroller))
+    exchange(#selector(setter: hasVerticalScroller), #selector(softSetHasVerticalScroller))
+    exchange(#selector(setter: hasHorizontalScroller), #selector(softSetHasHorizontalScroller))
   }
 
   private static func exchange(_ original: Selector, _ replacement: Selector) {
@@ -49,13 +49,13 @@ extension NSScrollView {
   }
 
   // Each calls the original setter: the implementations are exchanged
-  @objc private func soft_setHasVerticalScroller(_ flag: Bool) {
-    soft_setHasVerticalScroller(flag)
+  @objc private func softSetHasVerticalScroller(_ flag: Bool) {
+    softSetHasVerticalScroller(flag)
     if let soft = Self.softened(verticalScroller) { verticalScroller = soft }
   }
 
-  @objc private func soft_setHasHorizontalScroller(_ flag: Bool) {
-    soft_setHasHorizontalScroller(flag)
+  @objc private func softSetHasHorizontalScroller(_ flag: Bool) {
+    softSetHasHorizontalScroller(flag)
     if let soft = Self.softened(horizontalScroller) { horizontalScroller = soft }
   }
 
