@@ -660,6 +660,7 @@ struct TabCommands: Commands {
         switch AppSettings.shared.defaultNewTabType {
         case .notebook: manager.newNotebook()
         case .sqlFile: manager.newSQLFile()
+        case .markdownFile: manager.newMarkdownFile()
         }
       } label: {
         Label("New Tab", systemImage: "plus.square")

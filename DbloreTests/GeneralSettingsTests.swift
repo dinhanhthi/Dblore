@@ -27,12 +27,12 @@ struct GeneralSettingsTests {
     try withIsolatedDefaults { suite in
       let settings = AppSettings(defaults: suite)
       settings.openWindowsAsTabs = true
-      settings.defaultNewTabType = .sqlFile
+      settings.defaultNewTabType = .markdownFile
       settings.launchBehavior = .restoreLastSession
       #expect(suite.string(forKey: Self.launchKey) == "restoreLastSession")
       let reloaded = AppSettings(defaults: suite)
       #expect(reloaded.openWindowsAsTabs == true)
-      #expect(reloaded.defaultNewTabType == .sqlFile)
+      #expect(reloaded.defaultNewTabType == .markdownFile)
       #expect(reloaded.launchBehavior == .restoreLastSession)
     }
   }

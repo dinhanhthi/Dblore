@@ -49,11 +49,13 @@ enum AnimationPreference: String, CaseIterable {
 enum NewTabType: String, CaseIterable {
   case notebook
   case sqlFile
+  case markdownFile
 
   var title: String {
     switch self {
     case .notebook: return "Notebook"
     case .sqlFile: return "SQL File"
+    case .markdownFile: return "Markdown File"
     }
   }
 }

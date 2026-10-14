@@ -581,7 +581,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
     (
       "Files",
       [
-        ("New Tab (Notebook or SQL File, see General)", "Cmd+T"),
+        ("New Tab (Notebook, SQL or Markdown File, see General)", "Cmd+T"),
         ("New SQL File", "Cmd+Shift+J"),
         ("Open", "Cmd+O"),
         ("Save", "Cmd+S"),
