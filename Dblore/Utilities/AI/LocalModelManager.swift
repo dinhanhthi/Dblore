@@ -42,6 +42,9 @@ final class LocalModelManager {
   private(set) var state: [LocalModel.ID: DownloadState] = [:]
   /// Ids of installed models. Updated by background scans so views never touch the disk.
   private(set) var installedIDs: Set<LocalModel.ID> = []
+  /// Bytes of files under the root that no catalog model uses. Updated by `refreshUnused()`.
+  private(set) var unusedBytes: Int64 = 0
+  private(set) var isRemovingUnused = false
 
   let root: URL
   private let downloader: Downloader
@@ -99,11 +102,43 @@ final class LocalModelManager {
     }.value
   }
 
+  /// Direct children of `root` (hidden ones included) that are not a catalog model folder.
+  nonisolated static func unusedEntries(in root: URL) -> [URL] {
+    let ids = Set(LocalModelCatalog.all.map(\.id))
+    let urls =
+      (try? FileManager.default.contentsOfDirectory(
+        at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+    return urls.filter { !ids.contains($0.lastPathComponent) }
+  }
+
+  /// Sums the unused entries off the main thread and publishes `unusedBytes`. The active
+  /// download's staging folder is not unused.
+  func refreshUnused() async {
+    let root = root
+    let active = activeID.flatMap(LocalModelCatalog.model(for:)).map {
+      stagingDirectory(for: $0).lastPathComponent
+    }
+    let bytes = await Task.detached {
+      let entries = Self.unusedEntries(in: root).filter { $0.lastPathComponent != active }
+      return entries.reduce(Int64(0)) { total, url in
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        if values?.isDirectory == true {
+          return total + Self.sizeOfFiles(in: url, since: nil, recursive: true)
+        }
+        return total + Int64(values?.fileSize ?? 0)
+      }
+    }.value
+    // A view task restarted meanwhile; its newer scan publishes instead of this stale one
+    guard !Task.isCancelled else { return }
+    if unusedBytes != bytes { unusedBytes = bytes }
+  }
+
   var isDownloading: Bool { activeID != nil }
 
-  /// True while a download, finalize or delete is in flight; conflicting actions are disabled.
+  /// True while a download, finalize, delete or cleanup is in flight; conflicting actions are
+  /// disabled.
   var isBusy: Bool {
-    activeID != nil || state.values.contains { $0 == .deleting }
+    activeID != nil || isRemovingUnused || state.values.contains { $0 == .deleting }
   }
 
   // MARK: - Actions
@@ -210,6 +245,18 @@ final class LocalModelManager {
     await Task.detached { try? FileManager.default.removeItem(at: dir) }.value
     await refreshInstalled()
     state[model.id] = nil
+  }
+
+  /// Deletes every unused entry under the root in the background; ignored while busy.
+  func removeUnused() async {
+    guard !isBusy else { return }
+    isRemovingUnused = true
+    let root = root
+    await Task.detached {
+      for url in Self.unusedEntries(in: root) { try? FileManager.default.removeItem(at: url) }
+    }.value
+    isRemovingUnused = false
+    await refreshUnused()
   }
 
   /// Runs on a background thread: checks size and completeness, then swaps `staging` into

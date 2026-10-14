@@ -258,6 +258,114 @@ struct LocalModelManagerTests {
         atPath: root.appendingPathComponent(".staging-\(model.id)").path))
   }
 
+  @Test func unusedEntriesListsNonCatalogChildren() throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(LocalModelManager.unusedEntries(in: root).isEmpty)
+    try write(["config.json"], in: root.appendingPathComponent(model.id))
+    try write(["model.safetensors"], in: root.appendingPathComponent("omnisql-7b"))
+    try write(["part"], in: root.appendingPathComponent(".staging-x"))
+    try write(["stray.bin"], in: root)
+    let names = Set(LocalModelManager.unusedEntries(in: root).map(\.lastPathComponent))
+    #expect(names == ["omnisql-7b", ".staging-x", "stray.bin"])
+  }
+
+  @Test func refreshUnusedCountsOnlyUnusedBytes() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = LocalModelManager(root: root) { _, _, _ in }
+    try write(["config.json", "model.safetensors"], in: manager.directory(for: model))
+    await manager.refreshUnused()
+    #expect(manager.unusedBytes == 0)
+    try write(["a.safetensors", "config.json"], in: root.appendingPathComponent("omnisql-7b"))
+    try write(["part"], in: root.appendingPathComponent(".staging-x"))
+    try write(["stray.bin"], in: root)
+    await manager.refreshUnused()
+    #expect(manager.unusedBytes == 4)
+  }
+
+  @Test func removeUnusedDeletesOnlyUnusedEntries() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = LocalModelManager(root: root) { _, _, _ in }
+    try write(["config.json", "model.safetensors"], in: manager.directory(for: model))
+    try write(["model.safetensors"], in: root.appendingPathComponent("omnisql-7b"))
+    try write(["part"], in: root.appendingPathComponent(".staging-x"))
+    try write(["stray.bin"], in: root)
+    await manager.removeUnused()
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    #expect(names == [model.id])
+    #expect(
+      FileManager.default.fileExists(
+        atPath: manager.directory(for: model).appendingPathComponent("model.safetensors").path))
+    #expect(manager.unusedBytes == 0)
+    #expect(!manager.isRemovingUnused)
+  }
+
+  @Test func removeUnusedIsIgnoredWhileDownloading() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calls = 0
+    let manager = LocalModelManager(
+      root: root,
+      downloader: { _, _, _ in
+        calls += 1
+        try await Task.sleep(for: .seconds(30))
+      }, unloader: { _ in true })
+    defer { manager.cancel() }
+    let old = root.appendingPathComponent("omnisql-7b")
+    try write(["model.safetensors"], in: old)
+    manager.download(model)
+    for _ in 0..<300 where calls < 1 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(calls == 1)
+    await manager.removeUnused()
+    #expect(FileManager.default.fileExists(atPath: old.path))
+    #expect(!manager.isRemovingUnused)
+    manager.cancel()
+    for _ in 0..<300 where manager.isDownloading { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!manager.isDownloading, "download did not stop after cancel")
+  }
+
+  @Test func refreshUnusedSkipsActiveDownloadStaging() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calls = 0
+    let manager = LocalModelManager(
+      root: root,
+      downloader: { _, staging, _ in
+        try self.write(["config.json", "model.safetensors"], in: staging)
+        calls += 1
+        try await Task.sleep(for: .seconds(30))
+      }, unloader: { _ in true })
+    defer { manager.cancel() }
+    try write(["stray.bin"], in: root)
+    manager.download(model)
+    for _ in 0..<300 where calls < 1 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(calls == 1)
+    await manager.refreshUnused()
+    #expect(manager.unusedBytes == 1)
+    manager.cancel()
+    for _ in 0..<300 where manager.isDownloading { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!manager.isDownloading, "download did not stop after cancel")
+  }
+
+  @Test func downloadIsIgnoredWhileRemovingUnused() async throws {
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var calls = 0
+    let manager = LocalModelManager(root: root) { _, _, _ in calls += 1 }
+    try write(["model.safetensors"], in: root.appendingPathComponent("omnisql-7b"))
+    let cleanup = Task { await manager.removeUnused() }
+    for _ in 0..<300 where !manager.isRemovingUnused { await Task.yield() }
+    // The flag cannot reset until this test suspends again (both run on the main actor)
+    try #require(manager.isRemovingUnused)
+    manager.download(model)
+    #expect(!manager.isDownloading)
+    #expect(manager.state[model.id] == nil)
+    await cleanup.value
+    #expect(calls == 0)
+  }
+
   @Test func olderScanNeverOverwritesNewerOne() async throws {
     final class Gate: @unchecked Sendable {
       private let lock = NSLock()
