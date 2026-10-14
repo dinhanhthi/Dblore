@@ -2,7 +2,7 @@
 //  GeneralSettingsSection.swift
 //  Dblore
 //
-//  General settings: Startup, Windows, New tab, Notifications and Automatic updates
+//  General settings: Startup, Quit, Windows, New tab, Notifications and Automatic updates
 //
 
 import AppKit
@@ -21,6 +21,15 @@ struct GeneralSettingsSection: View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
       SettingsGroupCard(title: "Startup") {
         launchBehaviorPicker
+      }
+
+      SettingsGroupCard(title: "Quit") {
+        SettingsToggle(
+          title: "Confirm before quitting with Cmd+Q",
+          description:
+            "Ask before Dblore quits from the keyboard shortcut. Quitting from the Dock or the menu bar never asks.",
+          isOn: $appSettings.confirmBeforeQuit
+        )
       }
 
       SettingsGroupCard(title: "Windows") {

@@ -139,6 +139,20 @@ nonisolated struct PendingTransactionSummary: Sendable, Equatable {
     return (shown + more).joined(separator: "\n")
   }
 
+  /// Every pending statement in full for the details modal, in run order: a
+  /// "-- N. KIND · rows" comment line, then the SQL. The earlier changes of an adopted
+  /// transaction have no SQL: their line stays a comment.
+  var detailsSQL: String {
+    pending.enumerated().map { index, statement in
+      let rows = statement.rowsText.isEmpty ? "" : " · \(statement.rowsText)"
+      let header = "-- \(index + 1). \(statement.kindLabel)\(rows)"
+      if statement.isEarlierChanges { return "\(header)\n-- \(statement.sqlPreview)" }
+      let sql = statement.sql.hasSuffix(";") ? statement.sql : statement.sql + ";"
+      return "\(header)\n\(sql)"
+    }
+    .joined(separator: "\n\n")
+  }
+
   /// Commit / Rollback awaited this long: the banner offers to disconnect
   static let slowEndingThreshold: TimeInterval = 5
 

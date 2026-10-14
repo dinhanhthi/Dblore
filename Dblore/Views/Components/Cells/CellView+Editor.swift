@@ -91,8 +91,9 @@ struct SQLEditorView: View {
       baseView
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
         .overlay(
-          RoundedRectangle(cornerRadius: CornerRadius.md)
-            .stroke(isFocused ? Color.foregroundMuted.opacity(0.4) : Color.clear, lineWidth: 1)
+          HairlineBorder(
+            shape: RoundedRectangle(cornerRadius: CornerRadius.md),
+            color: isFocused ? Color.foregroundMuted.opacity(0.4) : Color.border)
         )
     }
   }

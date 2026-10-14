@@ -31,6 +31,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 {
   static let textColor = NSColor(Color.gridForeground)
   static let nullTextColor = NSColor(Color.foregroundSubtle)
+  static let numberTextColor = NSColor(Color.gridNumber)
+  static let stringTextColor = NSColor(Color.gridString)
+  static let dateTextColor = NSColor(Color.gridDate)
+  static let booleanTextColor = NSColor(Color.gridBoolean)
+  static let jsonTextColor = NSColor(Color.gridJSON)
   /// Brighter text color for normal cells on emphasized selection
   static let selectedTextColor = NSColor.alternateSelectedControlTextColor
   /// Brighter text color for NULL cells on emphasized selection (distinct from normal values)
@@ -56,6 +61,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       ofSize: AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize),
       weight: .regular)
   }
+
+  /// Settings → Results → Color Values by Type, set by the grid before each update
+  var colorValuesByType = false
 
   /// Font size last applied to `tableView`. Nil until the grid is configured.
   private var appliedFontSize: CGFloat?
@@ -165,6 +173,19 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     switch value {
     case .int, .double: .right
     default: .left
+    }
+  }
+
+  /// Text color of `value` when values are colored by type. Nil keeps the grid color:
+  /// NULL has its own and binary stays neutral.
+  static func typeColor(for value: CellValue) -> NSColor? {
+    switch value {
+    case .int, .double: numberTextColor
+    case .string: stringTextColor
+    case .date: dateTextColor
+    case .bool: booleanTextColor
+    case .json: jsonTextColor
+    case .null, .data: nil
     }
   }
 
@@ -798,6 +819,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let value = model.value(row: row, column: column)
     let isNull = value == .null
     cell.isNull = isNull
+    cell.typeColor = colorValuesByType ? Self.typeColor(for: value) : nil
     let isSelected = tableView.isRowSelected(row)
     let isEmphasized = isSelected && (tableView.window?.isKeyWindow ?? true)
     cell.backgroundStyle = isEmphasized ? .emphasized : .normal
@@ -1072,6 +1094,15 @@ final class ResultGridCell: NSTableCellView {
     }
   }
 
+  /// Color of the value's type when values are colored by type, else nil (the grid color)
+  var typeColor: NSColor? {
+    didSet {
+      if typeColor != oldValue {
+        updateTextColor()
+      }
+    }
+  }
+
   /// Whether the cell is currently showing search match highlights (attributed string)
   var hasSearchHighlight = false
 
@@ -1096,7 +1127,7 @@ final class ResultGridCell: NSTableCellView {
     } else {
       return emphasized
         ? ResultGridCoordinator.selectedTextColor
-        : ResultGridCoordinator.textColor
+        : typeColor ?? ResultGridCoordinator.textColor
     }
   }
 

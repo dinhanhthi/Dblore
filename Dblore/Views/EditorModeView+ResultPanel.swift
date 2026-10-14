@@ -157,10 +157,7 @@ extension EditorModeView {
         Capsule()
           .fill(Color.inputBackground)
       )
-      .overlay(
-        Capsule()
-          .stroke(Color.border, lineWidth: 1)
-      )
+      .overlay(HairlineBorder(shape: Capsule()))
     }
     .id(viewModel.editorStatementResults.map { $0.id })
     .buttonStyle(.plain)
@@ -277,6 +274,7 @@ extension EditorModeView {
         cellId: nil,  // Editor mode has no cell ID
         queryIndex: !viewModel.editorStatementResults.isEmpty
           ? (viewModel.selectedStatementIndex + 1) : nil,
+        dialect: viewModel.sqlDialect,
         displayMode: resultDisplayModeBinding(for: result)
       )
       .frame(height: 24)
@@ -387,11 +385,7 @@ struct EditorResultGridView: View {
               row: row, column: column, newValue: newValue, result: result)
           },
           onStageInsert: {
-            Task {
-              if let message = await viewModel.addStagedRow() {
-                viewModel.showToast(message, type: .error)
-              }
-            }
+            Task { await viewModel.openAddRowForm() }
           },
           onStageDuplicate: { rows in
             Task {

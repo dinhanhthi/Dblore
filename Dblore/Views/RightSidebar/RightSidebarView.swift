@@ -37,6 +37,8 @@ struct RightSidebarView: View {
           // TableFilterContent and TableHighlightContent handle their own ScrollView; Apply and
           // Clear sit in a footer pinned at the bottom
           formWithFooter(content)
+        } else if content == .addRow {
+          addRowForm
         } else if case .executedQuery = content {
           // ExecutedQuerySidebarContent handles its own ScrollView
           VStack(alignment: .leading, spacing: 0) {
@@ -68,8 +70,8 @@ struct RightSidebarView: View {
       Divider()
     }
     .overlay(alignment: .leading) {
-      // Only the cell value view can be widened, for long text and JSON
-      if case .cellInfo = viewModel.rightSidebarContent {
+      // Only the cell value view and the Add Row form can be widened, for long text and JSON
+      if widensLikeCellInfo {
         ResizableSidebarDivider(
           sidebarWidth: $viewModel.cellInfoSidebarWidth,
           minWidth: ComponentSize.sidebarWidth,
@@ -82,10 +84,37 @@ struct RightSidebarView: View {
   }
 
   private var sidebarWidth: CGFloat {
-    if case .cellInfo = viewModel.rightSidebarContent {
-      return viewModel.cellInfoSidebarWidth
+    widensLikeCellInfo ? viewModel.cellInfoSidebarWidth : ComponentSize.sidebarWidth
+  }
+
+  /// Cell value and Add Row share the resizable width
+  private var widensLikeCellInfo: Bool {
+    switch viewModel.rightSidebarContent {
+    case .cellInfo, .addRow: return true
+    default: return false
     }
-    return ComponentSize.sidebarWidth
+  }
+
+  /// Add Row fields with Add and Cancel pinned at the bottom
+  private var addRowForm: some View {
+    VStack(spacing: 0) {
+      contentView(for: .addRow)
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+      Divider()
+
+      HStack(spacing: Spacing.sm) {
+        Button("Add") { viewModel.applyAddRow() }
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(viewModel.addRowHasErrors || viewModel.addRowFields.isEmpty)
+          .help("Stage this row. Commit sends it to the database.")
+        Button("Cancel") { viewModel.closeSidebar() }
+          .buttonStyle(SecondaryButtonStyle())
+        Spacer()
+      }
+      .padding(Spacing.md)
+    }
   }
 
   /// Form content filling the sidebar with a footer (Apply/Clear) pinned at the bottom
@@ -198,6 +227,8 @@ struct RightSidebarView: View {
       return "Highlight"
     case .parameters:
       return "Parameters"
+    case .addRow:
+      return "Add Row"
     }
   }
 
@@ -258,6 +289,8 @@ struct RightSidebarView: View {
       TableHighlightContent(viewModel: viewModel)
     case .parameters:
       QueryParametersContent(viewModel: viewModel)
+    case .addRow:
+      AddRowContent(viewModel: viewModel)
     }
   }
 

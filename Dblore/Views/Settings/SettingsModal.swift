@@ -24,6 +24,9 @@ enum SettingsPage: String {
 /// Main settings modal for workspace level
 /// Shows settings in a tabbed modal, one section per tab
 struct SettingsModal: View {
+  /// Width of the right sidebar: room for the 180pt navigation and the setting cards.
+  static let panelWidth: CGFloat = 640
+
   @Binding var isPresented: Bool
   let viewMode: ViewMode?
   var viewModel: NotebookViewModel?
@@ -31,6 +34,7 @@ struct SettingsModal: View {
   let openToken: UUID
 
   @Bindable var appSettings = AppSettings.shared
+  @Environment(\.colorScheme) private var colorScheme
   @State private var isExportingLogs = false
   @State private var selectedTab: SettingsTab
   @State private var searchQuery = ""
@@ -61,6 +65,7 @@ struct SettingsModal: View {
     case data = "Data"
     case security = "Security"
     case plugins = "Plugins"
+    case mcp = "MCP"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
 
@@ -76,6 +81,7 @@ struct SettingsModal: View {
       case .data: return "externaldrive"
       case .security: return "lock.shield"
       case .plugins: return "puzzlepiece.extension"
+      case .mcp: return "point.3.connected.trianglepath.dotted"
       case .developer: return "wrench.and.screwdriver"
       case .shortcuts: return "keyboard"
       }
@@ -99,19 +105,20 @@ struct SettingsModal: View {
   }
 
   var body: some View {
-    GenericModal(
-      title: "Settings - \(selectedTab.rawValue)",
-      titleIcon: "gear",
-      width: 720,
-      height: 600,
-      isPresented: $isPresented
-    ) {
+    VStack(spacing: 0) {
+      GenericModalHeader(
+        title: "Settings - \(selectedTab.rawValue)", titleIcon: "gear",
+        onClose: { isPresented = false }
+      ) {
+        // Next to the close button, only as wide as a search needs
+        WelcomeFilterField(prompt: "Search settings", text: $searchQuery)
+          .frame(width: 200)
+      }
+
       ScrollViewReader { proxy in
         HStack(spacing: 0) {
-          // Navigation sidebar: search field, then tabs filtered by the search
+          // Navigation sidebar: tabs filtered by the search in the title bar
           VStack(spacing: 0) {
-            SidebarFilterField(text: $searchQuery, placeholder: "Search settings")
-
             ScrollView {
               VStack(alignment: .leading, spacing: Spacing.xsm) {
                 ForEach(searchMatches, id: \.tab) { match in
@@ -141,7 +148,8 @@ struct SettingsModal: View {
           }
           .frame(width: 180)
           .frame(maxHeight: .infinity)
-          .background(Color.cardHeaderBackground)
+          // White like the body in light; the tinted panel stays in dark
+          .background(colorScheme == .light ? Color.cardBackground : Color.cardHeaderBackground)
 
           Divider()
 
@@ -156,6 +164,9 @@ struct SettingsModal: View {
         }
       }
     }
+    .background(Color.cardBackground)
+    // The panel's backdrop covers the window's toast overlay, so draw toasts over the panel
+    .overlay { ToastOverlay() }
     .fileExporter(
       isPresented: $isExportingLogs,
       document: LogDocument(),
@@ -224,6 +235,8 @@ struct SettingsModal: View {
       }
     case .plugins:
       PluginsSettingsSection()
+    case .mcp:
+      MCPSettingsSection()
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
@@ -247,6 +260,7 @@ private struct SettingsNavRow: View {
   let isSelected: Bool
   let action: () -> Void
 
+  @Environment(\.colorScheme) private var colorScheme
   @State private var isHovered = false
 
   var body: some View {
@@ -265,18 +279,25 @@ private struct SettingsNavRow: View {
       .padding(.horizontal, Spacing.sm)
       .frame(height: 28)
       .background {
-        Capsule()
-          .fill(
-            // cellBackgroundHover matches cardHeaderBackground, so the hover capsule would disappear.
-            isSelected
-              ? Color.selectionFill
-              : (isHovered ? Color.foreground.opacity(0.12) : Color.clear))
+        Capsule().fill(fill)
       }
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
     .linkPointer()
     .onHover { isHovered = $0 }
+  }
+
+  /// Neutral gray on the white light sidebar; accent selection in dark
+  private var fill: Color {
+    if colorScheme == .light {
+      return isSelected
+        ? Color.foreground.opacity(0.1) : (isHovered ? Color.cellBackgroundHover : Color.clear)
+    }
+    // cellBackgroundHover matches cardHeaderBackground, so the hover capsule would disappear.
+    return isSelected
+      ? Color.selectionFill
+      : (isHovered ? Color.foreground.opacity(0.12) : Color.clear)
   }
 }
 
@@ -390,17 +411,26 @@ struct SettingsModalResultTableSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
       SettingsGroupCard(title: "Text") {
-        SettingsSlider(
-          title: "Font Size",
-          valueText: "\(Int(appSettings.resultFontSize)) pt",
-          value: Binding(
-            get: { Double(appSettings.resultFontSize) },
-            set: { appSettings.resultFontSize = CGFloat($0) }
-          ),
-          range: AppSettings.fontSizeRange,
-          step: 1,
-          description: "Size of the text in result tables. Column headers stay the same."
-        )
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          SettingsSlider(
+            title: "Font Size",
+            valueText: "\(Int(appSettings.resultFontSize)) pt",
+            value: Binding(
+              get: { Double(appSettings.resultFontSize) },
+              set: { appSettings.resultFontSize = CGFloat($0) }
+            ),
+            range: AppSettings.fontSizeRange,
+            step: 1,
+            description: "Size of the text in result tables. Column headers stay the same."
+          )
+          Divider()
+          SettingsToggle(
+            title: "Color Values by Type",
+            description:
+              "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style.",
+            isOn: $appSettings.colorValuesByType
+          )
+        }
       }
 
       SettingsGroupCard(title: "Table") {
@@ -656,7 +686,7 @@ struct SettingsModalKeyboardShortcutsSection: View {
 // MARK: - View Extension for Settings Modal
 
 extension View {
-  /// Shows a settings modal with zoom animation from center
+  /// Shows settings in a right sidebar that slides in from the trailing edge
   func settingsModal(
     isPresented: Binding<Bool>,
     viewMode: ViewMode?,
@@ -664,7 +694,7 @@ extension View {
     section: SettingsPage? = nil,
     openToken: UUID = UUID()
   ) -> some View {
-    modalOverlay(isPresented: isPresented) {
+    sidePanelOverlay(isPresented: isPresented, width: SettingsModal.panelWidth) {
       SettingsModal(
         isPresented: isPresented,
         viewMode: viewMode,

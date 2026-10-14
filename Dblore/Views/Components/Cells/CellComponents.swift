@@ -150,6 +150,8 @@ struct TopRightFloatingPanelView: View {
   @Binding var isDeleteConfirming: Bool
   @Binding var isTopRightPanelHovered: Bool
   @Binding var isCopied: Bool
+  /// The cell's editor, formatted in place by the Format SQL button
+  let textView: SQLTextView?
 
   var body: some View {
     HStack(spacing: Spacing.sm) {
@@ -221,6 +223,24 @@ struct TopRightFloatingPanelView: View {
             }
           }
         }
+
+        FloatingPanelButton(
+          icon: "text.alignleft",
+          helpText: "Format SQL",
+          action: {
+            textView?.formatDocument()
+          }
+        )
+
+        FloatingPanelButton(
+          icon: AppSettings.shared.syntaxHighlightingEnabled ? "paintbrush.fill" : "paintbrush",
+          helpText: AppSettings.shared.syntaxHighlightingEnabled
+            ? "Disable syntax highlighting" : "Enable syntax highlighting",
+          useSymbolEffect: true,
+          action: {
+            AppSettings.shared.syntaxHighlightingEnabled.toggle()
+          }
+        )
       }
 
       FloatingPanelButton(

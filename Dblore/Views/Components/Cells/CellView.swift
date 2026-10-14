@@ -126,7 +126,8 @@ struct CellView: View {
               viewModel: viewModel,
               isDeleteConfirming: $isDeleteConfirming,
               isTopRightPanelHovered: $isTopRightPanelHovered,
-              isCopied: $isCopied
+              isCopied: $isCopied,
+              textView: textViewRef
             )
           }
           Spacer()

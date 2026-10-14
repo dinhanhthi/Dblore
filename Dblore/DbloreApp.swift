@@ -36,10 +36,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     // Start Sparkle (no-op under tests)
     UpdaterController.shared.start()
+    // The MCP server runs only while enabled in Settings
+    if !SessionManager.isRunningAsTestHost {
+      MCPServerController.shared.activate()
+    }
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    MCPServerController.shared.stopForQuit()
   }
 
   /// Set before launch finishes, so a click that launches the app is delivered too
   func applicationWillFinishLaunching(_ notification: Notification) {
+    // Before the first window, so every scroll view gets the soft scroll bar
+    NSScrollView.installSoftScrollers()
     // Long-query notification clicks open their tab
     if !SessionManager.isRunningAsTestHost {
       UNUserNotificationCenter.current().delegate = self
@@ -121,6 +132,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
   /// without COMMIT, so the server rolls the transaction back.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
     // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
     guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
@@ -141,6 +153,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
+  }
+
+  /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
+  /// update relaunches come without a key event, so they never ask.
+  private func confirmKeyboardQuit() -> Bool {
+    guard AppSettings.shared.confirmBeforeQuit, NSApp.currentEvent?.type == .keyDown,
+      !SessionManager.isRunningAsTestHost
+    else { return true }
+    let alert = NSAlert()
+    alert.messageText = "Quit Dblore?"
+    alert.informativeText = "You can turn this off in Settings > General."
+    alert.addButton(withTitle: "Quit")
+    alert.addButton(withTitle: "Cancel")
+    return alert.runModal() == .alertFirstButtonReturn
   }
 
   /// Writes the launch snapshot, and flushes workspaces that already have a file, before the
@@ -264,7 +290,6 @@ struct DbloreApp: App {
     // Window-local state determines what to show
     WindowGroup {
       AppWindowView()
-        .frame(minWidth: 800, minHeight: 600)
         // Disable all SwiftUI animations app-wide for snappier tab and layout switches
         .transaction {
           // Sidebar show/hide keeps its animation
@@ -282,7 +307,9 @@ struct DbloreApp: App {
       EditorCommands()
       SchemaVisualizerCommands()
     }
-    .defaultSize(width: 1200, height: 800)
+    .defaultSize(DocumentWindowSizing.compactSize)
+    // Min and max follow the content (`documentWindowMode`): Welcome screens are not resizable
+    .windowResizability(.contentSize)
     // Note: handlesExternalEvents doesn't work for file open events
     // Duplicate windows are closed in AppDelegate.application(_:open:)
   }

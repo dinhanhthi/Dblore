@@ -12,6 +12,7 @@ import SwiftUI
 struct PendingTransactionBanner: View {
   @Bindable var workspaceManager: WorkspaceManager
 
+  @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
   @State private var isWorking = false
   /// When Commit / Rollback started being awaited (nil when not ending)
@@ -37,7 +38,9 @@ struct PendingTransactionBanner: View {
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
-    .tintedChromeGlass(tint)
+    // Lighter tint in light mode: 0.25 reads too dark there; stronger in dark mode, where
+    // 0.25 over the dark background turns muddy brown
+    .tintedChromeGlass(tint, opacity: colorScheme == .light ? 0.1 : 0.35)
     .overlay(alignment: .bottom) {
       Rectangle().fill(tint.opacity(0.4)).frame(height: 1)
     }
@@ -77,6 +80,17 @@ struct PendingTransactionBanner: View {
       Spacer(minLength: Spacing.sm)
 
       slowEndingDisconnect
+
+      Button {
+        workspaceManager.isTransactionDetailsVisible = true
+      } label: {
+        Text("View Details")
+          .transactionActionLabel()
+      }
+      .buttonStyle(GhostButtonStyle())
+      .linkPointer()
+      .controlSize(.small)
+      .help("Show every pending statement in full")
 
       Button {
         run { await workspaceManager.rollback() }
@@ -224,6 +238,81 @@ private struct PendingStatementRow: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       "\(statement.kindLabel): \(statement.sqlPreview)\(rowsText.isEmpty ? "" : ", \(rowsText)")")
+  }
+}
+
+// MARK: - Details panel
+
+extension View {
+  /// The banner's View Details right sidebar; it closes by itself once the transaction ends
+  func pendingTransactionDetailsModal(workspaceManager: WorkspaceManager) -> some View {
+    let isPresented = Binding(
+      get: {
+        workspaceManager.isTransactionDetailsVisible
+          && !workspaceManager.pendingTransaction.isIdle
+      },
+      set: { workspaceManager.isTransactionDetailsVisible = $0 }
+    )
+    return sidePanelOverlay(
+      isPresented: isPresented, width: PendingTransactionDetailsModal.panelWidth,
+      maxWidthFraction: 0.8
+    ) {
+      PendingTransactionDetailsModal(
+        summary: PendingTransactionSummary(state: workspaceManager.pendingTransaction),
+        dialect: workspaceManager.workspace.connectionConfig?.databaseType.dialect ?? .postgresql,
+        isPresented: isPresented)
+    }
+    // Else the next transaction would open with the modal already shown
+    .onChange(of: workspaceManager.pendingTransaction.isIdle) { _, isIdle in
+      if isIdle { workspaceManager.isTransactionDetailsVisible = false }
+    }
+  }
+}
+
+/// Every pending statement in full (the banner list shows one truncated line each)
+private struct PendingTransactionDetailsModal: View {
+  let summary: PendingTransactionSummary
+  let dialect: SQLDialect
+  @Binding var isPresented: Bool
+
+  /// Width of the right sidebar the details open in (long statements need room)
+  static let panelWidth: CGFloat = 820
+
+  var body: some View {
+    VStack(spacing: 0) {
+      GenericModalHeader(
+        title: "Pending Transaction",
+        titleIcon: summary.isAborted ? "exclamationmark.octagon.fill" : "clock.badge",
+        titleIconColor: summary.isAborted ? .destructive : .warning,
+        onClose: { isPresented = false })
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Text(summary.headline)
+          .font(.labelText.weight(.medium))
+          .foregroundColor(.foreground)
+        if let reason = summary.abortReason {
+          Text("A statement failed, so only Rollback is possible: \(reason)")
+            .font(.small)
+            .foregroundColor(.destructive)
+            .textSelection(.enabled)
+        }
+        if let warning = summary.earlierChangesWarning {
+          Text(warning)
+            .font(.small)
+            .foregroundColor(.warning)
+        }
+        SQLCodeWell(sql: summary.detailsSQL, dialect: dialect)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+      .padding(Spacing.md)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      GenericModalFooter {
+        Spacer()
+        Button("Close") { isPresented = false }
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .keyboardShortcut(.cancelAction)
+      }
+    }
+    .background(Color.cardBackground)
   }
 }
 

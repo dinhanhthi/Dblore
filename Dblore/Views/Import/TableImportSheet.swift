@@ -11,7 +11,7 @@ struct TableImportSheet: View {
   /// Loaded schema tables. Existing-table column types decide SQLite boolean casts.
   var tables: [DatabaseTable] = []
 
-  private static let errorAnchor = "import-content-end"
+  private static let contentEndAnchor = "import-content-end"
 
   @State private var model = TableImportModel()
   @State private var previewWidth: CGFloat = 0
@@ -28,17 +28,14 @@ struct TableImportSheet: View {
   /// Row and cell caps. JSONRowsReader uses the same defaults.
   private let limits = DelimitedTextReader.Options()
 
+  /// Width of the right sidebar the import opens in (the preview table needs room)
+  static let panelWidth: CGFloat = 760
+
   var body: some View {
-    GenericModal(
-      title: "Import Data",
-      titleIcon: "square.and.arrow.down",
-      width: 760,
-      height: 680,
-      isPresented: Binding(
-        get: { isPresented },
-        set: { if $0 || !isBusy { isPresented = $0 } }
-      )
-    ) {
+    VStack(spacing: 0) {
+      GenericModalHeader(
+        title: "Import Data", titleIcon: "square.and.arrow.down",
+        onClose: { if !isBusy { isPresented = false } })
       ScrollViewReader { proxy in
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -51,7 +48,8 @@ struct TableImportSheet: View {
               sqlSection
             }
             if model.isLoading || model.isImporting {
-              ProgressView(value: model.progress)
+              // Indeterminate while the database runs the batch: there is no per-row progress
+              ProgressView(value: model.isExecutingBatch ? nil : model.progress)
                 .accessibilityLabel("Import progress")
             }
             if let error = model.errorMessage {
@@ -74,24 +72,39 @@ struct TableImportSheet: View {
           .padding(Spacing.md)
           .frame(maxWidth: .infinity, alignment: .leading)
           // Anchor on the padded content so the scroll ends below the bottom padding
-          .id(Self.errorAnchor)
+          .id(Self.contentEndAnchor)
         }
         .onChange(of: model.errorMessage) { _, message in
           guard message != nil else { return }
-          withAnimation { proxy.scrollTo(Self.errorAnchor, anchor: .bottom) }
+          withAnimation { proxy.scrollTo(Self.contentEndAnchor, anchor: .bottom) }
+        }
+        // The progress bar sits below the form; bring it into view once the import starts
+        .onChange(of: model.isImporting) { _, importing in
+          guard importing else { return }
+          withAnimation { proxy.scrollTo(Self.contentEndAnchor, anchor: .bottom) }
         }
       }
-    } footer: {
+      .frame(maxHeight: .infinity)
       GenericModalFooter {
         Spacer()
         Button("Cancel", action: cancelImport)
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(isCancelling)
-        Button("Import", action: importFile)
-          .buttonStyle(PrimaryButtonStyle())
-          .disabled(!canImport)
+        Button(action: importFile) {
+          if model.isImporting {
+            HStack(spacing: Spacing.sm) {
+              ProgressView().controlSize(.mini)
+              Text("Importing...")
+            }
+          } else {
+            Text("Import")
+          }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(!canImport)
       }
     }
+    .background(Color.cardBackground)
     .onAppear {
       if let initialDestination {
         model.destination = initialDestination
@@ -115,7 +128,7 @@ struct TableImportSheet: View {
             .truncationMode(.middle)
             .frame(maxWidth: .infinity, alignment: .leading)
           Button("Choose File") { Task { await model.pickFile() } }
-            .buttonStyle(SecondaryButtonStyle())
+            .buttonStyle(FilledSecondaryButtonStyle())
             .disabled(model.isLoading || model.isImporting)
         }
         if let size = fileSize {

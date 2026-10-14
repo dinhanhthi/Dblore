@@ -15,18 +15,18 @@ struct QueryParametersContent: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Spacing.md) {
         if parameterRows.isEmpty {
-          Text("Use :name in SQL to add a parameter.")
+          emptyNote
             .font(.small)
             .foregroundColor(.foregroundMuted)
         } else {
           ForEach(parameterRows) { row in
             parameterRow(row)
           }
-        }
 
-        Text(persistenceNote)
-          .font(.small)
-          .foregroundColor(.foregroundMuted)
+          Text(persistenceNote)
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+        }
       }
       .padding(Spacing.md)
       .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -45,6 +45,28 @@ struct QueryParametersContent: View {
 
   private var persistenceNote: String {
     "Values stay until this tab closes."
+  }
+
+  @ViewBuilder
+  private var emptyNote: some View {
+    let note = Text("Use \(inlineCode(":name")) in SQL to add a parameter. \(persistenceNote)")
+    if #available(macOS 15, *) {
+      note.textRenderer(InlineCodeRenderer())
+    } else {
+      note
+    }
+  }
+
+  /// Mono run with its own fill, like inline code in Markdown. macOS 14 cannot round the fill.
+  private func inlineCode(_ code: String) -> Text {
+    let padded = "\u{2009}\(code)\u{2009}"
+    if #available(macOS 15, *) {
+      return Text(padded).font(.monoSmall).customAttribute(InlineCodeAttribute())
+    }
+    var run = AttributedString(padded)
+    run.font = .monoSmall
+    run.backgroundColor = .hoverFill
+    return Text(run)
   }
 
   private func parameterRow(_ row: ParameterFormRow) -> some View {
@@ -80,4 +102,35 @@ private struct ParameterFormRow: Identifiable {
   let isUnused: Bool
 
   var id: String { name }
+}
+
+@available(macOS 15, *)
+private struct InlineCodeAttribute: TextAttribute {}
+
+/// Draws a rounded fill behind runs tagged with `InlineCodeAttribute`.
+@available(macOS 15, *)
+private struct InlineCodeRenderer: TextRenderer {
+  func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+    for line in layout {
+      // A tagged span can split into several runs; fill their union once so it has no seams.
+      var span: CGRect?
+      for run in line {
+        if run[InlineCodeAttribute.self] != nil {
+          let rect = run.typographicBounds.rect
+          span = span?.union(rect) ?? rect
+        } else if let rect = span {
+          fill(rect, in: &context)
+          span = nil
+        }
+      }
+      if let rect = span { fill(rect, in: &context) }
+      for run in line { context.draw(run) }
+    }
+  }
+
+  private func fill(_ rect: CGRect, in context: inout GraphicsContext) {
+    context.fill(
+      RoundedRectangle(cornerRadius: CornerRadius.sm).path(in: rect.insetBy(dx: 0, dy: -1)),
+      with: .color(.hoverFill))
+  }
 }

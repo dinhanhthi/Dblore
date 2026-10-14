@@ -22,6 +22,13 @@ struct ResultTableSettingsSection: View {
           isOn: $appSettings.hideColumnTypes
         )
 
+        SettingsToggle(
+          title: "Color Values by Type",
+          description:
+            "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style.",
+          isOn: $appSettings.colorValuesByType
+        )
+
         // Hide Run with Query Section toggle
         SettingsToggle(
           title: "Hide Run with Query Section",

@@ -90,6 +90,8 @@ struct ResultGridView: NSViewRepresentable {
   var onHorizontalScrollerChange: ((Bool) -> Void)? = nil
   /// Result cell text size. The default reads Settings so a slider move refreshes the grid.
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
+  /// Colors values by type. The default reads Settings so a toggle refreshes the grid.
+  var colorValuesByType: Bool = AppSettings.shared.colorValuesByType
 
   /// Row height at the default result font size. Larger and smaller faces scale from this
   /// so an untouched setting keeps the 26pt rows the notebook height math expects.
@@ -179,6 +181,10 @@ struct ResultGridView: NSViewRepresentable {
 
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
     let fontChanged = coordinator.noteFontSize(fontSize, tableView: tableView)
+    // The first update loads cells with the flag; only a later toggle needs its own reload.
+    let colorsChanged =
+      coordinator.model != nil && coordinator.colorValuesByType != colorValuesByType
+    coordinator.colorValuesByType = colorValuesByType
     coordinator.isEditable = isEditable
     coordinator.readOnlyColumns = readOnlyColumns
     coordinator.stagesEdits = stagesEdits
@@ -206,9 +212,9 @@ struct ResultGridView: NSViewRepresentable {
       hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
       searchMatches: searchMatches, changeSet: changeSet)
-    // A font-only change skips `update` (the row model is unchanged). `update` may also
-    // refresh only staged rows, so reload every visible cell onto the new face.
-    if fontChanged {
+    // A font or color change alone skips `update` (the row model is unchanged). `update` may
+    // also refresh only staged rows, so reload every visible cell onto the new face and colors.
+    if fontChanged || colorsChanged {
       tableView.tableColumn(withIdentifier: ResultGridCoordinator.rowNumberIdentifier)?.width =
         ResultGridCoordinator.rowNumberWidth(rowCount: result.rows.count)
       tableView.reloadData()
