@@ -10,7 +10,7 @@ import SwiftUI
 /// WorkspaceContainerView)
 struct DocumentLayoutView<Content: View>: View {
   let viewModel: NotebookViewModel
-  @Bindable private var appSettings = AppSettings.shared
+  @ReduceMotion private var reduceMotion
 
   @ViewBuilder let content: Content
 
@@ -37,7 +37,7 @@ struct DocumentLayoutView<Content: View>: View {
               HStack {
                 Spacer()
                 SearchPanelView(viewModel: viewModel)
-                  .frame(width: 500)
+                  .frame(width: 420)
                   .padding(.horizontal, Spacing.md)
                   .padding(.vertical, Spacing.sm)
               }
@@ -57,17 +57,14 @@ struct DocumentLayoutView<Content: View>: View {
         // Right sidebar (conditionally shown) - now at same level as header
         RightSidebarContainer(viewModel: viewModel)
       }
-      // Slide the sidebar (and resize the content beside it) whichever entry point toggled it,
-      // including callers that change the visibility without `withAnimation`
-      .animation(SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
+      // Slide the sidebar (and resize the content beside it). Only callers that use
+      // `withSidebarAnimation` animate: the app-wide kill switch blocks plain state changes
+      .animation(
+        reduceMotion ? nil : SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
 
       // Toast notification overlay (app-level via WorkspaceWindowManager)
       ToastOverlay()
     }
-    .animation(
-      .easeInOut(duration: 0.4), value: WorkspaceWindowManager.shared.toastState.currentToast
-    )
-    .windowAppearance(appSettings.themePreference.colorScheme)
     // Note: Connection modals are now handled at workspace level (WorkspaceContainerView)
   }
 

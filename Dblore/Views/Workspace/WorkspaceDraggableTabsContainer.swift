@@ -63,6 +63,8 @@ struct WorkspaceDraggableTabsContainer: View {
   /// Tab under the current mouse press, so selection fires once per press
   @State private var pressedTabId: UUID?
 
+  @ReduceMotion private var reduceMotion
+
   /// Namespace for the active tab capsule that slides between tabs
   @Namespace private var tabCapsuleNamespace
 
@@ -114,7 +116,16 @@ struct WorkspaceDraggableTabsContainer: View {
         )
         .opacity(isDragging && isDetaching ? 0.5 : 1)
         .offset(x: calculateOffset(for: tab, at: index))
-        .animation(draggingTabId != nil ? .easeInOut(duration: 0.2) : nil, value: targetIndex)
+        // Neighbors slide aside; the dragged tab keeps tracking the pointer without lag
+        .animation(
+          draggingTabId != nil && !isDragging && !reduceMotion ? .snappy(duration: 0.2) : nil,
+          value: targetIndex
+        )
+        // Opt out of the app-wide animation kill switch, only for the reorder change while
+        // dragging: a drop (draggingTabId cleared) must stay instant
+        .transaction(value: targetIndex) {
+          if draggingTabId != nil { $0.disablesAnimations = false }
+        }
         .zIndex(isDragging ? 100 : (isActive ? 50 : 0))
         .gesture(
           // Zero distance so the tab activates on mouse-down (like Chrome); a tap gesture
@@ -210,9 +221,7 @@ struct WorkspaceDraggableTabsContainer: View {
       )
 
     if newTargetIndex != targetIndex {
-      withAnimation(.easeInOut(duration: 0.2)) {
-        targetIndex = newTargetIndex
-      }
+      targetIndex = newTargetIndex
     }
   }
 
@@ -291,15 +300,13 @@ struct WorkspaceDraggableTabsContainer: View {
       let targetIdx = targetIndex,
       originalIdx != targetIdx
     else {
-      // Reset without moving - animate back to original position
-      withAnimation(.easeOut(duration: 0.2)) {
+      // Reset without moving: slide back into the slot and drop the lifted look together.
+      // targetIndex/originalIndex stay stale on purpose: clearing them here changes the `value:`
+      // of the reorder `.animation` (nil while not dragging) and would cancel this slide.
+      // The next drag overwrites them (handleDragChanged).
+      withSidebarAnimation(.snappy(duration: 0.2)) {
         dragOffset = 0
-      }
-      // Clear state after animation
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
         draggingTabId = nil
-        targetIndex = nil
-        originalIndex = nil
       }
       return
     }

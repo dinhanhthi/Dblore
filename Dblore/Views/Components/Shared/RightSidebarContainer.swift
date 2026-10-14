@@ -9,6 +9,7 @@ import SwiftUI
 /// Shared between Notebook and Editor modes
 struct RightSidebarContainer: View {
   let viewModel: NotebookViewModel
+  @ReduceMotion private var reduceMotion
 
   var body: some View {
     // The `if` and its animation live in this view so removal slides off the
@@ -19,6 +20,7 @@ struct RightSidebarContainer: View {
           .transition(SidebarAnimation.trailingSlide)
       }
     }
-    .animation(SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
+    .animation(
+      reduceMotion ? nil : SidebarAnimation.animation, value: viewModel.isRightSidebarVisible)
   }
 }

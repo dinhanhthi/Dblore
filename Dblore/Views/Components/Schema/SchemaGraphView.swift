@@ -364,7 +364,8 @@ class SchemaGraphNSView: NSView {
   }
 
   private func startColumnConnectionAnimation() {
-    guard columnConnectionAnimationTimer == nil else { return }
+    // Reduce motion: keep the dashes static
+    guard columnConnectionAnimationTimer == nil, !SidebarAnimation.reduceMotion else { return }
     columnConnectionAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
       [weak self] _ in
       Task { @MainActor in

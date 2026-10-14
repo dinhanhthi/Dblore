@@ -2,7 +2,7 @@
 //  AppearanceSettingsSection.swift
 //  Dblore
 //
-//  Appearance settings: Theme and Accent Color
+//  Appearance settings: Theme, Accent Color and Animations
 //
 
 import SwiftUI
@@ -17,6 +17,9 @@ struct AppearanceSettingsSection: View {
       }
       SettingsGroupCard(title: "Accent color") {
         accentColorPicker
+      }
+      SettingsGroupCard(title: "Animations") {
+        animationPicker
       }
     }
   }
@@ -54,6 +57,22 @@ struct AppearanceSettingsSection: View {
       .accessibilityLabel("Accent color")
 
       Text("Choose the main color for buttons, links, and syntax highlighting.")
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
+    }
+  }
+
+  private var animationPicker: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      CapsuleTabPicker(
+        selection: $appSettings.animationPreference,
+        tabs: Array(AnimationPreference.allCases),
+        height: 28
+      )
+      .fitsContent()
+      .accessibilityLabel("Animations")
+
+      Text("Turn interface animations on or off. System follows macOS Reduce motion.")
         .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
     }

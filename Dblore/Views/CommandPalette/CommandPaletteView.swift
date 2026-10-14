@@ -372,7 +372,7 @@ extension View {
         workspaceManager.commandPaletteFieldFocused = false
       }
     )
-    return modalOverlay(isPresented: isPresented) {
+    return modalOverlay(isPresented: isPresented, animated: false) {
       if let model = workspaceManager.commandPalette {
         CommandPaletteView(
           model: model,
