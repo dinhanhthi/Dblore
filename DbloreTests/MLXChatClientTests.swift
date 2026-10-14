@@ -50,10 +50,9 @@ struct MLXChatClientTests {
 
   @Test("enable_thinking false only for Qwen3 ids")
   func thinkingContext() {
-    let qwen = MLXChatClient.additionalContext(forModel: "qwen3-4b-instruct-2507")
+    let qwen = MLXChatClient.additionalContext(forModel: "qwen3.5-4b")
     #expect(qwen?["enable_thinking"] as? Bool == false)
-    #expect(MLXChatClient.additionalContext(forModel: "qwen2.5-coder-1.5b") == nil)
-    #expect(MLXChatClient.additionalContext(forModel: "omnisql-7b") == nil)
+    #expect(MLXChatClient.additionalContext(forModel: "gemma-4-12b") == nil)
   }
 
   @Test("listModels reflects installed catalog entries")
@@ -64,10 +63,10 @@ struct MLXChatClientTests {
     let client = MLXChatClient(root: root)
     #expect(try await client.listModels().isEmpty)
 
-    let dir = root.appendingPathComponent("qwen2.5-coder-1.5b", isDirectory: true)
+    let dir = root.appendingPathComponent("qwen3.5-2b", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
     try Data().write(to: dir.appendingPathComponent("model.safetensors"))
-    #expect(try await client.listModels() == ["qwen2.5-coder-1.5b"])
+    #expect(try await client.listModels() == ["qwen3.5-2b"])
   }
 }

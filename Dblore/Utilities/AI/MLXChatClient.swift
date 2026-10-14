@@ -280,7 +280,8 @@ nonisolated struct MLXChatClient: AIChatClient {
     return result
   }
 
-  /// Qwen3 chat templates think by default; turn it off for predictable SQL output.
+  /// Qwen3 and Qwen3.5 chat templates think by default (Gemma 4 does not); turn it off for
+  /// predictable SQL output.
   static func additionalContext(forModel id: String) -> [String: any Sendable]? {
     id.lowercased().hasPrefix("qwen3") ? ["enable_thinking": false] : nil
   }

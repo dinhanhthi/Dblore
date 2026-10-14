@@ -25,40 +25,52 @@ nonisolated struct LocalModel: Identifiable, Sendable, Equatable {
 nonisolated enum LocalModelCatalog {
   private static let gb: Int64 = 1_073_741_824
 
-  /// Display order: smallest first. Sizes are the repo storage reported by Hugging Face.
+  /// Display order: smallest first. Sizes are the total file size of the pinned revision on
+  /// Hugging Face (Qwen3.5 and Gemma 4 repos also ship vision weights, skipped at load).
   static let all: [LocalModel] = [
     LocalModel(
-      id: "qwen2.5-coder-1.5b",
-      repoID: "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit",
-      revision: "b3252a2f97102b1fb1571fec2c9b27219a8536be",
-      displayName: "Qwen2.5 Coder 1.5B (4-bit)",
+      id: "qwen3.5-2b",
+      repoID: "mlx-community/Qwen3.5-2B-MLX-4bit",
+      revision: "93760be4f1f69842a46bc13dbdc0f19e291392a3",
+      displayName: "Qwen3.5 2B (4-bit)",
       tier: .tiny,
-      approxSizeBytes: 868_628_559,
+      approxSizeBytes: 1_749_083_534,
       minRAMBytes: 8 * gb,
       license: "Apache-2.0",
       note: "Fastest, good for simple queries"
     ),
     LocalModel(
-      id: "qwen3-4b-instruct-2507",
-      repoID: "mlx-community/Qwen3-4B-Instruct-2507-4bit",
-      revision: "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b",
-      displayName: "Qwen3 4B Instruct (4-bit)",
+      id: "qwen3.5-4b",
+      repoID: "mlx-community/Qwen3.5-4B-MLX-4bit",
+      revision: "32f3e8ecf65426fc3306969496342d504bfa13f3",
+      displayName: "Qwen3.5 4B (4-bit)",
       tier: .balanced,
-      approxSizeBytes: 2_274_445_071,
+      approxSizeBytes: 3_061_132_920,
       minRAMBytes: 8 * gb,
       license: "Apache-2.0",
       note: "Balanced speed and quality"
     ),
     LocalModel(
-      id: "omnisql-7b",
-      repoID: "sazak/OmniSQL-7B-4bit-mlx",
-      revision: "43986495330ae8a82349fc1f99909a52b8e070b3",
-      displayName: "OmniSQL 7B (4-bit)",
+      id: "qwen3.5-9b",
+      repoID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+      revision: "938d8919941c6e7efd3c7150eff7fe9d12afa631",
+      displayName: "Qwen3.5 9B (4-bit)",
       tier: .best,
-      approxSizeBytes: 4_295_768_620,
+      approxSizeBytes: 5_977_074_591,
       minRAMBytes: 16 * gb,
       license: "Apache-2.0",
-      note: "SQL-tuned (trained mostly on SQLite dialect)"
+      note: "Best quality"
+    ),
+    LocalModel(
+      id: "gemma-4-12b",
+      repoID: "mlx-community/gemma-4-12B-it-4bit",
+      revision: "73bcf09092aa277861d5a191b989b666f7f32e8f",
+      displayName: "Gemma 4 12B (4-bit)",
+      tier: .best,
+      approxSizeBytes: 6_773_372_848,
+      minRAMBytes: 16 * gb,
+      license: "Apache-2.0",
+      note: "Alternative to Qwen3.5 9B, larger and slower"
     ),
   ]
 
@@ -66,8 +78,11 @@ nonisolated enum LocalModelCatalog {
     all.first { $0.id == id }
   }
 
-  /// Largest model whose minimum RAM fits; nil when the Mac is below every minimum.
+  /// First model of the largest tier whose minimum RAM fits; nil when the Mac is below every
+  /// minimum.
   static func recommended(forRAM ram: UInt64) -> LocalModel? {
-    all.last { $0.minRAMBytes <= Int64(clamping: ram) }
+    let fitting = all.filter { $0.minRAMBytes <= Int64(clamping: ram) }
+    guard let tier = fitting.last?.tier else { return nil }
+    return fitting.first { $0.tier == tier }
   }
 }
