@@ -30,6 +30,7 @@ enum SidebarContent: Equatable {
   case tableHighlight  // Highlight form of the data viewer tab
   case parameters  // Named SQL parameters of the editor tab
   case addRow  // Add Row form of the data viewer tab
+  case rowDetail(cellId: UUID?)  // Row Details of one result row (`rowDetail`)
 }
 
 /// Persists one history row. A failure stays inside the recorder and never fails the query.
@@ -160,6 +161,8 @@ class NotebookViewModel {
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
   var cellDetailRow: Int?
+  /// Row shown in Row Details, with its drafts (session-only)
+  var rowDetail: RowDetailState?
 
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook

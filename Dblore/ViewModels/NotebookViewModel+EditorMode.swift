@@ -143,6 +143,7 @@ extension NotebookViewModel {
           // Update View Query sidebar if it's open for editor mode
           updateEditorExecutedQuerySidebarIfNeeded(result: editorResult!)
           syncCellDetail(cellId: nil, result: editorResult)
+          syncRowDetail(cellId: nil, result: editorResult)
         }
         recordResults(results.map { (sql: $0.queryText, result: $0.result) }, source: source)
         completion = results.last.map { Self.completionOutcome($0.result) }
@@ -189,6 +190,7 @@ extension NotebookViewModel {
         // Update View Query sidebar if it's open for editor mode
         updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)
         syncCellDetail(cellId: nil, result: cellResult)
+        syncRowDetail(cellId: nil, result: cellResult)
         recordResults([(sql: query, result: cellResult)], source: source)
         completion = Self.completionOutcome(cellResult)
       }

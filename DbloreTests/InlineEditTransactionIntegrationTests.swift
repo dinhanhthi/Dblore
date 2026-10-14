@@ -343,7 +343,7 @@ struct InlineEditTransactionIntegrationTests {
       primaryKeyColumns: target.primaryKeyColumns, rowData: ["id": .int(id)],
       updateOnly: target.updateOnly)
     let edit = PendingInlineEdit(
-      statement: statement, columnName: "v", tableName: target.qualifiedName, cellId: nil,
+      statement: statement, columnNames: ["v"], tableName: target.qualifiedName, cellId: nil,
       connectionManager: manager)
     await viewModel.sendInlineEdit(edit, target: target)
   }
@@ -379,6 +379,37 @@ struct InlineEditTransactionIntegrationTests {
       #expect(toasts.isEmpty)
       #expect(await manager.transactionSnapshot().isIdle)
       #expect(try await value(observer, table) == .int(11))
+    }
+  }
+
+  @Test("Row Details of a plain editor row: a sent edit becomes the row, drafts clean")
+  func rowDetailCleanAfterEditorEdit() async throws {
+    let table = "p6_grid_row_detail"
+    try await withTable(table, protectedMode: false) { manager, observer in
+      let viewModel = gridViewModel(style: .immediate)
+      let resolved = try #require(try await target("SELECT * FROM \(table)", manager))
+      var result = CellResult(
+        columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "v", type: "int4")],
+        rows: [[.int(1), .int(10)]], tableName: resolved.qualifiedName, primaryKeyColumns: ["id"])
+      result.editTarget = resolved
+      viewModel.editorResult = result
+      viewModel.showRowDetail(row: result.rows[0], originalRow: 0, result: result, cellId: nil)
+      viewModel.rowDetail?.fields[1].text = "11"
+      #expect(viewModel.rowDetailHasChanges)
+      let statement = try CellUpdateStatement.make(
+        qualifiedName: resolved.qualifiedName, assignments: [(column: "v", value: "11")],
+        primaryKeyColumns: resolved.primaryKeyColumns, rowData: ["id": .int(1)],
+        updateOnly: resolved.updateOnly)
+
+      await viewModel.sendInlineEdit(
+        PendingInlineEdit(
+          statement: statement, columnNames: ["v"], tableName: resolved.qualifiedName,
+          cellId: nil, connectionManager: manager),
+        target: resolved)
+
+      #expect(try await value(observer, table) == .int(11))
+      #expect(!viewModel.rowDetailHasChanges)
+      #expect(viewModel.rowDetail?.fields[1].original == .int(11))
     }
   }
 

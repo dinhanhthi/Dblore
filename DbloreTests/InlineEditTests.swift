@@ -132,6 +132,58 @@ struct CellUpdateStatementTests {
       NotebookViewModel.statementsNeedingConfirmation(classified, commitStyle: .confirm) != nil)
   }
 
+  @Test("Several assignments share one UPDATE; a nil value binds NULL")
+  func multiColumnUpdate() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.t",
+      assignments: [(column: "a", value: "1"), (column: "note", value: nil)],
+      primaryKeyColumns: ["id"], rowData: ["id": .int(7), "a": .int(0), "note": .string("x")])
+    #expect(statement.sql == #"UPDATE public.t SET "a" = $1, "note" = $2 WHERE "id" = $3"#)
+    #expect(statement.values == ["1", nil, "7"])
+    #expect(statement.binds == [.text("1"), .null, .text("7")])
+    #expect(statement.rowCheck == nil)
+  }
+
+  @Test("Composite key placeholders are numbered after the assignments")
+  func multiColumnCompositeKey() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "sales.orders",
+      assignments: [(column: "qty", value: "5"), (column: "note", value: "n")],
+      primaryKeyColumns: ["order_id", "line_no"],
+      rowData: ["order_id": .int(10), "line_no": .int(2)], updateOnly: true)
+    #expect(
+      statement.sql
+        == #"UPDATE ONLY sales.orders SET "qty" = $1, "note" = $2"#
+        + #" WHERE "order_id" = $3 AND "line_no" = $4"#)
+    #expect(statement.values == ["5", "n", "10", "2"])
+  }
+
+  @Test("MySQL multi-column UPDATE uses ? binds and keeps the row check")
+  func multiColumnMySQL() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "`db`.`t`",
+      assignments: [(column: "x", value: "1"), (column: "y", value: nil)],
+      primaryKeyColumns: ["id", "b"],
+      rowData: ["id": .int(7), "b": .data(Data([0x01, 0xFF]))], dialect: .mysql)
+    #expect(
+      statement.sql == "UPDATE `db`.`t` SET `x` = ?, `y` = ? WHERE `id` = ? AND `b` = UNHEX(?)")
+    #expect(statement.values == ["1", nil, "7", "01ff"])
+    #expect(
+      statement.rowCheck
+        == RowExistenceCheck(
+          sql: "SELECT 1 FROM `db`.`t` WHERE `id` = ? AND `b` = UNHEX(?) FOR UPDATE",
+          values: ["7", "01ff"]))
+  }
+
+  @Test("An UPDATE with no assignment is refused")
+  func emptyAssignmentsRefused() {
+    #expect(throws: DatabaseError.self) {
+      try CellUpdateStatement.make(
+        qualifiedName: "public.t", assignments: [], primaryKeyColumns: ["id"],
+        rowData: ["id": .int(1)])
+    }
+  }
+
   @Test("Edited text: empty or 'null' on a NULL cell binds NULL, other text is kept")
   func bindTextForEditedValue() {
     #expect(NotebookViewModel.bindText(for: "", original: .null) == nil)

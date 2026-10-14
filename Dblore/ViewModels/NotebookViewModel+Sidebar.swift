@@ -224,10 +224,16 @@ extension NotebookViewModel {
     }
   }
 
-  /// Re-run what produced the sidebar cell (same gates as Run); the new result refreshes the
-  /// sidebar through `syncCellDetail`
+  /// Re-run what produced the sidebar cell or row (same gates as Run); the new result refreshes
+  /// the sidebar through `syncCellDetail` / `syncRowDetail`
   func refreshCellDetail() {
-    guard case .cellInfo(_, _, _, _, _, _, let cellId) = rightSidebarContent else { return }
+    let cellId: UUID?
+    switch rightSidebarContent {
+    case .cellInfo(_, _, _, _, _, _, let id), .rowDetail(let id):
+      cellId = id
+    default:
+      return
+    }
     if let cellId {
       confirmAndRunCell(id: cellId)
     } else {

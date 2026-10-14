@@ -217,6 +217,18 @@ extension NotebookViewModel {
     )
 
     guard let connectionManager, let rowData else { return }
+    submitInlineEdit(
+      assignments: [(column: columnName, value: bindText)], rowData: rowData, cellId: cellId,
+      connectionManager: connectionManager)
+  }
+
+  /// Gate shared by a cell edit and Row Details Apply: ONE UPDATE setting every `assignments`
+  /// column of `rowData` against the live `cellDetailEditTarget`, checked by the protection
+  /// gate, confirmed when the commit style asks, then sent.
+  func submitInlineEdit(
+    assignments: [(column: String, value: String?)], rowData: [String: CellValue],
+    cellId: UUID?, connectionManager: DatabaseConnectionManager
+  ) {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
       return
@@ -228,15 +240,16 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
-    guard !target.generatedColumns.contains(columnName) else {
-      showToast(Self.generatedColumnMessage(columnName), type: .error)
+    let columnNames = assignments.map(\.column)
+    if let generated = columnNames.first(where: target.generatedColumns.contains) {
+      showToast(Self.generatedColumnMessage(generated), type: .error)
       return
     }
 
     let statement: CellUpdateStatement
     do {
       statement = try CellUpdateStatement.make(
-        qualifiedName: target.qualifiedName, columnName: columnName, newValue: bindText,
+        qualifiedName: target.qualifiedName, assignments: assignments,
         primaryKeyColumns: target.primaryKeyColumns, rowData: rowData,
         updateOnly: target.updateOnly, dialect: sqlDialect)
     } catch {
@@ -251,7 +264,7 @@ extension NotebookViewModel {
     }
 
     let edit = PendingInlineEdit(
-      statement: statement, columnName: columnName, tableName: target.qualifiedName,
+      statement: statement, columnNames: columnNames, tableName: target.qualifiedName,
       cellId: cellId, connectionManager: connectionManager)
 
     // Confirm and password ask before anything is sent. Review and immediate do not.
@@ -298,6 +311,7 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
+    let columnList = edit.columnNames.joined(separator: ", ")
     let started = Date()
     do {
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
@@ -315,7 +329,7 @@ extension NotebookViewModel {
       // Success needs no toast: the refreshed cell (and the pending banner) shows it
       if rowsAffected != 1 {
         showToast(
-          "Expected to update 1 row, updated \(rowsAffected) ('\(edit.columnName)' in '\(edit.tableName)')",
+          "Expected to update 1 row, updated \(rowsAffected) ('\(columnList)' in '\(edit.tableName)')",
           type: .error)
       }
       // Re-run the cell to refresh the table view with the stored data
@@ -324,29 +338,35 @@ extension NotebookViewModel {
       } else if dataViewer != nil {
         if hasPendingStagedChanges {
           // Refresh stored values without replacing the batch's generation or drafts.
-          if isLiveEditTarget(target, cellId: nil), let result = editorResult,
-            let state = dataViewer,
-            let column = result.columns.firstIndex(where: { $0.name == edit.columnName }),
+          let count = edit.columnNames.count
+          let newValues = Array(edit.statement.values.prefix(count))
+          let assignments = zip(edit.columnNames, newValues).map { (column: $0, value: $1) }
+          let result = editorResult
+          let columns = edit.columnNames.compactMap { name in
+            result?.columns.firstIndex(where: { $0.name == name })
+          }
+          if isLiveEditTarget(target, cellId: nil), let result, let state = dataViewer,
+            columns.count == count,
             let row = result.rows.firstIndex(where: { values in
               guard
                 let statement = try? CellUpdateStatement.make(
-                  qualifiedName: target.qualifiedName, columnName: edit.columnName,
-                  newValue: edit.statement.values[0], primaryKeyColumns: target.primaryKeyColumns,
+                  qualifiedName: target.qualifiedName, assignments: assignments,
+                  primaryKeyColumns: target.primaryKeyColumns,
                   rowData: CellResult.rowData(columns: result.columns, row: values),
                   dialect: sqlDialect)
               else { return false }
-              return statement.values.dropFirst() == edit.statement.values.dropFirst()
+              return statement.values.dropFirst(count) == edit.statement.values.dropFirst(count)
             })
           {
-            let value = Self.editedCellValue(
-              edit.statement.values[0], original: result.rows[row][column])
             let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
             let key = RowChangeSet.RowKey(
               values: target.primaryKeyColumns.compactMap { rowData[$0] })
-            if var changes = dataViewer?.changeSet, changes.edits[key]?[edit.columnName] != nil {
-              try changes.stageEdit(
-                row: key, column: edit.columnName, value: value, original: value)
-              dataViewer?.changeSet = changes.isEmpty ? nil : changes
+            for (name, (column, newValue)) in zip(edit.columnNames, zip(columns, newValues)) {
+              let value = Self.editedCellValue(newValue, original: result.rows[row][column])
+              if var changes = dataViewer?.changeSet, changes.edits[key]?[name] != nil {
+                try changes.stageEdit(row: key, column: name, value: value, original: value)
+                dataViewer?.changeSet = changes.isEmpty ? nil : changes
+              }
             }
             // Undo snapshots must not restore a draft over the value just committed.
             undoManager.removeAllActions()
@@ -378,17 +398,21 @@ extension NotebookViewModel {
             updated.skippedStatements = result.skippedStatements
             updated.skippedQueuedCells = result.skippedQueuedCells
             editorResult = updated
+            syncRowDetail(cellId: nil, result: updated)
           }
         } else {
           await loadDataViewerPage()
         }
+      } else if rowsAffected == 1 {
+        // A plain editor result is not re-run: Row Details takes the sent values as its row
+        rowDetailSent(edit, target: target)
       }
     } catch {
       recordFailure(
         error, sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
         source: .dataViewerEdit)
       showToast(
-        "Failed to update '\(edit.columnName)': \(error.localizedDescription)", type: .error)
+        "Failed to update '\(columnList)': \(error.localizedDescription)", type: .error)
     }
     await onStatementsExecuted?()
   }

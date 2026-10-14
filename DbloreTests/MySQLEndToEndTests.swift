@@ -66,7 +66,7 @@ struct MySQLEndToEndTests {
         updateOnly: target.updateOnly, dialect: .mysql)
       await viewModel.sendInlineEdit(
         PendingInlineEdit(
-          statement: statement, columnName: "name", tableName: target.qualifiedName, cellId: nil,
+          statement: statement, columnNames: ["name"], tableName: target.qualifiedName, cellId: nil,
           connectionManager: workspace.connectionManager),
         target: target)
       #expect(

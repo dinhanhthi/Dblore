@@ -39,6 +39,8 @@ struct RightSidebarView: View {
           formWithFooter(content)
         } else if content == .addRow {
           addRowForm
+        } else if case .rowDetail = content {
+          rowDetailForm
         } else if case .executedQuery = content {
           // ExecutedQuerySidebarContent handles its own ScrollView
           VStack(alignment: .leading, spacing: 0) {
@@ -70,7 +72,8 @@ struct RightSidebarView: View {
       Divider()
     }
     .overlay(alignment: .leading) {
-      // Only the cell value view and the Add Row form can be widened, for long text and JSON
+      // Only the cell value view, the Add Row form and Row Details can be widened, for long text
+      // and JSON
       if widensLikeCellInfo {
         ResizableSidebarDivider(
           sidebarWidth: $viewModel.cellInfoSidebarWidth,
@@ -87,10 +90,10 @@ struct RightSidebarView: View {
     widensLikeCellInfo ? viewModel.cellInfoSidebarWidth : ComponentSize.sidebarWidth
   }
 
-  /// Cell value and Add Row share the resizable width
+  /// Cell value, Add Row and Row Details share the resizable width
   private var widensLikeCellInfo: Bool {
     switch viewModel.rightSidebarContent {
-    case .cellInfo, .addRow: return true
+    case .cellInfo, .addRow, .rowDetail: return true
     default: return false
     }
   }
@@ -114,6 +117,32 @@ struct RightSidebarView: View {
         Spacer()
       }
       .padding(Spacing.md)
+    }
+  }
+
+  /// Row Details with Apply and Cancel pinned at the bottom while a draft differs from the row
+  private var rowDetailForm: some View {
+    VStack(spacing: 0) {
+      RowDetailContent(viewModel: viewModel)
+        .padding(Spacing.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+      if viewModel.rowDetailHasChanges {
+        Divider()
+
+        HStack(spacing: Spacing.sm) {
+          Button("Apply") { viewModel.applyRowDetail() }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(viewModel.rowDetailHasErrors)
+            .help(
+              viewModel.rowDetail?.stagedInsertID != nil
+                ? "Stage these values. Commit sends them." : "Update this row")
+          Button("Cancel") { viewModel.cancelRowDetailEdits() }
+            .buttonStyle(SecondaryButtonStyle())
+          Spacer()
+        }
+        .padding(Spacing.md)
+      }
     }
   }
 
@@ -197,6 +226,16 @@ struct RightSidebarView: View {
         .help("Refresh value")
       }
 
+      if case .rowDetail = viewModel.rightSidebarContent {
+        Button(action: { viewModel.refreshCellDetail() }) {
+          Image(systemName: "arrow.clockwise")
+            .foregroundColor(.foregroundMuted)
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .controlSize(.small)
+        .help("Refresh row")
+      }
+
       Button(action: { viewModel.closeSidebar() }) {
         Image(systemName: "xmark")
           .foregroundColor(.foregroundMuted)
@@ -229,6 +268,8 @@ struct RightSidebarView: View {
       return "Parameters"
     case .addRow:
       return "Add Row"
+    case .rowDetail:
+      return "Row Details"
     }
   }
 
@@ -291,6 +332,8 @@ struct RightSidebarView: View {
       QueryParametersContent(viewModel: viewModel)
     case .addRow:
       AddRowContent(viewModel: viewModel)
+    case .rowDetail:
+      RowDetailContent(viewModel: viewModel)
     }
   }
 

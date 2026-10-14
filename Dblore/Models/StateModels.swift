@@ -166,13 +166,14 @@ struct QueryConfirmationState: Equatable, Sendable {
 /// An inline grid edit ready to send through the gate
 struct PendingInlineEdit: Equatable, Sendable {
   let statement: CellUpdateStatement
-  let columnName: String
+  /// Columns the statement sets, in SET order
+  let columnNames: [String]
   let tableName: String
   let cellId: UUID?
   let connectionManager: DatabaseConnectionManager
 
   static func == (lhs: PendingInlineEdit, rhs: PendingInlineEdit) -> Bool {
-    lhs.statement == rhs.statement && lhs.columnName == rhs.columnName
+    lhs.statement == rhs.statement && lhs.columnNames == rhs.columnNames
       && lhs.tableName == rhs.tableName && lhs.cellId == rhs.cellId
       && lhs.connectionManager === rhs.connectionManager
   }

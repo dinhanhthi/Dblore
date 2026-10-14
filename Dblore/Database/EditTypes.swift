@@ -18,11 +18,11 @@ nonisolated struct RowExistenceCheck: Sendable, Equatable {
   }
 }
 
-/// `UPDATE [ONLY] <table> SET <column> = $1 WHERE <pk1> = $2 [AND ...]` for one grid cell.
+/// `UPDATE [ONLY] <table> SET <c1> = $1[, ...] WHERE <pk1> = $n [AND ...]` for grid cells of a row.
 /// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
-  /// `$1` is the new value, `$2...` the primary-key values in key order; nil binds NULL
+  /// New values in SET order, then the primary-key values in key order; nil binds NULL
   let values: [String?]
   /// MySQL: checks a 0-affected UPDATE against the row (see `RowExistenceCheck`)
   var rowCheck: RowExistenceCheck? = nil
@@ -32,21 +32,38 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     values.map(SQLBindValue.init(optionalText:))
   }
 
-  /// Builds the UPDATE for one cell of `rowData`, keyed by `primaryKeyColumns` only.
-  /// - Parameters:
-  ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target
-  ///     (MySQL: two backtick-quoted names), inserted verbatim (never user text; see
-  ///     `isServerQualifiedName`)
-  ///   - newValue: the new value as input text; nil sets NULL
-  ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children); only
-  ///     where `dialect.supportsUpdateOnly`
-  /// - Throws: `DatabaseError.notEditable` when the row cannot be targeted by its primary key
+  /// Builds the UPDATE for one cell of `rowData` (`make(assignments:)` with one assignment).
   static func make(
     qualifiedName: String, columnName: String, newValue: String?, primaryKeyColumns: [String],
     rowData: [String: CellValue], updateOnly: Bool = false, dialect: SQLDialect = .postgresql
   ) throws -> CellUpdateStatement {
+    try make(
+      qualifiedName: qualifiedName, assignments: [(column: columnName, value: newValue)],
+      primaryKeyColumns: primaryKeyColumns, rowData: rowData, updateOnly: updateOnly,
+      dialect: dialect)
+  }
+
+  /// Builds one UPDATE setting every `assignments` column of `rowData`, keyed by
+  /// `primaryKeyColumns` only.
+  /// - Parameters:
+  ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target
+  ///     (MySQL: two backtick-quoted names), inserted verbatim (never user text; see
+  ///     `isServerQualifiedName`)
+  ///   - assignments: columns and new values as input text, in SET order; a nil value sets NULL
+  ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children); only
+  ///     where `dialect.supportsUpdateOnly`
+  /// - Throws: `DatabaseError.notEditable` when there is no assignment or the row cannot be
+  ///   targeted by its primary key
+  static func make(
+    qualifiedName: String, assignments: [(column: String, value: String?)],
+    primaryKeyColumns: [String], rowData: [String: CellValue], updateOnly: Bool = false,
+    dialect: SQLDialect = .postgresql
+  ) throws -> CellUpdateStatement {
     guard isServerQualifiedName(qualifiedName, dialect: dialect) else {
       throw DatabaseError.notEditable("unsupported table name \"\(qualifiedName)\"")
+    }
+    guard !assignments.isEmpty else {
+      throw DatabaseError.notEditable("no column to update")
     }
     guard !primaryKeyColumns.isEmpty else {
       throw DatabaseError.notEditable("the table has no primary key")
@@ -61,15 +78,20 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
         throw DatabaseError.notEditable("primary key column \"\(column)\" is NULL")
       }
       keyValues.append(text)
-      let placeholder = bindPlaceholder(dialect.placeholder(index + 2), value, dialect: dialect)
+      let placeholder = bindPlaceholder(
+        dialect.placeholder(assignments.count + index + 1), value, dialect: dialect)
       conditions.append("\(quoteIdentifier(column, dialect: dialect)) = \(placeholder)")
     }
     let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
     let condition = conditions.joined(separator: " AND ")
+    let setList = assignments.enumerated().map { index, assignment in
+      "\(quoteIdentifier(assignment.column, dialect: dialect)) = \(dialect.placeholder(index + 1))"
+    }
     let sql =
-      "UPDATE \(only)\(qualifiedName) SET \(quoteIdentifier(columnName, dialect: dialect))"
-      + " = \(dialect.placeholder(1)) WHERE \(condition)"
-    var statement = CellUpdateStatement(sql: sql, values: [newValue] + keyValues)
+      "UPDATE \(only)\(qualifiedName) SET \(setList.joined(separator: ", "))"
+      + " WHERE \(condition)"
+    var statement = CellUpdateStatement(
+      sql: sql, values: assignments.map(\.value) + keyValues)
     if dialect == .mysql {
       statement.rowCheck = RowExistenceCheck(
         sql: "SELECT 1 FROM \(qualifiedName) WHERE \(condition) FOR UPDATE", values: keyValues)

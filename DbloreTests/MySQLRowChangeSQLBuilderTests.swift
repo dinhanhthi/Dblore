@@ -349,6 +349,54 @@ struct MySQLRowChangeSQLBuilderTests {
     }
   }
 
+  @Test(
+    "A 2-column inline edit beside staged drafts refreshes both columns and keeps other drafts",
+    .requiresMySQL, arguments: [Server.mysql, .mariadb])
+  func multiColumnInlineEditBesideDrafts(server: Server) async throws {
+    try await withViewer(
+      server, protectedMode: false,
+      ddl: "CREATE TABLE Mrc_Items (id INT PRIMARY KEY, name VARCHAR(20), note VARCHAR(20))",
+      seed: "INSERT INTO Mrc_Items VALUES (1, 'a', 'p'), (2, 'b', 'q')"
+    ) { viewModel, manager, observer in
+      #expect(
+        viewModel.stageEdit(row: try rowIndex(1, viewModel), column: "name", value: .string("d"))
+          == nil)
+      #expect(
+        viewModel.stageEdit(row: try rowIndex(2, viewModel), column: "name", value: .string("o"))
+          == nil)
+      let result = try #require(viewModel.editorResult)
+      let target = try #require(result.editTarget)
+      let statement = try CellUpdateStatement.make(
+        qualifiedName: target.qualifiedName,
+        assignments: [(column: "name", value: "x"), (column: "note", value: "y")],
+        primaryKeyColumns: target.primaryKeyColumns,
+        rowData: CellResult.rowData(
+          columns: result.columns, row: result.rows[try rowIndex(1, viewModel)]),
+        updateOnly: target.updateOnly, dialect: .mysql)
+
+      await viewModel.sendInlineEdit(
+        PendingInlineEdit(
+          statement: statement, columnNames: ["name", "note"], tableName: target.qualifiedName,
+          cellId: nil, connectionManager: manager),
+        target: target)
+
+      // Row 1's draft of the sent column now equals the committed value, so it is no draft
+      // anymore; row 2's draft stays staged.
+      let changes = try #require(viewModel.dataViewer?.changeSet)
+      #expect(changes.edits[RowChangeSet.RowKey(values: [.int(1)])]?["name"] == nil)
+      #expect(changes.edits[RowChangeSet.RowKey(values: [.int(2)])]?["name"] == .string("o"))
+      // Both sent columns of row 1 are refreshed from the stored page.
+      let refreshed = try #require(viewModel.editorResult)
+      let data = CellResult.rowData(
+        columns: refreshed.columns, row: refreshed.rows[try rowIndex(1, viewModel)])
+      #expect(data["name"] == .string("x"))
+      #expect(data["note"] == .string("y"))
+      #expect(
+        try await observer.executeInternal("SELECT name, note FROM Mrc_Items WHERE id = 1").rows
+          == [[.string("x"), .string("y")]])
+    }
+  }
+
   /// Keys whose neighbours share a double (2^63 - 1 / 2^63 - 2, 2^64 - 1 / 2^64 - 2, 2^53 + 1 /
   /// 2^53): every key is bound as text, so a double comparison would hit the neighbour.
   static let bigKeys: [(type: String, ids: [String])] = [
@@ -407,7 +455,7 @@ struct MySQLRowChangeSQLBuilderTests {
       let target = try #require(viewModel.editorResult?.editTarget)
       await viewModel.sendInlineEdit(
         PendingInlineEdit(
-          statement: try statement("n1", set: "inline"), columnName: "name",
+          statement: try statement("n1", set: "inline"), columnNames: ["name"],
           tableName: target.qualifiedName, cellId: nil, connectionManager: manager),
         target: target)
       #expect(
