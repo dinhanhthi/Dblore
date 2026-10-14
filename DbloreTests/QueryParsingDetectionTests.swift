@@ -10,7 +10,6 @@ import Testing
 @MainActor
 struct QueryParsingDetectionTests {
 
-
   // MARK: - Statement kind detection (classifier; replaces prefix-based isModificationQuery)
 
   @Suite("Statement kind - Detection")
@@ -128,6 +127,5 @@ struct QueryParsingDetectionTests {
       #expect(affectsAllRows("UPDATE users SET note = 'WHERE id = 1'"))
     }
   }
-
 
 }

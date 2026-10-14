@@ -102,4 +102,3 @@ struct ResultRowCapTests {
     }
   }
 }
-

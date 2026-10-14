@@ -24,4 +24,3 @@ struct NativeWindowTabsTests {
   // Miniaturized and background-tab windows count as open too, but both need the window server:
   // addTabbedWindow stalls the main actor for ~25s in the test host, so they are not tested here.
 }
-
