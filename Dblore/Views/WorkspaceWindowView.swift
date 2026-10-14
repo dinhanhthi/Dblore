@@ -66,9 +66,9 @@ struct AppWindowView: View {
   var body: some View {
     Group {
       if shouldCloseWindow {
-        // Empty view - window will close itself
+        // Empty view - window will close itself. Flexible: with `.contentSize` resizability a
+        // fixed size would shrink the window before it closes
         Color.clear
-          .frame(width: 1, height: 1)
       } else if let id = workspaceId,
         let manager = windowManager.workspace(for: id)
       {
@@ -90,6 +90,7 @@ struct AppWindowView: View {
             cancelFileOpen()
           }
         )
+        .documentWindowMode(.compact, isTabbed: false)
       } else if SessionManager.isRunningAsTestHost {
         // Running as test host - skip welcome (it loads recent connections from Keychain)
         Color.clear
@@ -271,7 +272,6 @@ struct NewWorkspaceWindowView: View {
         .background(Color.appBackground)
       }
     }
-    .frame(minWidth: 800, minHeight: 600)
     .buttonBorderShape(.capsule)
     // Observe pendingWorkspaceId to focus this window if its workspace is re-opened
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
@@ -358,13 +358,14 @@ class NewWindowStore {
         $0.animation = nil
       }
     let hostingController = NSHostingController(rootView: newWindowView)
+    // Min and max follow the content (`documentWindowMode`), like `.contentSize` resizability
+    hostingController.sizingOptions = [.minSize, .maxSize]
 
     let newWindow = NSWindow(contentViewController: hostingController)
     newWindow.title = "Dblore"
     newWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     newWindow.titlebarAppearsTransparent = true
     newWindow.titleVisibility = .hidden
-    newWindow.minSize = NSSize(width: 800, height: 600)
     newWindow.tabbingIdentifier = .dbloreDocument
     newWindow.tabbingMode = .automatic
 
@@ -457,30 +458,32 @@ class NewWindowStore {
     }
 
     let welcome = AppWindowView()
-      .frame(minWidth: 800, minHeight: 600)
       .transaction {
         guard !$0.isSidebarAnimation else { return }
         $0.disablesAnimations = true
         $0.animation = nil
       }
     let hostingController = NSHostingController(rootView: welcome)
+    // Min and max follow the content (`documentWindowMode`), like `.contentSize` resizability
+    hostingController.sizingOptions = [.minSize, .maxSize]
 
     let window = NSWindow(contentViewController: hostingController)
     window.title = "Dblore"
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
-    window.minSize = NSSize(width: 800, height: 600)
     window.isRestorable = false
     window.tabbingIdentifier = .dbloreDocument
     window.tabbingMode = .automatic
 
     if let parent {
       parent.addTabbedWindow(window, ordered: .above)
-    } else if frame.width >= 800, frame.height >= 600 {
-      window.setFrame(frame, display: false)
+    } else if frame.width > 0, frame.height > 0 {
+      // Welcome opens small, centered over the window it replaces
+      window.setFrame(
+        DocumentWindowSizing.compactFrame(centeredOn: frame), display: false)
     } else {
-      window.setContentSize(NSSize(width: 1200, height: 800))
+      window.setContentSize(DocumentWindowSizing.compactSize)
       window.center()
     }
 

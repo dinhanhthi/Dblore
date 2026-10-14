@@ -22,7 +22,7 @@ extension ConnectionFormContent {
           }) {
             HStack {
               // Connection name
-              Text(DropdownTitle.singleLine(entry.config.name))
+              Text(historyTitle(entry.config))
                 .font(.body)
 
               historyShield(for: entry.config)
@@ -59,7 +59,7 @@ extension ConnectionFormContent {
         }
       } label: {
         HStack {
-          Text(DropdownTitle.singleLine(selectedHistoryEntry?.config.name ?? "Select a connection"))
+          Text(selectedHistoryEntry.map { historyTitle($0.config) } ?? "Select a connection")
             .lineLimit(1)
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
           Spacer()
@@ -102,6 +102,11 @@ extension ConnectionFormContent {
         "This removes every connection from Recent connections. Saved passwords and certificates for those connections are removed too."
       )
     }
+  }
+
+  /// A row saved without a name shows `database@host:port` instead of an empty title.
+  func historyTitle(_ config: ConnectionConfig) -> String {
+    DropdownTitle.singleLine(config.name.isEmpty ? config.displayString : config.name)
   }
 
   var selectedHistoryEntry: ConnectionHistoryEntry? {

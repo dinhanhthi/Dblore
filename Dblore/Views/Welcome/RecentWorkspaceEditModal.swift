@@ -71,13 +71,13 @@ struct RecentWorkspaceEditModal: View {
         }
       }
       .padding(Spacing.md)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(Color.appBackground)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .background(Color.panelBackground)
 
       GenericModalFooter {
         Spacer(minLength: Spacing.sm)
         Button("Cancel") { isPresented = false }
-          .buttonStyle(SecondaryButtonStyle())
+          .buttonStyle(FilledSecondaryButtonStyle())
           .disabled(isSaving)
         Button(action: save) {
           HStack(spacing: Spacing.sm) {
@@ -94,16 +94,11 @@ struct RecentWorkspaceEditModal: View {
         .disabled(isSaving || trimmedName.isEmpty)
       }
     }
-    .frame(width: 440)
     .background(Color.cardBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.xxl)
-        .stroke(Color.border.opacity(0.5), lineWidth: 1)
-    )
-    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
-    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
   }
+
+  /// Width of the right sidebar the form opens in.
+  static let panelWidth: CGFloat = 400
 
   private func browse() {
     let panel = NSSavePanel()

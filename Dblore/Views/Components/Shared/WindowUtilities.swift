@@ -476,72 +476,260 @@ class DoubleClickBlockerNSView: NSView {
   }
 }
 
-// MARK: - Document Type Card
+// MARK: - Document Window Sizing
 
-/// Card for each document type in the welcome screen
-struct DocumentTypeCard: View {
-  let icon: String
-  let title: String
-  let description: String
-  let accentColor: Color
-  let onNew: () -> Void
-  let onOpen: () -> Void
+/// How big a document window's content wants it.
+enum DocumentWindowMode: Equatable {
+  /// Welcome screens: one small size, not resizable.
+  case compact
+  /// Tabs: resizable from 1000×600.
+  case regular
+}
 
-  @State private var isHovering = false
+/// SwiftUI sizes the window from the content frame set by `documentWindowMode` (windows use
+/// `.contentSize` resizability). This moves the frame when the mode changes: compact centers the
+/// small size, regular goes back to the window's last regular frame (1200×800 the first time).
+/// Tabs share one frame, so a window in a tab group, or in full screen, is never resized.
+@MainActor
+enum DocumentWindowSizing {
+  /// Content size below the title bar of a compact window.
+  static let compactSize = NSSize(width: 820, height: 540)
+  /// 1000 wide: the structure editor panel (80% of the window) then keeps the 800 its columns
+  /// table needs
+  static let regularMinSize = NSSize(width: 1000, height: 600)
+  static let regularDefaultSize = NSSize(width: 1200, height: 800)
 
-  var body: some View {
-    HStack(spacing: Spacing.md) {
-      Image(systemName: icon)
-        .font(.system(size: 20))
-        .foregroundColor(accentColor)
-        .frame(width: 24)
+  /// Mode last applied to each window (true for compact).
+  private static let modes = NSMapTable<NSWindow, NSNumber>.weakToStrongObjects()
+  /// Last regular frame of each window, restored when it leaves compact mode.
+  private static let regularFrames = NSMapTable<NSWindow, NSValue>.weakToStrongObjects()
+  private static var frameObservers: [NSObjectProtocol] = []
 
-      // Title and description
-      VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-          .font(.callout)
-          .fontWeight(.semibold)
-          .foregroundColor(.foreground)
-
-        Text(description)
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
-          .lineLimit(1)
-          .truncationMode(.tail)
-      }
-
-      Spacer(minLength: Spacing.sm)
-
-      // Buttons
-      HStack(spacing: Spacing.sm) {
-        Button {
-          onNew()
-        } label: {
-          Label("New", systemImage: "plus")
-        }
-        .buttonStyle(PrimaryButtonStyle())
-
-        Button {
-          onOpen()
-        } label: {
-          Label("Open", systemImage: "folder")
-        }
-        .buttonStyle(SecondaryButtonStyle())
-      }
-      .controlSize(.small)
+  /// `onSettled` runs once the window has animated to the mode's size, so the content can apply
+  /// the mode's limits: applying them first would let SwiftUI snap the window without animation.
+  static func apply(
+    _ mode: DocumentWindowMode, isTabbed: Bool, to window: NSWindow,
+    onSettled: @escaping () -> Void = {}
+  ) {
+    observeFramesOnce()
+    let wasCompact = modes.object(forKey: window)?.boolValue
+    modes.setObject(NSNumber(value: mode == .compact), forKey: window)
+    guard isLone(window, isTabbed: isTabbed) else {
+      unlock(window)
+      onSettled()
+      return
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
-    .frame(width: 460)
-    .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.lg)
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.lg)
-        .stroke(isHovering ? accentColor.opacity(0.5) : Color.border, lineWidth: 1)
-    )
-    .animation(.easeInOut(duration: 0.15), value: isHovering)
-    .onHover { hovering in
-      isHovering = hovering
+    switch mode {
+    case .compact:
+      // Same limits SwiftUI derives from the content frame, set here too: SwiftUI does not
+      // always refresh them after a programmatic resize
+      let size = withTitleBar(compactSize, of: window)
+      window.contentMinSize = size
+      setFullScreenAndZoom(enabled: false, on: window)
+      setFrame(centered(size, on: window.frame), of: window) {
+        window.contentMaxSize = size
+        onSettled()
+      }
+    case .regular:
+      window.contentMaxSize = NSSize(
+        width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+      setFullScreenAndZoom(enabled: true, on: window)
+      var target = window.frame
+      if wasCompact == true {
+        target =
+          regularFrames.object(forKey: window)?.rectValue
+          ?? centered(regularDefaultSize, on: window.frame)
+      } else if isSmallerThanRegular(window) {
+        target = centered(regularDefaultSize, on: window.frame)
+      }
+      setFrame(target, of: window) {
+        unlock(window)
+        onSettled()
+      }
+    }
+  }
+
+  /// Frame of a new compact window opened over `frame` (the closed or key window's frame).
+  static func compactFrame(centeredOn frame: NSRect) -> NSRect {
+    centered(compactSize, on: frame)
+  }
+
+  private static func unlock(_ window: NSWindow) {
+    window.contentMinSize = withTitleBar(regularMinSize, of: window)
+    window.contentMaxSize = NSSize(
+      width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    setFullScreenAndZoom(enabled: true, on: window)
+  }
+
+  /// The content frame sits below the title bar, so the window is that much taller.
+  private static func withTitleBar(_ size: NSSize, of window: NSWindow) -> NSSize {
+    NSSize(
+      width: size.width,
+      height: size.height + max(0, window.frame.height - window.contentLayoutRect.height))
+  }
+
+  private static func isLone(_ window: NSWindow, isTabbed: Bool) -> Bool {
+    !isTabbed && (window.tabbedWindows?.count ?? 1) <= 1
+      && !window.styleMask.contains(.fullScreen)
+  }
+
+  private static func isSmallerThanRegular(_ window: NSWindow) -> Bool {
+    window.frame.width < regularMinSize.width || window.frame.height < regularMinSize.height
+  }
+
+  /// Remembers a regular window's frame on every move and resize, before a switch to compact
+  /// shrinks it.
+  private static func observeFramesOnce() {
+    guard frameObservers.isEmpty else { return }
+    for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+      frameObservers.append(
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+          notification in
+          guard let window = notification.object as? NSWindow else { return }
+          MainActor.assumeIsolated {
+            guard modes.object(forKey: window)?.boolValue == false,
+              isLone(window, isTabbed: false), !isSmallerThanRegular(window)
+            else { return }
+            regularFrames.setObject(NSValue(rect: window.frame), forKey: window)
+          }
+        })
+    }
+  }
+
+  private static func setFullScreenAndZoom(enabled: Bool, on window: NSWindow) {
+    if enabled {
+      window.collectionBehavior.remove(.fullScreenNone)
+      window.collectionBehavior.insert(.fullScreenPrimary)
+    } else {
+      window.collectionBehavior.remove(.fullScreenPrimary)
+      window.collectionBehavior.insert(.fullScreenNone)
+    }
+    window.standardWindowButton(.zoomButton)?.isEnabled = enabled
+  }
+
+  private static func setFrame(
+    _ frame: NSRect, of window: NSWindow, completion: @escaping @MainActor () -> Void = {}
+  ) {
+    let frame = onScreen(frame, of: window)
+    guard frame != window.frame, window.isVisible, !SidebarAnimation.reduceMotion else {
+      window.setFrame(frame, display: true)
+      completion()
+      return
+    }
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = 0.25
+      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      window.animator().setFrame(frame, display: true)
+    } completionHandler: {
+      MainActor.assumeIsolated { completion() }
+    }
+  }
+
+  private static func centered(_ size: NSSize, on frame: NSRect) -> NSRect {
+    NSRect(
+      x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
+      width: size.width, height: size.height)
+  }
+
+  /// Moves `frame` inside the visible frame of the window's screen.
+  private static func onScreen(_ frame: NSRect, of window: NSWindow) -> NSRect {
+    guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return frame }
+    var frame = frame
+    frame.size.width = min(frame.width, visible.width)
+    frame.size.height = min(frame.height, visible.height)
+    frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+    frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+    return frame
+  }
+}
+
+extension View {
+  /// Sizes the hosting document window for `mode`. A compact window in a tab group stays
+  /// resizable: tabs share the group's frame.
+  func documentWindowMode(_ mode: DocumentWindowMode, isTabbed: Bool) -> some View {
+    modifier(DocumentWindowModeModifier(mode: mode, isTabbed: isTabbed))
+  }
+}
+
+private struct DocumentWindowModeModifier: ViewModifier {
+  let mode: DocumentWindowMode
+  let isTabbed: Bool
+
+  /// The mode whose size the window has animated to (see `onSettled`). Until then the limits
+  /// let the window pass between both sizes, so SwiftUI does not snap it.
+  @State private var settledMode: DocumentWindowMode?
+
+  func body(content: Content) -> some View {
+    let compact = DocumentWindowSizing.compactSize
+    let regular = DocumentWindowSizing.regularMinSize
+    let locked = mode == .compact && !isTabbed
+    let minSize = locked || (settledMode != .regular && !isTabbed) ? compact : regular
+    let maxSize = locked && settledMode == .compact ? compact : nil
+    content
+      // Measured below the title bar: the window is that much taller (`withTitleBar`)
+      .frame(
+        minWidth: minSize.width, maxWidth: maxSize?.width ?? .infinity,
+        minHeight: minSize.height, maxHeight: maxSize?.height ?? .infinity
+      )
+      .background(
+        DocumentWindowModeApplier(mode: mode, isTabbed: isTabbed) { settledMode = $0 }
+      )
+  }
+}
+
+private struct DocumentWindowModeApplier: NSViewRepresentable {
+  let mode: DocumentWindowMode
+  let isTabbed: Bool
+  let onSettled: (DocumentWindowMode) -> Void
+
+  func makeNSView(context: Context) -> ApplierView {
+    let view = ApplierView()
+    view.onSettled = onSettled
+    view.update(mode: mode, isTabbed: isTabbed)
+    return view
+  }
+
+  func updateNSView(_ nsView: ApplierView, context: Context) {
+    nsView.onSettled = onSettled
+    nsView.update(mode: mode, isTabbed: isTabbed)
+  }
+
+  final class ApplierView: NSView {
+    var onSettled: (DocumentWindowMode) -> Void = { _ in }
+    private var mode: DocumentWindowMode = .regular
+    private var isTabbed = false
+
+    func update(mode: DocumentWindowMode, isTabbed: Bool) {
+      guard mode != self.mode || isTabbed != self.isTabbed else { return }
+      self.mode = mode
+      self.isTabbed = isTabbed
+      scheduleApply()
+    }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      scheduleApply()
+    }
+
+    /// Next turn, outside the SwiftUI update. Session restore places its windows itself, so
+    /// the mode waits until it is done.
+    private func scheduleApply() {
+      guard window != nil else { return }
+      let delay: TimeInterval = LaunchRestorer.isRestoring ? 0.5 : 0
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        guard let self, let window = self.window else { return }
+        if LaunchRestorer.isRestoring {
+          self.scheduleApply()
+        } else {
+          let mode = self.mode
+          DocumentWindowSizing.apply(mode, isTabbed: self.isTabbed, to: window) {
+            [weak self] in
+            // A later mode switch wins over an animation that ends after it
+            guard let self, self.mode == mode else { return }
+            self.onSettled(mode)
+          }
+        }
+      }
     }
   }
 }

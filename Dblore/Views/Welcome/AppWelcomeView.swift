@@ -7,7 +7,7 @@ import AppKit
 import SwiftUI
 
 /// Welcome screen shown when no workspace is open
-/// Displays recent workspaces and recent connections in two columns
+/// Sidebar with logo and start actions; recent workspaces and connections on the right
 struct AppWelcomeView: View {
   /// Callback when a workspace is selected - opens workspace in current window
   var onWorkspaceSelected: ((UUID) -> Void)?
@@ -28,109 +28,78 @@ struct AppWelcomeView: View {
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
   /// Recent workspace whose name and file path are being edited.
+  /// Kept after close so the panel keeps its content while it slides out.
   @State private var editingWorkspace: WorkspaceHistoryEntry?
+  @State private var isWorkspaceEditPresented = false
+  @State private var isImportPresented = false
   @State private var isNativeTabBarVisible = false
   @Environment(\.controlActiveState) private var controlActiveState
+
+  @Environment(\.pixelLength) private var pixelLength
+
+  /// Clears the traffic lights when the native tab bar is hidden
+  private var topInset: CGFloat {
+    isNativeTabBarVisible ? 0 : ComponentSize.tabBarHeight
+  }
 
   var body: some View {
     ZStack {
       WelcomeWindowMarker().frame(width: 0, height: 0)
-      // Main content
-      GeometryReader { geometry in
-        ScrollView {
-          VStack(spacing: Spacing.xl) {
-            // Header
-            WelcomeHeader()
+      HStack(spacing: 0) {
+        WelcomeSidebar(
+          topInset: topInset,
+          onNewWorkspace: createNewWorkspace,
+          onConnect: showConnectionForm,
+          onImport: { isImportPresented = true },
+          onSettings: { NotificationCenter.default.post(name: .openSettings, object: nil) }
+        )
 
-            // Two columns for recent items
-            if recentManager.hasRecentItems {
-              HStack(alignment: .top, spacing: Spacing.xl) {
-                // Recent Workspaces column
-                if !recentManager.recentWorkspaces.isEmpty {
-                  RecentWorkspacesColumn(
-                    workspaces: recentManager.recentWorkspaces,
-                    onSelect: openWorkspace,
-                    onConfigure: editWorkspace,
-                    onRemove: { recentManager.removeWorkspace(id: $0.id) },
-                    onNew: createNewWorkspace,
-                    columnWidth: columnWidth(
-                      containerWidth: geometry.size.width,
-                      hasBothColumns: recentManager.hasBothLists
-                    )
-                  )
-                }
+        Rectangle()
+          .fill(Color.border)
+          .frame(width: pixelLength)
 
-                // Recent Connections column
-                if !recentManager.recentConnections.isEmpty {
-                  RecentConnectionsColumn(
-                    connections: recentManager.recentConnections,
-                    onSelect: openConnectionAsWorkspace,
-                    onConfigure: editConnection,
-                    onRemove: { recentManager.removeConnection(id: $0.id) },
-                    onNew: showConnectionForm,
-                    onImport: ConnectionImportPresenter.present,
-                    columnWidth: columnWidth(
-                      containerWidth: geometry.size.width,
-                      hasBothColumns: recentManager.hasBothLists
-                    )
-                  )
-                }
-              }
-            } else {
-              // No recent items - show action buttons
-              EmptyWelcomeActions(
-                onNewWorkspace: createNewWorkspace,
-                onConnect: showConnectionForm,
-                onImport: ConnectionImportPresenter.present
-              )
-            }
-          }
-          .padding(.vertical, Spacing.xxl)
-          .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
-        }
+        WelcomeRecents(
+          workspaces: recentManager.recentWorkspaces,
+          connections: recentManager.recentConnections,
+          onOpenWorkspace: openWorkspace,
+          onEditWorkspace: editWorkspace,
+          onRemoveWorkspace: { recentManager.removeWorkspace(id: $0.id) },
+          onOpenConnection: openConnectionAsWorkspace,
+          onEditConnection: editConnection,
+          onRemoveConnection: { recentManager.removeConnection(id: $0.id) },
+          onNewWorkspace: createNewWorkspace,
+          onConnect: showConnectionForm
+        )
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.appBackground)
-
     }
     .overlay {
       ToastOverlay()
-    }
-    .overlay(alignment: .topTrailing) {
-      // Same row as the traffic lights
-      Button {
-        NotificationCenter.default.post(name: .openSettings, object: nil)
-      } label: {
-        Image(systemName: "gearshape")
-          .foregroundColor(.foregroundMuted)
-      }
-      .buttonStyle(SecondaryButtonStyle(iconOnly: true))
-      .controlSize(.small)
-      .blockDoubleClickZoom()
-      .help("Settings (⌘,)")
-      .frame(height: ComponentSize.tabBarHeight)
-      .padding(.trailing, Spacing.md)
     }
     .connectionFormModal(
       isPresented: $isShowingConnectionSidebar,
       connectionConfig: $editingConnectionConfig,
       title: editingConnectionId == nil ? "Connect to Database" : "Edit Connection",
       submitTitle: editingConnectionId == nil ? "Connect" : "Save",
-      showsRecentHistory: editingConnectionId == nil,
+      showsRecentHistory: false,
       onTestConnection: testConnectionForWelcome,
       onConnect: submitConnectionForm,
       onOpenPluginSettings: { openSettings(section: .plugins) }
     )
-    // After the connection form, so it opens on top of it
+    // After the connection form, so they open on top of it
+    .connectionImportPanel(isPresented: $isImportPresented)
     .settingsModal(
       isPresented: $isShowingSettings, viewMode: nil, section: settingsSection,
       openToken: settingsToken
     )
-    .modalOverlay(isPresented: workspaceEditPresented) {
+    .sidePanelOverlay(
+      isPresented: $isWorkspaceEditPresented, width: RecentWorkspaceEditModal.panelWidth
+    ) {
       if let entry = editingWorkspace {
         RecentWorkspaceEditModal(
           entry: entry,
-          isPresented: workspaceEditPresented,
+          isPresented: $isWorkspaceEditPresented,
           onSave: saveWorkspaceEdit
         )
         .id(entry.id)
@@ -144,7 +113,17 @@ struct AppWelcomeView: View {
       TrafficLightPositioner(
         tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
     )
-    .background(HostWindowReader(reference: hostWindow))
+    .background(
+      HostWindowReader(reference: hostWindow) {
+        // A request made while this window was opening finds it once the window is known
+        Task { @MainActor in
+          if ConnectionImportPresenter.claim(for: hostWindow.window) { isImportPresented = true }
+        }
+      }
+    )
+    .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isImportPresented)
+    .documentWindowMode(.compact, isTabbed: isNativeTabBarVisible)
+    .windowAppearance(AppSettings.shared.themePreference.colorScheme)
     .onChange(of: controlActiveState) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
     }
@@ -168,19 +147,6 @@ struct AppWelcomeView: View {
     settingsSection = section
     settingsToken = UUID()
     isShowingSettings = true
-  }
-
-  // MARK: - Layout Helpers
-
-  /// Calculate column width based on container width and whether both columns are shown
-  /// - When only one column: 500px (fixed)
-  /// - When both columns and container < 900px: 350px each
-  /// - When both columns and container >= 900px: 400px each
-  private func columnWidth(containerWidth: CGFloat, hasBothColumns: Bool) -> CGFloat {
-    if !hasBothColumns {
-      return 500
-    }
-    return containerWidth < 900 ? 350 : 400
   }
 
   // MARK: - Actions
@@ -237,15 +203,9 @@ struct AppWelcomeView: View {
     }
   }
 
-  private var workspaceEditPresented: Binding<Bool> {
-    Binding(
-      get: { editingWorkspace != nil },
-      set: { if !$0 { editingWorkspace = nil } }
-    )
-  }
-
   private func editWorkspace(_ entry: WorkspaceHistoryEntry) {
     editingWorkspace = entry
+    isWorkspaceEditPresented = true
   }
 
   private func saveWorkspaceEdit(
@@ -308,112 +268,285 @@ struct AppWelcomeView: View {
   }
 }
 
-// MARK: - Welcome Header
+// MARK: - Welcome Sidebar
 
-struct WelcomeHeader: View {
+/// Logo, version and the start actions. Settings sits at the bottom.
+struct WelcomeSidebar: View {
+  var topInset: CGFloat = 0
+  let onNewWorkspace: () -> Void
+  let onConnect: () -> Void
+  let onImport: () -> Void
+  let onSettings: () -> Void
+
+  @ObservedObject private var updater = UpdaterController.shared
+  @Environment(\.openURL) private var openURL
+  @Environment(\.colorScheme) private var colorScheme
+
+  private static let repositoryURL = URL(string: "https://github.com/dinhanhthi/Dblore")!
+  private static let issuesURL = URL(string: "https://github.com/dinhanhthi/Dblore/issues")!
+
   private var appVersion: String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
   }
 
   var body: some View {
-    VStack(spacing: Spacing.xs) {
-      Image(nsImage: NSApp.applicationIconImage)
-        .resizable()
-        .aspectRatio(contentMode: .fit)
-        .frame(width: 80, height: 80)
+    WelcomeSidebarColumn(topInset: topInset) {
+      VStack(spacing: Spacing.xs) {
+        Image(nsImage: NSApp.applicationIconImage)
+          .resizable()
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 72, height: 72)
+        Text("Dblore")
+          .font(.title3.weight(.semibold))
+          .foregroundColor(.foreground)
+        Text("Version \(appVersion)")
+          .font(.callout)
+          .foregroundColor(.foregroundMuted)
+      }
+    } actions: {
+      WelcomeActionButton(
+        title: "New Workspace", systemImage: "folder.badge.plus", action: onNewWorkspace)
+      WelcomeActionButton(
+        title: "Connect to Database", systemImage: "server.rack", action: onConnect)
+      WelcomeActionButton(
+        title: "Import Connections...", systemImage: "square.and.arrow.down",
+        help: "Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip",
+        action: onImport)
+    } footer: {
+      HStack(spacing: Spacing.sm) {
+        Button(action: updater.checkForUpdates) {
+          Image(systemName: "arrow.triangle.2.circlepath")
+        }
+        .help("Check for Updates")
+        .disabled(!updater.canCheckForUpdates)
 
-      Text("Welcome to Dblore")
-        .font(.largeTitle)
-        .fontWeight(.bold)
-        .foregroundColor(.foreground)
+        Button {
+          openURL(Self.repositoryURL)
+        } label: {
+          Image("GitHubMark")
+            .resizable()
+            .frame(width: 14, height: 14)
+        }
+        .help("GitHub Repository (github.com/dinhanhthi/Dblore)")
 
-      Text("Open a workspace or connect to a database to get started")
-        .font(.body)
-        .foregroundColor(.foregroundMuted)
+        Button {
+          openURL(Self.issuesURL)
+        } label: {
+          Image(systemName: "ladybug")
+        }
+        .help("Find a bug or suggest a feature?")
 
-      Text("Version \(appVersion)")
-        .font(.callout)
-        .foregroundColor(.foregroundSubtle)
+        Button {
+          AppSettings.shared.themePreference = ThemePreference.toggled(from: colorScheme)
+        } label: {
+          Image(systemName: colorScheme == .dark ? "sun.max" : "moon")
+        }
+        .help(colorScheme == .dark ? "Switch to Light Mode" : "Switch to Dark Mode")
+
+        Button(action: onSettings) {
+          Image(systemName: "gearshape")
+        }
+        .help("Settings (⌘,)")
+      }
+      .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+      .frame(maxWidth: .infinity)
     }
-    .padding(.bottom, Spacing.lg)
   }
 }
 
-// MARK: - Recent Workspaces Column
+// MARK: - Welcome Recents
 
-struct RecentWorkspacesColumn: View {
+/// Filter field and Workspaces / Connections tabs above a compact list of the selected kind.
+struct WelcomeRecents: View {
   let workspaces: [WorkspaceHistoryEntry]
-  let onSelect: (WorkspaceHistoryEntry) -> Void
-  let onConfigure: (WorkspaceHistoryEntry) -> Void
-  let onRemove: (WorkspaceHistoryEntry) -> Void
-  let onNew: () -> Void
-  let columnWidth: CGFloat
+  let connections: [ConnectionHistoryEntry]
+  let onOpenWorkspace: (WorkspaceHistoryEntry) -> Void
+  let onEditWorkspace: (WorkspaceHistoryEntry) -> Void
+  let onRemoveWorkspace: (WorkspaceHistoryEntry) -> Void
+  let onOpenConnection: (ConnectionHistoryEntry) -> Void
+  let onEditConnection: (ConnectionHistoryEntry) -> Void
+  let onRemoveConnection: (ConnectionHistoryEntry) -> Void
+  /// Start actions offered when there is nothing recent yet
+  let onNewWorkspace: () -> Void
+  let onConnect: () -> Void
 
-  /// Track which workspace is currently being loaded
-  @State private var loadingWorkspaceId: UUID?
+  private enum RecentsTab: Hashable {
+    case workspaces
+    case connections
+  }
+
+  @Environment(\.pixelLength) private var pixelLength
+  @State private var filter = ""
+  @State private var tab: RecentsTab = .workspaces
+  /// Row being opened; every row is disabled meanwhile
+  @State private var loadingId: UUID?
+  /// Keeps rows readable on wide windows
+  private let contentMaxWidth: CGFloat = 680
+
+  private var query: String { filter.trimmingCharacters(in: .whitespaces) }
+
+  private var shownWorkspaces: [WorkspaceHistoryEntry] {
+    guard !query.isEmpty else { return workspaces }
+    return workspaces.filter {
+      $0.name.localizedCaseInsensitiveContains(query)
+        || ($0.connectionDisplayString?.localizedCaseInsensitiveContains(query) ?? false)
+    }
+  }
+
+  private var shownConnections: [ConnectionHistoryEntry] {
+    guard !query.isEmpty else { return connections }
+    return connections.filter {
+      $0.shortDisplayName.localizedCaseInsensitiveContains(query)
+        || $0.config.displayString.localizedCaseInsensitiveContains(query)
+    }
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Header with action button
-      HStack {
-        Label("Recent Workspaces", systemImage: "folder.badge.gearshape")
-          .font(.headline)
-          .foregroundColor(.foreground)
-
-        Spacer()
-
-        Button {
-          onNew()
-        } label: {
-          Label("New", systemImage: "plus")
+    if workspaces.isEmpty && connections.isEmpty {
+      emptyState
+    } else {
+      VStack(spacing: Spacing.md) {
+        HStack(spacing: Spacing.sm) {
+          WelcomeFilterField(prompt: "Filter recents", text: $filter)
+          CapsuleTabPicker(
+            selection: $tab, tabs: [.workspaces, .connections], height: 30
+          ) { item in
+            CapsuleTabLabel(text: tabTitle(item), isSelected: tab == item)
+          }
+          .fitsContent()
         }
-        .buttonStyle(PrimaryButtonStyle())
-        .controlSize(.small)
-      }
 
-      // Workspace list
-      VStack(spacing: 0) {
-        let rows = Array(workspaces.prefix(6))
-        ForEach(Array(rows.enumerated()), id: \.element.id) { index, workspace in
-          RecentWorkspaceRow(
-            workspace: workspace,
-            isFirst: index == 0,
-            isLast: index == rows.count - 1,
-            isLoading: loadingWorkspaceId == workspace.id,
-            onSelect: { entry in
-              loadingWorkspaceId = entry.id
-              onSelect(entry)
-            },
-            onConfigure: { onConfigure(workspace) },
-            onRemove: { onRemove(workspace) }
-          )
-          .disabled(loadingWorkspaceId != nil)
+        // The list scrolls inside its own card, which ends above the bottom edge
+        ScrollView {
+          VStack(alignment: .leading, spacing: Spacing.xxs) {
+            switch tab {
+            case .workspaces: workspaceRows
+            case .connections: connectionRows
+            }
+          }
+          .disabled(loadingId != nil)
+          .padding(Spacing.sm)
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.visible)
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.lg))
+        .overlay(
+          RoundedRectangle(cornerRadius: CornerRadius.lg)
+            .strokeBorder(Color.border, lineWidth: pixelLength)
+        )
       }
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md).fill(Color.cardBackground)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(Color.border, lineWidth: 1)
+      .frame(maxWidth: contentMaxWidth)
+      .padding(.horizontal, Spacing.xl)
+      .padding(.vertical, Spacing.xl)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .onAppear {
+        // Open on the list that has something in it
+        if workspaces.isEmpty { tab = .connections }
+      }
+    }
+  }
+
+  private func tabTitle(_ item: RecentsTab) -> String {
+    switch item {
+    case .workspaces: "Workspaces (\(workspaces.count))"
+    case .connections: "Connections (\(connections.count))"
+    }
+  }
+
+  @ViewBuilder
+  private var workspaceRows: some View {
+    let rows = shownWorkspaces
+    ForEach(rows, id: \.id) { workspace in
+      RecentWorkspaceRow(
+        workspace: workspace,
+        isLoading: loadingId == workspace.id,
+        onSelect: { entry in
+          loadingId = entry.id
+          onOpenWorkspace(entry)
+        },
+        onConfigure: { onEditWorkspace(workspace) },
+        onRemove: { onRemoveWorkspace(workspace) }
       )
     }
-    .frame(width: columnWidth)
+    if rows.isEmpty {
+      emptyListText(workspaces.isEmpty ? "No recent workspaces" : noMatchText)
+    }
+  }
+
+  @ViewBuilder
+  private var connectionRows: some View {
+    let rows = shownConnections
+    ForEach(rows, id: \.id) { connection in
+      RecentConnectionRow(
+        connection: connection,
+        isLoading: loadingId == connection.id,
+        onSelect: { entry in
+          loadingId = entry.id
+          onOpenConnection(entry)
+        },
+        onConfigure: { onEditConnection(connection) },
+        onRemove: { onRemoveConnection(connection) }
+      )
+    }
+    if rows.isEmpty {
+      emptyListText(connections.isEmpty ? "No recent connections" : noMatchText)
+    }
+  }
+
+  private var noMatchText: String { "Nothing matches \"\(query)\"" }
+
+  private func emptyListText(_ text: String) -> some View {
+    Text(text)
+      .font(.callout)
+      .foregroundColor(.foregroundMuted)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.top, Spacing.sm)
+  }
+
+  /// First run: a welcome and the two ways to start, instead of an empty filter and tabs
+  private var emptyState: some View {
+    VStack(spacing: Spacing.md) {
+      Text("Welcome to Dblore")
+        .font(.title2.weight(.semibold))
+        .foregroundColor(.foreground)
+      Text(
+        "Connect to a database to start querying, or create a workspace to keep your notebooks, SQL files and notes together."
+      )
+      .font(.callout)
+      .foregroundColor(.foregroundMuted)
+      .multilineTextAlignment(.center)
+      .frame(maxWidth: 380)
+
+      HStack(spacing: Spacing.sm) {
+        Button(action: onNewWorkspace) {
+          Label("New Workspace", systemImage: "folder.badge.plus")
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        Button(action: onConnect) {
+          Label("Connect to Database", systemImage: "server.rack")
+        }
+        .buttonStyle(PrimaryButtonStyle())
+      }
+      .padding(.top, Spacing.sm)
+    }
+    .padding(Spacing.xl)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
 // MARK: - Recent Workspace Row
 
+/// One line: name, connection string, then tab count and relative time.
 struct RecentWorkspaceRow: View {
   let workspace: WorkspaceHistoryEntry
-  let isFirst: Bool
-  let isLast: Bool
   let isLoading: Bool
   let onSelect: (WorkspaceHistoryEntry) -> Void
   let onConfigure: () -> Void
   let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringReveal = false
   @State private var isHoveringConfigure = false
   @State private var isHoveringRemove = false
 
@@ -421,198 +554,64 @@ struct RecentWorkspaceRow: View {
     Button {
       onSelect(workspace)
     } label: {
-      HStack(alignment: .top, spacing: Spacing.sm) {
-        // Workspace icon or loading indicator
+      RecentRowLayout(isHovering: isHovering) {
         if isLoading {
-          ProgressView()
-            .controlSize(.small)
-            .frame(width: 24)
+          ProgressView().controlSize(.small)
         } else {
           Image(systemName: "folder.badge.gearshape")
-            .font(.system(size: 16))
+            .font(.system(size: 13))
             .foregroundColor(.accent)
-            .frame(width: 24)
         }
-
-        VStack(alignment: .leading, spacing: 2) {
-          // Name. Config and remove take the old tab-count chip slot on hover.
+      } title: {
+        Text(workspace.name)
+      } detail: {
+        if let connection = workspace.connectionDisplayString, !connection.isEmpty {
+          Text(connection)
+        }
+      } trailing: {
+        RecentTrailingSlot(
+          isShown: showsRecentActions,
+          isHoveringReveal: $isHoveringReveal,
+          isHoveringConfigure: $isHoveringConfigure,
+          isHoveringRemove: $isHoveringRemove,
+          configureHelp: "Edit workspace",
+          onReveal: { NSWorkspace.shared.activateFileViewerSelecting([workspace.fileURL]) },
+          onConfigure: onConfigure,
+          onRemove: onRemove
+        ) {
           HStack(spacing: Spacing.xs) {
-            Text(workspace.name)
-              .font(.callout)
-              .fontWeight(.medium)
-              .foregroundColor(.foreground)
-              .lineLimit(1)
-              .truncationMode(.tail)
-
-            Spacer(minLength: 0)
+            if workspace.tabCount > 0 {
+              Text("\(workspace.tabCount)")
+                .font(.caption.weight(.bold))
+                .foregroundColor(.foreground)
+                .help("Number of tabs open in this workspace")
+              RecentMetaDot()
+            }
+            Text(workspace.formattedLastOpened)
+              .help("Last opened date")
           }
-          .recentActionSlot(
-            isShown: showsRecentActions,
-            isHoveringConfigure: $isHoveringConfigure,
-            isHoveringRemove: $isHoveringRemove,
-            configureHelp: "Edit workspace",
-            onConfigure: onConfigure,
-            onRemove: onRemove
-          )
-
-          workspaceDetailLine
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(Spacing.sm)
-      .background(
-        recentRowShape(isFirst: isFirst, isLast: isLast)
-          .fill(isHovering ? Color.cellBackgroundHover : Color.clear)
-      )
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .onHover { hovering in
-      isHovering = hovering
-    }
+    .onHover { isHovering = $0 }
     .animation(.easeOut(duration: 0.12), value: isHovering)
+    .animation(.easeOut(duration: 0.12), value: isHoveringReveal)
     .animation(.easeOut(duration: 0.12), value: isHoveringConfigure)
     .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
   }
 
-  /// Connection string, then tab count and relative time, separated by dots.
-  /// The string truncates; the count and time stay fully visible.
-  private var workspaceDetailLine: some View {
-    let connection = workspace.connectionDisplayString.flatMap { $0.isEmpty ? nil : $0 }
-    let showsTabCount = workspace.tabCount > 0
-
-    return HStack(spacing: Spacing.xs) {
-      if let connection {
-        Text(connection)
-          .foregroundColor(.foregroundMuted)
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .frame(minWidth: 0, alignment: .leading)
-      }
-
-      if showsTabCount {
-        if connection != nil {
-          RecentMetaDot()
-        }
-        Text("\(workspace.tabCount)")
-          .font(.caption.weight(.bold))
-          .foregroundColor(.foreground)
-          .fixedSize(horizontal: true, vertical: false)
-          .layoutPriority(1)
-          .help("Number of tabs open in this workspace")
-      }
-
-      if connection != nil || showsTabCount {
-        RecentMetaDot()
-      }
-
-      Text(workspace.formattedLastOpened)
-        .fixedSize(horizontal: true, vertical: false)
-        .layoutPriority(1)
-        .help("Last opened date")
-
-      Spacer(minLength: 0)
-        .layoutPriority(-1)
-    }
-    .font(.caption)
-    .foregroundColor(.foregroundSubtle)
-  }
-
   private var showsRecentActions: Bool {
-    (isHovering || isHoveringConfigure || isHoveringRemove) && !isLoading
-  }
-}
-
-// MARK: - Recent Connections Column
-
-struct RecentConnectionsColumn: View {
-  let connections: [ConnectionHistoryEntry]
-  let onSelect: (ConnectionHistoryEntry) -> Void
-  let onConfigure: (ConnectionHistoryEntry) -> Void
-  let onRemove: (ConnectionHistoryEntry) -> Void
-  let onNew: () -> Void
-  var onImport: () -> Void = {}
-  let columnWidth: CGFloat
-
-  /// Track which connection is currently being loaded
-  @State private var loadingConnectionId: UUID?
-  /// Shows every saved connection instead of the first `collapsedCount`.
-  @State private var showsAll = false
-  private let collapsedCount = 6
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.md) {
-      // Header with action button
-      HStack {
-        Label("Recent Connections", systemImage: "server.rack")
-          .font(.headline)
-          .foregroundColor(.foreground)
-
-        Spacer()
-
-        Button {
-          onImport()
-        } label: {
-          Label("Import", systemImage: "square.and.arrow.down")
-        }
-        .buttonStyle(SecondaryButtonStyle())
-        .controlSize(.small)
-        .help("Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip")
-
-        Button {
-          onNew()
-        } label: {
-          Label("Connect", systemImage: "plus")
-        }
-        .buttonStyle(PrimaryButtonStyle())
-        .controlSize(.small)
-      }
-
-      // Connection list
-      VStack(spacing: 0) {
-        let rows = showsAll ? connections : Array(connections.prefix(collapsedCount))
-        ForEach(Array(rows.enumerated()), id: \.element.id) { index, connection in
-          RecentConnectionRow(
-            connection: connection,
-            isFirst: index == 0,
-            isLast: index == rows.count - 1,
-            isLoading: loadingConnectionId == connection.id,
-            onSelect: { entry in
-              loadingConnectionId = entry.id
-              onSelect(entry)
-            },
-            onConfigure: { onConfigure(connection) },
-            onRemove: { onRemove(connection) }
-          )
-          .disabled(loadingConnectionId != nil)
-        }
-      }
-      .background(
-        RoundedRectangle(cornerRadius: CornerRadius.md).fill(Color.cardBackground)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: CornerRadius.md)
-          .stroke(Color.border, lineWidth: 1)
-      )
-
-      if connections.count > collapsedCount {
-        Button(showsAll ? "Show less" : "Show all (\(connections.count))") {
-          showsAll.toggle()
-        }
-        .buttonStyle(GhostButtonStyle())
-        .controlSize(.small)
-      }
-    }
-    .frame(width: columnWidth)
+    (isHovering || isHoveringReveal || isHoveringConfigure || isHoveringRemove) && !isLoading
   }
 }
 
 // MARK: - Recent Connection Row
 
+/// One line: name, connection string, then last-used date.
 struct RecentConnectionRow: View {
   let connection: ConnectionHistoryEntry
-  let isFirst: Bool
-  let isLast: Bool
   let isLoading: Bool
   let onSelect: (ConnectionHistoryEntry) -> Void
   let onConfigure: () -> Void
@@ -626,84 +625,40 @@ struct RecentConnectionRow: View {
     Button {
       onSelect(connection)
     } label: {
-      HStack(alignment: .top, spacing: Spacing.sm) {
-        // Database type icon or loading indicator
+      RecentRowLayout(isHovering: isHovering) {
         if isLoading {
-          ProgressView()
-            .controlSize(.small)
-            .frame(width: 24)
+          ProgressView().controlSize(.small)
         } else {
           Image(connection.config.databaseType.iconAssetName)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: 16, height: 16)
-            .foregroundColor(.syntaxFunction)
-            .frame(width: 24)
+            .frame(width: 17, height: 17)
+            .foregroundColor(connection.config.databaseType.brandColor)
         }
-
-        VStack(alignment: .leading, spacing: 2) {
-          // Name. Config and remove take the trailing slot on hover, same as workspace rows.
-          HStack(spacing: Spacing.xs) {
-            Text(connection.shortDisplayName)
-              .font(.callout)
-              .fontWeight(.medium)
-              .foregroundColor(.foreground)
-              .lineLimit(1)
-              .truncationMode(.tail)
-
-            Spacer(minLength: 0)
-          }
-          .recentActionSlot(
-            isShown: showsRecentActions,
-            isHoveringConfigure: $isHoveringConfigure,
-            isHoveringRemove: $isHoveringRemove,
-            configureHelp: "Edit connection",
-            onConfigure: onConfigure,
-            onRemove: onRemove
-          )
-
-          connectionDetailLine
+      } title: {
+        Text(connection.shortDisplayName)
+      } detail: {
+        Text(connection.config.displayString)
+      } trailing: {
+        RecentTrailingSlot(
+          isShown: showsRecentActions,
+          isHoveringConfigure: $isHoveringConfigure,
+          isHoveringRemove: $isHoveringRemove,
+          configureHelp: "Edit connection",
+          onConfigure: onConfigure,
+          onRemove: onRemove
+        ) {
+          Text(connection.formattedLastUsedDate)
+            .help("Last used date")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(Spacing.sm)
-      .background(
-        recentRowShape(isFirst: isFirst, isLast: isLast)
-          .fill(isHovering ? Color.cellBackgroundHover : Color.clear)
-      )
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .onHover { hovering in
-      isHovering = hovering
-    }
+    .onHover { isHovering = $0 }
     .animation(.easeOut(duration: 0.12), value: isHovering)
     .animation(.easeOut(duration: 0.12), value: isHoveringConfigure)
     .animation(.easeOut(duration: 0.12), value: isHoveringRemove)
-  }
-
-  /// Connection string, then last-used date, separated by a dot.
-  /// The string truncates; the date stays fully visible.
-  private var connectionDetailLine: some View {
-    HStack(spacing: Spacing.xs) {
-      Text(connection.config.displayString)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(1)
-        .truncationMode(.tail)
-        .frame(minWidth: 0, alignment: .leading)
-
-      RecentMetaDot()
-
-      Text(connection.formattedLastUsedDate)
-        .fixedSize(horizontal: true, vertical: false)
-        .layoutPriority(1)
-        .help("Last used date")
-
-      Spacer(minLength: 0)
-        .layoutPriority(-1)
-    }
-    .font(.caption)
-    .foregroundColor(.foregroundSubtle)
   }
 
   private var showsRecentActions: Bool {
@@ -713,25 +668,20 @@ struct RecentConnectionRow: View {
 
 // MARK: - Recent Hover Buttons
 
-/// Hover highlight of a row: rounded only at the corners it shares with the card
-private func recentRowShape(isFirst: Bool, isLast: Bool) -> UnevenRoundedRectangle {
-  UnevenRoundedRectangle(
-    topLeadingRadius: isFirst ? CornerRadius.md : 0,
-    bottomLeadingRadius: isLast ? CornerRadius.md : 0,
-    bottomTrailingRadius: isLast ? CornerRadius.md : 0,
-    topTrailingRadius: isFirst ? CornerRadius.md : 0)
-}
-
 private enum RecentHoverMetrics {
   static let diameter: CGFloat = 16
-  /// Title-line inset so the name clears the gear and the remove mark.
-  static let pairWidth: CGFloat = diameter * 2 + Spacing.xs
+
+  /// Minimum width of the trailing slot so the buttons never cover the detail text.
+  static func slotWidth(buttonCount: Int) -> CGFloat {
+    diameter * CGFloat(buttonCount) + Spacing.xs * CGFloat(buttonCount - 1)
+  }
 }
 
 /// Hover-only control on a recent row. The remove mark is drawn, not an SF Symbol:
 /// `xmark`'s alignment rect sits off the circle's center.
 private struct RecentHoverButton: View {
   enum Mark {
+    case reveal
     case configure
     case remove
   }
@@ -764,6 +714,10 @@ private struct RecentHoverButton: View {
   @ViewBuilder
   private var markView: some View {
     switch mark {
+    case .reveal:
+      Image(systemName: "folder")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundColor(color)
     case .configure:
       Image(systemName: "gearshape")
         .font(.system(size: 9, weight: .semibold))
@@ -794,155 +748,63 @@ private struct CenteredXMark: View {
   }
 }
 
-extension View {
-  /// Puts config and remove on the trailing edge of a title line.
-  fileprivate func recentActionSlot(
-    isShown: Bool,
-    isHoveringConfigure: Binding<Bool>,
-    isHoveringRemove: Binding<Bool>,
-    configureHelp: String,
-    onConfigure: @escaping () -> Void,
-    onRemove: @escaping () -> Void
-  ) -> some View {
-    padding(.trailing, isShown ? RecentHoverMetrics.pairWidth : 0)
+/// Meta on the trailing edge of a row; reveal (optional), config and remove take its place on hover.
+private struct RecentTrailingSlot<Meta: View>: View {
+  let isShown: Bool
+  var isHoveringReveal: Binding<Bool> = .constant(false)
+  @Binding var isHoveringConfigure: Bool
+  @Binding var isHoveringRemove: Bool
+  let configureHelp: String
+  var onReveal: (() -> Void)? = nil
+  let onConfigure: () -> Void
+  let onRemove: () -> Void
+  @ViewBuilder let meta: Meta
+
+  var body: some View {
+    meta
+      .fixedSize()
+      .frame(
+        minWidth: RecentHoverMetrics.slotWidth(buttonCount: onReveal == nil ? 2 : 3),
+        alignment: .trailing
+      )
+      .opacity(isShown ? 0 : 1)
       .overlay(alignment: .trailing) {
         if isShown {
           HStack(spacing: Spacing.xs) {
+            if let onReveal {
+              RecentHoverButton(
+                mark: .reveal,
+                help: "Go to location",
+                action: onReveal,
+                isHovering: isHoveringReveal
+              )
+            }
             RecentHoverButton(
               mark: .configure,
               help: configureHelp,
               action: onConfigure,
-              isHovering: isHoveringConfigure
+              isHovering: $isHoveringConfigure
             )
             RecentHoverButton(
               mark: .remove,
               help: "Remove from recent",
               action: onRemove,
-              isHovering: isHoveringRemove
+              isHovering: $isHoveringRemove
             )
           }
           .transition(.opacity)
         }
       }
-      .zIndex(isShown ? 1 : 0)
   }
 }
 
-/// Separator between connection string, tab count, and relative time.
+/// Separator between tab count and relative time.
 private struct RecentMetaDot: View {
   var body: some View {
     Circle()
       .fill(Color.foregroundSubtle)
       .frame(width: 3, height: 3)
       .accessibilityHidden(true)
-  }
-}
-
-// MARK: - Empty Welcome Actions
-
-struct EmptyWelcomeActions: View {
-  let onNewWorkspace: () -> Void
-  let onConnect: () -> Void
-  var onImport: () -> Void = {}
-
-  var body: some View {
-    VStack(spacing: Spacing.lg) {
-      cards
-
-      Button {
-        onImport()
-      } label: {
-        Label("Import Connections...", systemImage: "square.and.arrow.down")
-      }
-      .buttonStyle(GhostButtonStyle())
-    }
-  }
-
-  private var cards: some View {
-    HStack(spacing: Spacing.lg) {
-      // New Workspace Card
-      ActionCard(
-        icon: "folder.badge.gearshape",
-        title: "New Workspace",
-        description: "Create a new workspace to organize your notebooks and queries",
-        accentColor: .accent,
-        buttonTitle: "Create Workspace",
-        action: onNewWorkspace
-      )
-
-      // Connect to Database Card
-      ActionCard(
-        icon: "server.rack",
-        title: "Connect to Database",
-        description: "Connect to a database and start querying",
-        accentColor: .syntaxFunction,
-        buttonTitle: "Connect",
-        action: onConnect
-      )
-    }
-  }
-}
-
-// MARK: - Action Card
-
-struct ActionCard: View {
-  let icon: String
-  let title: String
-  let description: String
-  let accentColor: Color
-  let buttonTitle: String
-  let action: () -> Void
-
-  @State private var isHovering = false
-  @State private var isHoveringRemove = false
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      // Icon and Title
-      HStack(spacing: Spacing.sm) {
-        Image(systemName: icon)
-          .font(.system(size: 24))
-          .foregroundColor(accentColor)
-
-        Text(title)
-          .font(.headline)
-          .foregroundColor(.foreground)
-      }
-
-      // Description
-      Text(description)
-        .font(.subheadline)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(2)
-        .fixedSize(horizontal: false, vertical: true)
-
-      Spacer()
-
-      // Action button
-      Button(action: action) {
-        Text(buttonTitle)
-          .frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.borderedProminent)
-      .buttonBorderShape(.capsule)
-      .linkPointer()
-      .tint(accentColor)
-      .controlSize(.regular)
-    }
-    .padding(Spacing.lg)
-    .frame(width: 260, height: 180)
-    .background(Color.cardBackground)
-    .cornerRadius(CornerRadius.lg)
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.lg)
-        .stroke(isHovering ? accentColor.opacity(0.5) : Color.border, lineWidth: 1)
-    )
-    .shadow(color: .black.opacity(isHovering ? 0.1 : 0.05), radius: isHovering ? 8 : 4, y: 2)
-    .scaleEffect(isHovering ? 1.02 : 1.0)
-    .animation(.easeInOut(duration: 0.15), value: isHovering)
-    .onHover { hovering in
-      isHovering = hovering
-    }
   }
 }
 
@@ -1001,139 +863,49 @@ private enum PreviewData {
   }
 }
 
-// MARK: - Preview RecentManager
-
-@MainActor
-@Observable
-private class PreviewRecentManager {
-  var recentWorkspaces: [WorkspaceHistoryEntry]
-  var recentConnections: [ConnectionHistoryEntry]
-
-  init(
-    workspaces: [WorkspaceHistoryEntry] = [],
-    connections: [ConnectionHistoryEntry] = []
-  ) {
-    self.recentWorkspaces = workspaces
-    self.recentConnections = connections
-  }
-
-  var hasRecentItems: Bool {
-    !recentWorkspaces.isEmpty || !recentConnections.isEmpty
-  }
-
-  var hasOnlyWorkspaces: Bool {
-    !recentWorkspaces.isEmpty && recentConnections.isEmpty
-  }
-
-  var hasOnlyConnections: Bool {
-    recentWorkspaces.isEmpty && !recentConnections.isEmpty
-  }
-
-  var hasBothLists: Bool {
-    !recentWorkspaces.isEmpty && !recentConnections.isEmpty
-  }
-}
-
-// MARK: - Preview AppWelcomeView
-
-private struct PreviewAppWelcomeView: View {
-  let previewManager: PreviewRecentManager
-
-  /// Calculate column width based on container width and whether both columns are shown
-  private func columnWidth(containerWidth: CGFloat, hasBothColumns: Bool) -> CGFloat {
-    if !hasBothColumns {
-      return 500
-    }
-    return containerWidth < 900 ? 350 : 400
-  }
-
-  var body: some View {
-    ZStack {
-      GeometryReader { geometry in
-        ScrollView {
-          VStack(spacing: Spacing.xl) {
-            WelcomeHeader()
-
-            if previewManager.hasRecentItems {
-              HStack(alignment: .top, spacing: Spacing.xl) {
-                if !previewManager.recentWorkspaces.isEmpty {
-                  RecentWorkspacesColumn(
-                    workspaces: previewManager.recentWorkspaces,
-                    onSelect: { _ in },
-                    onConfigure: { _ in },
-                    onRemove: { _ in },
-                    onNew: {},
-                    columnWidth: columnWidth(
-                      containerWidth: geometry.size.width,
-                      hasBothColumns: previewManager.hasBothLists
-                    )
-                  )
-                }
-
-                if !previewManager.recentConnections.isEmpty {
-                  RecentConnectionsColumn(
-                    connections: previewManager.recentConnections,
-                    onSelect: { _ in },
-                    onConfigure: { _ in },
-                    onRemove: { _ in },
-                    onNew: {},
-                    columnWidth: columnWidth(
-                      containerWidth: geometry.size.width,
-                      hasBothColumns: previewManager.hasBothLists
-                    )
-                  )
-                }
-              }
-            } else {
-              EmptyWelcomeActions(
-                onNewWorkspace: {},
-                onConnect: {}
-              )
-            }
-          }
-          .padding(.vertical, Spacing.xxl)
-          .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
-        }
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Color.appBackground)
-    }
-  }
-}
-
 // MARK: - Previews
 
+private struct PreviewWelcome: View {
+  var workspaces: [WorkspaceHistoryEntry] = []
+  var connections: [ConnectionHistoryEntry] = []
+
+  var body: some View {
+    HStack(spacing: 0) {
+      WelcomeSidebar(onNewWorkspace: {}, onConnect: {}, onImport: {}, onSettings: {})
+      Divider()
+      WelcomeRecents(
+        workspaces: workspaces,
+        connections: connections,
+        onOpenWorkspace: { _ in },
+        onEditWorkspace: { _ in },
+        onRemoveWorkspace: { _ in },
+        onOpenConnection: { _ in },
+        onEditConnection: { _ in },
+        onRemoveConnection: { _ in },
+        onNewWorkspace: {},
+        onConnect: {}
+      )
+    }
+    .background(Color.appBackground)
+    .frame(width: 800, height: 600)
+  }
+}
+
 #Preview("Both Workspaces and Connections") {
-  PreviewAppWelcomeView(
-    previewManager: PreviewRecentManager(
-      workspaces: PreviewData.makeWorkspaces(),
-      connections: PreviewData.makeConnections()
-    )
+  PreviewWelcome(
+    workspaces: PreviewData.makeWorkspaces(),
+    connections: PreviewData.makeConnections()
   )
-  .frame(width: 800, height: 600)
 }
 
 #Preview("Empty - No Recent Items") {
-  PreviewAppWelcomeView(
-    previewManager: PreviewRecentManager()
-  )
-  .frame(width: 800, height: 600)
+  PreviewWelcome()
 }
 
 #Preview("Only Workspaces") {
-  PreviewAppWelcomeView(
-    previewManager: PreviewRecentManager(
-      workspaces: PreviewData.makeWorkspaces()
-    )
-  )
-  .frame(width: 800, height: 600)
+  PreviewWelcome(workspaces: PreviewData.makeWorkspaces())
 }
 
 #Preview("Only Connections") {
-  PreviewAppWelcomeView(
-    previewManager: PreviewRecentManager(
-      connections: PreviewData.makeConnections()
-    )
-  )
-  .frame(width: 800, height: 600)
+  PreviewWelcome(connections: PreviewData.makeConnections())
 }

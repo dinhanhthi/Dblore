@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-/// Modal wrapper for ConnectionFormContent
+/// Right-sidebar wrapper for ConnectionFormContent
 /// Used consistently across the app for showing connection forms
 struct ConnectionFormModal: View {
   @Binding var isPresented: Bool
@@ -26,7 +26,9 @@ struct ConnectionFormModal: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      GenericModalHeader(title: title, onClose: { isPresented = false }) {
+      GenericModalHeader(
+        title: title, verticalPadding: Spacing.md, onClose: { isPresented = false }
+      ) {
         databaseTypeMenu
       }
       if connectionConfig.databaseType.capabilities.requiresPlugin && !isDuckDBInstalled {
@@ -46,18 +48,11 @@ struct ConnectionFormModal: View {
         draftGeneration: draftGeneration
       )
     }
-    .modalFrame(
-      width: 440, height: connectionConfig.databaseType.capabilities.isFileBased ? 420 : 640
-    )
     .background(Color.cardBackground)
-    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
-    .overlay(
-      RoundedRectangle(cornerRadius: CornerRadius.xxl)
-        .stroke(Color.border.opacity(0.5), lineWidth: 1)
-    )
-    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
-    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
   }
+
+  /// Width of the right sidebar the form opens in.
+  static let panelWidth: CGFloat = 440
 
   /// Engine picker, sitting on the right of the title and before the close button.
   private var databaseTypeMenu: some View {
@@ -66,13 +61,20 @@ struct ConnectionFormModal: View {
       showExperimental: AppSettings.shared.showExperimentalEngines,
       current: connectionConfig.databaseType,
       isPluginInstalled: { $0 == .duckdb ? installed : true })
-    return Picker("Database", selection: $connectionConfig.databaseType) {
-      ForEach(types, id: \.self) { type in
-        Text(type.displayName).tag(type)
+    // A capsule like the form's dropdowns, so it is white on the header in light
+    return Menu {
+      Picker("Database", selection: $connectionConfig.databaseType) {
+        ForEach(types, id: \.self) { type in
+          Text(type.displayName).tag(type)
+        }
       }
+      .pickerStyle(.inline)
+      .labelsHidden()
+    } label: {
+      HeaderDropdownLabel(title: connectionConfig.databaseType.displayName)
     }
-    .pickerStyle(.menu)
-    .labelsHidden()
+    .buttonStyle(.plain)
+    .linkPointer()
     .fixedSize()
   }
 
@@ -130,7 +132,9 @@ nonisolated enum ConnectionErrorAction: Equatable, Sendable {
   /// `DatabaseError.engineUnavailable`, directly or wrapped in another error's message (catalog
   /// fetches wrap it in `queryFailed`).
   static func action(for error: any Error) -> ConnectionErrorAction? {
-    if case DatabaseError.engineUnavailable = error { return .openPluginSettings }
+    if case DatabaseError.engineUnavailable(let type) = error {
+      return type.capabilities.requiresPlugin ? .openPluginSettings : nil
+    }
     return action(forMessage: error.localizedDescription)
   }
 
@@ -157,7 +161,7 @@ nonisolated enum ConnectionErrorAction: Equatable, Sendable {
 // MARK: - View Extension for Connection Form Modal
 
 extension View {
-  /// Shows a connection form modal with zoom animation from center
+  /// Shows the connection form in a right sidebar that slides in from the trailing edge
   func connectionFormModal(
     isPresented: Binding<Bool>,
     connectionConfig: Binding<ConnectionConfig>,
@@ -173,7 +177,7 @@ extension View {
       .postOpenPluginSettings,
     draftGeneration: Int = 0
   ) -> some View {
-    modalOverlay(isPresented: isPresented) {
+    sidePanelOverlay(isPresented: isPresented, width: ConnectionFormModal.panelWidth) {
       ConnectionFormModal(
         isPresented: isPresented,
         connectionConfig: connectionConfig,
@@ -283,19 +287,12 @@ struct WorkspaceConnectUnlockSheet: View {
 
   Color.appBackground
     .frame(width: 800, height: 700)
-    .overlay {
-      ZStack {
-        if isPresented {
-          Color.black.opacity(0.4)
-            .ignoresSafeArea()
-
-          ConnectionFormModal(
-            isPresented: $isPresented,
-            connectionConfig: $config,
-            onTestConnection: { _ in true },
-            onConnect: { _ in }
-          )
-        }
-      }
+    .sidePanelOverlay(isPresented: $isPresented, width: ConnectionFormModal.panelWidth) {
+      ConnectionFormModal(
+        isPresented: $isPresented,
+        connectionConfig: $config,
+        onTestConnection: { _ in true },
+        onConnect: { _ in }
+      )
     }
 }

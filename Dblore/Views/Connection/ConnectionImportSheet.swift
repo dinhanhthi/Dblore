@@ -2,10 +2,10 @@
 //  ConnectionImportSheet.swift
 //  Dblore
 //
-//  Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip. The sheet attaches to
-//  the frontmost document window (above any modal on it), so the Welcome screen, the connection
-//  form and the File menu all open the same sheet. Imported content is external input: rows are
-//  shown as plain text and never include passwords.
+//  Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip. The sidebar opens in
+//  the frontmost document window (above the connection form), so the Welcome screen, the
+//  connection form and the File menu all open the same panel. Imported content is external input:
+//  rows are shown as plain text and never include passwords.
 //
 
 import AppKit
@@ -37,7 +37,7 @@ nonisolated extension ImportSource {
 
   var hint: String {
     switch self {
-    case .uri: "Paste a postgresql:// connection URI."
+    case .uri: "Paste a postgresql:// or mysql:// connection URI."
     case .pgpass: "Choose your .pgpass file or paste its contents."
     case .dbeaver:
       "Choose your DBeaver workspace's .dbeaver folder (e.g. ~/Library/DBeaverData/workspace6/General/.dbeaver)."
@@ -107,55 +107,45 @@ nonisolated enum ConnectionImportText {
 
 // MARK: - Presenter
 
-/// Attaches the import sheet to the frontmost document window, opening the Welcome window first
-/// when none is open. One sheet at a time.
+/// One request to open the import sidebar in the document window numbered `windowNumber`.
+struct ConnectionImportRequest: Equatable {
+  let windowNumber: Int
+  let id = UUID()
+}
+
+/// The pending request. Welcome and workspace views watch it and open the sidebar when it
+/// targets their window.
+@MainActor
+@Observable
+final class ConnectionImportRequests {
+  static let shared = ConnectionImportRequests()
+  fileprivate(set) var pending: ConnectionImportRequest?
+}
+
+/// Opens the import sidebar in the frontmost document window, opening the Welcome window first
+/// when none is open.
+@MainActor
 enum ConnectionImportPresenter {
-  private static var sheet: NSWindow?
-
   static func present() {
-    if let sheet {
-      // The host window closed with the sheet on it: forget the stale sheet.
-      guard sheet.sheetParent == nil else {
-        sheet.makeKeyAndOrderFront(nil)
-        return
-      }
-      self.sheet = nil
-    }
-    if let host = hostWindow() {
-      attach(to: host)
-      return
-    }
-    guard let welcome = NewWindowStore.shared.openWelcomeWindow(frame: .zero) else { return }
-    // Let the new window finish showing before a sheet attaches to it.
-    Task { @MainActor in attach(to: welcome) }
+    guard
+      let target = frontDocumentWindow() ?? NewWindowStore.shared.openWelcomeWindow(frame: .zero)
+    else { return }
+    ConnectionImportRequests.shared.pending = ConnectionImportRequest(
+      windowNumber: target.windowNumber)
   }
 
-  private static func attach(to host: NSWindow) {
-    guard sheet == nil else { return }
-    let view = ConnectionImportSheet(sheetWindow: { sheet }, onClose: close)
-    let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-    sheet = window
-    host.beginSheet(window)
+  /// True once for the view in the window the pending request targets; clears the request.
+  static func claim(for window: NSWindow?) -> Bool {
+    guard let window, ConnectionImportRequests.shared.pending?.windowNumber == window.windowNumber
+    else { return false }
+    ConnectionImportRequests.shared.pending = nil
+    return true
   }
 
-  static func close() {
-    guard let sheet else { return }
-    self.sheet = nil
-    if let parent = sheet.sheetParent {
-      parent.endSheet(sheet)
-    } else {
-      sheet.orderOut(nil)
-    }
-  }
-
-  /// The frontmost visible document window, descending into the sheets already attached to it.
-  private static func hostWindow() -> NSWindow? {
+  /// The frontmost visible document window. A sheet on it resolves to the window it sits on.
+  private static func frontDocumentWindow() -> NSWindow? {
     let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 } + NSApp.orderedWindows
-    var window = candidates.lazy.map(rootWindow).first { $0.isVisible && $0.isDbloreDocumentWindow }
-    while let attached = window?.attachedSheet {
-      window = attached
-    }
-    return window
+    return candidates.lazy.map(rootWindow).first { $0.isVisible && $0.isDbloreDocumentWindow }
   }
 
   private static func rootWindow(_ window: NSWindow) -> NSWindow {
@@ -167,22 +157,45 @@ enum ConnectionImportPresenter {
   }
 }
 
+extension View {
+  /// Opens the import sidebar on `isPresented` when a request targets the window in `hostWindow`.
+  func claimsConnectionImport(
+    hostWindow: HostWindowReference, isPresented: Binding<Bool>
+  ) -> some View {
+    onChange(of: ConnectionImportRequests.shared.pending, initial: true) {
+      if ConnectionImportPresenter.claim(for: hostWindow.window) { isPresented.wrappedValue = true }
+    }
+  }
+
+  /// The import sidebar, sliding in from the trailing edge.
+  func connectionImportPanel(isPresented: Binding<Bool>) -> some View {
+    sidePanelOverlay(isPresented: isPresented, width: ConnectionImportSheet.panelWidth) {
+      ConnectionImportSheet(isPresented: isPresented)
+    }
+  }
+}
+
 // MARK: - Sheet
 
 struct ConnectionImportSheet: View {
-  /// The window hosting this sheet, for the open panel.
-  let sheetWindow: () -> NSWindow?
-  let onClose: () -> Void
+  @Binding var isPresented: Bool
+
+  /// Width of the right sidebar the import opens in.
+  static let panelWidth: CGFloat = 540
 
   @State private var model = ConnectionImportModel()
   @State private var text = ""
   @State private var chosenName: String?
   @State private var isImporting = false
+  @State private var showsWarnings = false
 
   var body: some View {
     VStack(spacing: 0) {
       GenericModalHeader(
-        title: "Import Connections", titleIcon: "square.and.arrow.down", onClose: close)
+        title: "Import Connections", verticalPadding: Spacing.md, onClose: close
+      ) {
+        sourceMenu
+      }
 
       VStack(alignment: .leading, spacing: Spacing.md) {
         sourceSection
@@ -194,8 +207,8 @@ struct ConnectionImportSheet: View {
 
       footer
     }
-    .frame(width: 620, height: 600)
-    .background(Color.appBackground)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.panelBackground)
   }
 
   // MARK: Source
@@ -212,12 +225,26 @@ struct ConnectionImportSheet: View {
       })
   }
 
+  /// Source picker, on the right of the title and before the close button.
+  private var sourceMenu: some View {
+    Menu {
+      Picker("Source", selection: sourceBinding) {
+        ForEach(ImportSource.sheetOrder, id: \.self) { source in
+          Text(source.title).tag(source)
+        }
+      }
+      .pickerStyle(.inline)
+      .labelsHidden()
+    } label: {
+      HeaderDropdownLabel(title: model.source.title)
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+  }
+
   private var sourceSection: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      CapsuleTabPicker(selection: sourceBinding, tabs: ImportSource.sheetOrder, height: 32) {
-        CapsuleTabLabel(text: $0.title, isSelected: $0 == model.source)
-      }
-
       Text(model.source.hint)
         .font(.small)
         .foregroundColor(.foregroundMuted)
@@ -301,16 +328,35 @@ struct ConnectionImportSheet: View {
       .font(.small)
     }
     if !model.warnings.isEmpty {
-      DisclosureGroup {
-        warningList(model.warnings)
-      } label: {
-        Label(
-          "\(model.warnings.count) warning\(model.warnings.count == 1 ? "" : "s")",
-          systemImage: "exclamationmark.triangle"
-        )
-        .font(.small)
-        .foregroundColor(.warning)
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        Button {
+          showsWarnings.toggle()
+        } label: {
+          HStack(spacing: Spacing.xs) {
+            Image(systemName: "chevron.right")
+              .font(.system(size: 9, weight: .semibold))
+              .rotationEffect(.degrees(showsWarnings ? 90 : 0))
+            Label(
+              "\(model.warnings.count) warning\(model.warnings.count == 1 ? "" : "s")",
+              systemImage: "exclamationmark.triangle"
+            )
+          }
+          .font(.small)
+          .foregroundColor(.warning)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .linkPointer()
+        if showsWarnings {
+          warningList(model.warnings)
+        }
       }
+      .padding(Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(
+        RoundedRectangle(cornerRadius: CornerRadius.md)
+          .fill(Color.warning.opacity(0.1))
+      )
     }
   }
 
@@ -323,7 +369,6 @@ struct ConnectionImportSheet: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
-    .padding(.leading, Spacing.sm)
   }
 
   // MARK: Preview
@@ -337,9 +382,9 @@ struct ConnectionImportSheet: View {
         Spacer()
         if !model.rows.isEmpty {
           Button("Select All") { model.selectAll() }
-            .buttonStyle(GhostButtonStyle())
+            .buttonStyle(SecondaryButtonStyle())
           Button("Select None") { model.deselectAll() }
-            .buttonStyle(GhostButtonStyle())
+            .buttonStyle(SecondaryButtonStyle())
         }
       }
 
@@ -384,7 +429,7 @@ struct ConnectionImportSheet: View {
       }
       Spacer()
       Button("Cancel", action: close)
-        .buttonStyle(SecondaryButtonStyle())
+        .buttonStyle(FilledSecondaryButtonStyle())
         .keyboardShortcut(.cancelAction)
       Button("Import", action: runImport)
         .buttonStyle(PrimaryButtonStyle())
@@ -407,7 +452,7 @@ struct ConnectionImportSheet: View {
 
   private func close() {
     text = ""
-    onClose()
+    isPresented = false
   }
 
   private func choose() {
@@ -423,7 +468,7 @@ struct ConnectionImportSheet: View {
 
     Task { @MainActor in
       let response: NSApplication.ModalResponse
-      if let window = sheetWindow() {
+      if let window = NSApp.keyWindow {
         response = await panel.beginSheetModal(for: window)
       } else {
         response = panel.runModal()
@@ -446,7 +491,7 @@ struct ConnectionImportSheet: View {
       let message = model.summary(report)
       // Welcome's recent list and open connection forms reload on this.
       LocalDataNotifications.post(.connectionHistory)
-      // Close first, so the toast is not under the sheet.
+      // Close first, so the toast is not under the sidebar.
       close()
       WorkspaceWindowManager.shared.showToast(
         message, type: report.failed.isEmpty ? .success : .warning)

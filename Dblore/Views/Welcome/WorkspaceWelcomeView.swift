@@ -6,11 +6,13 @@
 import AppKit
 import SwiftUI
 
-/// Welcome view shown inside a workspace when no tabs are open
+/// Welcome view shown inside a workspace when no tabs are open.
+/// Left column: workspace name, connection and the new/open actions. Right: recent files.
 struct WorkspaceWelcomeView: View {
   @Bindable var workspaceManager: WorkspaceManager
   @Bindable var recentManager = RecentManager.shared
   @FocusState private var isFocused: Bool
+  @Environment(\.pixelLength) private var pixelLength
 
   /// Recent files from RecentManager (observable)
   private var recentFiles: [URL] {
@@ -18,65 +20,45 @@ struct WorkspaceWelcomeView: View {
   }
 
   var body: some View {
-    GeometryReader { geometry in
-      ScrollView {
-        VStack(spacing: Spacing.lg) {
-          // Workspace info
-          VStack(spacing: Spacing.xs) {
-            Image(nsImage: NSApp.applicationIconImage)
-              .resizable()
-              .aspectRatio(contentMode: .fit)
-              .frame(width: 56, height: 56)
+    HStack(spacing: 0) {
+      WelcomeSidebarColumn {
+        VStack(spacing: Spacing.sm) {
+          Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 56, height: 56)
 
-            WorkspaceTitleView(workspaceManager: workspaceManager)
-              .padding(.bottom, Spacing.sm)
+          WorkspaceTitleView(workspaceManager: workspaceManager)
 
-            // Connection status and Settings
-            HStack(spacing: Spacing.md) {
-              ConnectionStatusView(workspaceManager: workspaceManager)
-
-              // Settings button
-              Button {
-                workspaceManager.showSettings()
-              } label: {
-                Image(systemName: "gearshape")
-                  .frame(width: 14, height: 14)
-              }
-              .buttonStyle(SecondaryButtonStyle(iconOnly: true))
-              .controlSize(.small)
-              .help("Settings")
-
-              // Save button, only for unsaved workspaces
-              if !workspaceManager.workspace.isSaved {
-                Button {
-                  Task { try? await workspaceManager.saveWorkspace() }
-                } label: {
-                  Image(systemName: "square.and.arrow.down")
-                    .frame(width: 14, height: 14)
-                }
-                .buttonStyle(SecondaryButtonStyle(iconOnly: true))
-                .controlSize(.small)
-                .help("Save Workspace")
-              }
-            }
-          }
-
-          // Document type cards, stacked as compact rows (same width as Recent)
-          VStack(spacing: Spacing.sm) { documentTypeCards }
-            .padding(.top, Spacing.sm)
-
-          // Recent Files Section
-          if !recentFiles.isEmpty {
-            WorkspaceRecentFilesSection(
-              recentFiles: recentFiles,
-              workspaceManager: workspaceManager
-            )
-            .padding(.top, Spacing.lg)
+          ConnectionStatusView(workspaceManager: workspaceManager)
+        }
+      } actions: {
+        WelcomeActionButton(title: "New Notebook", systemImage: "doc.text") {
+          workspaceManager.newNotebook()
+        }
+        WelcomeActionButton(title: "New SQL File", systemImage: "doc") {
+          workspaceManager.newSQLFile()
+        }
+        WelcomeActionButton(title: "New Markdown Note", systemImage: "doc.richtext") {
+          workspaceManager.newMarkdownFile()
+        }
+        WelcomeActionButton(
+          title: "Open File...", systemImage: "folder",
+          help: "Open a notebook, SQL file or Markdown note", action: openFiles)
+      } footer: {
+        // Save, only for unsaved workspaces (Settings is in the title bar)
+        if !workspaceManager.workspace.isSaved {
+          WelcomeSidebarItem(title: "Save Workspace", systemImage: "square.and.arrow.down") {
+            Task { try? await workspaceManager.saveWorkspace() }
           }
         }
-        .padding(.vertical, Spacing.xl)
-        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
       }
+
+      Rectangle()
+        .fill(Color.border)
+        .frame(width: pixelLength)
+
+      WorkspaceRecentFiles(recentFiles: recentFiles, workspaceManager: workspaceManager)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.appBackground)
@@ -99,54 +81,12 @@ struct WorkspaceWelcomeView: View {
     }
   }
 
-  @ViewBuilder
-  private var documentTypeCards: some View {
-    // Notebook Card
-    DocumentTypeCard(
-      icon: "doc.text.fill",
-      title: "Notebook",
-      description: "Interactive queries with multiple cells and inline results",
-      accentColor: .accent,
-      onNew: { workspaceManager.newNotebook() },
-      onOpen: { openFile(type: .notebook) }
-    )
-
-    // SQL File Card
-    DocumentTypeCard(
-      icon: "doc.fill",
-      title: "SQL File",
-      description: "Simple SQL script editor for queries",
-      accentColor: .syntaxFunction,
-      onNew: { workspaceManager.newSQLFile() },
-      onOpen: { openFile(type: .sqlFile) }
-    )
-
-    // Markdown Note Card
-    DocumentTypeCard(
-      icon: "doc.richtext.fill",
-      title: "Markdown Note",
-      description: "Plain Markdown notes saved as .md files",
-      accentColor: .syntaxString,
-      onNew: { workspaceManager.newMarkdownFile() },
-      onOpen: { openFile(type: .markdown) }
-    )
-  }
-
-  private func openFile(type: TabDocumentType) {
+  /// One panel for every document type; `openFile(url:)` picks the tab type from the extension.
+  private func openFiles() {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-
-    switch type {
-    case .notebook:
-      panel.allowedContentTypes = [.dblore]
-    case .sqlFile:
-      panel.allowedContentTypes = [.sql]
-    case .markdown:
-      panel.allowedContentTypes = [.markdownText]
-    case .dataViewer:
-      return  // No file to open
-    }
+    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }
@@ -186,7 +126,7 @@ struct WorkspaceTitleView: View {
           .onChange(of: isFieldFocused) { _, focused in
             if !focused { commit() }
           }
-          .frame(width: 280)
+          .frame(maxWidth: .infinity)
       } else {
         Text(displayName)
           .lineLimit(1)
@@ -200,7 +140,7 @@ struct WorkspaceTitleView: View {
           .help("Click to rename")
       }
     }
-    .font(.title2)
+    .font(.title3)
     .fontWeight(.semibold)
     .foregroundColor(.foreground)
   }
@@ -267,44 +207,89 @@ struct ConnectionStatusView: View {
   }
 }
 
-// MARK: - Recent Files Section
+// MARK: - Recent Files
 
-struct WorkspaceRecentFilesSection: View {
+/// Filter field above a compact list of recent files.
+struct WorkspaceRecentFiles: View {
   let recentFiles: [URL]
   @Bindable var workspaceManager: WorkspaceManager
 
+  @State private var filter = ""
   /// Track which file is currently being loaded
   @State private var loadingFileURL: URL?
+  private let collapsedCount = 10
+  /// Keeps rows readable on wide windows
+  private let contentMaxWidth: CGFloat = 680
+
+  private var query: String { filter.trimmingCharacters(in: .whitespaces) }
+
+  private var shownFiles: [URL] {
+    guard !query.isEmpty else { return Array(recentFiles.prefix(collapsedCount)) }
+    return recentFiles.filter { $0.path.localizedCaseInsensitiveContains(query) }
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text("Recent")
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .foregroundColor(.foregroundMuted)
-        .padding(.horizontal, Spacing.xs)
-
+    if recentFiles.isEmpty {
+      emptyState
+    } else {
       VStack(spacing: 0) {
-        ForEach(recentFiles.prefix(10), id: \.self) { url in
-          WorkspaceRecentFileRow(
-            url: url,
-            isLoading: loadingFileURL == url
-          ) {
-            loadingFileURL = url
-            Task {
-              try? await workspaceManager.openFile(url: url)
+        WelcomeFilterField(prompt: "Filter recent files", text: $filter)
+          .frame(maxWidth: contentMaxWidth)
+          .padding(.horizontal, Spacing.xl)
+          .padding(.vertical, Spacing.md)
+
+        ScrollView {
+          VStack(alignment: .leading, spacing: Spacing.xxs) {
+            let shownFiles = shownFiles
+            WelcomeSectionHeader(title: "Recent Files", count: recentFiles.count)
+
+            ForEach(shownFiles, id: \.self) { url in
+              WorkspaceRecentFileRow(url: url, isLoading: loadingFileURL == url) {
+                loadingFileURL = url
+                Task {
+                  try? await workspaceManager.openFile(url: url)
+                }
+              }
+            }
+
+            if shownFiles.isEmpty {
+              Text("No recent files match \"\(query)\"")
+                .font(.callout)
+                .foregroundColor(.foregroundMuted)
+                .padding(.horizontal, Spacing.sm)
             }
           }
           .disabled(loadingFileURL != nil)
+          .frame(maxWidth: contentMaxWidth, alignment: .leading)
+          .padding(.horizontal, Spacing.lg)
+          .padding(.bottom, Spacing.xl)
+          .frame(maxWidth: .infinity)
         }
       }
     }
-    .frame(width: 460)
+  }
+
+  private var emptyState: some View {
+    VStack(spacing: Spacing.sm) {
+      Image(systemName: "doc.on.doc")
+        .font(.system(size: 28))
+        .foregroundColor(.foregroundSubtle)
+      Text("No recent files")
+        .font(.headline)
+        .foregroundColor(.foreground)
+      Text("Create a notebook, SQL file or note to get started")
+        .font(.callout)
+        .foregroundColor(.foregroundMuted)
+        .multilineTextAlignment(.center)
+    }
+    .padding(Spacing.xl)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
 // MARK: - Recent File Row
 
+/// One line: file name, then its folder.
 struct WorkspaceRecentFileRow: View {
   let url: URL
   let isLoading: Bool
@@ -334,42 +319,28 @@ struct WorkspaceRecentFileRow: View {
     Button {
       onOpen()
     } label: {
-      HStack(spacing: Spacing.sm) {
-        // File icon or loading indicator
+      RecentRowLayout(isHovering: isHovering) {
         if isLoading {
-          ProgressView()
-            .controlSize(.mini)
-            .frame(width: 16)
+          ProgressView().controlSize(.small)
         } else {
           Image(systemName: icon)
-            .font(.system(size: 12))
+            .font(.system(size: 13))
             .foregroundColor(iconColor)
-            .frame(width: 16)
         }
-
+      } title: {
         Text(url.lastPathComponent)
-          .font(.callout)
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-
+      } detail: {
         Text(url.deletingLastPathComponent().path)
-          .font(.caption)
-          .foregroundColor(.foregroundSubtle)
-          .lineLimit(1)
           .truncationMode(.middle)
-
-        Spacer()
+          .help(url.path)
+      } trailing: {
+        EmptyView()
       }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(isHovering ? Color.cellBackgroundHover : Color.clear)
-      .cornerRadius(CornerRadius.sm)
     }
     .buttonStyle(.plain)
     .linkPointer()
-    .onHover { hovering in
-      isHovering = hovering
-    }
+    .onHover { isHovering = $0 }
+    .animation(.easeOut(duration: 0.12), value: isHovering)
   }
 }
 

@@ -14,15 +14,28 @@ struct WorkspaceContainerView: View {
   @State private var isNativeTabBarVisible = false
   @State private var hostWindow = HostWindowReference()
   @Environment(\.controlActiveState) private var controlActiveState
+  @ReduceMotion private var reduceMotion
   @State private var isImportPresented = false
   @State private var isImportBusy = false
   @State private var importTabID: UUID?
   @State private var importDestination: TableImportDestination?
+  @State private var isConnectionImportPresented = false
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
     guard let activeTabId = workspaceManager.activeTabId else { return nil }
     return workspaceManager.viewModel(for: activeTabId)
+  }
+
+  /// Whether the content area shows `WorkspaceWelcomeView` (no tab and no schema visualizer)
+  private var showsWorkspaceWelcome: Bool {
+    !workspaceManager.isSchemaVisualizerActive && activeViewModel == nil
+  }
+
+  /// Hides the AI assistant only in its sidebar mode: the floating bubble takes no width
+  private func hideAIAssistantSidebar() {
+    guard workspaceManager.aiAssistant.showsSidebarPanel else { return }
+    withSidebarAnimation { workspaceManager.aiAssistant.hide() }
   }
 
   var body: some View {
@@ -83,18 +96,36 @@ struct WorkspaceContainerView: View {
               }
             }
 
-            // AI assistant panel (schema structure only, never row data)
+            // AI assistant panel, resizable from its leading edge
             if workspaceManager.aiAssistant.showsSidebarPanel {
+              // Same max rule as the left sidebar, from this layout pass's window width
+              let maxAIWidth = max(ComponentSize.sidebarWidth, geometry.size.width * 0.35)
+              let aiWidth = min(
+                max(AppSettings.shared.aiSidebarWidth, ComponentSize.sidebarWidth), maxAIWidth)
               AIAssistantPanel(
                 assistant: workspaceManager.aiAssistant,
                 activeTab: activeViewModel,
-                tables: workspaceManager.databaseTables
+                tables: workspaceManager.databaseTables,
+                width: aiWidth
               )
+              .overlay(alignment: .leading) {
+                ResizableSidebarDivider(
+                  sidebarWidth: Binding(
+                    get: { aiWidth },
+                    set: { AppSettings.shared.aiSidebarWidth = $0 }
+                  ),
+                  minWidth: ComponentSize.sidebarWidth,
+                  maxWidth: maxAIWidth,
+                  side: .right
+                )
+                .offset(x: -4)
+              }
               .transition(SidebarAnimation.trailingSlide)
             }
           }
           .animation(
-            SidebarAnimation.animation, value: workspaceManager.aiAssistant.showsSidebarPanel
+            reduceMotion ? nil : SidebarAnimation.animation,
+            value: workspaceManager.aiAssistant.showsSidebarPanel
           )
           .zIndex(0)
 
@@ -178,11 +209,13 @@ struct WorkspaceContainerView: View {
         FooterView(
           viewModel: workspaceManager.isSchemaVisualizerActive ? nil : activeViewModel,
           connectionState: workspaceManager.connectionState,
-          connectionConfig: workspaceManager.workspace.connectionConfig
+          connectionConfig: workspaceManager.workspace.connectionConfig,
+          transport: workspaceManager.mysqlTransport
         )
       }
     }
-    .frame(minWidth: 800, minHeight: 600)
+    // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
+    // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
     .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
     .environment(\.isNativeTabBarVisible, isNativeTabBarVisible)
@@ -247,19 +280,20 @@ struct WorkspaceContainerView: View {
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
+    // After the connection form, so they open on top of it
+    .connectionImportPanel(isPresented: $isConnectionImportPresented)
     .settingsModal(
       workspaceManager: workspaceManager,
       section: settingsSection,
       openToken: settingsOpenToken
     )
-    .favoriteModals(workspaceManager: workspaceManager)
-    .historyDetailModal(workspaceManager: workspaceManager)
-    .commandPaletteModal(workspaceManager: workspaceManager)
-    .modalOverlay(
+    .structureEditorPanel(workspaceManager: workspaceManager)
+    .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },
         set: { if $0 || !isImportBusy { isImportPresented = $0 } }
-      )
+      ),
+      width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
     ) {
       if let importTabID, let viewModel = workspaceManager.viewModel(for: importTabID) {
         TableImportSheet(
@@ -267,10 +301,45 @@ struct WorkspaceContainerView: View {
           initialDestination: importDestination, tables: workspaceManager.databaseTables)
       }
     }
+    .favoriteFormPanel(workspaceManager: workspaceManager)
+    .pendingTransactionDetailsModal(workspaceManager: workspaceManager)
+    // Right sidebars above run the full window height, like the content
+    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
+    .favoriteModals(workspaceManager: workspaceManager)
+    .historyDetailModal(workspaceManager: workspaceManager)
+    .commandPaletteModal(workspaceManager: workspaceManager)
     .background(HostWindowReader(reference: hostWindow))
+    .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
+    // The workspace welcome (no tab open) keeps the small Welcome size; tabs need room
+    .documentWindowMode(
+      showsWorkspaceWelcome ? .compact : .regular, isTabbed: isNativeTabBarVisible
+    )
     .environment(\.hostWindowReference, hostWindow)
+    // Here rather than on the tabs, so the theme also applies while no tab is open
+    .windowAppearance(AppSettings.shared.themePreference.colorScheme)
+    // The compact workspace welcome has no room for both sidebars: opening one collapses the
+    // other, and closing the last tab with both open keeps the left sidebar
+    .onChange(of: workspaceManager.aiAssistant.showsSidebarPanel) { _, shows in
+      if shows && showsWorkspaceWelcome && workspaceManager.isLeftSidebarVisible {
+        workspaceManager.toggleLeftSidebar()
+      }
+    }
+    .onChange(of: workspaceManager.isLeftSidebarVisible) { _, isVisible in
+      if isVisible && showsWorkspaceWelcome { hideAIAssistantSidebar() }
+    }
+    .onChange(of: showsWorkspaceWelcome) { _, shows in
+      if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
+    }
     .onChange(of: controlActiveState, initial: true) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id) }
+    }
+    // A reselected native tab keeps controlActiveState at .key, so onChange above misses it
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) {
+      notification in
+      guard let window = hostWindow.window, notification.object as? NSWindow === window else {
+        return
+      }
+      WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id)
     }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       guard workspaceManager.isActiveWorkspace(in: hostWindow) else { return }
@@ -956,6 +1025,14 @@ struct WorkspaceTitleBarTabsView: View {
             openFileWithPanel()
           } label: {
             Label("Open File…", systemImage: "folder")
+          }
+
+          Divider()
+
+          Button {
+            NewWindowStore.shared.openWelcomeWindowTab()
+          } label: {
+            Label("New Window", systemImage: "macwindow.badge.plus")
           }
         } label: {
           Image(systemName: "plus")
