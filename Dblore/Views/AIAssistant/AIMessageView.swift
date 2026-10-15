@@ -55,8 +55,9 @@ struct AIMessageView: View {
       .overlay(
         HairlineBorder(
           shape: RoundedRectangle(cornerRadius: CornerRadius.lg),
-          color: entry.isError ? .destructive : .border)
-          .opacity(isUser && !entry.isError ? 0 : 1)
+          color: entry.isError ? .destructive : .border
+        )
+        .opacity(isUser && !entry.isError ? 0 : 1)
       )
       .overlay(alignment: .topTrailing) {
         if isHovering, !isEditing, onRetry != nil || onEdit != nil {
