@@ -164,13 +164,11 @@ struct WorkspaceContainerView: View {
                     Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
                       Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 12))
-                        .foregroundColor(.accent)
+                        .foregroundColor(
+                          workspaceManager.isSchemaVisualizerActive
+                            ? Color.accent : Color.foregroundMuted)
                     }
-                    .buttonStyle(
-                      GhostButtonStyle(
-                        isActive: workspaceManager.isSchemaVisualizerActive, iconOnly: true
-                      )
-                    )
+                    .buttonStyle(GhostButtonStyle(iconOnly: true))
                     .controlSize(.small)
                     .blockDoubleClickZoom()
                     .help(
