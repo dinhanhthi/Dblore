@@ -738,7 +738,8 @@ struct SQLDumpWriterTests {
     #expect(!subsetText.contains("tags"))
 
     let (schemaOnly, schemaText) = try await dump(SQLDumpOptions(includeData: false))
-    #expect(schemaOnly == SQLDumpProgress(tablesDone: 0, tableCount: 0, rowsWritten: 0))
+    // Both tables are written (without rows), so the result says "2 tables, 0 rows"
+    #expect(schemaOnly == SQLDumpProgress(tablesDone: 2, tableCount: 2, rowsWritten: 0))
     #expect(schemaText.contains("CREATE TABLE notes") && schemaText.contains("CREATE TABLE tags"))
     #expect(schemaText.contains("CREATE INDEX idx_tags ON tags (label);"))
     #expect(!schemaText.contains("INSERT INTO"))

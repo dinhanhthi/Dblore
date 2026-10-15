@@ -554,7 +554,9 @@ final class DatabaseBackupModel {
     let panel = NSSavePanel()
     panel.nameFieldStringValue = name
     panel.allowedContentTypes = UTType(filenameExtension: fileExtension).map { [$0] } ?? []
-    panel.allowsOtherFileTypes = true
+    // A database copy may be named .db or .bak. A dump keeps .sql, also when the whole name is
+    // retyped: Restore's open panel lists only .sql and plain text files
+    panel.allowsOtherFileTypes = fileExtension != "sql"
     panel.canCreateDirectories = true
     return await withCheckedContinuation { continuation in
       panel.begin { response in

@@ -78,6 +78,8 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   case standardStringsOff(index: Int, value: String)
   /// PostgreSQL: `SHOW standard_conforming_strings` failed or gave an unexpected answer
   case standardStringsUnreadable(String)
+  /// The connection was reset (reconnect, or a Cancel that reconnected) after the dump was read
+  case connectionChanged
 
   var errorDescription: String? {
     switch self {
@@ -116,6 +118,9 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .standardStringsUnreadable(let reason):
       "Could not read this session's standard_conforming_strings, which decides how the dump's "
         + "quoted strings with a backslash are read (\(reason)). Nothing was executed."
+    case .connectionChanged:
+      "The connection was reset after this dump was read. Open the dump again to restore it. "
+        + "Nothing was executed."
     }
   }
 }
@@ -843,11 +848,11 @@ extension DatabaseConnectionManager {
 
   /// Run a restore plan. `caller` is the active notebook: under Protected mode the restore opens
   /// or joins the app transaction owned by it. `connectionEpoch` must still be `epoch`
-  /// (`DatabaseError.notEditable`) and the plan must be for the connected engine. A PostgreSQL
+  /// (`SQLRestoreError.connectionChanged`) and the plan must be for the connected engine. A PostgreSQL
   /// plan with `standardStringsStatement` then reads `SHOW standard_conforming_strings` and runs
   /// only when it is `on` (`SQLRestoreError.standardStringsOff` / `.standardStringsUnreadable`);
   /// a Cancel during that read stops the restore (`DatabaseError.batchCancelled`), another
-  /// connection refuses it (`DatabaseError.notEditable`). Only that read may come before a
+  /// connection refuses it (`SQLRestoreError.connectionChanged`). Only that read may come before a
   /// refusal: in the same actor turn as the first change, a read-only policy refuses any
   /// restore and every statement must pass `evaluate` against `effectivePolicy(for:)`
   /// (`DatabaseError.blockedByProtection`; schema-only refuses DDL).
@@ -867,7 +872,7 @@ extension DatabaseConnectionManager {
     caller: UUID? = nil, progress: @escaping @Sendable (SQLRestoreProgress) -> Void = { _ in }
   ) async throws -> SQLRestoreSummary {
     guard epoch == connectionEpoch else {
-      throw DatabaseError.notEditable("the connection changed; open the dump again to restore it")
+      throw SQLRestoreError.connectionChanged
     }
     guard let engine = config?.databaseType else { throw DatabaseError.notConnected }
     guard engine == plan.engine else {
@@ -924,7 +929,7 @@ extension DatabaseConnectionManager {
         try refuseIfConnectionClosed()
         summary.insideUserTransaction = userTxOpen
         let bound = plan.statements.map {
-          BoundStatement(sql: $0.text, values: [], expectedRows: nil)
+          BoundStatement(sql: $0.text, values: [], expectedRows: nil, classified: $0)
         }
         summary.statementsRun = try await runStagedBatch(
           bound, caller: caller, protectedMode: effective.protectedMode,
@@ -997,11 +1002,11 @@ extension DatabaseConnectionManager {
   }
 
   /// After the restore's first read: a Cancel meanwhile (`DatabaseError.batchCancelled`) or
-  /// another connection (`DatabaseError.notEditable`) stops it before anything is changed
+  /// another connection (`SQLRestoreError.connectionChanged`) stops it before anything is changed
   private func refuseIfRestoreInterrupted(since generation: UInt64, epoch: UInt64) throws {
     guard generation == batchCancellationGeneration else { throw DatabaseError.batchCancelled }
     guard epoch == connectionEpoch else {
-      throw DatabaseError.notEditable("the connection changed; open the dump again to restore it")
+      throw SQLRestoreError.connectionChanged
     }
   }
 

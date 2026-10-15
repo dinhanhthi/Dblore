@@ -14,6 +14,9 @@ nonisolated struct BoundStatement: Equatable, Sendable {
   var expectedRows: Int? = 1
   /// MySQL UPDATE: run when it affects 0 rows; a row found counts as the 1 expected
   var rowCheck: RowExistenceCheck? = nil
+  /// The statement as its caller already classified it (a restore plan), so the batch does not
+  /// tokenize `sql` again; nil classifies `sql` with the connection's dialect
+  var classified: ClassifiedStatement? = nil
 
   /// Neutral binds for `values`. Nil text is `.null`; any other string is `.text`.
   var binds: [SQLBindValue] {

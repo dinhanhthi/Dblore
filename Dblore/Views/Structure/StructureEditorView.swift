@@ -604,7 +604,7 @@ private struct FullStatementDisclosure: View {
   @State private var isExpanded = false
 
   var body: some View {
-    DisclosureGroup("Show full statement", isExpanded: $isExpanded) {
+    DisclosureGroup(isExpanded: $isExpanded) {
       ScrollView {
         Text(text)
           .font(.mono)
@@ -618,6 +618,10 @@ private struct FullStatementDisclosure: View {
       .background(Color.cardBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
       .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.sm)))
+    } label: {
+      // A plain text label only reacts on the chevron; the whole label toggles
+      Button("Show full statement") { isExpanded.toggle() }
+        .buttonStyle(.plain)
     }
     .font(.small)
     .foregroundColor(.foregroundMuted)

@@ -463,7 +463,8 @@ actor SQLDumpWriter {
         chosen.map { SQLDumpSelection.sqlite(input, keeping: $0) } ?? input)
     }
     var assembler = SQLDumpAssembler(engine: engine)
-    let tables = options.includeData ? script.tables.filter(\.hasData) : []
+    let dataTables = script.tables.filter(\.hasData)
+    let tables = options.includeData ? dataTables : []
     var state = SQLDumpProgress(tablesDone: 0, tableCount: tables.count, rowsWritten: 0)
     try emit(assembler.opening(script, created: Date()))
     for table in tables {
@@ -492,6 +493,11 @@ actor SQLDumpWriter {
       progress(state)
     }
     try emit(assembler.closing(script))
+    // Schema only: every table was written without rows (the result reads "n tables, 0 rows")
+    if !options.includeData {
+      state = SQLDumpProgress(
+        tablesDone: dataTables.count, tableCount: dataTables.count, rowsWritten: 0)
+    }
     return state
   }
 }

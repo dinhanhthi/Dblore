@@ -224,9 +224,7 @@ extension DatabaseConnectionManager {
           index, sql: statement.sql, reason: reason, rolledBack: rolledBack)
       }
       // SQLite's sqlite3_changes64 can retain the previous DML count after CREATE TABLE.
-      let isDDL =
-        SQLStatementClassifier.classify(statement.sql, dialect: Self.dialect(of: config)).first?
-        .kind == .ddl
+      let isDDL = classification(of: statement)?.kind == .ddl
       counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
       progress?(counts.count)
     }
@@ -242,8 +240,7 @@ extension DatabaseConnectionManager {
   private func recordBatch(_ statements: [BoundStatement], counts: [Int]) {
     let dialect = Self.dialect(of: config)
     for (index, statement) in statements.enumerated() {
-      guard let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect).first
-      else { continue }
+      guard let classified = classification(of: statement) else { continue }
       recordPending(
         StatementSummary(statement: classified, affectedRows: counts[index], dialect: dialect))
     }

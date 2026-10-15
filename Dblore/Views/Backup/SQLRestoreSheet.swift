@@ -270,8 +270,19 @@ struct SQLRestoreSheet: View {
 
   private static func kindsText(_ summary: SQLRestoreSummary) -> String {
     SQLRestoreStatementKind.allCases.filter { summary.count($0) > 0 }.map {
-      "\(summary.count($0).formatted()) \(kindLabel($0).lowercased())"
+      counted(summary.count($0), kindNoun($0))
     }.joined(separator: ", ")
+  }
+
+  /// Singular, for `counted` ("1 trigger", "2 triggers")
+  private static func kindNoun(_ kind: SQLRestoreStatementKind) -> String {
+    switch kind {
+    case .schema: "schema statement"
+    case .trigger: "trigger"
+    case .data: "data statement"
+    case .sequenceValue: "sequence value"
+    case .sessionSetting: "session setting"
+    }
   }
 
   private static func counted(_ count: Int, _ noun: String) -> String {

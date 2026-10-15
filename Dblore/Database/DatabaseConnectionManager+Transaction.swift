@@ -376,12 +376,16 @@ extension DatabaseConnectionManager {
   }
 
   func noteSchemaSQL(_ statements: [BoundStatement]) {
-    let dialect = Self.dialect(of: config)
     for statement in statements {
-      guard let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect).first
-      else { continue }
+      guard let classified = classification(of: statement) else { continue }
       noteSchemaChange(classified)
     }
+  }
+
+  /// `statement.classified`, or `sql` classified with the connection's dialect
+  func classification(of statement: BoundStatement) -> ClassifiedStatement? {
+    statement.classified
+      ?? SQLStatementClassifier.classify(statement.sql, dialect: Self.dialect(of: config)).first
   }
 
   /// Hands a committed schema change to the sidebar. Nothing is taken while an app

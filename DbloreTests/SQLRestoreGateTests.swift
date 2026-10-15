@@ -686,8 +686,8 @@ struct SQLRestoreGateTests {
     let (manager, factory) = try await connect(.postgresql, protectedMode: true)
     let epoch = await manager.connectionEpoch
     guard
-      case .notEditable? = await restoreError(manager, Self.postgresDump, epoch: epoch &+ 1)
-        as? DatabaseError
+      case .connectionChanged? = await restoreError(manager, Self.postgresDump, epoch: epoch &+ 1)
+        as? SQLRestoreError
     else {
       Issue.record("Expected a stale epoch refusal")
       return
@@ -744,6 +744,20 @@ struct SQLRestoreGateTests {
     #expect(summary.pending)
     #expect(await manager.transactionStatus().owner == caller)
     #expect(await manager.transactionSnapshot().pending.count == 12)
+  }
+
+  @Test("A restored table whose DDL holds a backslash string refreshes the sidebar")
+  func backslashSchemaRefreshesTheSidebar() async throws {
+    let (manager, _) = try await connect(.postgresql, rows: [[.string("on")]])
+    // The only schema statement: unknown to the default classifier, DDL to the plan
+    let script =
+      Self.header(.postgresql)
+      + "\nCREATE TABLE \"public\".\"pat\" (\"note\" text DEFAULT 'a\\b'::text);\n"
+    let plan = try Self.plan(script, .postgresql)
+    #expect(plan.statements.map(\.kind) == [.ddl])
+    _ = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch)
+    #expect(await manager.takeSchemaRefresh())
   }
 
   @Test("A COMMIT that fails without Protected mode is rolled back")
@@ -868,8 +882,8 @@ struct SQLRestoreGateTests {
       }
     }
     let error = await restoreError(manager, Self.backslashDump)
-    guard case .notEditable? = error as? DatabaseError else {
-      Issue.record("Expected notEditable, got \(String(describing: error))")
+    guard case .connectionChanged? = error as? SQLRestoreError else {
+      Issue.record("Expected connectionChanged, got \(String(describing: error))")
       return
     }
     #expect(session.statements == [DatabaseConnectionManager.standardStringsQuery])
