@@ -964,8 +964,10 @@ struct WorkspaceTitleBarTabsView: View {
           workspaceManager.toggleAIAssistant()
         } label: {
           Image(systemName: "sparkles")
-            .foregroundColor(
-              workspaceManager.aiAssistant.isVisible ? .foreground : .foregroundMuted
+            .foregroundStyle(
+              LinearGradient(
+                colors: [Color.accent, Color.accent.opacity(0.6)],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
             )
         }
         .buttonStyle(GhostButtonStyle(iconOnly: true))
