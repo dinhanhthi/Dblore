@@ -110,7 +110,7 @@ extension WorkspaceManager {
       insertFavorite(FavoriteStatement(id: id, name: name, sql: sql))
       return true
     case .history(let id, let sql):
-      guard !QueryHistoryEntry.isTransactionSummary(sql), canInsertPaletteText() else {
+      guard !QueryHistoryEntry.isLabelText(sql), canInsertPaletteText() else {
         return false
       }
       insertHistory(paletteHistoryEntry(id: id, sql: sql))

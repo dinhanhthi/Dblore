@@ -232,7 +232,7 @@ final class CommandPaletteModel {
     }
     guard generation == self.generation, !Task.isCancelled else { return }
     history = rows.prefix(Self.historyLimit).compactMap { row in
-      guard !QueryHistoryEntry.isTransactionSummary(row.sql) else { return nil }
+      guard !row.isLabel else { return nil }
       return .history(id: row.id, sql: row.sql)
     }
     historyGeneration = generation

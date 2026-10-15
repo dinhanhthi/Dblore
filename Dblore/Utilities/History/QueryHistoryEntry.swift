@@ -19,6 +19,10 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
     case mcp
     case structure
     case ai
+    /// One summary row per SQL dump
+    case dump
+    /// One summary row per SQL dump restore
+    case restore
 
     /// JSON from a newer version may hold an unknown source: it reads as editor, as the
     /// database read does, instead of failing the whole import. Encoding keeps the raw value.
@@ -69,5 +73,84 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
       return true
     }
     return false
+  }
+
+  /// A label row, not SQL that was sent, so Insert and Copy skip it: a dump or restore row by
+  /// its source, or a transaction summary by its text.
+  var isLabel: Bool {
+    source == .dump || source == .restore || Self.isTransactionSummary(sql)
+  }
+
+  /// `isLabel` for callers with only the text: a transaction summary or the text of a dump
+  /// ("SQL dump of <db>: n tables, m rows") or restore ("Restore SQL dump: n statements") row.
+  nonisolated static func isLabelText(_ sql: String) -> Bool {
+    if isTransactionSummary(sql) { return true }
+    let restorePrefix = "Restore SQL dump: "
+    if sql.hasPrefix(restorePrefix) {
+      return isCount(sql.dropFirst(restorePrefix.count), "statement")
+    }
+    guard sql.hasPrefix("SQL dump of "), let colon = sql.range(of: ": ", options: .backwards)
+    else { return false }
+    let counts = sql[colon.upperBound...].split(separator: ", ", omittingEmptySubsequences: false)
+    return counts.count == 2 && isCount(counts[0], "table") && isCount(counts[1], "row")
+  }
+
+  /// "n noun" or "n nouns", with n in ASCII digits.
+  private nonisolated static func isCount(_ text: Substring, _ noun: String) -> Bool {
+    let parts = text.split(separator: " ", omittingEmptySubsequences: false)
+    guard parts.count == 2, !parts[0].isEmpty,
+      parts[0].allSatisfy({ $0.isASCII && $0.isNumber })
+    else { return false }
+    return parts[1] == noun || parts[1] == noun + "s"
+  }
+
+  /// The one row a SQL dump records: "SQL dump of <db>: n tables, m rows", a read. Counts are
+  /// what was written, so a cancelled or failed dump shows how far it got.
+  nonisolated static func dumpSummary(
+    _ progress: SQLDumpProgress, config: ConnectionConfig, workspaceID: UUID?,
+    workspaceName: String?, durationMs: Int, status: Status, errorMessage: String?
+  ) -> QueryHistoryEntry {
+    let database =
+      config.databaseType == .sqlite
+      ? URL(fileURLWithPath: config.database).lastPathComponent : config.database
+    let sql =
+      "SQL dump of \(database): \(counted(progress.tablesDone, "table")), "
+      + counted(progress.rowsWritten, "row")
+    return summary(
+      sql, config: config, workspaceID: workspaceID, workspaceName: workspaceName,
+      durationMs: durationMs, rowCount: progress.rowsWritten, status: status,
+      errorMessage: errorMessage, source: .dump, kind: .read)
+  }
+
+  /// The one row a restore records: "Restore SQL dump: n statements" (all of the script's),
+  /// schema when it has DDL or triggers, else a write.
+  nonisolated static func restoreSummary(
+    _ restore: SQLRestoreSummary, config: ConnectionConfig, workspaceID: UUID?,
+    workspaceName: String?, durationMs: Int, status: Status, errorMessage: String?
+  ) -> QueryHistoryEntry {
+    summary(
+      "Restore SQL dump: \(counted(restore.statementCount, "statement"))", config: config,
+      workspaceID: workspaceID, workspaceName: workspaceName, durationMs: durationMs,
+      rowCount: nil, status: status, errorMessage: errorMessage, source: .restore,
+      kind: restore.changesSchema ? .schema : .write)
+  }
+
+  private nonisolated static func counted(_ count: Int, _ noun: String) -> String {
+    "\(count) \(noun)\(count == 1 ? "" : "s")"
+  }
+
+  /// The label is the connection name, or `host/database` when it has none (as other rows).
+  private nonisolated static func summary(
+    _ sql: String, config: ConnectionConfig, workspaceID: UUID?, workspaceName: String?,
+    durationMs: Int, rowCount: Int?, status: Status, errorMessage: String?, source: Source,
+    kind: Kind
+  ) -> QueryHistoryEntry {
+    let name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return QueryHistoryEntry(
+      id: 0, sql: sql, executedAt: Date(), durationMs: durationMs, rowCount: rowCount,
+      status: status, errorMessage: errorMessage,
+      connectionKey: QueryHistoryIdentity.connectionKey(for: config),
+      connectionLabel: name.isEmpty ? "\(config.host)/\(config.database)" : name,
+      workspaceID: workspaceID, workspaceName: workspaceName, source: source, kind: kind)
   }
 }

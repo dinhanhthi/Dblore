@@ -37,11 +37,15 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   let closeEvents: AsyncStream<SessionCloseReason>
 
   private let config: ConnectionConfig
+  /// Read-only with normal locking (`SQLITE_OPEN_READONLY`, no `immutable=1`), so a read
+  /// transaction sees rows still in another connection's WAL and is a stable snapshot (SQL dump)
+  private let snapshotReadOnly: Bool
   private let executor: DispatchSerialQueue
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let stateLock = NSLock()
   private var db: OpaquePointer?
   private var didEmitClose = false
+  /// 0 or less: no timeout (the SQL dump's setting)
   private var statementTimeoutSeconds: Int
   /// Deadline checked by the progress handler. Nil when no statement is inside `sqlite3_step`.
   private var publishedDeadline: ContinuousClock.Instant?
@@ -59,8 +63,10 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   private static let cursorError = SQLiteSessionError(
     extendedCode: SQLITE_ERROR, message: "SQLite does not support server cursors")
 
-  init(config: ConnectionConfig) {
+  /// `snapshotReadOnly`: open read-only without `immutable=1` (see `snapshotReadOnly`)
+  init(config: ConnectionConfig, snapshotReadOnly: Bool = false) {
     self.config = config
+    self.snapshotReadOnly = snapshotReadOnly
     capabilities = config.databaseType.capabilities
     statementTimeoutSeconds =
       config.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout
@@ -158,7 +164,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   }
 
   /// SQLite has no server-side lock or idle brake. The statement timeout is the progress handler,
-  /// which reads `statementTimeoutSeconds` (updated here when the actor applies settings).
+  /// which reads `statementTimeoutSeconds` (updated here when the actor applies settings). The
+  /// value is not clamped: 0 turns the timer off.
   func applySessionSettings(
     statementTimeoutSeconds: Int, lockTimeoutSeconds: Int, idleTimeoutSeconds: Int
   ) async throws {
@@ -195,8 +202,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     if filePath.isEmpty {
       throw SQLiteSessionError(extendedCode: SQLITE_CANTOPEN, message: "database path is empty")
     }
-    let readOnly = config.readOnlyFile
-    let path = try Self.databasePath(filePath: filePath, readOnly: readOnly)
+    let readOnly = config.readOnlyFile || snapshotReadOnly
+    let path =
+      snapshotReadOnly ? filePath : try Self.databasePath(filePath: filePath, readOnly: readOnly)
     let flags = Self.openFlags(readOnly: readOnly)
     var handle: OpaquePointer?
     let code = path.withCString { pointer in
@@ -276,18 +284,14 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   private func nextRow(_ id: UUID) async throws -> [CellValue]? {
     try await run {
       guard var read = self.reads[id], let statement = read.statement else { return nil }
-      let deadline: ContinuousClock.Instant
-      if let existing = read.deadline {
-        deadline = existing
-      } else {
-        deadline = ContinuousClock.now.advanced(by: .seconds(self.statementTimeoutSeconds))
-        read.deadline = deadline
+      if read.deadline == nil {
+        read.deadline = self.statementDeadline()
         self.stateLock.lock()
         self.timedOut = false
         self.stateLock.unlock()
       }
       self.reads[id] = read
-      self.publish(deadline)
+      self.publish(read.deadline)
       let code = sqlite3_step(statement)
       switch code {
       case SQLITE_ROW:
@@ -494,14 +498,20 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   // MARK: - Timeout
 
   private func beginStatementTiming() {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(statementTimeoutSeconds))
+    let deadline = statementDeadline()
     stateLock.lock()
     publishedDeadline = deadline
     timedOut = false
     stateLock.unlock()
   }
 
-  private func publish(_ deadline: ContinuousClock.Instant) {
+  /// Now plus the statement timeout; nil (no deadline) when the timeout is 0 or less
+  private func statementDeadline() -> ContinuousClock.Instant? {
+    guard statementTimeoutSeconds > 0 else { return nil }
+    return ContinuousClock.now.advanced(by: .seconds(statementTimeoutSeconds))
+  }
+
+  private func publish(_ deadline: ContinuousClock.Instant?) {
     stateLock.lock()
     publishedDeadline = deadline
     stateLock.unlock()

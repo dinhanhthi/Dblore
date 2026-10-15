@@ -1,6 +1,6 @@
 // DatabaseConnectionManager+SequentialBatch.swift
 // A batch sent one statement at a time in autocommit, with no BEGIN / COMMIT: MongoDB staged
-// document edits (no transactions) and MySQL restore. Gated like `executeGatedBatch`, but
+// document edits (no transactions) and MySQL restore (`executeGatedRestore`). Gated like `executeGatedBatch`, but
 // refused while a transaction is open or Protected mode applies, since it would skip both.
 
 import Foundation
@@ -15,10 +15,11 @@ extension DatabaseConnectionManager {
   /// (`DatabaseError.sequentialBatchRefused`). An empty batch returns `[]`.
   /// The first send error or count other than `expectedRows[i]` stops the batch:
   /// `DatabaseError.batchPartiallyApplied` (the statements before it stay applied).
-  /// Returns each statement's affected rows.
+  /// Returns each statement's affected rows. `progress` gets the number of statements done after
+  /// each one (SQL dump restore).
   func executeGatedSequentialBatch(
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, expectedRows: [Int]?
+    caller: UUID? = nil, expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)? = nil
   ) async throws -> [Int] {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
@@ -50,7 +51,8 @@ extension DatabaseConnectionManager {
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
-    return try await sendSequentially(statements, expectedRows: expectedRows)
+    return try await sendSequentially(
+      statements, expectedRows: expectedRows, progress: progress)
   }
 
   // MARK: - Private
@@ -61,7 +63,7 @@ extension DatabaseConnectionManager {
   /// Send each statement on its own. Stops at the first failure, once the connection changed
   /// or was cancelled, or once a transaction was opened meanwhile (the rest would run in it).
   private func sendSequentially(
-    _ statements: [String], expectedRows: [Int]?
+    _ statements: [String], expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)?
   ) async throws -> [Int] {
     let dialect = Self.dialect(of: config)
     let epoch = connectionEpoch
@@ -93,6 +95,7 @@ extension DatabaseConnectionManager {
           reason: "expected to affect \(expected) row\(expected == 1 ? "" : "s"), affected \(rows)")
       }
       counts.append(rows)
+      progress?(counts.count)
       await batchCheckpointHook?(index)
     }
     return counts

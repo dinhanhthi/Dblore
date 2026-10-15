@@ -70,6 +70,14 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
   let parameterNote: String?  // "name = value" for this statement, nil when it has no :name
   let likePatternAffectsAllRows: Bool  // LIKE/ILIKE/~~ operand trims to % only
   let allDocumentsCollection: String?  // MongoDB: the collection an empty filter affects in full
+  /// The whole statement, behind "Show full statement" (a SQL dump restore's rows whose preview
+  /// is cut, and every trigger); nil shows no disclosure (every other confirmation)
+  var fullText: String? = nil
+  /// The preview is cut
+  var isTruncated = false
+  /// Why `fullText` is offered (what the preview leaves out, what a trigger does), listed with
+  /// the reasons
+  var fullTextNotes: [String] = []
 
   nonisolated init(
     index: Int, preview: String, kindLabel: String, affectsAllRows: Bool, touchesBrake: Bool,
@@ -100,7 +108,7 @@ nonisolated struct StatementConfirmation: Identifiable, Equatable, Sendable {
     if likePatternAffectsAllRows { reasons.append(Self.likePatternAllRowsReason) }
     if touchesBrake { reasons.append("Changes session safety settings") }
     if changesPrivileges { reasons.append("Changes role/privileges") }
-    return reasons
+    return reasons + fullTextNotes
   }
 }
 

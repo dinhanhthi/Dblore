@@ -118,6 +118,41 @@ struct CommandPaletteModelTests {
     }
   }
 
+  @Test("perform refuses dump and restore labels, and history leaves out label rows")
+  func performAndHistorySkipDumpAndRestoreLabels() async throws {
+    let manager = makeWorkspace()
+    manager.newNotebook()
+    manager.activeViewModel?.selectedCellId = manager.activeViewModel?.notebook.cells.first?.id
+    withInsertionCapture { captured in
+      #expect(!manager.perform(.history(id: 1, sql: "SQL dump of shop: 3 tables, 120 rows")))
+      #expect(!manager.perform(.history(id: 2, sql: "Restore SQL dump: 7 statements")))
+      #expect(captured.text == nil)
+    }
+
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let key = "PostgreSQL|h|5432|d|u"
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(
+      Self.entry(sql: "nightly backup", at: start, connectionKey: key, source: .dump, kind: .read))
+    try await store.record(
+      Self.entry(
+        sql: "seven back", at: start.addingTimeInterval(1), connectionKey: key, source: .restore,
+        kind: .schema))
+    try await store.record(
+      Self.entry(
+        sql: "COMMIT (2 statements)", at: start.addingTimeInterval(2), connectionKey: key,
+        kind: .transaction))
+    try await store.record(
+      Self.entry(
+        sql: "SELECT kept", at: start.addingTimeInterval(3), connectionKey: key, kind: .read))
+    let model = CommandPaletteModel(historyStore: store)
+    model.open(CommandPaletteSnapshot(connectionKey: key))
+    #expect(await waitUntil { !model.history.isEmpty })
+    #expect(model.history == [.history(id: 4, sql: "SELECT kept")])
+  }
+
   @Test("perform stays open when commit, rollback, or the right sidebar would do nothing")
   func performStaysOpenWhenCommitRollbackOrSidebarWouldDoNothing() {
     let manager = makeWorkspace()
@@ -193,12 +228,14 @@ struct CommandPaletteModelTests {
   }
 
   private static func entry(
-    sql: String, at executedAt: Date, connectionKey: String, kind: QueryHistoryEntry.Kind
+    sql: String, at executedAt: Date, connectionKey: String,
+    source: QueryHistoryEntry.Source = .cell,
+    kind: QueryHistoryEntry.Kind
   ) -> QueryHistoryEntry {
     QueryHistoryEntry(
       id: 0, sql: sql, executedAt: executedAt, durationMs: 1, rowCount: 1, status: .success,
       errorMessage: nil, connectionKey: connectionKey, connectionLabel: "palette",
-      workspaceID: nil, workspaceName: nil, source: .cell, kind: kind)
+      workspaceID: nil, workspaceName: nil, source: source, kind: kind)
   }
 
   private func temporaryDatabaseURL() -> URL {

@@ -87,9 +87,16 @@ struct StructureEditorView: View {
       .frame(maxHeight: .infinity)
       .overlay { ToastOverlay() }
       if let statements = model.pendingConfirmation {
-        StructureConfirmationPanel(
-          model: model, statements: statements, databasePassword: databasePassword,
-          isConnected: isConnected, isShown: isShown)
+        SafeModeConfirmationPanel(
+          requiresPassword: model.confirmationRequiresPassword, confirmTitle: "Apply Changes",
+          biometricReason: "Authorize the structure change in Safe Mode",
+          databasePassword: databasePassword, isConnected: isConnected,
+          isPending: { [model] in model.pendingConfirmation != nil && isShown() },
+          onCancel: { [model] in model.cancelConfirmation() },
+          onConfirm: { [model] in await model.confirmApply() }
+        ) {
+          SafeModeStatementList(statements: statements)
+        }
       }
       footer
     }
@@ -363,22 +370,27 @@ struct StructureCommitField: View {
 
 // MARK: - Safe Mode
 
-/// Safe Mode step inside the panel (a sheet cannot sit on the panel overlay): lists the
-/// statements and their reasons, then asks for Touch ID or the Safe Mode password when the
-/// commit style requires it, the same checks as the query confirmation sheet.
-private struct StructureConfirmationPanel: View {
-  let model: StructureEditorModel
-  let statements: [StatementConfirmation]
+/// Safe Mode step inside a side panel (a sheet cannot sit on the panel overlay): shows what
+/// runs (`details`), then asks for Touch ID or the Safe Mode password when the commit style
+/// requires it, the same checks as the query confirmation sheet. Used by the structure editor
+/// and the SQL dump restore.
+struct SafeModeConfirmationPanel<Details: View>: View {
+  let requiresPassword: Bool
+  let confirmTitle: String
+  /// Shown by the Touch ID prompt
+  let biometricReason: String
   let databasePassword: String?
   let isConnected: Bool
-  let isShown: () -> Bool
+  /// Still waiting for this answer (not cancelled, panel still shown) once Touch ID returns
+  let isPending: () -> Bool
+  let onCancel: () -> Void
+  let onConfirm: () async -> Void
+  @ViewBuilder let details: () -> Details
 
   @State private var passwordEntry = ""
   @State private var passwordError: String?
   @State private var isBiometricAuthenticating = false
   @State private var useDatabasePassword = false
-
-  private var requiresPassword: Bool { model.confirmationRequiresPassword }
 
   private var showsTouchID: Bool {
     AppSettings.shared.isBiometricEnabled && AppSettings.shared.canUseTouchID
@@ -396,7 +408,7 @@ private struct StructureConfirmationPanel: View {
       }
       .padding(.horizontal, Spacing.md)
 
-      statementList
+      details()
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.controlBackground)
@@ -414,9 +426,9 @@ private struct StructureConfirmationPanel: View {
 
       HStack(spacing: Spacing.md) {
         Spacer()
-        Button("Cancel") { model.cancelConfirmation() }
+        Button("Cancel", action: onCancel)
           .buttonStyle(FilledSecondaryButtonStyle())
-        Button("Apply Changes", action: confirm)
+        Button(confirmTitle, action: confirm)
           .buttonStyle(DangerButtonStyle())
           .disabled(
             requiresPassword && !AppSettings.shared.hasCustomPasswordSet && !useDatabasePassword)
@@ -428,35 +440,6 @@ private struct StructureConfirmationPanel: View {
     .task {
       if requiresPassword && showsTouchID { authenticateWithBiometric() }
     }
-  }
-
-  private var statementList: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: Spacing.sm) {
-        ForEach(statements) { statement in
-          VStack(alignment: .leading, spacing: Spacing.xs) {
-            Text("\(statement.index + 1). \(statement.preview)")
-              .font(.mono)
-              .foregroundColor(.foregroundMuted)
-              .lineLimit(2)
-            Text(statement.kindLabel)
-              .font(.small)
-              .foregroundColor(.foregroundSubtle)
-            ForEach(statement.reasons, id: \.self) { reason in
-              Label(reason, systemImage: "exclamationmark.triangle.fill")
-                .font(.small)
-                .foregroundColor(.destructive)
-                .padding(.horizontal, Spacing.sm)
-                .padding(.vertical, Spacing.xxs)
-                .background(Color.destructive.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
-            }
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-    }
-    .frame(maxHeight: 140)
   }
 
   private var biometricButton: some View {
@@ -554,7 +537,7 @@ private struct StructureConfirmationPanel: View {
     }
     passwordEntry = ""
     passwordError = nil
-    Task { await model.confirmApply() }
+    Task { await onConfirm() }
   }
 
   private func authenticateWithBiometric() {
@@ -562,17 +545,81 @@ private struct StructureConfirmationPanel: View {
     isBiometricAuthenticating = true
     passwordError = nil
     Task { @MainActor in
-      let success = await SafeModeAuthenticator.shared.authenticate(
-        reason: "Authorize the structure change in Safe Mode")
+      let success = await SafeModeAuthenticator.shared.authenticate(reason: biometricReason)
       isBiometricAuthenticating = false
       guard success else {
         passwordError = "Touch ID did not unlock. Enter your password instead."
         return
       }
       // The step may have been cancelled, or the editor closed, while Touch ID was up
-      guard model.pendingConfirmation != nil, isShown() else { return }
+      guard isPending() else { return }
       passwordEntry = ""
-      await model.confirmApply()
+      await onConfirm()
     }
+  }
+}
+
+/// The statements a Safe Mode panel asks about and their reasons (structure changes, a
+/// restore's statements other than its rows). A row with `fullText` (a restore's cut rows and
+/// triggers) also offers "Show full statement".
+struct SafeModeStatementList: View {
+  let statements: [StatementConfirmation]
+
+  var body: some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: Spacing.sm) {
+        ForEach(statements) { statement in
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("\(statement.index + 1). \(statement.preview)")
+              .font(.mono)
+              .foregroundColor(.foregroundMuted)
+              .lineLimit(2)
+            Text(statement.kindLabel)
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+            if let fullText = statement.fullText {
+              FullStatementDisclosure(text: fullText)
+            }
+            ForEach(statement.reasons, id: \.self) { reason in
+              Label(reason, systemImage: "exclamationmark.triangle.fill")
+                .font(.small)
+                .foregroundColor(.destructive)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, Spacing.xxs)
+                .background(Color.destructive.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+    }
+    .frame(maxHeight: statements.contains { $0.fullText != nil } ? 280 : 140)
+  }
+}
+
+/// "Show full statement": the exact text, selectable and scrollable
+private struct FullStatementDisclosure: View {
+  let text: String
+  @State private var isExpanded = false
+
+  var body: some View {
+    DisclosureGroup("Show full statement", isExpanded: $isExpanded) {
+      ScrollView {
+        Text(text)
+          .font(.mono)
+          .foregroundColor(.foreground)
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(Spacing.sm)
+      }
+      .frame(maxHeight: 160)
+      .background(Color.cardBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.sm))
+      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.sm)))
+    }
+    .font(.small)
+    .foregroundColor(.foregroundMuted)
   }
 }

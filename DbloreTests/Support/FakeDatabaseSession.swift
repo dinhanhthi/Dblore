@@ -86,6 +86,8 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private var startedContinuation: CheckedContinuation<Void, Never>?
   private var queryDidStart = false
   private var failingCommand: String?
+  private var failingCommands: [String] = []
+  private var queryHook: (@Sendable (String) async -> Void)?
 
   private(set) var didOpen = false
   private(set) var didClose = false
@@ -156,6 +158,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
 
   func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
     record(sql, binds: binds, query: true)
+    if let hook = takeQueryHook() { await hook(sql) }
     if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
     if slowQueries { try await waitUntilInterrupted() }
     return rowSource()
@@ -177,9 +180,36 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     lock.unlock()
   }
 
+  /// Each text fails the next `command` whose SQL contains it (once each), besides
+  /// `failNextCommand`.
+  func failCommands(containing texts: [String]) {
+    lock.lock()
+    failingCommands += texts
+    lock.unlock()
+  }
+
+  /// The next `query` runs `hook` (once) before it answers, e.g. to cancel meanwhile.
+  func onNextQuery(_ hook: @escaping @Sendable (String) async -> Void) {
+    lock.lock()
+    queryHook = hook
+    lock.unlock()
+  }
+
+  private func takeQueryHook() -> (@Sendable (String) async -> Void)? {
+    lock.lock()
+    defer { lock.unlock() }
+    let hook = queryHook
+    queryHook = nil
+    return hook
+  }
+
   private func takeFailingCommand(_ sql: String) -> Bool {
     lock.lock()
     defer { lock.unlock() }
+    if let index = failingCommands.firstIndex(where: { sql.contains($0) }) {
+      failingCommands.remove(at: index)
+      return true
+    }
     guard let text = failingCommand, sql.contains(text) else { return false }
     failingCommand = nil
     return true

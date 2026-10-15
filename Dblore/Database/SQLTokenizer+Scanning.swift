@@ -47,7 +47,7 @@ nonisolated extension SQLTokenizer {
     if dialect == .mysql {
       return mysqlLexeme(in: s, at: i)
     }
-    return SQLTokenizer.lexeme(in: s, at: i, markBackslash: true)
+    return SQLTokenizer.lexeme(in: s, at: i, markBackslash: !standardConformingStrings)
   }
 
   /// MySQL optimizer hints: the raw text of every `/*+ ... */` comment in `sql`, outside
@@ -271,8 +271,9 @@ nonisolated extension SQLTokenizer {
       return SQLLexeme(
         kind: .whitespace, range: i..<Self.scan(s, from: i + 1, while: Self.isWhitespace))
     }
+    // SQLite ends a line comment at LF only (a CR inside it is still comment)
     if char == "-" && next == "-" {
-      let end = Self.scan(s, from: i, while: { !Self.isLineBreak($0) })
+      let end = Self.scan(s, from: i, while: { $0 != "\n" })
       return SQLLexeme(kind: .comment, range: i..<end)
     }
     if let end = Self.sqliteBlockCommentEnd(in: s, at: i) {

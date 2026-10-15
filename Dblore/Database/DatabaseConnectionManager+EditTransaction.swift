@@ -100,23 +100,27 @@ extension DatabaseConnectionManager {
   /// the savepoint (nothing from the batch is recorded) and names the statement. A transaction
   /// this batch opened, with nothing else pending, is rolled back the way `undoEdit` does.
   /// Unprotected, no user transaction: `BEGIN`, run each, `COMMIT`; any failure rolls the batch
-  /// back. Unprotected with a user transaction already open: use a savepoint so a failed chunk
-  /// cannot leave earlier chunks committable.
+  /// back (a COMMIT that fails is followed by ROLLBACK). Unprotected with a user transaction
+  /// already open: use a savepoint so a failed chunk cannot leave earlier chunks committable.
+  /// `progress` gets the number of statements done after each one (SQL dump restore).
   func runStagedBatch(
     _ statements: [BoundStatement], caller: UUID?, protectedMode: Bool,
-    cancellationGeneration: UInt64
+    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil
   ) async throws -> [Int] {
     if protectedMode {
       return try await runProtectedBatch(
-        statements, caller: caller, cancellationGeneration: cancellationGeneration)
+        statements, caller: caller, cancellationGeneration: cancellationGeneration,
+        progress: progress)
     }
-    return try await runUnprotectedBatch(statements, cancellationGeneration: cancellationGeneration)
+    return try await runUnprotectedBatch(
+      statements, cancellationGeneration: cancellationGeneration, progress: progress)
   }
 
   // MARK: - Private
 
   private func runProtectedBatch(
-    _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64
+    _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64,
+    progress: (@Sendable (Int) -> Void)?
   ) async throws -> [Int] {
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
     let opens = txState.isIdle
@@ -129,7 +133,8 @@ extension DatabaseConnectionManager {
     let counts: [Int]
     do {
       counts = try await applyBatch(
-        statements, rolledBack: true, cancellationGeneration: cancellationGeneration)
+        statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
+        progress: progress)
       try refuseCancelledBatch(since: cancellationGeneration)
     } catch {
       throw await undoBatch(error, openedHere: opens)
@@ -145,14 +150,16 @@ extension DatabaseConnectionManager {
   }
 
   private func runUnprotectedBatch(
-    _ statements: [BoundStatement], cancellationGeneration: UInt64
+    _ statements: [BoundStatement], cancellationGeneration: UInt64,
+    progress: (@Sendable (Int) -> Void)?
   ) async throws -> [Int] {
     if userTxOpen {
       _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
       let counts: [Int]
       do {
         counts = try await applyBatch(
-          statements, rolledBack: true, cancellationGeneration: cancellationGeneration)
+          statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
+          progress: progress)
         try refuseCancelledBatch(since: cancellationGeneration)
       } catch {
         throw await undoBatch(error, openedHere: false)
@@ -165,14 +172,24 @@ extension DatabaseConnectionManager {
     let counts: [Int]
     do {
       counts = try await applyBatch(
-        statements, rolledBack: true, cancellationGeneration: cancellationGeneration)
+        statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
+        progress: progress)
       try refuseCancelledBatch(since: cancellationGeneration)
     } catch {
       _ = try? await sendTransactionControl("ROLLBACK")
       throw error
     }
-    let metadata = try await sendTransactionControl("COMMIT")
+    // SQLite keeps the transaction open after a deferred foreign key failure at COMMIT: without
+    // the ROLLBACK its write lock would stay held while nothing tracks the transaction
+    let metadata: CommandResult
+    do {
+      metadata = try await sendTransactionControl("COMMIT")
+    } catch {
+      _ = try? await sendTransactionControl("ROLLBACK")
+      throw error
+    }
     guard metadata.tag == "COMMIT" else {
+      _ = try? await sendTransactionControl("ROLLBACK")
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
@@ -183,7 +200,8 @@ extension DatabaseConnectionManager {
   /// Send each statement and check its expected affected rows when set. The caller owns the
   /// transaction. `rolledBack` is only the flag on the thrown error.
   private func applyBatch(
-    _ statements: [BoundStatement], rolledBack: Bool, cancellationGeneration: UInt64
+    _ statements: [BoundStatement], rolledBack: Bool, cancellationGeneration: UInt64,
+    progress: (@Sendable (Int) -> Void)?
   ) async throws -> [Int] {
     var counts: [Int] = []
     counts.reserveCapacity(statements.count)
@@ -210,6 +228,7 @@ extension DatabaseConnectionManager {
         SQLStatementClassifier.classify(statement.sql, dialect: Self.dialect(of: config)).first?
         .kind == .ddl
       counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
+      progress?(counts.count)
     }
     return counts
   }

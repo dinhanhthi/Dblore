@@ -20,6 +20,9 @@ struct WorkspaceContainerView: View {
   @State private var importTabID: UUID?
   @State private var importDestination: TableImportDestination?
   @State private var isConnectionImportPresented = false
+  /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
+  @State private var backupSheet: BackupSheet?
+  @State private var backupTabID: UUID?
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -275,6 +278,9 @@ struct WorkspaceContainerView: View {
       workspaceManager.openCommandPalette()
     }
     .focusedSceneValue(\.openTableImportAction, importAction)
+    .focusedSceneValue(\.openSQLDumpAction, backupAction(.dump))
+    .focusedSceneValue(\.openSQLRestoreAction, backupAction(.restore))
+    .focusedSceneValue(\.openDatabaseFileCopyAction, backupAction(.fileCopy))
     .focusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
@@ -299,6 +305,9 @@ struct WorkspaceContainerView: View {
           initialDestination: importDestination, tables: workspaceManager.databaseTables)
       }
     }
+    .modifier(
+      BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
+    )
     .favoriteFormPanel(workspaceManager: workspaceManager)
     .pendingTransactionDetailsModal(workspaceManager: workspaceManager)
     // Right sidebars above run the full window height, like the content
@@ -359,12 +368,84 @@ struct WorkspaceContainerView: View {
     return { requestImport() }
   }
 
+  /// Connected to an engine with a SQL dump (the file copy: SQLite only); the sheet runs for the
+  /// active tab, or a new SQL file when none is open
+  private func backupAction(_ sheet: BackupSheet) -> (() -> Void)? {
+    guard workspaceManager.connectionState.isConnected,
+      let type = workspaceManager.workspace.connectionConfig?.databaseType,
+      type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite
+    else { return nil }
+    return {
+      guard backupSheet == nil else { return }
+      backupTabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+      backupSheet = sheet
+    }
+  }
+
   private func requestImport(for table: DatabaseTable? = nil) {
     guard workspaceManager.canImportData else { return }
     let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
     importTabID = tabID
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
     isImportPresented = true
+  }
+}
+
+// MARK: - SQL Dump Panels
+
+private enum BackupSheet {
+  case dump
+  case fileCopy
+  case restore
+}
+
+/// Export SQL Dump, Copy Database File and Restore SQL Dump in the right side panel. The panel
+/// stays open while the sheet works, unless the sheet's tab closes: then the sheet (which stops
+/// its work) and the panel go away.
+private struct BackupPanel: ViewModifier {
+  let workspaceManager: WorkspaceManager
+  @Binding var sheet: BackupSheet?
+  let tabID: UUID?
+  @State private var isBusy = false
+
+  /// The sheet's tab is still open (a tab restored at launch has no view model until it loads,
+  /// so the tab list is checked rather than the view model)
+  private var isTabOpen: Bool {
+    tabID.map { id in workspaceManager.tabs.contains { $0.id == id } } ?? false
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .onChange(of: isTabOpen) { _, isOpen in
+        guard !isOpen, sheet != nil else { return }
+        isBusy = false
+        sheet = nil
+      }
+      .sidePanelOverlay(
+        isPresented: Binding(
+          get: { sheet != nil },
+          set: { if !$0 && !isBusy { sheet = nil } }
+        ),
+        width: SQLDumpSheet.panelWidth
+      ) {
+        if let sheet, let tabID, let viewModel = workspaceManager.viewModel(for: tabID) {
+          let isPresented = Binding(
+            get: { self.sheet != nil }, set: { if !$0 { self.sheet = nil } })
+          switch sheet {
+          case .dump, .fileCopy:
+            SQLDumpSheet(
+              kind: sheet == .dump ? .sqlDump : .fileCopy, viewModel: viewModel,
+              tables: workspaceManager.databaseTables, isPresented: isPresented,
+              isBusy: $isBusy)
+          case .restore:
+            SQLRestoreSheet(
+              viewModel: viewModel,
+              databasePassword: workspaceManager.workspace.connectionConfig?.password,
+              isConnected: workspaceManager.connectionState == .connected,
+              isPresented: isPresented, isBusy: $isBusy)
+          }
+        }
+      }
   }
 }
 

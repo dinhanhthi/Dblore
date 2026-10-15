@@ -92,7 +92,7 @@ extension View {
       if let entry = workspaceManager.historyDetail {
         HistoryDetailModal(
           sql: entry.sql,
-          canCopy: !QueryHistoryEntry.isTransactionSummary(entry.sql),
+          canCopy: !entry.isLabel,
           errorMessage: entry.status == .success ? nil : entry.errorMessage,
           isPresented: isPresented,
           onCopy: { workspaceManager.copyHistory(entry) }

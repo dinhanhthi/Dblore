@@ -210,6 +210,50 @@ struct WorkspaceHistoryTests {
     #expect(NSPasteboard.general.string(forType: .string) == "SELECT copy_me")
   }
 
+  @Test("Dump and restore rows are labels: Insert and Copy skip them by source or by text")
+  func insertAndCopySkipDumpAndRestoreLabels() {
+    #expect(QueryHistoryEntry.isLabelText("SQL dump of shop: 3 tables, 120 rows"))
+    #expect(QueryHistoryEntry.isLabelText("SQL dump of app.sqlite: 1 table, 1 row"))
+    #expect(QueryHistoryEntry.isLabelText("SQL dump of a: b: 0 tables, 0 rows"))
+    #expect(QueryHistoryEntry.isLabelText("Restore SQL dump: 7 statements"))
+    #expect(QueryHistoryEntry.isLabelText("Restore SQL dump: 1 statement"))
+    #expect(QueryHistoryEntry.isLabelText("COMMIT (2 statements)"))
+    #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop"))
+    #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop: 3 tables"))
+    #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop: x tables, 1 rows"))
+    #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop: 3 tables, 1 rows; DROP TABLE t"))
+    #expect(!QueryHistoryEntry.isLabelText("Restore SQL dump: statements"))
+    #expect(!QueryHistoryEntry.isLabelText("Restore SQL dump: 7 statements; DROP TABLE t"))
+    #expect(!QueryHistoryEntry.isLabelText("SELECT 'Restore SQL dump: 7 statements'"))
+    #expect(!QueryHistoryEntry.isLabelText("SELECT 1"))
+
+    // By source whatever the text, and by text for a transaction summary
+    #expect(Self.entry(sql: "SELECT 1", source: .dump).isLabel)
+    #expect(Self.entry(sql: "SELECT 1", source: .restore).isLabel)
+    #expect(Self.entry(sql: "COMMIT (2 statements)", kind: .transaction).isLabel)
+    #expect(!Self.entry(sql: "SELECT 1", source: .editor).isLabel)
+
+    let manager = makeManager()
+    manager.newNotebook()
+    let captured = CapturedInsertion()
+    let token = NotificationCenter.default.addObserver(
+      forName: .insertTextIntoCell, object: nil, queue: nil
+    ) { note in
+      captured.text = note.userInfo?["text"] as? String
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+    let dump = Self.entry(sql: "SQL dump of shop: 3 tables, 120 rows", source: .dump, kind: .read)
+    let restore = Self.entry(
+      sql: "Restore SQL dump: 7 statements", source: .restore, kind: .schema)
+    manager.insertHistory(dump)
+    manager.insertHistory(restore)
+    #expect(captured.text == nil)
+    #expect(WorkspaceManager.historyClipboardText(dump) == nil)
+    #expect(WorkspaceManager.historyClipboardText(restore) == nil)
+    #expect(!manager.copyHistory(dump))
+    #expect(!manager.copyHistory(restore))
+  }
+
   @Test("A history data change reloads the first page and other categories do not")
   func localDataChangeReloadsHistory() async throws {
     await LocalDataNotificationGate.shared.acquire()
@@ -280,6 +324,7 @@ struct WorkspaceHistoryTests {
     connectionKey: String = connectionKey,
     workspaceID: UUID? = nil,
     status: QueryHistoryEntry.Status = .success,
+    source: QueryHistoryEntry.Source = .cell,
     kind: QueryHistoryEntry.Kind? = nil
   ) -> QueryHistoryEntry {
     QueryHistoryEntry(
@@ -294,7 +339,7 @@ struct WorkspaceHistoryTests {
       connectionLabel: "Prod",
       workspaceID: workspaceID,
       workspaceName: nil,
-      source: .cell,
+      source: source,
       kind: kind
     )
   }

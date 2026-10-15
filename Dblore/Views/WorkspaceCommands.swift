@@ -77,6 +77,20 @@ struct OpenTableImportActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Export SQL Dump, Restore SQL Dump, Copy Database File (File menu): nil unless the workspace
+/// is connected to an engine with `supportsSQLDump` (the file copy: SQLite only)
+struct OpenSQLDumpActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct OpenSQLRestoreActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct OpenDatabaseFileCopyActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -91,6 +105,21 @@ extension FocusedValues {
   var openTableImportAction: (() -> Void)? {
     get { self[OpenTableImportActionKey.self] }
     set { self[OpenTableImportActionKey.self] = newValue }
+  }
+
+  var openSQLDumpAction: (() -> Void)? {
+    get { self[OpenSQLDumpActionKey.self] }
+    set { self[OpenSQLDumpActionKey.self] = newValue }
+  }
+
+  var openSQLRestoreAction: (() -> Void)? {
+    get { self[OpenSQLRestoreActionKey.self] }
+    set { self[OpenSQLRestoreActionKey.self] = newValue }
+  }
+
+  var openDatabaseFileCopyAction: (() -> Void)? {
+    get { self[OpenDatabaseFileCopyActionKey.self] }
+    set { self[OpenDatabaseFileCopyActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

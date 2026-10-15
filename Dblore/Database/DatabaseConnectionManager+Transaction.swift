@@ -159,7 +159,9 @@ extension DatabaseConnectionManager {
   ///   statement or edit is running, or when the transaction changed since the review;
   ///   `DatabaseError.transactionAborted` when the transaction is aborted (only Rollback
   ///   is possible), when the server rolled it back instead, or when the connection was lost.
-  ///   A failed COMMIT ends the transaction on the server, so the state is `.idle` afterwards.
+  ///   A COMMIT that throws is followed by ROLLBACK (unless the connection was lost): SQLite
+  ///   keeps the transaction open after a deferred foreign key failure, PostgreSQL has already
+  ///   ended it. The state is `.idle` afterwards.
   func commitAppTransaction(expectedGeneration: UInt64) async throws {
     // The server ended the session (and its transaction): never report a silent success
     if session == nil, let loss = lastSessionLoss {
@@ -186,9 +188,11 @@ extension DatabaseConnectionManager {
       do {
         metadata = try await sendTransactionControl("COMMIT")
       } catch {
+        let lost = isConnectionLost
+        if !lost { _ = try? await sendTransactionControl("ROLLBACK") }
         txState = .idle
         discardAppSchemaChange()
-        if isConnectionLost {
+        if lost {
           throw DatabaseError.transactionAborted(
             "The connection was lost during Commit; it is unknown whether the "
               + "\(pending.count) pending statement(s) were committed.")

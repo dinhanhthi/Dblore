@@ -91,11 +91,15 @@ nonisolated enum SQLStatementClassifier {
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
   /// or a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content).
   /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
+  /// `standardConformingStrings` (PostgreSQL, SQL dump restore only): read a plain string with a
+  /// backslash as `standard_conforming_strings = on` does, once the session reported it on.
   static func classifyStatement(
-    _ text: String, dialect: SQLDialect = .postgresql
+    _ text: String, dialect: SQLDialect = .postgresql, standardConformingStrings: Bool = false
   ) -> ClassifiedStatement? {
     if dialect == .mongodb { return MongoCommandClassifier.classifyStatement(text) }
-    let tokens = SQLTokenizer(dialect: dialect).tokens(text)
+    let tokens = SQLTokenizer(
+      dialect: dialect, standardConformingStrings: standardConformingStrings
+    ).tokens(text)
     guard !tokens.isEmpty else { return nil }
     let analysis = analyze(tokens[...], dialect: dialect)
     let ambiguous = tokens.contains {

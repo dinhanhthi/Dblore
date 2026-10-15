@@ -605,6 +605,9 @@ struct TabCommands: Commands {
   // Note: All tab operations now go through WorkspaceManager
   // No fallback to legacy TabStateManager.shared
   @FocusedValue(\.openTableImportAction) private var openTableImportAction
+  @FocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
+  @FocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
+  @FocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -705,6 +708,15 @@ struct TabCommands: Commands {
 
       Button("Import Data...") { openTableImportAction?() }
         .disabled(openTableImportAction == nil)
+
+      Button("Export SQL Dump...") { openSQLDumpAction?() }
+        .disabled(openSQLDumpAction == nil)
+
+      Button("Restore SQL Dump...") { openSQLRestoreAction?() }
+        .disabled(openSQLRestoreAction == nil)
+
+      Button("Copy Database File...") { openDatabaseFileCopyAction?() }
+        .disabled(openDatabaseFileCopyAction == nil)
 
       // Works with no window open: the sheet opens the Welcome window first.
       Button("Import Connections...") { ConnectionImportPresenter.present() }

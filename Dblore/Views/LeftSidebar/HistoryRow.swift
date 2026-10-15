@@ -24,8 +24,9 @@ struct HistoryRow: View {
 
   private var showsActions: Bool { isHovering || isHoveringInsert || isHoveringDetail }
 
-  /// Transaction summaries are labels. Insert and Copy would put non-SQL where it can be run.
-  private var canReplay: Bool { !QueryHistoryEntry.isTransactionSummary(entry.sql) }
+  /// Transaction, dump and restore summaries are labels. Insert and Copy would put non-SQL
+  /// where it can be run.
+  private var canReplay: Bool { !entry.isLabel }
 
   var body: some View {
     HStack(alignment: .top, spacing: Spacing.xs) {
@@ -211,6 +212,8 @@ nonisolated enum HistoryRowLabels: Sendable {
     case .mcp: "MCP"
     case .structure: "Structure"
     case .ai: "AI Assistant"
+    case .dump: "Dump"
+    case .restore: "Restore"
     }
   }
 }

@@ -242,10 +242,10 @@ final class HistoryListModel {
 }
 
 extension WorkspaceManager {
-  /// SQL text placed on the pasteboard, or nil for a transaction summary label.
+  /// SQL text placed on the pasteboard, or nil for a label row (transaction, dump, restore).
   /// The action is what talks to `NSPasteboard`.
   static func historyClipboardText(_ entry: QueryHistoryEntry) -> String? {
-    guard !QueryHistoryEntry.isTransactionSummary(entry.sql) else { return nil }
+    guard !entry.isLabel else { return nil }
     return entry.sql
   }
 
@@ -265,9 +265,10 @@ extension WorkspaceManager {
 
   /// Inserts the statement at the cursor, the same way a favorite does.
   /// A transaction summary is a label. Running it with Protected mode off is a syntax error
-  /// that the client still treats as a finished COMMIT or ROLLBACK.
+  /// that the client still treats as a finished COMMIT or ROLLBACK. Dump and restore rows are
+  /// labels too.
   func insertHistory(_ entry: QueryHistoryEntry) {
-    guard !QueryHistoryEntry.isTransactionSummary(entry.sql) else { return }
+    guard !entry.isLabel else { return }
     activeViewModel?.insertTextIntoSelectedCell(entry.sql)
   }
 

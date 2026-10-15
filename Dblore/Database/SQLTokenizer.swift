@@ -12,9 +12,15 @@ nonisolated struct SQLTokenizer: Sendable {
   /// Lexical rules for this scanner. PostgreSQL keeps dollar quotes, `E'…'` escapes,
   /// nested block comments, and `.backslashString`.
   let dialect: SQLDialect
+  /// PostgreSQL only: read plain `'...'` strings as `standard_conforming_strings = on` does (a
+  /// backslash is a character), so one with a backslash is `.string`, not `.backslashString`.
+  /// Only for text whose session setting was checked (a SQL dump restore); everything else
+  /// keeps the default and fails closed.
+  let standardConformingStrings: Bool
 
-  init(dialect: SQLDialect = .postgresql) {
+  init(dialect: SQLDialect = .postgresql, standardConformingStrings: Bool = false) {
     self.dialect = dialect
+    self.standardConformingStrings = standardConformingStrings
   }
 
   /// Split SQL string into individual statements at `;` tokens, using `dialect`.
@@ -24,7 +30,8 @@ nonisolated struct SQLTokenizer: Sendable {
   /// - Dollar-quoted strings (`$$...$$`, `$tag$...$tag$`)
   /// - Comments (single-line -- and nested multi-line /* */)
   /// SQLite strings are `'…'` with doubled quotes only, identifiers may use `"…"`, `[…]`,
-  /// or backticks, block comments do not nest, and `$` is not a quote.
+  /// or backticks, block comments do not nest, line comments end at LF only, and `$` is not a
+  /// quote; a `CREATE TRIGGER … BEGIN …; END` body is one statement (`sqliteSplitStatements`).
   /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
   /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped).
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
@@ -36,6 +43,9 @@ nonisolated struct SQLTokenizer: Sendable {
     let scalars = Array(sql.unicodeScalars)
     if dialect == .mysql {
       return mysqlSplitStatements(scalars)
+    }
+    if dialect == .sqlite {
+      return sqliteSplitStatements(scalars)
     }
     var statements: [String] = []
     var start = 0
@@ -91,6 +101,28 @@ nonisolated struct SQLTokenizer: Sendable {
         break
       }
       hasContent = true
+      i = lexeme.range.upperBound
+    }
+    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
+    return statements
+  }
+
+  /// SQLite split: cuts exactly where SQLite's `sqlite3_complete` reports a complete statement,
+  /// so `;` inside a `CREATE [TEMP | TEMPORARY] TRIGGER … BEGIN … END` body does not split: in a
+  /// trigger only `;` `END` `;` (whitespace and comments between) ends it, never `CASE … END;`.
+  private func sqliteSplitStatements(_ scalars: [Unicode.Scalar]) -> [String] {
+    var statements: [String] = []
+    var state = SQLiteCompleteState.invalid
+    var start = 0
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      let token = SQLiteCompleteState.token(of: lexeme, in: scalars)
+      state = state.next(token)
+      if token == .semicolon, state == .start {
+        Self.appendTrimmed(scalars, start..<i, to: &statements)
+        start = lexeme.range.upperBound
+      }
       i = lexeme.range.upperBound
     }
     Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
@@ -234,4 +266,57 @@ nonisolated struct SQLToken: Sendable, Equatable {
 
   func isWord(_ word: String) -> Bool { keyword == word }
   func isSymbol(_ symbol: String) -> Bool { kind == .symbol && text == symbol }
+}
+
+/// The state machine of SQLite's `sqlite3_complete` (complete.c): a statement is complete when a
+/// `;` brings it back to `start`. Inside `CREATE [TEMP | TEMPORARY] TRIGGER` (`trigger`) a `;`
+/// only moves to `semicolon`, `END` right after it to `end`, and the next `;` completes it.
+nonisolated enum SQLiteCompleteState: Sendable, Equatable {
+  case invalid, start, normal, explain, create, trigger, semicolon, end
+
+  enum Token: Sendable, Equatable {
+    case semicolon, whitespace, other, explain, create, temp, trigger, end
+  }
+
+  /// The row of the `sqlite3_complete` transition table for `token`
+  func next(_ token: Token) -> SQLiteCompleteState {
+    switch (self, token) {
+    case (_, .whitespace): self
+    case (.trigger, .semicolon), (.semicolon, .semicolon): .semicolon
+    case (_, .semicolon): .start
+    case (.semicolon, .end): .end
+    case (.trigger, _), (.semicolon, _), (.end, _): .trigger
+    case (.invalid, .explain), (.start, .explain): .explain
+    case (.invalid, .create), (.start, .create), (.explain, .create): .create
+    case (.explain, .other): .explain
+    case (.create, .temp): .create
+    case (.create, .trigger): .trigger
+    default: .normal
+    }
+  }
+
+  /// `lexeme` as `sqlite3_complete` reads it. A comment is whitespace; a whitespace run with a
+  /// vertical tab is `other` (`sqlite3_complete` treats only space, TAB, LF, CR and FF as
+  /// whitespace, and `other` between whitespace acts as one `other`).
+  static func token(of lexeme: SQLLexeme, in scalars: [Unicode.Scalar]) -> Token {
+    switch lexeme.kind {
+    case .whitespace:
+      return scalars[lexeme.range].contains("\u{0B}") ? .other : .whitespace
+    case .comment:
+      return .whitespace
+    case .symbol:
+      return scalars[lexeme.range.lowerBound] == ";" ? .semicolon : .other
+    case .word:
+      switch SQLTokenizer.asciiUppercased(SQLTokenizer.text(scalars, lexeme.range)) {
+      case "CREATE": return .create
+      case "TEMP", "TEMPORARY": return .temp
+      case "TRIGGER": return .trigger
+      case "END": return .end
+      case "EXPLAIN": return .explain
+      default: return .other
+      }
+    case .number, .quoted, .dollarString, .executableComment:
+      return .other
+    }
+  }
 }

@@ -240,7 +240,7 @@ struct QueryHistoryStoreTests {
     #expect(stored.sql.count == 100_000 + "\n-- truncated".count)
   }
 
-  @Test("An empty v0 file migrates to userVersion 3 and a second open stays at 3")
+  @Test("An empty v0 file migrates to userVersion 4 and a second open stays at 4")
   func migrationFromEmptyV0() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
@@ -249,11 +249,11 @@ struct QueryHistoryStoreTests {
       #expect(empty.userVersion == 0)
     }
     let store = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 3)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
     #expect(try await store.fileSize() > 0)
     #expect(try await store.count() == 0)
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 3)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
     #expect(try await reopened.count() == 0)
   }
 
@@ -284,7 +284,7 @@ struct QueryHistoryStoreTests {
 
     let store = try QueryHistoryStore(url: url)
     let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 3)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
     let info = try SQLiteHandle(url: url)
     let tables = try info.prepare(
       "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'history'")
@@ -319,7 +319,7 @@ struct QueryHistoryStoreTests {
     #expect(again == loaded)
   }
 
-  @Test("A v2 file migrates to userVersion 3, so search finds rows by their source badge")
+  @Test("A v2 file migrates to userVersion 4, so search finds rows by their source badge")
   func version2MigratesToVersion3() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
@@ -334,7 +334,61 @@ struct QueryHistoryStoreTests {
     let store = try QueryHistoryStore(url: url)
     let found = try await store.search(text: "AI Assistant", scope: .all, limit: 10, offset: 0)
     #expect(found.map(\.sql) == ["SELECT 1"])
-    #expect(try SQLiteHandle(url: url).userVersion == 3)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
+  }
+
+  @Test(
+    "A v3 file rebuilds its tags, so dump and restore rows get their badges and keep their data")
+  func version3MigratesTagsToVersion4() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let key = "PostgreSQL|h|5432|d|u"
+    try seedVersion3(
+      at: url,
+      rows: [
+        (sql: "nightly backup of shop", key: key, source: "dump", kind: "read"),
+        (sql: "seven statements back", key: key, source: "restore", kind: "schema"),
+        (sql: "UPDATE t SET a = 1", key: key, source: "editor", kind: "write"),
+      ])
+    func tags(_ database: SQLiteHandle) throws -> [String?] {
+      let statement = try database.prepare("SELECT tags FROM history ORDER BY id")
+      var found: [String?] = []
+      while try statement.step() { found.append(statement.columnText(0)) }
+      return found
+    }
+    // The v3 mapping frozen in the file has no dump or restore case
+    #expect(try tags(SQLiteHandle(url: url)) == ["Editor Read", "Editor Schema", "Editor Write"])
+
+    let store = try QueryHistoryStore(url: url)
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try tags(SQLiteHandle(url: url)) == ["Dump Read", "Restore Schema", "Editor Write"])
+    #expect(
+      rows.map {
+        "\($0.sql)|\($0.source.rawValue)|\($0.kind?.rawValue ?? "nil")|\($0.connectionKey)"
+      }
+        == [
+          "UPDATE t SET a = 1|editor|write|\(key)",
+          "seven statements back|restore|schema|\(key)",
+          "nightly backup of shop|dump|read|\(key)",
+        ])
+    func found(_ text: String) async throws -> [String] {
+      try await store.search(text: text, scope: .all, limit: 10, offset: 0).map(\.sql)
+    }
+    #expect(try await found("Dump") == ["nightly backup of shop"])
+    #expect(try await found("Restore") == ["seven statements back"])
+    #expect(try await found("Editor") == ["UPDATE t SET a = 1"])
+    #expect(try await found("UPDATE") == ["UPDATE t SET a = 1"])
+
+    // The triggers index new rows with the new tags
+    try await store.record(
+      Self.entry(
+        sql: "another copy", at: Date(timeIntervalSince1970: 1_800_000_000), source: .dump,
+        kind: .read))
+    #expect(try await found("Dump").sorted() == ["another copy", "nightly backup of shop"])
+    let reopened = try QueryHistoryStore(url: url)
+    #expect(try await reopened.count() == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
   }
 
   @Test("A v1 backfill classifies MySQL and DuckDB keys with their own dialect")
@@ -418,7 +472,7 @@ struct QueryHistoryStoreTests {
 
     let entries = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
     #expect(entries.map(\.kind) == [.write])
-    #expect(try SQLiteHandle(url: url).userVersion == 3)
+    #expect(try SQLiteHandle(url: url).userVersion == 4)
   }
 
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
@@ -561,7 +615,76 @@ struct QueryHistoryStoreTests {
     #expect(rows.map(\.source) == [.ai])
   }
 
-  @Test("JSON import keeps mcp, structure and ai, and unknown source or kind falls back")
+  @Test("A dump row counts tables and rows as a read; a restore row is schema only with DDL")
+  func dumpAndRestoreSummaryEntries() {
+    let config = ConnectionConfig(
+      host: "db.example", port: 5432, database: "shop", username: "ana", name: "  Prod  ")
+    let workspace = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+    let dump = QueryHistoryEntry.dumpSummary(
+      SQLDumpProgress(tablesDone: 3, tableCount: 3, rowsWritten: 120), config: config,
+      workspaceID: workspace, workspaceName: "Shop", durationMs: 40, status: .success,
+      errorMessage: nil)
+    #expect(dump.sql == "SQL dump of shop: 3 tables, 120 rows")
+    #expect(dump.source == .dump)
+    #expect(dump.kind == .read)
+    #expect(dump.rowCount == 120)
+    #expect(dump.durationMs == 40)
+    #expect(dump.status == .success)
+    #expect(dump.workspaceID == workspace)
+    #expect(dump.workspaceName == "Shop")
+    #expect(dump.connectionKey == QueryHistoryIdentity.connectionKey(for: config))
+    #expect(dump.connectionLabel == "Prod")
+
+    let one = QueryHistoryEntry.dumpSummary(
+      SQLDumpProgress(tablesDone: 1, tableCount: 2, rowsWritten: 1),
+      config: ConnectionConfig(databaseType: .sqlite, host: "", database: "/tmp/data/app.sqlite"),
+      workspaceID: nil, workspaceName: nil, durationMs: 5, status: .cancelled,
+      errorMessage: "Cancelled")
+    #expect(one.sql == "SQL dump of app.sqlite: 1 table, 1 row")
+    #expect(one.status == .cancelled)
+    #expect(one.errorMessage == "Cancelled")
+
+    func restore(_ counts: [SQLRestoreStatementKind: Int], total: Int) -> QueryHistoryEntry {
+      QueryHistoryEntry.restoreSummary(
+        SQLRestoreSummary(
+          engine: .postgresql, statementCount: total, counts: counts, serverVersionOptions: []),
+        config: config, workspaceID: nil, workspaceName: nil, durationMs: 7, status: .success,
+        errorMessage: nil)
+    }
+    let schema = restore([.schema: 2, .data: 5], total: 7)
+    #expect(schema.sql == "Restore SQL dump: 7 statements")
+    #expect(schema.source == .restore)
+    #expect(schema.kind == .schema)
+    #expect(schema.rowCount == nil)
+    #expect(restore([.trigger: 1], total: 1).sql == "Restore SQL dump: 1 statement")
+    #expect(restore([.trigger: 1], total: 1).kind == .schema)
+    #expect(restore([.data: 4, .sessionSetting: 1], total: 5).kind == .write)
+  }
+
+  @Test("Dump and restore rows read back with their source and index their badges")
+  func dumpAndRestoreSourcesRoundTrip() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(
+      Self.entry(sql: "SQL dump of shop: 3 tables, 120 rows", at: start, source: .dump, kind: .read)
+    )
+    try await store.record(
+      Self.entry(
+        sql: "Restore SQL dump: 7 statements", at: start.addingTimeInterval(10), source: .restore,
+        kind: .schema))
+
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(rows.map(\.source) == [.restore, .dump])
+    let database = try SQLiteHandle(url: url)
+    let tags = try database.prepare("SELECT tags FROM history ORDER BY id")
+    var found: [String?] = []
+    while try tags.step() { found.append(tags.columnText(0)) }
+    #expect(found == ["Dump Read", "Restore Schema"])
+  }
+
+  @Test("JSON import keeps mcp, structure, ai, dump and restore; unknown source or kind falls back")
   func jsonImportToleratesUnknownSourceAndKind() async throws {
     let url = temporaryDatabaseURL()
     let jsonURL = FileManager.default.temporaryDirectory
@@ -572,7 +695,7 @@ struct QueryHistoryStoreTests {
     }
     let rows = [
       ("mcp", "read", 1), ("structure", "schema", 2), ("futureSource", "futureKind", 3),
-      ("ai", "read", 4),
+      ("ai", "read", 4), ("dump", "read", 5), ("restore", "write", 6),
     ]
     let objects = rows.map { source, kind, id in
       """
@@ -586,9 +709,12 @@ struct QueryHistoryStoreTests {
     try await store.importJSON(from: jsonURL, replace: true)
 
     let imported = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
-    #expect(imported.map(\.sql) == ["SELECT 4", "SELECT 3", "SELECT 2", "SELECT 1"])
-    #expect(imported.map(\.source) == [.ai, .editor, .structure, .mcp])
-    #expect(imported.map(\.kind) == [.read, .other, .schema, .read])
+    #expect(
+      imported.map(\.sql) == [
+        "SELECT 6", "SELECT 5", "SELECT 4", "SELECT 3", "SELECT 2", "SELECT 1",
+      ])
+    #expect(imported.map(\.source) == [.restore, .dump, .ai, .editor, .structure, .mcp])
+    #expect(imported.map(\.kind) == [.write, .read, .read, .other, .schema, .read])
   }
 
   @Test("200 concurrent records of distinct SQL insert 200 rows")
@@ -780,6 +906,95 @@ struct QueryHistoryStoreTests {
       try statement.bind(1, .string(row.sql))
       try statement.bind(2, .double(Double(1_700_000_000 + offset)))
       try statement.bind(3, .string(row.key))
+      while try statement.step() {}
+    }
+  }
+
+  /// Frozen version-3 schema: `kind`, and `tags` with the source mapping before dump and restore.
+  private func seedVersion3(
+    at url: URL, rows: [(sql: String, key: String, source: String, kind: String?)]
+  ) throws {
+    try seedVersion1(at: url, rows: [])
+    let database = try SQLiteHandle(url: url)
+    try database.transaction {
+      try database.execute("ALTER TABLE history ADD COLUMN kind TEXT")
+      try database.execute(
+        """
+        ALTER TABLE history ADD COLUMN tags TEXT GENERATED ALWAYS AS ((CASE source \
+        WHEN 'cell' THEN 'Cell' WHEN 'editor' THEN 'Editor' \
+        WHEN 'dataViewerEdit' THEN 'Data Viewer Edit' WHEN 'dataImport' THEN 'Data Import' \
+        WHEN 'mcp' THEN 'MCP' WHEN 'structure' THEN 'Structure' WHEN 'ai' THEN 'AI Assistant' \
+        ELSE 'Editor' END) || COALESCE(' ' || (CASE kind WHEN 'read' THEN 'Read' \
+        WHEN 'write' THEN 'Write' WHEN 'schema' THEN 'Schema' \
+        WHEN 'transaction' THEN 'Transaction' WHEN 'other' THEN 'Other' END), '')) VIRTUAL
+        """
+      )
+      try database.execute("DROP TRIGGER history_ai")
+      try database.execute("DROP TRIGGER history_ad")
+      try database.execute("DROP TRIGGER history_au")
+      try database.execute("DROP TABLE history_fts")
+      try database.execute(
+        """
+        CREATE VIRTUAL TABLE history_fts USING fts5(
+          sql, error_message, connection_label, workspace_name, tags,
+          content='history', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
+        )
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_ai AFTER INSERT ON history BEGIN
+          INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name, tags)
+          VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name,
+            new.tags);
+        END
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_ad AFTER DELETE ON history BEGIN
+          INSERT INTO history_fts(
+            history_fts, rowid, sql, error_message, connection_label, workspace_name, tags
+          )
+          VALUES (
+            'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name,
+            old.tags
+          );
+        END
+        """
+      )
+      try database.execute(
+        """
+        CREATE TRIGGER history_au AFTER UPDATE ON history BEGIN
+          INSERT INTO history_fts(
+            history_fts, rowid, sql, error_message, connection_label, workspace_name, tags
+          )
+          VALUES (
+            'delete', old.id, old.sql, old.error_message, old.connection_label, old.workspace_name,
+            old.tags
+          );
+          INSERT INTO history_fts(rowid, sql, error_message, connection_label, workspace_name, tags)
+          VALUES (new.id, new.sql, new.error_message, new.connection_label, new.workspace_name,
+            new.tags);
+        END
+        """
+      )
+      try database.execute("PRAGMA user_version = 3")
+    }
+    for (offset, row) in rows.enumerated() {
+      let statement = try database.prepare(
+        """
+        INSERT INTO history (
+          sql, executed_at, duration_ms, row_count, status,
+          connection_key, connection_label, source, kind
+        ) VALUES (?, ?, 1, 1, 'success', ?, 'label', ?, ?)
+        """
+      )
+      try statement.bind(1, .string(row.sql))
+      try statement.bind(2, .double(Double(1_700_000_000 + offset)))
+      try statement.bind(3, .string(row.key))
+      try statement.bind(4, .string(row.source))
+      try statement.bind(5, row.kind.map { .string($0) } ?? .null)
       while try statement.step() {}
     }
   }

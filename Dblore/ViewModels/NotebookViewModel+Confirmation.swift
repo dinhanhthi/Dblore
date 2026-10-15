@@ -1108,10 +1108,52 @@ extension NotebookViewModel {
     return previewLine(line, dialect: dialect)
   }
 
+  /// `collapsedLine`, cut as `preview` cuts its first line
+  nonisolated static func oneLinePreview(_ text: String, dialect: SQLDialect) -> String {
+    previewLine(collapsedLine(text, dialect: dialect), dialect: dialect)
+  }
+
+  /// The whole statement on one line: comments (lexed with `dialect`) dropped and every run of
+  /// whitespace, also inside quotes, one space, so padding cannot push what runs out of the
+  /// preview. A MySQL optimizer hint (`/*+ ... */`, which the server applies) is kept.
+  nonisolated static func collapsedLine(_ text: String, dialect: SQLDialect) -> String {
+    let scalars = Array(text.unicodeScalars)
+    let tokenizer = SQLTokenizer(dialect: dialect)
+    var line = String.UnicodeScalarView()
+    var space = false
+    var i = 0
+    while i < scalars.count {
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      let piece = scalars[lexeme.range]
+      if case .comment = lexeme.kind, !(dialect == .mysql && piece.starts(with: ["/", "*", "+"])) {
+        space = true
+      } else {
+        for scalar in piece {
+          if scalar.properties.isWhitespace {
+            space = true
+            continue
+          }
+          if space, !line.isEmpty { line.append(" ") }
+          space = false
+          line.append(scalar)
+        }
+      }
+      i = lexeme.range.upperBound
+    }
+    return String(line)
+  }
+
+  /// Characters of `line` the preview leaves out (`previewLine` keeps 79 and an ellipsis), or 0
+  nonisolated static func previewOmittedCount(_ line: String) -> Int {
+    line.count > previewLimit ? line.count - (previewLimit - 1) : 0
+  }
+
+  private nonisolated static let previewLimit = 80
+
   /// First 79 characters plus an ellipsis. A later `%` inside a LIKE operand is appended
   /// after that prefix. The head is not shortened, and a `%` in a comment or elsewhere is not.
   private nonisolated static func previewLine(_ line: String, dialect: SQLDialect) -> String {
-    let limit = 80
+    let limit = previewLimit
     guard line.count > limit else { return line }
     let head = String(line.prefix(limit - 1)) + "…"
     guard let mark = likeOperandPercent(in: line, past: limit - 1, dialect: dialect) else {

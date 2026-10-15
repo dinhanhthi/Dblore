@@ -160,6 +160,52 @@ struct SQLiteSessionTests {
     }
   }
 
+  @Test("A statement timeout of 0 disables the interrupt timer (the SQL dump setting)")
+  func zeroStatementTimeoutDisablesTimer() async throws {
+    try await withWritableDatabase(statementTimeoutSeconds: 1) { session in
+      try await session.applySessionSettings(
+        statementTimeoutSeconds: 0, lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)
+      let count = 40_000_000
+      let start = ContinuousClock.now
+      let result = try await collect(
+        session,
+        """
+        WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT \(count))
+        SELECT max(x) FROM c
+        """)
+      #expect(result.rows == [[.int(count)]])
+      // The statement outlived the 1 s brake it was opened with
+      #expect(start.duration(to: .now) > .seconds(1))
+      let command = try await session.command(
+        "CREATE TABLE t AS WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c"
+          + " LIMIT \(count)) SELECT max(x) AS m FROM c", binds: [])
+      #expect(command.tag == "CREATE")
+    }
+  }
+
+  @Test("A snapshot read-only open sees rows still in another connection's WAL")
+  func snapshotReadOnlyOpenReadsWAL() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let writing = SQLiteSession(config: makeConfig(path: url.path))
+    try await writing.open()
+    _ = try await collect(writing, "PRAGMA journal_mode = WAL")
+    _ = try await collect(writing, "PRAGMA wal_autocheckpoint = 0")
+    _ = try await writing.command("CREATE TABLE notes (body TEXT)", binds: [])
+    _ = try await writing.command("INSERT INTO notes (body) VALUES ('in the wal')", binds: [])
+
+    let reading = SQLiteSession(
+      config: makeConfig(path: url.path, readOnlyFile: true), snapshotReadOnly: true)
+    try await reading.open()
+    let visible = try await collect(reading, "SELECT body FROM notes")
+    #expect(visible.rows == [[.string("in the wal")]])
+    await #expect(throws: SQLiteSessionError.self) {
+      try await reading.command("INSERT INTO notes (body) VALUES ('x')", binds: [])
+    }
+    await reading.close()
+    await writing.close()
+  }
+
   @Test("A read-only open rejects a write and keeps the bound value out of the error")
   func readOnlyOpenRejectsWrite() async throws {
     let url = temporaryDatabaseURL()

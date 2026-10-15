@@ -56,14 +56,14 @@ actor QueryHistoryStore {
     }
   }
 
-  /// Finishes the version-2 and version-3 migrations on this actor. A failure is logged and
+  /// Finishes the version-2 to version-4 migrations on this actor. A failure is logged and
   /// rethrown; the file stays on its version and the process keeps running. SQLITE_BUSY or
   /// SQLITE_LOCKED (another connection held the file past the busy timeout) is not stored, so the
   /// next call tries again. Any other error is stored and later calls rethrow it without another
   /// attempt, so history stays unavailable for the session.
   private func prepare() throws {
     if let migrationError { throw migrationError }
-    guard database.userVersion < 3 else { return }
+    guard database.userVersion < 4 else { return }
     do {
       try Self.migrate(database)
     } catch {
@@ -250,6 +250,7 @@ actor QueryHistoryStore {
   /// Version 1 creates the original table. Version 2 adds `kind` and backfills it in one
   /// transaction. If that fails, the file stays on version 1 with no second table. Version 3
   /// indexes the row's source and kind badges (`tags`), so "AI Assistant" finds those rows.
+  /// Version 4 rebuilds `tags` with the dump and restore sources.
   private static func migrate(_ database: SQLiteHandle) throws {
     if database.userVersion < 1 {
       try createVersion1(database)
@@ -259,6 +260,9 @@ actor QueryHistoryStore {
     }
     if database.userVersion < 3 {
       try migrateToVersion3(database)
+    }
+    if database.userVersion < 4 {
+      try rebuildTags(database, version: 4)
     }
   }
 
@@ -307,8 +311,30 @@ actor QueryHistoryStore {
     }
   }
 
+  /// The file keeps the `tags` expression it was migrated with, so a new `Source` case needs a
+  /// new version that calls this again. The triggers read `tags` and SQLite refuses to drop a
+  /// column a trigger names, so they and the index go first; the index is then rebuilt.
+  private static func rebuildTags(_ database: SQLiteHandle, version: Int32) throws {
+    try database.transaction {
+      try database.execute("DROP TRIGGER IF EXISTS history_ai")
+      try database.execute("DROP TRIGGER IF EXISTS history_ad")
+      try database.execute("DROP TRIGGER IF EXISTS history_au")
+      try database.execute("DROP TABLE IF EXISTS history_fts")
+      try database.execute("ALTER TABLE history DROP COLUMN tags")
+      try database.execute(
+        "ALTER TABLE history ADD COLUMN tags TEXT GENERATED ALWAYS AS (\(tagsExpression)) VIRTUAL")
+      try database.execute(createFTS)
+      try database.execute(insertTrigger)
+      try database.execute(deleteTrigger)
+      try database.execute(updateTrigger)
+      try database.execute("INSERT INTO history_fts(history_fts) VALUES ('rebuild')")
+      try database.execute("PRAGMA user_version = \(version)")
+    }
+  }
+
   /// The badges a row shows (`HistoryRowLabels`): source, then kind when there is one. An
-  /// unknown source reads as editor, as the row read does. Fixed in the file when it migrates.
+  /// unknown source reads as editor, as the row read does. Fixed in the file when it migrates:
+  /// a change here needs a new version that runs `rebuildTags`.
   private static var tagsExpression: String {
     func literal(_ text: String) -> String {
       "'" + text.replacingOccurrences(of: "'", with: "''") + "'"
