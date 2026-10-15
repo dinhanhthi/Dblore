@@ -243,7 +243,7 @@ nonisolated enum MongoBSONMapping {
   }
 
   /// Milliseconds of a driver `Date` (built from Int64 milliseconds, so rounding recovers them).
-  private static func millis(of date: Date) -> Int64 {
+  static func millis(of date: Date) -> Int64 {
     let millis = (date.timeIntervalSince1970 * 1000).rounded()
     return Int64(exactly: millis) ?? (millis < 0 ? .min : .max)
   }

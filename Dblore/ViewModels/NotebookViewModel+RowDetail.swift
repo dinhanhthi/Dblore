@@ -154,9 +154,12 @@ extension NotebookViewModel {
     // A grid edit of another result may have replaced the shared target: the confirmation
     // sends with it, so it must be the panel's again
     cellDetailEditTarget = state.editTarget
+    let documentValue =
+      dirty.count == 1 ? (columnType: dirty[0].field.type, text: dirty[0].bindText) : nil
     submitInlineEdit(
       assignments: dirty.map { (column: $0.name, value: $0.bindText) }, rowData: state.rowData,
-      target: state.editTarget, cellId: cellId, connectionManager: connectionManager)
+      target: state.editTarget, cellId: cellId, connectionManager: connectionManager,
+      documentValue: documentValue)
   }
 
   /// The bound `text` of `field` as a `CellValue`. The NULL toggle decides NULL (nil text): a

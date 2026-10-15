@@ -82,6 +82,11 @@ enum DatabaseError: LocalizedError {
   /// MySQL: statement `applied + 1` of `total` failed; the `applied` before it stay committed
   /// (each DDL commits implicitly, nothing can be rolled back)
   case schemaChangePartiallyApplied(applied: Int, total: Int, reason: String)
+  /// A batch sent one by one without a transaction was refused before anything was sent
+  case sequentialBatchRefused(String)
+  /// Statement `applied + 1` of `total` of a batch sent one by one (no transaction) failed or
+  /// affected an unexpected row count; the `applied` before it stay
+  case batchPartiallyApplied(applied: Int, total: Int, reason: String)
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -173,6 +178,10 @@ enum DatabaseError: LocalizedError {
     case .schemaChangePartiallyApplied(let applied, let total, let reason):
       return "Applied \(applied) of \(total) schema changes; change \(applied + 1) failed: "
         + "\(reason). MySQL commits each change, so the applied ones stay."
+    case .sequentialBatchRefused(let reason):
+      return "\(reason) Nothing was executed."
+    case .batchPartiallyApplied(let applied, let total, let reason):
+      return "Applied \(applied) of \(total) changes: \(reason)"
     case .queryCancelled(let pendingCount, let userTxRolledBack, let connectionKept):
       return Self.cancelMessage(
         pendingCount: pendingCount, userTxRolledBack: userTxRolledBack,

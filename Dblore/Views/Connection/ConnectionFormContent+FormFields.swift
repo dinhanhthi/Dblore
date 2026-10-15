@@ -54,7 +54,7 @@ extension ConnectionFormContent {
       } else {
         HStack(alignment: .top, spacing: Spacing.md) {
           FormField(label: "Database") {
-            TextField("database_name", text: $connectionConfig.database)
+            TextField(databasePlaceholder, text: $connectionConfig.database)
               .textFieldStyle(.plain)
               .inputCapsuleStyle()
           }
@@ -69,6 +69,10 @@ extension ConnectionFormContent {
         FormField(label: "Password") {
           PasswordInputField(password: $connectionConfig.password)
         }
+      }
+
+      if connectionConfig.databaseType == .mongodb {
+        mongoAuthSourceField()
       }
 
       HStack(alignment: .top, spacing: Spacing.md) {
@@ -93,12 +97,84 @@ extension ConnectionFormContent {
 
       if capabilities.supportsSSL {
         sslModeHelpText()
-        if usesClientCertificate(connectionConfig.sslMode) {
-          clientCertificateSection()
-        } else {
-          removeClientCertificateButton()
-        }
+        mongoTLSWarning()
+        certificateSection(for: connectionConfig.sslMode)
       }
+
+      if let error = MongoConnectionDraft.fieldError(connectionConfig) {
+        Text(error)
+          .font(.caption)
+          .foregroundColor(.destructive)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  /// MongoDB without a database uses `test`.
+  private var databasePlaceholder: String {
+    connectionConfig.databaseType == .mongodb ? MongoSession.defaultDatabase : "database_name"
+  }
+
+  /// Stored in `mongoURI` only: an edit rebuilds the URI.
+  private func mongoAuthSourceField() -> some View {
+    FormField(label: "Auth Source") {
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        TextField(
+          MongoConnectionDraft.authSourcePlaceholder,
+          text: Binding(
+            get: { MongoConnectionDraft.authSource(of: connectionConfig) },
+            set: {
+              connectionConfig = MongoConnectionDraft.rebuilt(connectionConfig, authSource: $0)
+            }
+          )
+        )
+        .textFieldStyle(.plain)
+        .inputCapsuleStyle()
+
+        Text(MongoConnectionDraft.authSourceHelp)
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func mongoTLSWarning() -> some View {
+    if let warning = MongoConnectionDraft.tlsWarning(for: connectionConfig) {
+      HStack(alignment: .top, spacing: Spacing.sm) {
+        Image(systemName: "exclamationmark.triangle.fill")
+        Text(warning)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .font(.caption)
+      .foregroundColor(.warning)
+    }
+  }
+
+  /// The certificate pickers a TLS mode offers. MongoDB takes a custom CA only: `MongoSession`
+  /// refuses client certificates.
+  enum CertificateFields: Equatable {
+    case none
+    case customCA
+    case clientCertificateAndCA
+  }
+
+  static func certificateFields(for type: DatabaseType, sslMode: SSLMode) -> CertificateFields {
+    if type == .mongodb {
+      return MongoConnectionDraft.normalizedSSLMode(sslMode) == .disable ? .none : .customCA
+    }
+    return sslMode == .require || sslMode == .verifyCa || sslMode == .verifyFull
+      ? .clientCertificateAndCA : .none
+  }
+
+  @ViewBuilder
+  private func certificateSection(for mode: SSLMode) -> some View {
+    let fields = Self.certificateFields(for: connectionConfig.databaseType, sslMode: mode)
+    if fields == .none {
+      removeClientCertificateButton()
+    } else {
+      clientCertificateSection(offersClientCertificate: fields == .clientCertificateAndCA)
     }
   }
 
@@ -126,7 +202,7 @@ extension ConnectionFormContent {
       FormField(label: "Connection String") {
         VStack(alignment: .leading, spacing: Spacing.xs) {
           TextField(
-            "postgresql://username:password@localhost:5432/database", text: connectionStringBinding,
+            connectionStringPlaceholder, text: connectionStringBinding,
             axis: .vertical
           )
           .textFieldStyle(.plain)
@@ -140,9 +216,28 @@ extension ConnectionFormContent {
             }
           }
 
-          Text("Example: postgresql://username:password@localhost:5432/database?sslmode=require")
+          Text(connectionStringExample)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
+
+          if isMongoDB,
+            let note = MongoConnectionDraft.ignoredOptionsNote(
+              (try? MongoConnectionDraft.paste(
+                connectionStringBinding.wrappedValue, into: connectionConfig))?.ignoredOptions ?? []
+            )
+          {
+            Text(note)
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+      }
+
+      // The URI keeps no password: it moves here and is saved in the Keychain.
+      if isMongoDB {
+        FormField(label: "Password") {
+          PasswordInputField(password: $connectionConfig.password)
         }
       }
 
@@ -152,21 +247,37 @@ extension ConnectionFormContent {
           clearTestResult()
         }
         sslModeHelpText()
-        if usesClientCertificate(connectionStringSSLModeBinding.wrappedValue) {
-          clientCertificateSection()
-        } else {
-          removeClientCertificateButton()
-        }
+        mongoTLSWarning()
+        certificateSection(for: connectionStringSSLModeBinding.wrappedValue)
       }
     }
+  }
+
+  private var isMongoDB: Bool { connectionConfig.databaseType == .mongodb }
+
+  private var connectionStringPlaceholder: String {
+    isMongoDB
+      ? "mongodb://username:password@localhost:27017/database"
+      : "postgresql://username:password@localhost:5432/database"
+  }
+
+  private var connectionStringExample: String {
+    isMongoDB
+      ? "Example: mongodb+srv://username:password@cluster0.example.net/database?authSource=admin"
+      : "Example: postgresql://username:password@localhost:5432/database?sslmode=require"
   }
 
   private func sslModeMenu(
     selection: Binding<SSLMode>, onSelect: ((SSLMode) -> Void)? = nil
   ) -> some View {
-    FormField(label: "SSL Mode") {
+    // MongoDB shows a stored Prefer/Require as the Verify Full it connects with.
+    let shown =
+      isMongoDB
+      ? MongoConnectionDraft.normalizedSSLMode(selection.wrappedValue) : selection.wrappedValue
+    return FormField(label: "SSL Mode") {
       Menu {
-        ForEach(SSLMode.allCases, id: \.self) { mode in
+        ForEach(MongoConnectionDraft.sslModes(for: connectionConfig.databaseType), id: \.self) {
+          mode in
           Button(mode.displayName) {
             selection.wrappedValue = mode
             onSelect?(mode)
@@ -174,7 +285,7 @@ extension ConnectionFormContent {
         }
       } label: {
         HStack {
-          Text(selection.wrappedValue.displayName)
+          Text(shown.displayName)
           Spacer()
           Image(systemName: "chevron.up.chevron.down")
             .font(.caption)
@@ -204,36 +315,39 @@ extension ConnectionFormContent {
   }
 
   @ViewBuilder
-  private func clientCertificateSection() -> some View {
+  private func clientCertificateSection(offersClientCertificate: Bool) -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      FormField(label: "Client certificate (PEM)") {
-        HStack(spacing: Spacing.sm) {
-          Button(certificatePEM == nil ? "Choose certificate" : "Replace certificate") {
-            chooseCertificateFile(.certificate)
-          }
-          .buttonStyle(FilledSecondaryButtonStyle())
-          if certificatePEM != nil {
-            Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
-          }
-        }
-      }
-
-      FormField(label: "Private key (PEM)") {
-        HStack(spacing: Spacing.sm) {
-          Button(privateKeyPEM == nil ? "Choose key" : "Replace key") {
-            chooseCertificateFile(.privateKey)
-          }
-          .buttonStyle(FilledSecondaryButtonStyle())
-          if privateKeyPEM != nil {
-            Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
+      // MongoDB takes a custom CA only (no client certificate).
+      if offersClientCertificate {
+        FormField(label: "Client certificate (PEM)") {
+          HStack(spacing: Spacing.sm) {
+            Button(certificatePEM == nil ? "Choose certificate" : "Replace certificate") {
+              chooseCertificateFile(.certificate)
+            }
+            .buttonStyle(FilledSecondaryButtonStyle())
+            if certificatePEM != nil {
+              Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
+            }
           }
         }
-      }
 
-      FormField(label: "Key passphrase (if encrypted)") {
-        SecureField("Optional passphrase", text: certificatePassphraseBinding)
-          .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+        FormField(label: "Private key (PEM)") {
+          HStack(spacing: Spacing.sm) {
+            Button(privateKeyPEM == nil ? "Choose key" : "Replace key") {
+              chooseCertificateFile(.privateKey)
+            }
+            .buttonStyle(FilledSecondaryButtonStyle())
+            if privateKeyPEM != nil {
+              Text("Selected").font(.caption).foregroundColor(.foregroundMuted)
+            }
+          }
+        }
+
+        FormField(label: "Key passphrase (if encrypted)") {
+          SecureField("Optional passphrase", text: certificatePassphraseBinding)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
+        }
       }
 
       FormField(label: "Custom CA (PEM, optional)") {
@@ -819,7 +933,10 @@ extension ConnectionFormContent {
         Spacer()
 
         SafetyOptionMenu(
-          rows: SafetyOptionRow.commitStyles(idPrefix: "form", selected: formCommitStyle) {
+          rows: SafetyOptionRow.commitStyles(
+            idPrefix: "form", selected: formCommitStyle,
+            styles: MongoConnectionDraft.commitStyles(for: connectionConfig.databaseType)
+          ) {
             applyFormCommitStyle($0)
           }
         ) {

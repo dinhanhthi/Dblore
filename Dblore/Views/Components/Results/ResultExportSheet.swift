@@ -1,11 +1,13 @@
 // ResultExportSheet.swift
 // Download options. The format picker opens on the menu item the user chose.
-// Export writes a file. Nothing here is sent to the database.
+// Export writes a file. Nothing here is sent to the database. SQL INSERT is offered for SQL only.
 
 import SwiftUI
 
 struct ResultExportSheet: View {
   let result: CellResult
+  /// Formats the picker offers (`exportFormats(for:)`).
+  let formats: [ExportFormat]
   var onExport: (ExportOptions) -> Void
   var onCancel: () -> Void
 
@@ -14,15 +16,24 @@ struct ResultExportSheet: View {
   @State private var confirmLarge = false
 
   init(
-    result: CellResult, format: ExportFormat, onExport: @escaping (ExportOptions) -> Void,
-    onCancel: @escaping () -> Void
+    result: CellResult, format: ExportFormat, queryLanguage: DatabaseCapabilities.QueryLanguage,
+    onExport: @escaping (ExportOptions) -> Void, onCancel: @escaping () -> Void
   ) {
     self.result = result
+    self.formats = Self.exportFormats(for: queryLanguage)
     self.onExport = onExport
     self.onCancel = onCancel
-    let initial = ExportOptions(format: format)
+    let initial = ExportOptions(format: formats.contains(format) ? format : .csv)
     _options = State(initialValue: initial)
     _estimate = State(initialValue: ExportSize.estimate(result: result, options: initial))
+  }
+
+  /// Every format for SQL. MongoDB has no SQL INSERT (its results have no SQL table or literals).
+  static func exportFormats(for language: DatabaseCapabilities.QueryLanguage) -> [ExportFormat] {
+    switch language {
+    case .sql: ExportFormat.allCases
+    case .mongosh: ExportFormat.allCases.filter { $0 != .sqlInsert }
+    }
   }
 
   var body: some View {
@@ -114,7 +125,7 @@ struct ResultExportSheet: View {
       sectionTitle("Format")
       Spacer(minLength: Spacing.sm)
       Picker("Format", selection: $options.format) {
-        ForEach(ExportFormat.allCases) { format in
+        ForEach(formats) { format in
           Text(format.title).tag(format)
         }
       }

@@ -243,13 +243,14 @@ struct SafetyOptionRow: Identifiable {
     self.action = action
   }
 
-  /// Immediate, Confirm, Review, Password. No Use Global row.
+  /// Immediate, Confirm, Review, Password (or `styles`). No Use Global row.
   static func commitStyles(
     idPrefix: String,
     selected: CommitStyle,
+    styles: [CommitStyle] = CommitStyle.allCases,
     onSelect: @escaping (CommitStyle) -> Void
   ) -> [SafetyOptionRow] {
-    CommitStyle.allCases.map { style in
+    styles.map { style in
       SafetyOptionRow(
         id: "\(idPrefix)-\(style.rawValue)",
         title: style.title,

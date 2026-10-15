@@ -68,6 +68,11 @@ class SQLAutocompleteProvider {
   func getSuggestions(
     for fullText: String, at fullCursorPosition: Int, dialect: SQLDialect
   ) -> [AutocompleteSuggestion] {
+    if dialect == .mongodb {
+      return MongoshAutocompleteProvider.suggestions(
+        for: fullText, at: fullCursorPosition, tables: tables)
+    }
+
     // Only the current statement matters (bounded scan, see statementWindow)
     let (text, cursorPosition) = statementWindow(
       in: fullText, at: fullCursorPosition, dialect: dialect)

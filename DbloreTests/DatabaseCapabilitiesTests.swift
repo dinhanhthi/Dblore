@@ -1,7 +1,7 @@
 // DatabaseCapabilitiesTests.swift
 // DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
-// DuckDB is a file engine offered only when its plugin is installed. MongoDB is hidden until
-// experimental engines are shown.
+// DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
+// MySQL.
 
 import Foundation
 import Testing
@@ -21,14 +21,14 @@ struct DatabaseCapabilitiesTests {
   func pickerHidesDuckDBWithoutPlugin() {
     let types = DatabaseType.connectionPickerTypes(
       showExperimental: false, isPluginInstalled: { _ in false })
-    #expect(types == [.postgresql, .sqlite, .mysql])
+    #expect(types == [.postgresql, .sqlite, .mysql, .mongodb])
   }
 
   @Test("The picker lists DuckDB once its plugin is installed")
   func pickerListsDuckDBWithPlugin() {
     let types = DatabaseType.connectionPickerTypes(
       showExperimental: false, isPluginInstalled: { $0 == .duckdb })
-    #expect(types == [.postgresql, .sqlite, .duckdb, .mysql])
+    #expect(types == [.postgresql, .sqlite, .duckdb, .mysql, .mongodb])
   }
 
   @Test("Showing experimental engines does not list DuckDB without its plugin")
@@ -38,12 +38,12 @@ struct DatabaseCapabilitiesTests {
     #expect(!types.contains(.duckdb))
   }
 
-  @Test("MongoDB is listed only when experimental engines are shown")
-  func pickerListsMongoDBOnlyWhenExperimental() {
-    #expect(!DatabaseType.connectionPickerTypes(showExperimental: false).contains(.mongodb))
-    #expect(
-      DatabaseType.connectionPickerTypes(showExperimental: true)
-        == [.postgresql, .sqlite, .mysql, .mongodb])
+  @Test("MongoDB is listed after MySQL without experimental engines")
+  func pickerListsMongoDBWithoutExperimental() {
+    let types = DatabaseType.connectionPickerTypes(
+      showExperimental: false, isPluginInstalled: { _ in false })
+    #expect(types.last == .mongodb)
+    #expect(types.firstIndex(of: .mysql).map { $0 + 1 } == types.firstIndex(of: .mongodb))
   }
 
   private static let expected: [DatabaseType: DatabaseCapabilities] = [
@@ -168,7 +168,7 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
     requiresPlugin: false,
-    isAvailable: false,
+    isAvailable: true,
     queryLanguage: .mongosh,
     supportsTransactions: false,
     supportsStructure: false,

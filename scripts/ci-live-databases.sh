@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Starts or stops the live test databases of the CI integration job.
 #
-#   scripts/ci-live-databases.sh start postgres mysql
-#   scripts/ci-live-databases.sh stop postgres mysql
+#   scripts/ci-live-databases.sh start postgres mysql mongo
+#   scripts/ci-live-databases.sh stop postgres mysql mongo
 #
 # Runs the docker/*/docker-compose.test.yml files under the compose project "dblore-ci" with
 # their own container, volume and network names and their own host ports, so it never touches
-# the local test containers (5435, 3307, 3308) on the same Mac. `stop` runs `down -v`: nothing
-# is left on the runner. The tests read the ports from TEST_RUNNER_TEST_DB_PORT,
-# TEST_RUNNER_TEST_MYSQL_PORT and TEST_RUNNER_TEST_MARIADB_PORT (see ci.yml).
+# the local test containers (5435, 3307, 3308, 27018, 27019) on the same Mac. `stop` runs
+# `down -v`: nothing is left on the runner. The tests read the ports from TEST_RUNNER_TEST_DB_PORT,
+# TEST_RUNNER_TEST_MYSQL_PORT, TEST_RUNNER_TEST_MARIADB_PORT and TEST_RUNNER_TEST_MONGO_PORT
+# (see ci.yml).
 #
 # A new service is one start_<name>/stop_<name> pair below plus its name on the command line.
 set -euo pipefail
@@ -20,11 +21,12 @@ export DBLORE_TEST_NAME_PREFIX="$project"
 export DBLORE_PG_TEST_PORT="${DBLORE_PG_TEST_PORT:-15435}"
 export DBLORE_MYSQL_TEST_PORT="${DBLORE_MYSQL_TEST_PORT:-13307}"
 export DBLORE_MARIADB_TEST_PORT="${DBLORE_MARIADB_TEST_PORT:-13308}"
+export DBLORE_MONGO_TEST_PORT="${DBLORE_MONGO_TEST_PORT:-13018}"
 # Every service file shares the project; the others' containers are not orphans.
 export COMPOSE_IGNORE_ORPHANS=1
 
 usage() {
-  echo "usage: $0 start|stop postgres|mysql..." >&2
+  echo "usage: $0 start|stop postgres|mysql|mongo..." >&2
   exit 2
 }
 
@@ -46,7 +48,7 @@ require_free_port() {
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "error: port $port is already in use; the $project databases need it:" >&2
     lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true
-    echo "Free it or pick another port through DBLORE_PG_TEST_PORT / DBLORE_MYSQL_TEST_PORT / DBLORE_MARIADB_TEST_PORT." >&2
+    echo "Free it or pick another port through DBLORE_PG_TEST_PORT / DBLORE_MYSQL_TEST_PORT / DBLORE_MARIADB_TEST_PORT / DBLORE_MONGO_TEST_PORT." >&2
     exit 1
   fi
 }
@@ -82,6 +84,22 @@ stop_mysql() {
   compose "$mysql_file" down -v
 }
 
+# --- mongo: MongoDB 8.0 standalone (users from docker/mongodb/init) ---------------------------
+
+mongo_file="docker/mongodb/docker-compose.test.yml"
+
+start_mongo() {
+  # Leftovers of a killed run (restart: unless-stopped) would hold the port; only dblore-ci.
+  # A plain `up` never starts the tls profile, so CI needs no certificates.
+  compose "$mongo_file" down -v
+  require_free_port "$DBLORE_MONGO_TEST_PORT"
+  compose "$mongo_file" up -d --wait --wait-timeout 180
+}
+
+stop_mongo() {
+  compose "$mongo_file" down -v
+}
+
 # ----------------------------------------------------------------------------------------------
 
 [ "$#" -ge 2 ] || usage
@@ -90,9 +108,9 @@ shift
 
 for service in "$@"; do
   case "$service" in
-    postgres | mysql) ;;
+    postgres | mysql | mongo) ;;
     *)
-      echo "error: unknown service '$service' (known: postgres, mysql)" >&2
+      echo "error: unknown service '$service' (known: postgres, mysql, mongo)" >&2
       exit 2
       ;;
   esac

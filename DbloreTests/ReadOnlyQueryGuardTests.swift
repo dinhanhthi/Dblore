@@ -56,6 +56,7 @@ struct ReadOnlyQueryGuardTests {
   @Test func refusalsTellNothingWasSent() {
     let refusals: [ReadOnlyQueryGuard.Refusal] = [
       .empty, .multipleStatements, .notRead, .sideEffectFunction, .fileAccess,
+      .serverSideJavaScript,
     ]
     for refusal in refusals {
       #expect(refusal.localizedDescription.hasSuffix("Nothing was sent to the database."))
@@ -112,5 +113,15 @@ struct ReadOnlyQueryGuardTests {
     #expect(throws: ReadOnlyQueryGuard.Refusal.notRead) {
       try ReadOnlyQueryGuard.check(sql, dialect: .duckdb, refuseFileAccess: true)
     }
+  }
+
+  /// The AI Assistant's MongoDB runs pass this check too (MCP's cases: `MCPMongoToolTests`).
+  @Test func mongoServerSideJavaScriptIsRefused() throws {
+    #expect(throws: ReadOnlyQueryGuard.Refusal.serverSideJavaScript) {
+      try ReadOnlyQueryGuard.check(
+        "db.c.aggregate([{$match: {$expr: {$function: {body: \"f\", args: [], lang: \"js\"}}}}])",
+        dialect: .mongodb)
+    }
+    #expect(try ReadOnlyQueryGuard.check("db.c.find({where: 1})", dialect: .mongodb).count == 1)
   }
 }

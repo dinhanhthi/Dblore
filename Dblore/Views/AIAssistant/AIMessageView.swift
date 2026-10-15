@@ -31,7 +31,7 @@ struct AIMessageView: View {
   @State private var editText = ""
 
   private var isUser: Bool { entry.role == .user }
-  private var segments: [AIMessageSegment] { AIMessageParser.parse(entry.text) }
+  private var segments: [AIMessageSegment] { AIMessageParser.parse(entry.text, dialect: dialect) }
 
   var body: some View {
     HStack(spacing: 0) {
@@ -480,13 +480,15 @@ private struct AICodeBlock: View {
 
   @State private var copied = false
 
-  private var isSQL: Bool { AIMessageParser.isSQL(language: language) }
-  private var modifiesData: Bool { isSQL && !AIMessageParser.isReadOnly(code, dialect: dialect) }
+  private var isRunnable: Bool { AIMessageParser.isRunnable(language: language, dialect: dialect) }
+  private var modifiesData: Bool {
+    isRunnable && !AIMessageParser.isReadOnly(code, dialect: dialect)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: Spacing.xs) {
-        Text(language ?? "sql")
+        Text(language ?? (dialect == .mongodb ? "mongodb" : "sql"))
           .font(.small)
           .foregroundColor(.foregroundMuted)
         if let runLabel { runBadge(runLabel) }
@@ -494,7 +496,7 @@ private struct AICodeBlock: View {
         Spacer(minLength: 0)
         Button(copied ? "Copied" : "Copy") { copy() }
           .buttonStyle(AICodeActionButtonStyle())
-        if isSQL {
+        if isRunnable {
           Button("Insert") { onInsert?(code) }
             .buttonStyle(AICodeActionButtonStyle())
             .disabled(onInsert == nil)

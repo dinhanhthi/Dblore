@@ -1,6 +1,7 @@
 // DatabaseTypePickerTests.swift
-// Connection form engine picker (MySQL always, DuckDB only with its plugin, but a saved DuckDB
-// connection keeps its selection) and the connect error that offers to install the plugin.
+// Connection form engine picker (MySQL and MongoDB always, DuckDB only with its plugin, but a
+// saved DuckDB connection keeps its selection) and the connect error that offers to install the
+// plugin.
 
 import Foundation
 import Testing
@@ -14,7 +15,7 @@ struct DatabaseTypePickerTests {
   func savedDuckDBKeepsSelection() {
     let types = ConnectionFormModal.pickerTypes(
       showExperimental: false, current: .duckdb, isPluginInstalled: { _ in false })
-    #expect(types == [.postgresql, .sqlite, .duckdb, .mysql])
+    #expect(types == [.postgresql, .sqlite, .duckdb, .mysql, .mongodb])
   }
 
   @Test("A missing plugin wrapped by a catalog fetch still offers the install")

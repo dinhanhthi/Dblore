@@ -24,7 +24,7 @@ struct AIMarkdownSanitizerTests {
       ```
       #### Explanation:
       - SELECT: columns
-      """)
+      """, dialect: .postgresql)
     guard segments.count == 3, case .text(let intro) = segments[0],
       case .text(let outro) = segments[2]
     else {

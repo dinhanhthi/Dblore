@@ -17,6 +17,8 @@ struct WorkspaceLeftSidebarContent: View {
   @State private var publicFilter = ""
   @State private var securityFilter = ""
   @State private var favoriteFilter = ""
+  /// The aggregation builder opened from a collection's menu
+  @State private var aggregationBuilder: AggregationBuilderModel?
 
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
@@ -47,12 +49,28 @@ struct WorkspaceLeftSidebarContent: View {
         contentForSelectedTab
       }
     }
+    .sheet(item: $aggregationBuilder) { model in
+      AggregationBuilderSheet(
+        model: model, insertTarget: workspaceManager.activeViewModel,
+        onClose: { aggregationBuilder = nil })
+    }
+  }
+
+  /// Security (users and roles) is hidden for MongoDB
+  private var visibleTabs: [SidebarTab] {
+    SidebarSectionModel.showsSecurityTab(queryLanguage)
+      ? SidebarTab.allCases : SidebarTab.allCases.filter { $0 != .security }
+  }
+
+  /// The selected tab, or Public when the connection hides it
+  private var shownTab: SidebarTab {
+    visibleTabs.contains(selectedTab) ? selectedTab : .public
   }
 
   private var tabSelector: some View {
     CapsuleTabPicker(
-      selection: $selectedTab,
-      tabs: SidebarTab.allCases,
+      selection: Binding(get: { shownTab }, set: { selectedTab = $0 }),
+      tabs: visibleTabs,
       height: 28
     ) { tab in
       tabLabel(tab)
@@ -63,7 +81,7 @@ struct WorkspaceLeftSidebarContent: View {
   /// "History" keeps the four titles on one row. The tooltip still says History.
   @ViewBuilder
   private func tabLabel(_ tab: SidebarTab) -> some View {
-    let isSelected = selectedTab == tab
+    let isSelected = shownTab == tab
     let label = Text(tab == .history ? "History" : tab.rawValue)
       .font(.body)
       .fontWeight(isSelected ? .semibold : .regular)
@@ -81,7 +99,7 @@ struct WorkspaceLeftSidebarContent: View {
   @ViewBuilder
   private var contentForSelectedTab: some View {
     // Favorite and history are handled in body; only the schema tabs reach here
-    if selectedTab == .security {
+    if shownTab == .security {
       securityTabContent
     } else {
       publicTabContent
@@ -91,6 +109,10 @@ struct WorkspaceLeftSidebarContent: View {
   /// Database of the open connection; PostgreSQL when the workspace has no config yet
   private var connectionDatabaseType: DatabaseType {
     workspaceManager.workspace.connectionConfig?.databaseType ?? .postgresql
+  }
+
+  private var queryLanguage: DatabaseCapabilities.QueryLanguage {
+    connectionDatabaseType.capabilities.queryLanguage
   }
 
   /// Whether the active tab is a data viewer showing this relation
@@ -253,7 +275,7 @@ struct WorkspaceLeftSidebarContent: View {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.sm) {
             // One schema keeps the flat layout; two or more get one group per schema
-            if schemas.count > 1 {
+            if schemas.count > 1 && SidebarSectionModel.groupsBySchema(queryLanguage) {
               ForEach(schemas, id: \.self) { schema in
                 let inSchema = entities.inSchema(schema)
                 if !inSchema.isEmpty {
@@ -280,144 +302,207 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
-  /// Tables, Views, Functions, Procedures and Triggers sections. `idPrefix` keeps section ids
+  /// The language's sections (`SidebarSectionModel`). `idPrefix` keeps section ids
   /// unique per schema; `showsSchema` adds the "(schema)" label to table and view rows.
   @ViewBuilder
   private func entitySections(
     _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool
   ) -> some View {
-    if showsEmptySections || !entities.tables.isEmpty {
-      EntitySection(
-        title: "Tables",
-        count: entities.tables.count,
-        icon: "tablecells",
-        isExpanded: true
-      ) {
-        ForEach(entities.tables) { table in
-          TableRowView(
-            table: table.display,
-            isExpanded: table.expandForMatch || table.source.isExpanded,
-            isSelected: isOpenInActiveTab(
-              schema: table.source.schema, name: table.source.name),
-            databaseType: connectionDatabaseType,
-            showsSchema: showsSchema,
-            onToggle: {
-              if !table.expandForMatch {
-                workspaceManager.toggleTableExpansion(tableId: table.id)
-              }
-            },
-            onOpen: {
-              workspaceManager.openDataViewer(
-                schema: table.source.schema,
-                name: table.source.name,
-                orderColumns: table.source.columns.filter(\.isPrimaryKey).map(\.name)
-              )
-            },
-            onColumnClick: { _ in
-              // No active cell to insert into when no document is open
-            },
-            onImport: connectionDatabaseType.capabilities.supportsDataImport
-              ? { onImportTable(table.source) } : nil,
-            onEditStructure: {
-              workspaceManager.openStructureEditor(
-                schema: table.source.schema, table: table.source.name)
-            }
-          )
-        }
-      }
-      .id(idPrefix + (publicKeywords.isEmpty ? "tables" : "tables-filtered"))
+    ForEach(SidebarSectionModel.sections(for: queryLanguage), id: \.kind) { section in
+      entitySection(
+        section, entities, idPrefix: idPrefix, showsEmptySections: showsEmptySections,
+        showsSchema: showsSchema)
     }
+  }
 
-    if showsEmptySections || !entities.views.isEmpty {
-      EntitySection(
-        title: "Views",
-        count: entities.views.count,
-        icon: "eye",
-        isExpanded: true
-      ) {
-        ForEach(entities.views) { view in
-          ViewRowView(
-            view: view.display,
-            isExpanded: view.expandForMatch || view.source.isExpanded,
-            isSelected: isOpenInActiveTab(
-              schema: view.source.schema, name: view.source.name),
-            databaseType: connectionDatabaseType,
-            showsSchema: showsSchema,
-            onToggle: {
-              if !view.expandForMatch {
-                workspaceManager.toggleViewExpansion(viewId: view.id)
-              }
-            },
-            onOpen: {
-              workspaceManager.openDataViewer(
-                schema: view.source.schema, name: view.source.name, orderColumns: [])
-            },
-            onColumnClick: { _ in
-              // No active cell to insert into when no document is open
-            }
-          )
+  @ViewBuilder
+  private func entitySection(
+    _ section: SidebarSectionModel.Section, _ entities: PublicEntities, idPrefix: String,
+    showsEmptySections: Bool, showsSchema: Bool
+  ) -> some View {
+    switch section.kind {
+    case .tables:
+      if showsEmptySections || !entities.tables.isEmpty {
+        EntitySection(
+          title: section.title,
+          count: entities.tables.count,
+          icon: section.icon,
+          isExpanded: true
+        ) {
+          ForEach(entities.tables) { table in
+            tableRow(table, showsSchema: showsSchema)
+          }
         }
+        .id(idPrefix + (publicKeywords.isEmpty ? "tables" : "tables-filtered"))
       }
-      .id(idPrefix + (publicKeywords.isEmpty ? "views" : "views-filtered"))
+
+    case .views:
+      if showsEmptySections || !entities.views.isEmpty {
+        EntitySection(
+          title: section.title,
+          count: entities.views.count,
+          icon: section.icon,
+          isExpanded: true
+        ) {
+          ForEach(entities.views) { view in
+            viewRow(view, showsSchema: showsSchema)
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "views" : "views-filtered"))
+      }
+
+    case .functions:
+      if showsEmptySections || !entities.functions.isEmpty {
+        EntitySection(
+          title: section.title,
+          count: entities.functions.count,
+          icon: section.icon,
+          isExpanded: true
+        ) {
+          ForEach(entities.functions) { function in
+            FunctionRowView(
+              function: function,
+              isExpanded: function.isExpanded,
+              onToggle: {
+                workspaceManager.toggleFunctionExpansion(functionId: function.id)
+              },
+              onViewSource: { workspaceManager.openObjectSource(.function(function)) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "functions" : "functions-filtered"))
+      }
+
+    case .procedures:
+      if showsEmptySections || !entities.procedures.isEmpty {
+        EntitySection(
+          title: section.title,
+          count: entities.procedures.count,
+          icon: section.icon,
+          isExpanded: true
+        ) {
+          ForEach(entities.procedures) { procedure in
+            ProcedureRowView(
+              procedure: procedure,
+              isExpanded: procedure.isExpanded,
+              onToggle: {
+                workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
+              },
+              onViewSource: { workspaceManager.openObjectSource(.procedure(procedure)) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "procedures" : "procedures-filtered"))
+      }
+
+    case .triggers:
+      if showsEmptySections || !entities.triggers.isEmpty {
+        EntitySection(
+          title: section.title,
+          count: entities.triggers.count,
+          icon: section.icon,
+          isExpanded: true
+        ) {
+          ForEach(entities.triggers) { trigger in
+            TriggerRowView(
+              trigger: trigger,
+              onViewSource: { workspaceManager.openObjectSource(.trigger(trigger)) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
+      }
     }
+  }
 
-    if showsEmptySections || !entities.functions.isEmpty {
-      EntitySection(
-        title: "Functions",
-        count: entities.functions.count,
-        icon: "function",
-        isExpanded: true
-      ) {
-        ForEach(entities.functions) { function in
-          FunctionRowView(
-            function: function,
-            isExpanded: function.isExpanded,
-            onToggle: {
-              workspaceManager.toggleFunctionExpansion(functionId: function.id)
-            },
-            onViewSource: { workspaceManager.openObjectSource(.function(function)) }
-          )
+  private func tableRow(_ table: FilteredTable, showsSchema: Bool) -> some View {
+    TableRowView(
+      table: table.display,
+      isExpanded: table.expandForMatch || table.source.isExpanded,
+      isSelected: isOpenInActiveTab(
+        schema: table.source.schema, name: table.source.name),
+      databaseType: connectionDatabaseType,
+      showsSchema: showsSchema,
+      onToggle: {
+        if !table.expandForMatch {
+          workspaceManager.toggleTableExpansion(tableId: table.id)
         }
+      },
+      onOpen: { openTable(table.source) },
+      onColumnClick: { _ in
+        // No active cell to insert into when no document is open
+      },
+      onImport: connectionDatabaseType.capabilities.supportsDataImport
+        ? { onImportTable(table.source) } : nil,
+      structureMenuTitle: SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType),
+      onEditStructure: {
+        workspaceManager.openStructureEditor(
+          schema: table.source.schema, table: table.source.name)
+      },
+      menuActions: SidebarSectionModel.rowActions(
+        for: .tables, name: table.source.name, language: queryLanguage),
+      onMenuAction: { action in
+        perform(action, name: table.source.name) { openTable(table.source) }
       }
-      .id(idPrefix + (publicKeywords.isEmpty ? "functions" : "functions-filtered"))
-    }
+    )
+  }
 
-    if showsEmptySections || !entities.procedures.isEmpty {
-      EntitySection(
-        title: "Procedures",
-        count: entities.procedures.count,
-        icon: "gearshape.2",
-        isExpanded: true
-      ) {
-        ForEach(entities.procedures) { procedure in
-          ProcedureRowView(
-            procedure: procedure,
-            isExpanded: procedure.isExpanded,
-            onToggle: {
-              workspaceManager.toggleProcedureExpansion(procedureId: procedure.id)
-            },
-            onViewSource: { workspaceManager.openObjectSource(.procedure(procedure)) }
-          )
+  private func viewRow(_ view: FilteredView, showsSchema: Bool) -> some View {
+    ViewRowView(
+      view: view.display,
+      isExpanded: view.expandForMatch || view.source.isExpanded,
+      isSelected: isOpenInActiveTab(
+        schema: view.source.schema, name: view.source.name),
+      databaseType: connectionDatabaseType,
+      showsSchema: showsSchema,
+      onToggle: {
+        if !view.expandForMatch {
+          workspaceManager.toggleViewExpansion(viewId: view.id)
         }
+      },
+      onOpen: { openView(view.source) },
+      onColumnClick: { _ in
+        // No active cell to insert into when no document is open
+      },
+      menuActions: SidebarSectionModel.rowActions(
+        for: .views, name: view.source.name, language: queryLanguage),
+      onMenuAction: { action in
+        perform(action, name: view.source.name) { openView(view.source) }
       }
-      .id(idPrefix + (publicKeywords.isEmpty ? "procedures" : "procedures-filtered"))
-    }
+    )
+  }
 
-    if showsEmptySections || !entities.triggers.isEmpty {
-      EntitySection(
-        title: "Triggers",
-        count: entities.triggers.count,
-        icon: ObjectSourceRef.Kind.trigger.iconName,
-        isExpanded: true
-      ) {
-        ForEach(entities.triggers) { trigger in
-          TriggerRowView(
-            trigger: trigger,
-            onViewSource: { workspaceManager.openObjectSource(.trigger(trigger)) }
-          )
-        }
-      }
-      .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
+  private func openTable(_ table: DatabaseTable) {
+    workspaceManager.openDataViewer(
+      schema: table.schema,
+      name: table.name,
+      orderColumns: table.columns.filter(\.isPrimaryKey).map(\.name)
+    )
+  }
+
+  private func openView(_ view: DatabaseView) {
+    workspaceManager.openDataViewer(schema: view.schema, name: view.name, orderColumns: [])
+  }
+
+  /// Runs a row menu item: Open as a row click, Copy Name to the pasteboard, Insert at the
+  /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet
+  private func perform(
+    _ action: SidebarSectionModel.RowAction, name: String, open: () -> Void
+  ) {
+    switch action {
+    case .open:
+      open()
+    case .copyName:
+      let pasteboard = NSPasteboard.general
+      pasteboard.clearContents()
+      pasteboard.setString(name, forType: .string)
+    case .insert(let text):
+      workspaceManager.activeViewModel?.insertTextIntoSelectedCell(text)
+    case .buildAggregation:
+      let model = AggregationBuilderModel(
+        collection: name, connectionManager: workspaceManager.connectionManager)
+      model.addStage()
+      aggregationBuilder = model
     }
   }
 

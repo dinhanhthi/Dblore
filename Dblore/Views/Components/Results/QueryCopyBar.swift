@@ -46,6 +46,11 @@ struct QueryCopyBar: View {
   /// Connection dialect of INSERT export and clipboard copy.
   let dialect: SQLDialect
 
+  /// The connection's query language. MongoDB results have no SQL INSERT download.
+  private var queryLanguage: DatabaseCapabilities.QueryLanguage {
+    dialect == .mongodb ? .mongosh : .sql
+  }
+
   /// When set, the Grid / Chart slider sits at the trailing end (editor result footer).
   var displayMode: Binding<ResultDisplayMode>? = nil
 
@@ -125,8 +130,12 @@ struct QueryCopyBar: View {
         // Download dropdown button (right-aligned)
         downloadButton(result: result, mode: currentMode)
 
-        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
-          ResultDisplayPicker(mode: displayMode)
+        if let displayMode,
+          let displayTabs = ResultDisplayMode.pickerTabs(
+            chartable: ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil,
+            documents: queryLanguage == .mongosh)
+        {
+          ResultDisplayPicker(mode: displayMode, tabs: displayTabs)
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -134,6 +143,7 @@ struct QueryCopyBar: View {
         ResultExportSheet(
           result: result,
           format: request.format,
+          queryLanguage: queryLanguage,
           onExport: { options in
             let exported = result
             let index = queryIndex
@@ -264,10 +274,12 @@ struct QueryCopyBar: View {
           }
         }
 
-        Button(action: { exportRequest = ExportRequest(format: .sqlInsert) }) {
-          HStack {
-            Image(systemName: "arrow.down.doc")
-            Text("SQL INSERT")
+        if ResultExportSheet.exportFormats(for: queryLanguage).contains(.sqlInsert) {
+          Button(action: { exportRequest = ExportRequest(format: .sqlInsert) }) {
+            HStack {
+              Image(systemName: "arrow.down.doc")
+              Text("SQL INSERT")
+            }
           }
         }
       }

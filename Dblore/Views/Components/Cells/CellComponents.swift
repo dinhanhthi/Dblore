@@ -224,13 +224,15 @@ struct TopRightFloatingPanelView: View {
           }
         }
 
-        FloatingPanelButton(
-          icon: "text.alignleft",
-          helpText: "Format SQL",
-          action: {
-            textView?.formatDocument()
-          }
-        )
+        if SQLTextView.canFormat(dialect: viewModel.sqlDialect) {
+          FloatingPanelButton(
+            icon: "text.alignleft",
+            helpText: "Format SQL",
+            action: {
+              textView?.formatDocument()
+            }
+          )
+        }
 
         FloatingPanelButton(
           icon: AppSettings.shared.syntaxHighlightingEnabled ? "paintbrush.fill" : "paintbrush",

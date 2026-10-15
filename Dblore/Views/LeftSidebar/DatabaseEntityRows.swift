@@ -23,8 +23,12 @@ struct TableRowView: View {
   let onColumnClick: (String) -> Void
   /// Nil hides "Import Data..." (the engine has no table import)
   let onImport: (() -> Void)?
-  /// Nil hides "Edit Structure..." ("View Structure..." on DuckDB)
-  var onEditStructure: (() -> Void)? = nil
+  /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
+  var structureMenuTitle: String? = nil
+  var onEditStructure: () -> Void = {}
+  /// Menu items of a MongoDB collection (SQL tables have none)
+  var menuActions: [SidebarSectionModel.RowAction] = []
+  var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
 
   @State private var isHoveringTable = false
 
@@ -104,13 +108,12 @@ struct TableRowView: View {
         }
       }
       .contextMenu {
+        RowActionButtons(actions: menuActions, onAction: onMenuAction)
         if let onImport {
           Button("Import Data...", action: onImport)
         }
-        if let onEditStructure {
-          Button(
-            databaseType == .duckdb ? "View Structure..." : "Edit Structure...",
-            action: onEditStructure)
+        if let structureMenuTitle {
+          Button(structureMenuTitle, action: onEditStructure)
         }
       }
 
@@ -154,6 +157,9 @@ struct ViewRowView: View {
   let onToggle: () -> Void
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
+  /// Menu items of a MongoDB view (SQL views have no menu)
+  var menuActions: [SidebarSectionModel.RowAction] = []
+  var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
 
   @State private var isHovering = false
 
@@ -218,6 +224,9 @@ struct ViewRowView: View {
           NSCursor.pop()
         }
       }
+      .contextMenu {
+        RowActionButtons(actions: menuActions, onAction: onMenuAction)
+      }
 
       // Columns (when expanded)
       if isExpanded {
@@ -242,6 +251,18 @@ struct ViewRowView: View {
       }
     }
     .clipped()
+  }
+}
+
+/// Context menu buttons for `actions`, in order. No actions renders nothing.
+private struct RowActionButtons: View {
+  let actions: [SidebarSectionModel.RowAction]
+  let onAction: (SidebarSectionModel.RowAction) -> Void
+
+  var body: some View {
+    ForEach(actions.indices, id: \.self) { index in
+      Button(actions[index].title) { onAction(actions[index]) }
+    }
   }
 }
 

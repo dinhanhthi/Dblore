@@ -27,6 +27,8 @@ struct CellView: View {
   @State private var isDeleteConfirming = false  // For delete confirmation state
   @FocusState private var isEditorFocused: Bool
   @State private var textViewRef: SQLTextView?  // Reference to text view for text insertion
+  /// Aggregation builder opened from the context menu (`cellContextMenu`)
+  @State var aggregationBuilder: AggregationBuilderModel?
 
   var body: some View {
     ZStack {
@@ -150,6 +152,11 @@ struct CellView: View {
     .contextMenu {
       cellContextMenu
     }
+    .sheet(item: $aggregationBuilder) { model in
+      AggregationBuilderSheet(
+        model: model, insertTarget: viewModel, onInsert: insertAggregation,
+        onClose: { aggregationBuilder = nil })
+    }
     .onChange(of: isSelected) { _, newValue in
       // Clear focus when cell becomes unselected
       if !newValue {
@@ -186,6 +193,27 @@ struct CellView: View {
         isEditorFocused = true
       }
     }
+  }
+
+  /// Insert from the aggregation builder opened on this cell: replaces the cell's text when it
+  /// is just the aggregate (`replacesWholeCell`), otherwise adds the command on a new line below
+  /// it, so no user text (comments) is deleted. False when the cell has no text view yet.
+  private func insertAggregation(_ text: String) -> Bool {
+    guard let textView = textViewRef else { return false }
+    // Same next-turn insert as `insertTextIntoCell` (not inside a SwiftUI update)
+    DispatchQueue.main.async {
+      let current = textView.string
+      let length = (current as NSString).length
+      if AggregationBuilderModel.replacesWholeCell(current) {
+        textView.insertText(text, replacementRange: NSRange(location: 0, length: length))
+      } else {
+        let separator = current.isEmpty || current.hasSuffix("\n") ? "" : "\n"
+        textView.insertText(
+          separator + text, replacementRange: NSRange(location: length, length: 0))
+      }
+      isEditorFocused = true
+    }
+    return true
   }
 
   // MARK: - Bottom Edge Hover Zone

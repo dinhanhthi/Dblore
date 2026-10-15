@@ -18,7 +18,8 @@ struct EditorModeView: View {
   @State private var isFocused: Bool = false
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isErrorCopied: Bool = false
-  /// Grid / Chart for the editor result. A new result (different timestamp) reads as Grid.
+  /// Grid / Documents / Chart for the editor result. A new result (different timestamp) reads as
+  /// Grid, except Documents, which stays for the tab.
   @State private var resultDisplayMode: ResultDisplayMode = .grid
   @State private var resultDisplayModeStamp: Date?
   /// Plan / Raw for an EXPLAIN result. A new result reads as Plan.
@@ -57,11 +58,13 @@ struct EditorModeView: View {
   }
 
   /// Binding shared by the result header and the grid. A different result timestamp reads as Grid
-  /// until the user picks a mode for that result.
+  /// (Documents excepted) until the user picks a mode for that result.
   func resultDisplayModeBinding(for result: CellResult) -> Binding<ResultDisplayMode> {
     Binding(
       get: {
-        resultDisplayModeStamp == result.timestamp ? resultDisplayMode : .grid
+        ResultDisplayMode.shown(
+          stored: resultDisplayMode, stamp: resultDisplayModeStamp,
+          resultTimestamp: result.timestamp)
       },
       set: { newValue in
         resultDisplayModeStamp = result.timestamp
@@ -218,7 +221,7 @@ struct EditorModeView: View {
       // Floating format button and syntax highlighting toggle. Format rewrites the text, so a
       // read-only source has only the toggle.
       HStack(spacing: Spacing.xs) {
-        if !isReadOnly {
+        if !isReadOnly, SQLTextView.canFormat(dialect: viewModel.sqlDialect) {
           FormatSQLButton(textView: textViewRef)
         }
         SyntaxHighlightToggleButton()

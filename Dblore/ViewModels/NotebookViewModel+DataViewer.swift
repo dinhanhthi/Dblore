@@ -14,9 +14,11 @@ extension NotebookViewModel {
   func loadDataViewerPage() async {
     while let state = dataViewer, let connectionManager, !isEditorQueryRunning {
       let key = state.loadKey
-      // maxRows = pageSize never truncates a LIMIT pageSize page (no cap notice)
+      guard let query = dataViewerQuery(state) else { return }
+      // maxRows >= pageSize never truncates a LIMIT pageSize page (no cap notice); MongoDB's
+      // `limit(min(limit, maxRows + 1))` rewrite keeps limit(pageSize)
       await executeEditorQuery(
-        state.pageSQL, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
+        query.page, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
         source: .internal)
 
       if dataViewer?.totalRows == nil {
@@ -26,11 +28,11 @@ extension NotebookViewModel {
         // Errors keep the total unknown (Next stays enabled), no toast
         let started = Date()
         let result = try? await connectionManager.execute(
-          userSQL: state.countSQL, policy: protectionPolicy, maxRows: 1, caller: id)
+          userSQL: query.count, policy: protectionPolicy, maxRows: 1, caller: id)
         scheduleHistory(
           [
             QueryHistoryOutcome(
-              sql: state.countSQL, duration: Date().timeIntervalSince(started),
+              sql: query.count, duration: Date().timeIntervalSince(started),
               rowCount: result?.rowCount, status: result == nil ? .error : .success,
               errorMessage: nil)
           ], source: .internal)
@@ -41,11 +43,33 @@ extension NotebookViewModel {
     }
   }
 
+  /// True for a data viewer on a MongoDB connection: pages are mongosh commands and the
+  /// document filter bar replaces the SQL filter form.
+  var isMongoDataViewer: Bool {
+    guard let state = dataViewer else { return false }
+    return state.databaseType == .mongodb || sqlDialect == .mongodb
+  }
+
+  /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
+  /// SQL paging and WHERE helpers never run there), else the SQL. Nil, with the error shown, when
+  /// the applied document filter does not parse.
+  private func dataViewerQuery(_ state: DataViewerState) -> (page: String, count: String)? {
+    guard isMongoDataViewer else { return (state.pageSQL, state.countSQL) }
+    do {
+      let commands = try state.mongoQueries()
+      return (commands.page.render(), commands.count.render())
+    } catch {
+      editorResult = CellResult.errorResult(
+        error.localizedDescription, sourceQuery: state.documentFilter)
+      return nil
+    }
+  }
+
   /// Write a count back only while the tab still shows the relation and filter it was counted
   /// for; otherwise the total stays unknown and the load loop recounts.
   func storeDataViewerTotal(_ total: Int?, for state: DataViewerState) {
     guard let current = dataViewer, current.schema == state.schema, current.name == state.name,
-      current.filter == state.filter
+      current.filter == state.filter, current.documentFilter == state.documentFilter
     else { return }
     dataViewer?.totalRows = total
   }
@@ -128,8 +152,9 @@ extension NotebookViewModel {
     await applyFilterDraft()
   }
 
+  /// MongoDB has no SQL filter (the document filter bar replaces it): nothing is applied.
   private func applyFilterDraft() async {
-    guard let state = dataViewer else { return }
+    guard let state = dataViewer, !isMongoDataViewer else { return }
     let blank = filterDraft.whereClause(dialect: state.databaseType.dialect) == nil
     dataViewer?.filter = blank ? TableFilter(conditions: []) : filterDraft
     dataViewer?.page = 1
@@ -197,5 +222,48 @@ extension NotebookViewModel {
     guard let key = savedFilterKey else { return }
     savedFilterStore.delete(id: saved.id, for: key)
     refreshSavedFilters()
+  }
+}
+
+// MARK: - MongoDB filter and sort
+
+extension NotebookViewModel {
+  /// Apply the document filter `text`: back to page 1 with the count recomputed. Returns the
+  /// parse error (nothing applied, no prompt) for text that is not a document.
+  /// Staged changes must be resolved first.
+  func applyDocumentFilter(_ text: String) async -> DataViewerState.DocumentFilterError? {
+    guard dataViewer != nil else { return nil }
+    let value: MongoValue?
+    switch DataViewerState.documentFilterValue(text) {
+    case .success(let document): value = document
+    case .failure(let error): return error
+    }
+    guard await confirmLeaveStagedChanges() else { return nil }
+    guard dataViewer != nil else { return nil }
+    // Blank text and `{}` are both no filter
+    dataViewer?.documentFilter =
+      value == nil ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines)
+    dataViewer?.page = 1
+    dataViewer?.totalRows = nil
+    await loadDataViewerPage()
+    return nil
+  }
+
+  /// Remove the document filter. Staged changes must be resolved first.
+  func clearDocumentFilter() async {
+    _ = await applyDocumentFilter("")
+  }
+
+  /// Sort by `field` (nil: the default `{_id: 1}`) on the server and go back to page 1.
+  /// Staged changes must be resolved first.
+  func setDocumentSort(_ field: String?, ascending: Bool) async {
+    guard dataViewer != nil else { return }
+    guard await confirmLeaveStagedChanges() else { return }
+    guard dataViewer != nil else { return }
+    dataViewer?.documentSort = field.map {
+      DataViewerState.DocumentSort(field: $0, ascending: ascending)
+    }
+    dataViewer?.page = 1
+    await loadDataViewerPage()
   }
 }

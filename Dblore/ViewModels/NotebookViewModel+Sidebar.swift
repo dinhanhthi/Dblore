@@ -175,6 +175,17 @@ extension NotebookViewModel {
     }
   }
 
+  /// Whether `insertTextIntoSelectedCell` has somewhere to insert: an editor text view (not a
+  /// data viewer tab) or a selected notebook cell. Markdown notes have neither.
+  var canInsertText: Bool {
+    guard dataViewer == nil else { return false }
+    switch viewMode {
+    case .markdown: return false
+    case .editor: return editorTextView != nil
+    case .notebook: return selectedCellId != nil
+    }
+  }
+
   /// Insert text into selected cell or editor at cursor position
   func insertTextIntoSelectedCell(_ text: String) {
     // Markdown notes have no SQL cell or editor to insert into

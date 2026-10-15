@@ -97,7 +97,8 @@ extension NotebookViewModel {
   /// The collection of a result read by exactly one `find`, keyed by `_id`, or nil. Nil for
   /// other reads (`aggregate`, `distinct`, `countDocuments`, `listCollections`: their `_id` need
   /// not name a document of one collection), a find on a view (`databaseViews`, the cached
-  /// catalog), a projection that excludes `_id` or sets it to an expression, and a result
+  /// catalog), a projection that excludes `_id` or sets it to an expression, a projection whose
+  /// other fields are not plain inclusions or exclusions (`projectsStoredFields`), and a result
   /// without an `_id` column or whose `_id` type is `mixed`. No lookup relation (no foreign keys).
   private func mongoResultTarget(
     for query: String, result: QueryResult, config: ConnectionConfig, epoch: UInt64
@@ -105,7 +106,7 @@ extension NotebookViewModel {
     guard MongoshSplitter.split(query).count == 1,
       case .find(let collection, _, let projection, _, _, _)? = try? MongoshParser.parse(query),
       !databaseViews.contains(where: { $0.name == collection }),
-      Self.keepsPlainID(projection),
+      Self.keepsPlainID(projection), Self.projectsStoredFields(projection),
       let idColumn = result.columns.first(where: { $0.name == "_id" }), idColumn.type != "mixed"
     else { return nil }
     let database = config.database.isEmpty ? MongoSession.defaultDatabase : config.database
@@ -130,6 +131,26 @@ extension NotebookViewModel {
     case .int64(let number): return number != 0
     case .double(let number): return number != 0
     default: return false
+    }
+  }
+
+  /// True when every projected field other than `_id` (`keepsPlainID`) is a plain inclusion or
+  /// exclusion of a top-level key: `true`/`false`, or 1/0 of any numeric type. A string
+  /// (`"$other"` renames), an expression, `$slice` / `$elemMatch` (part of an array), or a dotted
+  /// key (part of a document) shows a value that an edit would write back as a stray or
+  /// truncated field.
+  private nonisolated static func projectsStoredFields(_ projection: MongoValue?) -> Bool {
+    guard case .document(let fields)? = projection else { return true }
+    return fields.allSatisfy { field in
+      if field.key == "_id" { return true }
+      guard !field.key.contains("."), !field.key.hasPrefix("$") else { return false }
+      switch field.value {
+      case .bool: return true
+      case .int32(let number): return number == 0 || number == 1
+      case .int64(let number): return number == 0 || number == 1
+      case .double(let number): return number == 0 || number == 1
+      default: return false
+      }
     }
   }
 
@@ -272,16 +293,19 @@ extension NotebookViewModel {
     guard let connectionManager, let rowData else { return }
     submitInlineEdit(
       assignments: [(column: columnName, value: bindText)], rowData: rowData,
-      target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager)
+      target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager,
+      documentValue: (columnType: columnType, text: newValue))
   }
 
   /// Gate shared by a cell edit and Row Details Apply: ONE UPDATE setting every `assignments`
   /// column of `rowData` against `target` (the cell's `cellDetailEditTarget`, the panel's own
   /// target), which must be live for `cellId`, checked by the protection gate, confirmed when
-  /// the commit style asks, then sent.
+  /// the commit style asks, then sent. On MongoDB the one assignment is sent as a `$set` of
+  /// `documentValue` (its column type and the typed text).
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
-    target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager
+    target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager,
+    documentValue: (columnType: String, text: String?)? = nil
   ) {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
@@ -297,6 +321,17 @@ extension NotebookViewModel {
     let columnNames = assignments.map(\.column)
     if let generated = columnNames.first(where: target.generatedColumns.contains) {
       showToast(Self.generatedColumnMessage(generated), type: .error)
+      return
+    }
+    // MongoDB: one `$set` through `executeGatedSequentialBatch`, never `executeGatedUpdate`
+    if stagesDocuments {
+      guard assignments.count == 1, let column = columnNames.first, let documentValue else {
+        showToast(Self.oneDocumentFieldMessage, type: .error)
+        return
+      }
+      handleDocumentValueEdit(
+        columnName: column, columnType: documentValue.columnType, newValue: documentValue.text,
+        rowData: rowData, target: target, cellId: cellId)
       return
     }
 
@@ -351,6 +386,10 @@ extension NotebookViewModel {
   nonisolated static let notEditableMessage =
     "This result is read-only: run the cell again to edit a single table with a primary key"
 
+  /// Shown when Row Details applies more than one field of a MongoDB document at once
+  nonisolated static let oneDocumentFieldMessage =
+    "On MongoDB, Row Details applies one changed field at a time"
+
   /// Send an inline edit through the actor gate and refresh the cell. Review keeps the
   /// connection's policy and leaves the edit pending (`commitImmediately` false). Immediate,
   /// confirm, and password commit at once unless an app transaction is already open
@@ -399,7 +438,7 @@ extension NotebookViewModel {
           let columns = edit.columnNames.compactMap { name in
             result?.columns.firstIndex(where: { $0.name == name })
           }
-          if isLiveEditTarget(target, cellId: nil), let result, let state = dataViewer,
+          if isLiveEditTarget(target, cellId: nil), let result,
             columns.count == count,
             let row = result.rows.firstIndex(where: { values in
               guard
@@ -424,35 +463,8 @@ extension NotebookViewModel {
             }
             // Undo snapshots must not restore a draft over the value just committed.
             undoManager.removeAllActions()
-            let stored: QueryResult
-            do {
-              stored = try await edit.connectionManager.execute(
-                userSQL: state.pageSQL, policy: protectionPolicy,
-                maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
-            } catch {
-              showToast(
-                "Cell updated, but failed to refresh: \(error.localizedDescription)", type: .error)
-              await onStatementsExecuted?()
-              return
-            }
-            guard isLiveEditTarget(target, cellId: nil), dataViewer?.loadKey == state.loadKey,
-              stored.columns.map(\.name) == result.columns.map(\.name)
-            else {
-              await onStatementsExecuted?()
-              return
-            }
-            var updated = CellResult(
-              columns: result.columns, rows: stored.rows, executionTime: result.executionTime,
-              rowCount: stored.rows.count, timestamp: result.timestamp, error: result.error,
-              wasLimited: result.wasLimited, sourceQuery: result.sourceQuery,
-              tableName: result.tableName, primaryKeyColumns: result.primaryKeyColumns,
-              affectedRows: result.affectedRows, editTarget: result.editTarget,
-              lookupRelation: result.lookupRelation)
-            updated.sessionReset = result.sessionReset
-            updated.skippedStatements = result.skippedStatements
-            updated.skippedQueuedCells = result.skippedQueuedCells
-            editorResult = updated
-            syncRowDetail(cellId: nil, result: updated)
+            await refreshDataViewerRows(
+              target: target, connectionManager: edit.connectionManager, done: "Cell updated")
           }
         } else {
           await loadDataViewerPage()
@@ -469,6 +481,42 @@ extension NotebookViewModel {
         "Failed to update '\(columnList)': \(error.localizedDescription)", type: .error)
     }
     await onStatementsExecuted?()
+  }
+
+  /// Re-reads the data viewer's page into the shown result, keeping its edit target (staged
+  /// changes were made against that generation and stay valid) and its columns. The page is
+  /// `mongoQueries()` for MongoDB (`pageSQL` asserts it is not), else `pageSQL`. A failed read
+  /// shows "<done>, but failed to refresh"; a page, target, or column list that changed
+  /// meanwhile is left as shown.
+  func refreshDataViewerRows(
+    target: EditTarget, connectionManager: DatabaseConnectionManager, done: String
+  ) async {
+    guard let result = editorResult, let state = dataViewer else { return }
+    let stored: QueryResult
+    do {
+      let page = isMongoDataViewer ? try state.mongoQueries().page.render() : state.pageSQL
+      stored = try await connectionManager.execute(
+        userSQL: page, policy: protectionPolicy,
+        maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
+    } catch {
+      showToast("\(done), but failed to refresh: \(error.localizedDescription)", type: .error)
+      return
+    }
+    guard isLiveEditTarget(target, cellId: nil), dataViewer?.loadKey == state.loadKey,
+      stored.columns.map(\.name) == result.columns.map(\.name)
+    else { return }
+    var updated = CellResult(
+      columns: result.columns, rows: stored.rows, executionTime: result.executionTime,
+      rowCount: stored.rows.count, timestamp: result.timestamp, error: result.error,
+      wasLimited: result.wasLimited, sourceQuery: result.sourceQuery,
+      tableName: result.tableName, primaryKeyColumns: result.primaryKeyColumns,
+      affectedRows: result.affectedRows, editTarget: result.editTarget,
+      lookupRelation: result.lookupRelation)
+    updated.sessionReset = result.sessionReset
+    updated.skippedStatements = result.skippedStatements
+    updated.skippedQueuedCells = result.skippedQueuedCells
+    editorResult = updated
+    syncRowDetail(cellId: nil, result: updated)
   }
 
   /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).

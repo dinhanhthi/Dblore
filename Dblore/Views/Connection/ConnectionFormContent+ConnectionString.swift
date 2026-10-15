@@ -26,6 +26,10 @@ extension ConnectionFormContent {
   }
 
   func parseConnectionString(_ connectionStr: String) {
+    if connectionConfig.databaseType == .mongodb {
+      parseMongoConnectionString(connectionStr)
+      return
+    }
     // Support both postgresql:// and postgres:// schemes
     let normalizedStr = connectionStr.trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "postgres://", with: "postgresql://")
@@ -94,5 +98,17 @@ extension ConnectionFormContent {
     updateConnectionStringSSLMode(sslMode)
 
     clearParseError()
+  }
+
+  /// A `mongodb://` or `mongodb+srv://` URI through `MongoURIParser`: its password moves to the
+  /// Password field and the stored `mongoURI` has no credentials.
+  private func parseMongoConnectionString(_ text: String) {
+    do {
+      connectionConfig = try MongoConnectionDraft.paste(text, into: connectionConfig).config
+      updateConnectionStringSSLMode(connectionConfig.sslMode)
+      clearParseError()
+    } catch {
+      setParseError(MongoConnectionDraft.message(for: error))
+    }
   }
 }

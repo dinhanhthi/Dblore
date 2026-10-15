@@ -1,7 +1,8 @@
 // CapabilityGatingTests.swift
 // SQLite skips Keychain save/load/delete. PostgreSQL still uses host:port:database:username.
 // Staged and inline row edits, table import and foreign key lookup follow the engine's
-// capability flags: DuckDB refuses them with a clear message, PostgreSQL keeps them.
+// capability flags: DuckDB refuses them with a clear message, PostgreSQL keeps them. The structure
+// menu and the SQL INSERT export format are hidden for MongoDB.
 
 import Foundation
 import Testing
@@ -142,6 +143,30 @@ struct CapabilityGatingTests {
         column: "user_id", schema: "main", table: "orders", rowColumns: ["user_id"],
         values: ["user_id": .int(7)]))
     #expect(opened == 1)
+  }
+
+  // MARK: - Structure menu
+
+  @Test("MongoDB has no structure menu; DuckDB views structure; other engines edit it")
+  func structureMenuFollowsCapability() {
+    #expect(SidebarSectionModel.structureMenuTitle(for: .mongodb) == nil)
+    #expect(SidebarSectionModel.structureMenuTitle(for: .duckdb) == "View Structure...")
+    for type in [DatabaseType.postgresql, .mysql, .sqlite] {
+      #expect(SidebarSectionModel.structureMenuTitle(for: type) == "Edit Structure...")
+    }
+  }
+
+  // MARK: - Export formats
+
+  @Test("MongoDB exports every format but SQL INSERT; SQL engines keep all formats")
+  func exportFormatsFollowQueryLanguage() {
+    let mongo = ResultExportSheet.exportFormats(
+      for: DatabaseType.mongodb.capabilities.queryLanguage)
+    #expect(mongo == [.csv, .excel, .json, .markdown, .pdf])
+    for type in [DatabaseType.postgresql, .mysql, .sqlite, .duckdb] {
+      let formats = ResultExportSheet.exportFormats(for: type.capabilities.queryLanguage)
+      #expect(formats == ExportFormat.allCases)
+    }
   }
 
   // MARK: - Helpers

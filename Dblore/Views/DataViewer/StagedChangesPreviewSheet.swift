@@ -2,8 +2,9 @@
 //  StagedChangesPreviewSheet.swift
 //  Dblore
 //
-//  Read-only preview of staged data-viewer SQL. Copy puts the text on the pasteboard.
-//  Nothing in this sheet is sent to the database.
+//  Read-only preview of staged data-viewer SQL, or for MongoDB the mongosh commands exactly as
+//  Commit sends them. Copy puts the text on the pasteboard. Nothing in this sheet is sent to
+//  the database.
 //
 
 import AppKit
@@ -14,7 +15,7 @@ struct StagedChangesPreviewSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var copied = false
 
-  /// Display SQL from `previewStagedSQL()`. Not executed.
+  /// Display SQL from `previewStagedSQL()` (MongoDB: the commands as sent). Not executed.
   var sql: String { viewModel.previewStagedSQL() }
 
   private var dialect: SQLDialect {
@@ -26,7 +27,7 @@ struct StagedChangesPreviewSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
-        Text("Preview SQL")
+        Text(viewModel.isMongoDataViewer ? "Preview Commands" : "Preview SQL")
           .font(.subheading)
           .foregroundColor(.foreground)
         Spacer()

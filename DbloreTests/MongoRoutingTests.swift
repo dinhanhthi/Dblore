@@ -41,18 +41,6 @@ struct MongoRoutingTests {
     #expect(await manager.introspector is MongoSchemaIntrospector)
   }
 
-  @Test("MCP refuses MongoDB before the inner factory opens anything")
-  func mcpFactoryRefusesMongo() async throws {
-    let inner = FakeDatabaseSessionFactory(capabilities: .contract())
-    do {
-      _ = try await MCPReadOnlySessionFactory(inner: inner).makeSession(config: mongoConfig)
-      Issue.record("MCP should refuse MongoDB")
-    } catch DatabaseError.engineUnavailable(let type) {
-      #expect(type == .mongodb)
-    }
-    #expect(inner.sessions.isEmpty)
-  }
-
   // MARK: - Gate dialect and silent routes
 
   @Test("The gate classifies MongoDB text with the mongosh classifier")
@@ -113,9 +101,6 @@ struct MongoRoutingTests {
     // Explain Analyze
     #expect(!capabilities.supportsExplainAnalyze)
     #expect(!capabilities.supportsExplainJSON)
-    // Hidden until Phase 12
-    #expect(!capabilities.isAvailable)
-    #expect(!DatabaseType.connectionPickerTypes(showExperimental: false).contains(.mongodb))
     for type in DatabaseType.allCases {
       #expect(
         (type.capabilities.queryLanguage == .mongosh) == (type.dialect == .mongodb),

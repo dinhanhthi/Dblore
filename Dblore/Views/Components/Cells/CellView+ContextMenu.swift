@@ -39,6 +39,15 @@ extension CellView {
     .disabled(!viewModel.canExplainAnalyze)
     .help(viewModel.explainAnalyzeUnavailableReason ?? "")
 
+    if let command = aggregationCommand, let manager = viewModel.connectionManager {
+      Button {
+        viewModel.selectedCellId = cell.id
+        aggregationBuilder = AggregationBuilderModel(command: command, connectionManager: manager)
+      } label: {
+        Label("Build Aggregation...", systemImage: "square.stack.3d.up")
+      }
+    }
+
     Divider()
 
     Button {
@@ -83,5 +92,12 @@ extension CellView {
     } label: {
       Label("Delete", systemImage: "trash.fill")
     }
+  }
+
+  /// The cell's command when it is a MongoDB cell of exactly one `aggregate`, for Build
+  /// Aggregation... (the substring check skips the parse for every other cell)
+  private var aggregationCommand: MongoCommand? {
+    guard viewModel.sqlDialect == .mongodb, cell.content.contains("aggregate") else { return nil }
+    return AggregationBuilderModel.aggregateCommand(in: cell.content)
   }
 }

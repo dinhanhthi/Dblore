@@ -2,13 +2,16 @@
 // The check SQL passes before it runs without a human in the loop (MCP run_query, the AI
 // Assistant): exactly one statement the dialect classifies as `.read`, that neither changes the
 // session's brakes nor its privileges and, on PostgreSQL, calls no `postgresSideEffectFunctions`
-// function; on request (the AI Assistant), no DuckDB file read (only queries starting with
-// SELECT, WITH, FROM, VALUES or `(` pass that check). Refused SQL is never sent. The guard only
-// classifies (a function it does not know may still write): SQL that passes runs under the
-// read-only gate on a read-only session (`MCPReadOnlySessionFactory`: PostgreSQL / MySQL inside
-// a READ ONLY transaction always rolled back, SQLite on the file opened read-only), MCP on its
-// pool's and the AI Assistant on one of its own; AI Assistant DuckDB queries run on the
-// workspace session (`WorkspaceManager.runAIQuery`).
+// function; on MongoDB, one read command that runs no server-side JavaScript
+// (`MongoCommandClassifier.usesServerSideJavaScript`); on request (the AI Assistant), no DuckDB
+// file read (only queries starting with SELECT, WITH, FROM, VALUES or `(` pass that check).
+// Refused SQL is never sent. The guard only classifies (a function it does not know may still
+// write): SQL that passes runs under the read-only gate on a read-only session
+// (`MCPReadOnlySessionFactory`: PostgreSQL / MySQL inside a READ ONLY transaction always rolled
+// back, SQLite on the file opened read-only, MongoDB on a plain session, which has no read-only
+// transaction: `MongoSession.query` runs reads only), MCP on its pool's and the AI Assistant on
+// one of its own; AI Assistant DuckDB queries run on the workspace session
+// (`WorkspaceManager.runAIQuery`).
 
 import Foundation
 
@@ -20,6 +23,7 @@ nonisolated enum ReadOnlyQueryGuard {
     case notRead
     case sideEffectFunction
     case fileAccess
+    case serverSideJavaScript
 
     var errorDescription: String? {
       switch self {
@@ -27,8 +31,8 @@ nonisolated enum ReadOnlyQueryGuard {
       case .multipleStatements:
         "Only a single statement runs automatically. Nothing was sent to the database."
       case .notRead:
-        "Only a single read-only statement (SELECT, SHOW, …) runs automatically. "
-          + "Nothing was sent to the database."
+        "Only a single read-only statement (SELECT, SHOW, …; on MongoDB find, aggregate, "
+          + "countDocuments or distinct) runs automatically. Nothing was sent to the database."
       case .sideEffectFunction:
         "The query calls a PostgreSQL function that does not run automatically (locks, "
           + "sessions, files, sequences, settings, sleeps or remote SQL). "
@@ -36,6 +40,9 @@ nonisolated enum ReadOnlyQueryGuard {
       case .fileAccess:
         "On DuckDB only SELECT queries that read no files run automatically. "
           + "Nothing was sent to the database."
+      case .serverSideJavaScript:
+        "MongoDB server-side JavaScript ($where, $function, $accumulator or code values) does "
+          + "not run automatically. Nothing was sent to the database."
       }
     }
   }
@@ -53,6 +60,9 @@ nonisolated enum ReadOnlyQueryGuard {
     else { throw Refusal.notRead }
     if dialect == .postgresql, callsPostgresSideEffectFunction(sql) {
       throw Refusal.sideEffectFunction
+    }
+    if dialect == .mongodb, MongoCommandClassifier.usesServerSideJavaScript(statement.text) {
+      throw Refusal.serverSideJavaScript
     }
     if refuseFileAccess, dialect == .duckdb, readsDuckDBFiles(sql) {
       throw Refusal.fileAccess

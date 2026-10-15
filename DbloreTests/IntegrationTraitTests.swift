@@ -1,6 +1,6 @@
 // IntegrationTraitTests.swift
 // Env parsing of the opt-in MongoDB gates: bare or TEST_RUNNER_ keys, true/1/yes only,
-// and SKIP_INTEGRATION_TESTS wins.
+// and SKIP_INTEGRATION_TESTS wins. The spike gate also needs the MongoDB gate.
 
 import Testing
 
@@ -37,5 +37,21 @@ struct IntegrationTraitTests {
   )
   func mongoTLSGate(env: [String: String], expected: Bool) {
     #expect(MongoTLSIntegrationGate.isEnabled(env: env) == expected)
+  }
+
+  @Test(
+    "MongoSpikeIntegrationGate needs MONGO_SPIKE_TESTS and MONGO_TESTS",
+    arguments: [
+      ([:], false),
+      (["MONGO_TESTS": "1"], false),
+      (["MONGO_SPIKE_TESTS": "1"], false),
+      (["MONGO_TESTS": "1", "MONGO_SPIKE_TESTS": "1"], true),
+      (["TEST_RUNNER_MONGO_TESTS": "1", "TEST_RUNNER_MONGO_SPIKE_TESTS": "yes"], true),
+      (["MONGO_TESTS": "1", "MONGO_SPIKE_TESTS": "no"], false),
+      (["MONGO_TESTS": "1", "MONGO_SPIKE_TESTS": "1", "SKIP_INTEGRATION_TESTS": "true"], false),
+    ] as [([String: String], Bool)]
+  )
+  func mongoSpikeGate(env: [String: String], expected: Bool) {
+    #expect(MongoSpikeIntegrationGate.isEnabled(env: env) == expected)
   }
 }

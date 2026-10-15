@@ -54,6 +54,40 @@ nonisolated enum MongoCommandClassifier {
     return fields.contains { $0.key == name }
   }
 
+  /// Keys that make the server run JavaScript: the `$where`, `$function` and `$accumulator`
+  /// operators, and `$code`, the Extended JSON shape `MongoBSONMapping` writes as BSON code.
+  static let serverSideJavaScriptKeys: Set<String> = [
+    "$where", "$function", "$accumulator", "$code",
+  ]
+
+  /// `text` would run JavaScript on the server: a `serverSideJavaScriptKeys` key (exact case,
+  /// as the server matches operators) at any depth of any document argument (filter,
+  /// projection, sort, pipeline, update, document). Text that does not parse as one command
+  /// counts as JavaScript (fail closed; the classifier calls it unknown anyway).
+  static func usesServerSideJavaScript(_ text: String) -> Bool {
+    guard let command = try? MongoshParser.parse(text) else { return true }
+    return arguments(of: command).contains { value in
+      serverSideJavaScriptKeys.contains { containsKey(value, $0) }
+    }
+  }
+
+  /// Every document or array argument of `command`.
+  private static func arguments(of command: MongoCommand) -> [MongoValue] {
+    switch command {
+    case .find(_, let filter, let projection, let sort, _, _):
+      [filter, projection, sort].compactMap { $0 }
+    case .aggregate(_, let pipeline): [.array(pipeline)]
+    case .countDocuments(_, let filter), .distinct(_, _, let filter): filter.map { [$0] } ?? []
+    case .insertOne(_, let document): [document]
+    case .insertMany(_, let documents): [.array(documents)]
+    case .updateOne(_, let filter, let update, _), .updateMany(_, let filter, let update, _),
+      .replaceOne(_, let filter, let update, _):
+      [filter, update]
+    case .deleteOne(_, let filter), .deleteMany(_, let filter): [filter]
+    case .listCollections: []
+    }
+  }
+
   /// A document key `name` (exact case) at any depth of `value`: sub-pipelines (`$facet`,
   /// `$lookup`, `$unionWith`) and filters included, so nested writes fail closed. The parser's
   /// depth limit bounds the recursion.

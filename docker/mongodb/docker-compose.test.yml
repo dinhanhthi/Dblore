@@ -4,7 +4,8 @@
 # `--profile tls up -d --wait` adds mongo-tls-test (requireTLS, 27019). A plain
 # `up` never starts it, so it never needs the certs.
 # Published ports and names are overridable (DBLORE_MONGO_TEST_PORT,
-# DBLORE_MONGO_TLS_TEST_PORT, DBLORE_TEST_NAME_PREFIX).
+# DBLORE_MONGO_TLS_TEST_PORT, DBLORE_TEST_NAME_PREFIX) for scripts/ci-live-databases.sh,
+# which starts mongo-test only (no tls profile).
 # The healthchecks ping the container hostname, not localhost: the entrypoint's
 # temporary init mongod listens on 127.0.0.1 only, so "healthy" means init is done.
 name: dblore-mongodb-test

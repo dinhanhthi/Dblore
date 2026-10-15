@@ -70,11 +70,13 @@ extension EditorModeView {
 
         Spacer()
 
-        // Grid / Chart falls back here when the "Run with query" footer is hidden
+        // Grid / Documents / Chart falls back here when the "Run with query" footer is hidden
         if !showsResultPanelFooter(result: result),
-          ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
+          let displayTabs = ResultDisplayMode.pickerTabs(
+            chartable: ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil,
+            documents: viewModel.sqlDialect == .mongodb)
         {
-          ResultDisplayPicker(mode: resultDisplayModeBinding(for: result))
+          ResultDisplayPicker(mode: resultDisplayModeBinding(for: result), tabs: displayTabs)
         }
 
         if ExplainResultPlan.parse(result) != nil {
@@ -353,6 +355,8 @@ struct EditorResultGridView: View {
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
   @State private var currentMatch: SearchMatch?
+  /// MongoDB: the staged documents drawn as a row overlay, rebuilt only when they change
+  @State private var documentOverlay = StagedDocumentOverlay()
 
   var body: some View {
     ExplainableResult(
@@ -362,100 +366,17 @@ struct EditorResultGridView: View {
         result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
         showsPicker: showsDisplayPicker
       ) {
-        let relation = referencedRelation(
-          dataViewer: viewModel.dataViewer, editTarget: result.editTarget,
-          lookupRelation: result.lookupRelation)
-        let referencedRow = referencedRowHandlers(
-          viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
-        ResultGridView(
-          result: result,
-          sortColumn: sortColumn,
-          ascending: sortAscending,
-          isEditable: viewModel.canEdit(result),
-          readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
-          onCommitEdit: { row, column, newValue in
-            viewModel.handleGridCellEdit(
-              row: row, column: column, newValue: newValue, result: result, cellId: nil,
-              connectionManager: viewModel.connectionManager)
-          },
-          stagesEdits: viewModel.stagingEnabled,
-          changeSet: viewModel.dataViewer?.changeSet,
-          onStageEdit: { row, column, newValue in
-            viewModel.handleStagedGridCellEdit(
-              row: row, column: column, newValue: newValue, result: result)
-          },
-          onStageInsert: {
-            Task { await viewModel.openAddRowForm() }
-          },
-          onStageDuplicate: { rows in
-            Task {
-              if let message = await viewModel.stageDuplicate(rows: rows) {
-                viewModel.showToast(message, type: .error)
-              }
-            }
-          },
-          onStageDelete: { rows in
-            if let message = viewModel.stageDelete(rows: rows) {
-              viewModel.showToast(message, type: .error)
-            }
-          },
-          onRevertStaged: { rows in
-            if let message = viewModel.revertStaged(rows: rows) {
-              viewModel.showToast(message, type: .error)
-            }
-          },
-          onSortChange: { column, ascending in
-            guard viewModel.hasPendingStagedChanges else {
-              sortColumn = column
-              sortAscending = ascending
-              return
-            }
-            Task { @MainActor in
-              guard await viewModel.confirmLeaveStagedChanges() else { return }
-              sortColumn = column
-              sortAscending = ascending
-            }
-          },
-          valueFilter: valueFilter,
-          onValueFilterChange: { valueFilter = $0 },
-          onShowCellDetails: { row, originalRow, column in
-            viewModel.showGridCellInSidebar(
-              row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
-          },
-          onShowRowDetails: { row, originalRow in
-            viewModel.showRowDetail(
-              row: row, originalRow: originalRow, result: result, cellId: nil)
-          },
-          onHighlightCell: canHighlight
-            ? { column, value, style, color in
-              guard result.columns.indices.contains(column) else { return }
-              viewModel.highlightCell(
-                column: result.columns[column].name, value: value, style: style, color: color)
-            } : nil,
-          onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
-          searchQuery: viewModel.searchState.query,
-          caseSensitive: viewModel.searchState.isCaseSensitive,
-          currentMatch: currentMatch,
-          searchMatches: viewModel.searchState.matches,
-          forwardsScrollToParent: false,
-          hideColumnTypes: AppSettings.shared.hideColumnTypes,
-          hiddenColumns: hiddenColumns,
-          highlight: highlight,
-          highlightDialect: dialect,
-          relationSchema: relation?.schema,
-          relationTable: relation?.table,
-          baseColumnNames: relation?.baseColumns,
-          foreignKeys: viewModel.lookupForeignKeys,
-          lookupDialect: viewModel.sqlDialect,
-          onLookupReferencedRow: referencedRow.lookup,
-          onJumpToReferencedRow: referencedRow.jump
-        )
+        if showsDocuments {
+          DocumentTreeView(result: result, fillsAvailableHeight: true)
+        } else {
+          resultGrid
+        }
       }
     }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
       currentMatch = gridSearchMatchOnScreen(
-        currentMatch, result: result, sortColumn: sortColumn, ascending: sortAscending,
+        currentMatch, result: result, sortColumn: gridSort.column, ascending: gridSort.ascending,
         valueFilter: valueFilter, viewModel: viewModel)
     }
     .onReceive(NotificationCenter.default.publisher(for: .highlightSearchMatch)) { notification in
@@ -465,14 +386,14 @@ struct EditorResultGridView: View {
       if notification.userInfo?["resolved"] as? Bool == true {
         if let match = notification.userInfo?["match"] as? SearchMatch {
           currentMatch = assignedSearchMatch(
-            match, cellId: match.cellId, result: result, sortColumn: sortColumn,
-            ascending: sortAscending, valueFilter: valueFilter)
+            match, cellId: match.cellId, result: result, sortColumn: gridSort.column,
+            ascending: gridSort.ascending, valueFilter: valueFilter)
         } else {
           currentMatch = nil
         }
       } else if let match = notification.userInfo?["match"] as? SearchMatch, match.isInResultGrid {
         currentMatch = gridSearchMatchOnScreen(
-          match, result: result, sortColumn: sortColumn, ascending: sortAscending,
+          match, result: result, sortColumn: gridSort.column, ascending: gridSort.ascending,
           valueFilter: valueFilter, viewModel: viewModel)
       } else {
         currentMatch = nil
@@ -484,5 +405,144 @@ struct EditorResultGridView: View {
       else { return }
       currentMatch = nil
     }
+  }
+
+  /// A MongoDB data viewer sorts on the server: the header shows the page's `documentSort`.
+  /// Other grids sort the loaded rows locally.
+  private var gridSort: (column: String?, ascending: Bool) {
+    guard viewModel.isMongoDataViewer else { return (sortColumn, sortAscending) }
+    let sort = viewModel.dataViewer?.documentSort
+    return (sort?.field, sort?.ascending ?? true)
+  }
+
+  /// The Documents view replaces the grid for a MongoDB result
+  private var showsDocuments: Bool {
+    viewModel.sqlDialect == .mongodb && displayMode?.wrappedValue == .documents
+  }
+
+  /// Staged rows drawn on the grid: the SQL change set, else the data viewer's staged MongoDB
+  /// documents (drawing only; it never reaches the SQL builders).
+  private var stagedOverlay: RowChangeSet? {
+    guard let state = viewModel.dataViewer else { return nil }
+    if let set = state.changeSet { return set }
+    return documentOverlay.rowChangeSet(for: state.documentChangeSet, target: result.editTarget)
+  }
+
+  @ViewBuilder
+  private var resultGrid: some View {
+    let relation = referencedRelation(
+      dataViewer: viewModel.dataViewer, editTarget: result.editTarget,
+      lookupRelation: result.lookupRelation)
+    let referencedRow = referencedRowHandlers(
+      viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    ResultGridView(
+      result: result,
+      sortColumn: gridSort.column,
+      ascending: gridSort.ascending,
+      isEditable: viewModel.canEdit(result),
+      readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
+      onCommitEdit: { row, column, newValue in
+        viewModel.handleGridCellEdit(
+          row: row, column: column, newValue: newValue, result: result, cellId: nil,
+          connectionManager: viewModel.connectionManager)
+      },
+      stagesEdits: viewModel.stagingEnabled,
+      changeSet: stagedOverlay,
+      onStageEdit: { row, column, newValue in
+        viewModel.handleStagedGridCellEdit(
+          row: row, column: column, newValue: newValue, result: result)
+      },
+      onStageInsert: {
+        Task { await viewModel.openAddRowForm() }
+      },
+      onStageDuplicate: { rows in
+        Task {
+          if let message = await viewModel.stageDuplicate(rows: rows) {
+            viewModel.showToast(message, type: .error)
+          }
+        }
+      },
+      onStageDelete: { rows in
+        if let message = viewModel.stageDelete(rows: rows) {
+          viewModel.showToast(message, type: .error)
+        }
+      },
+      onRevertStaged: { rows in
+        if let message = viewModel.revertStaged(rows: rows) {
+          viewModel.showToast(message, type: .error)
+        }
+      },
+      onSortChange: { column, ascending in
+        if viewModel.isMongoDataViewer {
+          Task { @MainActor in await viewModel.setDocumentSort(column, ascending: ascending) }
+          return
+        }
+        guard viewModel.hasPendingStagedChanges else {
+          sortColumn = column
+          sortAscending = ascending
+          return
+        }
+        Task { @MainActor in
+          guard await viewModel.confirmLeaveStagedChanges() else { return }
+          sortColumn = column
+          sortAscending = ascending
+        }
+      },
+      valueFilter: valueFilter,
+      onValueFilterChange: { valueFilter = $0 },
+      onShowCellDetails: { row, originalRow, column in
+        viewModel.showGridCellInSidebar(
+          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+      },
+      onShowRowDetails: { row, originalRow in
+        viewModel.showRowDetail(
+          row: row, originalRow: originalRow, result: result, cellId: nil)
+      },
+      onHighlightCell: canHighlight
+        ? { column, value, style, color in
+          guard result.columns.indices.contains(column) else { return }
+          viewModel.highlightCell(
+            column: result.columns[column].name, value: value, style: style, color: color)
+        } : nil,
+      onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
+      searchQuery: viewModel.searchState.query,
+      caseSensitive: viewModel.searchState.isCaseSensitive,
+      currentMatch: currentMatch,
+      searchMatches: viewModel.searchState.matches,
+      forwardsScrollToParent: false,
+      hideColumnTypes: AppSettings.shared.hideColumnTypes,
+      hiddenColumns: hiddenColumns,
+      highlight: highlight,
+      highlightDialect: dialect,
+      relationSchema: relation?.schema,
+      relationTable: relation?.table,
+      baseColumnNames: relation?.baseColumns,
+      foreignKeys: viewModel.lookupForeignKeys,
+      lookupDialect: viewModel.sqlDialect,
+      onLookupReferencedRow: referencedRow.lookup,
+      onJumpToReferencedRow: referencedRow.jump
+    )
+  }
+}
+
+/// The drawing-only `RowChangeSet` of a staged `MongoDocumentChangeSet`, kept while the set and
+/// target are unchanged: `displayRowChangeSet(target:)` makes new insert ids on every call, and
+/// the grid redraws its staged rows whenever the overlay differs.
+final class StagedDocumentOverlay {
+  private var source: (set: MongoDocumentChangeSet, target: EditTarget)?
+  private var display: RowChangeSet?
+
+  /// Nil when nothing is staged or the result has no edit target.
+  func rowChangeSet(for set: MongoDocumentChangeSet?, target: EditTarget?) -> RowChangeSet? {
+    guard let set, !set.isEmpty, let target else {
+      source = nil
+      display = nil
+      return nil
+    }
+    if let source, source.set == set, source.target == target { return display }
+    let next = set.displayRowChangeSet(target: target)
+    source = (set, target)
+    display = next
+    return next
   }
 }

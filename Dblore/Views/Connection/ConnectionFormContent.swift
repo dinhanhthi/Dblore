@@ -195,7 +195,9 @@ struct ConnectionFormContent: View {
                     testResult = nil
                     if newMode == .connectionString {
                       let config = connectionConfig
-                      if !config.username.isEmpty && !config.database.isEmpty {
+                      if config.databaseType == .mongodb {
+                        connectionString = MongoConnectionDraft.connectionString(for: config)
+                      } else if !config.username.isEmpty && !config.database.isEmpty {
                         connectionString = generateConnectionString()
                       } else {
                         connectionString = ""
@@ -252,9 +254,9 @@ struct ConnectionFormContent: View {
       )
       .onChange(of: connectionConfig.databaseType) { _, newType in
         clearParseErrorAndTestResult()
-        if !Self.supportsConnectionString(newType) {
-          inputMode = .form
-        }
+        // A string typed for the previous engine is not parsed as the new one's.
+        inputMode = .form
+        connectionString = ""
         // Loading a history row sets `fieldsEngine` before `databaseType`, so this
         // only runs for the header picker. A PostgreSQL database name would otherwise
         // stay in `database` and show up under Browse.
@@ -302,6 +304,11 @@ struct ConnectionFormContent: View {
         if selectedHistoryId != retained {
           selectedHistoryId = retained
         }
+      }
+      // MongoDB keeps `mongoURI` in step with the fields (other engines drop it).
+      .onChange(of: MongoConnectionDraft.FieldsKey(connectionConfig)) { _, _ in
+        let rebuilt = MongoConnectionDraft.rebuilt(connectionConfig)
+        if rebuilt != connectionConfig { connectionConfig = rebuilt }
       }
       .onChange(of: connectionConfig.clientCertificate) { _, _ in
         restoreCertificateDraft()
@@ -388,11 +395,11 @@ struct ConnectionFormContent: View {
     return newFormDraft(databaseType: newType)
   }
 
-  /// The Connection String tab parses and builds `postgresql://` URIs only.
+  /// The Connection String tab parses and builds `postgresql://` and `mongodb://` URIs.
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
-    case .postgresql: true
-    case .mysql, .sqlite, .duckdb, .mongodb: false
+    case .postgresql, .mongodb: true
+    case .mysql, .sqlite, .duckdb: false
     }
   }
 
@@ -408,7 +415,11 @@ struct ConnectionFormContent: View {
         + "plain, unencrypted connection when the server offers no SSL. On untrusted networks, "
         + "use Verify CA or Verify Full. A picked CA certificate is used only by Verify CA and "
         + "Verify Full."
-    case .postgresql, .sqlite, .duckdb, .mongodb: nil
+    case .mongodb:
+      "Verify Full encrypts the connection and checks the server certificate and host name. Use "
+        + "the server's host name, not an IP address. A picked CA certificate replaces the "
+        + "system trust store."
+    case .postgresql, .sqlite, .duckdb: nil
     }
   }
 
@@ -416,6 +427,7 @@ struct ConnectionFormContent: View {
   /// `ConnectionConfig()` stays the unstyled default tests use.
   static func newFormDraft(databaseType: DatabaseType = .postgresql) -> ConnectionConfig {
     var config = ConnectionConfig(databaseType: databaseType, port: databaseType.defaultPort)
+    if databaseType == .mongodb { config.sslMode = MongoConnectionDraft.defaultSSLMode }
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config
   }
@@ -694,11 +706,15 @@ struct ConnectionFormContent: View {
   // MARK: - Validation
 
   /// Form fields are complete enough to test or connect.
-  /// A file engine only needs the file path. Password stays optional.
+  /// A file engine only needs the file path. Password stays optional. MongoDB needs only a host
+  /// (no database means `test`, no user means no authentication) that forms a valid URI.
   static func isFormInputValid(_ config: ConnectionConfig) -> Bool {
     let capabilities = config.databaseType.capabilities
     if !capabilities.usesNetwork {
       return !config.database.isEmpty
+    }
+    if config.databaseType == .mongodb {
+      return !config.host.isEmpty && MongoConnectionDraft.fieldError(config) == nil
     }
     return !config.host.isEmpty && !config.database.isEmpty && !config.username.isEmpty
   }
@@ -882,7 +898,7 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try preparedCertificateConfig())
+      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -944,7 +960,7 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try preparedCertificateConfig())
+      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -971,6 +987,7 @@ struct ConnectionFormContent: View {
           }
         }
         connectionConfig.clientCertificate = config.clientCertificate
+        connectionConfig.mongoURI = config.mongoURI
         clearCertificateDraft()
         // Restores the draft from the submitted tunnel (and drops the typed secret).
         connectionConfig.sshTunnel = config.sshTunnel

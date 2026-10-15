@@ -2,14 +2,21 @@
 // Sessions for MCP connections. PostgreSQL and MySQL run every query inside a server-side
 // read-only transaction that is always rolled back; SQLite opens the file read-only. DuckDB is
 // refused: a second in-process instance is a frozen snapshot, and closing it drops the
-// writer's file lock (spike 2.4). MongoDB is refused (`engineUnavailable`) until it ships.
+// writer's file lock (spike 2.4). MongoDB has no read-only transaction: its session is returned
+// as is, since `MongoSession.query` runs only commands the classifier calls reads (and refuses
+// binds), MCP never calls `command`, and `MongoSchemaIntrospector` needs the `MongoSession`
+// itself. `ReadOnlyQueryGuard` refuses server-side JavaScript first; a read-only database role
+// is the server-side backstop.
 //
 // MCP read path: `DatabaseConnectionManager.execute(userSQL:policy:maxRows:)` with a read-only
 // policy and no caller. MCP sends only `.read` statements and never opens a transaction, so a
 // read goes through `query` and the capped reader (a truncated PostgreSQL read closes and
-// reopens the session, `resetSessionIfCapped`), never through a server cursor. `command` and
-// the cursor methods are therefore refused here: nothing MCP sends needs them, and the
-// manager's connect setup only calls `applySessionSettings`.
+// reopens the session, `resetSessionIfCapped`), never through a server cursor. For SQL engines
+// `command` and the cursor methods are therefore refused here: nothing MCP sends needs them,
+// and the manager's connect setup only calls `applySessionSettings`. MongoDB's session is
+// returned unwrapped, so nothing is refused here for it: read-only rests on
+// `ReadOnlyQueryGuard`, the manager's read-only policy and `MongoSession.query`, which runs
+// reads only.
 
 import Foundation
 
@@ -74,7 +81,7 @@ nonisolated struct MCPReadOnlySessionFactory: DatabaseSessionFactory {
     case .duckdb:
       throw MCPConnectionError.duckDBNotSupported
     case .mongodb:
-      throw DatabaseError.engineUnavailable(.mongodb)
+      return try await inner.makeSession(config: config)
     }
   }
 }

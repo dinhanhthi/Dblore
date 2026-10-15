@@ -13,10 +13,11 @@ extension WorkspaceManager {
   /// result is visible. `ReadOnlyQueryGuard` checks it again for the live connection's dialect
   /// (the connection may have changed since the reply was asked for); a refusal is not recorded.
   /// The guard only classifies (a function it does not know may still write), so PostgreSQL,
-  /// MySQL and SQLite queries run on a read-only session of their own (`runOnReadOnlySession`),
-  /// never the workspace's: no write commits, and the tabs' transactions are neither joined nor
-  /// read. DuckDB runs on the workspace session. Records History on success and failure, then
-  /// rethrows.
+  /// MySQL, SQLite and MongoDB queries run on a read-only session of their own
+  /// (`runOnReadOnlySession`; MongoDB: a plain session that runs reads only, after the guard
+  /// refused server-side JavaScript), never the workspace's: no write commits, and the tabs'
+  /// transactions are neither joined nor read. DuckDB runs on the workspace session. Records
+  /// History on success and failure, then rethrows.
   func runAIQuery(_ sql: String) async throws -> QueryResult {
     guard connectionState.isConnected, let config = workspace.connectionConfig else {
       throw AIAssistantViewModel.QueryRunError.notConnected
@@ -51,7 +52,7 @@ extension WorkspaceManager {
 
   /// Runs `sql` on a new session as MCP does (`MCPReadOnlySessionFactory`: PostgreSQL / MySQL
   /// inside a READ ONLY transaction that is always rolled back, SQLite on the file opened
-  /// read-only), connected like the workspace session (its config, unremembered certificate and
+  /// read-only, MongoDB on a plain session that runs reads only), connected like the workspace session (its config, unremembered certificate and
   /// SSH secret, host-key policy), then closed. A failed connect throws `.readSessionFailed`,
   /// without the server's text.
   private func runOnReadOnlySession(_ sql: String) async throws -> QueryResult {

@@ -53,7 +53,7 @@ extension AIAssistantViewModel {
     guard await streamReply(request, from: context.client, into: entryId),
       context.runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,
-      let sql = AIMessageParser.runQuery(in: reply)
+      let sql = AIMessageParser.runQuery(in: reply, dialect: context.dialect)
     else { return }
     await runQuery(sql, context: context, token: token)
   }

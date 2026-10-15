@@ -220,31 +220,34 @@ struct HeaderView: View {
             if !Task.isCancelled { canStopEditorQuery = true }
           }
 
-          // Filter rows: toggles the filter form in the right sidebar
+          // Filter rows: toggles the filter form in the right sidebar. MongoDB filters in the
+          // document filter bar above the grid instead.
           let isFilterShown =
             viewModel.isRightSidebarVisible && viewModel.rightSidebarContent == .tableFilter
-          Button(action: {
-            if isFilterShown {
-              viewModel.closeSidebar()
-            } else {
-              viewModel.prepareFilterDraft()
-              viewModel.showSidebar(content: .tableFilter)
+          if !viewModel.isMongoDataViewer {
+            Button(action: {
+              if isFilterShown {
+                viewModel.closeSidebar()
+              } else {
+                viewModel.prepareFilterDraft()
+                viewModel.showSidebar(content: .tableFilter)
+              }
+            }) {
+              Image(systemName: "line.3.horizontal.decrease")
             }
-          }) {
-            Image(systemName: "line.3.horizontal.decrease")
-          }
-          .buttonStyle(
-            GhostButtonStyle(
-              isActive: isFilterShown || !(viewModel.dataViewer?.filter.isEmpty ?? true),
-              iconOnly: true)
-          )
-          .overlay(alignment: .bottomTrailing) {
-            if !(viewModel.dataViewer?.filter.isEmpty ?? true) {
-              Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
-                .allowsHitTesting(false)
+            .buttonStyle(
+              GhostButtonStyle(
+                isActive: isFilterShown || !(viewModel.dataViewer?.filter.isEmpty ?? true),
+                iconOnly: true)
+            )
+            .overlay(alignment: .bottomTrailing) {
+              if !(viewModel.dataViewer?.filter.isEmpty ?? true) {
+                Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
+                  .allowsHitTesting(false)
+              }
             }
+            .help("Filter rows")
           }
-          .help("Filter rows")
 
           // Highlight rows: toggles the highlight form in the right sidebar
           let isHighlightShown =

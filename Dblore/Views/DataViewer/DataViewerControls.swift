@@ -42,8 +42,8 @@ struct DataViewerControls: View {
 
         addRowButton
 
-        if let set = state.changeSet, !set.isEmpty {
-          stagedSummary(set.counts)
+        if let counts = viewModel.stagedChangeCounts {
+          stagedSummary(counts)
           previewButton
           discardButton
           commitButton
@@ -152,7 +152,7 @@ struct DataViewerControls: View {
   private var previewButton: some View {
     Button(action: { showPreview = true }) {
       dataViewerCapsuleLabel {
-        Text("Preview SQL")
+        Text(viewModel.isMongoDataViewer ? "Preview" : "Preview SQL")
           .font(.system(size: 11))
           .foregroundColor(.foreground)
       }
@@ -160,7 +160,10 @@ struct DataViewerControls: View {
     .buttonStyle(.plain)
     .linkPointer()
     .fixedSize()
-    .help("Show the staged SQL. Nothing is sent to the database.")
+    .help(
+      viewModel.isMongoDataViewer
+        ? "Show the staged commands. Nothing is sent to the database."
+        : "Show the staged SQL. Nothing is sent to the database.")
   }
 
   private var discardButton: some View {
@@ -247,8 +250,9 @@ struct DataViewerPagingBar: View {
 
         Spacer(minLength: Spacing.sm)
 
-        if showsChartPicker {
-          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode)
+        let tabs = displayTabs
+        if tabs.count > 1 {
+          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode, tabs: tabs)
         }
       }
       .padding(.horizontal, Spacing.md)
@@ -263,14 +267,18 @@ struct DataViewerPagingBar: View {
     }
   }
 
-  /// Same rule as the in-grid picker: a loaded page that can be plotted.
-  private var showsChartPicker: Bool {
-    guard let result = viewModel.editorResult, result.error == nil else { return false }
+  /// Same rule as the in-grid picker: a loaded page, with Documents for a MongoDB collection and
+  /// Chart when it can be plotted. One tab hides the picker.
+  private var displayTabs: [ResultDisplayMode] {
+    guard let result = viewModel.editorResult, result.error == nil else { return [] }
     let showingRows =
       !result.rows.isEmpty
       || viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
-    guard showingRows else { return false }
-    return ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil
+      || viewModel.dataViewer?.documentChangeSet?.inserts.isEmpty == false
+    guard showingRows else { return [] }
+    return ResultDisplayMode.tabs(
+      chartable: ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil,
+      documents: viewModel.sqlDialect == .mongodb)
   }
 
   private func pageSizeMenu(state: DataViewerState) -> some View {

@@ -11,9 +11,14 @@ import AppKit
 
 extension SQLTextView {
 
+  /// Format SQL applies to SQL dialects only; mongosh cells are not SQL
+  nonisolated static func canFormat(dialect: SQLDialect) -> Bool {
+    dialect != .mongodb
+  }
+
   /// Replace the whole text with its formatted version (undoable)
   func formatDocument() {
-    guard let textStorage = textStorage else { return }
+    guard Self.canFormat(dialect: dialect), let textStorage = textStorage else { return }
 
     let caret = selectedRange().location
     let fullRange = NSRange(location: 0, length: textStorage.length)

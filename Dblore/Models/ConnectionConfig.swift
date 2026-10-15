@@ -83,7 +83,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
-  /// without transactions, structure editing or SQL dump; hidden until it is complete.
+  /// without transactions, structure editing or SQL dump.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -205,7 +205,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: false,
         supportsForeignKeyLookup: false,
         requiresPlugin: false,
-        isAvailable: false,
+        isAvailable: true,
         queryLanguage: .mongosh,
         supportsTransactions: false,
         supportsStructure: false,

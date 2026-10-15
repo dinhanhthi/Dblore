@@ -109,6 +109,63 @@ struct AIPromptsTests {
     #expect(prompt.hasSuffix("<schema>\nt(a)\n</schema>"))
   }
 
+  @Test func mysqlPromptKeepsSQLRules() {
+    let prompt = AIPrompts.system(databaseName: "shop", schema: "t(a)", dialect: .mysql)
+    #expect(prompt.hasPrefix("You are a SQL assistant inside a database client"))
+    #expect(prompt.contains("- Use the MySQL dialect.\n- Put SQL in ```sql fenced blocks.\n"))
+  }
+
+  // MARK: - MongoDB
+
+  /// A sampled collection as the Mongo introspector reports it: field paths and BSON type names
+  private static let mongoSnapshot = AISchemaSnapshot(
+    tables: [
+      DatabaseTable(
+        schema: "shop", name: "orders",
+        columns: [
+          DatabaseColumn(name: "_id", type: "objectId", isNullable: false, isPrimaryKey: true),
+          DatabaseColumn(name: "customer.city", type: "string"),
+          DatabaseColumn(name: "total", type: "decimal"),
+        ], rowCount: 48_213)
+    ], foreignKeys: [], databaseName: "shop", dialect: .mongodb)
+
+  private static func mongoPrompt(runsQueries: Bool, compact: Bool) async -> String {
+    await AIAssistantViewModel.buildRequest(
+      model: "m", question: "orders per city", explicit: [], snapshot: mongoSnapshot,
+      history: [], runsQueries: runsQueries, compactPrompt: compact
+    ).system
+  }
+
+  @Test(arguments: [(false, false), (true, false), (false, true), (true, true)])
+  func mongoPromptTeachesTheSubsetWithoutSQL(runsQueries: Bool, compact: Bool) async {
+    let prompt = await Self.mongoPrompt(runsQueries: runsQueries, compact: compact)
+    for marker in [
+      "db.getCollection(\"", "db[\"", ".sort(", ".limit(", ".skip(", "aggregate([",
+      "countDocuments(", "distinct(", "insertOne(", "insertMany(", "updateOne(", "updateMany(",
+      "replaceOne(", "deleteOne(", "deleteMany(", "show collections", "db.getCollectionNames()",
+      "ObjectId(", "ISODate(", "NumberLong(", "NumberDecimal(", "findOne", ".toArray()",
+      ".pretty()", "JavaScript", "```mongodb",
+    ] {
+      #expect(prompt.contains(marker), "missing \(marker)")
+    }
+    for sqlWording in ["SQL", "dialect", "SELECT", "LIMIT", "table"] {
+      #expect(!prompt.contains(sqlWording), "contains \(sqlWording)")
+    }
+    #expect(prompt.contains(runsQueries ? "```mongodb run" : "cannot run"))
+    #expect(!prompt.contains(runsQueries ? "cannot run" : "```mongodb run"))
+  }
+
+  @Test func mongoSchemaHasCollectionsAndFieldTypesButNoValues() async {
+    let prompt = await Self.mongoPrompt(runsQueries: false, compact: false)
+    #expect(prompt.contains("connected to the database \"shop\""))
+    #expect(
+      prompt.hasSuffix(
+        "<schema>\nshop.orders(_id objectId PK NOT NULL, customer.city string, total decimal)"
+          + "\n</schema>"))
+    // The only data-derived number a collection carries (its document count) stays out
+    #expect(!prompt.contains("48213") && !prompt.contains("48,213"))
+  }
+
   @Test func queryShownPlaceholderContainsRowCount() {
     #expect(AIPrompts.queryShownPlaceholder(rowCount: 7).contains("7 row"))
   }

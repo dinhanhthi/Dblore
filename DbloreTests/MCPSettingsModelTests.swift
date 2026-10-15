@@ -1,7 +1,7 @@
 // MCPSettingsModelTests.swift
-// Settings > MCP without the view: the allowlist toggles write the setting (DuckDB never), a
-// committed port is clamped and the running server moves to it, and the copy buttons put the
-// client snippets with the token on the pasteboard without logging the token.
+// Settings > MCP without the view: the allowlist toggles write the setting (DuckDB never,
+// MongoDB allowed), a committed port is clamped and the running server moves to it, and the copy
+// buttons put the client snippets with the token on the pasteboard without logging the token.
 
 import Foundation
 import Testing
@@ -16,6 +16,8 @@ struct MCPSettingsModelTests {
     config: ConnectionConfig(databaseType: .postgresql, database: "app", name: "Orders"))
   private let duckdb = ConnectionHistoryEntry(
     config: ConnectionConfig(databaseType: .duckdb, database: "/tmp/a.duckdb"))
+  private let mongo = ConnectionHistoryEntry(
+    config: ConnectionConfig(databaseType: .mongodb, database: "app"))
 
   private func makeSettings() throws -> AppSettings {
     AppSettings(defaults: try #require(UserDefaults(suiteName: suiteName)))
@@ -40,7 +42,7 @@ struct MCPSettingsModelTests {
     return port
   }
 
-  @Test("Allowlist toggles write the setting; DuckDB is listed but never allowed")
+  @Test("Allowlist toggles write the setting; DuckDB is never allowed, MongoDB is")
   func allowlist() throws {
     let settings = try makeSettings()
     defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
@@ -52,6 +54,7 @@ struct MCPSettingsModelTests {
     #expect(settings.mcpAllowedConnectionIDs == [postgres.id])
     #expect(model.isAllowed(postgres.id))
     #expect(!MCPSettingsModel.isAvailable(duckdb))
+    #expect(MCPSettingsModel.isAvailable(mongo))
     model.setAllowed(duckdb.id, true)
     #expect(settings.mcpAllowedConnectionIDs == [postgres.id])
 

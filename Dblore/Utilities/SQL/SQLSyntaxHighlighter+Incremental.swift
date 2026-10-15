@@ -107,11 +107,13 @@ extension SQLSyntaxHighlighter {
     return range
   }
 
-  /// Resets `range` to the default attributes, then highlights it
+  /// Resets `range` to the default attributes, then highlights it. MongoDB re-highlights the
+  /// whole text: mongosh tokens depend on context `dirtyRange` does not track.
   static func rehighlight(
     storage: NSMutableAttributedString, range: NSRange, palette: Palette,
     dialect: SQLDialect = .postgresql
   ) {
+    let range = dialect == .mongodb ? NSRange(location: 0, length: storage.length) : range
     storage.addAttributes(palette.defaultAttributes, range: range)
     highlight(in: storage, range: range, palette: palette, dialect: dialect)
   }

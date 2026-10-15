@@ -2,11 +2,14 @@
 // The MCP tools, as plain Swift calls the JSON-RPC layer maps to tools/list and tools/call.
 // Connection-scoped tools check the allowlist first: an unknown, malformed or not-allowlisted
 // id gets the same refusal. run_query sends exactly one statement the connection's dialect
-// classifies as `.read` and, on PostgreSQL, that calls no `postgresSideEffectFunctions` function
-// (`ReadOnlyQueryGuard`; refused before sending otherwise, whatever the app's Safe Mode), then
-// the manager's read-only gate and the read-only session apply. Rows stop at `max_rows` (default
-// `defaultMaxRows`, the row cap setting, else 200; at most 1000); the session's statement timeout
-// is 30 s (the pool's brake).
+// classifies as `.read` and, on PostgreSQL, that calls no `postgresSideEffectFunctions` function;
+// on MongoDB (mongosh subset), one read command (no `$out`/`$merge`) without server-side
+// JavaScript (`$where`, `$function`, `$accumulator`, code values) (`ReadOnlyQueryGuard`; refused
+// before sending otherwise, whatever the app's Safe Mode), then the manager's read-only gate and
+// the read-only session apply (MongoDB has no read-only transaction: `MongoSession.query` runs
+// reads only). Rows stop at `max_rows` (default `defaultMaxRows`, the row cap setting, else 200;
+// at most 1000); the session's statement timeout is 30 s (the pool's brake; `maxTimeMS` on
+// MongoDB).
 // Every run_query with a statement, after the allowlist, is recorded in History as `.mcp` while
 // History is on; a statement that carries a password is recorded with its string literals
 // redacted (`redactingStrings`) and no error text.
@@ -65,6 +68,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case multipleStatements
   case notRead
   case sideEffectFunction
+  case serverSideJavaScript
   case tableNotFound
   case ambiguousTable
 
@@ -77,10 +81,14 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .emptyStatement: "The SQL is empty."
     case .multipleStatements: "run_query takes exactly one SQL statement."
     case .notRead:
-      "Only read queries (SELECT, SHOW, ...) run over MCP. Nothing was sent to the database."
+      "Only read queries (SELECT, SHOW, ...; on MongoDB find, aggregate, countDocuments or "
+        + "distinct) run over MCP. Nothing was sent to the database."
     case .sideEffectFunction:
       "The query calls a PostgreSQL function MCP does not run (locks, sessions, files, "
         + "sequences, settings, sleeps or remote SQL). Nothing was sent to the database."
+    case .serverSideJavaScript:
+      "MongoDB server-side JavaScript ($where, $function, $accumulator or code values) does not "
+        + "run over MCP. Nothing was sent to the database."
     case .tableNotFound: "Table not found."
     case .ambiguousTable: "Several schemas have a table with this name: pass schema."
     }
@@ -135,13 +143,20 @@ nonisolated struct MCPToolService: Sendable {
         ], required: ["connection_id", "table"])),
     MCPToolDefinition(
       name: "run_query",
-      description: "Run one read-only SQL query (SELECT, SHOW, ...) in a read-only transaction. "
+      description:
+        "Run one read-only SQL query (SELECT, SHOW, ...); on PostgreSQL and MySQL it runs in a "
+        + "read-only transaction. "
         + "Writes, DDL, SET, CALL and several statements are refused. Returns at most max_rows "
         + "rows (default 200, at most 1000) and about 4 MB; cells over 2000 characters are cut; "
-        + "the query stops after 30 seconds. Queries are recorded in Dblore's History." + untrusted,
+        + "the query stops after 30 seconds. Queries are recorded in Dblore's History. "
+        + "On MongoDB connections, sql is one mongosh command of Dblore's subset: "
+        + "db.<collection>.find(filter, projection) with .sort/.skip/.limit, aggregate([...]) "
+        + "without $out or $merge, countDocuments, distinct, or show collections; "
+        + "$where, $function and $accumulator are refused." + untrusted,
       inputSchema: schema(
         [
-          "connection_id": connectionIDProperty, "sql": text("One SQL statement"),
+          "connection_id": connectionIDProperty,
+          "sql": text("One SQL statement, or one mongosh command on MongoDB"),
           "max_rows": .object([
             "type": .string("integer"), "minimum": .number(1),
             "maximum": .number(Double(maxRowsLimit)),
@@ -265,6 +280,7 @@ nonisolated struct MCPToolService: Sendable {
       case .multipleStatements: throw MCPToolError.multipleStatements
       case .notRead, .fileAccess: throw MCPToolError.notRead
       case .sideEffectFunction: throw MCPToolError.sideEffectFunction
+      case .serverSideJavaScript: throw MCPToolError.serverSideJavaScript
       }
     }
   }
@@ -431,15 +447,23 @@ nonisolated struct MCPSQLReadSource: MCPReadSource {
     connectionID: UUID, schema: String?, table: String
   ) async throws -> [MCPColumnDescription] {
     try await pool.withManager(for: connectionID) { manager in
-      let all = try await manager.fetchAllColumns()
-      let keys = schema.map { ["\($0).\(table)"] } ?? all.keys.filter { $0.hasSuffix(".\(table)") }
-      let found = keys.filter { all[$0] != nil }
-      guard let key = found.first else { throw MCPToolError.tableNotFound }
-      guard found.count == 1 else { throw MCPToolError.ambiguousTable }
-      return (all[key] ?? []).map {
-        MCPColumnDescription(
-          name: $0.name, type: $0.type, nullable: $0.isNullable, primaryKey: $0.isPrimaryKey)
-      }
+      try Self.columns(in: try await manager.fetchAllColumns(), schema: schema, table: table)
+    }
+  }
+
+  /// The columns of `table` in a catalog keyed `schema.relation` (MongoDB:
+  /// `<database>.<collection>`, sampled field paths with their BSON types). Without `schema`,
+  /// the one key ending in `.table`.
+  static func columns(
+    in all: [String: [DatabaseColumn]], schema: String?, table: String
+  ) throws -> [MCPColumnDescription] {
+    let keys = schema.map { ["\($0).\(table)"] } ?? all.keys.filter { $0.hasSuffix(".\(table)") }
+    let found = keys.filter { all[$0] != nil }
+    guard let key = found.first else { throw MCPToolError.tableNotFound }
+    guard found.count == 1 else { throw MCPToolError.ambiguousTable }
+    return (all[key] ?? []).map {
+      MCPColumnDescription(
+        name: $0.name, type: $0.type, nullable: $0.isNullable, primaryKey: $0.isPrimaryKey)
     }
   }
 

@@ -3,7 +3,8 @@
 // (mongo:8.0 standalone on 27018, requireTLS copy on 27019, users in `admin`). Each test asserts
 // the observed behavior and records the numbers behind it ("SPIKE ..." lines, also appended to
 // $TMPDIR/dblore-mongo-spike.txt because xcodebuild drops test host stdout). Opt-in:
-// TEST_RUNNER_MONGO_TESTS=1, plus TEST_RUNNER_MONGO_TLS_TESTS=1 for the TLS cases and
+// TEST_RUNNER_MONGO_TESTS=1 and TEST_RUNNER_MONGO_SPIKE_TESTS=1 (so CI's MongoDB service skips
+// it), plus TEST_RUNNER_MONGO_TLS_TESTS=1 for the TLS cases and
 // TEST_RUNNER_MONGO_SRV_SPIKE=1 (with TEST_MONGO_SRV_URI) for the SRV lookup. Collections use
 // `spike_` and are dropped at the end of each test. Plain imports on purpose: this target compiles
 // MongoKitten and BSON under Swift 6 strict concurrency without @preconcurrency (Q2).
@@ -19,7 +20,7 @@ import NIOPosix
 import NIOSSL
 import Testing
 
-@Suite(.serialized, .timeLimit(.minutes(10)))
+@Suite(.serialized, .timeLimit(.minutes(10)), .requiresMongoSpike)
 struct MongoKittenSpikeTests {
   typealias Spike = MongoSpike
 

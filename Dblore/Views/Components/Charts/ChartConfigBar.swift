@@ -9,37 +9,74 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum ResultDisplayMode: Hashable {
+nonisolated enum ResultDisplayMode: Hashable, Sendable {
   case grid
+  /// MongoDB results only: the document tree.
+  case documents
   case chart
+
+  /// The mode a result shows. `stored` was picked for the result of timestamp `stamp`: Chart
+  /// belongs to that result (a new one reads as Grid), Documents stays for later results.
+  static func shown(
+    stored: ResultDisplayMode, stamp: Date?, resultTimestamp: Date
+  ) -> ResultDisplayMode {
+    stamp == resultTimestamp || stored == .documents ? stored : .grid
+  }
+
+  /// Picker tabs: Documents for MongoDB results, Chart when a chart can be suggested. A single
+  /// tab means no picker.
+  static func tabs(chartable: Bool, documents: Bool) -> [ResultDisplayMode] {
+    [.grid] + (documents ? [.documents] : []) + (chartable ? [.chart] : [])
+  }
+
+  /// `tabs`, nil when they make no picker. Put it last in an `if` condition list: `chartable`
+  /// (`ChartSpec.suggested`) scans the whole result, so only evaluate it when a picker can show.
+  static func pickerTabs(chartable: Bool, documents: Bool) -> [ResultDisplayMode]? {
+    let tabs = tabs(chartable: chartable, documents: documents)
+    return tabs.count > 1 ? tabs : nil
+  }
 }
 
-/// Grid / Chart control. Same capsule as the sidebar, sized to the Explain menu:
+/// Grid / Documents / Chart control. Same capsule as the sidebar, sized to the Explain menu:
 /// 11pt label plus `Spacing.xs` vertical padding measures 22pt. Notebook query-bar
 /// icon buttons use this height so the slider and those buttons match.
 struct ResultDisplayPicker: View {
   @Binding var mode: ResultDisplayMode
+  var tabs: [ResultDisplayMode] = [.grid, .chart]
 
   static let height: CGFloat = 22
+  /// Grid / Chart width; a picker with Documents gives every tab the wider share.
   private static let width: CGFloat = 132
+  private static let documentsTabWidth: CGFloat = 76
 
   var body: some View {
     CapsuleTabPicker(
       selection: $mode,
-      tabs: [ResultDisplayMode.grid, .chart],
+      tabs: tabs,
       height: Self.height,
       inset: 2,
       verticalInset: 2
     ) { tab in
       let isSelected = mode == tab
-      Text(tab == .grid ? "Grid" : "Chart")
+      Text(Self.title(tab))
         .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
         .foregroundColor(isSelected ? .onAccentFill : .foreground)
         .lineLimit(1)
     }
-    .frame(width: Self.width)
+    .frame(
+      width: tabs.contains(.documents)
+        ? Self.documentsTabWidth * CGFloat(tabs.count) : Self.width
+    )
     .fixedSize()
-    .accessibilityLabel("Grid or chart")
+    .accessibilityLabel(tabs.contains(.documents) ? "Result view" : "Grid or chart")
+  }
+
+  private static func title(_ mode: ResultDisplayMode) -> String {
+    switch mode {
+    case .grid: "Grid"
+    case .documents: "Documents"
+    case .chart: "Chart"
+    }
   }
 }
 

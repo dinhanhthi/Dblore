@@ -20,6 +20,27 @@ struct PendingStagedBatch: Sendable {
   /// Import only: the import sheet is still open to show the failure detail. False once the
   /// sheet closed for the Safe Mode confirmation.
   var reportsToImportSheet = true
+  /// MongoDB: the commands, sent one by one through `executeGatedSequentialBatch` (never
+  /// `executeGatedBatch`, which wraps them in BEGIN / COMMIT); `statements` is then empty.
+  var mongoCommands: [String]? = nil
+  /// MongoDB inline edit (one `$set`, not `documentChangeSet`): where the edited result is
+  /// shown. Nil for a staged commit.
+  var mongoInlineEdit: MongoInlineEdit? = nil
+  /// MongoDB staged commit: what each command sends, so the applied ones leave the staged set
+  /// by identity. Nil for an inline edit.
+  var mongoStagedChanges: MongoStagedChanges? = nil
+
+  struct MongoInlineEdit: Sendable {
+    /// The notebook cell to re-run, nil for the editor or the data viewer
+    var cellId: UUID?
+  }
+
+  struct MongoStagedChanges: Sendable {
+    /// Generation of the staged set the keys were taken from
+    var generation: UUID
+    /// `MongoDocumentChangeSet.changeKeys()`, one per command
+    var keys: [MongoDocumentChangeSet.ChangeKey]
+  }
 }
 
 extension NotebookViewModel {
@@ -29,8 +50,11 @@ extension NotebookViewModel {
   static let connectionIsReadOnly = "This connection is read-only"
 
   /// Why grid edits are refused for this engine (`supportsRowStaging`), or nil.
+  /// Nil for MongoDB, whose flag stays false: it edits documents (`+DocumentStaging.swift`), and
+  /// every entry point there also needs a Mongo edit target.
   var rowEditingUnsupportedReason: String? {
-    unavailableFeatureMessage("Editing rows", \.supportsRowStaging)
+    if stagesDocuments { return nil }
+    return unavailableFeatureMessage("Editing rows", \.supportsRowStaging)
   }
 
   /// Why a table import is refused for this engine (`supportsDataImport`), or nil.
@@ -44,6 +68,9 @@ extension NotebookViewModel {
   var rowStagingUnavailableReason: String? {
     if let reason = rowEditingUnsupportedReason { return reason }
     if protectionPolicy.protectionLevel == .readOnly { return Self.connectionIsReadOnly }
+    if stagesDocuments {
+      return mongoDocumentTarget == nil ? MongoDocumentChangeError.notMongoTarget.message : nil
+    }
     return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
   }
 
@@ -51,7 +78,7 @@ extension NotebookViewModel {
   var stagingEnabled: Bool { rowStagingUnavailableReason == nil }
 
   var hasPendingStagedChanges: Bool {
-    dataViewer?.changeSet?.isEmpty == false
+    dataViewer?.changeSet?.isEmpty == false || dataViewer?.documentChangeSet?.isEmpty == false
   }
 
   /// Stages a new row. `values` and later cell edits may include primary-key columns.
@@ -59,6 +86,7 @@ extension NotebookViewModel {
   @discardableResult
   func stageInsert(values: [String: CellValue] = [:]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return openDocumentInsertEditor() }
     return changeSet("Add Row") { $0.stageInsert(values: values) }
   }
 
@@ -66,6 +94,7 @@ extension NotebookViewModel {
   /// A key the database fills (identity, serial, or any other default) is left unset.
   func addStagedRow() async -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return openDocumentInsertEditor() }
     return stageInsert(values: await automaticIntegerKeyValues())
   }
 
@@ -74,6 +103,7 @@ extension NotebookViewModel {
   @discardableResult
   func stageDuplicate(rows: [Int]) async -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return openDocumentDuplicateEditor(rows: rows) }
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
     var copies = rows.compactMap { duplicatedValues(row: $0, target: target) }
     if copies.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
@@ -95,6 +125,7 @@ extension NotebookViewModel {
   @discardableResult
   func stageDelete(rows: [Int]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return stageDocumentDelete(rows: rows) }
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
     let keys = rows.compactMap { rowKey(at: $0, target: target) }
     if keys.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
@@ -107,6 +138,7 @@ extension NotebookViewModel {
   @discardableResult
   func stageEdit(row: Int, column: String, value: CellValue) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return stageDocumentInsertEdit(row: row, column: column, value: value) }
     guard let target = stagedEditTarget, let key = rowKey(at: row, target: target) else {
       return Self.rowNotOnPage
     }
@@ -133,6 +165,7 @@ extension NotebookViewModel {
   @discardableResult
   func revertStaged(rows: [Int]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return revertStagedDocuments(rows: rows) }
     guard let target = stagedEditTarget, dataViewer?.changeSet != nil else { return nil }
     let keys = rows.compactMap { rowKey(at: $0, target: target) }
     return changeSet("Revert") { $0.revert(rows: keys) }
@@ -177,6 +210,8 @@ extension NotebookViewModel {
   /// Drops every staged change. A Safe Mode dialog for this batch is cancelled with it.
   func discardStaged() {
     dataViewer?.changeSet = nil
+    dataViewer?.documentChangeSet = nil
+    dataViewer?.pendingDocumentEditor = nil
     undoManager.removeAllActions()
     let hadInlineEdit = pendingInlineEdit != nil
     pendingInlineEdit = nil
@@ -187,12 +222,17 @@ extension NotebookViewModel {
 
   /// Display SQL for the staged batch. Not sent to the server.
   func previewStagedSQL() -> String {
-    stagedBatch()?.preview ?? ""
+    if stagesDocuments { return stagedDocumentBatch()?.preview ?? "" }
+    return stagedBatch()?.preview ?? ""
   }
 
   /// Confirms the preview in Safe Mode when needed, then sends the bound batch.
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
   func commitStaged() async {
+    if stagesDocuments {
+      await commitStagedDocuments()
+      return
+    }
     guard discardsInvalidatedStagedSet() == false else { return }
     await fillMissingIntegerKeys()
     // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
@@ -237,6 +277,10 @@ extension NotebookViewModel {
     guard let connectionManager else {
       showToast("No database connection available", type: .error)
       return "No database connection available"
+    }
+    if let commands = batch.mongoCommands {
+      return await runConfirmedDocumentBatch(
+        batch, commands: commands, connectionManager: connectionManager)
     }
     let started = Date()
     var failure: String?

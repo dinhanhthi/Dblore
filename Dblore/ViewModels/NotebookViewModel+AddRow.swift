@@ -9,8 +9,13 @@
 import Foundation
 
 extension NotebookViewModel {
-  /// + Row: opens the form, or closes it when it is already shown.
+  /// + Row: opens the form, or closes it when it is already shown. MongoDB opens the document
+  /// editor instead (closed when already shown).
   func toggleAddRowForm() async {
+    if stagesDocuments, dataViewer?.pendingDocumentEditor != nil {
+      dataViewer?.pendingDocumentEditor = nil
+      return
+    }
     if isRightSidebarVisible && rightSidebarContent == .addRow {
       closeSidebar()
       return
@@ -22,6 +27,11 @@ extension NotebookViewModel {
   func openAddRowForm() async {
     if let reason = rowStagingUnavailableReason {
       showToast(reason, type: .error)
+      return
+    }
+    // MongoDB inserts a document: the SQL form (and its column-type kinds) never shows
+    if stagesDocuments {
+      _ = openDocumentInsertEditor()
       return
     }
     await prepareAddRowFields()

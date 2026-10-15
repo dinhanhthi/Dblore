@@ -22,16 +22,19 @@ struct ResultAreaView: View {
   let viewModel: NotebookViewModel
   let cellId: UUID
   @State private var isQueryCopied: Bool = false
-  /// Grid / Chart for this cell. A new result (different timestamp) reads as Grid.
+  /// Grid / Documents / Chart for this cell (view state, not saved in the file). A new result
+  /// (different timestamp) reads as Grid, except Documents, which stays for the cell.
   @State private var resultDisplayMode: ResultDisplayMode = .grid
   @State private var resultDisplayModeStamp: Date?
 
   /// Binding shared by the query bar and the grid. A different result timestamp reads as Grid
-  /// until the user picks a mode for that result.
+  /// (Documents excepted) until the user picks a mode for that result.
   private var displayMode: Binding<ResultDisplayMode> {
     Binding(
       get: {
-        resultDisplayModeStamp == result.timestamp ? resultDisplayMode : .grid
+        ResultDisplayMode.shown(
+          stored: resultDisplayMode, stamp: resultDisplayModeStamp,
+          resultTimestamp: result.timestamp)
       },
       set: { newValue in
         resultDisplayModeStamp = result.timestamp
@@ -269,6 +272,14 @@ struct ResultMetadataView: View {
     }
   }
 
+  /// Grid, plus Documents for a MongoDB result and Chart when a chart can be suggested; nil for
+  /// Grid alone (no picker). Scans the result: read it once, after the cheap conditions.
+  private var displayTabs: [ResultDisplayMode]? {
+    ResultDisplayMode.pickerTabs(
+      chartable: ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil,
+      documents: viewModel?.sqlDialect == .mongodb)
+  }
+
   /// Truncate long query text for display in dropdown menu
   private func truncateQuery(_ query: String, maxLength: Int = 60) -> String {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -379,8 +390,8 @@ struct ResultMetadataView: View {
         if let viewModel, let cellId {
           CellResultPinControls(result: result, viewModel: viewModel, cellId: cellId)
         }
-        if let displayMode, ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil {
-          ResultDisplayPicker(mode: displayMode)
+        if let displayMode, let displayTabs {
+          ResultDisplayPicker(mode: displayMode, tabs: displayTabs)
         }
       }
       .font(.labelText)
@@ -578,55 +589,69 @@ struct NotebookResultGridView: View {
         result: result, chartSpec: chartSpecBinding, mode: displayMode,
         showsPicker: showsDisplayPicker
       ) {
-        let relation = referencedRelation(
-          dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
-        let referencedRow = referencedRowHandlers(
-          viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
-        ResultGridView(
-          result: result,
-          sortColumn: sortColumn,
-          ascending: sortAscending,
-          isEditable: viewModel.canEdit(result),
-          readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
-          onCommitEdit: { row, column, newValue in
-            viewModel.handleGridCellEdit(
-              row: row, column: column, newValue: newValue, result: result, cellId: cellId,
-              connectionManager: viewModel.connectionManager)
-          },
-          onSortChange: { column, ascending in
-            sortColumn = column
-            sortAscending = ascending
-          },
-          valueFilter: valueFilter,
-          onValueFilterChange: { valueFilter = $0 },
-          onShowCellDetails: { row, originalRow, column in
-            viewModel.showGridCellInSidebar(
-              row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
-          },
-          onShowRowDetails: { row, originalRow in
-            viewModel.showRowDetail(
-              row: row, originalRow: originalRow, result: result, cellId: cellId)
-          },
-          searchQuery: viewModel.searchState.query,
-          caseSensitive: viewModel.searchState.isCaseSensitive,
-          currentMatch: currentMatch,
-          searchMatches: viewModel.searchState.matches,
-          hideColumnTypes: AppSettings.shared.hideColumnTypes,
-          relationSchema: relation?.schema,
-          relationTable: relation?.table,
-          baseColumnNames: relation?.baseColumns,
-          foreignKeys: viewModel.lookupForeignKeys,
-          lookupDialect: viewModel.sqlDialect,
-          onLookupReferencedRow: referencedRow.lookup,
-          onJumpToReferencedRow: referencedRow.jump,
-          onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
-        )
-        .frame(
-          height: ResultGridView.height(
-            rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
-            reservesHorizontalScroller: showsHorizontalScroller))
+        if showsDocuments {
+          DocumentTreeView(result: result)
+        } else {
+          resultGrid
+        }
       }
     }
+  }
+
+  /// The Documents view replaces the grid for a MongoDB result
+  private var showsDocuments: Bool {
+    viewModel.sqlDialect == .mongodb && displayMode?.wrappedValue == .documents
+  }
+
+  @ViewBuilder
+  private var resultGrid: some View {
+    let relation = referencedRelation(
+      dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    let referencedRow = referencedRowHandlers(
+      viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    ResultGridView(
+      result: result,
+      sortColumn: sortColumn,
+      ascending: sortAscending,
+      isEditable: viewModel.canEdit(result),
+      readOnlyColumns: viewModel.readOnlyColumnIndexes(result),
+      onCommitEdit: { row, column, newValue in
+        viewModel.handleGridCellEdit(
+          row: row, column: column, newValue: newValue, result: result, cellId: cellId,
+          connectionManager: viewModel.connectionManager)
+      },
+      onSortChange: { column, ascending in
+        sortColumn = column
+        sortAscending = ascending
+      },
+      valueFilter: valueFilter,
+      onValueFilterChange: { valueFilter = $0 },
+      onShowCellDetails: { row, originalRow, column in
+        viewModel.showGridCellInSidebar(
+          row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
+      },
+      onShowRowDetails: { row, originalRow in
+        viewModel.showRowDetail(
+          row: row, originalRow: originalRow, result: result, cellId: cellId)
+      },
+      searchQuery: viewModel.searchState.query,
+      caseSensitive: viewModel.searchState.isCaseSensitive,
+      currentMatch: currentMatch,
+      searchMatches: viewModel.searchState.matches,
+      hideColumnTypes: AppSettings.shared.hideColumnTypes,
+      relationSchema: relation?.schema,
+      relationTable: relation?.table,
+      baseColumnNames: relation?.baseColumns,
+      foreignKeys: viewModel.lookupForeignKeys,
+      lookupDialect: viewModel.sqlDialect,
+      onLookupReferencedRow: referencedRow.lookup,
+      onJumpToReferencedRow: referencedRow.jump,
+      onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
+    )
+    .frame(
+      height: ResultGridView.height(
+        rowCount: result.rows.count, hideColumnTypes: AppSettings.shared.hideColumnTypes,
+        reservesHorizontalScroller: showsHorizontalScroller))
   }
 
   var body: some View {

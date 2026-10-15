@@ -1,6 +1,6 @@
 // IntegrationTrait.swift
 // Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, MySQL,
-// MySQL TLS, MongoDB, MongoDB TLS). SKIP_INTEGRATION_TESTS or
+// MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike). SKIP_INTEGRATION_TESTS or
 // TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them all off.
 
 import Foundation
@@ -110,6 +110,19 @@ nonisolated enum MongoTLSIntegrationGate {
   }
 }
 
+/// The Phase 2 spike suite (1M-document insert, exact NIO thread counts) runs only on request,
+/// on top of the MongoDB gate, so CI's MongoDB service never runs it.
+nonisolated enum MongoSpikeIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard MongoIntegrationGate.isEnabled(env: env),
+      let value = env["MONGO_SPIKE_TESTS"] ?? env["TEST_RUNNER_MONGO_SPIKE_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 extension Trait where Self == ConditionTrait {
   /// The PostgreSQL test container is opt-in.
   static var requiresPostgres: Self {
@@ -172,6 +185,14 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: MongoTLSIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_MONGO_TLS_TESTS=1, run docker/mongodb/scripts/gen-mongo-tls.sh and start the compose profile tls"
+    )
+  }
+
+  /// The MongoKitten spike suite is opt-in on top of the MongoDB container.
+  static var requiresMongoSpike: Self {
+    .enabled(
+      if: MongoSpikeIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_MONGO_TESTS=1 and TEST_RUNNER_MONGO_SPIKE_TESTS=1 and start docker/mongodb/docker-compose.test.yml to run"
     )
   }
 }

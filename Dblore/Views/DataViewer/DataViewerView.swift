@@ -15,11 +15,30 @@ struct DataViewerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if viewModel.isMongoDataViewer {
+        MongoFilterBar(viewModel: viewModel)
+      }
       content
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       DataViewerPagingBar(viewModel: viewModel)
     }
     .background(Color.appBackground)
+    .sheet(item: documentEditorRequest, onDismiss: { viewModel.documentEditorDismissed() }) {
+      request in
+      MongoDocumentEditorSheet(viewModel: viewModel, request: request)
+    }
+  }
+
+  /// MongoDB document editor: presented while `pendingDocumentEditor` is set; dismissing the
+  /// sheet clears it. A Safe Mode dialog its field edit armed opens once it has dismissed.
+  private var documentEditorRequest: Binding<DataViewerState.DocumentEditorRequest?> {
+    Binding(
+      get: { viewModel.dataViewer?.pendingDocumentEditor },
+      set: { request in
+        guard request == nil else { return }
+        viewModel.dataViewer?.pendingDocumentEditor = nil
+      }
+    )
   }
 
   // MARK: - Content
@@ -55,6 +74,7 @@ struct DataViewerView: View {
   /// A staged insert on an empty page still belongs in the grid.
   private var hasStagedInserts: Bool {
     viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
+      || viewModel.dataViewer?.documentChangeSet?.inserts.isEmpty == false
   }
 
   private func errorView(error: String) -> some View {
