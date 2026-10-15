@@ -71,6 +71,39 @@ struct MongoConfirmationTests {
     #expect(!reader.presentConfirmationIfNeeded(for: "db.users.find()", cellId: nil))
   }
 
+  @Test("The dialog's all-rows warning names the documents on MongoDB, rows on SQL")
+  func allRowsWarningPerDialect() {
+    let mongo = Self.viewModel()
+    #expect(
+      mongo.presentConfirmationIfNeeded(for: "db.users.updateMany({}, {$set: {a: 1}})", cellId: nil)
+    )
+    #expect(mongo.queryConfirmationState.affectsAllRows)
+    #expect(
+      mongo.queryConfirmationState.allRowsWarning
+        == "WARNING: This command has an empty filter and will affect ALL documents in users!")
+    var sql = QueryConfirmationState()
+    sql.affectsAllRows = true
+    #expect(
+      sql.allRowsWarning == "WARNING: This query has no WHERE clause and will affect ALL rows!")
+  }
+
+  @Test("The dialog message is one text: warning, the statement list and the question")
+  func dialogMessageListsTheStatements() {
+    let viewModel = Self.viewModel()
+    #expect(viewModel.presentConfirmationIfNeeded(for: "db.users.deleteMany({})", cellId: nil))
+    let state = viewModel.queryConfirmationState
+    let message = state.dialogMessage(statementSummary: "1. db.users.deleteMany({})")
+    #expect(
+      message
+        == "⚠️ " + state.allRowsWarning
+        + "\n\n1. db.users.deleteMany({})\n\nAre you sure you want to proceed?")
+    let plain = QueryConfirmationState().dialogMessage(statementSummary: "1. INSERT ...")
+    #expect(
+      plain
+        == "These statements need confirmation:\n\n1. INSERT ...\n\nAre you sure you want to proceed?"
+    )
+  }
+
   @Test("A stored Immediate style with the Protected flag is raised to Confirm")
   func storedImmediateWithProtectedFlag() {
     var config = Self.config()

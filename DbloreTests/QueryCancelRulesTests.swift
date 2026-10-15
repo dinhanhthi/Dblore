@@ -23,6 +23,16 @@ struct QueryCancelRulesTests {
     #expect(QueryCancelWarning.make(state: .idle, userTxOpen: false) == nil)
   }
 
+  @Test("An interrupt that keeps the transaction (MySQL, MongoDB) warns about nothing")
+  func keptTransactionNeedsNoWarning() {
+    let pending = [summary("UPDATE t SET v = 1 WHERE id = 1", rows: 1)]
+    #expect(
+      QueryCancelWarning.make(
+        state: .appTx(pending: pending), userTxOpen: true, keepsTransaction: true) == nil)
+    #expect(QueryCancelWarning.statementInterrupt.detail.contains("kept"))
+    #expect(!QueryCancelWarning.statementInterrupt.detail.contains("reset"))
+  }
+
   @Test("Pending app transaction: warns with the count and the itemized review text")
   func pendingChangesWarn() {
     let pending = [

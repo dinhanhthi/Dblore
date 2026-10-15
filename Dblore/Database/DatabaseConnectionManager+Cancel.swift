@@ -43,6 +43,9 @@ nonisolated struct RunningStatementStatus: Sendable, Equatable {
   let owner: UUID?
   /// A gated statement or inline edit is running
   let inFlight: Bool
+  /// Cancel interrupts only the statement and keeps the session, its pending changes and any
+  /// open transaction (MySQL `KILL QUERY`, MongoDB `killOp`)
+  var keepsTransaction = false
 }
 
 nonisolated enum QueryCancelOutcome: Sendable, Equatable {
@@ -58,7 +61,9 @@ extension DatabaseConnectionManager {
   func runningStatementStatus() -> RunningStatementStatus {
     RunningStatementStatus(
       state: txState, userTxOpen: userTxOpen, generation: commitGuard.generation,
-      epoch: connectionEpoch, owner: txOwner, inFlight: commitGuard.inFlight > 0)
+      epoch: connectionEpoch, owner: txOwner, inFlight: commitGuard.inFlight > 0,
+      keepsTransaction: session?.capabilities.cancelStrategy == .interrupt
+        && config?.databaseType.interruptKeepsTransaction == true)
   }
 
   /// Stop the running statement on the server: close the connection and reconnect with the

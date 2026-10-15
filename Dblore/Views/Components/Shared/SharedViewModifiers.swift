@@ -119,27 +119,7 @@ private struct QueryConfirmationModifier: ViewModifier {
           viewModel.cancelPendingQuery()
         }
       } message: {
-        let state = viewModel.queryConfirmationState
-        VStack(alignment: .leading, spacing: 8) {
-          if state.affectsAllRows {
-            Text("⚠️ WARNING: This query has no WHERE clause and will affect ALL rows!")
-              .font(.body.bold())
-              .foregroundStyle(.red)
-          }
-          if state.likePatternAffectsAllRows {
-            Text(StatementConfirmation.likePatternAllRowsReason)
-              .font(.body.bold())
-              .foregroundStyle(.red)
-          }
-          if !state.affectsAllRows && !state.likePatternAffectsAllRows {
-            Text("These statements need confirmation:")
-              .font(.body)
-          }
-          Text(statementSummary)
-            .font(.system(.body, design: .monospaced))
-          Text("Are you sure you want to proceed?")
-            .font(.body)
-        }
+        Text(viewModel.queryConfirmationState.dialogMessage(statementSummary: statementSummary))
       }
   }
 
@@ -157,7 +137,7 @@ private struct QueryConfirmationModifier: ViewModifier {
 
       // Warning for dangerous queries
       if viewModel.queryConfirmationState.affectsAllRows {
-        allRowsWarning("WARNING: This query has no WHERE clause and will affect ALL rows!")
+        allRowsWarning(viewModel.queryConfirmationState.allRowsWarning)
       }
       if viewModel.queryConfirmationState.likePatternAffectsAllRows {
         allRowsWarning(StatementConfirmation.likePatternAllRowsReason)

@@ -4,6 +4,7 @@
 //
 //  Cancel closes the connection to stop the server work, which rolls back the pending
 //  Protected transaction or the user's open transaction: the warning shown first (pure rule).
+//  An interrupt that keeps the transaction (MySQL, MongoDB) discards nothing.
 //
 
 import Foundation
@@ -19,16 +20,26 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
     detail: "The connection is reset to stop the query on the server (temp tables, SET and "
       + "search_path are lost).")
 
+  /// Asked before stopping the editor run when the cancel only interrupts the statement
+  static let statementInterrupt = QueryCancelWarning(
+    title: "Stop the running query?",
+    detail: "The server stops the statement. The connection, its pending changes and any open "
+      + "transaction are kept.")
+
   let title: String
   /// What is discarded (the itemized pending list for an app transaction)
   let detail: String
 
-  /// nil when cancelling loses nothing but the session state (temp tables, SET, search_path)
+  /// nil when cancelling loses nothing but the session state (temp tables, SET, search_path),
+  /// or nothing at all (`keepsTransaction`)
   /// - Parameter ownedByAnotherTab: the app transaction was opened by another tab. A user
   ///   transaction (Protected off) has no owner: any tab may have sent its BEGIN.
+  /// - Parameter keepsTransaction: the cancel interrupts only the statement (MySQL, MongoDB)
   static func make(
-    state: TransactionState, userTxOpen: Bool, ownedByAnotherTab: Bool = false
+    state: TransactionState, userTxOpen: Bool, ownedByAnotherTab: Bool = false,
+    keepsTransaction: Bool = false
   ) -> QueryCancelWarning? {
+    guard !keepsTransaction else { return nil }
     if !state.isIdle {
       let count = state.pending.count
       let owner = ownedByAnotherTab ? "another tab's " : ""

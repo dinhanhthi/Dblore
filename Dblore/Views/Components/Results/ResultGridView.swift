@@ -337,10 +337,18 @@ final class ResultGridScrollView: NSScrollView {
   var onHorizontalScrollerChange: ((Bool) -> Void)?
   private var reportedHorizontalScroller: Bool?
 
-  /// Reports after layout whether a legacy horizontal scroller is shown (autohidden when the
-  /// columns fit). Deferred: the receiver changes the grid height, which lays out again.
+  /// Keeps a grid shown from its first row there when the top content inset (the header)
+  /// grows, instead of the two-line header covering that row. Then reports whether a legacy
+  /// horizontal scroller is shown (autohidden when the columns fit). Deferred: the receiver
+  /// changes the grid height, which lays out again.
   override func tile() {
+    let clip = contentView
+    let atTop = clip.bounds.minY + clip.contentInsets.top < 1
     super.tile()
+    if atTop, clip.bounds.minY + clip.contentInsets.top >= 1 {
+      clip.scroll(to: NSPoint(x: clip.bounds.minX, y: -clip.contentInsets.top))
+      reflectScrolledClipView(clip)
+    }
     let shown = scrollerStyle == .legacy && horizontalScroller?.isHidden == false
     guard shown != reportedHorizontalScroller, let onHorizontalScrollerChange else { return }
     reportedHorizontalScroller = shown

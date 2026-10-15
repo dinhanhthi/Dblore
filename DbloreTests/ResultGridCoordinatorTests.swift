@@ -268,6 +268,16 @@ struct ResultGridCoordinatorTests {
     #expect(deleted == [[0, 2], [0, 2]])
   }
 
+  @Test("A MongoDB grid offers no SQL copies (INSERT, IN list)")
+  func mongoGridHasNoSQLCopies() {
+    let (coordinator, _) = makeGrid(sortColumn: nil)
+    coordinator.lookupDialect = .mongodb
+    let titles = coordinator.contextMenu(row: 0, column: 0)?.items.map(\.title) ?? []
+    #expect(titles.contains("Copy Value"))
+    #expect(!titles.contains("Copy as INSERT"))
+    #expect(!titles.contains("Copy as IN list"))
+  }
+
   @Test("Staging adds row actions that call the stage callbacks; a notebook grid does not")
   func stagingContextMenuCallsStageCallbacks() {
     let (coordinator, tableView) = makeGrid(sortColumn: nil)

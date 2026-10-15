@@ -157,6 +157,27 @@ struct QueryConfirmationState: Equatable, Sendable {
   /// Run All waits for the Safe Mode unlock (password sheet) under safeRead/safeAll
   var runAllAwaitingUnlock: Bool = false
 
+  /// The dialog's warning for a statement that affects every row: an empty MongoDB filter names
+  /// its collection's documents, SQL has no WHERE
+  var allRowsWarning: String {
+    if let collection = statements.first(where: \.affectsAllRows)?.allDocumentsCollection {
+      return "WARNING: This command has an empty filter and will affect ALL documents in "
+        + "\(collection)!"
+    }
+    return "WARNING: This query has no WHERE clause and will affect ALL rows!"
+  }
+
+  /// The confirmation dialog's message as one text (a macOS dialog shows only the first text of
+  /// its message): the warnings or the intro line, the statement list, the question
+  func dialogMessage(statementSummary: String) -> String {
+    var lead: [String] = []
+    if affectsAllRows { lead.append("⚠️ " + allRowsWarning) }
+    if likePatternAffectsAllRows { lead.append(StatementConfirmation.likePatternAllRowsReason) }
+    if lead.isEmpty { lead.append("These statements need confirmation:") }
+    return (lead + [statementSummary, "Are you sure you want to proceed?"])
+      .joined(separator: "\n\n")
+  }
+
   /// Cells the Run All dialog lists ("Don't Allow" skips them)
   var runAllConfirmCells: [RunAllCell] { runAllPendingCells.filter(\.needsConfirmation) }
 

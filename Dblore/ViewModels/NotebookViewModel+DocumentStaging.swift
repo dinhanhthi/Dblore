@@ -549,6 +549,8 @@ extension NotebookViewModel {
       dataViewer?.documentChangeSet = set.isEmpty ? nil : set
     }
     guard hasPendingStagedChanges else {
+      // Inserts and deletes changed the document count: count again with the page
+      dataViewer?.totalRows = nil
       await loadDataViewerPage()
       return
     }

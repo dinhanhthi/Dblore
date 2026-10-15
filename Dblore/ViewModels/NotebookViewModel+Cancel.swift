@@ -80,8 +80,9 @@ extension NotebookViewModel {
       }
       let ownedByAnotherTab = status.owner.map { $0 != id } ?? false
       if let warning = QueryCancelWarning.make(
-        state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab)
-        ?? (alwaysConfirm ? .sessionReset : nil)
+        state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab,
+        keepsTransaction: status.keepsTransaction)
+        ?? (alwaysConfirm ? (status.keepsTransaction ? .statementInterrupt : .sessionReset) : nil)
       {
         guard await confirmCancel(warning) else { return false }
       }
@@ -107,7 +108,7 @@ extension NotebookViewModel {
     // Return keeps the query running; the destructive answer needs a click
     alert.addButton(withTitle: QueryCancelWarning.keepTitle)
     let discard = alert.addButton(
-      withTitle: warning == .sessionReset
+      withTitle: warning == .sessionReset || warning == .statementInterrupt
         ? QueryCancelWarning.stopTitle : QueryCancelWarning.confirmTitle)
     discard.hasDestructiveAction = true
     let response: NSApplication.ModalResponse

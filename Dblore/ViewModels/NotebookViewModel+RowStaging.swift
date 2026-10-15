@@ -297,7 +297,11 @@ extension NotebookViewModel {
             sql: batch.preview, duration: Date().timeIntervalSince(started),
             rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
         ], source: batch.historySource)
-      if dataViewer != nil { await loadDataViewerPage() }
+      if dataViewer != nil {
+        // Inserts and deletes changed the row count: count again with the page
+        dataViewer?.totalRows = nil
+        await loadDataViewerPage()
+      }
     } catch {
       let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
       recordFailure(

@@ -310,6 +310,22 @@ struct DocumentStagingViewModelTests {
     await fixture.manager.disconnect()
   }
 
+  @Test("A committed insert or delete counts the documents again")
+  func commitRecountsTheTotal() async throws {
+    let fixture = try await Self.dataViewer()
+    let viewModel = fixture.viewModel
+    // The count was read before the commit
+    viewModel.dataViewer?.totalRows = 2
+    await viewModel.toggleAddRowForm()
+    #expect(await viewModel.applyDocumentEditor("{name: 'cy'}") == nil)
+    let sent = fixture.factory.statements.count
+    await viewModel.commitStaged()
+    await viewModel.executePendingQuery()
+    let after = Array(fixture.factory.statements.dropFirst(sent))
+    #expect(after.contains("db.users.countDocuments()"))
+    await fixture.manager.disconnect()
+  }
+
   @Test("A partly applied commit keeps only the unapplied changes")
   func partialCommitKeepsTheRest() async throws {
     let fixture = try await Self.dataViewer(commandRows: { $0.contains("insertOne") ? 0 : 1 })

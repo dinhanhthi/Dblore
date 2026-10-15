@@ -141,7 +141,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Nil: the result column names are the base names. Keys match base names only.
   var baseColumnNames: [String?]?
   var foreignKeys: [ForeignKey] = []
-  /// Connection dialect. Only decides whether `ForeignKeyLookup` can follow the cell.
+  /// Connection dialect: whether `ForeignKeyLookup` can follow the cell, and no SQL copies on
+  /// MongoDB
   var lookupDialect: SQLDialect = .postgresql
   var onLookupReferencedRow: ReferencedRowLookup?
   var onJumpToReferencedRow: ReferencedRowJump?
@@ -378,13 +379,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let menu = NSMenu()
     menu.autoenablesItems = false
     addItem(to: menu, "Copy Value", #selector(copyValue(_:)), MenuTarget(row: row, column: column))
-    addItem(
-      to: menu, "Copy as INSERT", #selector(copyAsInsert(_:)),
-      MenuTarget(row: row, column: column, insertRows: insertRows))
-    let inList = addItem(
-      to: menu, "Copy as IN list", #selector(copyAsINList(_:)),
-      MenuTarget(row: row, column: column, inListValues: inListValues))
-    inList.isEnabled = selectedColumns.count <= 1
+    // SQL text: nothing to paste into a MongoDB cell
+    if lookupDialect != .mongodb {
+      addItem(
+        to: menu, "Copy as INSERT", #selector(copyAsInsert(_:)),
+        MenuTarget(row: row, column: column, insertRows: insertRows))
+      let inList = addItem(
+        to: menu, "Copy as IN list", #selector(copyAsINList(_:)),
+        MenuTarget(row: row, column: column, inListValues: inListValues))
+      inList.isEnabled = selectedColumns.count <= 1
+    }
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
     if onShowRowDetails != nil {

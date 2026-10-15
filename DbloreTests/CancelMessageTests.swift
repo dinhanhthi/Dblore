@@ -67,6 +67,13 @@ struct CancelMessageTests {
     }
     await session.waitUntilQueryStarted()
     let status = await connection.runningStatementStatus()
+    // An interrupt that keeps the transaction discards nothing: no rollback warning first
+    let keeps = strategy == .interrupt && type.interruptKeepsTransaction
+    #expect(status.keepsTransaction == keeps)
+    let warning = QueryCancelWarning.make(
+      state: status.state, userTxOpen: status.userTxOpen,
+      keepsTransaction: status.keepsTransaction)
+    #expect((warning == nil) == keeps)
     let outcome = await connection.cancelRunningStatement(
       expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
       expectedEpoch: status.epoch)

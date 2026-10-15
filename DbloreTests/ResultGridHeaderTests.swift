@@ -26,6 +26,30 @@ struct ResultGridHeaderTests {
         : nil)
   }
 
+  @Test("A long result starts with its first row under the header, in either header height")
+  func firstRowStartsUnderTheHeader() {
+    for hideColumnTypes in [false, true] {
+      let rows = (0..<100).map { [CellValue.int($0), .string("r\($0)")] }
+      let long = CellResult(columns: columns, rows: rows, rowCount: rows.count)
+      let coordinator = ResultGridCoordinator()
+      let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+      // As in SwiftUI: the grid is filled before its scroll view gets a size
+      let scrollView = ResultGridScrollView()
+      scrollView.documentView = tableView
+      coordinator.update(
+        tableView, result: long, sortColumn: nil, ascending: true,
+        hideColumnTypes: hideColumnTypes)
+      scrollView.setFrameSize(NSSize(width: 400, height: 300))
+      scrollView.layoutSubtreeIfNeeded()
+      // The header sits in the top content inset: the document is scrolled to just below it
+      let clip = scrollView.contentView
+      #expect(
+        clip.bounds.minY + clip.contentInsets.top == 0, "hideColumnTypes: \(hideColumnTypes)")
+      #expect(
+        clip.contentInsets.top == ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes))
+    }
+  }
+
   private func columnNameMatch(_ name: String) -> SearchMatch {
     SearchMatch(
       cellId: UUID(), matchType: .columnName(name), matchRange: name.startIndex..<name.endIndex,

@@ -186,8 +186,17 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     scrollView.autohidesScrollers = true
     scrollView.drawsBackground = false
 
-    // Set initial text with highlighting
+    // Set initial text with highlighting. Not in a window yet, so `applyHighlighting` skips it:
+    // show the plain text now and highlight it once attached (a fixed-height editor, as in a
+    // sheet, gets no later update that would set it)
     context.coordinator.applyHighlighting(to: textView, text: text)
+    if textView.string != text {
+      textView.string = text
+      DispatchQueue.main.async { [weak textView, coordinator = context.coordinator] in
+        guard let textView, textView.string == text else { return }
+        coordinator.applyHighlighting(to: textView, text: text)
+      }
+    }
 
     // Update height after setting text
     DispatchQueue.main.async {
