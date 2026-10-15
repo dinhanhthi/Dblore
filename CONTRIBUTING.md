@@ -43,10 +43,34 @@ Thanks for your interest — contributions are welcome!
        -skipPackagePluginValidation -skipMacroValidation
      ```
 
+     The MongoDB suites are opt-in. Start `docker/mongodb` (`docker/README.md`, "MongoDB
+     Test Databases") and put `TEST_RUNNER_MONGO_TESTS=1` in front of the integration test
+     command above (`xcodebuild` passes it to the tests as `MONGO_TESTS`; either form turns
+     the gate on). The TLS suites also need `TEST_RUNNER_MONGO_TLS_TESTS=1`
+     (`MONGO_TLS_TESTS`), the certificates from `docker/mongodb/scripts/gen-mongo-tls.sh` and
+     the `tls` compose profile. Both gates stay off with `SKIP_INTEGRATION_TESTS=true`.
+
   2. Match the existing style: the project is Swift 6 with strict concurrency, formatted
      with `swift-format` (`.swift-format`). Check the files you changed with
      `swift-format lint --strict <files>`.
   3. Keep pull requests focused, and describe what changed and why.
+
+## mysql-nio fork
+
+The MySQL driver comes from the [dinhanhthi/mysql-nio](https://github.com/dinhanhthi/mysql-nio)
+fork: upstream mysql-nio 1.9.1 plus Dblore's patches on the branch `dblore-patches`, released
+as tags `1.9.1-dblore.<n>` (currently `1.9.1-dblore.3`). The app pins the tag's commit as an
+exact revision, never a branch or a version range. To change the driver (maintainer only):
+
+1. Commit the patch on `dblore-patches` in a local clone of the fork, with tests.
+2. Run the fork's packet tests: `swift test --package-path ~/git/mysql-nio --filter MySQLPacket`
+   (adjust the path to your clone; add other filters for the code you touched).
+3. Tag the commit `1.9.1-dblore.<n+1>` and push the branch and the tag to the fork.
+4. Set the new commit SHA as the `revision` of the mysql-nio package reference in
+   `Dblore.xcodeproj/project.pbxproj` and in
+   `Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`, check that
+   no other pin moved, and run the MySQL suites (`TEST_RUNNER_MYSQL_TESTS=1`, containers from
+   `docker/mysql`) before committing.
 
 ## Markdown editor bundle
 

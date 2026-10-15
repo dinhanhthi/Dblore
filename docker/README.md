@@ -9,6 +9,7 @@ docker/
 ├── README.md              # This file - complete guide
 ├── postgresql/            # PostgreSQL setup
 │   ├── docker-compose.yml
+│   ├── docker-compose.ssh.yml  # SSH test stack (sshd + PostgreSQL, MySQL, MongoDB)
 │   ├── .env.example
 │   ├── init/             # Schema and sample data (runs on first setup)
 │   ├── scripts/          # Helper scripts
@@ -18,6 +19,10 @@ docker/
 │   ├── docker-compose.test.yml
 │   ├── init/             # Test users and grants (runs on first start)
 │   └── scripts/          # gen-mysql-tls.sh (TLS/mTLS test certificates)
+├── mongodb/              # MongoDB 8.0 test servers (27018, TLS-only 27019)
+│   ├── docker-compose.test.yml
+│   ├── init/             # Test users (runs on first start)
+│   └── scripts/          # gen-mongo-tls.sh (TLS test certificates)
 └── sqlite/               # Coming soon
 ```
 
@@ -432,22 +437,94 @@ lsof -i :5435
 
 ---
 
+## MongoDB Test Databases
+
+`docker/mongodb/docker-compose.test.yml` runs MongoDB 8.0 standalone servers for the opt-in
+MongoDB suites. Ports are bound to `127.0.0.1` only.
+
+| Service | Port | Gate (via xcodebuild) | Notes |
+|---------|------|-----------------------|-------|
+| `mongo-test` | 27018 | `TEST_RUNNER_MONGO_TESTS=1` | Plain connections |
+| `mongo-tls-test` | 27019 | `TEST_RUNNER_MONGO_TLS_TESTS=1` | `requireTLS`, only with the `tls` profile |
+
+```bash
+# Plain server
+docker compose -f docker/mongodb/docker-compose.test.yml up -d --wait
+
+# TLS server: generate the certificates (gitignored, docker/mongodb/tls), then start the profile
+docker/mongodb/scripts/gen-mongo-tls.sh
+docker compose -f docker/mongodb/docker-compose.test.yml --profile tls up -d --wait
+```
+
+`gen-mongo-tls.sh` writes a test CA and a server certificate for `localhost` and `127.0.0.1`.
+The TLS container copies them when it starts, so after generating new ones recreate it with
+`--force-recreate mongo-tls-test`. A plain `up` never starts `mongo-tls-test`, so it never
+needs the certificates.
+
+`init/01-users.js` creates the test users in `admin` (connect with `authSource=admin`), all
+with the test-only password `dblore123`:
+
+| User | Roles | Login |
+|------|-------|-------|
+| `dblore_test` | `readWrite` on `dblore_test`, `clusterMonitor` | SCRAM-SHA-256 |
+| `dblore_reader` | `read` on `dblore_test` | SCRAM-SHA-256 |
+| `dblore_sha1` | `readWrite` on `dblore_test` | SCRAM-SHA-1 |
+
+The root user is `root` / `dblore123`. The tests read `TEST_MONGO_HOST`, `TEST_MONGO_PORT`,
+`TEST_MONGO_TLS_PORT`, `TEST_MONGO_DB`, `TEST_MONGO_USER` and `TEST_MONGO_PASSWORD` (defaults
+`127.0.0.1`, 27018, 27019, `dblore_test`, `dblore_test`, `dblore123`); pass them to
+`xcodebuild` as `TEST_RUNNER_<NAME>`. Remove everything with
+`docker compose -f docker/mongodb/docker-compose.test.yml --profile tls down -v`.
+
+---
+
+## SSH Test Stack
+
+`docker/postgresql/docker-compose.ssh.yml` runs an SSH server in front of databases that
+publish no port, so they are reachable only through an SSH tunnel. It backs the opt-in SSH
+suites (`TEST_RUNNER_SSH_TESTS=1`).
+
+```bash
+# Generate the keys and certificates once (gitignored, docker/postgresql/data/ssh)
+docker/postgresql/scripts/gen-ssh-fixtures.sh
+
+# No --project-directory: ./data must resolve next to the compose file
+docker compose -f docker/postgresql/docker-compose.ssh.yml up -d --wait
+```
+
+| Service | Reach | Details |
+|---------|-------|---------|
+| `sshd` | `127.0.0.1:2222` | ed25519 host key; user `dblore`, password `dblore-ssh-123` or the generated keys |
+| `sshd-rsa` | `127.0.0.1:2223` | Same, with an RSA-only host key |
+| `postgres` | tunnel target `postgres:5432` | PostgreSQL 16, database and user `dblore_ssh`, password `dblore123`, TLS optional |
+| `mysql-ssh` | tunnel target `mysql-ssh:3306` | MySQL 8.4, database and user `dblore_ssh`, password `dblore123`, TLS optional |
+| `mongo-ssh` | tunnel target `mongo-ssh:27017` | MongoDB 8.0, user `root`, password `dblore123`, `authSource=admin`, TLS optional (`preferTLS`) |
+
+The database certificates name their service (`postgres`, `mysql-ssh`, `mongo-ssh`); the
+MySQL and MongoDB ones are issued by `data/ssh/ca.crt`. If certificates are missing or out of
+date, delete `data/ssh/ca.*`, `data/ssh/mysql/` and `data/ssh/mongo/` together and run the
+script again.
+
+---
+
 ## CI Live Databases (`scripts/ci-live-databases.sh`)
 
-The `integration` job of `.github/workflows/ci.yml` runs the PostgreSQL and MySQL/MariaDB
-integration suites on the self-hosted `xcode-27` runner, which may be a Mac that also runs the
+The `integration` job of `.github/workflows/ci.yml` runs the PostgreSQL, MySQL/MariaDB and
+MongoDB integration suites on the self-hosted `xcode-27` runner, which may be a Mac that also runs the
 local test containers. The script starts a separate copy of the test databases next to them:
 
 ```bash
-scripts/ci-live-databases.sh start postgres mysql   # docker compose -p dblore-ci ... up -d --wait
-scripts/ci-live-databases.sh stop postgres mysql    # docker compose -p dblore-ci ... down -v
+scripts/ci-live-databases.sh start postgres mysql mongo   # docker compose -p dblore-ci ... up -d --wait
+scripts/ci-live-databases.sh stop postgres mysql mongo    # docker compose -p dblore-ci ... down -v
 ```
 
 - Compose project `dblore-ci`; containers, volumes and networks are named `dblore-ci-*`
-  (`dblore-ci-postgres-test`, `dblore-ci-mysql-test`, `dblore-ci-mariadb-test`), so the local
+  (`dblore-ci-postgres-test`, `dblore-ci-mysql-test`, `dblore-ci-mariadb-test`,
+  `dblore-ci-mongo-test`), so the local
   `dblore-*-test` containers and their data are never touched. `stop` removes the containers,
   networks and volumes.
-- `mysql` starts both MySQL 8.4 and MariaDB 11.4 (one compose file).
+- `mysql` starts both MySQL 8.4 and MariaDB 11.4 (one compose file); `mongo` starts only the
+  plain MongoDB server (no `tls` profile).
 - `start` fails with a clear message when Docker is not reachable or a CI port is taken.
 - Each service is one `start_<name>` / `stop_<name>` pair in the script plus its name on the
   command line.
@@ -457,6 +534,7 @@ scripts/ci-live-databases.sh stop postgres mysql    # docker compose -p dblore-c
 | PostgreSQL 16 | 5435 | 15435 | `DBLORE_PG_TEST_PORT` | `TEST_RUNNER_TEST_DB_PORT` |
 | MySQL 8.4 | 3307 | 13307 | `DBLORE_MYSQL_TEST_PORT` | `TEST_RUNNER_TEST_MYSQL_PORT` |
 | MariaDB 11.4 | 3308 | 13308 | `DBLORE_MARIADB_TEST_PORT` | `TEST_RUNNER_TEST_MARIADB_PORT` |
+| MongoDB 8.0 | 27018 | 13018 | `DBLORE_MONGO_TEST_PORT` | `TEST_RUNNER_TEST_MONGO_PORT` |
 
 The test compose files read these overrides, plus `DBLORE_TEST_NAME_PREFIX` (default `dblore`)
 for the container, volume and network names. Without them nothing changes for local use.
@@ -464,15 +542,16 @@ for the container, volume and network names. Without them nothing changes for lo
 To reproduce the CI job locally (with or without the local containers running):
 
 ```bash
-scripts/ci-live-databases.sh start postgres mysql
-TEST_RUNNER_MYSQL_TESTS=1 TEST_RUNNER_TEST_DB_PORT=15435 \
+scripts/ci-live-databases.sh start postgres mysql mongo
+TEST_RUNNER_MYSQL_TESTS=1 TEST_RUNNER_MONGO_TESTS=1 TEST_RUNNER_TEST_DB_PORT=15435 \
   TEST_RUNNER_TEST_MYSQL_PORT=13307 TEST_RUNNER_TEST_MARIADB_PORT=13308 \
+  TEST_RUNNER_TEST_MONGO_PORT=13018 \
   xcodebuild test -project Dblore.xcodeproj -scheme Dblore -destination 'platform=macOS,arch=arm64' \
   -skipPackagePluginValidation -skipMacroValidation
-scripts/ci-live-databases.sh stop postgres mysql
+scripts/ci-live-databases.sh stop postgres mysql mongo
 ```
 
-The MySQL TLS, mTLS, SSH and DuckDB plugin suites stay local-only.
+The MySQL TLS, MongoDB TLS, mTLS, SSH and DuckDB plugin suites stay local-only.
 
 ---
 
