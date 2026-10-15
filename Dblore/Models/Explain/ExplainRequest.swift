@@ -29,7 +29,8 @@ nonisolated struct ExplainRequest: Sendable {
   let statement: String
   let analyze: Bool
   let buffers: Bool
-  /// MySQL: `EXPLAIN FORMAT=JSON` (shown as JSON text) instead of the tabular `EXPLAIN`.
+  /// MySQL: `EXPLAIN FORMAT=JSON` (shown in the plan view) instead of the tabular `EXPLAIN`.
+  /// Unless the caller says, on for a MySQL server and off for MariaDB or an unknown server.
   let jsonFormat: Bool
   /// When true, ANALYZE of INSERT/UPDATE/DELETE/MERGE rolls back unless a transaction is open.
   let rollbackAfterAnalyze: Bool
@@ -39,7 +40,7 @@ nonisolated struct ExplainRequest: Sendable {
 
   init(
     statement: String, analyze: Bool, buffers: Bool, rollbackAfterAnalyze: Bool = true,
-    jsonFormat: Bool = false, dialect: SQLDialect = .postgresql,
+    jsonFormat: Bool? = nil, dialect: SQLDialect = .postgresql,
     mysqlServer: MySQLServerInfo? = nil
   ) throws {
     if analyze,
@@ -51,7 +52,7 @@ nonisolated struct ExplainRequest: Sendable {
     self.statement = body
     self.analyze = analyze
     self.buffers = buffers
-    self.jsonFormat = jsonFormat
+    self.jsonFormat = jsonFormat ?? (dialect == .mysql && mysqlServer?.flavor == .mysql)
     self.rollbackAfterAnalyze = rollbackAfterAnalyze
     self.dialect = dialect
     self.changesData = Self.statementChangesData(body, dialect: dialect)

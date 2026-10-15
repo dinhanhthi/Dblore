@@ -11,6 +11,8 @@
 //   statement stops, the session and its transaction stay. A killed SLEEP returns 1 on MySQL
 //   (1317 on MariaDB), so a statement counts as cancelled by the session's own flag.
 // - A procedure that returns a result set cannot be called (1312, no multi-results flag).
+// - With `sshTunnel`, every connection goes through a loopback forwarder over the SSH tunnel
+//   (`MySQLSession+SSHTunnel.swift`).
 
 import Foundation
 import Logging
@@ -93,12 +95,19 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let config: ConnectionConfig
   let closeEvents: AsyncStream<SessionCloseReason>
+  /// Builds the SSH tunnel when `config.sshTunnel` is set.
+  let tunnelFactory: any SSHTunnelFactory
+  /// Decides whether the bastion's host key is trusted.
+  let hostKeyValidator: any SSHHostKeyValidating
 
   private let lock = NSLock()
   private var connectionStorage: MySQLConnection?
   private var groupStorage: MultiThreadedEventLoopGroup?
+  private var tunnelStorage: (any SSHTunneling)?
+  private var forwarderStorage: SSHLoopbackForwarder?
   /// The TLS settings and address of the open session, reused by the KILL control connection
-  /// (an unremembered client certificate is only in scope while connecting).
+  /// (an unremembered client certificate is only in scope while connecting). Over SSH the
+  /// address is the forwarder's.
   private var tlsStorage: TLSConfiguration?
   private var addressStorage: SocketAddress?
   private var connectionID: Int?
@@ -129,8 +138,14 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     "MAXDB",
   ]
 
-  init(config: ConnectionConfig) {
+  init(
+    config: ConnectionConfig,
+    tunnelFactory: any SSHTunnelFactory = LiveSSHTunnelFactory(),
+    hostKeyValidator: any SSHHostKeyValidating = RejectUnknownSSHHostKeys()
+  ) {
     self.config = config
+    self.tunnelFactory = tunnelFactory
+    self.hostKeyValidator = hostKeyValidator
     capabilities = config.databaseType.capabilities
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
@@ -181,14 +196,24 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     } catch {
       throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
     }
-    let (connection, address, usedTLS, encrypted) = try await connect(tls: tls, on: group.next())
-    lock.withLock {
+    let addresses =
+      config.sshTunnel != nil
+      ? [try await openTunnelEndpoint()]
+      : try await Self.addresses(host: config.host, port: config.port)
+    let (connection, address, usedTLS, encrypted) = try await connect(
+      to: addresses, tls: tls, on: group.next())
+    let tunnel = lock.withLock {
       connectionStorage = connection
       tlsStorage = usedTLS
       encryptedStorage = encrypted
       addressStorage = address
+      return tunnelStorage
     }
     connection.channel.closeFuture.whenComplete { [weak self] _ in
+      self?.emit(.connectionLost)
+    }
+    // Registered only once connected: a tunnel lost during the login fails the open instead.
+    tunnel?.whenClosed { [weak self] in
       self?.emit(.connectionLost)
     }
     do {
@@ -199,7 +224,8 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
-  /// Test connection: open (with the pins), `SELECT 1`, close.
+  /// Test connection: open (with the pins), `SELECT 1`, close (also the SSH forwarder and
+  /// tunnel, on every path).
   func probe() async throws -> Bool {
     do {
       try await open()
@@ -211,27 +237,51 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
         throw DatabaseError.connectionFailed("Test query returned unexpected results")
       }
       return true
-    } catch let error as DatabaseError {
-      await close()
-      throw error
     } catch {
       await close()
-      throw DatabaseError.connectionFailed(formatError(error))
+      switch error {
+      case is DatabaseError, is SSHTunnelError, is SSHPrivateKeyError: throw error
+      default: throw DatabaseError.connectionFailed(formatError(error))
+      }
     }
   }
 
-  /// Close the socket and the event-loop group. Yields `.closedByApp` first.
+  /// Close the socket, the SSH forwarder and tunnel (if any) and the event-loop group, in that
+  /// order. Yields `.closedByApp` first.
   func close() async {
     emit(.closedByApp)
-    let (connection, group) = lock.withLock {
+    await takeResources().close(includingConnection: true)
+  }
+
+  /// Drop the socket, forwarder, tunnel and group without closing them. The actor closes them.
+  /// Yields `.closedByApp` so a later socket or tunnel close is not reported as a loss.
+  func detach() -> DetachedMySQLSession {
+    emit(.closedByApp)
+    return takeResources()
+  }
+
+  private func takeResources() -> DetachedMySQLSession {
+    lock.withLock {
       defer {
         connectionStorage = nil
         groupStorage = nil
+        forwarderStorage = nil
+        tunnelStorage = nil
       }
-      return (connectionStorage, groupStorage)
+      return DetachedMySQLSession(
+        connection: connectionStorage, group: groupStorage, forwarder: forwarderStorage,
+        tunnel: tunnelStorage)
     }
-    if let connection { try? await connection.close().get() }
-    if let group { try? await group.shutdownGracefully() }
+  }
+
+  /// The tunnel of the session being opened. `close()` closes it.
+  func setTunnel(_ tunnel: any SSHTunneling) {
+    lock.withLock { tunnelStorage = tunnel }
+  }
+
+  /// The forwarder of the session being opened. `close()` stops it before the tunnel.
+  func setForwarder(_ forwarder: SSHLoopbackForwarder) {
+    lock.withLock { forwarderStorage = forwarder }
   }
 
   // MARK: - Statements
@@ -471,15 +521,27 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
   }
 
   private func killRunningStatement(_ run: MySQLStatementRun) async {
-    if let hook = beforeKillForTesting { await hook() }
-    let (id, open, tls, address) = lock.withLock {
-      (connectionID, connectionStorage != nil, tlsStorage, addressStorage)
+    let (id, open, tls, address, forwarder) = lock.withLock {
+      (connectionID, connectionStorage != nil, tlsStorage, addressStorage, forwarderStorage)
     }
     guard let id, open, let address else { return }
-    do {
+    let dial = {
+      if let hook = self.beforeKillForTesting { await hook() }
       // Not the session's own loop: it may be busy decoding the rows this kill should stop.
-      let control = try await Self.connect(
-        to: address, config: config, tls: tls, on: MultiThreadedEventLoopGroup.singleton.next())
+      return try await Self.connect(
+        to: address, config: self.config, tls: tls,
+        on: MultiThreadedEventLoopGroup.singleton.next())
+    }
+    do {
+      // Over SSH, never dial a stopped forwarder's port (any local process may hold it by then,
+      // and the login carries the user's credentials).
+      let control: MySQLConnection
+      if let forwarder {
+        guard let dialed = try await forwarder.whileListening(dial) else { return }
+        control = dialed
+      } else {
+        control = try await dial()
+      }
       do {
         // It may have finished while the control connection opened: skip the KILL.
         if isRunning(run) { _ = try await control.simpleQuery("KILL QUERY \(id)").get() }
@@ -510,14 +572,13 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Connect helpers
 
-  /// Every address of the host in turn, until one accepts the TCP connection. Login and TLS
-  /// failures are not retried, except that Allow and Prefer reconnect without TLS to a server
-  /// that does not offer it. Returns the TLS settings the connection used and whether it is
-  /// encrypted.
+  /// Every address of the host (or the SSH forwarder) in turn, until one accepts the TCP
+  /// connection. Login and TLS failures are not retried, except that Allow and Prefer reconnect
+  /// without TLS to a server that does not offer it. Returns the TLS settings the connection
+  /// used and whether it is encrypted.
   private func connect(
-    tls: TLSConfiguration?, on loop: any EventLoop
+    to addresses: [SocketAddress], tls: TLSConfiguration?, on loop: any EventLoop
   ) async throws -> (MySQLConnection, SocketAddress, TLSConfiguration?, Bool) {
-    let addresses = try await Self.addresses(host: config.host, port: config.port)
     var lastError: (any Error)?
     for address in addresses {
       let connection: MySQLConnection
@@ -551,7 +612,8 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
   }
 
   /// One handshake, bounded by the connection timeout. A connection that completes after the
-  /// timeout is closed.
+  /// timeout is closed. TLS checks `config.host`, whatever `address` is (the SSH forwarder's
+  /// loopback address included).
   static func connect(
     to address: SocketAddress, config: ConnectionConfig, tls: TLSConfiguration?,
     on loop: any EventLoop

@@ -1,5 +1,6 @@
 import Foundation
 import Logging
+import MySQLNIO
 import NIOCore
 import NIOPosix
 import NIOSSH
@@ -226,16 +227,30 @@ extension SSHTunnelIntegrationTests {
     let spy = SpySSHTunnelFactory()
     let store = InMemorySSHKnownHostStore()
     let prompt = FakeSSHHostKeyPrompt(answer: true)
-    let config = SSHTunnelIntegrationTests.config()
+    var config = SSHTunnelIntegrationTests.config()
 
     var policy: SSHHostKeyPolicy { SSHHostKeyPolicy(store: store, prompt: prompt) }
 
     func makeManager() -> DatabaseConnectionManager {
       let account = SSHCredentialStoreFactory.account(for: config)!
       SSHCredentialStoreFactory.shared.save(.password("dblore-ssh-123"), account: account)
-      return DatabaseConnectionManager(
-        sessionFactory: SpyPostgresSessionFactory(tunnelFactory: spy, hostKeyValidator: policy),
-        sshHostKeyPrompt: prompt)
+      let factory: any DatabaseSessionFactory =
+        switch config.databaseType {
+        case .mysql: SpyMySQLSessionFactory(tunnelFactory: spy, hostKeyValidator: policy)
+        case .mongodb: SpyMongoSessionFactory(tunnelFactory: spy, hostKeyValidator: policy)
+        default: SpyPostgresSessionFactory(tunnelFactory: spy, hostKeyValidator: policy)
+        }
+      return DatabaseConnectionManager(sessionFactory: factory, sshHostKeyPrompt: prompt)
+    }
+
+    /// A MySQL session with this harness's spy tunnels and host-key policy.
+    func mysqlSession(_ config: ConnectionConfig) -> MySQLSession {
+      MySQLSession(config: config, tunnelFactory: spy, hostKeyValidator: policy)
+    }
+
+    /// A MongoDB session with this harness's spy tunnels and host-key policy.
+    func mongoSession(_ config: ConnectionConfig) -> MongoSession {
+      MongoSession(config: config, tunnelFactory: spy, hostKeyValidator: policy)
     }
 
     /// The bastion was confirmed once and pinned; later tunnels reused the pin.
@@ -395,6 +410,322 @@ extension SSHTunnelIntegrationTests {
     #expect(harness.spy.tunnels.allSatisfy { $0.isTornDown })
     harness.expectPinnedOnce()
     harness.store.remove(host: Self.bastionHost, port: Self.bastionPort)
+  }
+}
+
+// MARK: - MySQL through the loopback forwarder (phase 13.3)
+// mysql-ssh:3306 (MySQL 8.4) resolves only on the bastion. Its caching_sha2_password user logs
+// in over plain TCP only once the server's auth cache is warm, so each test logs in over TLS
+// first.
+
+@MainActor
+extension SSHTunnelIntegrationTests {
+  private static func mysqlConfig(sslMode: SSLMode = .disable) -> ConnectionConfig {
+    ConnectionConfig(
+      databaseType: .mysql, host: "mysql-ssh", port: 3306, database: "dblore_ssh",
+      username: "dblore_ssh", password: "dblore123", sslMode: sslMode,
+      sshTunnel: SSHTunnelConfig(host: bastionHost, port: bastionPort, username: "dblore"),
+      timeoutSeconds: 15, safeMode: .silent, protectedMode: false,
+      statementTimeoutSeconds: 120)
+  }
+
+  private static func mysqlRows(
+    _ session: MySQLSession, _ sql: String
+  ) async throws -> [[CellValue]] {
+    let source = try await session.query(sql, binds: [])
+    var rows: [[CellValue]] = []
+    for try await row in source.rows { rows.append(row) }
+    return rows
+  }
+
+  /// One TLS login (Require), so a plain-text login after it finds the auth cache warm.
+  private static func primeMySQLAuthCache(_ harness: Harness) async throws {
+    let session = harness.mysqlSession(mysqlConfig(sslMode: .require))
+    try await session.open()
+    await session.close()
+  }
+
+  private static func mysqlConnectionID(_ manager: DatabaseConnectionManager) async throws -> Int {
+    let value = try await manager.executeInternal("SELECT CONNECTION_ID()").rows.first?.first
+    guard case .int(let id) = value else { throw DatabaseError.queryFailed("no CONNECTION_ID", 0) }
+    return id
+  }
+
+  @Test(
+    "MySQL over SSH: verified TLS and plain logins run queries; close and probe leave no channel",
+    .timeLimit(.minutes(1)))
+  func mysqlLoginsThroughForwarder() async throws {
+    let harness = Harness(config: Self.mysqlConfig())
+    _ = harness.makeManager()  // saves the SSH credential
+
+    // Verify Full checks the certificate's name, DNS:mysql-ssh, not the forwarder's 127.0.0.1.
+    var verified = Self.mysqlConfig(sslMode: .verifyFull)
+    verified.clientCertificate = ClientCertificateInfo(subject: nil, expiry: nil, hasCA: true)
+    let caPEM = try String(
+      contentsOf: Self.fixtures.appendingPathComponent("ca.crt"), encoding: .utf8)
+    let scoped = ClientCertificateStoreFactory.ScopedMaterial(
+      account: ClientCertificateStoreFactory.account(for: verified),
+      material: ClientCertificateMaterial(caPEM: caPEM))
+    try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      let session = harness.mysqlSession(verified)
+      try await session.open()
+      #expect(session.transport == .verified)
+      let cipher = try await Self.mysqlRows(session, "SHOW SESSION STATUS LIKE 'Ssl_cipher'")
+      #expect(cipher.first?.last != .string(""))
+      await session.close()
+    }
+
+    let session = harness.mysqlSession(harness.config)
+    try await session.open()
+    #expect(session.transport == .plaintext)
+    #expect(try await Self.mysqlRows(session, "SELECT 1 AS one") == [[.int(1)]])
+    // Close order: connection, forwarder, then tunnel.
+    let tunnel = try #require(harness.spy.tunnels.last)
+    let detached = session.detach()
+    tunnel.onClose = { detached.connection?.isClosed == true }
+    await detached.close(includingConnection: true)
+    #expect(tunnel.connectionClosedFirst == true)
+
+    #expect(try await harness.mysqlSession(harness.config).probe())
+    #expect(harness.spy.tunnels.count == 3)
+    #expect(
+      await Self.eventually {
+        harness.spy.tunnels.allSatisfy {
+          $0.isTornDown && $0.channels.allSatisfy { !$0.isActive }
+        }
+      })
+    harness.expectPinnedOnce()
+    harness.store.remove(host: Self.bastionHost, port: Self.bastionPort)
+  }
+
+  @Test(
+    "MySQL over SSH: cancel sends KILL QUERY through the same tunnel and keeps the session",
+    .timeLimit(.minutes(1)))
+  func mysqlCancelKeepsSession() async throws {
+    let harness = Harness(config: Self.mysqlConfig())
+    let manager = harness.makeManager()
+    try await Self.primeMySQLAuthCache(harness)
+    try await manager.connect(config: harness.config)
+    let id = try await Self.mysqlConnectionID(manager)
+    let policy = open
+    let running = Task {
+      await bounded(.seconds(15)) {
+        _ = try await manager.execute(userSQL: "SELECT SLEEP(10)", policy: policy)
+      }
+    }
+    #expect(await Self.eventually { await manager.runningStatementStatus().inFlight })
+    // inFlight is counted before the statement reaches the server; let it start.
+    try await Task.sleep(for: .milliseconds(300))
+    let status = await manager.runningStatementStatus()
+    let start = ContinuousClock.now
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    let statement = await running.value
+    guard case .threw(let error) = statement, case .queryCancelled? = error as? DatabaseError
+    else {
+      Issue.record("Expected queryCancelled, got \(statement)")
+      await harness.tearDown(manager)
+      return
+    }
+    #expect(ContinuousClock.now - start < .seconds(3))
+
+    #expect(await manager.isConnected)
+    #expect(try await Self.mysqlConnectionID(manager) == id)
+    // The prime's tunnel, then the session's, which also carried the KILL QUERY connection.
+    harness.expectOnlyLatestOpen(count: 2)
+    #expect(harness.spy.tunnels.last?.channels.count == 2)
+    harness.expectPinnedOnce()
+    await harness.tearDown(manager)
+    #expect(harness.spy.tunnels.allSatisfy { $0.channels.allSatisfy { !$0.isActive } })
+  }
+
+  @Test(
+    "MySQL over SSH: a dropped SSH connection is reported lost and its tunnel torn down",
+    .timeLimit(.minutes(1)))
+  func mysqlTunnelLossReported() async throws {
+    let harness = Harness(config: Self.mysqlConfig())
+    let manager = harness.makeManager()
+    try await Self.primeMySQLAuthCache(harness)
+    try await manager.connect(config: harness.config)
+    let tunnel = try #require(harness.spy.tunnels.last)
+    let events = manager.sessionEvents
+    let lost = Task {
+      await bounded(.seconds(10)) {
+        for await _ in events { return }
+      }
+    }
+    try await tunnel.parentChannel.close()
+    let outcome = await lost.value
+    guard case .returned = outcome else {
+      Issue.record("No session-lost event: \(outcome)")
+      await harness.tearDown(manager)
+      return
+    }
+    #expect(await !manager.isConnected)
+    #expect(await Self.eventually { tunnel.isTornDown })
+    harness.expectPinnedOnce()
+    await harness.tearDown(manager)
+  }
+}
+
+// MARK: - MongoDB by channel injection (phase 14.1)
+// mongo-ssh:27017 (MongoDB 8.0, preferTLS, user root in admin) resolves only on the bastion.
+// Its certificate names DNS:mongo-ssh; the container name dblore-mongo-ssh reaches the same
+// server through the bastion's DNS, so Verify Full to it must fail on the name.
+
+@MainActor
+extension SSHTunnelIntegrationTests {
+  private static func mongoConfig(
+    host: String = "mongo-ssh", sslMode: SSLMode = .disable
+  ) -> ConnectionConfig {
+    var config = ConnectionConfig(
+      databaseType: .mongodb, host: host, port: 27017, database: "dblore_ssh",
+      username: "root", password: "dblore123", sslMode: sslMode,
+      sshTunnel: SSHTunnelConfig(host: bastionHost, port: bastionPort, username: "dblore"),
+      timeoutSeconds: 15, safeMode: .silent, protectedMode: false,
+      statementTimeoutSeconds: 120)
+    config.mongoURI = "mongodb://\(host):27017/dblore_ssh?authSource=admin"
+    return config
+  }
+
+  /// The SSH secret for `config` (the account includes the database host).
+  private static func saveSSHCredential(for config: ConnectionConfig) {
+    let account = SSHCredentialStoreFactory.account(for: config)!
+    SSHCredentialStoreFactory.shared.save(.password(password), account: account)
+  }
+
+  private static func mongoRun(
+    _ manager: DatabaseConnectionManager, _ text: String
+  ) async throws -> QueryResult {
+    try await manager.execute(userSQL: text, policy: ProtectionPolicy(protectionLevel: .none))
+  }
+
+  @Test(
+    "MongoDB over SSH: verified TLS, a wrong TLS name refused, plain login; nothing left open",
+    .timeLimit(.minutes(1)))
+  func mongoLoginsThroughTunnel() async throws {
+    let harness = Harness(config: Self.mongoConfig())
+    _ = harness.makeManager()  // saves the SSH credential
+    let caPEM = try String(
+      contentsOf: Self.fixtures.appendingPathComponent("ca.crt"), encoding: .utf8)
+
+    // Verify Full checks config.host against the certificate (DNS:mongo-ssh) inside the tunnel.
+    for (host, trusted) in [("mongo-ssh", true), ("dblore-mongo-ssh", false)] {
+      var verified = Self.mongoConfig(host: host, sslMode: .verifyFull)
+      verified.clientCertificate = ClientCertificateInfo(subject: nil, expiry: nil, hasCA: true)
+      Self.saveSSHCredential(for: verified)
+      let scoped = ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: verified),
+        material: ClientCertificateMaterial(caPEM: caPEM))
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+        let session = harness.mongoSession(verified)
+        do {
+          try await session.open()
+          try await session.hello()
+          #expect(trusted, "\(host) must fail Verify Full")
+        } catch DatabaseError.connectionFailed(let message) {
+          #expect(!trusted, "\(message)")
+          #expect(message.hasPrefix(MongoSession.tlsHint), "\(message)")
+          #expect(message.contains("failedToValidateHostname"), "\(message)")
+        }
+        await session.close()
+      }
+    }
+
+    let session = harness.mongoSession(harness.config)
+    try await session.open()
+    try await session.hello()
+    // Close order: connections, then tunnel.
+    let tunnel = try #require(harness.spy.tunnels.last)
+    tunnel.onClose = { tunnel.channels.allSatisfy { !$0.isActive } }
+    await session.close()
+    #expect(tunnel.connectionClosedFirst == true)
+
+    #expect(try await harness.mongoSession(harness.config).probe())
+    #expect(harness.spy.tunnels.count == 4)
+    #expect(
+      await Self.eventually {
+        harness.spy.tunnels.allSatisfy {
+          $0.isTornDown && $0.channels.allSatisfy { !$0.isActive }
+        }
+      })
+    harness.expectPinnedOnce()
+    harness.store.remove(host: Self.bastionHost, port: Self.bastionPort)
+  }
+
+  @Test(
+    "MongoDB over SSH: cancel sends killOp through the same tunnel and keeps the session",
+    .timeLimit(.minutes(1)))
+  func mongoCancelKeepsSession() async throws {
+    let harness = Harness(config: Self.mongoConfig())
+    let manager = harness.makeManager()
+    try await manager.connect(config: harness.config)
+    _ = try await Self.mongoRun(
+      manager, "db.ssh_cancel.updateOne({_id: 1}, {$set: {a: 1}}, {upsert: true})")
+    let epoch = await manager.connectionEpoch
+    let running = Task {
+      await bounded(.seconds(15)) {
+        _ = try await Self.mongoRun(
+          manager, "db.ssh_cancel.find({$where: \"sleep(10000) || true\"})")
+      }
+    }
+    #expect(await Self.eventually { await manager.runningStatementStatus().inFlight })
+    // inFlight is counted before the find reaches the server; let it start.
+    try await Task.sleep(for: .milliseconds(300))
+    let status = await manager.runningStatementStatus()
+    let start = ContinuousClock.now
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    let statement = await running.value
+    guard case .threw(let error) = statement, case .queryCancelled? = error as? DatabaseError
+    else {
+      Issue.record("Expected queryCancelled, got \(statement)")
+      await harness.tearDown(manager)
+      return
+    }
+    #expect(ContinuousClock.now - start < .seconds(5))
+
+    #expect(await manager.connectionEpoch == epoch)
+    let count = try await Self.mongoRun(manager, "db.ssh_cancel.countDocuments({_id: 1})")
+    #expect(count.rows == [[.int(1)]])
+    // One tunnel: the session's channel and the killOp control connection's.
+    harness.expectOnlyLatestOpen(count: 1)
+    #expect(harness.spy.tunnels.last?.channels.count == 2)
+    harness.expectPinnedOnce()
+    _ = try await Self.mongoRun(manager, "db.ssh_cancel.deleteOne({_id: 1})")
+    await harness.tearDown(manager)
+    #expect(harness.spy.tunnels.allSatisfy { $0.channels.allSatisfy { !$0.isActive } })
+  }
+
+  @Test(
+    "MongoDB over SSH: a dropped SSH connection is reported lost and its tunnel torn down",
+    .timeLimit(.minutes(1)))
+  func mongoTunnelLossReported() async throws {
+    let harness = Harness(config: Self.mongoConfig())
+    let manager = harness.makeManager()
+    try await manager.connect(config: harness.config)
+    let tunnel = try #require(harness.spy.tunnels.last)
+    let events = manager.sessionEvents
+    let lost = Task {
+      await bounded(.seconds(10)) {
+        for await _ in events { return }
+      }
+    }
+    try await tunnel.parentChannel.close()
+    let outcome = await lost.value
+    guard case .returned = outcome else {
+      Issue.record("No session-lost event: \(outcome)")
+      await harness.tearDown(manager)
+      return
+    }
+    #expect(await !manager.isConnected)
+    #expect(await Self.eventually { tunnel.isTornDown })
+    harness.expectPinnedOnce()
+    await harness.tearDown(manager)
   }
 }
 

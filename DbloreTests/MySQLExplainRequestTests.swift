@@ -1,8 +1,8 @@
 // MySQLExplainRequestTests.swift
-// Explain on MySQL: the tabular `EXPLAIN`, `EXPLAIN FORMAT=JSON` shown as JSON text, and
-// `EXPLAIN ANALYZE` only on MySQL 8.0.18+ (never MariaDB, never an unknown server). No MySQL
-// result reaches the PostgreSQL plan view. Live cases (MySQL 8.4 on 3307, MariaDB 11.4 on 3308)
-// are opt-in (`.requiresMySQL`).
+// Explain on MySQL: `EXPLAIN FORMAT=JSON` (shown in the plan view) on a MySQL server, the tabular
+// `EXPLAIN` on MariaDB or an unknown server, and `EXPLAIN ANALYZE` (a text tree) only on MySQL
+// 8.0.18+ (never MariaDB, never an unknown server). Live cases (MySQL 8.4 on 3307, MariaDB 11.4
+// on 3308) are opt-in (`.requiresMySQL`).
 
 import Foundation
 import Testing
@@ -23,7 +23,7 @@ struct MySQLExplainRequestTests {
 
   // MARK: - Request building
 
-  @Test("MySQL Explain is the tabular EXPLAIN; FORMAT=JSON only when asked; never PG syntax")
+  @Test("MySQL Explain is EXPLAIN, FORMAT=JSON or EXPLAIN ANALYZE; never PG syntax")
   func mysqlRequestText() throws {
     let tabular = try ExplainRequest(
       statement: "SELECT 1;", analyze: false, buffers: true, dialect: .mysql)
@@ -35,10 +35,40 @@ struct MySQLExplainRequestTests {
       statement: "SELECT 1", analyze: true, buffers: true, jsonFormat: true, dialect: .mysql,
       mysqlServer: MySQLServerInfo(version: "8.4.11"))
     #expect(analyzed.sql == "EXPLAIN ANALYZE SELECT 1")
-    for request in [tabular, json, analyzed] {
+    let auto = try ExplainRequest(
+      statement: "SELECT 1", analyze: false, buffers: true, dialect: .mysql,
+      mysqlServer: MySQLServerInfo(version: "8.4.11"))
+    #expect(auto.sql == "EXPLAIN FORMAT=JSON SELECT 1")
+    for request in [tabular, json, analyzed, auto] {
       #expect(!request.sql.contains("("), "\(request.sql)")
       #expect(!request.sql.contains("FORMAT JSON"), "\(request.sql)")
     }
+  }
+
+  @Test("Explain asks a MySQL server for FORMAT=JSON; MariaDB and an unknown server stay tabular")
+  func jsonFormatFollowsFlavor() throws {
+    func sql(
+      _ server: MySQLServerInfo?, json: Bool? = nil, analyze: Bool = false
+    ) throws
+      -> String
+    {
+      try ExplainRequest(
+        statement: "SELECT 1", analyze: analyze, buffers: analyze, jsonFormat: json,
+        dialect: .mysql, mysqlServer: server
+      ).sql
+    }
+    let mysql = MySQLServerInfo(version: "8.4.11")
+    #expect(try sql(mysql) == "EXPLAIN FORMAT=JSON SELECT 1")
+    #expect(try sql(MySQLServerInfo(version: "5.7.44")) == "EXPLAIN FORMAT=JSON SELECT 1")
+    #expect(try sql(MySQLServerInfo(version: "11.4.13-MariaDB-ubu2404")) == "EXPLAIN SELECT 1")
+    #expect(try sql(nil) == "EXPLAIN SELECT 1")
+    #expect(try sql(mysql, json: false) == "EXPLAIN SELECT 1")
+    #expect(try sql(mysql, analyze: true) == "EXPLAIN ANALYZE SELECT 1")
+    // Other engines ignore the MySQL server.
+    let postgres = try ExplainRequest(
+      statement: "SELECT 1", analyze: false, buffers: false, dialect: .postgresql,
+      mysqlServer: mysql)
+    #expect(postgres.sql == "EXPLAIN (FORMAT JSON) SELECT 1")
   }
 
   @Test(
@@ -104,12 +134,33 @@ struct MySQLExplainRequestTests {
     #expect(postgres.canExplainAnalyze)
   }
 
-  @Test("A MySQL JSON or tabular plan never opens the PostgreSQL plan view")
-  func noPlanView() {
+  @Test("A MySQL JSON plan opens the plan view; a tabular plan or text tree does not")
+  func planView() throws {
     let json = CellResult(
       columns: [ColumnInfo(name: "EXPLAIN", type: "JSON")],
       rows: [[.json(#"{"query_block": {"select_id": 1}}"#)]], rowCount: 1)
-    #expect(ExplainResultPlan.parse(json) == nil)
+    #expect(ExplainResultPlan.parse(json)?.root.nodeType == "Result")
+    // MySQL types the plan column as text.
+    let text = CellResult(
+      columns: [ColumnInfo(name: "EXPLAIN", type: "TEXT")],
+      rows: [[.string(ExplainFixtures.mysqlJoin)]], rowCount: 1)
+    let plan = try #require(ExplainResultPlan.parse(text))
+    #expect(plan.root.nodeType == "Nested Loop")
+    #expect(plan == MySQLExplainAdapter.plan(fromJSON: ExplainFixtures.mysqlJoin))
+    // Only a single EXPLAIN column goes through the MySQL adapter.
+    let renamed = CellResult(
+      columns: [ColumnInfo(name: "QUERY PLAN", type: "TEXT")],
+      rows: [[.string(ExplainFixtures.mysqlJoin)]], rowCount: 1)
+    #expect(ExplainResultPlan.parse(renamed) == nil)
+    let tree = CellResult(
+      columns: [ColumnInfo(name: "EXPLAIN", type: "TEXT")],
+      rows: [[.string("-> Rows fetched before execution  (cost=0..0 rows=1)")]], rowCount: 1)
+    #expect(ExplainResultPlan.parse(tree) == nil)
+    // A PostgreSQL plan still opens through its own column.
+    let postgres = CellResult(
+      columns: [ColumnInfo(name: "QUERY PLAN", type: "JSON")],
+      rows: [[.json(ExplainFixtures.seqScan)]], rowCount: 1)
+    #expect(ExplainResultPlan.parse(postgres)?.root.nodeType == "Seq Scan")
     let tabular = CellResult(
       columns: ["id", "select_type", "table"].map { ColumnInfo(name: $0, type: "VARCHAR") },
       rows: [[.int(1), .string("SIMPLE"), .null]], rowCount: 1)
@@ -142,7 +193,7 @@ struct MySQLExplainRequestTests {
 
     let json = try await run(false, json: true)
     #expect(json.columns.map(\.name) == ["EXPLAIN"])
-    #expect(ExplainResultPlan.parse(json) == nil)
+    #expect(ExplainResultPlan.parse(json)?.root.nodeType == "Result")
     // MySQL types the plan column as text, so the grid shows the JSON document as text.
     guard case .string(let text)? = json.rows.first?.first else {
       Issue.record("Expected JSON text, got \(String(describing: json.rows.first))")

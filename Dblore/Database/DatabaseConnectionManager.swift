@@ -275,9 +275,9 @@ actor DatabaseConnectionManager {
     case .sqlite, .duckdb:
       return try await probeFile(config)
     case .mysql:
-      return try await MySQLSession(config: config).probe()
+      return try await MySQLSession(config: config, hostKeyValidator: sshHostKeyPolicy).probe()
     case .mongodb:
-      return try await MongoSession.probe(config: config)
+      return try await MongoSession.probe(config: config, hostKeyValidator: sshHostKeyPolicy)
     }
   }
 
@@ -372,12 +372,13 @@ actor DatabaseConnectionManager {
   /// Forget the current connection before any suspension point: no edit can use its targets,
   /// and a statement failing meanwhile sees the connection gone (state stays idle). Closing it
   /// (or the server closing it) rolls back any open transaction on the server.
-  /// A PostgreSQL session is detached synchronously (`.closedByApp`) so its socket close is not
-  /// a loss. Any other session is closed by the caller.
+  /// A PostgreSQL or MySQL session is detached synchronously (`.closedByApp`) so its socket or
+  /// SSH tunnel close is not a loss. Any other session is closed by the caller.
   func forgetConnection() -> ForgottenSession {
     connectionEpoch &+= 1
     let forgotten = session
     let resources = (forgotten as? PostgresSession)?.detach() ?? DetachedPostgresSession()
+    let mysql = (forgotten as? MySQLSession)?.detach()
     session = nil
     config = nil
     sqliteReadOnlyReason = nil
@@ -390,13 +391,17 @@ actor DatabaseConnectionManager {
     mysqlTableColumns.removeAll()
     return ForgottenSession(
       session: forgotten, connection: resources.connection, group: resources.group,
-      tunnel: resources.tunnel)
+      tunnel: resources.tunnel, mysql: mysql)
   }
 
   /// Close what `forgetConnection` returned. PostgreSQL closes the detached socket, its SSH
   /// tunnel (always, even when the socket is already closed) and its event-loop group, in that
-  /// order. Any other session closes itself.
+  /// order; MySQL its socket, SSH forwarder, tunnel and group. Any other session closes itself.
   static func closeForgotten(_ forgotten: ForgottenSession, includingConnection: Bool) async {
+    if let mysql = forgotten.mysql {
+      await mysql.close(includingConnection: includingConnection)
+      return
+    }
     if forgotten.connection != nil || forgotten.group != nil || forgotten.tunnel != nil {
       await DetachedPostgresSession(
         connection: forgotten.connection, group: forgotten.group, tunnel: forgotten.tunnel
@@ -460,6 +465,8 @@ nonisolated struct ForgottenSession: Sendable {
   var connection: PostgresConnection?
   var group: EventLoopGroup?
   var tunnel: (any SSHTunneling)?
+  /// A detached MySQL session's resources.
+  var mysql: DetachedMySQLSession?
 }
 
 /// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
@@ -506,9 +513,9 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       // `open()` runs the loader (hash, signature check, dlopen) on the session's own queue.
       return DuckDBSession(config: config, extraAllowedPaths: extraAllowedPaths, loadLibrary: load)
     case .mysql:
-      return MySQLSession(config: config)
+      return MySQLSession(config: config, hostKeyValidator: hostKeyValidator)
     case .mongodb:
-      return MongoSession(config: config)
+      return MongoSession(config: config, hostKeyValidator: hostKeyValidator)
     }
   }
 }

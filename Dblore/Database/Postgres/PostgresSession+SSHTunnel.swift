@@ -7,48 +7,7 @@
 import Foundation
 import Logging
 import NIOCore
-import NIOSSH
 import PostgresNIO
-
-/// Opens an SSH tunnel. Production calls `SSHTunnel.connect`; tests inject fakes or spies.
-nonisolated protocol SSHTunnelFactory: Sendable {
-  func connect(
-    host: String, port: Int, username: String, authentication: SSHTunnelAuthentication,
-    hostKeyValidator: @escaping SSHHostKeyValidator, connectTimeout: TimeAmount,
-    handshakeTimeout: TimeAmount
-  ) async throws -> any SSHTunneling
-}
-
-nonisolated struct LiveSSHTunnelFactory: SSHTunnelFactory {
-  func connect(
-    host: String, port: Int, username: String, authentication: SSHTunnelAuthentication,
-    hostKeyValidator: @escaping SSHHostKeyValidator, connectTimeout: TimeAmount,
-    handshakeTimeout: TimeAmount
-  ) async throws -> any SSHTunneling {
-    try await SSHTunnel.connect(
-      host: host, port: port, username: username, authentication: authentication,
-      hostKeyValidator: hostKeyValidator, connectTimeout: connectTimeout,
-      handshakeTimeout: handshakeTimeout)
-  }
-}
-
-/// Decides whether the SSH server at `host:port` is trusted. Throw to reject the key.
-nonisolated protocol SSHHostKeyValidating: Sendable {
-  func validate(
-    host: String, port: Int, hostKey: NIOSSHPublicKey, fingerprint: String)
-    async throws
-}
-
-/// The default until the trust prompt exists: no host key is trusted.
-nonisolated struct RejectUnknownSSHHostKeys: SSHHostKeyValidating {
-  func validate(
-    host: String, port: Int, hostKey: NIOSSHPublicKey, fingerprint: String
-  )
-    async throws
-  {
-    throw SSHTunnelError.hostKeyRejected
-  }
-}
 
 /// What `PostgresSession.detach()` hands over. The caller closes it with `close`.
 nonisolated struct DetachedPostgresSession: Sendable {
@@ -93,8 +52,10 @@ extension PostgresSession {
   /// `open()` for a connection with `sshTunnel`. Every failure after the tunnel exists closes it.
   func openThroughTunnel() async throws {
     let tls = try tunnelTLS()
-    let authentication = try sshAuthentication()
-    let tunnel = try await connectTunnel(authentication)
+    let authentication = try SSHTunnelConnector.sshAuthentication(for: config)
+    let tunnel = try await SSHTunnelConnector.connectTunnel(
+      config: config, authentication: authentication, hostKeyValidator: hostKeyValidator,
+      factory: tunnelFactory)
     let conn: PostgresConnection
     do {
       conn = try await attemptConnection(timeoutSeconds: config.timeoutSeconds) {
@@ -118,10 +79,12 @@ extension PostgresSession {
   /// timeouts bound it, and the handshake one is paused while the trust sheet is open.
   func probeThroughTunnel() async throws -> Bool {
     let tls = try tunnelTLS()
-    let authentication = try sshAuthentication()
+    let authentication = try SSHTunnelConnector.sshAuthentication(for: config)
     let tunnel: any SSHTunneling
     do {
-      tunnel = try await connectTunnel(authentication)
+      tunnel = try await SSHTunnelConnector.connectTunnel(
+        config: config, authentication: authentication, hostKeyValidator: hostKeyValidator,
+        factory: tunnelFactory)
     } catch {
       throw Self.tunnelFailure(error)
     }
@@ -173,50 +136,6 @@ extension PostgresSession {
         sslMode: config.sslMode, material: try clientCertificateMaterial())
     } catch {
       throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
-    }
-  }
-
-  /// The SSH secret as an authentication: the operation's scoped credential (form, unremembered
-  /// connection) for this account, else the stored one. Private keys are restored from their
-  /// decrypted Keychain form.
-  private func sshAuthentication() throws -> SSHTunnelAuthentication {
-    guard let stored = SSHCredentialStoreFactory.load(for: config) else {
-      throw DatabaseError.sshCredentialMissing
-    }
-    switch stored {
-    case .password(let password):
-      return .password(password)
-    case .privateKey(let keychainRepresentation):
-      return .privateKey(try SSHPrivateKeyParser.restore(from: keychainRepresentation).privateKey)
-    }
-  }
-
-  /// Connects to the bastion. The session timeout bounds both the TCP connect and the
-  /// handshake (key exchange, user auth); time spent in the host-key check (trust sheet) is
-  /// not counted.
-  private func connectTunnel(
-    _ authentication: SSHTunnelAuthentication
-  ) async throws
-    -> any SSHTunneling
-  {
-    guard let ssh = config.sshTunnel else { throw DatabaseError.sshCredentialMissing }
-    let validator = hostKeyValidator
-    let host = ssh.host
-    let port = ssh.port
-    let timeout = TimeAmount.seconds(Int64(config.timeoutSeconds))
-    let factory = tunnelFactory
-    do {
-      return try await PerfSignpost.interval("ssh-tunnel-connect") {
-        try await factory.connect(
-          host: host, port: port, username: ssh.username, authentication: authentication,
-          hostKeyValidator: { key, fingerprint in
-            try await validator.validate(
-              host: host, port: port, hostKey: key, fingerprint: fingerprint)
-          },
-          connectTimeout: timeout, handshakeTimeout: timeout)
-      }
-    } catch let error as SSHTunnelError {
-      throw error.databaseError(host: host, port: port) ?? error
     }
   }
 

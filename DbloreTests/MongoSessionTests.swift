@@ -271,16 +271,6 @@ struct MongoSessionTests {
       Self.connectionFailure(refused)?.contains("Client certificates are not supported") == true)
   }
 
-  @Test("An SSH tunnel is refused instead of connecting around it")
-  func sshTunnelRefused() async {
-    var config = Self.config()
-    config.sshTunnel = SSHTunnelConfig(host: "bastion.example.com", username: "me")
-    let session = MongoSession(config: config)
-    let error = await Self.failure { try await session.open() }
-    await session.close()
-    #expect(Self.connectionFailure(error)?.contains("SSH") == true)
-  }
-
   // MARK: - Refusals before sending
 
   @Test("Binds are refused by query and command")

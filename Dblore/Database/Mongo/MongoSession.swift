@@ -10,6 +10,8 @@
 // - `mongodb://…?directConnection=true`: its one host, one injected `MongoConnection` behind
 //   `MongoSingleConnectionPool` (no discovery);
 // - `mongodb+srv://…`: the SRV answers (dnssd, `MongoSRV`), `MongoCluster`.
+// - with `sshTunnel`: the URI's one host through the tunnel, as with `directConnection=true`
+//   (`MongoSession+SSHTunnel.swift`); `+srv` and several hosts are refused.
 // - TLS is on exactly when `sslMode != .disable` (6.2: `sslMode` is the source of truth), with
 //   chain and host-name verification (MongoKitten always verifies). A custom CA comes from the
 //   Keychain picker as PEM (`sslCaCertificate`; the cluster path trusts the first certificate of
@@ -41,7 +43,10 @@
 //   `currentOp {$ownOps: true}` by that comment (also as the originating comment of a getMore)
 //   and kills it with `killOp`. The statement fails with `DatabaseError.queryCancelled`
 //   (`connectionKept: true`); the session stays usable.
-// - SSH tunnels are refused until Phase 14 wires them (never connect around a configured tunnel).
+// - Over SSH the killOp control connection is a channel of the same tunnel, never a direct
+//   connection (`usesTunnel`), and losing the tunnel yields `.connectionLost`. `close()` closes
+//   the connections, waits (bounded) for a killOp control connection under way, then closes the
+//   tunnel.
 
 import BSON
 import Foundation
@@ -115,8 +120,11 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
 nonisolated struct MongoConnectionPlan: Sendable {
   /// Hosts (SRV resolved), credentials, authSource, database, TLS and the first CA certificate.
   var settings: ConnectionSettings
-  /// `directConnection=true`: one connection behind `MongoSingleConnectionPool`, no discovery.
+  /// `directConnection=true` or an SSH tunnel: one connection behind
+  /// `MongoSingleConnectionPool`, no discovery.
   var isDirect: Bool
+  /// Reached only through the SSH tunnel: never connected to directly.
+  var usesTunnel: Bool
   /// Every certificate of the custom CA PEM (empty: the system trust store).
   var caCertificates: [NIOSSLCertificate]
 
@@ -136,6 +144,10 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let config: ConnectionConfig
   let closeEvents: AsyncStream<SessionCloseReason>
+  /// Builds the SSH tunnel when `config.sshTunnel` is set.
+  let tunnelFactory: any SSHTunnelFactory
+  /// Decides whether the bastion's host key is trusted.
+  let hostKeyValidator: any SSHHostKeyValidating
   private let resolver: any MongoSRVResolving
 
   /// How the open session reaches the server.
@@ -147,18 +159,30 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   private let lock = NSLock()
   private var topologyStorage: Topology?
   private var planStorage: MongoConnectionPlan?
-  /// Connections the single pool built (closed by `close()`).
-  private var directConnections: [MongoConnection] = []
+  /// Connections the single pool built (closed by `close()`), with the context of a tunneled one.
+  private var directConnections: [(connection: MongoConnection, context: MongoClientContext?)] = []
+  private var tunnelStorage: (any SSHTunneling)?
+  /// The error recorder of the last connection built through the tunnel.
+  private var channelErrorsStorage: MongoChannelErrorRecorder?
   private var isClosed = false
   private var statementTimeoutStorage: Int
   private var documentCapStorage = MongoSession.maxBufferedDocuments
   /// Comment tokens of the statements in flight; true once `interrupt()` targeted them.
   private var running: [String: Bool] = [:]
+  /// killOp control connections under way through the tunnel, and what waits for them to end.
+  private var controlDials = 0
+  private var controlDialsEnded: [AsyncStream<Void>.Continuation] = []
   private var didEmitClose = false
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
 
-  init(config: ConnectionConfig, resolver: (any MongoSRVResolving)? = nil) {
+  init(
+    config: ConnectionConfig, resolver: (any MongoSRVResolving)? = nil,
+    tunnelFactory: any SSHTunnelFactory = LiveSSHTunnelFactory(),
+    hostKeyValidator: any SSHHostKeyValidating = RejectUnknownSSHHostKeys()
+  ) {
     self.config = config
+    self.tunnelFactory = tunnelFactory
+    self.hostKeyValidator = hostKeyValidator
     self.resolver = resolver ?? MongoDNSServiceResolver(timeoutSeconds: config.timeoutSeconds)
     capabilities = config.databaseType.capabilities
     statementTimeoutStorage = SessionBrakeLimits.clampStatementTimeout(
@@ -187,14 +211,12 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Open / close
 
-  /// Connect and authenticate. Throws `DatabaseError.connectionFailed`. The caller closes the
-  /// session after a failure.
+  /// Connect and authenticate. Throws `DatabaseError.connectionFailed` (SSH errors keep their
+  /// type). The caller closes the session after a failure, which also closes the tunnel.
   func open() async throws {
-    guard config.sshTunnel == nil else {
-      throw DatabaseError.connectionFailed("SSH tunnels for MongoDB are not available yet.")
-    }
     let plan = try await Self.plan(
       config: config, material: try Self.certificateMaterial(for: config), resolver: resolver)
+    let tunnel = config.sshTunnel != nil ? try await openTunnel() : nil
     let group = MultiThreadedEventLoopGroup.singleton
     lock.withLock { planStorage = plan }
     do {
@@ -218,13 +240,20 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     } catch let error as DatabaseError {
       throw error
     } catch {
-      throw DatabaseError.connectionFailed(formatError(error))
+      // Over the tunnel MongoKitten reports a TLS failure only as a closed channel.
+      let cause = lock.withLock { channelErrorsStorage?.first } ?? error
+      throw DatabaseError.connectionFailed(formatError(cause))
     }
+    // Registered only once connected: a tunnel lost during the login fails the open instead.
+    tunnel?.whenClosed { [weak self] in self?.emit(.connectionLost) }
   }
 
-  /// Test connection: connect, authenticate, `hello`, close.
-  static func probe(config: ConnectionConfig) async throws -> Bool {
-    try await MongoSession(config: config).probe()
+  /// Test connection: connect, authenticate, `hello`, close (also the SSH tunnel, on every
+  /// path).
+  static func probe(
+    config: ConnectionConfig, hostKeyValidator: any SSHHostKeyValidating
+  ) async throws -> Bool {
+    try await MongoSession(config: config, hostKeyValidator: hostKeyValidator).probe()
   }
 
   func probe() async throws -> Bool {
@@ -233,28 +262,79 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
       try await hello()
       await close()
       return true
-    } catch let error as DatabaseError {
-      await close()
-      throw error
     } catch {
       await close()
-      throw DatabaseError.connectionFailed(formatError(error))
+      switch error {
+      case is DatabaseError, is SSHTunnelError, is SSHPrivateKeyError: throw error
+      default: throw DatabaseError.connectionFailed(formatError(error))
+      }
     }
   }
 
-  /// Disconnect every connection. Yields `.closedByApp` first.
+  /// Disconnect every connection, then the SSH tunnel (if any). Yields `.closedByApp` first.
   func close() async {
     emit(.closedByApp)
-    let (topology, connections) = lock.withLock {
+    let (topology, connections, tunnel) = lock.withLock {
       defer {
         isClosed = true
         topologyStorage = nil
         directConnections = []
+        tunnelStorage = nil
       }
-      return (topologyStorage, directConnections)
+      return (topologyStorage, directConnections, tunnelStorage)
     }
     if case .cluster(let cluster) = topology { await cluster.disconnect() }
-    for connection in connections { await connection.close() }
+    for (connection, context) in connections {
+      await Self.closeConnection(connection, context: context)
+    }
+    if tunnel != nil { await controlDialsDone() }
+    await tunnel?.close()
+  }
+
+  /// How long `close()` waits for a killOp control connection before closing the tunnel anyway.
+  /// Covers the control connection's last `currentOp` round trip (its statement is gone once
+  /// `close()` closed the connections) plus its own `closeConnection` grace.
+  static let controlDialGrace: Duration = .seconds(5)
+
+  /// Returns once no killOp control connection runs through the tunnel (none starts once
+  /// closed), or after `controlDialGrace`.
+  private func controlDialsDone() async {
+    let (ended, continuation) = AsyncStream<Void>.makeStream()
+    let waiting = lock.withLock { () -> Bool in
+      guard controlDials > 0 else { return false }
+      controlDialsEnded.append(continuation)
+      return true
+    }
+    guard waiting else { return }
+    Task {
+      try? await Task.sleep(for: Self.controlDialGrace)
+      continuation.finish()
+    }
+    for await _ in ended {}
+  }
+
+  private func endControlDial() {
+    let waiters = lock.withLock { () -> [AsyncStream<Void>.Continuation] in
+      controlDials -= 1
+      guard controlDials == 0 else { return [] }
+      defer { controlDialsEnded.removeAll() }
+      return controlDialsEnded
+    }
+    for waiter in waiters { waiter.finish() }
+  }
+
+  /// The tunnel of the session being opened. False (and nothing kept) once the session closed.
+  func keepTunnel(_ tunnel: any SSHTunneling) -> Bool {
+    lock.withLock {
+      guard !isClosed else { return false }
+      tunnelStorage = tunnel
+      return true
+    }
+  }
+
+  /// The error recorder of the connection being built through the tunnel.
+  func setChannelErrors(_ recorder: MongoChannelErrorRecorder) {
+    lock.withLock { channelErrorsStorage = recorder }
   }
 
   /// A writable connection with MongoKitten's client timeout cleared.
@@ -269,20 +349,31 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     return connection
   }
 
-  /// The single pool's builder: a new connection, watched for loss, closed by `close()`.
+  /// The single pool's builder: a new connection (a fresh tunnel channel over SSH), watched for
+  /// loss, closed by `close()`.
   private func buildDirectConnection(
     plan: MongoConnectionPlan, group: any EventLoopGroup
   ) async throws -> MongoConnection {
-    guard !lock.withLock({ isClosed }) else { throw MongoSessionError.closed }
-    let connection = try await Self.connectDirect(
-      plan: plan, group: group, timeoutSeconds: config.timeoutSeconds)
+    let (closed, tunnel) = lock.withLock { (isClosed, tunnelStorage) }
+    guard !closed else { throw MongoSessionError.closed }
+    let connection: MongoConnection
+    var context: MongoClientContext?
+    if let tunnel {
+      let recorder = MongoChannelErrorRecorder()
+      setChannelErrors(recorder)
+      (connection, context) = try await Self.connectThroughTunnel(
+        plan: plan, tunnel: tunnel, errors: recorder)
+    } else {
+      connection = try await Self.connectDirect(
+        plan: plan, group: group, timeoutSeconds: config.timeoutSeconds)
+    }
     let kept = lock.withLock { () -> Bool in
       guard !isClosed else { return false }
-      directConnections.append(connection)
+      directConnections.append((connection, context))
       return true
     }
     guard kept else {
-      await connection.close()
+      await Self.closeConnection(connection, context: context)
       throw MongoSessionError.closed
     }
     connection.closeFuture.whenComplete { [weak self] _ in self?.emit(.connectionLost) }
@@ -362,6 +453,10 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
         tls: nil, replicaSet: nil, directConnection: nil, appName: nil, readPreference: nil,
         ignoredOptions: [])
     }
+    // Before any SRV lookup: a tunnel reaches one host as the bastion resolves it.
+    if config.sshTunnel != nil, uri.isSRV || uri.hosts.count != 1 {
+      throw DatabaseError.connectionFailed(sshSingleHostMessage)
+    }
     let usesTLS = config.sslMode != .disable
     var hosts = uri.hosts
     var txtAuthSource: String?
@@ -404,7 +499,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
       settings.sslCaCertificate = certificates.first
     }
     return MongoConnectionPlan(
-      settings: settings, isDirect: uri.directConnection == true, caCertificates: certificates)
+      settings: settings, isDirect: uri.directConnection == true || config.sshTunnel != nil,
+      usesTunnel: config.sshTunnel != nil, caCertificates: certificates)
   }
 
   static func authentication(
@@ -489,16 +585,24 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   }
 
   /// killOp of every statement in flight, from a control connection. The statements fail with
-  /// `queryCancelled`; the session stays open.
+  /// `queryCancelled`; the session stays open. Over SSH, nothing is dialed once the session
+  /// closed, and `close()` waits for a control connection under way before closing the tunnel.
   func interrupt() async {
-    let (tokens, plan) = lock.withLock { () -> ([String], MongoConnectionPlan?) in
+    let (tokens, plan, tunnel) = lock.withLock {
+      () -> ([String], MongoConnectionPlan?, (any SSHTunneling)?) in
       for token in running.keys { running[token] = true }
-      return (Array(running.keys), planStorage)
+      guard !running.isEmpty, let planStorage else { return ([], nil, nil) }
+      guard planStorage.usesTunnel else { return (Array(running.keys), planStorage, nil) }
+      guard let tunnelStorage else { return ([], nil, nil) }
+      // A tunnel is returned only with a control dial counted, which the defer below ends.
+      controlDials += 1
+      return (Array(running.keys), planStorage, tunnelStorage)
     }
     guard !tokens.isEmpty, let plan else { return }
+    defer { if tunnel != nil { endControlDial() } }
     do {
       let control = try await ControlConnection.open(
-        plan: plan, timeoutSeconds: config.timeoutSeconds)
+        plan: plan, timeoutSeconds: config.timeoutSeconds, tunnel: tunnel)
       do {
         for token in tokens { try await killOperations(tagged: token, on: control.connection) }
       } catch {
@@ -649,29 +753,45 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   }
 }
 
-/// A short-lived connection for killOp (its own connection on the shared NIO group).
+/// A short-lived connection for killOp (its own connection on the shared NIO group, or its own
+/// channel of the session's SSH tunnel).
 private nonisolated struct ControlConnection: Sendable {
   let connection: MongoConnection
   private let cluster: MongoCluster?
+  /// Set for a tunneled connection (see `MongoSession.closeConnection`).
+  private let context: MongoClientContext?
 
-  static func open(plan: MongoConnectionPlan, timeoutSeconds: Int) async throws -> ControlConnection
-  {
+  static func open(
+    plan: MongoConnectionPlan, timeoutSeconds: Int, tunnel: (any SSHTunneling)?
+  ) async throws -> ControlConnection {
     let group = MultiThreadedEventLoopGroup.singleton
     if plan.isDirect {
-      let connection = try await MongoSession.connectDirect(
-        plan: plan, group: group, timeoutSeconds: timeoutSeconds)
+      let (connection, context): (MongoConnection, MongoClientContext?) =
+        if let tunnel {
+          try await MongoSession.connectThroughTunnel(
+            plan: plan, tunnel: tunnel, errors: MongoChannelErrorRecorder())
+        } else if plan.usesTunnel {
+          // The tunnel is gone (the session closed): never dial around it.
+          throw MongoSessionError.closed
+        } else {
+          (
+            try await MongoSession.connectDirect(
+              plan: plan, group: group, timeoutSeconds: timeoutSeconds), nil
+          )
+        }
       do {
         try await connection.authenticate(
           clientDetails: nil, using: plan.settings.authentication, to: plan.authSource)
       } catch {
-        await connection.close()
+        await MongoSession.closeConnection(connection, context: context)
         throw error
       }
-      return ControlConnection(connection: connection, cluster: nil)
+      return ControlConnection(connection: connection, cluster: nil, context: context)
     }
     let cluster = try await MongoCluster(connectingTo: plan.settings, eventLoopGroup: group)
     do {
-      return ControlConnection(connection: try await cluster.next(for: .writable), cluster: cluster)
+      return ControlConnection(
+        connection: try await cluster.next(for: .writable), cluster: cluster, context: nil)
     } catch {
       await cluster.disconnect()
       throw error
@@ -682,7 +802,7 @@ private nonisolated struct ControlConnection: Sendable {
     if let cluster {
       await cluster.disconnect()
     } else {
-      await connection.close()
+      await MongoSession.closeConnection(connection, context: context)
     }
   }
 }

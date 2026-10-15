@@ -157,6 +157,28 @@ nonisolated struct ExplainNode: Decodable, Equatable, Sendable {
 
   private static let modeledKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
+  /// A node built from another engine's plan format (`MySQLExplainAdapter`).
+  /// Fields left out stay nil.
+  init(
+    nodeType: String?,
+    relationName: String? = nil,
+    indexName: String? = nil,
+    totalCost: Double? = nil,
+    planRows: Double? = nil,
+    filter: String? = nil,
+    children: [ExplainNode] = [],
+    extras: [String: JSONValue] = [:]
+  ) {
+    self.nodeType = nodeType
+    self.relationName = relationName
+    self.indexName = indexName
+    self.totalCost = totalCost
+    self.planRows = planRows
+    self.filter = filter
+    self.children = children
+    self.extras = extras
+  }
+
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     func field<T: Decodable>(_ key: CodingKeys, as type: T.Type = T.self) throws -> T? {
@@ -249,6 +271,18 @@ nonisolated struct ExplainPlan: Decodable, Equatable, Sendable {
     case executionTime = "Execution Time"
     case root = "Plan"
     case triggers = "Triggers"
+  }
+
+  init(
+    root: ExplainNode,
+    planningTime: Double? = nil,
+    executionTime: Double? = nil,
+    triggers: [ExplainTrigger] = []
+  ) {
+    self.root = root
+    self.planningTime = planningTime
+    self.executionTime = executionTime
+    self.triggers = triggers
   }
 
   init(from decoder: Decoder) throws {

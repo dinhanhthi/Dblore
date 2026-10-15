@@ -12,14 +12,25 @@ enum ExplainDisplayMode: Hashable {
   case raw
 }
 
-/// Reads a plan only when the result is one `QUERY PLAN` cell and JSON parses.
+/// Reads a plan only when the result is one cell that parses: a `QUERY PLAN` column holding
+/// PostgreSQL JSON, or an `EXPLAIN` column holding MySQL `{"query_block": …}` JSON (anything
+/// else in that column, such as the EXPLAIN ANALYZE text tree, gives nil).
 nonisolated enum ExplainResultPlan {
   static func parse(_ result: CellResult) -> ExplainPlan? {
-    guard result.columns.count == 1,
-      result.columns[0].name.compare("QUERY PLAN", options: [.caseInsensitive]) == .orderedSame,
-      let value = result.rows.first?.first
-    else { return nil }
-    return try? ExplainPlan.parse(value)
+    guard result.columns.count == 1, let value = result.rows.first?.first else { return nil }
+    let column = result.columns[0].name
+    if column.compare("QUERY PLAN", options: [.caseInsensitive]) == .orderedSame {
+      return try? ExplainPlan.parse(value)
+    }
+    guard column.compare("EXPLAIN", options: [.caseInsensitive]) == .orderedSame else {
+      return nil
+    }
+    switch value {
+    case .json(let text), .string(let text):
+      return MySQLExplainAdapter.plan(fromJSON: text)
+    default:
+      return nil
+    }
   }
 }
 

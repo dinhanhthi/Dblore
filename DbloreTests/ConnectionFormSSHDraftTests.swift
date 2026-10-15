@@ -62,6 +62,44 @@ struct ConnectionFormSSHDraftTests {
     #expect(SSHFormDraft(from: ConnectionConfig()) == SSHFormDraft())
   }
 
+  // MARK: Engines
+
+  @Test(
+    "Network engines offer SSH; file engines hide it",
+    arguments: [
+      (DatabaseType.postgresql, true), (.mysql, true), (.mongodb, true), (.sqlite, false),
+      (.duckdb, false),
+    ])
+  func sshEngines(type: DatabaseType, supported: Bool) {
+    #expect(SSHFormDraft.supportsSSH(type) == supported)
+  }
+
+  private static func mongoConfig(_ uri: String) throws -> ConnectionConfig {
+    try MongoConnectionDraft.paste(
+      uri, into: ConnectionFormContent.newFormDraft(databaseType: .mongodb)
+    ).config
+  }
+
+  @Test(
+    "SSH on a +srv or multi-host MongoDB connection shows the single-host message",
+    arguments: ["mongodb+srv://cluster.example/app", "mongodb://a.example,b.example:27018/app"])
+  func mongoSSHNeedsSingleHost(uri: String) throws {
+    let config = try Self.mongoConfig(uri)
+    var draft = Self.enabledDraft()
+    #expect(draft.mongoHostError(for: config) == MongoSession.sshSingleHostMessage)
+    draft.enabled = false
+    #expect(draft.mongoHostError(for: config) == nil)
+  }
+
+  @Test("SSH on a single-host MongoDB or another engine shows no host message")
+  func singleHostAllowed() throws {
+    let draft = Self.enabledDraft()
+    #expect(draft.mongoHostError(for: try Self.mongoConfig("mongodb://db.internal/app")) == nil)
+    #expect(
+      draft.mongoHostError(for: ConnectionFormContent.newFormDraft(databaseType: .mongodb)) == nil)
+    #expect(draft.mongoHostError(for: Self.tunneledConfig()) == nil)
+  }
+
   // MARK: Validation
 
   @Test("SSH on requires host, user and a secret")

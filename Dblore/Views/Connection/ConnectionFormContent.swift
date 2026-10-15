@@ -735,10 +735,12 @@ struct ConnectionFormContent: View {
     return Self.isFormInputValid(connectionConfig)
   }
 
-  /// SSH on requires host, user and a usable secret. Engines without SSH ignore the draft.
+  /// SSH on requires host, user, a usable secret and (MongoDB) a single host. Engines without
+  /// SSH ignore the draft.
   private var sshDraftIsValid: Bool {
     !SSHFormDraft.supportsSSH(connectionConfig.databaseType)
-      || sshDraft.isValid(storedMethod: usableSSHStoredMethod)
+      || (sshDraft.isValid(storedMethod: usableSSHStoredMethod)
+        && sshDraft.mongoHostError(for: connectionConfig) == nil)
   }
 
   // MARK: - SSH Draft
@@ -1083,8 +1085,18 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
     storedKeyFingerprint = tunnel.keyFingerprint
   }
 
-  /// SSH tunnels are PostgreSQL-only.
-  static func supportsSSH(_ type: DatabaseType) -> Bool { type == .postgresql }
+  /// Network engines (PostgreSQL, MySQL, MongoDB) offer SSH; file engines do not.
+  static func supportsSSH(_ type: DatabaseType) -> Bool { type.capabilities.usesNetwork }
+
+  /// A tunnel reaches one MongoDB host: SSH on a `+srv` or multi-host URI gets the session's
+  /// single-host message (nil otherwise; an invalid URI is `MongoConnectionDraft.fieldError`'s).
+  func mongoHostError(for config: ConnectionConfig) -> String? {
+    guard enabled, config.databaseType == .mongodb,
+      let uri = config.mongoURI.flatMap({ try? MongoURIParser.parse($0) }),
+      uri.isSRV || uri.hosts.count != 1
+    else { return nil }
+    return MongoSession.sshSingleHostMessage
+  }
 
   /// Nil when SSH is off. The key's algorithm and fingerprint are display data only.
   var preparedConfig: SSHTunnelConfig? {

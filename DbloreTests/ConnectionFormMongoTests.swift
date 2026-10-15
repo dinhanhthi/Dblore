@@ -179,10 +179,6 @@ struct ConnectionFormMongoTests {
     #expect(MongoConnectionDraft.commitStyles(for: .postgresql) == CommitStyle.allCases)
   }
 
-  @Test func sshIsHiddenForMongoDB() {
-    #expect(!SSHFormDraft.supportsSSH(.mongodb))
-  }
-
   @Test func mongoDBOffersACustomCAButNoClientCertificate() {
     #expect(
       ConnectionFormContent.certificateFields(for: .mongodb, sslMode: .verifyFull) == .customCA)

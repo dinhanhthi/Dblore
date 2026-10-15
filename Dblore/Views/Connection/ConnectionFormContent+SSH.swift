@@ -82,6 +82,13 @@ extension ConnectionFormContent {
         .font(.caption)
         .foregroundColor(.warning)
     }
+
+    if let error = sshDraft.mongoHostError(for: connectionConfig) {
+      Text(error)
+        .font(.caption)
+        .foregroundColor(.destructive)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 
   /// A saved password is not shown; leaving the field empty keeps it.

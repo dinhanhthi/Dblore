@@ -77,11 +77,28 @@ nonisolated enum SSHTunnelError: Error, Equatable, LocalizedError {
   }
 }
 
-/// What a PostgreSQL session needs from a tunnel. `SSHTunnel` in production; tests use fakes.
+/// What a database session needs from a tunnel. `SSHTunnel` in production; tests use fakes.
 nonisolated protocol SSHTunneling: Sendable {
-  func openDirectTCPIP(targetHost: String, targetPort: Int) async throws -> any Channel
+  /// Opens a channel to `targetHost:targetPort` as seen from the SSH server. With `autoRead`
+  /// off, what the target sends first stays buffered in the channel until its first `read()`.
+  func openDirectTCPIP(
+    targetHost: String, targetPort: Int, autoRead: Bool
+  ) async throws
+    -> any Channel
+  /// Calls `callback` once the SSH connection is gone (closed or lost); at once if it already is.
+  func whenClosed(_ callback: @escaping @Sendable () -> Void)
   /// Idempotent. Closes every channel opened through the tunnel, then its owned event loop.
   func close() async
+}
+
+// `nonisolated`: in this target a bare extension is main-actor isolated, so every channel open
+// would wait for the main actor inside the session's connect timeout.
+nonisolated extension SSHTunneling {
+  /// An auto-reading channel: for clients that speak first or install their handlers on the
+  /// channel's event loop before data can arrive.
+  func openDirectTCPIP(targetHost: String, targetPort: Int) async throws -> any Channel {
+    try await openDirectTCPIP(targetHost: targetHost, targetPort: targetPort, autoRead: true)
+  }
 }
 
 nonisolated final class SSHTunnel: SSHTunneling, @unchecked Sendable {
@@ -192,8 +209,12 @@ nonisolated final class SSHTunnel: SSHTunneling, @unchecked Sendable {
   }
 
   /// Opens a direct-tcpip channel to `targetHost:targetPort` as seen from the SSH server.
-  /// The returned channel reads and writes `ByteBuffer`.
-  func openDirectTCPIP(targetHost: String, targetPort: Int) async throws -> any Channel {
+  /// The returned channel reads and writes `ByteBuffer`. `autoRead` is set in the child
+  /// initializer (after swift-nio-ssh copied the parent's, before activation), so a paused
+  /// channel keeps a server greeting until its first `read()`.
+  func openDirectTCPIP(
+    targetHost: String, targetPort: Int, autoRead: Bool
+  ) async throws -> any Channel {
     // After close() the owned event loop may be shut down; a task submitted to it never runs.
     // Counting the open under the same lock keeps the loop alive until it is registered.
     let started = lock.withLock {
@@ -217,6 +238,12 @@ nonisolated final class SSHTunnel: SSHTunneling, @unchecked Sendable {
             child.eventLoop.makeCompletedFuture {
               // EOF must reach the adapter; see SSHChannelDataAdapter.
               try child.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+              if !autoRead {
+                guard let options = child.syncOptions else {
+                  throw ChannelError.operationUnsupported
+                }
+                try options.setOption(ChannelOptions.autoRead, value: false)
+              }
               try child.pipeline.syncOperations.addHandler(SSHChannelDataAdapter())
             }
           }
@@ -269,6 +296,15 @@ nonisolated final class SSHTunnel: SSHTunneling, @unchecked Sendable {
       }
       if idle { continuation.resume() }
     }
+  }
+
+  func whenClosed(_ callback: @escaping @Sendable () -> Void) {
+    // After close() the owned loop may be shut down, and it would drop the callback.
+    if isClosed {
+      callback()
+      return
+    }
+    parentChannel.closeFuture.whenComplete { _ in callback() }
   }
 
   /// Closes the SSH connection, waits for its child channels to close, then shuts down the

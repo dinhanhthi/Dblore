@@ -1,5 +1,6 @@
 // ExplainFixtures.swift
-// Raw EXPLAIN (FORMAT JSON) text captured from PostgreSQL 16.
+// Raw EXPLAIN (FORMAT JSON) text captured from PostgreSQL 16, and EXPLAIN FORMAT=JSON text
+// captured from MySQL 8.4.
 
 import Foundation
 
@@ -306,5 +307,251 @@ enum ExplainFixtures {
         }
       }
     ]
+    """#
+
+  // MARK: - MySQL 8.4 EXPLAIN FORMAT=JSON
+
+  /// Inner join: `o` scanned, `c` read by PRIMARY (eq_ref).
+  static let mysqlJoin = #"""
+    {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "1.20"
+        },
+        "nested_loop": [
+          {
+            "table": {
+              "table_name": "o",
+              "access_type": "ALL",
+              "possible_keys": [
+                "idx_customer"
+              ],
+              "rows_examined_per_scan": 6,
+              "rows_produced_per_join": 1,
+              "filtered": "16.67",
+              "cost_info": {
+                "read_cost": "0.75",
+                "eval_cost": "0.10",
+                "prefix_cost": "0.85",
+                "data_read_per_join": "56"
+              },
+              "used_columns": [
+                "customer_id",
+                "total",
+                "status"
+              ],
+              "attached_condition": "((`dblore_test`.`o`.`status` = 'open') and (`dblore_test`.`o`.`customer_id` is not null))"
+            }
+          },
+          {
+            "table": {
+              "table_name": "c",
+              "access_type": "eq_ref",
+              "possible_keys": [
+                "PRIMARY"
+              ],
+              "key": "PRIMARY",
+              "used_key_parts": [
+                "id"
+              ],
+              "key_length": "4",
+              "ref": [
+                "dblore_test.o.customer_id"
+              ],
+              "rows_examined_per_scan": 1,
+              "rows_produced_per_join": 1,
+              "filtered": "100.00",
+              "cost_info": {
+                "read_cost": "0.25",
+                "eval_cost": "0.10",
+                "prefix_cost": "1.20",
+                "data_read_per_join": "288"
+              },
+              "used_columns": [
+                "id",
+                "name"
+              ]
+            }
+          }
+        ]
+      }
+    }
+    """#
+  /// ORDER BY on an unindexed column: filesort over a full scan.
+  static let mysqlOrderBy = #"""
+    {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "6.85"
+        },
+        "ordering_operation": {
+          "using_filesort": true,
+          "cost_info": {
+            "sort_cost": "6.00"
+          },
+          "table": {
+            "table_name": "dblore_explain_orders",
+            "access_type": "ALL",
+            "rows_examined_per_scan": 6,
+            "rows_produced_per_join": 6,
+            "filtered": "100.00",
+            "cost_info": {
+              "read_cost": "0.25",
+              "eval_cost": "0.60",
+              "prefix_cost": "0.85",
+              "data_read_per_join": "336"
+            },
+            "used_columns": [
+              "id",
+              "customer_id",
+              "total",
+              "status"
+            ]
+          }
+        }
+      }
+    }
+    """#
+  /// GROUP BY on an indexed column: full index scan.
+  static let mysqlGroupBy = #"""
+    {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "0.85"
+        },
+        "grouping_operation": {
+          "using_filesort": false,
+          "table": {
+            "table_name": "dblore_explain_orders",
+            "access_type": "index",
+            "possible_keys": [
+              "idx_customer"
+            ],
+            "key": "idx_customer",
+            "used_key_parts": [
+              "customer_id"
+            ],
+            "key_length": "5",
+            "rows_examined_per_scan": 6,
+            "rows_produced_per_join": 6,
+            "filtered": "100.00",
+            "cost_info": {
+              "read_cost": "0.25",
+              "eval_cost": "0.60",
+              "prefix_cost": "0.85",
+              "data_read_per_join": "336"
+            },
+            "used_columns": [
+              "id",
+              "customer_id",
+              "total"
+            ]
+          }
+        }
+      }
+    }
+    """#
+  /// DISTINCT through a temporary table.
+  static let mysqlDistinct = #"""
+    {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "0.85"
+        },
+        "duplicates_removal": {
+          "using_temporary_table": true,
+          "using_filesort": false,
+          "table": {
+            "table_name": "dblore_explain_orders",
+            "access_type": "ALL",
+            "rows_examined_per_scan": 6,
+            "rows_produced_per_join": 6,
+            "filtered": "100.00",
+            "cost_info": {
+              "read_cost": "0.25",
+              "eval_cost": "0.60",
+              "prefix_cost": "0.85",
+              "data_read_per_join": "336"
+            },
+            "used_columns": [
+              "id",
+              "status"
+            ]
+          }
+        }
+      }
+    }
+    """#
+  /// Derived table `d` materialized from a grouped subquery.
+  static let mysqlDerived = #"""
+    {
+      "query_block": {
+        "select_id": 1,
+        "cost_info": {
+          "query_cost": "3.17"
+        },
+        "table": {
+          "table_name": "d",
+          "access_type": "ALL",
+          "rows_examined_per_scan": 6,
+          "rows_produced_per_join": 6,
+          "filtered": "100.00",
+          "cost_info": {
+            "read_cost": "2.58",
+            "eval_cost": "0.60",
+            "prefix_cost": "3.18",
+            "data_read_per_join": "192"
+          },
+          "used_columns": [
+            "customer_id",
+            "s"
+          ],
+          "materialized_from_subquery": {
+            "using_temporary_table": true,
+            "dependent": false,
+            "cacheable": true,
+            "query_block": {
+              "select_id": 2,
+              "cost_info": {
+                "query_cost": "0.85"
+              },
+              "grouping_operation": {
+                "using_filesort": false,
+                "table": {
+                  "table_name": "dblore_explain_orders",
+                  "access_type": "index",
+                  "possible_keys": [
+                    "idx_customer"
+                  ],
+                  "key": "idx_customer",
+                  "used_key_parts": [
+                    "customer_id"
+                  ],
+                  "key_length": "5",
+                  "rows_examined_per_scan": 6,
+                  "rows_produced_per_join": 6,
+                  "filtered": "100.00",
+                  "cost_info": {
+                    "read_cost": "0.25",
+                    "eval_cost": "0.60",
+                    "prefix_cost": "0.85",
+                    "data_read_per_join": "336"
+                  },
+                  "used_columns": [
+                    "id",
+                    "customer_id",
+                    "total"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     """#
 }

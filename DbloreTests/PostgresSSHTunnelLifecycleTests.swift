@@ -128,7 +128,8 @@ struct PostgresSSHTunnelSeamTests {
 
   @Test("A failure after the tunnel exists closes the tunnel (open and probe)")
   func channelOpenFailureClosesTunnel() async {
-    let config = Self.config("channel")
+    // The fake fails at once; the timeout only has to outlast task scheduling in a busy run.
+    let config = Self.config("channel", timeoutSeconds: 10)
     Self.save(.password("jump-pass"), for: config)
     for isProbe in [false, true] {
       let factory = FakeSSHTunnelFactory(openError: SSHTunnelError.channelOpenRejected)
@@ -145,6 +146,8 @@ struct PostgresSSHTunnelSeamTests {
       #expect(factory.tunnels.first?.openRequests.count == 1)
       #expect(factory.tunnels.first?.openRequests.first?.host == "db-channel.internal")
       #expect(factory.tunnels.first?.openRequests.first?.port == 5432)
+      // The open runs inside the connect timeout: a hop to a busy main actor would eat it.
+      #expect(factory.tunnels.first?.openedOnMainThread == [false])
     }
   }
 
@@ -489,6 +492,7 @@ private final class FakeSSHTunnel: SSHTunneling, @unchecked Sendable {
   private let lock = NSLock()
   private var closed = false
   private var opens: [(host: String, port: Int)] = []
+  private var onMainThread: [Bool] = []
   private let openError: (any Error)?
 
   init(openError: (any Error)?) {
@@ -497,11 +501,22 @@ private final class FakeSSHTunnel: SSHTunneling, @unchecked Sendable {
 
   var isClosed: Bool { lock.withLock { closed } }
   var openRequests: [(host: String, port: Int)] { lock.withLock { opens } }
+  /// Per open: whether it ran on the main thread (it inherits its caller's executor).
+  var openedOnMainThread: [Bool] { lock.withLock { onMainThread } }
 
-  func openDirectTCPIP(targetHost: String, targetPort: Int) async throws -> any Channel {
-    lock.withLock { opens.append((targetHost, targetPort)) }
+  func openDirectTCPIP(
+    targetHost: String, targetPort: Int, autoRead: Bool
+  ) async throws -> any Channel {
+    let isMain = pthread_main_np() != 0
+    lock.withLock {
+      opens.append((targetHost, targetPort))
+      onMainThread.append(isMain)
+    }
     throw openError ?? SSHTunnelError.closedBeforeReady
   }
+
+  /// No forwarder runs over this fake.
+  func whenClosed(_ callback: @escaping @Sendable () -> Void) {}
 
   func close() async {
     lock.withLock { closed = true }
