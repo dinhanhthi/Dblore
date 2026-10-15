@@ -2,6 +2,16 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.7.2 (2026-10-15)
+
+### Added
+
+- **Markdown File as the new tab default.** The "New Tab" default in Settings > General can now be "Markdown File", so `Cmd+T` opens a new Markdown file. [#2bd558bc](https://github.com/dinhanhthi/Dblore/commit/2bd558bc)
+
+### Improved
+
+- **Hairline borders.** Panels, modals, popups and the right sidebar use thinner, more consistent borders, and the details header picker and tab bar spacing are tidier. [#66e82982](https://github.com/dinhanhthi/Dblore/commit/66e82982)
+
 ## v0.7.1 (2026-10-14)
 
 ### Added
