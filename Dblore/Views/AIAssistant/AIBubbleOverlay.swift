@@ -205,11 +205,22 @@ struct AIBubbleOverlay: View {
       .interpolation(.high)
       .scaleEffect(assistant.isBubbleExpanded ? 0.9 : 1)
       .frame(width: AIBubbleLayout.circleDiameter, height: AIBubbleLayout.circleDiameter)
-      .background(Color.aiBubbleBackground)
+      .background {
+        ZStack {
+          Color.aiBubbleBackground
+          // Expanded: bright accent gradient on white, light enough to keep the logo readable
+          LinearGradient(
+            colors: [Color.white, Color.accent.opacity(0.35)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+          )
+          .background(Color.white)
+          .opacity(assistant.isBubbleExpanded ? 1 : 0)
+        }
+      }
       .clipShape(Circle())
       .overlay(
         Circle()
-          .stroke(Color.accent, lineWidth: 2)
+          .strokeBorder(Color.accent.opacity(0.4), lineWidth: 1)
           .opacity(assistant.isBubbleExpanded ? 1 : 0)
       )
       .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
