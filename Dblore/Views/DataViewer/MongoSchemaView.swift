@@ -27,7 +27,8 @@ struct MongoSchemaView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.sm) {
+      // Top aligned: the button stays level with the first line as the field grows
+      HStack(alignment: .top, spacing: Spacing.sm) {
         MongoQueryField(
           text: $model.schemaFilter,
           placeholder: #"Optional filter, e.g. {status: "active"}"#,
@@ -39,10 +40,12 @@ struct MongoSchemaView: View {
           Button("Cancel", action: model.cancelSchemaAnalysis)
             .buttonStyle(SecondaryButtonStyle())
             .help("Stop the analysis")
+            .frame(height: MongoQueryField.styledLineHeight)
         } else {
           Button("Analyze", action: model.analyzeSchema)
             .buttonStyle(PrimaryButtonStyle())
             .help("Read a document sample and list its fields")
+            .frame(height: MongoQueryField.styledLineHeight)
         }
       }
       Text(status)

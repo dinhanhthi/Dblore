@@ -29,10 +29,12 @@ struct MongoFilterBar: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
-      HStack(spacing: Spacing.sm) {
+      // Top aligned: the icon and buttons stay level with the first line as the field grows
+      HStack(alignment: .top, spacing: Spacing.sm) {
         Image(systemName: "line.3.horizontal.decrease")
           .font(.system(size: 11))
           .foregroundColor(appliedFilter.isEmpty ? .foregroundMuted : .accent)
+          .frame(height: MongoQueryField.styledLineHeight)
         MongoQueryField(
           text: $draft,
           placeholder: #"Filter, e.g. {status: "active"}"#,
@@ -47,10 +49,12 @@ struct MongoFilterBar: View {
           .buttonStyle(SecondaryButtonStyle())
           .disabled(viewModel.isEditorQueryRunning)
           .help("Run the filter on the server")
+          .frame(height: MongoQueryField.styledLineHeight)
         Button("Clear", action: clear)
           .buttonStyle(GhostButtonStyle())
           .disabled(viewModel.isEditorQueryRunning || (draft.isEmpty && appliedFilter.isEmpty))
           .help("Show every document")
+          .frame(height: MongoQueryField.styledLineHeight)
       }
       if let error {
         Text(error.localizedDescription)

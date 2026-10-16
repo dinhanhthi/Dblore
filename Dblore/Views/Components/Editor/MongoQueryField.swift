@@ -35,6 +35,11 @@ struct MongoQueryField: View {
     return CGFloat(min(max(lines, 1), maxLines)) * lineHeight
   }
 
+  /// Height of a one-line field inside `.inputStyle()` (its `Spacing.sm` padding on both sides).
+  /// Controls beside the field sit centered in this height in a top-aligned row: centered next
+  /// to one line, level with the first line once the field grows.
+  static let styledLineHeight = lineHeight + 2 * Spacing.sm
+
   var body: some View {
     MongoQueryFieldRepresentable(
       text: $text, autocompleteProvider: autocompleteProvider, onSubmit: onSubmit
