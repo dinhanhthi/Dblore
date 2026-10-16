@@ -100,11 +100,12 @@ nonisolated struct DocumentTreeModel: Sendable {
   private var collapsed: Set<DocumentTreeNodeID> = []
   /// Children shown per expanded container, when more than the first page.
   private var shownCounts: [DocumentTreeNodeID: Int] = [:]
-  /// The rows to draw: every document, and the shown children of expanded containers. Rebuilt
-  /// when the expanded or paged state changes, so a view reads it for free.
-  private(set) var visibleNodes: [DocumentTreeNode] = []
-  /// `visibleNodes` grouped per document, built with them.
+  /// The rows to draw, one card per document: the document and the shown children of its
+  /// expanded containers. A change of expanded or paged state rebuilds only its own card, so a
+  /// view reads them for free.
   private(set) var cards: [DocumentTreeCard] = []
+  /// Every card's rows, in order.
+  var visibleNodes: [DocumentTreeNode] { cards.flatMap(\.nodes) }
 
   /// `previous` (the model of an earlier result of the same view) hands over its expanded,
   /// collapsed and paged state by position; positions that no longer exist are ignored.
@@ -118,7 +119,7 @@ nonisolated struct DocumentTreeModel: Sendable {
       collapsed = previous.collapsed
       shownCounts = previous.shownCounts
     }
-    rebuildVisibleNodes()
+    rebuildCards()
   }
 
   // MARK: - Rebuild
@@ -178,14 +179,16 @@ nonisolated struct DocumentTreeModel: Sendable {
     } else if expanded.remove(id) == nil {
       expanded.insert(id)
     }
-    rebuildVisibleNodes()
+    rebuildCard(id.document)
   }
 
   /// Replaces the staged inserts shown after the stored documents; the stored documents are not
   /// rebuilt.
   mutating func setStagedInserts(_ inserts: [MongoValue]) {
     documents = Array(documents.prefix(storedCount)) + inserts
-    rebuildVisibleNodes()
+    cards =
+      Array(cards.prefix(storedCount))
+      + inserts.indices.map { card(at: storedCount + $0) }
   }
 
   /// Whether the document at `document` is a staged insert.
@@ -198,7 +201,7 @@ nonisolated struct DocumentTreeModel: Sendable {
     let parent = DocumentTreeNodeID(document: id.document, indexes: id.indexes)
     guard let count = value(at: parent).map(Self.childCount) else { return }
     shownCounts[parent] = min(shownCount(parent) + Self.pageSize, count)
-    rebuildVisibleNodes()
+    rebuildCard(parent.document)
   }
 
   private func shownCount(_ id: DocumentTreeNodeID) -> Int {
@@ -209,22 +212,23 @@ nonisolated struct DocumentTreeModel: Sendable {
     id.indexes.isEmpty ? !collapsed.contains(id) : expanded.contains(id)
   }
 
-  private mutating func rebuildVisibleNodes() {
+  private mutating func rebuildCards() {
+    cards = documents.indices.map(card(at:))
+  }
+
+  private mutating func rebuildCard(_ position: Int) {
+    guard cards.indices.contains(position) else { return }
+    cards[position] = card(at: position)
+  }
+
+  private func card(at position: Int) -> DocumentTreeCard {
     var nodes: [DocumentTreeNode] = []
-    var cards: [DocumentTreeCard] = []
-    cards.reserveCapacity(documents.count)
-    for (position, document) in documents.enumerated() {
-      var cardNodes: [DocumentTreeNode] = []
-      let id = DocumentTreeNodeID(document: position, indexes: [])
-      let key = Self.documentKey(document, position: position)
-      append(document, id: id, key: key, path: "", keys: [], into: &cardNodes)
-      nodes += cardNodes
-      cards.append(
-        DocumentTreeCard(
-          document: position, nodes: cardNodes, isStaged: isStaged(document: position)))
-    }
-    visibleNodes = nodes
-    self.cards = cards
+    let document = documents[position]
+    let id = DocumentTreeNodeID(document: position, indexes: [])
+    let key = Self.documentKey(document, position: position)
+    append(document, id: id, key: key, path: "", keys: [], into: &nodes)
+    return DocumentTreeCard(
+      document: position, nodes: nodes, isStaged: isStaged(document: position))
   }
 
   private func append(

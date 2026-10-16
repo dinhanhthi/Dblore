@@ -208,9 +208,9 @@ struct DocumentTreeView: View {
 
   // MARK: - Edit
 
-  /// What a double-click on `node` does; nil when it does nothing (no gesture is attached, so a
-  /// single click is not delayed). A staged card opens its editor sheet from any line; a stored
-  /// line edits a scalar inline, or opens the sheet for any other value.
+  /// What a double-click on `node` does; nil when it does nothing. A staged card opens its
+  /// editor sheet from any line; a stored line edits a scalar inline, or opens the sheet for any
+  /// other value.
   private func doubleClickAction(
     _ node: DocumentTreeNode, card: DocumentTreeCard
   ) -> (() -> Void)? {
@@ -319,16 +319,26 @@ private enum DocumentLine {
 }
 
 extension View {
-  /// A double-click (when given) and a single click. The double-click gesture is attached first
-  /// so the single click waits for it to fail: a double-click on a container does not toggle it.
-  @ViewBuilder
+  /// A single click and a double-click (when given), told apart by the event's click count, so a
+  /// click acts at once instead of waiting out the double-click interval. The second click of a
+  /// double-click runs `onClick` again, undoing the first one's toggle (a double-clicked card or
+  /// container keeps its state), then `onDoubleClick`.
   fileprivate func documentClicks(
     onDoubleClick: (() -> Void)?, onClick: @escaping () -> Void
   ) -> some View {
-    if let onDoubleClick {
-      onTapGesture(count: 2, perform: onDoubleClick).onTapGesture(perform: onClick)
-    } else {
-      onTapGesture(perform: onClick)
+    onTapGesture {
+      // `clickCount` exists on mouse events only
+      let event = NSApp.currentEvent
+      let isMouse = event?.type == .leftMouseUp || event?.type == .leftMouseDown
+      switch isMouse ? event?.clickCount ?? 1 : 1 {
+      case 1:
+        onClick()
+      case 2:
+        onClick()
+        onDoubleClick?()
+      default:
+        break
+      }
     }
   }
 }
