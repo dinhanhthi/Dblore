@@ -560,15 +560,15 @@ struct RecentWorkspaceRow: View {
         } else {
           // Plain folder; the connection engine badges its bottom-right corner through a cutout
           Image(systemName: "folder")
-            .font(.system(size: 13))
-            .foregroundColor(.accent)
+            .font(.system(size: 14))
+            .foregroundColor(.foreground)
             .mask {
               Rectangle()
                 .overlay(alignment: .bottomTrailing) {
                   if workspace.databaseType != nil {
                     Circle()
-                      .frame(width: 12, height: 12)
-                      .offset(x: 3, y: 3)
+                      .frame(width: 14, height: 14)
+                      .offset(x: 4, y: 4)
                       .blendMode(.destinationOut)
                   }
                 }
@@ -579,9 +579,9 @@ struct RecentWorkspaceRow: View {
                 Image(type.iconAssetName)
                   .resizable()
                   .aspectRatio(contentMode: .fit)
-                  .frame(width: 10, height: 10)
+                  .frame(width: 12, height: 12)
                   .foregroundColor(type.brandColor)
-                  .offset(x: 2, y: 2)
+                  .offset(x: 3, y: 3)
               }
             }
         }
