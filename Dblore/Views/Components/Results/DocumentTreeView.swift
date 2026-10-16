@@ -382,6 +382,7 @@ private struct DocumentCardHeader: View {
         .foregroundColor(.gridForeground)
         .strikethrough(isDeleted)
         .lineLimit(1)
+        .truncationMode(.tail)
         .layoutPriority(1)
       Text(node.preview)
         .font(DocumentLine.font)
@@ -389,8 +390,10 @@ private struct DocumentCardHeader: View {
         .lineLimit(1)
       if isStaged { newMarker }
       Spacer(minLength: Spacing.sm)
+      // The badge stays rightmost; the hover toolbar takes room from the `_id` text, which
+      // truncates
+      if isHovered { toolbar }
       DocumentLine.badge(node.typeName)
-      toolbar
     }
     .padding(.horizontal, Spacing.sm)
     .frame(height: ResultGridView.rowHeight)
@@ -418,7 +421,7 @@ private struct DocumentCardHeader: View {
       .fixedSize()
   }
 
-  /// Icon buttons shown while the header is hovered; kept in the layout so nothing moves.
+  /// Icon buttons shown while the header is hovered, left of the type badge
   private var toolbar: some View {
     HStack(spacing: Spacing.xxs) {
       ForEach(actions) { action in
@@ -431,8 +434,7 @@ private struct DocumentCardHeader: View {
         .accessibilityLabel(action.title)
       }
     }
-    .opacity(isHovered ? 1 : 0)
-    .allowsHitTesting(isHovered)
+    .fixedSize()
   }
 }
 
