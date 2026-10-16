@@ -40,7 +40,7 @@ enum MongoshAutocompleteProvider {
     "updateMany", "replaceOne", "deleteOne", "deleteMany",
   ]
   static let databaseMethods = ["getCollection", "getCollectionNames"]
-  static let chainMethods = ["sort", "limit", "skip"]
+  static let chainMethods = ["sort", "limit", "skip", "collation", "hint", "maxTimeMS"]
   static let queryOperators = [
     "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$exists", "$type", "$regex",
     "$and", "$or", "$nor", "$not", "$elemMatch", "$size", "$all", "$expr",

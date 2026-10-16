@@ -14,12 +14,12 @@ nonisolated enum MongoCommandRewriter {
   static func withLimit(_ command: MongoCommand, maxRows: Int) -> MongoCommand {
     let cap = maxRows == .max ? maxRows : max(maxRows, 0) + 1
     switch command {
-    case .find(let name, let filter, let projection, let sort, let skip, let limit):
+    case .find(let name, let filter, let projection, let sort, let skip, let limit, let options):
       let magnitude = limit?.magnitude ?? 0
       let capped = magnitude == 0 ? cap : Int(min(magnitude, UInt(cap)))
       return .find(
         collection: name, filter: filter, projection: projection, sort: sort, skip: skip,
-        limit: capped)
+        limit: capped, options: options)
     case .aggregate(let name, let pipeline):
       if let last = pipeline.last,
         MongoCommandClassifier.hasStage(last, "$out")

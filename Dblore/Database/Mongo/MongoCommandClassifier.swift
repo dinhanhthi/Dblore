@@ -62,8 +62,8 @@ nonisolated enum MongoCommandClassifier {
 
   /// `text` would run JavaScript on the server: a `serverSideJavaScriptKeys` key (exact case,
   /// as the server matches operators) at any depth of any document argument (filter,
-  /// projection, sort, pipeline, update, document). Text that does not parse as one command
-  /// counts as JavaScript (fail closed; the classifier calls it unknown anyway).
+  /// projection, sort, find collation and hint, count options, pipeline, update, document). Text
+  /// that does not parse as one command counts as JavaScript (fail closed; the classifier calls it unknown anyway).
   static func usesServerSideJavaScript(_ text: String) -> Bool {
     guard let command = try? MongoshParser.parse(text) else { return true }
     return arguments(of: command).contains { value in
@@ -74,10 +74,11 @@ nonisolated enum MongoCommandClassifier {
   /// Every document or array argument of `command`.
   private static func arguments(of command: MongoCommand) -> [MongoValue] {
     switch command {
-    case .find(_, let filter, let projection, let sort, _, _):
-      [filter, projection, sort].compactMap { $0 }
+    case .find(_, let filter, let projection, let sort, _, _, let options):
+      [filter, projection, sort, options.collation, options.hint].compactMap { $0 }
     case .aggregate(_, let pipeline): [.array(pipeline)]
-    case .countDocuments(_, let filter), .distinct(_, _, let filter): filter.map { [$0] } ?? []
+    case .countDocuments(_, let filter, let options): [filter, options].compactMap { $0 }
+    case .distinct(_, _, let filter): filter.map { [$0] } ?? []
     case .insertOne(_, let document): [document]
     case .insertMany(_, let documents): [.array(documents)]
     case .updateOne(_, let filter, let update, _), .updateMany(_, let filter, let update, _),

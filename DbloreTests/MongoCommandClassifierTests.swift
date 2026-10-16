@@ -135,6 +135,15 @@ struct MongoCommandClassifierTests {
     #expect(MongoCommandClassifier.hasStage(.string("$out"), "$out") == false)
   }
 
+  /// The full table is `MCPMongoToolTests.javaScriptRefused`.
+  @Test("Server-side JavaScript in a countDocuments options document is found as in a filter")
+  func javaScriptInCountOptions() {
+    #expect(MongoCommandClassifier.usesServerSideJavaScript("db.c.countDocuments({$where: \"1\"})"))
+    #expect(
+      MongoCommandClassifier.usesServerSideJavaScript(
+        "db.c.countDocuments({}, {hint: {$where: \"1\"}})"))
+  }
+
   // MARK: - Fail closed
 
   @Test("Text that does not parse as one command is unknown")

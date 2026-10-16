@@ -7,8 +7,9 @@ import Foundation
 /// The mongosh subset:
 /// - `show collections`, `db.getCollectionNames()`
 /// - `db.<name>`, `db.getCollection("<name>")` or `db["<name>"]`, then one method:
-///   `find(filter?, projection?)` with `.sort(doc)`, `.skip(n)`, `.limit(n)` in any order (each
-///   at most once), `aggregate([stages])`, `countDocuments(filter?)`,
+///   `find(filter?, projection?)` with `.sort(doc)`, `.skip(n)`, `.limit(n)`, `.collation(doc)`,
+///   `.hint(name or doc)`, `.maxTimeMS(n)` in any order (each at most once), `aggregate([stages])`,
+///   `countDocuments(filter?, {skip, limit, collation, hint, maxTimeMS}?)`,
 ///   `distinct("field", filter?)`, `insertOne(doc)`, `insertMany([docs])`,
 ///   `updateOne`/`updateMany(filter, update, {upsert}?)`, `replaceOne(filter, replacement,
 ///   {upsert}?)`, `deleteOne`/`deleteMany(filter)`.
@@ -157,9 +158,10 @@ nonisolated extension MongoshParser {
       case "find": return try parseFind(on: collection, call)
       case "aggregate": command = try aggregate(on: collection, call)
       case "countDocuments":
-        try call.allowPositional(1)
+        try call.allowPositional(2)
         let filter = try optionalDocument(call[0], "filter")
-        command = .countDocuments(collection: collection, filter: filter)
+        let options = try countOptions(call[1])
+        command = .countDocuments(collection: collection, filter: filter, options: options)
       case "distinct": command = try distinct(on: collection, call)
       case "insertOne": command = try insertOne(on: collection, call)
       case "insertMany": command = try insertMany(on: collection, call)
@@ -190,12 +192,13 @@ nonisolated extension MongoshParser {
       var sort: MongoValue?
       var skip: Int?
       var limit: Int?
+      var options = MongoCommand.CursorOptions.none
       var seen: Set<String> = []
       while true {
         try skipTrivia()
         guard take(".") else { break }
         let (name, nameStart) = try methodName()
-        guard ["sort", "skip", "limit"].contains(name) else {
+        guard ["sort", "skip", "limit", "collation", "hint", "maxTimeMS"].contains(name) else {
           throw failure(unsupported(name), at: nameStart)
         }
         guard peek() == UInt8(ascii: "(") else {
@@ -212,12 +215,28 @@ nonisolated extension MongoshParser {
           }
           sort = try optionalDocument(chained[0], "sort")
         case "skip": skip = try integer(chained)
-        default: limit = try integer(chained)
+        case "limit": limit = try integer(chained)
+        case "collation":
+          guard chained.arguments.count == 1 else {
+            throw failure("collation needs one document", at: nameStart)
+          }
+          options.collation = try requiredDocument(chained[0], "collation")
+        case "hint":
+          guard chained.arguments.count == 1 else {
+            throw failure("hint needs an index name or a key document", at: nameStart)
+          }
+          options.hint = try hint(chained.arguments[0])
+        default:
+          let value = try integer(chained)
+          guard value >= 0 else {
+            throw failure("maxTimeMS needs a non-negative integer", at: chained.arguments[0].offset)
+          }
+          options.maxTimeMS = value
         }
       }
       return .find(
         collection: collection, filter: filter, projection: projection, sort: sort, skip: skip,
-        limit: limit)
+        limit: limit, options: options)
     }
 
     /// Any `.method(` after a command other than find is outside the subset.
@@ -390,6 +409,45 @@ nonisolated extension MongoshParser {
       case .int64(let value): return Int(value)
       default: throw failure("\(call.method) needs an integer", at: argument.offset)
       }
+    }
+
+    /// An index name string or a key pattern document.
+    private func hint(_ argument: Argument) throws(ParseError) -> MongoValue {
+      switch argument.value {
+      case .string, .document: return argument.value
+      default: throw failure("hint needs an index name or a key document", at: argument.offset)
+      }
+    }
+
+    /// The `countDocuments` options document as written, nil when missing or empty. Only skip,
+    /// limit, collation, hint and maxTimeMS, each at most once; any other key is refused.
+    private func countOptions(_ argument: Argument?) throws(ParseError) -> MongoValue? {
+      guard let options = try optionalDocument(argument, "options"), let argument,
+        case .document(let fields) = options
+      else { return nil }
+      var seen: Set<String> = []
+      for field in fields {
+        guard seen.insert(field.key).inserted else {
+          throw failure("The option \(field.key) can only be used once", at: argument.offset)
+        }
+        switch field.key {
+        case "skip", "limit", "maxTimeMS":
+          switch field.value {
+          case .int32(let value) where value >= 0: break
+          case .int64(let value) where value >= 0: break
+          default:
+            throw failure("\(field.key) needs a non-negative integer", at: argument.offset)
+          }
+        case "collation":
+          guard case .document = field.value else {
+            throw failure("The collation must be a document", at: argument.offset)
+          }
+        case "hint": _ = try hint((field.value, argument.offset))
+        default:
+          throw failure(unsupported("The option \(field.key)"), at: argument.offset)
+        }
+      }
+      return options
     }
 
     /// The `{upsert: bool}` options of an update or replace (third argument), false if absent.

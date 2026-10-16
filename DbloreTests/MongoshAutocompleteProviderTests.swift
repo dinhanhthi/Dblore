@@ -51,7 +51,7 @@ struct MongoshAutocompleteProviderTests {
         let text = try #require(completedText(context, tables: tables), "\(context)")
         #expect(MongoshSplitter.split(text) == [text], "\(text)")
         let command = try MongoshParser.parse(text)
-        guard case .find(let collection, _, _, _, _, _) = command else {
+        guard case .find(let collection, _, _, _, _, _, _) = command else {
           Issue.record("not a single find: \(text)")
           continue
         }
@@ -100,8 +100,12 @@ struct MongoshAutocompleteProviderTests {
 
   @Test("After find(...) the unused chain methods are offered")
   func chainAfterFind() {
-    #expect(suggest("db.users.find({}).|") == [".limit", ".skip", ".sort"])
-    #expect(suggest("db.users.find().sort({a: 1})\n  .limit(1).|") == [".skip"])
+    #expect(
+      suggest("db.users.find({}).|")
+        == [".collation", ".hint", ".limit", ".maxTimeMS", ".skip", ".sort"])
+    #expect(
+      suggest("db.users.find().sort({a: 1})\n  .limit(1).hint(\"a_1\").|")
+        == [".collation", ".maxTimeMS", ".skip"])
     #expect(suggest("db.users.find()\n.L|") == [".limit"])
     #expect(suggest("db.users.countDocuments().|").isEmpty)
   }

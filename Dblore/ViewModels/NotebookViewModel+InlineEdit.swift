@@ -104,7 +104,7 @@ extension NotebookViewModel {
     for query: String, result: QueryResult, config: ConnectionConfig, epoch: UInt64
   ) -> EditTarget? {
     guard MongoshSplitter.split(query).count == 1,
-      case .find(let collection, _, let projection, _, _, _)? = try? MongoshParser.parse(query),
+      case .find(let collection, _, let projection, _, _, _, _)? = try? MongoshParser.parse(query),
       !databaseViews.contains(where: { $0.name == collection }),
       Self.keepsPlainID(projection), Self.projectsStoredFields(projection),
       let idColumn = result.columns.first(where: { $0.name == "_id" }), idColumn.type != "mixed"

@@ -38,11 +38,12 @@ struct MongoshParserTests {
 
   private func find(
     _ collection: String, filter: MongoValue? = nil, projection: MongoValue? = nil,
-    sort: MongoValue? = nil, skip: Int? = nil, limit: Int? = nil
+    sort: MongoValue? = nil, skip: Int? = nil, limit: Int? = nil,
+    options: MongoCommand.CursorOptions = .none
   ) -> MongoCommand {
     .find(
       collection: collection, filter: filter, projection: projection, sort: sort, skip: skip,
-      limit: limit)
+      limit: limit, options: options)
   }
 
   // MARK: - Access forms and methods
@@ -222,8 +223,8 @@ struct MongoshParserTests {
         "aggregate options are not supported in the Dblore MongoDB subset", "{allow"
       ),
       (
-        "db.c.countDocuments({}, {limit: 1})",
-        "countDocuments options are not supported in the Dblore MongoDB subset", "{limit"
+        "db.c.countDocuments({}, {limit: 1, batchSize: 2})",
+        "The option batchSize is not supported in the Dblore MongoDB subset", "{limit"
       ),
       ("db.c.updateOne({}, {a: 1})", update, "{a"),
       ("db.c.updateOne({}, {})", update, "{})"),
@@ -301,6 +302,14 @@ struct MongoshParserTests {
           skip: 5, limit: 10),
         "db.users.find({ a: 1 }, { b: 1 }).sort({ a: -1 }).skip(5).limit(10)"
       ),
+      (
+        find(
+          "c", filter: a1, sort: doc(("a", .int32(-1))), skip: 5, limit: 10,
+          options: .init(
+            collation: doc(("locale", .string("fr"))), hint: .string("a_1"), maxTimeMS: 500)),
+        "db.c.find({ a: 1 }).sort({ a: -1 }).skip(5).limit(10).collation({ locale: \"fr\" })"
+          + ".hint(\"a_1\").maxTimeMS(500)"
+      ),
       (find("users"), "db.users.find()"),
       (find("Orders2", skip: 0, limit: 0), "db.Orders2.find().skip(0).limit(0)"),
       (find("c", limit: -5), "db.c.find().limit(-5)"),
@@ -312,6 +321,16 @@ struct MongoshParserTests {
       (
         .countDocuments(collection: "stats", filter: nil),
         "db.getCollection(\"stats\").countDocuments()"
+      ),
+      (
+        .countDocuments(
+          collection: "c", filter: nil,
+          options: doc(
+            ("skip", .int32(5)), ("limit", .int32(10)),
+            ("collation", doc(("locale", .string("fr")))),
+            ("hint", a1), ("maxTimeMS", .int32(500)))),
+        "db.c.countDocuments({}, { skip: 5, limit: 10, collation: { locale: \"fr\" }, hint: { a: 1 },"
+          + " maxTimeMS: 500 })"
       ),
       (
         .distinct(collection: "my-coll", field: "x", filter: a1),

@@ -431,6 +431,42 @@ struct MongoSessionTests {
         == nil)
   }
 
+  @Test("find and count options: collation and hint on the command, never a second maxTimeMS")
+  func readOptionsDocuments() throws {
+    let collation = Self.reply(("locale", .string("fr")))
+    let find = MongoSession.readCommand(
+      .find(
+        collection: "c", filter: nil, projection: nil, sort: nil, skip: nil, limit: 3,
+        options: .init(collation: collation, hint: .string("a_1"), maxTimeMS: 500)))
+    // execute appends maxTimeMS to every command: a second one is a duplicate key.
+    #expect(find.map(\.key) == ["find", "limit", "collation", "hint"])
+    #expect(find.first { $0.key == "collation" }?.value == collation)
+    #expect(find.first { $0.key == "hint" }?.value == .string("a_1"))
+
+    func stages(_ fields: [MongoValue.Field]) -> [String] {
+      guard case .array(let pipeline)? = fields.first(where: { $0.key == "pipeline" })?.value
+      else { return [] }
+      return pipeline.compactMap { stage in
+        guard case .document(let fields) = stage else { return nil }
+        return fields.first?.key
+      }
+    }
+    let filter = Self.reply(("a", .int32(1)))
+    let count = MongoSession.countCommand(
+      collection: "c", filter: filter,
+      options: Self.reply(
+        ("skip", .int32(3)), ("limit", .int64(10)), ("collation", collation),
+        ("hint", .string("a_1")), ("maxTimeMS", .int32(500))))
+    #expect(stages(count) == ["$match", "$skip", "$limit", "$group"])
+    #expect(count.map(\.key) == ["aggregate", "pipeline", "cursor", "collation", "hint"])
+    #expect(count.first { $0.key == "hint" }?.value == .string("a_1"))
+    // The server refuses $limit: 0; a count limit of 0 means no limit.
+    let zero = MongoSession.countCommand(
+      collection: "c", filter: filter,
+      options: Self.reply(("skip", .int32(0)), ("limit", .int32(0))))
+    #expect(stages(zero) == ["$match", "$group"])
+  }
+
   @Test("Result shapes of countDocuments, distinct and listCollections")
   func resultShapes() {
     let count = MongoSession.countResult([Self.reply(("_id", .int32(1)), ("n", .int32(7)))])

@@ -7,7 +7,8 @@
 // Result shapes (`query`):
 // - find / aggregate: one row per document, columns from `MongoBSONMapping.columns` (`_id` first;
 //   no documents gives just `_id`).
-// - countDocuments: one row, column `count` (`long`), from `$match` + `$group` like the drivers.
+// - countDocuments: one row, column `count` (`long`), from `$match` (+ `$skip`/`$limit`) +
+//   `$group` like the drivers.
 // - distinct: one row per value, one column named after the field.
 // - listCollections: `name`, `type`, sorted by name (`nameOnly`, `authorizedCollections`).
 // Reads are buffered before rows stream, so the columns are known first. The manager already
@@ -112,15 +113,19 @@ extension MongoSession {
     return try await withStatement { token, connection in
       switch command {
       case .find, .aggregate:
+        let userMaxTimeMS: Int? =
+          if case .find(_, _, _, _, _, _, let options) = command { options.maxTimeMS } else { nil }
         let documents = try await readCursor(
           Self.readCommand(command), cap: cap, token: token, connection: connection,
-          database: database)
+          database: database, maxTimeMS: statementMaxTimeMS(userMaxTimeMS))
         let columns = MongoBSONMapping.columns(for: documents)
         return (columns, documents.map { MongoBSONMapping.row(for: $0, columns: columns) })
-      case .countDocuments(let collection, let filter):
+      case .countDocuments(let collection, let filter, let options):
         let documents = try await readCursor(
-          Self.countCommand(collection: collection, filter: filter), cap: 1, token: token,
-          connection: connection, database: database)
+          Self.countCommand(collection: collection, filter: filter, options: options), cap: 1,
+          token: token, connection: connection, database: database,
+          maxTimeMS: statementMaxTimeMS(
+            options.flatMap { Self.intValue(Self.field("maxTimeMS", of: $0)) }))
         return Self.countResult(documents)
       case .distinct(_, let field, _):
         let reply = try await execute(
@@ -138,6 +143,14 @@ extension MongoSession {
         throw MongoSessionError(message: "Read commands return rows; run them as a query.")
       }
     }
+  }
+
+  /// The `maxTimeMS` of a read with a user `maxTimeMS`: the statement timeout is a brake the user
+  /// can shorten but never lengthen. 0 means "no limit" to the server, so it (like nil) keeps the
+  /// statement timeout.
+  private func statementMaxTimeMS(_ user: Int?) -> Int64? {
+    guard let user, user > 0 else { return nil }
+    return min(Int64(user), maxTimeMS)
   }
 
   /// Runs a cursor command and buffers at most `cap` documents. The cursor is closed whenever
@@ -228,10 +241,12 @@ extension MongoSession {
   /// find, aggregate, distinct and listCollections. A negative find limit is mongosh's "at most
   /// abs(n) documents in one batch": sent as `limit` and `batchSize` abs(n) (capped at 10,000),
   /// never `singleBatch`, which a find on a view (run as an aggregate) refuses with code 168.
-  /// `readCursor` closes any cursor the server keeps. `limit(0)` means no limit.
+  /// `readCursor` closes any cursor the server keeps. `limit(0)` means no limit. Never a
+  /// `maxTimeMS` field: `execute` adds it to every command, and a second one is a duplicate key.
   static func readCommand(_ command: MongoCommand) -> [Field] {
     switch command {
-    case .find(let collection, let filter, let projection, let sort, let skip, let limit):
+    case .find(
+      let collection, let filter, let projection, let sort, let skip, let limit, let options):
       var fields = [Field("find", .string(collection))]
       if let filter { fields.append(Field("filter", filter)) }
       if let projection { fields.append(Field("projection", projection)) }
@@ -242,6 +257,8 @@ extension MongoSession {
         fields.append(Field("limit", .int64(count)))
         if limit < 0 { fields.append(Field("batchSize", .int64(min(count, 10_000)))) }
       }
+      if let collation = options.collation { fields.append(Field("collation", collation)) }
+      if let hint = options.hint { fields.append(Field("hint", hint)) }
       return fields
     case .aggregate(let collection, let pipeline):
       return aggregateCommand(collection: collection, pipeline: pipeline)
@@ -259,10 +276,22 @@ extension MongoSession {
     }
   }
 
-  /// countDocuments as the drivers run it: `$match` then `$group` with `$sum: 1`.
-  static func countCommand(collection: String, filter: MongoValue?) -> [Field] {
+  /// countDocuments as the drivers run it: `$match`, then `$skip` and `$limit` from the options,
+  /// then `$group` with `$sum: 1`; `collation` and `hint` go on the aggregate. A limit of 0 means
+  /// no limit (the server refuses `$limit: 0`). The options' `maxTimeMS` is never a field here
+  /// (`execute` adds one): `read` passes it to `execute`.
+  static func countCommand(
+    collection: String, filter: MongoValue?, options: MongoValue? = nil
+  ) -> [Field] {
     var pipeline: [MongoValue] = []
     if let filter { pipeline.append(.document([Field("$match", filter)])) }
+    let option = { (key: String) in options.flatMap { field(key, of: $0) } }
+    if let skip = intValue(option("skip")), skip > 0 {
+      pipeline.append(.document([Field("$skip", .int64(Int64(skip)))]))
+    }
+    if let limit = intValue(option("limit")), limit > 0 {
+      pipeline.append(.document([Field("$limit", .int64(Int64(limit)))]))
+    }
     pipeline.append(
       .document([
         Field(
@@ -271,7 +300,10 @@ extension MongoSession {
             Field("_id", .int32(1)), Field("n", .document([Field("$sum", .int32(1))])),
           ]))
       ]))
-    return aggregateCommand(collection: collection, pipeline: pipeline)
+    var fields = aggregateCommand(collection: collection, pipeline: pipeline)
+    if let collation = option("collation") { fields.append(Field("collation", collation)) }
+    if let hint = option("hint") { fields.append(Field("hint", hint)) }
+    return fields
   }
 
   private static func aggregateCommand(collection: String, pipeline: [MongoValue]) -> [Field] {

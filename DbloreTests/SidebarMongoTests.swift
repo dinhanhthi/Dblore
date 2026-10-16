@@ -54,7 +54,7 @@ struct SidebarMongoTests {
     let snippet = SidebarSectionModel.findSnippet(collection: name)
     #expect(snippet == #"db.getCollection("a\"b\\c\nd\te\u0001f.g").find({})"#)
 
-    guard case .find(let collection, _, _, _, _, _) = try MongoshParser.parse(snippet) else {
+    guard case .find(let collection, _, _, _, _, _, _) = try MongoshParser.parse(snippet) else {
       Issue.record("not a find: \(snippet)")
       return
     }

@@ -12,11 +12,21 @@ import Foundation
 /// (updates, `replaceOne`, deletes) keep `{}` as `.document([])`.
 /// `skip` and `limit` keep the number as written (`limit(0)` and negative limits included).
 nonisolated enum MongoCommand: Equatable, Sendable {
+  /// The find cursor methods `.collation(doc)`, `.hint(name or doc)` and `.maxTimeMS(n)`.
+  nonisolated struct CursorOptions: Equatable, Sendable {
+    var collation: MongoValue? = nil
+    var hint: MongoValue? = nil
+    var maxTimeMS: Int? = nil
+
+    static let none = CursorOptions()
+  }
+
   case find(
     collection: String, filter: MongoValue?, projection: MongoValue?, sort: MongoValue?,
-    skip: Int?, limit: Int?)
+    skip: Int?, limit: Int?, options: CursorOptions = .none)
   case aggregate(collection: String, pipeline: [MongoValue])
-  case countDocuments(collection: String, filter: MongoValue?)
+  /// `options` is the mongosh options document, nil when none is written.
+  case countDocuments(collection: String, filter: MongoValue?, options: MongoValue? = nil)
   case distinct(collection: String, field: String, filter: MongoValue?)
   case insertOne(collection: String, document: MongoValue)
   case insertMany(collection: String, documents: [MongoValue])
@@ -33,7 +43,8 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   /// The target collection, nil for `listCollections`.
   var collection: String? {
     switch self {
-    case .find(let name, _, _, _, _, _), .aggregate(let name, _), .countDocuments(let name, _),
+    case .find(let name, _, _, _, _, _, _), .aggregate(let name, _),
+      .countDocuments(let name, _, _),
       .distinct(let name, _, _), .insertOne(let name, _), .insertMany(let name, _),
       .updateOne(let name, _, _, _), .updateMany(let name, _, _, _), .replaceOne(let name, _, _, _),
       .deleteOne(let name, _), .deleteMany(let name, _):
@@ -43,23 +54,29 @@ nonisolated enum MongoCommand: Equatable, Sendable {
     }
   }
 
-  /// Canonical mongosh text: values in mongosh notation, find chains as `.sort .skip .limit`,
-  /// `{upsert: true}` only when set, `show collections` for `listCollections`. A nil find filter
-  /// is written `{}` when a projection follows. `MongoshParser.parse` reads it back unchanged.
+  /// Canonical mongosh text: values in mongosh notation, find chains as `.sort .skip .limit`
+  /// then `.collation .hint .maxTimeMS`, `{upsert: true}` only when set, `show collections` for
+  /// `listCollections`. A nil find or count filter is written `{}` when a projection or count
+  /// options follow. `MongoshParser.parse` reads it back unchanged.
   func render() -> String {
     switch self {
-    case .find(let name, let filter, let projection, let sort, let skip, let limit):
+    case .find(let name, let filter, let projection, let sort, let skip, let limit, let options):
       let arguments =
         projection.map { [filter ?? .document([]), $0] } ?? (filter.map { [$0] } ?? [])
       var text = Self.call(name, "find", arguments)
       if let sort { text += ".sort(\(Self.value(sort)))" }
       if let skip { text += ".skip(\(skip))" }
       if let limit { text += ".limit(\(limit))" }
+      if let collation = options.collation { text += ".collation(\(Self.value(collation)))" }
+      if let hint = options.hint { text += ".hint(\(Self.value(hint)))" }
+      if let maxTimeMS = options.maxTimeMS { text += ".maxTimeMS(\(maxTimeMS))" }
       return text
     case .aggregate(let name, let pipeline):
       return Self.call(name, "aggregate", [.array(pipeline)])
-    case .countDocuments(let name, let filter):
-      return Self.call(name, "countDocuments", filter.map { [$0] } ?? [])
+    case .countDocuments(let name, let filter, let options):
+      let arguments =
+        options.map { [filter ?? .document([]), $0] } ?? (filter.map { [$0] } ?? [])
+      return Self.call(name, "countDocuments", arguments)
     case .distinct(let name, let field, let filter):
       return Self.call(name, "distinct", [.string(field)] + (filter.map { [$0] } ?? []))
     case .insertOne(let name, let document):

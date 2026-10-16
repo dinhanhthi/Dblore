@@ -18,7 +18,7 @@ struct MongoCommandRewriterTests {
   }
 
   private func limit(of command: MongoCommand) -> Int? {
-    guard case .find(_, _, _, _, _, let limit) = command else { return nil }
+    guard case .find(_, _, _, _, _, let limit, _) = command else { return nil }
     return limit
   }
 
