@@ -6,7 +6,12 @@
 //
 // - tables: collections and time series collections from `listCollections` (full entries, so
 //   the `listCollections` privilege is needed: `read`/`readWrite` have it). Names starting with
-//   `system.` (`system.views`, `system.buckets.*`, `system.profile`, …) are hidden. No row count.
+//   `system.` (`system.views`, `system.buckets.*`, `system.profile`, …) are hidden. The first 200
+//   collections by name carry their `count` (see rowCount) for the sidebar badge, at most 8 in
+//   flight, each with the sampling `maxTimeMS`. They are pipelined on the session's connection
+//   (the server still runs them one by one), so a load pays about one round trip, not one per
+//   collection. A time series has no badge (its count unpacks every bucket). A count that fails
+//   leaves that badge out and is logged.
 // - views: `type: "view"`, `definition` = the view's pipeline in mongosh notation.
 // - allColumns: fields sampled from the first 200 relations by name (the rest get no columns),
 //   each with its own `maxTimeMS` (2,000 ms, or the statement timeout when shorter; the session's
@@ -35,8 +40,10 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
 
   /// Documents sampled per relation.
   static let sampleSize = 100
-  /// Relations whose fields are sampled, the first by name.
+  /// Relations whose fields are sampled (and collections counted), the first by name.
   static let maxSampledRelations = 200
+  /// Badge `count` commands in flight at once.
+  static let maxConcurrentCounts = 8
   /// `maxTimeMS` of each sample command (capped by the statement timeout).
   static let sampleMaxTimeMS: Int64 = 2000
   /// Path segments of the deepest sampled field (`a.b.c`).
@@ -48,14 +55,18 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
     var isView: Bool
     /// The view's pipeline in mongosh notation; nil for a collection.
     var definition: String?
+    /// `type: "timeseries"`.
+    var isTimeseries = false
   }
 
   // MARK: - SchemaIntrospector
 
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     let mongo = try Self.mongoSession(session)
-    return try await Self.relations(in: mongo).filter { !$0.isView }.map {
-      DatabaseTable(schema: mongo.databaseName, name: $0.name)
+    let relations = try await Self.relations(in: mongo)
+    let counts = try await Self.badgeCounts(of: Self.countedCollections(relations), in: mongo)
+    return relations.filter { !$0.isView }.map {
+      DatabaseTable(schema: mongo.databaseName, name: $0.name, rowCount: counts[$0.name])
     }
   }
 
@@ -96,12 +107,7 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
   ) async throws
     -> Int
   {
-    let mongo = try Self.mongoSession(session)
-    let reply = try await mongo.catalogCommand([Field("count", .string(table))])
-    guard case .document(let fields) = reply,
-      let count = fields.first(where: { $0.key == "n" }).flatMap({ Self.int($0.value) })
-    else { throw MongoSessionError(message: "The server sent an unexpected reply.") }
-    return count
+    try await Self.count(table, in: try Self.mongoSession(session))
   }
 
   func primaryKeyColumns(of _: String, in _: any DatabaseSession) async throws -> [String] {
@@ -129,6 +135,56 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
     return relations(
       from: try await session.catalogDocuments(
         command, cap: MongoSession.maxBufferedDocuments))
+  }
+
+  /// `count` of `collection` (no query) in the session's database.
+  private static func count(
+    _ collection: String, in session: MongoSession, maxTimeMS: Int64? = nil
+  ) async throws -> Int {
+    let reply = try await session.catalogCommand(
+      [Field("count", .string(collection))], maxTimeMS: maxTimeMS)
+    guard case .document(let fields) = reply,
+      let count = fields.first(where: { $0.key == "n" }).flatMap({ int($0.value) })
+    else { throw MongoSessionError(message: "The server sent an unexpected reply.") }
+    return count
+  }
+
+  /// Badge counts of `collections` by name, at most `maxConcurrentCounts` in flight. A failed
+  /// count is left out; cancel stops the rest.
+  private static func badgeCounts(
+    of collections: [String], in session: MongoSession
+  ) async throws -> [String: Int] {
+    let maxTimeMS = min(sampleMaxTimeMS, session.maxTimeMS)
+    return try await withThrowingTaskGroup(of: (String, Int?).self) { group in
+      var counts: [String: Int] = [:]
+      for (index, name) in collections.enumerated() {
+        if index >= maxConcurrentCounts, let (done, count) = try await group.next() {
+          counts[done] = count
+        }
+        try Task.checkCancellation()
+        group.addTask { (name, try await badgeCount(name, in: session, maxTimeMS: maxTimeMS)) }
+      }
+      for try await (name, count) in group { counts[name] = count }
+      return counts
+    }
+  }
+
+  /// `count` of `collection` for the sidebar badge, or nil when it failed (logged). Cancel is
+  /// rethrown.
+  private static func badgeCount(
+    _ collection: String, in session: MongoSession, maxTimeMS: Int64
+  ) async throws -> Int? {
+    do {
+      return try await count(collection, in: session, maxTimeMS: maxTimeMS)
+    } catch {
+      if Task.isCancelled || error is CancellationError || MongoSession.isInterruption(error) {
+        throw error
+      }
+      await AppLogger.shared.warning(
+        "MongoDB document count skipped \(collection): \(session.formatError(error))",
+        category: "Schema")
+      return nil
+    }
   }
 
   /// The sampled documents of `relation`, or nil when every sample command failed (logged).
@@ -165,7 +221,8 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
       guard case .string(let name)? = field("name", of: entry), !name.hasPrefix("system.")
       else { return nil }
       guard case .string("view")? = field("type", of: entry) else {
-        return Relation(name: name, isView: false, definition: nil)
+        let isTimeseries = field("type", of: entry) == .string("timeseries")
+        return Relation(name: name, isView: false, definition: nil, isTimeseries: isTimeseries)
       }
       let pipeline = field("options", of: entry).flatMap { field("pipeline", of: $0) }
       return Relation(
@@ -173,6 +230,12 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
         definition: pipeline.map { MongoRelaxedJSON.render($0, as: .mongosh) })
     }
     .sorted { $0.name < $1.name }
+  }
+
+  /// The collections whose badge count is read: the first `maxSampledRelations` of a sorted
+  /// list, never a view or a time series.
+  static func countedCollections(_ relations: [Relation]) -> [String] {
+    sampledRelations(relations.filter { !$0.isView && !$0.isTimeseries }).map(\.name)
   }
 
   /// The relations whose fields are sampled: the first `maxSampledRelations` of a sorted list.

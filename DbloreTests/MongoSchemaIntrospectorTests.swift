@@ -42,8 +42,24 @@ struct MongoSchemaIntrospectorTests {
 
     #expect(relations.map(\.name) == ["Accounts", "big_orders", "metrics", "orders"])
     #expect(relations.map(\.isView) == [false, true, false, false])
+    #expect(relations.map(\.isTimeseries) == [false, false, true, false])
     #expect(relations[1].definition == "[ { $match: { n: { $gt: 1 } } } ]")
     #expect(relations[0].definition == nil)
+  }
+
+  @Test("Badge counts: the first 200 collections by name, never a view or a time series")
+  func countedCollections() {
+    let names = (0..<250).map { String(format: "c%03d", $0) }
+    var entries = names.shuffled().map {
+      MongoValue.document([.init("name", .string($0)), .init("type", .string("collection"))])
+    }
+    entries.append(.document([.init("name", .string("a_view")), .init("type", .string("view"))]))
+    entries.append(
+      .document([.init("name", .string("a_series")), .init("type", .string("timeseries"))]))
+
+    let counted = Introspector.countedCollections(Introspector.relations(from: entries))
+
+    #expect(counted == Array(names.prefix(200)))
   }
 
   @Test("At most 200 relations are sampled, the first by name")
@@ -163,6 +179,9 @@ struct MongoSchemaIntrospectorTests {
     #expect(tables.filter { $0.name.hasPrefix("introspect_") }.map(\.name) == [empty, orders])
     #expect(!tables.contains { $0.name.hasPrefix("system.") })
     #expect(tables.allSatisfy { $0.schema == database })
+    // Each collection carries its `count` for the sidebar badge.
+    #expect(tables.first { $0.name == orders }?.rowCount == 3)
+    #expect(tables.first { $0.name == empty }?.rowCount == 0)
 
     let views = try await introspector.views(in: session)
     let numbered = try #require(views.first { $0.name == view })
