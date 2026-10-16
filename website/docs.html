@@ -91,6 +91,7 @@
               <li><a href="#editor">SQL editor</a></li>
               <li><a href="#sidebar">Sidebar</a></li>
               <li><a href="#results">Results grid</a></li>
+              <li><a href="#mongodb">MongoDB</a></li>
               <li><a href="#structure">Structure editor</a></li>
               <li><a href="#charts">Charts</a></li>
               <li><a href="#export">Export</a></li>
@@ -118,12 +119,13 @@
             <h2>Connect</h2>
 <ul class="list">
             <li><strong>PostgreSQL:</strong> host, port, user, database. SSL modes from <code>disable</code> to <code>verify-full</code>, timeouts, retry on failure, read-only mode.</li>
-            <li><strong>MySQL and MariaDB:</strong> host, port, user and database (required; the sidebar shows only that database). TCP only, no SSH tunnel. Users with <code>caching_sha2_password</code> or <code>mysql_native_password</code>; <code>sha256_password</code> and MariaDB ed25519 are not supported.</li>
+            <li><strong>MySQL and MariaDB:</strong> host, port, user and database (required; the sidebar shows only that database). Direct or through an SSH tunnel. Users with <code>caching_sha2_password</code> or <code>mysql_native_password</code>; <code>sha256_password</code> and MariaDB ed25519 are not supported.</li>
             <li><strong>MySQL SSL:</strong> only <strong>Verify CA</strong> and <strong>Verify Full</strong> check the server certificate. Allow, Prefer and Require encrypt the connection without checking it, so on an untrusted network an active attacker could read the traffic and the password. Allow and Prefer also fall back to plain text when the server offers no SSL. A client certificate needs Require, Verify CA or Verify Full.</li>
-            <li><strong>SSH tunnel</strong> (PostgreSQL): password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
+            <li><strong>SSH tunnel</strong> (PostgreSQL, MySQL, MariaDB and MongoDB; MongoDB takes a single host, no <code>mongodb+srv://</code>): password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
             <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority. A custom CA also works on its own, without a certificate.</li>
             <li>Statement, lock and idle-in-transaction timeouts: global in <strong>Settings &gt; Results</strong>, overridable per connection.</li>
             <li>Passwords are stored in the Keychain.</li>
+            <li><strong>MongoDB:</strong> a <code>mongodb://</code> or <code>mongodb+srv://</code> string, or the form. See <a href="#mongodb">MongoDB</a>.</li>
             <li><strong>SQLite:</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
             <li><strong>DuckDB:</strong> needs the <a href="#plugins">plugin</a>.</li>
             <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
@@ -202,6 +204,20 @@
 </ul>
           </section>
 
+          <section id="mongodb" class="doc">
+            <h2>MongoDB</h2>
+<ul class="list">
+            <li><strong>Connect</strong> with a connection string or the form. Logins use SCRAM-SHA-256 or SCRAM-SHA-1 (a user created in <code>admin</code> needs Auth Source <code>admin</code>). TLS is off or <strong>Verify Full</strong>, with an optional custom CA.</li>
+            <li><strong>Commands:</strong> cells and SQL files take a subset of the mongosh syntax (<code>find</code>, <code>aggregate</code>, <code>countDocuments</code>, <code>distinct</code>, <code>insertOne</code>/<code>insertMany</code>, <code>updateOne</code>/<code>updateMany</code>, <code>replaceOne</code>, <code>deleteOne</code>/<code>deleteMany</code>, <code>show collections</code>). Dblore parses it itself and never runs JavaScript.</li>
+            <li><strong>Browse:</strong> click a collection in the sidebar. The filter bar takes a filter document such as <code>{status: "active"}</code> and runs it on the server.</li>
+            <li><strong>Grid or Documents:</strong> the picker under a result switches between the grid and document cards. A card shows the top-level fields; click a nested object or array to expand it.</li>
+            <li><strong>Edit in place:</strong> double-click a value on a card (or a grid cell) to edit it, Return to send, Esc to cancel. Each edit runs one <code>$set</code> on that field after the Safe Mode confirmation. A double-click on an object, array or other type opens the field editor. The card header opens Row Details in the right sidebar, and a field's right-click menu has <strong>Show Details</strong>.</li>
+            <li><strong>Add, duplicate, delete:</strong> in the data viewer, stage them by <code>_id</code>, preview the exact <code>insertOne</code>/<code>updateOne</code>/<code>deleteOne</code> commands, then Commit. Results whose <code>_id</code> mixes types are read-only.</li>
+            <li><strong>Build Aggregation…</strong> in the collection menu builds a pipeline stage by stage, with a read-only preview of each stage.</li>
+            <li>MongoDB has no transactions, so writes ask before they run instead of waiting for Commit. For agents over MCP, use a user with a read-only role.</li>
+</ul>
+          </section>
+
           <section id="structure" class="doc">
             <h2>Structure editor</h2>
 <ul class="list">
@@ -229,6 +245,7 @@
             <li>Formats: Excel, CSV, TSV, JSON, Markdown, PDF and SQL <code>INSERT</code>.</li>
             <li>Copy results as SQL <code>INSERT</code> or an <code>IN</code> list.</li>
             <li>Per-format options with reset, redaction, wrapping and a size check.</li>
+            <li><strong>File &gt; Export SQL Dump…</strong> writes a PostgreSQL, MySQL/MariaDB or SQLite database to a <code>.sql</code> file (all tables or a few, with or without data). <strong>File &gt; Restore SQL Dump…</strong> checks every statement of a Dblore dump before running it. <strong>File &gt; Copy Database File…</strong> saves an open SQLite database as one file. A dump holds your data in clear text.</li>
 </ul>
           </section>
 

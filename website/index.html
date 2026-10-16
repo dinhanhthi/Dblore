@@ -6,7 +6,7 @@
     <title>Dblore: notebooks and a database editor for macOS</title>
     <meta
       name="description"
-      content="Dblore is a native macOS app for working with databases: notebooks and a database editor in one tabbed workspace. PostgreSQL, MySQL, MariaDB, SQLite and DuckDB. Free and open source."
+      content="Dblore is a native macOS app for working with databases: notebooks and a database editor in one tabbed workspace. PostgreSQL, MySQL, MariaDB, MongoDB, SQLite and DuckDB. Free and open source."
     />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Dblore: notebooks and a database editor for macOS" />
@@ -190,7 +190,7 @@
           <h2>Databases</h2>
           <ul class="list">
             <li><strong>PostgreSQL</strong>: saved connections, passwords in the Keychain, SSL, client certificates, SSH tunnels, read-only mode, and import from DBeaver, TablePlus, DataGrip, <code>.pgpass</code> or a URI.</li>
-            <li><strong>MySQL and MariaDB</strong>: TCP with TLS and client certificates, staged edits by primary key, foreign-key lookup, CSV import, routine and trigger source, and import from DBeaver, TablePlus, DataGrip or a <code>mysql://</code> URI.</li>
+            <li><strong>MySQL and MariaDB</strong>: TCP or SSH tunnel, TLS and client certificates, staged edits by primary key, foreign-key lookup, CSV import, routine and trigger source, and import from DBeaver, TablePlus, DataGrip or a <code>mysql://</code> URI.</li>
             <li><strong>SQLite</strong>: open a file and work with it like a server connection.</li>
           </ul>
         </section>
@@ -199,6 +199,7 @@
           <h2>Plugins</h2>
           <p>Optional engines, installed from Settings &gt; Plugins: a signed, notarized download, checked before every load and removable at any time.</p>
           <ul class="list">
+            <li><strong>MongoDB</strong>: a connection string or form, mongosh commands, a collection browser with a filter bar, editable document cards, an aggregation builder, and edits staged by <code>_id</code> and confirmed in Safe Mode.</li>
             <li><strong>DuckDB</strong>: open a .duckdb file or an in-memory database, browse its schema and query Parquet or CSV files.</li>
           </ul>
         </section>
@@ -207,7 +208,7 @@
           <h2>Get started</h2>
           <ol class="steps">
             <li>Download the signed and notarized DMG from the <a href="https://github.com/dinhanhthi/Dblore/releases/latest" target="_blank" rel="noopener noreferrer">releases page</a> and drag Dblore to Applications.</li>
-            <li>Connect to a PostgreSQL, MySQL or MariaDB server, or open a SQLite file.</li>
+            <li>Connect to a PostgreSQL, MySQL, MariaDB or MongoDB server, or open a SQLite file.</li>
             <li>Create a notebook (<code>Cmd+T</code>) and run a cell (<code>Ctrl+Enter</code>).</li>
           </ol>
           <p class="note">More in the <a href="docs.html">docs</a>. Dblore updates itself.</p>
