@@ -367,7 +367,7 @@ struct EditorResultGridView: View {
         showsPicker: showsDisplayPicker
       ) {
         if showsDocuments {
-          DocumentTreeView(result: result, fillsAvailableHeight: true)
+          documentCards
         } else {
           resultGrid
         }
@@ -426,6 +426,57 @@ struct EditorResultGridView: View {
     guard let state = viewModel.dataViewer else { return nil }
     if let set = state.changeSet { return set }
     return documentOverlay.rowChangeSet(for: state.documentChangeSet, target: result.editTarget)
+  }
+
+  /// The Documents cards. A MongoDB data viewer that can stage also draws its staged inserts and
+  /// deletes and offers Duplicate, Delete and Revert, through the grid's staging entry points.
+  private var documentCards: some View {
+    let stages = viewModel.isMongoDataViewer && viewModel.stagingEnabled
+    return DocumentTreeView(
+      result: result,
+      fillsAvailableHeight: true,
+      isEditable: viewModel.canEdit(result),
+      stagedInserts: stages
+        ? viewModel.dataViewer?.documentChangeSet?.inserts.map(\.document) ?? [] : [],
+      deletedRows: stages ? viewModel.stagedDeletedDocumentRows(result: result) : [],
+      onShowDetails: { row in
+        guard result.rows.indices.contains(row) else { return }
+        viewModel.showRowDetail(
+          row: result.rows[row], originalRow: row, result: result, cellId: nil)
+      },
+      onShowFieldDetails: { row, key in
+        guard result.rows.indices.contains(row),
+          let column = result.columns.firstIndex(where: { $0.name == key })
+        else { return }
+        viewModel.showGridCellInSidebar(
+          row: result.rows[row], originalRow: row, column: column, result: result, cellId: nil)
+      },
+      onEditField: { row, keys, editType, text, current in
+        viewModel.handleDocumentFieldEdit(
+          row: row, keys: keys, editType: editType, text: text, current: current, result: result,
+          cellId: nil)
+      },
+      onDuplicate: stages
+        ? { row in
+          Task {
+            if let message = await viewModel.stageDuplicate(rows: [row]) {
+              viewModel.showToast(message, type: .error)
+            }
+          }
+        } : nil,
+      onDelete: stages
+        ? { row in
+          if let message = viewModel.stageDelete(rows: [row]) {
+            viewModel.showToast(message, type: .error)
+          }
+        } : nil,
+      onRevert: stages
+        ? { row in
+          if let message = viewModel.revertStaged(rows: [row]) {
+            viewModel.showToast(message, type: .error)
+          }
+        } : nil
+    )
   }
 
   @ViewBuilder

@@ -168,8 +168,9 @@ extension DataViewerState {
       case insert
       /// A staged insert, replaced by the edited document in place
       case replaceInsert(localID: UUID)
-      /// One top-level field of a stored document (its `_id` cell), committed as one `$set`
-      case value(id: CellValue, column: String)
+      /// One field (key path from the top level) of a stored document (its `_id` cell),
+      /// committed as one `$set`
+      case value(id: CellValue, path: [String])
     }
 
     let id = UUID()

@@ -1,6 +1,14 @@
 // DocumentTreeModel.swift
 // The Documents view of a MongoDB result: documents rebuilt from the grid rows and the column BSON
-// type names (Key decision d), flattened into visible tree rows with expand/collapse and paging.
+// type names (Key decision d), shown as one card per document. A card starts with its top-level
+// fields shown and its nested documents and arrays collapsed; the visible rows page large
+// containers. Staged inserts follow the stored documents as extra cards.
+//
+// Edit info: each row has its raw key path from the document. A primitive scalar
+// (`NotebookViewModel.primitiveDocumentTypes`) has an edit type and an edit text when its BSON type
+// is exact: always for nested values (parsed from canonical Extended JSON), for a top-level field
+// only when its column has that type (a `mixed` column infers it from the cell). Never for `_id`
+// or anything under it, nor for staged inserts.
 //
 // Rebuild rules (the grid cells are the only source, so some details are not recoverable):
 // - A `.null` cell is a missing key. `MongoBSONMapping.row` writes `.null` for an explicit null
@@ -41,7 +49,7 @@ nonisolated struct DocumentTreeNode: Identifiable, Equatable, Sendable {
 
   let id: DocumentTreeNodeID
   let kind: Kind
-  /// 0 for a document, 1 for its fields, ...
+  /// 0 for a document (the card header), 1 for its fields, ...
   let depth: Int
   /// Field key, array index, or for a document its `_id` (mongosh notation) or `(position)`.
   /// Display text (see the file header).
@@ -54,8 +62,23 @@ nonisolated struct DocumentTreeNode: Identifiable, Equatable, Sendable {
   /// Dot path from the document (`items.3.sku`), keys as they are; empty for a document itself.
   /// Copy Path quotes the keys (`DocumentTreeModel.copyPathText`).
   let path: String
+  /// Raw keys from the document (array indexes as decimal digits); empty for a document itself.
+  let keys: [String]
+  /// `$type` alias of a value edited as text (see the file header); nil otherwise.
+  let editType: String?
   let isExpandable: Bool
   let isExpanded: Bool
+}
+
+/// One document of the Documents view: its header row and the visible rows below it.
+nonisolated struct DocumentTreeCard: Identifiable, Equatable, Sendable {
+  /// Document position: page index for a stored document, `storedCount + n` for a staged insert.
+  let document: Int
+  /// `nodes[0]` is the document (depth 0), the rest its visible fields and items.
+  let nodes: [DocumentTreeNode]
+  let isStaged: Bool
+
+  var id: Int { document }
 }
 
 /// Documents of a result plus the expanded and paged state of their tree.
@@ -65,17 +88,37 @@ nonisolated struct DocumentTreeModel: Sendable {
   /// Longest scalar preview, in characters (the copy texts are never cut).
   static let previewLimit = 200
 
-  let documents: [MongoValue]
-  private(set) var expanded: Set<DocumentTreeNodeID> = []
+  /// The stored documents, then the staged inserts (`setStagedInserts`).
+  private(set) var documents: [MongoValue]
+  /// Stored documents: the result rows. Positions from here on are staged inserts.
+  let storedCount: Int
+  /// BSON type per top-level column (first column of a name), for the edit types.
+  private let columnTypes: [String: String]
+  /// Expanded documents and arrays below a document; documents themselves are in `collapsed`.
+  private var expanded: Set<DocumentTreeNodeID> = []
+  /// Collapsed documents (cards start expanded).
+  private var collapsed: Set<DocumentTreeNodeID> = []
   /// Children shown per expanded container, when more than the first page.
   private var shownCounts: [DocumentTreeNodeID: Int] = [:]
   /// The rows to draw: every document, and the shown children of expanded containers. Rebuilt
   /// when the expanded or paged state changes, so a view reads it for free.
   private(set) var visibleNodes: [DocumentTreeNode] = []
+  /// `visibleNodes` grouped per document, built with them.
+  private(set) var cards: [DocumentTreeCard] = []
 
-  init(columns: [ColumnInfo], rows: [[CellValue]]) {
+  /// `previous` (the model of an earlier result of the same view) hands over its expanded,
+  /// collapsed and paged state by position; positions that no longer exist are ignored.
+  init(columns: [ColumnInfo], rows: [[CellValue]], carrying previous: DocumentTreeModel? = nil) {
     documents = rows.map { Self.document(row: $0, columns: columns) }
-    visibleNodes = buildVisibleNodes()
+    storedCount = rows.count
+    columnTypes = Dictionary(
+      columns.map { ($0.name, $0.type) }, uniquingKeysWith: { first, _ in first })
+    if let previous {
+      expanded = previous.expanded
+      collapsed = previous.collapsed
+      shownCounts = previous.shownCounts
+    }
+    rebuildVisibleNodes()
   }
 
   // MARK: - Rebuild
@@ -130,8 +173,24 @@ nonisolated struct DocumentTreeModel: Sendable {
 
   /// Expands a collapsed document or array, collapses an expanded one.
   mutating func toggleExpansion(_ id: DocumentTreeNodeID) {
-    if expanded.remove(id) == nil { expanded.insert(id) }
-    visibleNodes = buildVisibleNodes()
+    if id.indexes.isEmpty {
+      if collapsed.remove(id) == nil { collapsed.insert(id) }
+    } else if expanded.remove(id) == nil {
+      expanded.insert(id)
+    }
+    rebuildVisibleNodes()
+  }
+
+  /// Replaces the staged inserts shown after the stored documents; the stored documents are not
+  /// rebuilt.
+  mutating func setStagedInserts(_ inserts: [MongoValue]) {
+    documents = Array(documents.prefix(storedCount)) + inserts
+    rebuildVisibleNodes()
+  }
+
+  /// Whether the document at `document` is a staged insert.
+  func isStaged(document: Int) -> Bool {
+    document >= storedCount
   }
 
   /// Shows the next page of the container whose "show more" row is `id`.
@@ -139,34 +198,47 @@ nonisolated struct DocumentTreeModel: Sendable {
     let parent = DocumentTreeNodeID(document: id.document, indexes: id.indexes)
     guard let count = value(at: parent).map(Self.childCount) else { return }
     shownCounts[parent] = min(shownCount(parent) + Self.pageSize, count)
-    visibleNodes = buildVisibleNodes()
+    rebuildVisibleNodes()
   }
 
   private func shownCount(_ id: DocumentTreeNodeID) -> Int {
     shownCounts[id] ?? Self.pageSize
   }
 
-  private func buildVisibleNodes() -> [DocumentTreeNode] {
+  private func isExpanded(_ id: DocumentTreeNodeID) -> Bool {
+    id.indexes.isEmpty ? !collapsed.contains(id) : expanded.contains(id)
+  }
+
+  private mutating func rebuildVisibleNodes() {
     var nodes: [DocumentTreeNode] = []
+    var cards: [DocumentTreeCard] = []
+    cards.reserveCapacity(documents.count)
     for (position, document) in documents.enumerated() {
+      var cardNodes: [DocumentTreeNode] = []
       let id = DocumentTreeNodeID(document: position, indexes: [])
       let key = Self.documentKey(document, position: position)
-      append(document, id: id, key: key, path: "", into: &nodes)
+      append(document, id: id, key: key, path: "", keys: [], into: &cardNodes)
+      nodes += cardNodes
+      cards.append(
+        DocumentTreeCard(
+          document: position, nodes: cardNodes, isStaged: isStaged(document: position)))
     }
-    return nodes
+    visibleNodes = nodes
+    self.cards = cards
   }
 
   private func append(
-    _ value: MongoValue, id: DocumentTreeNodeID, key: String, path: String,
+    _ value: MongoValue, id: DocumentTreeNodeID, key: String, path: String, keys: [String],
     into nodes: inout [DocumentTreeNode]
   ) {
     let isContainer = Self.isContainer(value)
-    let isExpanded = isContainer && expanded.contains(id)
+    let isExpanded = isContainer && isExpanded(id)
     nodes.append(
       DocumentTreeNode(
         id: id, kind: .value, depth: id.indexes.count, key: key, preview: Self.preview(value),
-        typeName: MongoBSONMapping.typeName(value), path: path, isExpandable: isContainer,
-        isExpanded: isExpanded))
+        typeName: MongoBSONMapping.typeName(value), path: path, keys: keys,
+        editType: editType(of: value, document: id.document, keys: keys),
+        isExpandable: isContainer, isExpanded: isExpanded))
     guard isExpanded else { return }
     let count = Self.childCount(of: value)
     let shown = min(shownCount(id), count)
@@ -175,15 +247,73 @@ nonisolated struct DocumentTreeModel: Sendable {
       let childPath = path.isEmpty ? child.key : path + "." + child.key
       let childID = DocumentTreeNodeID(document: id.document, indexes: id.indexes + [index])
       append(
-        child.value, id: childID, key: Self.displayText(child.key), path: childPath, into: &nodes)
+        child.value, id: childID, key: Self.displayText(child.key), path: childPath,
+        keys: keys + [child.key], into: &nodes)
     }
     if shown < count {
       nodes.append(
         DocumentTreeNode(
           id: DocumentTreeNodeID(document: id.document, indexes: id.indexes, isShowMore: true),
           kind: .showMore(remaining: count - shown), depth: id.indexes.count + 1, key: "",
-          preview: "", typeName: "", path: path, isExpandable: false, isExpanded: false))
+          preview: "", typeName: "", path: path, keys: keys, editType: nil, isExpandable: false,
+          isExpanded: false))
     }
+  }
+
+  // MARK: - Edit
+
+  /// The value of a row, for the editor sheet; nil for a "show more" row.
+  func currentValue(_ id: DocumentTreeNodeID) -> MongoValue? {
+    id.isShowMore ? nil : value(at: id)
+  }
+
+  /// The text an inline edit starts from, in the form `NotebookViewModel.parsedDocumentValue`
+  /// reads back to the same value (never the cut preview); nil for a row without an edit type.
+  func editText(_ id: DocumentTreeNodeID) -> String? {
+    guard !id.isShowMore, let entry = entry(at: id),
+      let type = editType(of: entry.value, document: id.document, keys: entry.keys)
+    else { return nil }
+    let text: String? =
+      switch entry.value {
+      case .string(let text): text
+      case .int32(let number): String(number)
+      case .int64(let number): String(number)
+      case .double(let number): number.description
+      case .bool(let flag): flag ? "true" : "false"
+      case .date(let millis): Self.isoText(millis: millis)
+      case .objectId(let id): id.hex
+      default: nil
+      }
+    // A date the ISO 8601 text cannot hold (far outside years 1...9999) is not edited as text
+    guard let text,
+      (try? NotebookViewModel.parsedDocumentValue(text, columnType: type)) == entry.value
+    else { return nil }
+    return text
+  }
+
+  /// See the file header.
+  private func editType(of value: MongoValue, document: Int, keys: [String]) -> String? {
+    guard !isStaged(document: document), let field = keys.first, field != "_id" else { return nil }
+    let type = MongoBSONMapping.typeName(value)
+    guard NotebookViewModel.primitiveDocumentTypes.contains(type) else { return nil }
+    guard keys.count == 1 else { return type }
+    let columnType = columnTypes[field]
+    return columnType == type && columnType != MongoBSONMapping.mixedTypeName ? type : nil
+  }
+
+  /// `millis` as ISO 8601 UTC with milliseconds (`2023-11-14T22:13:20.123Z`). Formatted from the
+  /// whole seconds, so the binary fraction of a `Date` cannot round the milliseconds down.
+  private static func isoText(millis: Int64) -> String? {
+    var (seconds, remainder) = millis.quotientAndRemainder(dividingBy: 1000)
+    if remainder < 0 {
+      seconds -= 1
+      remainder += 1000
+    }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let text = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
+    guard text.hasSuffix("Z") else { return nil }
+    return String(text.dropLast()) + "." + String(format: "%03d", Int(remainder)) + "Z"
   }
 
   // MARK: - Copy
@@ -228,12 +358,19 @@ nonisolated struct DocumentTreeModel: Sendable {
   // MARK: - Helpers
 
   private func value(at id: DocumentTreeNodeID) -> MongoValue? {
+    entry(at: id)?.value
+  }
+
+  /// The raw keys from the document to `id`, and its value.
+  private func entry(at id: DocumentTreeNodeID) -> (keys: [String], value: MongoValue)? {
     guard var value = documents[safe: id.document] else { return nil }
+    var keys: [String] = []
     for index in id.indexes {
       guard let child = Self.child(of: value, at: index) else { return nil }
+      keys.append(child.key)
       value = child.value
     }
-    return value
+    return (keys, value)
   }
 
   private static func isContainer(_ value: MongoValue) -> Bool {

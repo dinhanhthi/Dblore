@@ -21,10 +21,12 @@ struct DocumentTreeModelTests {
   }
 
   /// The model of `documents` as the session hands them to the grid (Key decision d).
-  private func model(_ documents: [MongoValue]) -> DocumentTreeModel {
+  private func model(
+    _ documents: [MongoValue], carrying previous: DocumentTreeModel? = nil
+  ) -> DocumentTreeModel {
     let columns = MongoBSONMapping.columns(for: documents)
     let rows = documents.map { MongoBSONMapping.row(for: $0, columns: columns) }
-    return DocumentTreeModel(columns: columns, rows: rows)
+    return DocumentTreeModel(columns: columns, rows: rows, carrying: previous)
   }
 
   private func node(_ model: DocumentTreeModel, path: String) -> DocumentTreeNode? {
@@ -96,9 +98,8 @@ struct DocumentTreeModelTests {
   @Test("a malformed json cell falls back to a string node")
   func malformedJSONCell() {
     let columns = [ColumnInfo(name: "_id", type: "int"), ColumnInfo(name: "sub", type: "object")]
-    var tree = DocumentTreeModel(columns: columns, rows: [[.int(1), .json("{oops")]])
+    let tree = DocumentTreeModel(columns: columns, rows: [[.int(1), .json("{oops")]])
     #expect(tree.documents == [doc(("_id", .int32(1)), ("sub", .string("{oops")))])
-    tree.toggleExpansion(tree.visibleNodes[0].id)
     let sub = node(tree, path: "sub")
     #expect(sub?.typeName == "string")
     #expect(sub?.isExpandable == false)
@@ -112,14 +113,11 @@ struct DocumentTreeModelTests {
     var tree = model([doc(("_id", oid()), ("qty", .int64(3)), ("items", items))])
 
     let root = tree.visibleNodes[0]
-    #expect(tree.visibleNodes.count == 1)
     #expect(root.key == "ObjectId(\"\(Self.hex)\")")
     #expect(root.preview == "{3 fields}")
     #expect(root.typeName == "object")
     #expect(root.path == "")
-    #expect(root.isExpandable && !root.isExpanded)
-
-    tree.toggleExpansion(root.id)
+    #expect(root.isExpandable && root.isExpanded)
     #expect(tree.visibleNodes.map(\.path) == ["", "_id", "qty", "items"])
     #expect(node(tree, path: "qty")?.preview == "NumberLong(\"3\")")
     #expect(node(tree, path: "qty")?.typeName == "long")
@@ -137,19 +135,22 @@ struct DocumentTreeModelTests {
 
     tree.toggleExpansion(node(tree, path: "items")!.id)
     #expect(tree.visibleNodes.map(\.path) == ["", "_id", "qty", "items"])
+
+    tree.toggleExpansion(root.id)
+    #expect(tree.visibleNodes.count == 1)
+    #expect(tree.visibleNodes[0].isExpandable && !tree.visibleNodes[0].isExpanded)
   }
 
   @Test("a document without a scalar _id is keyed by its position")
   func rootKeyWithoutID() {
     let tree = model([doc(("a", .int32(1))), doc(("a", .int32(2)))])
-    #expect(tree.visibleNodes.map(\.key) == ["(1)", "(2)"])
+    #expect(tree.cards.map { $0.nodes[0].key } == ["(1)", "(2)"])
   }
 
   @Test("large arrays page in steps of 100 behind a show more node")
   func paging() {
     let big = MongoValue.array((0..<250).map { .int32(Int32($0)) })
     var tree = model([doc(("_id", .int32(1)), ("big", big))])
-    tree.toggleExpansion(tree.visibleNodes[0].id)
     let bigNode = node(tree, path: "big")!
     tree.toggleExpansion(bigNode.id)
 
@@ -179,6 +180,8 @@ struct DocumentTreeModelTests {
     var tree = model([original])
     let clock = ContinuousClock()
     let elapsed = clock.measure {
+      // Collapse and expand again: one rebuild of the visible rows
+      tree.toggleExpansion(tree.visibleNodes[0].id)
       tree.toggleExpansion(tree.visibleNodes[0].id)
       _ = tree.visibleNodes
     }
@@ -195,12 +198,77 @@ struct DocumentTreeModelTests {
   func displayEscaping() {
     let key = "a\u{202E}b\u{7}"
     let value = "x\u{2067}y\u{85}"
-    var tree = model([doc(("_id", .int32(1)), (key, .string(value)))])
-    tree.toggleExpansion(tree.visibleNodes[0].id)
+    let tree = model([doc(("_id", .int32(1)), (key, .string(value)))])
     let row = tree.visibleNodes[2]
     #expect(row.key == "a\\u202eb\\u0007")
     #expect(row.preview == "\"x\\u2067y\\u0085\"")
     #expect(tree.copyValueText(row.id) == value)
+  }
+
+  // MARK: - Cards
+
+  @Test("fields carry key paths; exact primitives get an edit type and a text that parses back")
+  func editInfo() throws {
+    let items = MongoValue.array([doc(("qty", .int64(1))), doc(("qty", .int64(9_000_000_000)))])
+    var tree = model([
+      doc(
+        ("_id", oid()), ("when", .date(1_700_000_000_123)), ("old", .date(-1)), ("items", items))
+    ])
+    tree.toggleExpansion(node(tree, path: "items")!.id)
+    tree.toggleExpansion(node(tree, path: "items.1")!.id)
+
+    let qty = try #require(node(tree, path: "items.1.qty"))
+    #expect(qty.keys == ["items", "1", "qty"])
+    #expect(qty.editType == "long")
+    let qtyText = tree.editText(qty.id)
+    #expect(
+      try NotebookViewModel.parsedDocumentValue(qtyText, columnType: "long")
+        == .int64(9_000_000_000))
+    for (path, millis) in [("when", Int64(1_700_000_000_123)), ("old", -1)] {
+      let date = try #require(node(tree, path: path))
+      #expect(date.editType == "date")
+      let text = tree.editText(date.id)
+      #expect(
+        try NotebookViewModel.parsedDocumentValue(text, columnType: "date") == .date(millis),
+        "\(text ?? "nil")")
+    }
+    #expect(tree.visibleNodes[0].keys == [])
+    #expect(tree.visibleNodes[0].editType == nil)
+    #expect(node(tree, path: "_id")?.editType == nil)
+    #expect(node(tree, path: "items")?.editType == nil)
+    #expect(tree.editText(node(tree, path: "_id")!.id) == nil)
+
+    // A mixed column infers its values from the cells: not exact, so not edited as text
+    let mixed = model([
+      doc(("_id", .int32(1)), ("v", .int32(4))), doc(("_id", .int32(2)), ("v", .string("x"))),
+    ])
+    #expect(node(mixed, path: "v")?.editType == nil)
+  }
+
+  @Test("staged inserts follow the stored documents; tree state survives inserts and rebuilds")
+  func stagedInsertsAndCarryOver() throws {
+    let stored = [doc(("_id", .int32(1)), ("sub", doc(("a", .int32(1))))), doc(("_id", .int32(2)))]
+    var tree = model(stored)
+    tree.toggleExpansion(node(tree, path: "sub")!.id)
+    tree.toggleExpansion(tree.cards[1].nodes[0].id)
+
+    let inserted = doc(("name", .string("new")))
+    tree.setStagedInserts([inserted])
+    #expect(tree.storedCount == 2)
+    #expect(tree.documents == stored + [inserted])
+    #expect(tree.isStaged(document: 2) && !tree.isStaged(document: 1))
+    #expect(tree.cards.map(\.document) == [0, 1, 2])
+    #expect(tree.cards.map(\.isStaged) == [false, false, true])
+    #expect(tree.cards[0].nodes.map(\.path) == ["", "_id", "sub", "sub.a"])
+    #expect(tree.cards[1].nodes.count == 1)
+    #expect(tree.cards[2].nodes.map(\.path) == ["", "name"])
+    #expect(tree.cards[2].nodes[1].editType == nil)
+
+    tree.setStagedInserts([])
+    #expect(tree.documents == stored)
+
+    let rebuilt = model(stored, carrying: tree)
+    #expect(rebuilt.visibleNodes == tree.visibleNodes)
   }
 
   // MARK: - Copy
@@ -216,7 +284,6 @@ struct DocumentTreeModelTests {
       ("first name", .int32(6)),
       ("snake_case9", .int32(7)))
     var tree = model([original])
-    tree.toggleExpansion(tree.visibleNodes[0].id)
     tree.toggleExpansion(tree.visibleNodes[2].id)
     tree.toggleExpansion(tree.visibleNodes[4].id)
     tree.toggleExpansion(tree.visibleNodes[6].id)
@@ -235,7 +302,6 @@ struct DocumentTreeModelTests {
       ("tags", .array([.string("x"), .int64(2)])))
     var tree = model([original])
     let root = tree.visibleNodes[0]
-    tree.toggleExpansion(root.id)
     tree.toggleExpansion(node(tree, path: "tags")!.id)
 
     let name = node(tree, path: "name")!.id

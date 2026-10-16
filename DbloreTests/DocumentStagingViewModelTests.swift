@@ -443,6 +443,35 @@ struct DocumentStagingViewModelTests {
     await fixture.manager.disconnect()
   }
 
+  @Test("A Documents-view edit of a nested field commits one $set of its dotted path")
+  func documentFieldEditSetsPath() async throws {
+    let fixture = try await Self.dataViewer()
+    let viewModel = fixture.viewModel
+    let result = try #require(viewModel.editorResult)
+    viewModel.handleDocumentFieldEdit(
+      row: 0, keys: ["stats", "n"], editType: "long", text: "7", current: .int64(5),
+      result: result, cellId: nil)
+    let batch = try #require(viewModel.pendingStagedBatch)
+    #expect(batch.mongoCommands == [Self.setCommand(Self.first, "stats.n", .int64(7))])
+    #expect(viewModel.pendingInlineEdit == nil)
+    await viewModel.executePendingQuery()
+
+    // An object opens the editor sheet on its path; applying it sets that path
+    let page = try #require(viewModel.editorResult)
+    viewModel.handleDocumentFieldEdit(
+      row: 0, keys: ["stats"], editType: nil, text: nil, current: Self.stats, result: page,
+      cellId: nil)
+    let request = try #require(viewModel.dataViewer?.pendingDocumentEditor)
+    #expect(request.kind == .value(id: .string(Self.first), path: ["stats"]))
+    #expect(request.text == MongoRelaxedJSON.render(Self.stats, as: .mongosh))
+    #expect(await viewModel.applyDocumentEditor(request.text) == nil)
+    #expect(
+      viewModel.pendingStagedBatch?.mongoCommands == [
+        Self.setCommand(Self.first, "stats", Self.stats)
+      ])
+    await fixture.manager.disconnect()
+  }
+
   @Test("Row Details applies one changed field as one $set; two fields at once are refused")
   func rowDetailApplyOnDocuments() async throws {
     let fixture = try await Self.dataViewer()

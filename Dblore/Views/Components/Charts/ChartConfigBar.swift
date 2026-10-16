@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 
 nonisolated enum ResultDisplayMode: Hashable, Sendable {
   case grid
-  /// MongoDB results only: the document tree.
+  /// MongoDB results only: the document cards.
   case documents
   case chart
 

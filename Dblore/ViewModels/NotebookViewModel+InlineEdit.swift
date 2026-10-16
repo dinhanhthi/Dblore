@@ -301,11 +301,11 @@ extension NotebookViewModel {
   /// column of `rowData` against `target` (the cell's `cellDetailEditTarget`, the panel's own
   /// target), which must be live for `cellId`, checked by the protection gate, confirmed when
   /// the commit style asks, then sent. On MongoDB the one assignment is sent as a `$set` of
-  /// `documentValue` (its column type and the typed text).
+  /// `documentValue` (its column type and the typed text) at `documentPath` (nil: the column).
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
     target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager,
-    documentValue: (columnType: String, text: String?)? = nil
+    documentValue: (columnType: String, text: String?)? = nil, documentPath: [String]? = nil
   ) {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
@@ -331,7 +331,7 @@ extension NotebookViewModel {
       }
       handleDocumentValueEdit(
         columnName: column, columnType: documentValue.columnType, newValue: documentValue.text,
-        rowData: rowData, target: target, cellId: cellId)
+        rowData: rowData, target: target, cellId: cellId, path: documentPath)
       return
     }
 

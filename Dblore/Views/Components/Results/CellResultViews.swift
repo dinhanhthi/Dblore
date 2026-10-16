@@ -590,7 +590,7 @@ struct NotebookResultGridView: View {
         showsPicker: showsDisplayPicker
       ) {
         if showsDocuments {
-          DocumentTreeView(result: result)
+          documentCards
         } else {
           resultGrid
         }
@@ -601,6 +601,31 @@ struct NotebookResultGridView: View {
   /// The Documents view replaces the grid for a MongoDB result
   private var showsDocuments: Bool {
     viewModel.sqlDialect == .mongodb && displayMode?.wrappedValue == .documents
+  }
+
+  /// The Documents cards: details and field edits, no staging (a notebook cell has none)
+  private var documentCards: some View {
+    DocumentTreeView(
+      result: result,
+      isEditable: viewModel.canEdit(result),
+      onShowDetails: { row in
+        guard result.rows.indices.contains(row) else { return }
+        viewModel.showRowDetail(
+          row: result.rows[row], originalRow: row, result: result, cellId: cellId)
+      },
+      onShowFieldDetails: { row, key in
+        guard result.rows.indices.contains(row),
+          let column = result.columns.firstIndex(where: { $0.name == key })
+        else { return }
+        viewModel.showGridCellInSidebar(
+          row: result.rows[row], originalRow: row, column: column, result: result, cellId: cellId)
+      },
+      onEditField: { row, keys, editType, text, current in
+        viewModel.handleDocumentFieldEdit(
+          row: row, keys: keys, editType: editType, text: text, current: current, result: result,
+          cellId: cellId)
+      }
+    )
   }
 
   @ViewBuilder

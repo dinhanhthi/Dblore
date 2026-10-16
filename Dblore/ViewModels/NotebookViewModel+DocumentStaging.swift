@@ -4,8 +4,9 @@
 //
 //  MongoDB document staging and inline edits. The data viewer stages inserts (+ Row, Insert,
 //  Duplicate, through the document editor sheet) and deletes in
-//  `DataViewerState.documentChangeSet`. An inline edit is a one-`$set` change set committed at
-//  once. Both are confirmed in Safe Mode as their rendered commands, then sent one by one through
+//  `DataViewerState.documentChangeSet`. An inline edit (a grid cell, or a field of a Documents
+//  card at any key path) is a one-`$set` change set committed at once. Both are confirmed in
+//  Safe Mode as their rendered commands, then sent one by one through
 //  `executeGatedSequentialBatch`: never `executeGatedBatch` or `executeGatedUpdate`, whose
 //  BEGIN / COMMIT MongoDB does not have. No undo: the undo stack holds `RowChangeSet`s only.
 //
@@ -181,9 +182,9 @@ extension NotebookViewModel {
         (set: inout MongoDocumentChangeSet) throws(MongoDocumentChangeError) in
         try set.replaceInsert(localID: localID, with: value)
       }
-    case .value(let id, let column):
+    case .value(let id, let path):
       switch documentEditBatch(
-        id: id, column: column, value: value, target: request.target, cellId: nil)
+        id: id, path: path, value: value, target: request.target, cellId: nil)
       {
       case .success(let ready?):
         batch = ready
@@ -212,22 +213,25 @@ extension NotebookViewModel {
 
   // MARK: - Inline edits
 
-  /// An inline edit of a MongoDB result's field (grid or sidebar), after the live-target checks
-  /// of `handleCellValueEdit`. Primitive types parse by BSON type and commit one `$set`; other
+  /// An inline edit of a MongoDB result's field (grid, sidebar or Documents card), after the
+  /// live-target checks of `handleCellValueEdit`. `path` is the field's key path (nil: the
+  /// top-level `columnName`). Primitive types parse by BSON type and commit one `$set`; other
   /// types open the editor sheet in the data viewer, and only there.
   func handleDocumentValueEdit(
     columnName: String, columnType: String, newValue: String?, rowData: [String: CellValue],
-    target: EditTarget, cellId: UUID?
+    target: EditTarget, cellId: UUID?, path: [String]? = nil
   ) {
     guard let id = rowData["_id"] else {
       showToast(Self.notEditableMessage, type: .error)
       return
     }
+    let path = path ?? [columnName]
     let value: MongoValue
     do {
       guard let parsed = try Self.parsedDocumentValue(newValue, columnType: columnType) else {
         openDocumentValueEditor(
-          id: id, column: columnName, columnType: columnType, current: rowData[columnName],
+          id: id, path: path,
+          current: Self.documentValue(cell: rowData[columnName] ?? .null, columnType: columnType),
           cellId: cellId)
         return
       }
@@ -236,9 +240,7 @@ extension NotebookViewModel {
       showToast(error.message, type: .error)
       return
     }
-    switch documentEditBatch(
-      id: id, column: columnName, value: value, target: target, cellId: cellId)
-    {
+    switch documentEditBatch(id: id, path: path, value: value, target: target, cellId: cellId) {
     case .success(let batch?):
       Task { [weak self] in await self?.runConfirmedStagedBatch(batch) }
     case .success(nil):
@@ -246,6 +248,56 @@ extension NotebookViewModel {
     case .failure(let error):
       showToast(error.message, type: .error)
     }
+  }
+
+  /// An edit of a Documents card field: `row` is the document's position (staged inserts follow
+  /// the page), `keys` its key path, `editType` and `text` its exact primitive type and edit text
+  /// (nil: edited in the sheet), `current` its value. A staged insert opens the sheet on the whole
+  /// staged document; `_id` is never edited; any other field commits one `$set` of its dotted
+  /// path through the grid's gates, without the grid's clipboard copy or Cell Info refresh.
+  func handleDocumentFieldEdit(
+    row: Int, keys: [String], editType: String?, text: String?, current: MongoValue,
+    result: CellResult, cellId: UUID?
+  ) {
+    guard row >= 0 else { return }
+    if row >= result.rows.count {
+      if let message = openStagedInsertEditor(row: row) { showToast(message, type: .error) }
+      return
+    }
+    guard let first = keys.first, first != "_id" else { return }
+    let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
+    guard let editType, let text else {
+      guard let id = rowData["_id"] else {
+        showToast(Self.notEditableMessage, type: .error)
+        return
+      }
+      openDocumentValueEditor(id: id, path: keys, current: current, cellId: cellId)
+      return
+    }
+    guard let connectionManager else {
+      showToast(Self.notEditableMessage, type: .error)
+      return
+    }
+    cellDetailEditTarget = result.editTarget
+    submitInlineEdit(
+      assignments: [(column: first, value: text)], rowData: rowData, target: result.editTarget,
+      cellId: cellId, connectionManager: connectionManager,
+      documentValue: (columnType: editType, text: text), documentPath: keys)
+  }
+
+  /// Page rows of `result` whose document is staged for deletion.
+  func stagedDeletedDocumentRows(result: CellResult) -> Set<Int> {
+    guard let deletes = dataViewer?.documentChangeSet?.deletes, !deletes.isEmpty,
+      let index = result.columns.firstIndex(where: { $0.name == "_id" })
+    else { return [] }
+    let idType = result.columns[index].type
+    return Set(
+      result.rows.indices.filter { row in
+        guard result.rows[row].indices.contains(index),
+          let id = MongoDocumentChangeSet.idValue(cell: result.rows[row][index], columnType: idType)
+        else { return false }
+        return deletes.contains(id)
+      })
   }
 
   /// The value of `text` typed for a field of BSON `columnType`. Nil for a type that is not
@@ -464,25 +516,38 @@ extension NotebookViewModel {
     }
   }
 
-  /// Opens the editor sheet on one field of a stored document, in the data viewer only.
+  /// Opens the editor sheet on one field (`path` from the top level) of a stored document, in
+  /// the data viewer only.
   private func openDocumentValueEditor(
-    id: CellValue, column: String, columnType: String, current: CellValue?, cellId: UUID?
+    id: CellValue, path: [String], current: MongoValue, cellId: UUID?
   ) {
     guard cellId == nil, dataViewer != nil, let target = mongoDocumentTarget else {
       showToast(Self.documentValueNeedsDataViewer, type: .error)
       return
     }
-    let value = Self.documentValue(cell: current ?? .null, columnType: columnType)
     dataViewer?.pendingDocumentEditor = DataViewerState.DocumentEditorRequest(
-      kind: .value(id: id, column: column), target: target,
-      text: MongoRelaxedJSON.render(value, as: .mongosh))
+      kind: .value(id: id, path: path), target: target,
+      text: MongoRelaxedJSON.render(current, as: .mongosh))
   }
 
-  /// One `$set` of `column` on the document `id` of `target`'s live result, as a batch. Success
+  /// Opens the editor sheet on the staged insert drawn at `row`; the reason when it can't.
+  private func openStagedInsertEditor(row: Int) -> String? {
+    if let reason = rowStagingUnavailableReason { return reason }
+    guard let target = mongoDocumentTarget else {
+      return MongoDocumentChangeError.notMongoTarget.message
+    }
+    guard case .staged(let insert)? = documentRow(row) else { return Self.rowNotOnPage }
+    dataViewer?.pendingDocumentEditor = DataViewerState.DocumentEditorRequest(
+      kind: .replaceInsert(localID: insert.localID), target: target,
+      text: MongoRelaxedJSON.render(insert.document, as: .mongosh))
+    return nil
+  }
+
+  /// One `$set` of `path` on the document `id` of `target`'s live result, as a batch. Success
   /// nil: the Safe Mode dialog holds it (`pendingStagedBatch`). Success with a batch: send it
   /// now. A document staged for deletion, `_id`, and invalid keys are refused.
   private func documentEditBatch(
-    id: CellValue, column: String, value: MongoValue, target: EditTarget, cellId: UUID?
+    id: CellValue, path: [String], value: MongoValue, target: EditTarget, cellId: UUID?
   ) -> Result<PendingStagedBatch?, DataViewerState.DocumentEditorError> {
     func refused(
       _ message: String
@@ -496,10 +561,10 @@ extension NotebookViewModel {
     do {
       // The staged set knows which documents are deleted; probing it changes nothing
       if cellId == nil, var staged = dataViewer?.documentChangeSet {
-        try staged.stageSet(id: id, path: [column], value: value)
+        try staged.stageSet(id: id, path: path, value: value)
       }
       var edit = try MongoDocumentChangeSet(target: target, columns: columns)
-      try edit.stageSet(id: id, path: [column], value: value)
+      try edit.stageSet(id: id, path: path, value: value)
       set = edit
     } catch {
       return refused(error.message)

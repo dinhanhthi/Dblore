@@ -33,7 +33,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **MongoDB**: connect with a `mongodb://` or `mongodb+srv://` string or the form (SCRAM
   login, TLS, SSH tunnel to a single host); write commands in a subset of the mongosh
   syntax (find, aggregate, count, distinct, insert, update, replace and delete) with
-  highlighting and autocomplete; browse results as a grid or a document tree; filter a
+  highlighting and autocomplete; browse results as a grid or as document cards, with nested
+  fields that expand and values you edit in place with a double-click; filter a
   collection in the data viewer, build an aggregation stage by stage with a preview of each
   stage, and stage document edits by `_id` that run one by one after Safe Mode confirmation
 - **Notebooks**: `.dblore` notebooks that mix SQL cells with inline results, like Jupyter

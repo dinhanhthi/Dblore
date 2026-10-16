@@ -131,7 +131,7 @@ struct MongoDocumentEditorSheet: View {
 
   /// The edited field, else the collection
   private var subtitle: String {
-    if case .value(_, let column) = request.kind { return column }
+    if case .value(_, let path) = request.kind { return path.joined(separator: ".") }
     return viewModel.dataViewer?.name ?? ""
   }
 
