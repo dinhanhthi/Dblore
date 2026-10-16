@@ -13,6 +13,8 @@ import Foundation
 ///   `distinct("field", filter?)`, `insertOne(doc)`, `insertMany([docs])`,
 ///   `updateOne`/`updateMany(filter, update, {upsert}?)`, `replaceOne(filter, replacement,
 ///   {upsert}?)`, `deleteOne`/`deleteMany(filter)`.
+/// - A find chain or an aggregate may end with `.explain()` (`queryPlanner`) or
+///   `.explain("queryPlanner" | "executionStats" | "allPlansExecution")`, once and last.
 ///
 /// Whitespace, `//` and `/* */` comments and one trailing `;` are allowed. Any other method,
 /// including `.toArray()` and `.pretty()`, fails with "<method> is not supported in the Dblore
@@ -156,9 +158,12 @@ nonisolated extension MongoshParser {
       let command: MongoCommand
       switch method {
       case "find": return try parseFind(on: collection, call)
-      case "aggregate": command = try aggregate(on: collection, call)
+      case "aggregate": return try explainChain(after: aggregate(on: collection, call))
       case "countDocuments":
-        try call.allowPositional(2)
+        if let extra = call[2] {
+          throw failure(
+            "countDocuments takes at most a filter and an options document", at: extra.offset)
+        }
         let filter = try optionalDocument(call[0], "filter")
         let options = try countOptions(call[1])
         command = .countDocuments(collection: collection, filter: filter, options: options)
@@ -194,10 +199,15 @@ nonisolated extension MongoshParser {
       var limit: Int?
       var options = MongoCommand.CursorOptions.none
       var seen: Set<String> = []
+      var explainStart: Int?
       while true {
         try skipTrivia()
         guard take(".") else { break }
         let (name, nameStart) = try methodName()
+        if name == "explain" {
+          explainStart = nameStart
+          break
+        }
         guard ["sort", "skip", "limit", "collation", "hint", "maxTimeMS"].contains(name) else {
           throw failure(unsupported(name), at: nameStart)
         }
@@ -234,17 +244,66 @@ nonisolated extension MongoshParser {
           options.maxTimeMS = value
         }
       }
-      return .find(
+      let command = MongoCommand.find(
         collection: collection, filter: filter, projection: projection, sort: sort, skip: skip,
         limit: limit, options: options)
+      guard let explainStart else { return command }
+      return try parseExplain(command, at: explainStart)
     }
 
-    /// Any `.method(` after a command other than find is outside the subset.
+    /// Any `.method(` after a command other than find or aggregate is outside the subset.
     private mutating func refuseChain() throws(ParseError) {
       try skipTrivia()
       guard take(".") else { return }
       let (name, nameStart) = try methodName()
+      guard name != "explain" else {
+        throw failure("explain only follows find or aggregate", at: nameStart)
+      }
       throw failure(unsupported(name), at: nameStart)
+    }
+
+    /// `command` (an aggregate), or its `.explain(...)` when one follows; any other method is
+    /// outside the subset.
+    private mutating func explainChain(
+      after command: MongoCommand
+    ) throws(ParseError) -> MongoCommand {
+      try skipTrivia()
+      guard take(".") else { return command }
+      let (name, nameStart) = try methodName()
+      guard name == "explain" else { throw failure(unsupported(name), at: nameStart) }
+      return try parseExplain(command, at: nameStart)
+    }
+
+    /// The `(verbosity?)` of an `explain` whose name ends just before `pos`; nothing may follow.
+    private mutating func parseExplain(
+      _ command: MongoCommand, at nameStart: Int
+    ) throws(ParseError) -> MongoCommand {
+      guard peek() == UInt8(ascii: "(") else {
+        throw failure("Expected '(' after explain", at: pos)
+      }
+      let call = Call(method: "explain", offset: nameStart, arguments: try parseArguments())
+      if let extra = call[1] {
+        throw failure("explain takes at most one verbosity", at: extra.offset)
+      }
+      var verbosity = "queryPlanner"
+      if let argument = call[0] {
+        guard case .string(let value) = argument.value,
+          ["queryPlanner", "executionStats", "allPlansExecution"].contains(value)
+        else {
+          throw failure(
+            "explain needs \"queryPlanner\", \"executionStats\" or \"allPlansExecution\"",
+            at: argument.offset)
+        }
+        verbosity = value
+      }
+      try skipTrivia()
+      if take(".") {
+        let (name, nameStart) = try methodName()
+        throw failure(
+          name == "explain" ? "explain can only be used once" : "explain must be the last method",
+          at: nameStart)
+      }
+      return .explain(command, verbosity: verbosity)
     }
 
     private func aggregate(

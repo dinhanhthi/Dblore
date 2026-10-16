@@ -102,11 +102,12 @@ struct MongoshAutocompleteProviderTests {
   func chainAfterFind() {
     #expect(
       suggest("db.users.find({}).|")
-        == [".collation", ".hint", ".limit", ".maxTimeMS", ".skip", ".sort"])
+        == [".collation", ".explain", ".hint", ".limit", ".maxTimeMS", ".skip", ".sort"])
     #expect(
       suggest("db.users.find().sort({a: 1})\n  .limit(1).hint(\"a_1\").|")
-        == [".collation", ".maxTimeMS", ".skip"])
+        == [".collation", ".explain", ".maxTimeMS", ".skip"])
     #expect(suggest("db.users.find()\n.L|") == [".limit"])
+    #expect(suggest("db.users.find().explain().|").isEmpty)
     #expect(suggest("db.users.countDocuments().|").isEmpty)
   }
 

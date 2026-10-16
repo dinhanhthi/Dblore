@@ -1,7 +1,7 @@
 // MongoConfirmationTests.swift
 // MongoDB in the notebook view model: Safe Mode confirmation of Mongo writes (rendered command
 // text, the all-documents warning, Run All), SQL-only LIKE helpers off, result targets of a
-// `find` (cells, editor and data-viewer pages) and none for other reads, and Explain refused.
+// `find` (cells, editor and data-viewer pages) and none for other reads, and Explain of a read.
 // Fake session, no database needed.
 
 import Foundation
@@ -326,22 +326,31 @@ struct MongoConfirmationTests {
 
   // MARK: - Explain
 
-  @Test("Explain and Explain Analyze are refused for MongoDB before anything is sent")
-  func explainRefused() async throws {
-    let (viewModel, manager, factory) = try await Self.connected(cells: ["db.users.find()"])
+  @Test("Explain sends the executionStats explain of one find; nothing else is explained")
+  func explainFind() async throws {
+    let (viewModel, manager, factory) = try await Self.connected(cells: ["db.users.find({a: 1})"])
     var toasts: [String] = []
     viewModel.toastPresenter = { message, _ in toasts.append(message) }
     viewModel.selectedCellId = viewModel.notebook.cells[0].id
-    for analyze in [false, true] {
-      await viewModel.explainSelectedStatement(analyze: analyze)
-      await viewModel.explain(statement: "db.users.find()", analyze: analyze, buffers: analyze)
-    }
+    await viewModel.explainSelectedStatement(analyze: false)
     await viewModel.executionQueue.waitForIdle()
+    #expect(toasts.isEmpty)
+    #expect(factory.statements == [#"db.users.find({ a: 1 }).explain("executionStats")"#])
+
+    // Explain Analyze and a pipeline that writes are refused before anything is sent.
+    await viewModel.explainSelectedStatement(analyze: true)
+    await viewModel.explain(statement: "db.users.find()", analyze: true, buffers: true)
+    await viewModel.explain(
+      statement: "db.users.aggregate([{$match: {}}, {$out: \"copy\"}])", analyze: false,
+      buffers: false)
+    await viewModel.executionQueue.waitForIdle()
+    #expect(toasts.count == 3)
     #expect(
-      toasts == Array(repeating: "EXPLAIN is not available for MongoDB connections", count: 4))
+      toasts.prefix(2).allSatisfy {
+        $0 == "Explain Analyze is not available for MongoDB connections"
+      })
     #expect(!viewModel.queryConfirmationState.showDialog)
-    #expect(factory.statements.isEmpty)
-    #expect(viewModel.notebook.cells[0].result == nil)
+    #expect(factory.statements.count == 1)
     await manager.disconnect()
   }
 }

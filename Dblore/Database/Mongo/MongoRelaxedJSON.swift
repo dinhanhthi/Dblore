@@ -63,8 +63,10 @@ nonisolated enum MongoRelaxedJSON {
     return try parser.parseOne()
   }
 
-  static func render(_ value: MongoValue, as format: Format) -> String {
-    var renderer = Renderer(format: format)
+  /// `value` as text in `format`. `indented` writes one key or array element per line with a
+  /// 2-space indent (key order kept); empty `{}` / `[]` and Extended JSON wrappers stay inline.
+  static func render(_ value: MongoValue, as format: Format, indented: Bool = false) -> String {
+    var renderer = Renderer(format: format, indented: indented)
     renderer.write(value)
     return renderer.output
   }
@@ -922,7 +924,10 @@ private nonisolated enum MongoDateText {
 nonisolated extension MongoRelaxedJSON {
   fileprivate nonisolated struct Renderer {
     let format: Format
+    let indented: Bool
     var output = ""
+    /// Containers open around the value being written (indented output only).
+    var level = 0
 
     /// Dates the relaxed form shows as an ISO string (Extended JSON v2: years 1970-9999).
     private static let relaxedISODates: ClosedRange<Int64> =
@@ -967,15 +972,15 @@ nonisolated extension MongoRelaxedJSON {
         output += "{}"
         return
       }
-      output += format == .mongosh ? "{ " : "{"
+      open("{")
       for (index, field) in fields.enumerated() {
-        if index > 0 { output += ", " }
+        if index > 0 { separate() }
         output +=
           format == .mongosh && field.key.isPlainIdentifier ? field.key : Self.quoted(field.key)
         output += ": "
         write(field.value)
       }
-      output += format == .mongosh ? " }" : "}"
+      close("}")
     }
 
     private mutating func writeArray(_ items: [MongoValue]) {
@@ -983,13 +988,38 @@ nonisolated extension MongoRelaxedJSON {
         output += "[]"
         return
       }
-      output += format == .mongosh ? "[ " : "["
+      open("[")
       for (index, item) in items.enumerated() {
-        if index > 0 { output += ", " }
+        if index > 0 { separate() }
         write(item)
       }
-      output += format == .mongosh ? " ]" : "]"
+      close("]")
     }
+
+    /// Opens a non-empty document or array; indented, its first entry starts a deeper line.
+    private mutating func open(_ bracket: String) {
+      if indented {
+        level += 1
+        output += bracket + "\n" + indentation
+      } else {
+        output += format == .mongosh ? bracket + " " : bracket
+      }
+    }
+
+    private mutating func separate() {
+      output += indented ? ",\n" + indentation : ", "
+    }
+
+    private mutating func close(_ bracket: String) {
+      if indented {
+        level -= 1
+        output += "\n" + indentation + bracket
+      } else {
+        output += format == .mongosh ? " " + bracket : bracket
+      }
+    }
+
+    private var indentation: String { String(repeating: "  ", count: level) }
 
     private mutating func writeInt64(_ number: Int64) {
       switch format {

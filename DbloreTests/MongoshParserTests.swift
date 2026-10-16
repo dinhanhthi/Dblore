@@ -226,6 +226,11 @@ struct MongoshParserTests {
         "db.c.countDocuments({}, {limit: 1, batchSize: 2})",
         "The option batchSize is not supported in the Dblore MongoDB subset", "{limit"
       ),
+      (
+        "db.c.countDocuments({}, {}, {})",
+        "countDocuments takes at most a filter and an options document", "{})"
+      ),
+      ("db.c.find().explain().limit(1)", "explain must be the last method", "limit"),
       ("db.c.updateOne({}, {a: 1})", update, "{a"),
       ("db.c.updateOne({}, {})", update, "{})"),
       ("db.c.updateOne({}, [1])", "Each pipeline stage must be a document", "[1]"),
@@ -366,6 +371,15 @@ struct MongoshParserTests {
       (.deleteOne(collection: "c", filter: id1), "db.c.deleteOne({ _id: 1 })"),
       (.deleteMany(collection: "c", filter: .document([])), "db.c.deleteMany({})"),
       (.listCollections, "show collections"),
+      (
+        .explain(find("c", filter: a1, limit: 5), verbosity: "executionStats"),
+        "db.c.find({ a: 1 }).limit(5).explain(\"executionStats\")"
+      ),
+      (
+        .explain(
+          .aggregate(collection: "c", pipeline: [doc(("$match", a1))]), verbosity: "queryPlanner"),
+        "db.c.aggregate([ { $match: { a: 1 } } ]).explain(\"queryPlanner\")"
+      ),
       (find("_x"), "db.getCollection(\"_x\").find()"),
       (find("$cmd"), "db.getCollection(\"$cmd\").find()"),
       (find("getCollection"), "db.getCollection(\"getCollection\").find()"),

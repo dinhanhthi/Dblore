@@ -135,10 +135,36 @@ struct MongoCommandClassifierTests {
     #expect(MongoCommandClassifier.hasStage(.string("$out"), "$out") == false)
   }
 
+  @Test("An explain is a read only when the explained command is one, never a write")
+  func explain() throws {
+    for text in [
+      "db.c.find().explain()",
+      "db.c.find({a: 1}).sort({a: -1}).limit(2).explain(\"executionStats\")",
+      "db.c.aggregate([{$match: {a: 1}}]).explain(\"allPlansExecution\")",
+    ] {
+      let statement = try classified(text)
+      #expect(statement.kind == .read, "\(text)")
+      #expect(statement.isReadOnlySafe, "\(text)")
+      expectQuietFlags(statement)
+    }
+    for text in [
+      "db.c.aggregate([{$merge: \"x\"}]).explain(\"executionStats\")",
+      "db.c.aggregate([{$match: {}}, {$out: \"x\"}]).explain()",
+      "db.c.aggregate([{$facet: {a: [{$out: \"x\"}]}}]).explain()",
+    ] {
+      let statement = try classified(text)
+      #expect(statement.kind == .unknown, "\(text)")
+      #expect(!statement.isReadOnlySafe, "\(text)")
+      #expect(!statement.affectsAllRows && !statement.createsTable, "\(text)")
+      expectQuietFlags(statement)
+    }
+    #expect(MongoCommandClassifier.usesServerSideJavaScript("db.c.find({$where: \"1\"}).explain()"))
+  }
+
   /// The full table is `MCPMongoToolTests.javaScriptRefused`.
-  @Test("Server-side JavaScript in a countDocuments options document is found as in a filter")
+  @Test("Server-side JavaScript in a find hint or countDocuments options is found as in a filter")
   func javaScriptInCountOptions() {
-    #expect(MongoCommandClassifier.usesServerSideJavaScript("db.c.countDocuments({$where: \"1\"})"))
+    #expect(MongoCommandClassifier.usesServerSideJavaScript("db.c.find().hint({$where: \"1\"})"))
     #expect(
       MongoCommandClassifier.usesServerSideJavaScript(
         "db.c.countDocuments({}, {hint: {$where: \"1\"}})"))

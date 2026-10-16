@@ -11,6 +11,8 @@
 //   `$group` like the drivers.
 // - distinct: one row per value, one column named after the field.
 // - listCollections: `name`, `type`, sorted by name (`nameOnly`, `authorizedCollections`).
+// - explain (of a find or aggregate): one row, column `EXPLAIN` (`object`), the whole reply as
+//   indented relaxed Extended JSON.
 // Reads are buffered before rows stream, so the columns are known first. The manager already
 // caps reads at `maxRows + 1`; the session also stops at `documentCap` (100,001 by default) and
 // closes the cursor, so a find without a limit cannot buffer a whole collection. Every cursor is
@@ -139,6 +141,16 @@ extension MongoSession {
           Self.readCommand(command), cap: cap, token: token, connection: connection,
           database: database)
         return Self.collectionsResult(documents)
+      case .explain(let inner, let verbosity):
+        guard let fields = Self.explainCommand(inner, verbosity: verbosity) else {
+          throw MongoSessionError(message: "Only a find or an aggregate can be explained.")
+        }
+        let userMaxTimeMS: Int? =
+          if case .find(_, _, _, _, _, _, let options) = inner { options.maxTimeMS } else { nil }
+        let reply = try await execute(
+          fields, token: token, on: connection, database: database,
+          maxTimeMS: statementMaxTimeMS(userMaxTimeMS))
+        return Self.explainResult(try MongoBSONMapping.document(reply))
       default:
         throw MongoSessionError(message: "Read commands return rows; run them as a query.")
       }
@@ -306,6 +318,25 @@ extension MongoSession {
     return fields
   }
 
+  /// `explain` of a find or aggregate (nil for any other command): the inner command exactly as
+  /// `readCommand` builds it (no row cap), with a find's user `maxTimeMS` inside it. `execute`
+  /// adds the outer `maxTimeMS` and `comment`.
+  static func explainCommand(_ command: MongoCommand, verbosity: String) -> [Field]? {
+    var inner: [Field]
+    switch command {
+    case .find(_, _, _, _, _, _, let options):
+      inner = readCommand(command)
+      if let maxTimeMS = options.maxTimeMS, maxTimeMS > 0 {
+        inner.append(Field("maxTimeMS", .int64(Int64(maxTimeMS))))
+      }
+    case .aggregate:
+      inner = readCommand(command)
+    default:
+      return nil
+    }
+    return [Field("explain", .document(inner)), Field("verbosity", .string(verbosity))]
+  }
+
   private static func aggregateCommand(collection: String, pipeline: [MongoValue]) -> [Field] {
     [
       Field("aggregate", .string(collection)), Field("pipeline", .array(pipeline)),
@@ -332,7 +363,7 @@ extension MongoSession {
       return deleteCommand(collection, filter, limit: 0)
     case .aggregate(let collection, let pipeline):
       return aggregateCommand(collection: collection, pipeline: pipeline)
-    case .find, .countDocuments, .distinct, .listCollections:
+    case .find, .countDocuments, .distinct, .listCollections, .explain:
       return nil
     }
   }
@@ -398,7 +429,7 @@ extension MongoSession {
       return CommandResult(affectedRows: written, tag: "DELETE \(written)")
     case .aggregate:
       return CommandResult(affectedRows: 0, tag: "AGGREGATE")
-    case .find, .countDocuments, .distinct, .listCollections:
+    case .find, .countDocuments, .distinct, .listCollections, .explain:
       throw MongoSessionError(message: "Read commands return rows; run them as a query.")
     }
   }
@@ -419,6 +450,12 @@ extension MongoSession {
         type: MongoBSONMapping.columns(for: values.map { .document([Field("v", $0)]) }).first?
           .type ?? "null")
     return ([column], values.map { [MongoBSONMapping.cellValue($0)] })
+  }
+
+  /// One row holding the explain reply as indented relaxed Extended JSON.
+  static func explainResult(_ reply: MongoValue) -> ([ColumnInfo], [[CellValue]]) {
+    let text = MongoRelaxedJSON.render(reply, as: .relaxedExtendedJSON, indented: true)
+    return ([ColumnInfo(name: "EXPLAIN", type: "object")], [[.json(text)]])
   }
 
   /// `name` and `type` of each collection, by name.

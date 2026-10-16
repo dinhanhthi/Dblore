@@ -37,7 +37,7 @@ nonisolated struct AnalyzedNode: Equatable, Sendable {
   /// Exclusive metric divided by the root inclusive metric, clamped to 0...1.
   var share: Double
   var estimatedRows: Double?
-  /// `actualRows * actualLoops` when both values are present.
+  /// `actualRows * actualLoops` when rows are present (no loops count as one).
   var actualRowsTimesLoops: Double?
   var misestimateFactor: Double?
   var misestimateDirection: MisestimateDirection?
@@ -154,8 +154,8 @@ nonisolated enum ExplainPlanAnalyzer {
   ) {
     let estimated = node.planRows
     let actualTimesLoops: Double?
-    if let actual = node.actualRows, let loops = node.actualLoops {
-      actualTimesLoops = actual * loops
+    if let actual = node.actualRows {
+      actualTimesLoops = actual * loopFactor(node.actualLoops)
     } else {
       actualTimesLoops = nil
     }

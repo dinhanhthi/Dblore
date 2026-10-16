@@ -4,7 +4,8 @@
 //
 //  Explain and Explain Analyze use the same protection check, Safe Mode confirmation,
 //  execution, and history recording as a normal run. EXPLAIN ANALYZE runs the inner
-//  statement, so it is never sent through executeInternal.
+//  statement, so it is never sent through executeInternal. MongoDB explains one find or
+//  aggregate as its mongosh `.explain("executionStats")` text and has no Explain Analyze.
 //
 
 import Foundation
@@ -13,7 +14,7 @@ extension NotebookViewModel {
   /// Explain the statement the Run action would run: the editor selection (or the current
   /// line / file), or the selected notebook cell.
   func explainSelectedStatement(analyze: Bool) async {
-    if refuseMongoExplain() { return }
+    if analyze, refuseMongoExplainAnalyze() { return }
     if analyze, !canExplainAnalyze {
       if let reason = explainAnalyzeUnavailableReason { showToast(reason, type: .error) }
       return
@@ -41,9 +42,12 @@ extension NotebookViewModel {
     rollbackAfterAnalyze: Bool = true,
     cellId: UUID? = nil
   ) async {
-    if refuseMongoExplain() { return }
     if viewMode == .markdown { return }
     ConfirmedParameterSnapshot.disarmExplain(self)
+    if isMongoConnection {
+      await explainMongo(statement: statement, analyze: analyze, cellId: cellId)
+      return
+    }
     // Asked of the open session: the version the request is checked against is the live one.
     let mysqlServer = await connectionManager?.mysqlServerInfo
     let request: ExplainRequest
@@ -77,13 +81,71 @@ extension NotebookViewModel {
     await runExplained(sql, cellId: targetCell)
   }
 
-  /// MongoDB has no Explain in Dblore: refused before any request is built (so no SQL
-  /// `explainPrefix` is ever applied to mongosh text). True when refused.
-  private func refuseMongoExplain() -> Bool {
-    guard notebook.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
-    else { return false }
-    showToast("EXPLAIN is not available for MongoDB connections", type: .error)
+  private var isMongoConnection: Bool {
+    notebook.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
+  }
+
+  /// MongoDB has no Explain Analyze: refused with a toast before anything is sent. True when
+  /// refused.
+  private func refuseMongoExplainAnalyze() -> Bool {
+    guard isMongoConnection else { return false }
+    showToast("Explain Analyze is not available for MongoDB connections", type: .error)
     return true
+  }
+
+  /// MongoDB Explain: one `find` (any chain) or read `aggregate` becomes its
+  /// `.explain("executionStats")` text, then takes the same protection check, Safe Mode
+  /// confirmation and send path as SQL. No `ExplainRequest`, so no SQL prefix is applied.
+  private func explainMongo(statement: String, analyze: Bool, cellId: UUID?) async {
+    if analyze, refuseMongoExplainAnalyze() { return }
+    guard let script = mongoExplainScript(statement) else { return }
+    if let message = protectionBlockMessage(for: script) {
+      showToast(message, type: .error)
+      return
+    }
+    let targetCell = viewMode == .editor ? nil : (cellId ?? selectedCellId)
+    if refuseMissingParameters(script, cellId: targetCell) != nil { return }
+    if presentConfirmationIfNeeded(for: script, cellId: targetCell) {
+      ConfirmedParameterSnapshot.armExplain(
+        self, sql: script, values: queryConfirmationState.parameterValues)
+      pendingExplainSQL = script
+      pendingStagedBatch = nil
+      return
+    }
+    await runExplained(script, cellId: targetCell)
+  }
+
+  /// The explain text of exactly one `find` or `aggregate`, or nil after a toast. A pipeline
+  /// that writes (`$out`, `$merge`) is refused: the classifier only lets an explain of a read
+  /// through.
+  private func mongoExplainScript(_ statement: String) -> String? {
+    let needsOne = "Explain needs one find or aggregate"
+    let pieces = MongoshSplitter.split(statement)
+    guard pieces.count == 1 else {
+      showToast(needsOne, type: .error)
+      return nil
+    }
+    let command: MongoCommand
+    do {
+      command = try MongoshParser.parse(pieces[0])
+    } catch {
+      showToast(error.message, type: .error)
+      return nil
+    }
+    switch command {
+    case .find, .aggregate:
+      let script = MongoCommand.explain(command, verbosity: "executionStats").render()
+      guard MongoCommandClassifier.classifyStatement(script)?.kind == .read else {
+        showToast("Explain runs reads only: this pipeline writes ($out or $merge)", type: .error)
+        return nil
+      }
+      return script
+    case .explain:
+      showToast("This is already an explain", type: .error)
+    default:
+      showToast(needsOne, type: .error)
+    }
+    return nil
   }
 
   /// Protected mode owns the transaction even before the first statement opens it.

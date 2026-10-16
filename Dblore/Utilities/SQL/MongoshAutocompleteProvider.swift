@@ -40,7 +40,9 @@ enum MongoshAutocompleteProvider {
     "updateMany", "replaceOne", "deleteOne", "deleteMany",
   ]
   static let databaseMethods = ["getCollection", "getCollectionNames"]
-  static let chainMethods = ["sort", "limit", "skip", "collation", "hint", "maxTimeMS"]
+  static let chainMethods = [
+    "sort", "limit", "skip", "collation", "hint", "maxTimeMS", "explain",
+  ]
   static let queryOperators = [
     "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$exists", "$type", "$regex",
     "$and", "$or", "$nor", "$not", "$elemMatch", "$size", "$all", "$expr",
@@ -595,7 +597,9 @@ extension MongoshAutocompleteProvider {
       where MongoshAutocompleteProvider.chainMethods.contains(name):
         return Frame(
           role: .call(name), collection: collection,
-          afterClose: .found(collection: collection, used: used.union([name])))
+          // `explain` must be the last method
+          afterClose: name == "explain"
+            ? .none : .found(collection: collection, used: used.union([name])))
       default:
         return Frame(role: .other, collection: "")
       }

@@ -467,6 +467,28 @@ struct MongoSessionTests {
     #expect(stages(zero) == ["$match", "$group"])
   }
 
+  @Test("explain wraps the read command uncapped, a find's maxTimeMS inside, none at the top")
+  func explainCommandDocument() throws {
+    let find = MongoCommand.find(
+      collection: "c", filter: nil, projection: nil, sort: nil, skip: nil, limit: nil,
+      options: .init(maxTimeMS: 500))
+    let fields = try #require(MongoSession.explainCommand(find, verbosity: "executionStats"))
+    #expect(fields.map(\.key) == ["explain", "verbosity"])
+    #expect(fields[1].value == .string("executionStats"))
+    guard case .document(let inner) = fields[0].value else {
+      Issue.record("explain is not a document")
+      return
+    }
+    #expect(inner.map(\.key) == ["find", "maxTimeMS"])
+    #expect(inner.last?.value == .int64(500))
+    let pipeline = [Self.reply(("$match", Self.reply(("a", .int32(1)))))]
+    let aggregate = MongoCommand.aggregate(collection: "c", pipeline: pipeline)
+    #expect(
+      MongoSession.explainCommand(aggregate, verbosity: "queryPlanner")?.first?.value
+        == .document(MongoSession.readCommand(aggregate)))
+    #expect(MongoSession.explainCommand(.listCollections, verbosity: "queryPlanner") == nil)
+  }
+
   @Test("Result shapes of countDocuments, distinct and listCollections")
   func resultShapes() {
     let count = MongoSession.countResult([Self.reply(("_id", .int32(1)), ("n", .int32(7)))])

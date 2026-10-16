@@ -39,10 +39,15 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   case deleteMany(collection: String, filter: MongoValue)
   /// `show collections` or `db.getCollectionNames()`.
   case listCollections
+  /// A find chain or an aggregate ending in `.explain(verbosity)`: `queryPlanner`,
+  /// `executionStats` or `allPlansExecution`.
+  indirect case explain(MongoCommand, verbosity: String)
 
-  /// The target collection, nil for `listCollections`.
+  /// The target collection (the explained command's for `explain`), nil for `listCollections`.
   var collection: String? {
     switch self {
+    case .explain(let command, _):
+      command.collection
     case .find(let name, _, _, _, _, _, _), .aggregate(let name, _),
       .countDocuments(let name, _, _),
       .distinct(let name, _, _), .insertOne(let name, _), .insertMany(let name, _),
@@ -56,8 +61,9 @@ nonisolated enum MongoCommand: Equatable, Sendable {
 
   /// Canonical mongosh text: values in mongosh notation, find chains as `.sort .skip .limit`
   /// then `.collation .hint .maxTimeMS`, `{upsert: true}` only when set, `show collections` for
-  /// `listCollections`. A nil find or count filter is written `{}` when a projection or count
-  /// options follow. `MongoshParser.parse` reads it back unchanged.
+  /// `listCollections`, `.explain("<verbosity>")` always with its verbosity. A nil find or count
+  /// filter is written `{}` when a projection or count options follow. `MongoshParser.parse`
+  /// reads it back unchanged.
   func render() -> String {
     switch self {
     case .find(let name, let filter, let projection, let sort, let skip, let limit, let options):
@@ -95,6 +101,8 @@ nonisolated enum MongoCommand: Equatable, Sendable {
       return Self.call(name, "deleteMany", [filter])
     case .listCollections:
       return "show collections"
+    case .explain(let command, let verbosity):
+      return "\(command.render()).explain(\(Self.value(.string(verbosity))))"
     }
   }
 

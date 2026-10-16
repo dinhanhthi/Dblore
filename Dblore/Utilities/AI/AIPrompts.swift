@@ -120,6 +120,7 @@ nonisolated enum AIPrompts {
     - Collection: db.c, db.getCollection("c") or db["c"]; use db.getCollection("c") when the name has a dot or other special characters.
     - db.c.find(filter, projection), optionally followed by .sort({field: 1}), .skip(n), .limit(n), .collation({locale: "en"}), .hint("index_name" or {field: 1}) and .maxTimeMS(n), each at most once. Only find takes these.
     - db.c.aggregate([stage, ...])
+    - A find chain or an aggregate may end with .explain() or .explain("executionStats") to show the query plan; nothing may follow it.
     - db.c.countDocuments(filter, options)
     - db.c.distinct("field", filter)
     - db.c.insertOne(document), db.c.insertMany([document, ...])

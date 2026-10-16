@@ -10,10 +10,12 @@ import Foundation
 ///
 /// Mapping: `find`, `countDocuments`, `distinct`, `listCollections` and an `aggregate` without
 /// `$out`/`$merge` are reads; inserts, updates, `replaceOne`, deletes and an `aggregate` with
-/// `$merge` are DML; an `aggregate` with `$out` is DDL that creates a table; text that does not
-/// parse is unknown. `$out`/`$merge` count as a key at any depth of the pipeline (fail closed).
-/// No statement is non-transactional (Schema-only lets DML run), none has RETURNING, and none
-/// touches session brakes or privileges.
+/// `$merge` are DML; an `aggregate` with `$out` is DDL that creates a table; an `explain` is a
+/// read when the explained command is one, otherwise unknown (never a write, so a writing
+/// pipeline is refused rather than confirmed); text that does not parse is unknown.
+/// `$out`/`$merge` count as a key at any depth of the pipeline (fail closed). No statement is
+/// non-transactional (Schema-only lets DML run), none has RETURNING, and none touches session
+/// brakes or privileges.
 nonisolated enum MongoCommandClassifier {
 
   /// Split `text` into commands and classify each. Comment-only pieces are dropped.
@@ -33,6 +35,10 @@ nonisolated enum MongoCommandClassifier {
     guard let command = try? MongoshParser.parse(text) else {
       return statement(text, kind: .unknown)
     }
+    return classify(command, text: text)
+  }
+
+  private static func classify(_ command: MongoCommand, text: String) -> ClassifiedStatement {
     switch command {
     case .find, .countDocuments, .distinct, .listCollections:
       return statement(text, kind: .read)
@@ -44,6 +50,8 @@ nonisolated enum MongoCommandClassifier {
       return statement(text, kind: .dml)
     case .updateMany(_, let filter, _, _), .deleteMany(_, let filter):
       return statement(text, kind: .dml, affectsAllRows: filter == .document([]))
+    case .explain(let inner, _):
+      return statement(text, kind: classify(inner, text: text).kind == .read ? .read : .unknown)
     }
   }
 
@@ -86,6 +94,7 @@ nonisolated enum MongoCommandClassifier {
       [filter, update]
     case .deleteOne(_, let filter), .deleteMany(_, let filter): [filter]
     case .listCollections: []
+    case .explain(let command, _): arguments(of: command)
     }
   }
 
