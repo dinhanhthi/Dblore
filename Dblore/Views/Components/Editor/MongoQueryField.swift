@@ -60,9 +60,12 @@ struct MongoQueryField: View {
 // MARK: - Text View
 
 /// SQLTextView with the query field keys. `viewModelId` stays nil, so the notebook cell
-/// shortcuts and arrow navigation of the base class are off.
+/// shortcuts and arrow navigation of the base class are off. Also the aggregation stage body
+/// (`submitsOnReturn` off), through `HighlightedTextEditor`.
 final class MongoQueryTextView: SQLTextView {
   var onSubmit: (() -> Void)?
+  /// False in a multi-line body: Return adds an indented line, as Shift+Return does
+  var submitsOnReturn = true
 
   private static let pairKeys: Set<Character> = ["{", "[", "\"", "'", "}", "]"]
   /// Set while `apply` inserts its edit, so that insertion is not taken as typing again
@@ -96,12 +99,12 @@ final class MongoQueryTextView: SQLTextView {
       return
     }
     if event.keyCode == 36 || event.keyCode == 76 {
-      if flags.isEmpty {
+      if flags.isEmpty, submitsOnReturn {
         hideAutocomplete()
         onSubmit?()
         return
       }
-      if flags == .shift, apply(.newline) {
+      if flags.isEmpty || flags == .shift, apply(.newline) {
         return
       }
     }

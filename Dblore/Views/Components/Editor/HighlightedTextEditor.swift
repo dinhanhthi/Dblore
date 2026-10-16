@@ -64,6 +64,9 @@ struct HighlightedTextEditor: View {
   var fontSize: CGFloat = AppSettings.shared.editorFontSize
   /// False for read-only text (object source tabs): still selectable and copyable
   var isEditable = true
+  /// The MongoDB query field keys (brackets and quotes pair, Return keeps the indent); for
+  /// mongosh bodies
+  var mongoQueryEditing = false
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -81,7 +84,8 @@ struct HighlightedTextEditor: View {
       wordWrapEnabled: wordWrapEnabled,
       dialect: dialect,
       fontSize: fontSize,
-      isEditable: isEditable
+      isEditable: isEditable,
+      mongoQueryEditing: mongoQueryEditing
     )
     .frame(height: maxHeight ?? height)
   }
@@ -103,10 +107,18 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var dialect: SQLDialect = .postgresql
   var fontSize: CGFloat = AppSettings.shared.editorFontSize
   var isEditable = true
+  var mongoQueryEditing = false
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
-    let textView = SQLTextView()
+    let textView: SQLTextView
+    if mongoQueryEditing {
+      let mongoTextView = MongoQueryTextView()
+      mongoTextView.submitsOnReturn = false
+      textView = mongoTextView
+    } else {
+      textView = SQLTextView()
+    }
 
     textView.delegate = context.coordinator
     // Records which characters each edit touched (see Coordinator.textStorage(_:didProcessEditing:))

@@ -110,7 +110,8 @@ struct AggregationStageRow: View {
       isEmpty: $isBodyEmpty,
       autocompleteProvider: fieldCompletion,
       maxHeight: Self.editorHeight,
-      dialect: .mongodb
+      dialect: .mongodb,
+      mongoQueryEditing: true
     )
     .padding(Spacing.xs)
     .background(Color.inputBackground)
