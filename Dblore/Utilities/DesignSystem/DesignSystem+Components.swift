@@ -90,12 +90,13 @@ struct PrimaryButtonStyle: ButtonStyle {
 
 struct SecondaryButtonStyle: ButtonStyle {
   var iconOnly: Bool = false
+  var fillsWidth: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(
-      variant: .secondary, iconOnly: iconOnly, hPadding: hPadding,
+      variant: .secondary, iconOnly: iconOnly, fillsWidth: fillsWidth, hPadding: hPadding,
       vPadding: vPadding, configuration: configuration
     )
   }
@@ -130,13 +131,14 @@ struct DangerButtonStyle: ButtonStyle {
 struct GhostButtonStyle: ButtonStyle {
   var isActive: Bool = false
   var iconOnly: Bool = false
+  var fillsWidth: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
 
   func makeBody(configuration: Configuration) -> some View {
     BaseButtonStyleView(
-      variant: .ghost, isActive: isActive, iconOnly: iconOnly, hPadding: hPadding,
-      vPadding: vPadding, configuration: configuration
+      variant: .ghost, isActive: isActive, iconOnly: iconOnly, fillsWidth: fillsWidth,
+      hPadding: hPadding, vPadding: vPadding, configuration: configuration
     )
   }
 }
@@ -146,6 +148,9 @@ private struct BaseButtonStyleView: View {
   let variant: ButtonStyleVariant
   var isActive: Bool = false
   var iconOnly: Bool = false
+  /// The label stretches to the offered width (`.frame(maxWidth: .infinity)` inside it).
+  /// Otherwise the label keeps its full single-line width and never wraps.
+  var fillsWidth: Bool = false
   var hPadding: CGFloat? = nil
   var vPadding: CGFloat? = nil
   let configuration: ButtonStyleConfiguration
@@ -221,6 +226,8 @@ private struct BaseButtonStyleView: View {
 
   var body: some View {
     configuration.label
+      .lineLimit(1)
+      .fixedSize(horizontal: !fillsWidth, vertical: false)
       .font(iconFontSize.map { Font.system(size: $0) } ?? font)
       .foregroundColor(
         variant.foregroundColor(

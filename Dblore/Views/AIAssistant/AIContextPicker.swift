@@ -278,12 +278,13 @@ struct AIContextPicker<Accessory: View>: View {
                   .opacity(isOn ? 1 : 0)
                 Text(table.qualifiedName)
                   .font(.labelText)
+                  .truncationMode(.middle)
                 Spacer(minLength: 0)
               }
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
             }
-            .buttonStyle(GhostButtonStyle(isActive: isOn))
+            .buttonStyle(GhostButtonStyle(isActive: isOn, fillsWidth: true))
           }
         }
       }

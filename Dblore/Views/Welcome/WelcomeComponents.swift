@@ -60,7 +60,7 @@ struct WelcomeActionButton: View {
       }
       .frame(maxWidth: .infinity)
     }
-    .buttonStyle(SecondaryButtonStyle())
+    .buttonStyle(SecondaryButtonStyle(fillsWidth: true))
     .help(help ?? title)
   }
 }
