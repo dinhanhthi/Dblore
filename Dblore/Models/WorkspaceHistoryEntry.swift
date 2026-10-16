@@ -11,6 +11,8 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   let fileURL: URL
   let name: String
   let connectionDisplayString: String?
+  /// Engine of the workspace connection, badged on the welcome row (nil in older entries)
+  let databaseType: DatabaseType?
   let lastOpenedAt: Date
   let tabCount: Int
   /// App-scope security-scoped bookmark of the .sqlws file (nil in entries saved before bookmarks)
@@ -23,6 +25,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     fileURL: URL,
     name: String,
     connectionDisplayString: String? = nil,
+    databaseType: DatabaseType? = nil,
     lastOpenedAt: Date = Date(),
     tabCount: Int = 0,
     bookmark: Data? = nil
@@ -31,6 +34,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     self.fileURL = fileURL
     self.name = name
     self.connectionDisplayString = connectionDisplayString
+    self.databaseType = databaseType
     self.lastOpenedAt = lastOpenedAt
     self.tabCount = tabCount
     self.bookmark = bookmark
@@ -40,6 +44,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   static func == (lhs: WorkspaceHistoryEntry, rhs: WorkspaceHistoryEntry) -> Bool {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.name == rhs.name
       && lhs.connectionDisplayString == rhs.connectionDisplayString
+      && lhs.databaseType == rhs.databaseType
       && lhs.lastOpenedAt == rhs.lastOpenedAt && lhs.tabCount == rhs.tabCount
   }
 
@@ -64,6 +69,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       fileURL: fileURL,
       name: name,
       connectionDisplayString: connectionDisplayString,
+      databaseType: databaseType,
       lastOpenedAt: lastOpenedAt,
       tabCount: tabCount,
       bookmark: bookmark
@@ -87,6 +93,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       fileURL: fileURL,
       name: workspace.name,
       connectionDisplayString: workspace.connectionConfig?.displayString,
+      databaseType: workspace.connectionConfig?.databaseType,
       lastOpenedAt: workspace.lastOpenedAt,
       tabCount: workspace.tabs.count,
       bookmark: bookmark

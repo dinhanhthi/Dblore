@@ -558,9 +558,32 @@ struct RecentWorkspaceRow: View {
         if isLoading {
           ProgressView().controlSize(.small)
         } else {
-          Image(systemName: "folder.badge.gearshape")
+          // Plain folder; the connection engine badges its bottom-right corner through a cutout
+          Image(systemName: "folder")
             .font(.system(size: 13))
             .foregroundColor(.accent)
+            .mask {
+              Rectangle()
+                .overlay(alignment: .bottomTrailing) {
+                  if workspace.databaseType != nil {
+                    Circle()
+                      .frame(width: 12, height: 12)
+                      .offset(x: 3, y: 3)
+                      .blendMode(.destinationOut)
+                  }
+                }
+                .compositingGroup()
+            }
+            .overlay(alignment: .bottomTrailing) {
+              if let type = workspace.databaseType {
+                Image(type.iconAssetName)
+                  .resizable()
+                  .aspectRatio(contentMode: .fit)
+                  .frame(width: 10, height: 10)
+                  .foregroundColor(type.brandColor)
+                  .offset(x: 2, y: 2)
+              }
+            }
         }
       } title: {
         Text(workspace.name)
@@ -817,6 +840,7 @@ private enum PreviewData {
         fileURL: URL(fileURLWithPath: "/Users/dev/Projects/analytics.dblore"),
         name: "Analytics Dashboard",
         connectionDisplayString: "analytics@prod-db:5432",
+        databaseType: .postgresql,
         lastOpenedAt: Date().addingTimeInterval(-3600),  // 1 hour ago
         tabCount: 5
       ),
@@ -824,6 +848,7 @@ private enum PreviewData {
         fileURL: URL(fileURLWithPath: "/Users/dev/Projects/users-migration.dblore"),
         name: "Users Migration",
         connectionDisplayString: "users@localhost:5432",
+        databaseType: .postgresql,
         lastOpenedAt: Date().addingTimeInterval(-86400),  // 1 day ago
         tabCount: 3
       ),
