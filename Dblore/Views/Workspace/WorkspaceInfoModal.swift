@@ -50,7 +50,7 @@ struct WorkspaceInfoModal: View {
         CapsuleTabPicker(
           selection: $workspaceManager.workspaceInfoTab,
           tabs: Array(WorkspaceInfoTab.allCases),
-          height: 28
+          height: 32
         )
         .fitsContent()
         // Keeps the picker clear of the close button
