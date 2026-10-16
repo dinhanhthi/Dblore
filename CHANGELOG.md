@@ -20,7 +20,10 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ### Fixed
 
-- **Cancel on MySQL** now says "Query cancelled. The connection was kept." instead of reporting a reset connection, since `KILL QUERY` keeps the session and its transaction. [#2614c5dc](https://github.com/dinhanhthi/Dblore/commit/2614c5dc)
+- **Cancel on MySQL** now says "Query cancelled. The connection was kept." instead of reporting a reset connection, since `KILL QUERY` keeps the session and its transaction. Stopping a MySQL or MongoDB query no longer warns that pending changes will be rolled back. [#2614c5dc](https://github.com/dinhanhthi/Dblore/commit/2614c5dc) [#674f40cb](https://github.com/dinhanhthi/Dblore/commit/674f40cb)
+- **Safe Mode confirmation lists the statements.** The Confirm dialog showed only its first line; it now lists every statement it will run, under the warning. [#674f40cb](https://github.com/dinhanhthi/Dblore/commit/674f40cb)
+- **First row of a result.** A result long enough to scroll no longer opens with its first row half under the column header. [#674f40cb](https://github.com/dinhanhthi/Dblore/commit/674f40cb)
+- **Row count after Commit.** The data viewer counts the rows again after committed inserts or deletes, so the paging bar no longer shows the old total. [#674f40cb](https://github.com/dinhanhthi/Dblore/commit/674f40cb)
 - **MySQL values of 16 MiB or more** are sent and read in full: the mysql-nio fork's tag `1.9.1-dblore.3` splits and reassembles large packets (capped at 1 GiB) and adds a login over an already open channel. [#cca5347f](https://github.com/dinhanhthi/Dblore/commit/cca5347f)
 - **SQLite triggers in a cell.** A `CREATE TRIGGER … BEGIN … END` typed in a cell now runs as one statement instead of failing in pieces, and a `--` comment ends only at a line feed, as in SQLite, so Safe Mode no longer misreads a statement after a comment that ends with a bare carriage return. [#63e32bd0](https://github.com/dinhanhthi/Dblore/commit/63e32bd0)
 - **Structure editor on MySQL and MariaDB.** MariaDB refuses NOT NULL on a generated column up front, and MySQL CHECK and index expressions are shown without escape characters. [#2614c5dc](https://github.com/dinhanhthi/Dblore/commit/2614c5dc)
