@@ -42,13 +42,21 @@ struct AggregationBuilderBody: View {
           .foregroundColor(.foregroundMuted)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        List(selection: $selectedStage) {
+        // No List selection: its accent highlight is too loud behind the editors, so the selected
+        // stage gets a light neutral fill instead
+        List {
           ForEach(Array(model.stages.enumerated()), id: \.element.id) { index, stage in
             AggregationStageRow(
               model: model, stage: stage, number: index + 1,
               onSelect: { selectedStage = stage.id }, fieldSource: fieldSource
             )
-            .tag(stage.id)
+            .contentShape(Rectangle())
+            .onTapGesture { selectedStage = stage.id }
+            .listRowBackground(
+              RoundedRectangle(cornerRadius: CornerRadius.lg, style: .continuous)
+                .fill(selectedStage == stage.id ? Color.hoverFill : Color.clear)
+                .padding(.horizontal, Spacing.sm)
+            )
           }
           .onMove { source, destination in
             model.move(fromOffsets: source, toOffset: destination)
