@@ -245,6 +245,30 @@ struct DocumentTreeModelTests {
     #expect(node(mixed, path: "v")?.editType == nil)
   }
 
+  @Test("expand all opens every nested document and array of one card; collapse all closes them")
+  func expandAndCollapseAll() {
+    let nested = doc(
+      ("_id", .int32(1)),
+      ("a", doc(("b", doc(("c", .int32(1)))))),
+      ("tags", .array([doc(("x", .int32(2)))])))
+    var tree = model([nested, doc(("_id", .int32(2)), ("d", doc(("e", .int32(3)))))])
+    #expect(!tree.isFullyExpanded(document: 0))
+
+    tree.expandAll(document: 0)
+    #expect(
+      tree.cards[0].nodes.map(\.path) == [
+        "", "_id", "a", "a.b", "a.b.c", "tags", "tags.0", "tags.0.x",
+      ]
+    )
+    #expect(tree.isFullyExpanded(document: 0))
+    // Only that card
+    #expect(tree.cards[1].nodes.map(\.path) == ["", "_id", "d"])
+
+    tree.collapseAll(document: 0)
+    #expect(tree.cards[0].nodes.map(\.path) == ["", "_id", "a", "tags"])
+    #expect(!tree.isFullyExpanded(document: 0))
+  }
+
   @Test("staged inserts follow the stored documents; tree state survives inserts and rebuilds")
   func stagedInsertsAndCarryOver() throws {
     let stored = [doc(("_id", .int32(1)), ("sub", doc(("a", .int32(1))))), doc(("_id", .int32(2)))]

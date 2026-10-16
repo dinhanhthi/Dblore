@@ -182,6 +182,41 @@ nonisolated struct DocumentTreeModel: Sendable {
     rebuildCard(id.document)
   }
 
+  /// Opens the card of `document` and every document and array inside it (within the shown pages).
+  mutating func expandAll(document: Int) {
+    guard documents.indices.contains(document) else { return }
+    let root = DocumentTreeNodeID(document: document, indexes: [])
+    collapsed.remove(root)
+    expanded.formUnion(containerIDs(in: documents[document], id: root).dropFirst())
+    rebuildCard(document)
+  }
+
+  /// Closes every document and array inside the card of `document`; the card stays open.
+  mutating func collapseAll(document: Int) {
+    expanded = expanded.filter { $0.document != document }
+    rebuildCard(document)
+  }
+
+  /// Whether the card of `document` and every document and array inside it are open.
+  func isFullyExpanded(document: Int) -> Bool {
+    guard documents.indices.contains(document) else { return false }
+    let root = DocumentTreeNodeID(document: document, indexes: [])
+    return containerIDs(in: documents[document], id: root).allSatisfy(isExpanded)
+  }
+
+  /// `id` (when `value` is a container) and the containers below it, within the shown pages.
+  private func containerIDs(in value: MongoValue, id: DocumentTreeNodeID) -> [DocumentTreeNodeID] {
+    guard Self.isContainer(value) else { return [] }
+    var ids = [id]
+    for index in 0..<min(shownCount(id), Self.childCount(of: value)) {
+      guard let child = Self.child(of: value, at: index) else { break }
+      ids += containerIDs(
+        in: child.value,
+        id: DocumentTreeNodeID(document: id.document, indexes: id.indexes + [index]))
+    }
+    return ids
+  }
+
   /// Replaces the staged inserts shown after the stored documents; the stored documents are not
   /// rebuilt.
   mutating func setStagedInserts(_ inserts: [MongoValue]) {

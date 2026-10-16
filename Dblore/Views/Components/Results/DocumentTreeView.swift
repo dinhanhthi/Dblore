@@ -3,9 +3,10 @@
 //  Dblore
 //
 //  Documents view of a MongoDB result (DocumentTreeModel): one card per document. The card
-//  header is the document (`_id`, type badge, a hover toolbar and a context menu with View
-//  Details, Copy, Duplicate and Delete or Revert); its lines are the fields as `key: value`,
-//  nested documents and arrays collapsible and indented, large containers paged with "show more".
+//  header is the document (`_id`, type badge, a hover toolbar and a context menu with Expand or
+//  Collapse All, View Details, Copy, Duplicate and Delete or Revert); its lines are the fields as
+//  `key: value`, nested documents and arrays collapsible and indented, large containers paged
+//  with "show more".
 //  When editable, a double-click edits a scalar inline (Return commits, Esc or focus loss
 //  cancels) or hands any other value to `onEditField` (the editor sheet). Staged inserts follow
 //  the stored documents as "New" cards; documents staged for deletion are dimmed and struck.
@@ -179,6 +180,20 @@ struct DocumentTreeView: View {
   ) -> [DocumentCardAction] {
     let row = card.document
     var actions: [DocumentCardAction] = []
+    // View only: opens or closes every nested document and array of the card
+    if card.nodes.first?.isExpandable == true {
+      if model?.isFullyExpanded(document: row) == true {
+        actions.append(
+          DocumentCardAction(title: "Collapse All", systemImage: "rectangle.compress.vertical") {
+            model?.collapseAll(document: row)
+          })
+      } else {
+        actions.append(
+          DocumentCardAction(title: "Expand All", systemImage: "rectangle.expand.vertical") {
+            model?.expandAll(document: row)
+          })
+      }
+    }
     if !isStale, !card.isStaged, let onShowDetails {
       actions.append(
         DocumentCardAction(
