@@ -126,6 +126,24 @@ struct MongoshAutocompleteProviderTests {
     #expect(suggest("db.getCollection(\"a.b\").find({ k|") == ["key"])
   }
 
+  @Test("A bare filter or stage body offers the field paths of its collection, odd names too")
+  func bareDocumentFields() {
+    let source = SQLAutocompleteProvider()
+    source.update(tables: [
+      DatabaseTable(
+        schema: "shop", name: "ai-credentials",
+        columns: [DatabaseColumn(name: "status", type: "string")])
+    ])
+    let filter = MongoDocumentAutocompleteProvider(
+      collection: "ai-credentials", mode: .filter, source: source)
+    #expect(filter.getSuggestions(for: "{sta", at: 4, dialect: .mongodb).map(\.text) == ["{status"])
+    #expect(
+      filter.getSuggestions(for: "{sta}", at: 4, dialect: .mongodb).map(\.text) == ["{status}"])
+    let stage = MongoDocumentAutocompleteProvider(
+      collection: "ai-credentials", mode: .stage("$match"), source: source)
+    #expect(stage.getSuggestions(for: "{ st", at: 4, dialect: .mongodb).map(\.text) == ["status"])
+  }
+
   @Test("An update's second argument offers update operators at its top level")
   func updateOperators() {
     #expect(suggest("db.users.updateOne({_id: 1}, {$s|") == ["{$set"])

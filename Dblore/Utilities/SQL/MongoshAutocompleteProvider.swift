@@ -82,6 +82,33 @@ enum MongoshAutocompleteProvider {
     }
   }
 
+  /// Where a bare document (no `db.` command around it) is used
+  enum DocumentMode: Equatable {
+    /// A `find` filter
+    case filter
+    /// The body of the aggregation stage `op` (`$match`, `$project`, ...)
+    case stage(String)
+  }
+
+  /// Suggestions inside a bare document of `collection`: the text is read as if it followed
+  /// `db.getCollection("<collection>").find(` or `...aggregate([{<op>: `. Both prefixes end at
+  /// an editor token boundary, so the suggestion texts fit `text` unchanged. The `.stage(op)`
+  /// operator must be a trusted literal stage name: it is interpolated unescaped into the prefix.
+  static func documentSuggestions(
+    for text: String, at position: Int, collection: String, mode: DocumentMode,
+    tables: [DatabaseTable]
+  ) -> [AutocompleteSuggestion] {
+    let command = "db.getCollection(\(quoted(collection)))"
+    let prefix: String
+    switch mode {
+    case .filter: prefix = command + ".find("
+    case .stage(let op): prefix = command + ".aggregate([{\(op): "
+    }
+    let cursor = min(max(position, 0), (text as NSString).length)
+    return suggestions(
+      for: prefix + text, at: (prefix as NSString).length + cursor, tables: tables)
+  }
+
   // MARK: - Candidates
 
   private struct Candidate {

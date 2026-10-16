@@ -115,6 +115,17 @@ struct MongoshSyntaxHighlighterTests {
     #expect(type(of: #"/ab\/c[/]d/i"#, in: text) == .string)
   }
 
+  @Test("Bare filter literal without a db. prefix")
+  func bareFilter() {
+    let text = #"{status: "active", n: {$gt: 5}, _id: ObjectId("abc")}"#
+    #expect(type(of: "\"active\"", in: text) == .string)
+    #expect(type(of: "5", in: text) == .number)
+    #expect(type(of: "$gt", in: text) == .keyword)
+    #expect(type(of: "ObjectId", in: text) == .type)
+    #expect(type(of: "\"abc\"", in: text) == .string)
+    #expect(typeAt("status", in: text) == nil)
+  }
+
   @Test("Line and block comments")
   func comments() {
     let text = "/* head\n db.x */ db.c.find() // tail find\ndb.d.find()"

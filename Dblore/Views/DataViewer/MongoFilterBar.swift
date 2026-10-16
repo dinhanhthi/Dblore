@@ -20,18 +20,29 @@ struct MongoFilterBar: View {
 
   private var appliedFilter: String { viewModel.dataViewer?.documentFilter ?? "" }
 
+  /// Field names of the shown collection, from the workspace's sampled schema
+  private var fieldCompletion: SQLAutocompleteProvider? {
+    guard let name = viewModel.dataViewer?.name else { return nil }
+    return MongoDocumentAutocompleteProvider(
+      collection: name, mode: .filter, source: viewModel.autocompleteProvider)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       HStack(spacing: Spacing.sm) {
         Image(systemName: "line.3.horizontal.decrease")
           .font(.system(size: 11))
           .foregroundColor(appliedFilter.isEmpty ? .foregroundMuted : .accent)
-        TextField(#"Filter, e.g. {status: "active"}"#, text: $draft)
-          .textFieldStyle(.plain)
-          .font(.monoSmall)
-          .inputCapsuleStyle()
-          .onSubmit(apply)
-          .onChange(of: draft) { error = nil }
+        MongoQueryField(
+          text: $draft,
+          placeholder: #"Filter, e.g. {status: "active"}"#,
+          autocompleteProvider: fieldCompletion,
+          onSubmit: apply
+        )
+        // One style at every height (switching styles would rebuild the field): its corner
+        // radius makes a pill at one line and a rounded card at several
+        .inputStyle()
+        .onChange(of: draft) { error = nil }
         Button("Apply", action: apply)
           .buttonStyle(SecondaryButtonStyle())
           .disabled(viewModel.isEditorQueryRunning)
