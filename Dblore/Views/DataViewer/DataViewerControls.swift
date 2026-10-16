@@ -2,7 +2,8 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: table title, + Row, and staged-change actions.
+//  Data viewer header controls: table title, MongoDB collection sections, + Row, and
+//  staged-change actions.
 //  Rows-per-page, column visibility, paging, and the Grid / Chart slider sit
 //  in DataViewerPagingBar under the result table. The slider is trailing.
 //
@@ -40,7 +41,16 @@ struct DataViewerControls: View {
 
         Divider().frame(height: 14)
 
-        addRowButton
+        // MongoDB collection sections; + Row only stages into the Documents section
+        if let model = viewModel.mongoCollection {
+          MongoCollectionTabBar(model: model, documentCount: state.totalRows)
+          if model.section == .documents {
+            Divider().frame(height: 14)
+            addRowButton
+          }
+        } else {
+          addRowButton
+        }
 
         if let counts = viewModel.stagedChangeCounts {
           stagedSummary(counts)

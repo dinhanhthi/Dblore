@@ -18,9 +18,6 @@ struct DataViewerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      if let model = viewModel.mongoCollection {
-        MongoCollectionTabBar(model: model, documentCount: viewModel.dataViewer?.totalRows)
-      }
       // The documents stay in the hierarchy, hidden, while another section shows: the filter
       // draft and the grid's sort, search, value filter and scroll live in view state and would
       // reset

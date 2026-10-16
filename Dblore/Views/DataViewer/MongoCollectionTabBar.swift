@@ -2,9 +2,9 @@
 //  MongoCollectionTabBar.swift
 //  Dblore
 //
-//  Sections of a MongoDB collection screen (Documents, Aggregations, Schema, Indexes) above the
-//  data viewer, with the counts already known: the documents total of the loaded page and the
-//  indexes once read.
+//  Sections of a MongoDB collection screen (Documents, Aggregations, Schema, Indexes), shown in
+//  the data viewer header next to the collection title, with the counts already known: the
+//  documents total of the loaded page and the indexes once read.
 //
 
 import SwiftUI
@@ -17,29 +17,17 @@ struct MongoCollectionTabBar: View {
   private typealias Section = MongoCollectionModel.Section
 
   var body: some View {
-    HStack(spacing: Spacing.sm) {
-      CapsuleTabPicker(
-        selection: $model.section,
-        tabs: Section.allCases,
-        height: ResultDisplayPicker.height,
-        inset: 2,
-        verticalInset: 2
-      ) { tab in
-        label(tab)
-      }
-      .fitsContent()
-      .accessibilityLabel("Collection section")
-      Spacer(minLength: 0)
+    CapsuleTabPicker(
+      selection: $model.section,
+      tabs: Section.allCases,
+      height: ResultDisplayPicker.height,
+      inset: 2,
+      verticalInset: 2
+    ) { tab in
+      label(tab)
     }
-    .padding(.horizontal, Spacing.md)
-    .padding(.vertical, Spacing.sm)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.appBackground)
-    .overlay(alignment: .bottom) {
-      Rectangle()
-        .fill(Color.foregroundMuted.opacity(0.1))
-        .frame(height: 1)
-    }
+    .fitsContent()
+    .accessibilityLabel("Collection section")
   }
 
   /// Sized by the semibold title, so a selection change keeps every tab width and the chip
