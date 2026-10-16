@@ -51,7 +51,6 @@ struct DocumentTreeView: View {
   @FocusState private var focusedLine: DocumentTreeNodeID?
 
   private static let cardSpacing = Spacing.sm
-  private static let cardPadding = Spacing.xs
   private static let listPadding = Spacing.sm
 
   /// The shown cards were built from an earlier result (a rebuild is running): they stay drawn,
@@ -97,15 +96,14 @@ struct DocumentTreeView: View {
     if inserts != stagedInserts { model?.setStagedInserts(stagedInserts) }
   }
 
-  /// Fixed notebook height: the visible lines plus the chrome of their cards, at most as many
-  /// lines as a grid shows (plus one card's chrome).
+  /// Fixed notebook height: the visible lines plus the gaps between their cards, at most as many
+  /// lines as a grid shows.
   private static func height(cards: [DocumentTreeCard]) -> CGFloat {
     let lines = cards.reduce(0) { $0 + $1.nodes.count }
-    let cardChrome = cardPadding * 2
     let content =
-      ResultGridView.rowsHeight(rowCount: max(1, lines)) + CGFloat(cards.count) * cardChrome
+      ResultGridView.rowsHeight(rowCount: max(1, lines))
       + CGFloat(max(0, cards.count - 1)) * cardSpacing
-    let cap = ResultGridView.rowsHeight(rowCount: ResultGridView.maxVisibleRows) + cardChrome
+    let cap = ResultGridView.rowsHeight(rowCount: ResultGridView.maxVisibleRows)
     return min(content, cap) + listPadding * 2
   }
 
@@ -143,7 +141,6 @@ struct DocumentTreeView: View {
         line(node, card: card)
       }
     }
-    .padding(.vertical, Self.cardPadding)
     .background(Color.cellBackground, in: shape)
     .clipShape(shape)
     .overlay(HairlineBorder(shape: shape))
