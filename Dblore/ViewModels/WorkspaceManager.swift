@@ -64,10 +64,6 @@ class WorkspaceManager: Identifiable {
     workspace.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
   }
 
-  /// The schema visualizer draws tables and foreign keys, so it is offered on relational (SQL)
-  /// engines only, not on MongoDB
-  var canVisualizeSchema: Bool { !isMongoWorkspace }
-
   /// Label of the new script entry: "New Query" on MongoDB, else "New SQL File"
   var newScriptLabel: String { isMongoWorkspace ? "New Query" : "New SQL File" }
 

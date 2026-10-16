@@ -215,21 +215,19 @@ struct WorkspaceContainerView: View {
 
                   // Connect stays available until a connection exists. Details live on the info button.
                   if case .connected = workspaceManager.connectionState {
-                    if workspaceManager.canVisualizeSchema {
-                      Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                          .font(.system(size: 12))
-                          .foregroundColor(
-                            workspaceManager.isSchemaVisualizerActive
-                              ? Color.accent : Color.foregroundMuted)
-                      }
-                      .buttonStyle(GhostButtonStyle(iconOnly: true))
-                      .controlSize(.small)
-                      .blockDoubleClickZoom()
-                      .help(
-                        workspaceManager.isSchemaVisualizerActive
-                          ? "Close Schema Visualizer" : "Visualize Schema Relationships")
+                    Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
+                      Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 12))
+                        .foregroundColor(
+                          workspaceManager.isSchemaVisualizerActive
+                            ? Color.accent : Color.foregroundMuted)
                     }
+                    .buttonStyle(GhostButtonStyle(iconOnly: true))
+                    .controlSize(.small)
+                    .blockDoubleClickZoom()
+                    .help(
+                      workspaceManager.isSchemaVisualizerActive
+                        ? "Close Schema Visualizer" : "Visualize Schema Relationships")
                   } else {
                     DatabaseConnectionButton(workspaceManager: workspaceManager)
                   }
