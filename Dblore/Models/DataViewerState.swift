@@ -30,6 +30,8 @@ struct DataViewerState: Equatable {
   var documentFilter = ""
   /// MongoDB: the header sort, nil for the default `{_id: 1}`
   var documentSort: DocumentSort? = nil
+  /// MongoDB: the applied query options (projection, sort, collation, hint, skip, limit, ...)
+  var documentOptions = MongoQueryOptions()
   /// The applied highlight: painted client-side, so not part of `LoadKey`
   var highlight = TableHighlight(filter: TableFilter(conditions: []))
   /// Staged inserts, deletes, and cell edits. Nil when nothing is staged.
@@ -53,12 +55,14 @@ struct DataViewerState: Equatable {
     let filter: TableFilter
     let documentFilter: String
     let documentSort: DocumentSort?
+    let documentOptions: MongoQueryOptions
   }
 
   var loadKey: LoadKey {
     LoadKey(
       schema: schema, name: name, page: page, pageSize: pageSize, filter: filter,
-      documentFilter: documentFilter, documentSort: documentSort)
+      documentFilter: documentFilter, documentSort: documentSort,
+      documentOptions: documentOptions)
   }
 
   /// Tab title: `name` for the default (or no) schema or an engine that never names it
@@ -209,20 +213,67 @@ extension DataViewerState {
     }
   }
 
-  /// `find(<filter>).sort(<sort>).skip(<offset>).limit(<pageSize>)` (skip only after page 1) and
-  /// `countDocuments(<filter>)` on the collection `name`. The sort is `{_id: 1}`, or the header
-  /// field with `_id` as the tiebreak so skip/limit pages never repeat or miss a document.
-  func mongoQueries() throws(DocumentFilterError) -> (page: MongoCommand, count: MongoCommand) {
+  /// The page `find` and the `countDocuments` on the collection `name`, with the applied filter
+  /// and options. The page skips the user skip plus the earlier pages (no skip when 0) and
+  /// stops at the user limit: nil for a page past it (a limit of 0 would mean no limit). The sort
+  /// is the header sort, else the Sort option, then `_id` as the tiebreak unless it is a key, so
+  /// skip/limit pages never repeat or miss a document. The count carries the user window.
+  func mongoQueries() throws(DocumentFilterError) -> (page: MongoCommand?, count: MongoCommand) {
     let filter = try Self.documentFilterValue(documentFilter).get()
-    let id = MongoValue.Field("_id", .int32(1))
-    var sort = [id]
+    let options = try documentOptions.parsed()
+    var sort = options.sort ?? []
     if let documentSort {
-      let field = MongoValue.Field(documentSort.field, .int32(documentSort.ascending ? 1 : -1))
-      sort = documentSort.field == "_id" ? [field] : [field, id]
+      sort = [MongoValue.Field(documentSort.field, .int32(documentSort.ascending ? 1 : -1))]
     }
-    let page = MongoCommand.find(
-      collection: name, filter: filter, projection: nil, sort: .document(sort),
-      skip: page > 1 ? (page - 1) * pageSize : nil, limit: pageSize)
-    return (page, .countDocuments(collection: name, filter: filter))
+    if !sort.contains(where: { $0.key == "_id" }) {
+      sort.append(MongoValue.Field("_id", .int32(1)))
+    }
+    let offset = (page - 1) * pageSize
+    // Saturates: a huge user skip must not trap
+    let (sum, overflow) = (options.skip ?? 0).addingReportingOverflow(offset)
+    let skip = overflow ? Int.max : sum
+    var limit = pageSize
+    if let userLimit = options.limit { limit = min(pageSize, userLimit - offset) }
+    let pageCommand: MongoCommand? =
+      limit > 0
+      ? .find(
+        collection: name, filter: filter, projection: options.projection,
+        sort: .document(sort), skip: skip > 0 ? skip : nil, limit: limit,
+        options: options.cursor)
+      : nil
+    return (
+      pageCommand,
+      .countDocuments(collection: name, filter: filter, options: countOptions(options))
+    )
+  }
+
+  /// The find the user wrote: filter and options, the Sort option as typed (no header sort, no
+  /// `_id` tiebreak) and the user skip and limit, without paging. For Explain, Export and
+  /// favorites.
+  func userQuery() throws(DocumentFilterError) -> MongoCommand {
+    let filter = try Self.documentFilterValue(documentFilter).get()
+    let options = try documentOptions.parsed()
+    return .find(
+      collection: name, filter: filter, projection: options.projection,
+      sort: options.sort.map { .document($0) }, skip: options.skip, limit: options.limit,
+      options: options.cursor)
+  }
+
+  /// The `countDocuments` options of the user window, only the set keys, nil when none.
+  private func countOptions(_ options: MongoQueryOptions.Parsed) -> MongoValue? {
+    var fields: [MongoValue.Field] = []
+    if let collation = options.cursor.collation { fields.append(.init("collation", collation)) }
+    if let hint = options.cursor.hint { fields.append(.init("hint", hint)) }
+    if let skip = options.skip { fields.append(.init("skip", Self.integer(skip))) }
+    if let limit = options.limit { fields.append(.init("limit", Self.integer(limit))) }
+    if let maxTimeMS = options.cursor.maxTimeMS {
+      fields.append(.init("maxTimeMS", Self.integer(maxTimeMS)))
+    }
+    return fields.isEmpty ? nil : .document(fields)
+  }
+
+  /// int32 when it fits, else int64 (the count options refuse doubles).
+  private static func integer(_ number: Int) -> MongoValue {
+    Int32(exactly: number).map { .int32($0) } ?? .int64(Int64(number))
   }
 }

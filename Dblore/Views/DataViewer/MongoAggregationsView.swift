@@ -4,8 +4,8 @@
 //
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (stages, Add Stage and per-stage previews from `AggregationBuilderBody`), with
-//  Copy and Open in Query of the whole `aggregate`. Previews run read-only through the gate
-//  (`AggregationBuilderModel`), as in the builder sheet.
+//  Copy, Explain and Open in Query of the whole `aggregate`. Previews run read-only through the
+//  gate (`AggregationBuilderModel`), as in the builder sheet.
 //
 
 import SwiftUI
@@ -59,6 +59,7 @@ struct MongoAggregationsView: View {
         .buttonStyle(GhostButtonStyle())
         .disabled(builder.commandText == nil)
         .help("Copy the aggregate command")
+      explainButton(builder)
       Button("Open in Query") {
         guard let text = builder.commandText else { return }
         openQuery?(text)
@@ -72,6 +73,52 @@ struct MongoAggregationsView: View {
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
+  }
+
+  // MARK: - Explain
+
+  /// Explains the enabled stages as one `aggregate` (the sheet is in `DataViewerView`)
+  private func explainButton(_ builder: AggregationBuilderModel) -> some View {
+    let target = explainTarget(builder)
+    return Button("Explain") {
+      guard case .success(let command) = target else { return }
+      model.explain(command)
+    }
+    .buttonStyle(GhostButtonStyle())
+    .disabled(target.command == nil || model.explainState == .running)
+    .help(target.reason ?? "Explain the pipeline with execution statistics")
+  }
+
+  /// The `aggregate` of the enabled stages, or why it cannot be explained: no enabled stage, a
+  /// stage error, or a stage that writes (`$out`, `$merge`: the gate's classifier decides)
+  private func explainTarget(_ builder: AggregationBuilderModel) -> ExplainTarget {
+    let enabled = builder.stages.filter(\.isEnabled)
+    guard !enabled.isEmpty else { return .blocked("Add an enabled stage to explain") }
+    var pipeline: [MongoValue] = []
+    for stage in enabled {
+      guard case .success(let value) = AggregationBuilderModel.value(of: stage) else {
+        return .blocked("Fix the stage errors to explain the pipeline")
+      }
+      pipeline.append(value)
+    }
+    let command = MongoCommand.aggregate(collection: builder.collection, pipeline: pipeline)
+    guard MongoCommandClassifier.classifyStatement(command.render())?.kind == .read else {
+      return .blocked("A stage writes data ($out or $merge): such a pipeline is not explained")
+    }
+    return .success(command)
+  }
+
+  private enum ExplainTarget {
+    case success(MongoCommand)
+    case blocked(String)
+
+    var command: MongoCommand? {
+      if case .success(let command) = self { command } else { nil }
+    }
+
+    var reason: String? {
+      if case .blocked(let reason) = self { reason } else { nil }
+    }
   }
 
   private func stageCount(_ builder: AggregationBuilderModel) -> String {

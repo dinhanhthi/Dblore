@@ -49,6 +49,16 @@ final class MongoCollectionModel {
     case failed(String)
   }
 
+  enum ExplainState: Equatable {
+    case idle
+    case running
+    /// The raw explain reply (indented relaxed JSON), its plan tree and its summary; nil when
+    /// the reply has no shape the adapter reads
+    case done(text: String, plan: ExplainPlan?, summary: MongoExplainAdapter.Summary?)
+    /// User-facing error text
+    case failed(String)
+  }
+
   /// Database of the collection (the data viewer's schema), nil when the viewer names none.
   let database: String?
   let collection: String
@@ -66,10 +76,12 @@ final class MongoCollectionModel {
   /// Filter of the schema sample (relaxed JSON document text, blank for a random sample).
   var schemaFilter: String = ""
   private(set) var schemaState: SchemaState = .idle
+  private(set) var explainState: ExplainState = .idle
 
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
   @ObservationIgnored private var indexTask: Task<Void, Never>?
   @ObservationIgnored private var schemaTask: Task<Void, Never>?
+  @ObservationIgnored private var explainTask: Task<Void, Never>?
   /// The report shown before the analysis in flight (`.done` or `.idle`), restored on cancel.
   @ObservationIgnored private var previousSchemaState: SchemaState = .idle
 
@@ -96,6 +108,7 @@ final class MongoCollectionModel {
     indexTask = nil
     if case .loading = indexState { indexState = .idle }
     cancelSchemaAnalysis()
+    cancelExplain()
   }
 
   /// Sample the collection with `schemaFilter` and analyze it, dropping an analysis in flight.
@@ -138,6 +151,73 @@ final class MongoCollectionModel {
     schemaTask = nil
     guard case .analyzing = schemaState else { return }
     schemaState = previousSchemaState
+  }
+
+  /// Explain `command` (the Documents find or the pipeline's aggregate) at executionStats,
+  /// dropping an explain in flight. It goes through the gate with a read-only policy, as the
+  /// aggregation previews do, so a write (`$out`, `$merge`) is refused before anything is
+  /// sent. The read runs on the connection manager actor and the parsing in a detached task;
+  /// a cancelled or superseded explain never writes its result.
+  func explain(_ command: MongoCommand) {
+    explainTask?.cancel()
+    explainTask = nil
+    switch command {
+    case .find, .aggregate: break
+    default:
+      explainState = .failed("Only find and aggregate can be explained")
+      return
+    }
+    explainState = .running
+    let text = MongoCommand.explain(command, verbosity: "executionStats").render()
+    let connectionManager = connectionManager
+    explainTask = Task { [weak self] in
+      let state: ExplainState
+      do {
+        let result = try await connectionManager.execute(
+          userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly), maxRows: 1)
+        try Task.checkCancellation()
+        guard let json = Self.explainText(result) else {
+          throw ExplainError(message: "The server returned no explain output")
+        }
+        state = await Task.detached(priority: .userInitiated) {
+          ExplainState.done(
+            text: json, plan: MongoExplainAdapter.plan(fromJSON: json),
+            summary: MongoExplainAdapter.summary(fromJSON: json))
+        }.value
+      } catch {
+        state = .failed(error.localizedDescription)
+      }
+      guard !Task.isCancelled, let self else { return }
+      self.explainState = state
+      self.explainTask = nil
+    }
+  }
+
+  /// Drop the explain in flight; nothing is shown for it.
+  func cancelExplain() {
+    explainTask?.cancel()
+    explainTask = nil
+    if case .running = explainState { explainState = .idle }
+  }
+
+  /// Close the explain result (or drop the explain in flight).
+  func dismissExplain() {
+    cancelExplain()
+    explainState = .idle
+  }
+
+  /// Text of the `EXPLAIN` cell of an explain result, nil when there is none.
+  private nonisolated static func explainText(_ result: QueryResult) -> String? {
+    guard let index = result.columns.firstIndex(where: { $0.name == "EXPLAIN" }),
+      let row = result.rows.first, row.indices.contains(index),
+      case .json(let text) = row[index]
+    else { return nil }
+    return text
+  }
+
+  private struct ExplainError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
   }
 
   /// A builder on the collection with one empty stage, as the sidebar's Build Aggregation opens.

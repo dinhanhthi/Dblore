@@ -17,9 +17,13 @@ extension NotebookViewModel {
       guard let query = dataViewerQuery(state) else { return }
       // maxRows >= pageSize never truncates a LIMIT pageSize page (no cap notice); MongoDB's
       // `limit(min(limit, maxRows + 1))` rewrite keeps limit(pageSize)
-      await executeEditorQuery(
-        query.page, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
-        source: .internal)
+      if let page = query.page {
+        await executeEditorQuery(
+          page, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
+          source: .internal)
+      } else {
+        showEmptyDataViewerPage()
+      }
 
       if dataViewer?.totalRows == nil {
         // Busy during the count too: Cancel stops it, paging meanwhile is coalesced by the loop
@@ -78,13 +82,14 @@ extension NotebookViewModel {
   }
 
   /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
-  /// SQL paging and WHERE helpers never run there), else the SQL. Nil, with the error shown, when
-  /// the applied document filter does not parse.
-  private func dataViewerQuery(_ state: DataViewerState) -> (page: String, count: String)? {
+  /// SQL paging and WHERE helpers never run there), else the SQL. The page is nil past the user
+  /// limit (nothing to read). Nil, with the error shown, when the applied document filter or
+  /// options do not parse.
+  private func dataViewerQuery(_ state: DataViewerState) -> (page: String?, count: String)? {
     guard isMongoDataViewer else { return (state.pageSQL, state.countSQL) }
     do {
       let commands = try state.mongoQueries()
-      return (commands.page.render(), commands.count.render())
+      return (commands.page?.render(), commands.count.render())
     } catch {
       editorResult = CellResult.errorResult(
         error.localizedDescription, sourceQuery: state.documentFilter)
@@ -92,11 +97,24 @@ extension NotebookViewModel {
     }
   }
 
-  /// Write a count back only while the tab still shows the relation and filter it was counted
-  /// for; otherwise the total stays unknown and the load loop recounts.
+  /// A page past the user limit: no rows, nothing sent. The columns and edit target stay, so
+  /// the grid keeps its shape.
+  private func showEmptyDataViewerPage() {
+    editorStatementResults = []
+    selectedStatementIndex = 0
+    let empty = CellResult(
+      columns: editorResult?.columns ?? [], editTarget: editorResult?.editTarget,
+      lookupRelation: editorResult?.lookupRelation)
+    editorResult = empty
+    syncRowDetail(cellId: nil, result: empty)
+  }
+
+  /// Write a count back only while the tab still shows the relation, filter and options it was
+  /// counted for; otherwise the total stays unknown and the load loop recounts.
   func storeDataViewerTotal(_ total: Int?, for state: DataViewerState) {
     guard let current = dataViewer, current.schema == state.schema, current.name == state.name,
-      current.filter == state.filter, current.documentFilter == state.documentFilter
+      current.filter == state.filter, current.documentFilter == state.documentFilter,
+      current.documentOptions == state.documentOptions
     else { return }
     dataViewer?.totalRows = total
   }
@@ -255,25 +273,85 @@ extension NotebookViewModel {
 // MARK: - MongoDB filter and sort
 
 extension NotebookViewModel {
-  /// Apply the document filter `text`: back to page 1 with the count recomputed. Returns the
-  /// parse error (nothing applied, no prompt) for text that is not a document.
-  /// Staged changes must be resolved first.
+  /// Apply the document filter `text` with the applied options kept.
   func applyDocumentFilter(_ text: String) async -> DataViewerState.DocumentFilterError? {
+    await applyDocumentQuery(
+      filter: text, options: dataViewer?.documentOptions ?? MongoQueryOptions())
+  }
+
+  /// Apply the document filter and query options: back to page 1 with the count recomputed;
+  /// a Sort option replaces the header sort. Returns the parse error (nothing applied, no
+  /// prompt) for a filter that is not a document, an option that does not parse, or a
+  /// projection that drops `_id` or reshapes a field. Staged changes must be resolved first.
+  func applyDocumentQuery(
+    filter text: String, options: MongoQueryOptions
+  ) async -> DataViewerState.DocumentFilterError? {
     guard dataViewer != nil else { return nil }
     let value: MongoValue?
     switch DataViewerState.documentFilterValue(text) {
     case .success(let document): value = document
     case .failure(let error): return error
     }
+    let parsed: MongoQueryOptions.Parsed
+    do {
+      parsed = try options.parsed()
+    } catch {
+      return error
+    }
+    // The grid edits documents by `_id` and writes whole top-level values back
+    if let message = Self.projectionRefusal(parsed.projection) {
+      return DataViewerState.DocumentFilterError(message: message, offset: nil)
+    }
     guard await confirmLeaveStagedChanges() else { return nil }
     guard dataViewer != nil else { return nil }
     // Blank text and `{}` are both no filter
     dataViewer?.documentFilter =
       value == nil ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines)
+    // A new Sort option replaces the header sort; re-applying the same one keeps it
+    let previousSort = dataViewer?.documentOptions.sort
+    dataViewer?.documentOptions = options
+    if parsed.sort != nil, options.sort != previousSort { dataViewer?.documentSort = nil }
     dataViewer?.page = 1
     dataViewer?.totalRows = nil
     await loadDataViewerPage()
     return nil
+  }
+
+  /// Why `projection` cannot back an editable page, or nil. Only top-level fields set to 1 or 0
+  /// keep each shown value whole, so an edit cannot write a reshaped value back; `_id` must
+  /// stay, since rows are edited by it.
+  private static func projectionRefusal(_ projection: MongoValue?) -> String? {
+    guard case .document(let fields) = projection else { return nil }
+    for field in fields {
+      guard let included = projectionFlag(field.value) else { return projectionReshapes }
+      if field.key == "_id" {
+        if !included { return "Projection must keep _id: rows are edited by _id" }
+      } else if field.key.contains(".") || field.key.hasPrefix("$") {
+        return projectionReshapes
+      }
+    }
+    return nil
+  }
+
+  private static let projectionReshapes =
+    "Projection: only top-level fields set to 1 or 0 are allowed here, and _id must stay"
+
+  /// True for a 1 or true projection value, false for 0 or false, nil for anything else
+  private static func projectionFlag(_ value: MongoValue) -> Bool? {
+    let number: Double?
+    switch value {
+    case .bool(let flag): return flag
+    case .int32(let int): number = Double(int)
+    case .int64(let int): number = Double(int)
+    case .double(let double): number = double
+    case .decimal128(let text): number = Double(text)
+    default: number = nil
+    }
+    switch number {
+    case 1: return true
+    case 0: return false
+    default: return nil
+    }
   }
 
   /// Remove the document filter. Staged changes must be resolved first.

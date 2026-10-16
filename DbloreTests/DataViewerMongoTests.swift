@@ -17,19 +17,20 @@ struct DataViewerMongoTests {
 
   private static func state(
     name: String = "users", page: Int = 1, pageSize: Int = 100, filter: String = "",
-    sort: DataViewerState.DocumentSort? = nil
+    sort: DataViewerState.DocumentSort? = nil, options: MongoQueryOptions = MongoQueryOptions()
   ) -> DataViewerState {
     var state = DataViewerState(
       schema: "db", name: name, orderColumns: ["_id"], page: page, pageSize: pageSize)
     state.databaseType = .mongodb
     state.documentFilter = filter
     state.documentSort = sort
+    state.documentOptions = options
     return state
   }
 
-  private static func rendered(_ state: DataViewerState) throws -> (page: String, count: String) {
+  private static func rendered(_ state: DataViewerState) throws -> (page: String?, count: String) {
     let commands = try state.mongoQueries()
-    return (commands.page.render(), commands.count.render())
+    return (commands.page?.render(), commands.count.render())
   }
 
   private static func config() -> ConnectionConfig {
@@ -102,6 +103,39 @@ struct DataViewerMongoTests {
     let text = try Self.rendered(Self.state(page: 3, pageSize: 50, filter: "{a: 1}"))
     #expect(text.page == "db.users.find({ a: 1 }).sort({ _id: 1 }).skip(100).limit(50)")
     #expect(text.count == "db.users.countDocuments({ a: 1 })")
+  }
+
+  @Test("User skip and limit compose with paging; a page past the limit is not sent")
+  func optionsPaging() throws {
+    var options = MongoQueryOptions()
+    options.skip = "10"
+    options.limit = "250"
+    options.collation = #"{locale: "en"}"#
+    let third = try Self.rendered(Self.state(page: 3, options: options))
+    #expect(
+      third.page
+        == #"db.users.find().sort({ _id: 1 }).skip(210).limit(50).collation({ locale: "en" })"#)
+    #expect(
+      third.count
+        == #"db.users.countDocuments({}, { collation: { locale: "en" }, skip: 10, limit: 250 })"#)
+    #expect(try Self.state(page: 4, options: options).mongoQueries().page == nil)
+  }
+
+  @Test("The Sort option is the base sort, a header sort overrides it, _id breaks ties once")
+  func optionsSort() throws {
+    var options = MongoQueryOptions()
+    options.sort = "{b: -1}"
+    #expect(
+      try Self.rendered(Self.state(options: options)).page
+        == "db.users.find().sort({ b: -1, _id: 1 }).limit(100)")
+    let header = DataViewerState.DocumentSort(field: "age", ascending: false)
+    #expect(
+      try Self.rendered(Self.state(sort: header, options: options)).page
+        == "db.users.find().sort({ age: -1, _id: 1 }).limit(100)")
+    options.sort = "{b: -1, _id: -1}"
+    #expect(
+      try Self.rendered(Self.state(options: options)).page
+        == "db.users.find().sort({ b: -1, _id: -1 }).limit(100)")
   }
 
   @Test("Collection names with dots, quotes or method names render through getCollection")
@@ -209,6 +243,54 @@ struct DataViewerMongoTests {
     await viewModel.clearDocumentFilter()
     #expect(viewModel.dataViewer?.documentFilter == "")
     #expect(factory.statements.contains("db.users.find().sort({ _id: 1 }).limit(100)"))
+    await manager.disconnect()
+  }
+
+  @Test("Applying options refuses a projection without _id; a Sort option clears the header sort")
+  func applyDocumentQuery() async throws {
+    let header = DataViewerState.DocumentSort(field: "age", ascending: false)
+    let (viewModel, manager, factory) = try await Self.connected(Self.state(page: 2, sort: header))
+    var options = MongoQueryOptions()
+    options.project = "{_id: 0}"
+    let refused = await viewModel.applyDocumentQuery(filter: "", options: options)
+    #expect(refused?.message == "Projection must keep _id: rows are edited by _id")
+    #expect(viewModel.dataViewer?.documentOptions == MongoQueryOptions())
+    #expect(viewModel.dataViewer?.documentSort == header)
+    #expect(factory.statements.isEmpty)
+
+    // Reshaping projections would let an edit write the reshaped value back
+    for project in [#"{"address.city": 1}"#, "{tags: {$slice: 3}}", #"{_id: "$name"}"#] {
+      options.project = project
+      let reshaped = await viewModel.applyDocumentQuery(filter: "", options: options)
+      #expect(
+        reshaped?.message
+          == "Projection: only top-level fields set to 1 or 0 are allowed here, and _id must stay"
+      )
+      #expect(viewModel.dataViewer?.documentOptions == MongoQueryOptions())
+      #expect(factory.statements.isEmpty)
+    }
+
+    options.project = ""
+    options.sort = "{b: -1}"
+    let error = await viewModel.applyDocumentQuery(filter: "", options: options)
+    #expect(error == nil)
+    #expect(viewModel.dataViewer?.documentOptions == options)
+    #expect(viewModel.dataViewer?.documentSort == nil)
+    #expect(viewModel.dataViewer?.page == 1)
+    #expect(factory.statements.first == "db.users.find().sort({ b: -1, _id: 1 }).limit(100)")
+
+    // Re-applying the same Sort option with another filter keeps the header sort
+    viewModel.dataViewer?.documentSort = header
+    _ = await viewModel.applyDocumentQuery(filter: "{a: 1}", options: options)
+    #expect(viewModel.dataViewer?.documentSort == header)
+
+    // Top-level inclusions and exclusions keep the page editable
+    for project in ["{name: 1, age: true}", "{big: 0}"] {
+      options.project = project
+      let accepted = await viewModel.applyDocumentQuery(filter: "", options: options)
+      #expect(accepted == nil)
+      #expect(viewModel.dataViewer?.documentOptions == options)
+    }
     await manager.disconnect()
   }
 

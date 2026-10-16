@@ -19,10 +19,31 @@ struct SavedHighlight: Codable, Identifiable, Equatable {
   var highlight: TableHighlight
 }
 
-/// Saved table filters and highlights per connection and table, stored as JSON in UserDefaults
+/// A named MongoDB Documents query (filter text and options) saved for one collection
+struct SavedMongoQuery: Codable, Identifiable, Equatable {
+  var id = UUID()
+  var name: String
+  var filter: String
+  var options: MongoQueryOptions
+}
+
+extension SavedMongoQuery {
+  /// Options are optional, so an entry saved before they existed still loads
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    filter = try container.decode(String.self, forKey: .filter)
+    options = try container.decodeIfPresent(MongoQueryOptions.self, forKey: .options) ?? .init()
+  }
+}
+
+/// Saved table filters, highlights and MongoDB queries per connection and table, stored as JSON
+/// in UserDefaults
 final class SavedFilterStore {
   private nonisolated static let storageKey = "ace.thi.dblore.savedFilters"
   private nonisolated static let highlightStorageKey = "ace.thi.dblore.savedHighlights"
+  private nonisolated static let mongoQueryStorageKey = "ace.thi.dblore.savedMongoQueries"
 
   private let defaults: UserDefaults
 
@@ -81,6 +102,32 @@ final class SavedFilterStore {
     var all: [String: [SavedHighlight]] = load(Self.highlightStorageKey)
     all[key]?.removeAll { $0.id == id }
     store(all, Self.highlightStorageKey)
+  }
+
+  func listMongoQueries(for key: String) -> [SavedMongoQuery] {
+    load(Self.mongoQueryStorageKey)[key] ?? []
+  }
+
+  /// Saves `filter` and `options` under `name`; a query with the same name is replaced
+  func saveMongoQuery(
+    filter: String, options: MongoQueryOptions, named name: String, for key: String
+  ) {
+    var all: [String: [SavedMongoQuery]] = load(Self.mongoQueryStorageKey)
+    var queries = all[key] ?? []
+    if let index = queries.firstIndex(where: { $0.name == name }) {
+      queries[index].filter = filter
+      queries[index].options = options
+    } else {
+      queries.append(SavedMongoQuery(name: name, filter: filter, options: options))
+    }
+    all[key] = queries
+    store(all, Self.mongoQueryStorageKey)
+  }
+
+  func deleteMongoQuery(id: UUID, for key: String) {
+    var all: [String: [SavedMongoQuery]] = load(Self.mongoQueryStorageKey)
+    all[key]?.removeAll { $0.id == id }
+    store(all, Self.mongoQueryStorageKey)
   }
 
   private func load<T: Decodable>(

@@ -77,6 +77,23 @@ struct SavedFilterStoreTests {
     #expect(store.list(for: key(type: .sqlite)).isEmpty)
   }
 
+  @Test("A saved Mongo query reopens under its own collection only")
+  func mongoQueryIsolation() {
+    let store = makeStore()
+    let config = ConnectionConfig(databaseType: .mongodb, host: "h", port: 27017, database: "db")
+    let users = SavedFilterStore.key(for: config, schema: "db", name: "users")
+    var options = MongoQueryOptions()
+    options.limit = "10"
+    store.saveMongoQuery(filter: "{a: 1}", options: options, named: "mine", for: users)
+    let saved = store.listMongoQueries(for: users)
+    #expect(saved.map(\.name) == ["mine"])
+    #expect(saved.first?.filter == "{a: 1}")
+    #expect(saved.first?.options == options)
+    #expect(
+      store.listMongoQueries(for: SavedFilterStore.key(for: config, schema: "db", name: "orders"))
+        .isEmpty)
+  }
+
   @Test("A condition saved without the empty-string flag still decodes")
   func decodesConditionWithoutEmptyStringFlag() throws {
     let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"

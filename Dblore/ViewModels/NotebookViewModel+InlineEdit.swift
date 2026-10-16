@@ -494,7 +494,14 @@ extension NotebookViewModel {
     guard let result = editorResult, let state = dataViewer else { return }
     let stored: QueryResult
     do {
-      let page = isMongoDataViewer ? try state.mongoQueries().page.render() : state.pageSQL
+      let page: String
+      if isMongoDataViewer {
+        // Past the user limit there is no page to read
+        guard let command = try state.mongoQueries().page else { return }
+        page = command.render()
+      } else {
+        page = state.pageSQL
+      }
       stored = try await connectionManager.execute(
         userSQL: page, policy: protectionPolicy,
         maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)

@@ -47,6 +47,13 @@ struct DataViewerView: View {
       .onChange(of: hidesDocuments) { _, hidden in
         if hidden { NSApp.keyWindow?.makeFirstResponder(nil) }
       }
+      // Explain of the Documents bar and the Aggregations section. On its own node: two
+      // sheets on one view would conflict
+      .sheet(isPresented: explainPresented) {
+        if let model = viewModel.mongoCollection {
+          MongoExplainSheet(model: model)
+        }
+      }
     }
     .background(Color.appBackground)
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
@@ -62,6 +69,18 @@ struct DataViewerView: View {
       set: { request in
         guard request == nil else { return }
         viewModel.dataViewer?.pendingDocumentEditor = nil
+      }
+    )
+  }
+
+  /// MongoDB explain: presented while an explain runs or has a result; dismissing the sheet
+  /// drops it.
+  private var explainPresented: Binding<Bool> {
+    Binding(
+      get: { (viewModel.mongoCollection?.explainState ?? .idle) != .idle },
+      set: { presented in
+        guard !presented else { return }
+        viewModel.mongoCollection?.dismissExplain()
       }
     )
   }
