@@ -191,4 +191,11 @@ struct MongoIndexInfoTests {
         ["tenant:1", "$**:1"],
       ])
   }
+
+  @Test("Summing server counts clamps instead of trapping on overflow")
+  func saturatingSum() {
+    #expect(MongoIndexInfo.saturatingSum(.max, 1) == .max)
+    #expect(MongoIndexInfo.saturatingSum(.min, -1) == .min)
+    #expect(MongoIndexInfo.saturatingSum(2, 3) == 5)
+  }
 }

@@ -128,7 +128,7 @@ nonisolated struct MongoIndexInfo: Equatable, Sendable, Identifiable {
         result[name] = Usage(ops: ops, since: since, building: building)
         continue
       }
-      if let ops { merged.ops = (merged.ops ?? 0) + ops }
+      if let ops { merged.ops = saturatingSum(merged.ops ?? 0, ops) }
       if let since { merged.since = min(merged.since ?? since, since) }
       merged.building = merged.building || building
       result[name] = merged
@@ -147,10 +147,17 @@ nonisolated struct MongoIndexInfo: Equatable, Sendable, Identifiable {
       else { continue }
       for field in fields {
         guard let bytes = integer(field.value) else { continue }
-        result[field.key, default: 0] += bytes
+        result[field.key] = saturatingSum(result[field.key] ?? 0, bytes)
       }
     }
     return result
+  }
+
+  /// Server-provided counts summed without trapping: an overflow clamps to the Int64 bound.
+  static func saturatingSum(_ lhs: Int64, _ rhs: Int64) -> Int64 {
+    let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+    guard overflow else { return sum }
+    return rhs > 0 ? .max : .min
   }
 
   /// The key's fields in order. A text index's `_fts`/`_ftsx` pair is replaced, at its place,
