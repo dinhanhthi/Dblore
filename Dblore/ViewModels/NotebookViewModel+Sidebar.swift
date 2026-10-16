@@ -19,7 +19,6 @@ extension NotebookViewModel {
     withSidebarAnimation {
       isRightSidebarVisible = true
     }
-    handleRightSidebarConflict()
   }
 
   /// Show JSON in the sidebar
@@ -59,8 +58,14 @@ extension NotebookViewModel {
     withSidebarAnimation {
       isRightSidebarVisible.toggle()
     }
-    if isRightSidebarVisible {
-      handleRightSidebarConflict()
+  }
+
+  /// Width the right sidebar is laid out at: Cell value, Add Row and Row Details share the
+  /// resizable width
+  var rightSidebarWidth: CGFloat {
+    switch rightSidebarContent {
+    case .cellInfo, .addRow, .rowDetail: cellInfoSidebarWidth
+    default: ComponentSize.sidebarWidth
     }
   }
 
@@ -155,23 +160,6 @@ extension NotebookViewModel {
       for index in databaseRoles.indices {
         databaseRoles[index].isExpanded = areAllEntitiesExpanded
       }
-    }
-  }
-
-  // MARK: - Responsive Sidebar Management
-
-  /// Handle sidebar conflict when window width is narrow (< 1200pt)
-  /// When opening right sidebar on narrow window, close left sidebar
-  func handleRightSidebarConflict() {
-    guard let window = NSApp.keyWindow else { return }
-    let windowWidth = window.frame.size.width
-    let narrowWindowThreshold: CGFloat = 1200
-
-    guard windowWidth < narrowWindowThreshold else { return }
-
-    if isLeftSidebarVisible {
-      isLeftSidebarVisible = false
-      AppSettings.shared.isLeftSidebarVisible = false
     }
   }
 

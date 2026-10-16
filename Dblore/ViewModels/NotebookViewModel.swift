@@ -62,7 +62,6 @@ class NotebookViewModel {
   var dropPosition: DropPosition? = nil  // Track drop position (above or below target)
 
   // Left sidebar state
-  var isLeftSidebarVisible: Bool = false
   var databaseTables: [DatabaseTable] = []
   var databaseViews: [DatabaseView] = []
   var databaseFunctions: [DatabaseFunction] = []
@@ -295,11 +294,6 @@ class NotebookViewModel {
     // Initialize execution queue with execution handler
     executionQueue = ExecutionQueue { [weak self] task in
       await self?.executeTask(task)
-    }
-
-    // Load sidebar visibility from settings after init
-    Task {
-      self.isLeftSidebarVisible = AppSettings.shared.isLeftSidebarVisible
     }
 
     // Calculate initial file size for cache (10.3.4)

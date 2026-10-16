@@ -86,9 +86,7 @@ struct RightSidebarView: View {
     }
   }
 
-  private var sidebarWidth: CGFloat {
-    widensLikeCellInfo ? viewModel.cellInfoSidebarWidth : ComponentSize.sidebarWidth
-  }
+  private var sidebarWidth: CGFloat { viewModel.rightSidebarWidth }
 
   /// Cell value, Add Row and Row Details share the resizable width
   private var widensLikeCellInfo: Bool {

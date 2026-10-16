@@ -42,6 +42,46 @@ struct WorkspaceContainerView: View {
     withSidebarAnimation { workspaceManager.aiAssistant.hide() }
   }
 
+  /// Whether the left sidebar beside the open right sidebars (AI assistant panel and the tab's
+  /// sidebar) leaves the tab content less than its minimum width. The compact workspace welcome
+  /// never has room for both sides.
+  private var sidebarsCrowdContent: Bool {
+    if showsWorkspaceWelcome { return true }
+    guard let window = hostWindow.window else { return false }
+    let windowWidth = window.contentLayoutRect.width
+    let storedLeftWidth =
+      workspaceManager.workspace.settings.leftSidebarWidth
+      ?? CGFloat(AppSettings.shared.leftSidebarWidth)
+    var rightWidth: CGFloat = 0
+    if workspaceManager.aiAssistant.showsSidebarPanel {
+      rightWidth += SidebarRoom.aiWidth(
+        AppSettings.shared.aiSidebarWidth, windowWidth: windowWidth)
+    }
+    if let viewModel = activeViewModel, viewModel.isRightSidebarVisible {
+      rightWidth += viewModel.rightSidebarWidth
+    }
+    return !SidebarRoom.leftSidebarFits(
+      windowWidth: windowWidth,
+      leftWidth: SidebarRoom.leftWidth(storedLeftWidth, windowWidth: windowWidth),
+      rightWidth: rightWidth)
+  }
+
+  /// A right sidebar just opened: collapses the left one when both sides do not fit
+  private func collapseLeftSidebarIfCrowded() {
+    if workspaceManager.isLeftSidebarVisible && sidebarsCrowdContent {
+      workspaceManager.toggleLeftSidebar()
+    }
+  }
+
+  /// The left sidebar just opened: collapses the right ones when both sides do not fit
+  private func collapseRightSidebarsIfCrowded() {
+    guard sidebarsCrowdContent else { return }
+    hideAIAssistantSidebar()
+    if let viewModel = activeViewModel, viewModel.isRightSidebarVisible {
+      viewModel.closeSidebar()
+    }
+  }
+
   var body: some View {
     GeometryReader { geometry in
       // Footer below the sidebar + content area: always full window width, unaffected by the
@@ -103,9 +143,9 @@ struct WorkspaceContainerView: View {
             // AI assistant panel, resizable from its leading edge
             if workspaceManager.aiAssistant.showsSidebarPanel {
               // Same max rule as the left sidebar, from this layout pass's window width
-              let maxAIWidth = max(ComponentSize.sidebarWidth, geometry.size.width * 0.35)
-              let aiWidth = min(
-                max(AppSettings.shared.aiSidebarWidth, ComponentSize.sidebarWidth), maxAIWidth)
+              let maxAIWidth = SidebarRoom.aiMaxWidth(windowWidth: geometry.size.width)
+              let aiWidth = SidebarRoom.aiWidth(
+                AppSettings.shared.aiSidebarWidth, windowWidth: geometry.size.width)
               AIAssistantPanel(
                 assistant: workspaceManager.aiAssistant,
                 activeTab: activeViewModel,
@@ -325,15 +365,18 @@ struct WorkspaceContainerView: View {
     .environment(\.hostWindowReference, hostWindow)
     // Here rather than on the tabs, so the theme also applies while no tab is open
     .windowAppearance(AppSettings.shared.themePreference.colorScheme)
-    // The compact workspace welcome has no room for both sidebars: opening one collapses the
-    // other, and closing the last tab with both open keeps the left sidebar
+    // When the tab content would lose its minimum width, only one side stays open: opening a
+    // right sidebar collapses the left one and opening the left one collapses the right ones.
+    // The compact workspace welcome never has room for both, and closing the last tab with both
+    // open keeps the left sidebar
     .onChange(of: workspaceManager.aiAssistant.showsSidebarPanel) { _, shows in
-      if shows && showsWorkspaceWelcome && workspaceManager.isLeftSidebarVisible {
-        workspaceManager.toggleLeftSidebar()
-      }
+      if shows { collapseLeftSidebarIfCrowded() }
+    }
+    .onChange(of: activeViewModel?.isRightSidebarVisible == true) { _, shows in
+      if shows { collapseLeftSidebarIfCrowded() }
     }
     .onChange(of: workspaceManager.isLeftSidebarVisible) { _, isVisible in
-      if isVisible && showsWorkspaceWelcome { hideAIAssistantSidebar() }
+      if isVisible { collapseRightSidebarsIfCrowded() }
     }
     .onChange(of: showsWorkspaceWelcome) { _, shows in
       if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
