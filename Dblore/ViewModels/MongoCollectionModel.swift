@@ -52,8 +52,8 @@ final class MongoCollectionModel {
   /// Database of the collection (the data viewer's schema), nil when the viewer names none.
   let database: String?
   let collection: String
-  /// Written by the tab bar (an action, never a view body): the first switch to Aggregations
-  /// builds the builder
+  /// Written by the tab bar and by the assistant's actions, never a view body: the first
+  /// switch to Aggregations builds the builder
   var section: Section = .documents {
     didSet {
       if section == .aggregations, aggregationModel == nil { makeAggregationModel() }
@@ -66,6 +66,8 @@ final class MongoCollectionModel {
   /// Filter of the schema sample (relaxed JSON document text, blank for a random sample).
   var schemaFilter: String = ""
   private(set) var schemaState: SchemaState = .idle
+  /// Filter text set by the assistant, consumed (and reset to nil) by `MongoFilterBar`.
+  var pendingFilterDraft: String?
 
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
   @ObservationIgnored private var indexTask: Task<Void, Never>?
@@ -77,6 +79,19 @@ final class MongoCollectionModel {
     self.database = database
     self.collection = collection
     self.connectionManager = connectionManager
+  }
+
+  /// Show Documents and hand the text to the filter bar's draft (not applied).
+  func insertFilterDraft(_ text: String) {
+    section = .documents
+    pendingFilterDraft = text
+  }
+
+  /// Show Aggregations (building the builder on first use) with the given stages in place of
+  /// the current ones. Nothing runs.
+  func showGeneratedPipeline(_ stages: [AIMongoAssist.GeneratedStage]) {
+    section = .aggregations
+    aggregationModel?.replaceStages(stages)
   }
 
   /// Read the indexes once: only while nothing was loaded or tried yet.

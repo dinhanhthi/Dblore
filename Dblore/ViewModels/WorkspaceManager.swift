@@ -279,6 +279,7 @@ class WorkspaceManager: Identifiable {
         databaseName: name?.isEmpty == false ? name : nil,
         dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
     }
+    aiAssistant.mongoScreenSource = { [weak self] in self?.activeViewModel?.aiMongoScreen }
     aiAssistant.dialectSource = { [weak self] in
       self?.workspace.connectionConfig?.databaseType.dialect ?? .postgresql
     }

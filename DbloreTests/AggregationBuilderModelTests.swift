@@ -67,6 +67,23 @@ struct AggregationBuilderModelTests {
     await manager.disconnect()
   }
 
+  @Test("replaceStages replaces every stage in order")
+  func replaceStages() async throws {
+    let (manager, _) = try await Self.connected()
+    let (model, ids) = Self.model(manager, [("$match", "{}"), ("$limit", "5")])
+    model.setEnabled(false, for: ids[1])
+
+    model.replaceStages([
+      .init(operator: "$sort", body: "{a: -1}"), .init(operator: "$match", body: "{b: 1}"),
+      .init(operator: "$limit", body: "3"),
+    ])
+    #expect(model.stages.map(\.operator) == ["$sort", "$match", "$limit"])
+    #expect(model.stages.map(\.body) == ["{a: -1}", "{b: 1}", "3"])
+    #expect(model.stages.map(\.isEnabled) == [true, true, true])
+    #expect(Set(model.stages.map(\.id)).isDisjoint(with: ids))
+    await manager.disconnect()
+  }
+
   // MARK: - Errors
 
   @Test("A body that does not parse reports the parser's message and offset")
