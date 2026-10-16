@@ -16,11 +16,14 @@ struct MongoCollectionTabBar: View {
 
   private typealias Section = MongoCollectionModel.Section
 
+  /// Taller than the result pickers so the section names read as the screen's main navigation
+  private static let height: CGFloat = 26
+
   var body: some View {
     CapsuleTabPicker(
       selection: $model.section,
       tabs: Section.allCases,
-      height: ResultDisplayPicker.height,
+      height: Self.height,
       inset: 2,
       verticalInset: 2
     ) { tab in
@@ -36,18 +39,18 @@ struct MongoCollectionTabBar: View {
     let isSelected = model.section == tab
     return HStack(spacing: Spacing.xs) {
       Text(tab.title)
-        .font(.small)
+        .font(.labelText)
         .fontWeight(.semibold)
         .hidden()
         .overlay {
           Text(tab.title)
-            .font(.small)
+            .font(.labelText)
             .fontWeight(isSelected ? .semibold : .regular)
             .foregroundColor(isSelected ? .onAccentFill : .foreground)
         }
       if let count = count(of: tab) {
         Text(count.formatted())
-          .font(.small)
+          .font(.labelText)
           .monospacedDigit()
           .foregroundColor(isSelected ? .onAccentFill.opacity(0.75) : .foregroundSubtle)
       }
