@@ -123,9 +123,13 @@ extension WorkspaceManager {
     return true
   }
 
-  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not).
+  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not). The schema
+  /// visualizer only where `canVisualizeSchema`.
   private func paletteActions() -> [CommandPaletteAction] {
-    CommandPaletteAction.allCases.filter { $0 != .queryDuckDBFile || duckDBFileQueryConfig != nil }
+    CommandPaletteAction.allCases.filter {
+      ($0 != .queryDuckDBFile || duckDBFileQueryConfig != nil)
+        && ($0 != .schemaVisualizer || canVisualizeSchema)
+    }
   }
 
   /// One View Source row per function, procedure and trigger in the loaded schema
