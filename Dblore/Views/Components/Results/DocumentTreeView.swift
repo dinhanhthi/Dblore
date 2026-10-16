@@ -75,6 +75,10 @@ struct DocumentTreeView: View {
     .onChange(of: focusedLine) { old, new in
       if let editing, old == editing, new != editing { self.editing = nil }
     }
+    // The workspace key monitor takes Esc from a focused text view and posts this instead
+    .onReceive(NotificationCenter.default.publisher(for: .unfocusEditor)) { _ in
+      if let editing, focusedLine == editing { self.editing = nil }
+    }
   }
 
   private func build() async {
