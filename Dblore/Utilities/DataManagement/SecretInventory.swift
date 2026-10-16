@@ -131,34 +131,21 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     }
   }
 
+  /// Both keychains: items not yet read stay in the legacy one until they migrate.
   private func accounts(service: String) -> [String] {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecReturnAttributes as String: true,
-      kSecMatchLimit as String: kSecMatchLimitAll,
-    ]
-    var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    guard status == errSecSuccess, let result, let rows = result as? NSArray else { return [] }
-    var accounts: [String] = []
-    for case let row as NSDictionary in rows {
-      guard let account = row[kSecAttrAccount as String] as? String else { continue }
-      accounts.append(account)
-    }
-    return accounts
+    vault(service).accounts()
   }
 
   private func deleteGeneric(service: String, account: String) throws {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
-    ]
-    let status = SecItemDelete(query as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else {
+    let status = vault(service).delete(account: account)
+    guard status == errSecSuccess else {
       throw SecretInventoryError.keychainStatus(status)
     }
+  }
+
+  /// Accessibility only matters for writes, which the inventory never does.
+  private func vault(_ service: String) -> KeychainVault {
+    KeychainVault(service: service, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
   }
 }
 

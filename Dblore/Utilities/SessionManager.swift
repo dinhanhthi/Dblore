@@ -576,21 +576,12 @@ protocol ConnectionPasswordStore {
 
 /// Keychain implementation of `ConnectionPasswordStore`.
 struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
+  nonisolated static let vault = KeychainVault(
+    service: SessionManager.keychainService, accessible: kSecAttrAccessibleAfterFirstUnlock)
+
   func savePassword(_ password: String, forKey key: String) {
     guard let passwordData = password.data(using: .utf8) else { return }
-
-    // Delete existing item first
-    deletePassword(forKey: key)
-
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: SessionManager.keychainService,
-      kSecAttrAccount as String: key,
-      kSecValueData as String: passwordData,
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-    ]
-
-    SecItemAdd(query as CFDictionary, nil)
+    Self.vault.write(account: key, data: passwordData)
   }
 
   func loadPassword(forKey key: String) -> String? {
@@ -599,34 +590,11 @@ struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
 
   /// `loadPassword(forKey:)` callable off the main actor (the MCP pool).
   nonisolated static func loadPassword(forKey key: String) -> String? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: SessionManager.keychainService,
-      kSecAttrAccount as String: key,
-      kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-
-    var result: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-    guard status == errSecSuccess,
-      let passwordData = result as? Data,
-      let password = String(data: passwordData, encoding: .utf8)
-    else {
-      return nil
-    }
-
-    return password
+    guard case .found(let passwordData) = vault.read(account: key) else { return nil }
+    return String(data: passwordData, encoding: .utf8)
   }
 
   func deletePassword(forKey key: String) {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: SessionManager.keychainService,
-      kSecAttrAccount as String: key,
-    ]
-
-    SecItemDelete(query as CFDictionary)
+    Self.vault.delete(account: key)
   }
 }

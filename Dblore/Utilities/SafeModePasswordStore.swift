@@ -21,35 +21,21 @@ final class KeychainPasswordStore: SafeModePasswordStore {
   nonisolated static let serviceName = "ace.thi.dblore.safemode"
   nonisolated static let accountName = "safe-mode-password"
 
-  private var baseQuery: [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: Self.serviceName,
-      kSecAttrAccount as String: Self.accountName,
-    ]
-  }
+  nonisolated static let vault = KeychainVault(
+    service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
   func load() -> Data? {
-    var query = baseQuery
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var result: AnyObject?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-    return result as? Data
+    guard case .found(let data) = Self.vault.read(account: Self.accountName) else { return nil }
+    return data
   }
 
-  /// Delete-then-add (same pattern as SessionManager's database passwords)
   @discardableResult
   func save(_ data: Data) -> Bool {
-    delete()
-    var attributes = baseQuery
-    attributes[kSecValueData as String] = data
-    attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    Self.vault.write(account: Self.accountName, data: data) == errSecSuccess
   }
 
   func delete() {
-    SecItemDelete(baseQuery as CFDictionary)
+    Self.vault.delete(account: Self.accountName)
   }
 }
 

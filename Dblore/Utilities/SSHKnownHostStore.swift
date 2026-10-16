@@ -73,22 +73,16 @@ nonisolated extension SSHKnownHostStore {
 nonisolated final class KeychainSSHKnownHostStore: SSHKnownHostStore, Sendable {
   static let serviceName = "ace.thi.dblore.ssh-host-key"
 
-  private func baseQuery(account: String) -> [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: Self.serviceName,
-      kSecAttrAccount as String: account,
-      kSecAttrSynchronizable as String: false,
-    ]
-  }
+  private static let vault = KeychainVault(
+    service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
+  /// A failed read (also a failed legacy read) keeps its status, so it still throws.
   func load(account: String) throws -> SSHKnownHost? {
-    var query = baseQuery(account: account)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var result: AnyObject?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
-    return try Self.decode(status: status, data: result as? Data)
+    switch Self.vault.read(account: account) {
+    case .found(let data): try Self.decode(status: errSecSuccess, data: data)
+    case .notFound: try Self.decode(status: errSecItemNotFound, data: nil)
+    case .failed(let status): try Self.decode(status: status, data: nil)
+    }
   }
 
   /// Only "not found" means no pin. A locked Keychain, a denied read or corrupt JSON throws.
@@ -101,33 +95,22 @@ nonisolated final class KeychainSSHKnownHostStore: SSHKnownHostStore, Sendable {
     return host
   }
 
-  /// SecItemAdd fails with errSecDuplicateItem when a pin exists, so two first-use
+  /// The add fails with errSecDuplicateItem when a pin exists, so two first-use
   /// connections cannot overwrite each other.
   @discardableResult
   func add(_ host: SSHKnownHost, account: String) -> Bool {
     guard let data = try? JSONEncoder().encode(host) else { return false }
-    var attributes = baseQuery(account: account)
-    attributes[kSecValueData as String] = data
-    attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    return Self.vault.add(account: account, data: data)
   }
 
   @discardableResult
   func save(_ host: SSHKnownHost, account: String) -> Bool {
     guard let data = try? JSONEncoder().encode(host) else { return false }
-    let status = SecItemUpdate(
-      baseQuery(account: account) as CFDictionary,
-      [
-        kSecValueData as String: data,
-        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      ] as CFDictionary)
-    if status == errSecSuccess { return true }
-    guard status == errSecItemNotFound else { return false }
-    return add(host, account: account)
+    return Self.vault.write(account: account, data: data) == errSecSuccess
   }
 
   func delete(account: String) {
-    SecItemDelete(baseQuery(account: account) as CFDictionary)
+    Self.vault.delete(account: account)
   }
 }
 

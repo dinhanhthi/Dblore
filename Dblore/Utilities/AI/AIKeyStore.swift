@@ -20,37 +20,21 @@ nonisolated protocol AIKeyStore: AnyObject, Sendable {
 nonisolated final class KeychainAIKeyStore: AIKeyStore, Sendable {
   static let serviceName = "ace.thi.dblore.ai"
 
-  private func baseQuery(account: String) -> [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: Self.serviceName,
-      kSecAttrAccount as String: account,
-    ]
-  }
+  static let vault = KeychainVault(
+    service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
   func load(account: String) -> String? {
-    var query = baseQuery(account: account)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var result: AnyObject?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data
-    else { return nil }
+    guard case .found(let data) = Self.vault.read(account: account) else { return nil }
     return String(data: data, encoding: .utf8)
   }
 
-  /// Delete-then-add (same pattern as SafeModePasswordStore)
   @discardableResult
   func save(_ value: String, account: String) -> Bool {
-    delete(account: account)
-    var attributes = baseQuery(account: account)
-    attributes[kSecValueData as String] = Data(value.utf8)
-    attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    Self.vault.write(account: account, data: Data(value.utf8)) == errSecSuccess
   }
 
   func delete(account: String) {
-    SecItemDelete(baseQuery(account: account) as CFDictionary)
+    Self.vault.delete(account: account)
   }
 }
 

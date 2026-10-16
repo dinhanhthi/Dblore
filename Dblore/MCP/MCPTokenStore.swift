@@ -36,19 +36,16 @@ nonisolated final class KeychainMCPTokenStore: MCPTokenStore {
   /// Serializes load-then-create so two callers never save two tokens.
   private let lock = NSLock()
 
-  private var baseQuery: [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: Self.serviceName,
-      kSecAttrAccount as String: Self.account,
-      kSecAttrSynchronizable as String: false,
-    ]
-  }
+  private static let vault = KeychainVault(
+    service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
   func loadOrCreate() -> String {
     lock.withLock {
-      if let token = load() { return token }
+      let read = Self.vault.read(account: Self.account)
+      if let token = Self.token(from: read) { return token }
       let token = MCPTokenStoreFactory.generate()
+      // A failed read (for example a denied prompt) leaves the saved token for the next launch.
+      if case .failed = read { return token }
       save(token)
       return token
     }
@@ -62,32 +59,17 @@ nonisolated final class KeychainMCPTokenStore: MCPTokenStore {
     }
   }
 
-  private func load() -> String? {
-    var query = baseQuery
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var result: AnyObject?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data, let token = String(data: data, encoding: .utf8),
-      !token.isEmpty
+  /// A legacy-keychain token is migrated on read, so agents keep working.
+  private static func token(from read: KeychainRead) -> String? {
+    guard case .found(let data) = read,
+      let token = String(data: data, encoding: .utf8), !token.isEmpty
     else { return nil }
     return token
   }
 
   /// A failed save keeps the token in use for this run only; the next launch makes a new one.
   private func save(_ token: String) {
-    let data = Data(token.utf8)
-    let status = SecItemUpdate(
-      baseQuery as CFDictionary,
-      [
-        kSecValueData as String: data,
-        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      ] as CFDictionary)
-    guard status == errSecItemNotFound else { return }
-    var attributes = baseQuery
-    attributes[kSecValueData as String] = data
-    attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    SecItemAdd(attributes as CFDictionary, nil)
+    Self.vault.write(account: Self.account, data: Data(token.utf8))
   }
 }
 

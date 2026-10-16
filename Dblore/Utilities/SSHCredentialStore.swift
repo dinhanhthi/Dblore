@@ -17,45 +17,22 @@ nonisolated protocol SSHCredentialStore: AnyObject, Sendable {
 nonisolated final class KeychainSSHCredentialStore: SSHCredentialStore, Sendable {
   static let serviceName = "ace.thi.dblore.ssh-credential"
 
-  private func baseQuery(account: String) -> [String: Any] {
-    [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: Self.serviceName,
-      kSecAttrAccount as String: account,
-      kSecAttrSynchronizable as String: false,
-    ]
-  }
+  private static let vault = KeychainVault(
+    service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
   func load(account: String) -> SSHStoredCredential? {
-    var query = baseQuery(account: account)
-    query[kSecReturnData as String] = true
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    var result: AnyObject?
-    guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data
-    else { return nil }
+    guard case .found(let data) = Self.vault.read(account: account) else { return nil }
     return try? JSONDecoder().decode(SSHStoredCredential.self, from: data)
   }
 
   @discardableResult
   func save(_ credential: SSHStoredCredential, account: String) -> Bool {
     guard let data = try? JSONEncoder().encode(credential) else { return false }
-    let status = SecItemUpdate(
-      baseQuery(account: account) as CFDictionary,
-      [
-        kSecValueData as String: data,
-        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      ] as CFDictionary)
-    if status == errSecSuccess { return true }
-    guard status == errSecItemNotFound else { return false }
-    var attributes = baseQuery(account: account)
-    attributes[kSecValueData as String] = data
-    attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    return Self.vault.write(account: account, data: data) == errSecSuccess
   }
 
   func delete(account: String) {
-    SecItemDelete(baseQuery(account: account) as CFDictionary)
+    Self.vault.delete(account: account)
   }
 }
 
