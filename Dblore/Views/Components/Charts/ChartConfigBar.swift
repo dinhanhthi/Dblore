@@ -43,29 +43,36 @@ nonisolated enum ResultDisplayMode: Hashable, Sendable {
 struct ResultDisplayPicker: View {
   @Binding var mode: ResultDisplayMode
   var tabs: [ResultDisplayMode] = [.grid, .chart]
+  /// Data viewer footer: the size of the collection section tabs in the header, 26pt tall with
+  /// a 12pt label.
+  var large = false
 
   static let height: CGFloat = 22
+  private static let largeHeight: CGFloat = 26
   /// Grid / Chart width; a picker with Documents gives every tab the wider share.
   private static let width: CGFloat = 132
   private static let documentsTabWidth: CGFloat = 76
+  private static let largeWidth: CGFloat = 144
+  private static let largeDocumentsTabWidth: CGFloat = 84
 
   var body: some View {
     CapsuleTabPicker(
       selection: $mode,
       tabs: tabs,
-      height: Self.height,
+      height: large ? Self.largeHeight : Self.height,
       inset: 2,
       verticalInset: 2
     ) { tab in
       let isSelected = mode == tab
       Text(Self.title(tab))
-        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+        .font(.system(size: large ? 12 : 11, weight: isSelected ? .semibold : .regular))
         .foregroundColor(isSelected ? .onAccentFill : .foreground)
         .lineLimit(1)
     }
     .frame(
       width: tabs.contains(.documents)
-        ? Self.documentsTabWidth * CGFloat(tabs.count) : Self.width
+        ? (large ? Self.largeDocumentsTabWidth : Self.documentsTabWidth) * CGFloat(tabs.count)
+        : (large ? Self.largeWidth : Self.width)
     )
     .fixedSize()
     .accessibilityLabel(tabs.contains(.documents) ? "Result view" : "Grid or chart")

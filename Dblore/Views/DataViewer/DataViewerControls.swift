@@ -262,7 +262,7 @@ struct DataViewerPagingBar: View {
 
         let tabs = displayTabs
         if tabs.count > 1 {
-          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode, tabs: tabs)
+          ResultDisplayPicker(mode: $viewModel.dataViewerDisplayMode, tabs: tabs, large: true)
         }
       }
       .padding(.horizontal, Spacing.md)
