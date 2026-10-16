@@ -73,6 +73,16 @@ struct WorkspaceContainerView: View {
     }
   }
 
+  /// This window just resized: collapses the left sidebar when it no longer fits beside an open
+  /// right sidebar
+  private func collapseLeftSidebarOnResize(_ notification: Notification) {
+    guard let window = hostWindow.window, notification.object as? NSWindow === window,
+      workspaceManager.aiAssistant.showsSidebarPanel
+        || activeViewModel?.isRightSidebarVisible == true
+    else { return }
+    collapseLeftSidebarIfCrowded()
+  }
+
   /// The left sidebar just opened: collapses the right ones when both sides do not fit
   private func collapseRightSidebarsIfCrowded() {
     guard sidebarsCrowdContent else { return }
@@ -380,6 +390,10 @@ struct WorkspaceContainerView: View {
     }
     .onChange(of: showsWorkspaceWelcome) { _, shows in
       if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
+    }
+    // Shrinking the window with both sides open collapses the left sidebar once they stop fitting
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) {
+      collapseLeftSidebarOnResize($0)
     }
     .onChange(of: controlActiveState, initial: true) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id) }
