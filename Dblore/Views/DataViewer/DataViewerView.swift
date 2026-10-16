@@ -23,8 +23,7 @@ struct DataViewerView: View {
       DataViewerPagingBar(viewModel: viewModel)
     }
     .background(Color.appBackground)
-    .sheet(item: documentEditorRequest, onDismiss: { viewModel.documentEditorDismissed() }) {
-      request in
+    .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
       MongoDocumentEditorSheet(viewModel: viewModel, request: request)
     }
   }

@@ -828,7 +828,7 @@ private actor ReadGate {
 
   func arrive() async {
     arrived = true
-    arrivalWaiters.forEach { $0.resume() }
+    for waiter in arrivalWaiters { waiter.resume() }
     arrivalWaiters.removeAll()
     guard !released else { return }
     await withCheckedContinuation { releaseWaiters.append($0) }
@@ -841,7 +841,7 @@ private actor ReadGate {
 
   func release() {
     released = true
-    releaseWaiters.forEach { $0.resume() }
+    for waiter in releaseWaiters { waiter.resume() }
     releaseWaiters.removeAll()
   }
 }
