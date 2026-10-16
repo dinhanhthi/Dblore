@@ -34,7 +34,7 @@ struct DataViewerControls: View {
       HStack(spacing: Spacing.sm) {
         Text(state.title)
           .font(.system(size: 12, weight: .semibold, design: .monospaced))
-          .foregroundColor(.foreground)
+          .foregroundColor(.accent)
           .lineLimit(1)
           .truncationMode(.middle)
           .help(state.title)
