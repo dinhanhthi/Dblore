@@ -2,8 +2,9 @@
 //  QueryFieldEditing.swift
 //  Dblore
 //
-//  Editing rules of the MongoDB query field: bracket and quote pairing, stepping over a closer,
-//  deleting an empty pair, and new line indent. Pure text rules on UTF-16 offsets, no text view.
+//  Editing rules of the MongoDB query field: bracket and quote pairing, wrapping a selection in
+//  quotes, stepping over a closer, deleting an empty pair, and new line indent. Pure text rules
+//  on UTF-16 offsets, no text view.
 //
 
 import Foundation
@@ -16,11 +17,13 @@ nonisolated enum QueryFieldEditing {
     case newline
   }
 
-  /// Replace `range` with `replacement`, then put the caret at `caret` (UTF-16, absolute after the edit)
+  /// Replace `range` with `replacement`, then select `selectionLength` characters from `caret`
+  /// (UTF-16, absolute after the edit; 0 = a plain caret)
   struct Edit: Equatable {
     let range: NSRange
     let replacement: String
     let caret: Int
+    var selectionLength = 0
   }
 
   static let indentUnit = "  "
@@ -36,7 +39,7 @@ nonisolated enum QueryFieldEditing {
     let ns = text as NSString
     switch key {
     case .character(let character):
-      guard selection.length == 0 else { return nil }
+      guard selection.length == 0 else { return quoteWrap(character, in: ns, selection: selection) }
       return characterEdit(character, in: ns, caret: selection.location)
     case .backspace:
       guard selection.length == 0 else { return nil }
@@ -70,6 +73,20 @@ nonisolated enum QueryFieldEditing {
   }
 
   // MARK: - Rules
+
+  /// A quote typed over a selection wraps it in that quote and keeps the text selected; other
+  /// keys replace the selection as usual
+  private static func quoteWrap(
+    _ character: Character, in ns: NSString, selection: NSRange
+  )
+    -> Edit?
+  {
+    guard quotes.contains(character) else { return nil }
+    let quote = String(character)
+    return Edit(
+      range: selection, replacement: quote + ns.substring(with: selection) + quote,
+      caret: selection.location + quote.utf16.count, selectionLength: selection.length)
+  }
 
   private static func characterEdit(_ character: Character, in ns: NSString, caret: Int) -> Edit? {
     // Step over the same closer first, so a closing quote after a word still steps over

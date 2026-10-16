@@ -196,7 +196,7 @@ final class MongoQueryTextView: SQLTextView {
     isApplyingEdit = true
     insertText(edit.replacement, replacementRange: edit.range)
     isApplyingEdit = false
-    setSelectedRange(NSRange(location: edit.caret, length: 0))
+    setSelectedRange(NSRange(location: edit.caret, length: edit.selectionLength))
     return true
   }
 }

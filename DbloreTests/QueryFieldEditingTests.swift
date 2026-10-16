@@ -95,7 +95,20 @@ struct QueryFieldEditingTests {
     let text = "{a: 1}"
     let selection = NSRange(location: 4, length: 1)
     #expect(QueryFieldEditing.edit(for: .character("{"), in: text, selection: selection) == nil)
-    #expect(QueryFieldEditing.edit(for: .character("\""), in: text, selection: selection) == nil)
+    #expect(QueryFieldEditing.edit(for: .character("}"), in: text, selection: selection) == nil)
+  }
+
+  @Test("a quote typed over a selection wraps it and keeps it selected")
+  func quoteWrapsSelection() {
+    let text = "{id: -NiZn0351}"
+    let selection = NSRange(location: 5, length: 9)
+    let edit = QueryFieldEditing.edit(for: .character("\""), in: text, selection: selection)
+    #expect(edit?.range == selection)
+    #expect(edit?.replacement == "\"-NiZn0351\"")
+    #expect(edit?.caret == 6)
+    #expect(edit?.selectionLength == 9)
+    let single = QueryFieldEditing.edit(for: .character("'"), in: text, selection: selection)
+    #expect(single?.replacement == "'-NiZn0351'")
   }
 
   @Test("backspace inside an empty pair deletes both characters")
