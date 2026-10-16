@@ -662,8 +662,11 @@ struct WorkspaceTabContentView: View {
     DocumentLayoutView(viewModel: viewModel) {
       GeometryReader { geometry in
         ScrollView {
-          DataViewerView(viewModel: viewModel)
-            .frame(height: geometry.size.height)
+          DataViewerView(
+            viewModel: viewModel,
+            openQuery: { _ = workspaceManager.newSQLFile(content: $0) }
+          )
+          .frame(height: geometry.size.height)
         }
         .scrollDisabled(true)
         .scrollContentBackground(.hidden)

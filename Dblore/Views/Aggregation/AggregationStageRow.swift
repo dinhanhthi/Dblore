@@ -16,6 +16,8 @@ struct AggregationStageRow: View {
   let number: Int
   /// Shows this stage in the preview pane
   let onSelect: () -> Void
+  /// The workspace's autocomplete source, for field names of the collection; nil = no completion
+  var fieldSource: SQLAutocompleteProvider? = nil
 
   @State private var textViewRef: SQLTextView?
   @State private var isBodyEmpty = false
@@ -106,6 +108,7 @@ struct AggregationStageRow: View {
       onFocus: onSelect,
       textViewRef: $textViewRef,
       isEmpty: $isBodyEmpty,
+      autocompleteProvider: fieldCompletion,
       maxHeight: Self.editorHeight,
       dialect: .mongodb
     )
@@ -114,6 +117,15 @@ struct AggregationStageRow: View {
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
     .overlay(
       HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
+  }
+
+  /// Field names of the collection in the body. Only an operator from `commonOperators` is
+  /// passed on: it is interpolated unescaped into the completion prefix, so typed text never is.
+  private var fieldCompletion: SQLAutocompleteProvider? {
+    let name = stage.operator.trimmingCharacters(in: .whitespaces)
+    guard let fieldSource, Self.commonOperators.contains(name) else { return nil }
+    return MongoDocumentAutocompleteProvider(
+      collection: model.collection, mode: .stage(name), source: fieldSource)
   }
 
   @ViewBuilder
@@ -140,7 +152,7 @@ struct AggregationStageRow: View {
     switch state {
     case .notRun: nil
     case .loading: "Previewing..."
-    case .loaded(let result): AggregationBuilderSheet.countText(result)
+    case .loaded(let result): AggregationBuilderBody.countText(result)
     case .failed: "Preview failed"
     case .disabled, .writesData, .invalid: state.message
     }

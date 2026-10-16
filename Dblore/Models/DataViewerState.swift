@@ -152,7 +152,7 @@ extension DataViewerState {
 
   /// A filter text that is not a document. `offset` (UTF-16 units) is the parser's, nil when the
   /// text parsed but is not a document.
-  struct DocumentFilterError: Error, Equatable, LocalizedError {
+  nonisolated struct DocumentFilterError: Error, Equatable, LocalizedError {
     let message: String
     let offset: Int?
 
@@ -189,8 +189,10 @@ extension DataViewerState {
   }
 
   /// The filter document of `text`: nil for blank text or `{}` (no filter), else a document.
-  /// Arrays and scalars are refused.
-  static func documentFilterValue(_ text: String) -> Result<MongoValue?, DocumentFilterError> {
+  /// Arrays and scalars are refused. Also the schema sample's filter rule (`MongoSchemaAnalyzer`).
+  nonisolated static func documentFilterValue(
+    _ text: String
+  ) -> Result<MongoValue?, DocumentFilterError> {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       return .success(nil)
     }

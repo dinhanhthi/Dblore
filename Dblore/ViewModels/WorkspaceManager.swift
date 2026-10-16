@@ -602,14 +602,16 @@ class WorkspaceManager: Identifiable {
     return tab.id
   }
 
+  /// A new untitled script tab holding `content`; a tab with content is marked dirty so closing
+  /// it asks to save.
   @discardableResult
-  func newSQLFile() -> UUID {
-    let document = SQLEditorDocument()
-    let cell = NotebookCell(cellType: .sql, content: "")
+  func newSQLFile(content: String = "") -> UUID {
+    let document = SQLEditorDocument(content: content)
+    let cell = NotebookCell(cellType: .sql, content: content)
     let notebook = DbloreNotebook(cells: [cell], documentType: .script)
     let viewModel = createViewModel(for: notebook)
     viewModel.viewMode = .editor
-    viewModel.editorContent = ""
+    viewModel.editorContent = content
 
     let tab = TabItem.newSQLFile(
       fileExtension: TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType))
@@ -617,6 +619,7 @@ class WorkspaceManager: Identifiable {
     viewModels[tab.id] = viewModel
     editorDocuments[tab.id] = document
     markDirtyAndScheduleAutoSave()
+    if !content.isEmpty { markDirty(tabId: tab.id) }
 
     selectTab(id: tab.id)
     return tab.id

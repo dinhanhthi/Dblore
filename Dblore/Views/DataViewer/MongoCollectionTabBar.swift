@@ -2,8 +2,9 @@
 //  MongoCollectionTabBar.swift
 //  Dblore
 //
-//  Sections of a MongoDB collection screen (Documents, Indexes) above the data viewer, with the
-//  counts already known: the documents total of the loaded page and the indexes once read.
+//  Sections of a MongoDB collection screen (Documents, Aggregations, Schema, Indexes) above the
+//  data viewer, with the counts already known: the documents total of the loaded page and the
+//  indexes once read.
 //
 
 import SwiftUI
@@ -70,6 +71,8 @@ struct MongoCollectionTabBar: View {
     switch tab {
     case .documents:
       return documentCount
+    case .aggregations, .schema:
+      return nil
     case .indexes:
       guard case .loaded(.indexes(let indexes)) = model.indexState else { return nil }
       return indexes.count

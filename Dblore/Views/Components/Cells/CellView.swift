@@ -155,7 +155,7 @@ struct CellView: View {
     .sheet(item: $aggregationBuilder) { model in
       AggregationBuilderSheet(
         model: model, insertTarget: viewModel, onInsert: insertAggregation,
-        onClose: { aggregationBuilder = nil })
+        onClose: { aggregationBuilder = nil }, fieldSource: viewModel.autocompleteProvider)
     }
     .onChange(of: isSelected) { _, newValue in
       // Clear focus when cell becomes unselected

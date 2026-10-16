@@ -12,27 +12,42 @@ import SwiftUI
 /// Grid / Chart slider sit under the grid. The slider is trailing.
 struct DataViewerView: View {
   @Bindable var viewModel: NotebookViewModel
+  /// Opens a new query tab holding the text (Open in Query of the Aggregations section); nil
+  /// disables it
+  var openQuery: ((String) -> Void)? = nil
 
   var body: some View {
     VStack(spacing: 0) {
       if let model = viewModel.mongoCollection {
         MongoCollectionTabBar(model: model, documentCount: viewModel.dataViewer?.totalRows)
       }
-      // The documents stay in the hierarchy, hidden, while Indexes shows: the filter draft and
-      // the grid's sort, search, value filter and scroll live in view state and would reset
+      // The documents stay in the hierarchy, hidden, while another section shows: the filter
+      // draft and the grid's sort, search, value filter and scroll live in view state and would
+      // reset
       ZStack {
         documents
-          .opacity(showsIndexes ? 0 : 1)
-          .allowsHitTesting(!showsIndexes)
-          .disabled(showsIndexes)
-          .accessibilityHidden(showsIndexes)
-        if showsIndexes, let model = viewModel.mongoCollection {
-          MongoIndexesView(model: model)
+          .opacity(hidesDocuments ? 0 : 1)
+          .allowsHitTesting(!hidesDocuments)
+          .disabled(hidesDocuments)
+          .accessibilityHidden(hidesDocuments)
+        if let model = viewModel.mongoCollection {
+          switch model.section {
+          case .documents:
+            EmptyView()
+          case .aggregations:
+            MongoAggregationsView(
+              model: model, openQuery: openQuery,
+              fieldSource: viewModel.autocompleteProvider)
+          case .schema:
+            MongoSchemaView(model: model, autocompleteSource: viewModel.autocompleteProvider)
+          case .indexes:
+            MongoIndexesView(model: model)
+          }
         }
       }
       // AppKit views ignore `disabled`: drop the focus so keys never reach the hidden filter
       // field (Return would apply it) or grid
-      .onChange(of: showsIndexes) { _, hidden in
+      .onChange(of: hidesDocuments) { _, hidden in
         if hidden { NSApp.keyWindow?.makeFirstResponder(nil) }
       }
     }
@@ -56,7 +71,10 @@ struct DataViewerView: View {
 
   // MARK: - Content
 
-  private var showsIndexes: Bool { viewModel.mongoCollection?.section == .indexes }
+  private var hidesDocuments: Bool {
+    guard let section = viewModel.mongoCollection?.section else { return false }
+    return section != .documents
+  }
 
   /// Filter bar (MongoDB), the page, and the paging bar
   private var documents: some View {
