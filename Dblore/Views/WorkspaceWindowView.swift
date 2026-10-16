@@ -201,7 +201,7 @@ struct AppWindowView: View {
     let files = pendingFileOpen.takePendingFiles()
     Task {
       for url in files {
-        try? await manager.openFile(url: url)
+        try? await manager.openFile(url: url, checksScriptKind: true)
       }
       // Bring the workspace window to front
       windowManager.setActiveWorkspace(manager.id)
@@ -216,7 +216,7 @@ struct AppWindowView: View {
     let newManager = windowManager.newWorkspace()
     Task {
       for url in files {
-        try? await newManager.openFile(url: url)
+        try? await newManager.openFile(url: url, checksScriptKind: true)
       }
       // Use this window for the new workspace
       workspaceId = newManager.id

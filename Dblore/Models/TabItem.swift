@@ -55,11 +55,11 @@ struct TabItem: Identifiable, Equatable {
     )
   }
 
-  /// Creates a new untitled SQL file tab
-  static func newSQLFile() -> TabItem {
+  /// Creates a new untitled script tab: "sql", or "js" for a MongoDB query
+  static func newSQLFile(fileExtension: String = "sql") -> TabItem {
     TabItem(
       documentType: .sqlFile,
-      title: "Untitled.sql",
+      title: "Untitled.\(fileExtension)",
       isDirty: true  // New files are unsaved
     )
   }
@@ -77,7 +77,7 @@ struct TabItem: Identifiable, Equatable {
 /// The type of document in a tab
 enum TabDocumentType: String, Codable, Equatable {
   case notebook  // .dblore files
-  case sqlFile  // .sql files
+  case sqlFile  // .sql files, and .js queries in a MongoDB workspace
   case dataViewer  // table/view data viewer, no file
   case markdown  // .md files
 
@@ -103,10 +103,28 @@ enum TabDocumentType: String, Codable, Equatable {
   static func from(url: URL) -> TabDocumentType? {
     switch url.pathExtension.lowercased() {
     case "dblore": return .notebook
-    case "sql": return .sqlFile
+    case "sql", "js": return .sqlFile
     case "md": return .markdown
     default: return nil
     }
+  }
+
+  /// Script file extension for a connection: "js" for a mongosh connection, else "sql"
+  nonisolated static func scriptExtension(for databaseType: DatabaseType?) -> String {
+    databaseType?.capabilities.queryLanguage == .mongosh ? "js" : "sql"
+  }
+
+  /// Message when a script file does not fit the connection, nil when it opens. A workspace
+  /// with no connection accepts both kinds; other file types are never refused here.
+  nonisolated static func scriptKindRefusal(for url: URL, databaseType: DatabaseType?) -> String? {
+    guard let databaseType else { return nil }
+    let ext = url.pathExtension.lowercased()
+    guard ext == "sql" || ext == "js", ext != scriptExtension(for: databaseType) else {
+      return nil
+    }
+    return ext == "sql"
+      ? "SQL files can't run in a MongoDB workspace. Open a .js query instead."
+      : "JavaScript query files run only in a MongoDB workspace."
   }
 }
 

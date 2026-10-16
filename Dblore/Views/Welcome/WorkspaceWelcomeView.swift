@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Welcome view shown inside a workspace when no tabs are open.
 /// Left column: workspace name, connection and the new/open actions. Right: recent files.
@@ -36,7 +37,7 @@ struct WorkspaceWelcomeView: View {
         WelcomeActionButton(title: "New Notebook", systemImage: "doc.text") {
           workspaceManager.newNotebook()
         }
-        WelcomeActionButton(title: "New SQL File", systemImage: "doc") {
+        WelcomeActionButton(title: workspaceManager.newScriptLabel, systemImage: "doc") {
           workspaceManager.newSQLFile()
         }
         WelcomeActionButton(title: "New Markdown Note", systemImage: "doc.richtext") {
@@ -44,7 +45,9 @@ struct WorkspaceWelcomeView: View {
         }
         WelcomeActionButton(
           title: "Open File...", systemImage: "folder",
-          help: "Open a notebook, SQL file or Markdown note", action: openFiles)
+          help:
+            "Open a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or Markdown note",
+          action: openFiles)
       } footer: {
         // Save, only for unsaved workspaces (Settings is in the title bar)
         if !workspaceManager.workspace.isSaved {
@@ -86,13 +89,13 @@ struct WorkspaceWelcomeView: View {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
         for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
+          try? await workspaceManager.openFile(url: url, checksScriptKind: true)
         }
       }
     }
@@ -247,7 +250,8 @@ struct WorkspaceRecentFiles: View {
               WorkspaceRecentFileRow(url: url, isLoading: loadingFileURL == url) {
                 loadingFileURL = url
                 Task {
-                  try? await workspaceManager.openFile(url: url)
+                  try? await workspaceManager.openFile(url: url, checksScriptKind: true)
+                  loadingFileURL = nil
                 }
               }
             }
@@ -277,10 +281,12 @@ struct WorkspaceRecentFiles: View {
       Text("No recent files")
         .font(.headline)
         .foregroundColor(.foreground)
-      Text("Create a notebook, SQL file or note to get started")
-        .font(.callout)
-        .foregroundColor(.foregroundMuted)
-        .multilineTextAlignment(.center)
+      Text(
+        "Create a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or note to get started"
+      )
+      .font(.callout)
+      .foregroundColor(.foregroundMuted)
+      .multilineTextAlignment(.center)
     }
     .padding(Spacing.xl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

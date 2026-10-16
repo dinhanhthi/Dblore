@@ -63,7 +63,9 @@ extension WorkspaceManager {
       sources: paletteSourceRefs(),
       tabs: tabs.map { .init(id: $0.id, title: $0.title) },
       favorites: workspace.favorites.items.map { .init(id: $0.id, name: $0.name, sql: $0.sql) },
-      actions: paletteActions().map(\.snapshot),
+      actions: paletteActions().map {
+        $0 == .newSQLFile ? .init(id: $0.rawValue, title: newScriptLabel) : $0.snapshot
+      },
       connectionKey: activeHistoryConnectionKey ?? ""
     )
   }

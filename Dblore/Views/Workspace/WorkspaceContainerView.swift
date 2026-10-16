@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Main container view for a workspace with tabs, sidebars, and content
 struct WorkspaceContainerView: View {
@@ -1091,7 +1092,7 @@ struct WorkspaceTitleBarTabsView: View {
           Button {
             workspaceManager.newSQLFile()
           } label: {
-            Label("New SQL File", systemImage: "doc")
+            Label(workspaceManager.newScriptLabel, systemImage: "doc")
           }
 
           Button {
@@ -1170,13 +1171,13 @@ struct WorkspaceTitleBarTabsView: View {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
         for url in panel.urls {
-          try? await workspaceManager.openFile(url: url)
+          try? await workspaceManager.openFile(url: url, checksScriptKind: true)
         }
       }
     }

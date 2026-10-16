@@ -189,10 +189,10 @@ class RecentManager {
     recentDocuments = (documentController?.recentDocumentURLs ?? []).filter(Self.isRecentDocument)
   }
 
-  /// Notebooks, SQL files and Markdown notes; other recent files are not listed
+  /// Notebooks, SQL files, ".js" queries and Markdown notes; other recent files are not listed
   static func isRecentDocument(_ url: URL) -> Bool {
     let ext = url.pathExtension.lowercased()
-    return ext == "dblore" || ext == "sql" || ext == "md"
+    return ext == "dblore" || ext == "sql" || ext == "js" || ext == "md"
   }
 
   /// Add a file to the recent documents and remember its bookmark for the next reopen

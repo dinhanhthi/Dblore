@@ -58,6 +58,15 @@ class WorkspaceManager: Identifiable {
     connectionState.isConnected
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
   }
+
+  /// The workspace connection runs mongosh: script tabs are ".js" queries
+  var isMongoWorkspace: Bool {
+    workspace.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
+  }
+
+  /// Label of the new script entry: "New Query" on MongoDB, else "New SQL File"
+  var newScriptLabel: String { isMongoWorkspace ? "New Query" : "New SQL File" }
+
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
   var pendingWeakeningConnect: ConnectionConfig?
@@ -602,7 +611,8 @@ class WorkspaceManager: Identifiable {
     viewModel.viewMode = .editor
     viewModel.editorContent = ""
 
-    let tab = TabItem.newSQLFile()
+    let tab = TabItem.newSQLFile(
+      fileExtension: TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType))
     tabs.append(tab)
     viewModels[tab.id] = viewModel
     editorDocuments[tab.id] = document
@@ -863,7 +873,9 @@ class WorkspaceManager: Identifiable {
     }
   }
 
-  func openFile(url: URL, selectTab: Bool = true) async throws {
+  /// `checksScriptKind` (user-initiated opens) refuses a script that does not fit the
+  /// connection with a toast; restore paths keep the default and always open.
+  func openFile(url: URL, selectTab: Bool = true, checksScriptKind: Bool = false) async throws {
     switch Self.fileOpenRoute(url) {
     case .duckDBDatabase:
       presentDuckDBFile(url)
@@ -879,6 +891,14 @@ class WorkspaceManager: Identifiable {
         self.selectTab(id: existingTab.id)
       }
       return
+    }
+
+    if checksScriptKind,
+      let message = TabDocumentType.scriptKindRefusal(
+        for: url, databaseType: workspace.connectionConfig?.databaseType)
+    {
+      WorkspaceWindowManager.shared.showToast(message, type: .error)
+      throw CocoaError(.fileReadUnsupportedScheme)
     }
 
     guard let docType = TabDocumentType.from(url: url) else {
@@ -1245,7 +1265,11 @@ class WorkspaceManager: Identifiable {
     viewModel.editorContent = script
     viewModels[tabId] = viewModel
     ensureOverlayTab(
-      id: tabId, documentType: documentType, title: isMarkdown ? "Untitled.md" : "Untitled.sql")
+      id: tabId, documentType: documentType,
+      title: isMarkdown
+        ? "Untitled.md"
+        : "Untitled.\(TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType))"
+    )
   }
 
   private func ensureOverlayTab(id: UUID, documentType: TabDocumentType, title: String) {
@@ -1370,6 +1394,14 @@ class WorkspaceManager: Identifiable {
       if !tab.title.hasSuffix(".dblore") {
         panel.nameFieldStringValue += ".dblore"
       }
+    case .sqlFile where isMongoWorkspace:
+      panel.allowedContentTypes = [.javaScript]
+      if tab.title.lowercased().hasSuffix(".sql") {
+        panel.nameFieldStringValue = String(tab.title.dropLast(4))
+      }
+      if !panel.nameFieldStringValue.hasSuffix(".js") {
+        panel.nameFieldStringValue += ".js"
+      }
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
       if !tab.title.hasSuffix(".sql") {
@@ -1427,7 +1459,7 @@ class WorkspaceManager: Identifiable {
 
     if response == .OK, let url = panel.url {
       do {
-        try await openFile(url: url)
+        try await openFile(url: url, checksScriptKind: true)
       } catch {
         await AppLogger.shared.error("Failed to open notebook: \(error)", category: "Workspace")
       }
@@ -1436,17 +1468,17 @@ class WorkspaceManager: Identifiable {
 
   func openSQLFileWithPanel() async {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.sql]
+    panel.allowedContentTypes = isMongoWorkspace ? [.javaScript] : [.sql]
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
-    panel.message = "Select a SQL file to open"
+    panel.message = isMongoWorkspace ? "Select a query file to open" : "Select a SQL file to open"
 
     guard let window = NSApp.keyWindow else { return }
     let response = await panel.beginSheetModal(for: window)
 
     if response == .OK, let url = panel.url {
       do {
-        try await openFile(url: url)
+        try await openFile(url: url, checksScriptKind: true)
       } catch {
         await AppLogger.shared.error("Failed to open SQL file: \(error)", category: "Workspace")
       }

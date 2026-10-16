@@ -87,7 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
           let newManager = WorkspaceWindowManager.shared.newWorkspace()
           WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
           for url in documentURLs {
-            try? await newManager.openFile(url: url)
+            try? await newManager.openFile(url: url, checksScriptKind: true)
           }
         } else {
           // Have existing workspaces - store URLs for chooser dialog
@@ -681,7 +681,9 @@ struct TabCommands: Commands {
         let manager = activeWorkspaceOrNew
         manager.newSQLFile()
       } label: {
-        Label("New SQL File", systemImage: "doc.text")
+        Label(
+          WorkspaceWindowManager.shared.activeWorkspaceManager?.newScriptLabel ?? "New SQL File",
+          systemImage: "doc.text")
       }
       .keyboardShortcut("j", modifiers: [.command, .shift])
 
@@ -843,7 +845,7 @@ struct TabCommands: Commands {
 
   private func openFile() {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.dblore, .sql, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
 
@@ -856,7 +858,7 @@ struct TabCommands: Commands {
           WorkspaceWindowManager.shared.pendingWorkspaceId = manager!.id
         }
         for url in panel.urls {
-          try? await manager?.openFile(url: url)
+          try? await manager?.openFile(url: url, checksScriptKind: true)
         }
       }
     }
