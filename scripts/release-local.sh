@@ -12,6 +12,8 @@ PROJECT="Dblore.xcodeproj"
 TEAM_ID="86H6CNLN4C"
 IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
 NOTARY_PROFILE="DbloreNotary"
+# Must match PROVISIONING_PROFILE_SPECIFIER (Release) and scripts/ExportOptions.plist
+SIGNING_PROFILE="Dblore Developer ID"
 SPARKLE_ACCOUNT="sqlnotebook"
 PLUGIN_CATALOG="Dblore/Utilities/Plugins/DuckDBPluginCatalog.json"
 
@@ -124,6 +126,20 @@ xcode_line=${xcode_line%%$'\n'*}
 
 identities=$(security find-identity -v -p codesigning)
 grep -qF "$IDENTITY" <<<"$identities" || fail "signing identity not found: $IDENTITY"
+
+# The Developer ID profile authorizes the keychain access group shared with Debug builds
+profile_found=false
+for profile in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.provisionprofile \
+  "$HOME/Library/MobileDevice/Provisioning Profiles"/*.provisionprofile; do
+  [[ -f "$profile" ]] || continue
+  name=$(security cms -D -i "$profile" 2>/dev/null | plutil -extract Name raw -o - - 2>/dev/null) || continue
+  if [[ "$name" == "$SIGNING_PROFILE" ]]; then
+    profile_found=true
+    break
+  fi
+done
+$profile_found ||
+  fail "provisioning profile \"$SIGNING_PROFILE\" not installed. Create it at developer.apple.com (Profiles > Developer ID > App ID ace.thi.Dblore) and double-click the download (see docs/release-setup.md)"
 
 if [[ -z "${NOTARY_KEY_PATH:-}" || -z "${NOTARY_KEY_ID:-}" || -z "${NOTARY_ISSUER_ID:-}" ]]; then
   xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 ||

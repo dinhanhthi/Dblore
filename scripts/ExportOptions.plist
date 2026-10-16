@@ -10,5 +10,10 @@
 	<string>manual</string>
 	<key>signingCertificate</key>
 	<string>Developer ID Application</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>ace.thi.Dblore</key>
+		<string>Dblore Developer ID</string>
+	</dict>
 </dict>
 </plist>

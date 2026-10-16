@@ -122,6 +122,12 @@ if codesign -d --entitlements - "$APP" 2>/dev/null | grep get-task-allow >/dev/n
   fail "exported app has the get-task-allow entitlement; notarization would reject it"
 fi
 
+# The data protection keychain needs the access group, authorized by the embedded profile
+[[ -f "$APP/Contents/embedded.provisionprofile" ]] ||
+  fail "exported app has no embedded provisioning profile; secrets would not reach the keychain"
+codesign -d --entitlements - "$APP" 2>/dev/null | grep keychain-access-groups >/dev/null ||
+  fail "exported app lacks the keychain-access-groups entitlement"
+
 echo "==> Verifying app signature"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
