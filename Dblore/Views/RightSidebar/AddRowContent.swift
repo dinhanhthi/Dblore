@@ -103,7 +103,7 @@ struct NewRowFieldEditor: View {
       }
 
       Text(field.name)
-        .font(.mono)
+        .font(.monoMedium)
         .foregroundColor(.foreground)
         .lineLimit(1)
         .truncationMode(.middle)
@@ -161,7 +161,7 @@ struct NewRowFieldEditor: View {
       )
       .lineLimit(1...8)
       .textFieldStyle(.plain)
-      .font(.mono)
+      .font(.monoMedium)
       .padding(Spacing.sm)
       .background(Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
@@ -197,7 +197,7 @@ struct NewRowFieldEditor: View {
   /// Read-only stand-in for the input, in the NULL style of the cell value view
   private func placeholderBox(_ text: String, italic: Bool = true) -> some View {
     Text(text)
-      .font(.mono)
+      .font(.monoMedium)
       .italic(italic)
       .foregroundColor(.foregroundSubtle)
       .frame(maxWidth: .infinity, alignment: .leading)
