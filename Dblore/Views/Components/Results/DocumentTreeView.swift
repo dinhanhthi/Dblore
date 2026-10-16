@@ -123,11 +123,14 @@ struct DocumentTreeView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: fillsAvailableHeight ? .infinity : nil)
     .frame(height: fillsAvailableHeight ? nil : Self.height(cards: cards))
-    .background(Color.cellBackground)
+    // One step under the cards, so each document reads as its own surface
+    .background(Color.appBackground)
   }
 
   // MARK: - Card
 
+  /// A raised card on the list background, with a stronger border and a header band while open,
+  /// so neighbouring documents stay apart
   private func cardView(_ card: DocumentTreeCard) -> some View {
     let shape = RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)
     let isDeleted = deletedRows.contains(card.document)
@@ -141,6 +144,10 @@ struct DocumentTreeView: View {
           onToggle: { model?.toggleExpansion(header.id) },
           onDoubleClick: doubleClickAction(header, card: card)
         )
+        .background(header.isExpanded ? Color.cardHeaderBackground : .clear, in: Rectangle())
+        if header.isExpanded, card.nodes.count > 1 {
+          Rectangle().fill(Color.border).frame(height: 1)
+        }
       }
       ForEach(card.nodes.dropFirst()) { node in
         line(node, card: card)
@@ -148,7 +155,7 @@ struct DocumentTreeView: View {
     }
     .background(Color.cellBackground, in: shape)
     .clipShape(shape)
-    .overlay(HairlineBorder(shape: shape))
+    .overlay(HairlineBorder(shape: shape, color: .borderStrong))
     .opacity(isDeleted ? 0.5 : 1)
   }
 
