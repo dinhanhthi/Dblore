@@ -5,8 +5,10 @@
 // array element documents entered without an index; top values with counts for strings
 // (apart from numbers and bools of the same text), numbers and bools, number and date ranges,
 // weekday and hour histograms for dates and ObjectId timestamps read with the injected
-// Calendar. sampleCommand refuses server-side JavaScript in the filter and builds `$sample` or
-// `find().limit()` text.
+// Calendar; the exact filter value of a top value (none for a cut text). sampleCommand refuses
+// server-side JavaScript in the filter and builds `$sample` or `find().limit()` text.
+// MongoSchemaFilter edits filter text from schema clicks; MongoSchemaExport writes JSON Schema and
+// `$jsonSchema`.
 //
 // The suite is not main-actor isolated on purpose: the analyzer is `nonisolated` (it runs in a
 // detached task), so calling it from here must compile without `await`.
@@ -159,7 +161,7 @@ struct MongoSchemaAnalyzerTests {
       "{status: 'active', qty: 5, active: true}",
       "{status: 'archived', qty: 7.5, active: true}",
       "{status: 'active', qty: -1}",
-      "{qty: '5'}",
+      "{qty: '5', note: '\(String(repeating: "x", count: 300))'}",
     ])
 
     let report = MongoSchemaAnalyzer.analyze(documents, calendar: try Self.calendar())
@@ -179,6 +181,16 @@ struct MongoSchemaAnalyzerTests {
     #expect(Self.values(qty) == ["5:2", "-1:1", "2:1", "5:1", "7.5:1"])
     #expect(qty.distinctCount == 5)
     #expect(qty.numberRange == -1...7.5)
+    // The exact value to filter on keeps the type: the string '5' is not the number 5.
+    #expect(
+      qty.topValues.map(\.filterValue) == [
+        .int32(5), .int32(-1), .int32(2), .string("5"), .double(7.5),
+      ])
+    #expect(status.topValues.first?.filterValue == .string("active"))
+    // A text cut at 256 characters is no exact value.
+    let note = try #require(try Self.field("note", in: report).topValues.first)
+    #expect(note.value == String(repeating: "x", count: 256) + "…")
+    #expect(note.filterValue == nil)
 
     let active = try Self.field("active", in: report)
     #expect(Self.values(active) == ["true:3", "false:1"])
@@ -272,5 +284,112 @@ struct MongoSchemaAnalyzerTests {
         try MongoSchemaAnalyzer.sampleCommand(collection: collection, filterText: empty, size: 250)
           == sample)
     }
+  }
+
+  // MARK: - Schema filter
+
+  private static func apply(
+    _ keyPath: [String], _ kind: MongoSchemaFilter.Kind, to text: String, adding: Bool = false
+  ) throws -> String {
+    try MongoSchemaFilter.apply(
+      MongoSchemaFilter.Condition(keyPath: keyPath, kind: kind), to: text, adding: adding)
+  }
+
+  @Test("Schema filter: click sets, shift-click adds to $in, other fields stay; type and missing")
+  func schemaFilter() throws {
+    var text = try Self.apply(["status"], .value(.string("active")), to: "")
+    #expect(text == "{ status: \"active\" }")
+    // Shift-click turns the equality into $in, without duplicates.
+    text = try Self.apply(["status"], .value(.string("done")), to: text, adding: true)
+    #expect(text == "{ status: { $in: [ \"active\", \"done\" ] } }")
+    #expect(try Self.apply(["status"], .value(.string("done")), to: text, adding: true) == text)
+    text = try Self.apply(["status"], .value(.int32(5)), to: text, adding: true)
+    #expect(text == "{ status: { $in: [ \"active\", \"done\", 5 ] } }")
+
+    // Other fields stay (AND); a nested field is addressed by its dotted path; a click replaces
+    // the field's condition in place.
+    text = try Self.apply(["address", "city"], .value(.string("Paris")), to: text)
+    text = try Self.apply(["age"], .type("string"), to: text)
+    text = try Self.apply(["email"], .missing, to: text)
+    text = try Self.apply(["status"], .value(.string("archived")), to: text)
+    #expect(
+      text
+        == "{ status: \"archived\", \"address.city\": \"Paris\", age: { $type: \"string\" }, "
+        + "email: { $exists: false } }")
+    // The text reads back through the filter parser.
+    #expect(throws: Never.self) { try DataViewerState.documentFilterValue(text).get() }
+  }
+
+  @Test("Schema filter: a key holding a dot or starting with $ cannot be addressed")
+  func schemaFilterRefusesKeys() throws {
+    for keyPath in [["a.b"], ["meta", "$id"]] {
+      #expect(throws: MongoSchemaFilter.FilterError.self, "\(keyPath)") {
+        try Self.apply(keyPath, .value(.int32(1)), to: "{status: 'active'}")
+      }
+    }
+  }
+
+  // MARK: - Schema export
+
+  /// The value at `keys` (document keys one by one) in `value`.
+  private static func member(_ value: MongoValue?, _ keys: String...) -> MongoValue? {
+    keys.reduce(value) { current, key in
+      guard case .document(let fields)? = current else { return nil }
+      return fields.first { $0.key == key }?.value
+    }
+  }
+
+  @Test("Schema export: JSON Schema and $jsonSchema with required, type mapping and depth note")
+  func schemaExport() throws {
+    let documents = try Self.parse([
+      """
+      {_id: ObjectId('6acc06e0aaaaaaaaaaaaaaaa'), name: 'Ada', nick: 'ada', age: 36,
+       born: ISODate('1990-01-01T00:00:00Z'), tags: ['a'], a: {b: {c: {d: 1}}}}
+      """,
+      """
+      {_id: ObjectId('6acc9380aaaaaaaaaaaaaaaa'), name: null, age: NumberLong('40'),
+       born: ISODate('1991-01-01T00:00:00Z'), tags: [], a: {b: {c: {d: 2}}}}
+      """,
+    ])
+    let report = MongoSchemaAnalyzer.analyze(documents, calendar: try Self.calendar())
+    let required: MongoValue = .array(
+      ["_id", "name", "age", "born", "tags", "a"].map { .string($0) })
+
+    let json = try MongoRelaxedJSON.parse(MongoSchemaExport.jsonSchema(report))
+    #expect(
+      Self.member(json, "$schema") == .string("https://json-schema.org/draft/2020-12/schema"))
+    #expect(Self.member(json, "type") == .string("object"))
+    guard case .string(let summary)? = Self.member(json, "description") else {
+      Issue.record("no description")
+      return
+    }
+    #expect(summary.contains("2 documents"))
+    #expect(Self.member(json, "required") == required)
+    let properties = Self.member(json, "properties")
+    #expect(Self.member(properties, "_id", "type") == .string("string"))
+    #expect(Self.member(properties, "_id", "pattern") == .string("^[0-9a-fA-F]{24}$"))
+    #expect(
+      Self.member(properties, "name", "type") == .array([.string("null"), .string("string")]))
+    #expect(Self.member(properties, "age", "type") == .string("integer"))
+    #expect(Self.member(properties, "born", "type") == .string("string"))
+    #expect(Self.member(properties, "born", "format") == .string("date-time"))
+    #expect(Self.member(properties, "tags", "items", "type") == .string("string"))
+    #expect(Self.member(properties, "a", "properties", "b", "description") == nil)
+    #expect(
+      Self.member(properties, "a", "properties", "b", "properties", "c", "description") != nil)
+
+    let mongo = try MongoRelaxedJSON.parse(MongoSchemaExport.mongoJSONSchema(report))
+    #expect(Self.member(mongo, "$schema") == nil)
+    #expect(Self.member(mongo, "bsonType") == .string("object"))
+    #expect(Self.member(mongo, "required") == required)
+    let bsonProperties = Self.member(mongo, "properties")
+    #expect(
+      Self.member(bsonProperties, "_id") == .document([.init("bsonType", .string("objectId"))]))
+    #expect(
+      Self.member(bsonProperties, "age", "bsonType") == .array([.string("int"), .string("long")]))
+    #expect(Self.member(bsonProperties, "born") == .document([.init("bsonType", .string("date"))]))
+    #expect(Self.member(bsonProperties, "tags", "items", "bsonType") == .string("string"))
+    #expect(
+      Self.member(bsonProperties, "a", "properties", "b", "properties", "c", "description") != nil)
   }
 }

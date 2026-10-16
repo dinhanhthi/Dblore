@@ -12,9 +12,10 @@
 //   counts as type "undefined"; a null or missing parent is not an occurrence.
 // - Types are MongoDB's `$type` aliases (`MongoBSONMapping.typeName`).
 // - Values: top values for strings (raw text), numbers and bools (mongosh text), a string never
-//   counted with a number or bool of the same text; texts over 256 characters are cut; number range
-//   over int, long, double and decimal (when its text reads as a finite Double); date range,
-//   weekday and hour histograms for dates and ObjectId timestamps, in the injected calendar.
+//   counted with a number or bool of the same text; texts over 256 characters are cut (no exact
+//   value to filter on then); number range over int, long, double and decimal (when its text
+//   reads as a finite Double); date range, weekday and hour histograms for dates and ObjectId
+//   timestamps, in the injected calendar.
 // - Samples: up to five distinct values per field (objects excluded, their fields are listed),
 //   first seen first, as mongosh text.
 //
@@ -41,8 +42,12 @@ nonisolated enum MongoSchemaAnalyzer {
   }
 
   nonisolated struct ValueShare: Equatable, Sendable {
+    /// Display text: raw text for a string, mongosh text for a number or bool (cut at 256).
     let value: String
     let count: Int
+    /// The exact value to filter on (`.string` apart from numbers of the same text); nil when
+    /// the counted text was cut.
+    let filterValue: MongoValue?
   }
 
   nonisolated struct Field: Equatable, Sendable, Identifiable {
@@ -158,6 +163,12 @@ extension MongoSchemaAnalyzer {
     let text: String
   }
 
+  /// How often a value was counted, and its exact value (nil when its text was cut).
+  fileprivate nonisolated struct ValueCount {
+    var count: Int
+    let filterValue: MongoValue?
+  }
+
   /// Everything gathered for one field node.
   fileprivate nonisolated struct Accumulator {
     /// The parent node's index, nil for a top-level key.
@@ -165,7 +176,7 @@ extension MongoSchemaAnalyzer {
     let keyPath: [String]
     var typeCounts: [String: Int] = [:]
     var elementTypeCounts: [String: Int]?
-    var valueCounts: [ValueKey: Int] = [:]
+    var valueCounts: [ValueKey: ValueCount] = [:]
     var numberRange: ClosedRange<Double>?
     var dateRange: ClosedRange<Date>?
     var weekdays: [Int]?
@@ -202,6 +213,11 @@ extension MongoSchemaAnalyzer {
       if let hour = components.hour, (0..<24).contains(hour) { hours[hour] += 1 }
       self.weekdays = weekdays
       self.hours = hours
+    }
+
+    /// One more `value` counted under `key`; the first exact value of the key is kept.
+    mutating func addValue(_ value: MongoValue, as key: ValueKey, cut: Bool) {
+      valueCounts[key, default: ValueCount(count: 0, filterValue: cut ? nil : value)].count += 1
     }
 
     mutating func addSample(_ value: MongoValue) {
@@ -287,8 +303,9 @@ extension MongoSchemaAnalyzer {
         }
         nodes[node].elementTypeCounts = counts
       case .string(let text):
-        let key = ValueKey(isString: true, text: MongoSchemaAnalyzer.capped(text))
-        nodes[node].valueCounts[key, default: 0] += 1
+        let capped = MongoSchemaAnalyzer.capped(text)
+        nodes[node].addValue(
+          value, as: ValueKey(isString: true, text: capped), cut: capped != text)
       case .int32(let number):
         addValue(value, at: node)
         nodes[node].addNumber(Double(number))
@@ -327,8 +344,9 @@ extension MongoSchemaAnalyzer {
 
     /// A number or bool counted by its mongosh text.
     private mutating func addValue(_ value: MongoValue, at node: Int) {
-      let text = MongoSchemaAnalyzer.capped(MongoRelaxedJSON.render(value, as: .mongosh))
-      nodes[node].valueCounts[ValueKey(isString: false, text: text), default: 0] += 1
+      let rendered = MongoRelaxedJSON.render(value, as: .mongosh)
+      let text = MongoSchemaAnalyzer.capped(rendered)
+      nodes[node].addValue(value, as: ValueKey(isString: false, text: text), cut: text != rendered)
     }
 
     // MARK: Report
@@ -360,12 +378,14 @@ extension MongoSchemaAnalyzer {
       if missing > 0 { typeCounts[MongoSchemaAnalyzer.undefinedTypeName, default: 0] += missing }
       let values = accumulator.valueCounts
         .sorted { lhs, rhs in
-          if lhs.value != rhs.value { return lhs.value > rhs.value }
+          if lhs.value.count != rhs.value.count { return lhs.value.count > rhs.value.count }
           if lhs.key.text != rhs.key.text { return lhs.key.text < rhs.key.text }
           return !lhs.key.isString && rhs.key.isString
         }
         .prefix(MongoSchemaAnalyzer.topValueLimit)
-        .map { ValueShare(value: $0.key.text, count: $0.value) }
+        .map {
+          ValueShare(value: $0.key.text, count: $0.value.count, filterValue: $0.value.filterValue)
+        }
       return Field(
         keyPath: accumulator.keyPath, presentCount: presentCount,
         types: Self.shares(typeCounts),

@@ -4,8 +4,8 @@
 //
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (stages, Add Stage and per-stage previews from `AggregationBuilderBody`), with
-//  Copy, Explain and Open in Query of the whole `aggregate`. Previews run read-only through the
-//  gate (`AggregationBuilderModel`), as in the builder sheet.
+//  Copy, Explain, Export Code and Open in Query of the whole `aggregate`. Previews run read-only
+//  through the gate (`AggregationBuilderModel`), as in the builder sheet.
 //
 
 import SwiftUI
@@ -16,8 +16,11 @@ struct MongoAggregationsView: View {
   var openQuery: ((String) -> Void)? = nil
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
   var fieldSource: SQLAutocompleteProvider? = nil
+  /// Database the exported driver code connects to
+  var database: String = MongoSession.defaultDatabase
 
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
+  @State private var exportRequest: MongoExportCodeSheet.Request?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -32,6 +35,9 @@ struct MongoAggregationsView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.appBackground)
+    .sheet(item: $exportRequest) { request in
+      MongoExportCodeSheet(request: request)
+    }
   }
 
   // MARK: - Header
@@ -60,6 +66,7 @@ struct MongoAggregationsView: View {
         .disabled(builder.commandText == nil)
         .help("Copy the aggregate command")
       explainButton(builder)
+      exportButton(builder)
       Button("Open in Query") {
         guard let text = builder.commandText else { return }
         openQuery?(text)
@@ -91,24 +98,31 @@ struct MongoAggregationsView: View {
 
   /// The `aggregate` of the enabled stages, or why it cannot be explained: no enabled stage, a
   /// stage error, or a stage that writes (`$out`, `$merge`: the gate's classifier decides)
-  private func explainTarget(_ builder: AggregationBuilderModel) -> ExplainTarget {
-    let enabled = builder.stages.filter(\.isEnabled)
-    guard !enabled.isEmpty else { return .blocked("Add an enabled stage to explain") }
-    var pipeline: [MongoValue] = []
-    for stage in enabled {
-      guard case .success(let value) = AggregationBuilderModel.value(of: stage) else {
-        return .blocked("Fix the stage errors to explain the pipeline")
-      }
-      pipeline.append(value)
-    }
-    let command = MongoCommand.aggregate(collection: builder.collection, pipeline: pipeline)
+  private func explainTarget(_ builder: AggregationBuilderModel) -> PipelineTarget {
+    let target = pipelineTarget(builder, verb: "explain")
+    guard case .success(let command) = target else { return target }
     guard MongoCommandClassifier.classifyStatement(command.render())?.kind == .read else {
       return .blocked("A stage writes data ($out or $merge): such a pipeline is not explained")
     }
-    return .success(command)
+    return target
   }
 
-  private enum ExplainTarget {
+  /// The `aggregate` of the enabled stages, or why there is none (no enabled stage, a stage
+  /// error); `verb` names the action in the reason
+  private func pipelineTarget(_ builder: AggregationBuilderModel, verb: String) -> PipelineTarget {
+    let enabled = builder.stages.filter(\.isEnabled)
+    guard !enabled.isEmpty else { return .blocked("Add an enabled stage to \(verb)") }
+    var pipeline: [MongoValue] = []
+    for stage in enabled {
+      guard case .success(let value) = AggregationBuilderModel.value(of: stage) else {
+        return .blocked("Fix the stage errors to \(verb) the pipeline")
+      }
+      pipeline.append(value)
+    }
+    return .success(MongoCommand.aggregate(collection: builder.collection, pipeline: pipeline))
+  }
+
+  private enum PipelineTarget {
     case success(MongoCommand)
     case blocked(String)
 
@@ -119,6 +133,21 @@ struct MongoAggregationsView: View {
     var reason: String? {
       if case .blocked(let reason) = self { reason } else { nil }
     }
+  }
+
+  // MARK: - Export Code
+
+  /// Opens the driver code of the enabled stages as one `aggregate`; `$out` and `$merge` export
+  /// too, since nothing runs
+  private func exportButton(_ builder: AggregationBuilderModel) -> some View {
+    let target = pipelineTarget(builder, verb: "export")
+    return Button("Export Code") {
+      guard case .success(let command) = target else { return }
+      exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
+    }
+    .buttonStyle(GhostButtonStyle())
+    .disabled(target.command == nil)
+    .help(target.reason ?? "Export the pipeline as driver code")
   }
 
   private func stageCount(_ builder: AggregationBuilderModel) -> String {

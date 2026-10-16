@@ -3,8 +3,9 @@
 //  Dblore
 //
 //  MongoDB data viewer filter: an Extended JSON / mongosh filter document above the grid, in
-//  place of the SQL filter form, with the query options panel, saved queries and Explain of
-//  the draft. Text that is not a document or an option that does not parse shows inline.
+//  place of the SQL filter form, with the query options panel, saved queries, and Explain and
+//  Export Code of the draft. Text that is not a document or an option that does not parse shows
+//  inline.
 //
 
 import SwiftUI
@@ -18,6 +19,7 @@ struct MongoFilterBar: View {
   @State private var showsSavedQueries = false
   @State private var savedQueries: [SavedMongoQuery] = []
   @State private var saveName = ""
+  @State private var exportRequest: MongoExportCodeSheet.Request?
 
   /// The collection shown: a new one restarts the draft from its applied filter
   private var collection: String {
@@ -77,6 +79,9 @@ struct MongoFilterBar: View {
     }
     .onChange(of: appliedOptions) { draftOptions = appliedOptions }
     .onChange(of: draftOptions) { error = nil }
+    .sheet(item: $exportRequest) { request in
+      MongoExportCodeSheet(request: request)
+    }
   }
 
   // MARK: - Filter row
@@ -121,6 +126,15 @@ struct MongoFilterBar: View {
         .disabled(viewModel.mongoCollection == nil || isExplaining)
         .help("Explain the filter and options as typed, with execution statistics")
         .frame(height: MongoQueryField.styledLineHeight)
+      Button(action: exportCode) {
+        Image(systemName: "chevron.left.forwardslash.chevron.right")
+          .foregroundColor(.foregroundMuted)
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .disabled(viewModel.dataViewer == nil)
+      .help("Export Code: the filter and options as typed, as driver code")
+      .accessibilityLabel("Export Code")
+      .frame(height: MongoQueryField.styledLineHeight)
     }
   }
 
@@ -272,16 +286,31 @@ struct MongoFilterBar: View {
 
   /// Explains the draft (filter and options as typed, not the applied page)
   private func explain() {
-    guard var state = viewModel.dataViewer, let model = viewModel.mongoCollection else { return }
+    guard let model = viewModel.mongoCollection, let command = draftQuery() else { return }
+    model.explain(command)
+  }
+
+  /// Opens the driver code of the draft (filter and options as typed)
+  private func exportCode() {
+    guard let command = draftQuery() else { return }
+    exportRequest = MongoExportCodeSheet.Request(
+      command: command, database: MongoExportCodeSheet.database(for: viewModel))
+  }
+
+  /// The `find` of the draft (filter and options as typed, not the applied page); nil with the
+  /// error shown inline when it does not parse
+  private func draftQuery() -> MongoCommand? {
+    guard var state = viewModel.dataViewer else { return nil }
     state.documentFilter = draft
     state.documentOptions = draftOptions
     do {
       let command = try state.userQuery()
       error = nil
-      model.explain(command)
+      return command
     } catch {
       self.error = error
       revealOptionError()
+      return nil
     }
   }
 

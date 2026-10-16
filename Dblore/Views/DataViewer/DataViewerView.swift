@@ -34,9 +34,16 @@ struct DataViewerView: View {
           case .aggregations:
             MongoAggregationsView(
               model: model, openQuery: openQuery,
-              fieldSource: viewModel.autocompleteProvider)
+              fieldSource: viewModel.autocompleteProvider,
+              database: MongoExportCodeSheet.database(for: viewModel))
           case .schema:
-            MongoSchemaView(model: model, autocompleteSource: viewModel.autocompleteProvider)
+            MongoSchemaView(
+              model: model, autocompleteSource: viewModel.autocompleteProvider,
+              showDocuments: { filter in
+                await viewModel.applyDocumentQuery(
+                  filter: filter,
+                  options: viewModel.dataViewer?.documentOptions ?? MongoQueryOptions())
+              })
           case .indexes:
             MongoIndexesView(model: model)
           }

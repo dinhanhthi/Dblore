@@ -632,8 +632,7 @@ enum DataExporter {
     pasteboard.setString(content, forType: .string)
   }
 
-  private static func saveFile(content: String, defaultFilename: String, allowedFileTypes: [String])
-  {
+  static func saveFile(content: String, defaultFilename: String, allowedFileTypes: [String]) {
     let savePanel = NSSavePanel()
     savePanel.nameFieldStringValue = defaultFilename
     savePanel.allowedContentTypes = allowedFileTypes.compactMap { UTType(filenameExtension: $0) }

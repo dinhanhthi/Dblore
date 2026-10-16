@@ -5,7 +5,8 @@
 //  One field of a MongoDB schema analysis: its path, a stacked bar of the types it holds in the
 //  sample ("undefined" where a document lacks it), and its values: a bar chart of the most
 //  common ones, weekday and hour histograms for dates and ObjectId times, or sample chips.
-//  Everything shown is derived once in `init`.
+//  Everything shown is derived once in `init`. A click on a type or a top value hands its
+//  filter condition to the Schema view (Shift adds the value to the field's `$in`).
 //
 
 import Charts
@@ -13,7 +14,11 @@ import SwiftUI
 
 struct MongoSchemaFieldRow: View {
   let field: MongoSchemaAnalyzer.Field
+  /// Called with the clicked condition and whether Shift was held
+  let onFilter: (MongoSchemaFilter.Condition, _ adding: Bool) -> Void
 
+  /// No key of the path is empty, holds a dot or starts with `$`: a dotted path addresses it
+  private let isFilterable: Bool
   private let parentPrefix: String
   private let leafName: String
   private let segments: [TypeSegment]
@@ -28,6 +33,8 @@ struct MongoSchemaFieldRow: View {
     /// Top values above this count hide their x labels
     static let labeledValueLimit = 8
   }
+
+  private static let unfilterableHelp = "This field name can't be used in a filter"
 
   fileprivate struct TypeSegment: Identifiable {
     var id: String { name }
@@ -44,6 +51,8 @@ struct MongoSchemaFieldRow: View {
     let label: String
     let fraction: Double
     let percent: String
+    /// Exact value to filter on; nil when the counted text was cut
+    let filterValue: MongoValue?
   }
 
   fileprivate struct BucketPoint: Identifiable {
@@ -59,8 +68,15 @@ struct MongoSchemaFieldRow: View {
     case none
   }
 
-  init(field: MongoSchemaAnalyzer.Field) {
+  init(
+    field: MongoSchemaAnalyzer.Field,
+    onFilter: @escaping (MongoSchemaFilter.Condition, _ adding: Bool) -> Void
+  ) {
     self.field = field
+    self.onFilter = onFilter
+    isFilterable = field.keyPath.allSatisfy { key in
+      !key.isEmpty && !key.contains(".") && !key.hasPrefix("$")
+    }
     parentPrefix = field.depth > 1 ? field.parentPath + "." : ""
     leafName = field.name.isEmpty ? #""""# : field.name
     let total = field.types.reduce(0) { $0 + $1.count }
@@ -137,30 +153,36 @@ struct MongoSchemaFieldRow: View {
     .accessibilityHidden(true)
   }
 
-  /// "string 74%" per type: one line when it fits, else stacked
+  /// "string 74%" per type, each a filter button: one line when it fits, else stacked
+  @ViewBuilder
   private var typeLegend: some View {
-    ViewThatFits(in: .horizontal) {
+    let legend = ViewThatFits(in: .horizontal) {
       HStack(spacing: Spacing.sm) { legendItems }
       VStack(alignment: .leading, spacing: Spacing.xxs) { legendItems }
+    }
+    if isFilterable {
+      legend
+    } else {
+      // The help on the container: a disabled button may not show its own
+      legend
+        .disabled(true)
+        .help(Self.unfilterableHelp)
     }
   }
 
   private var legendItems: some View {
     ForEach(segments) { segment in
-      HStack(spacing: Spacing.xs) {
-        Circle()
-          .fill(segment.color)
-          .frame(width: 6, height: 6)
-        Text(segment.name)
-          .foregroundColor(.foregroundMuted)
-        Text(segment.percent)
-          .foregroundColor(.foregroundSubtle)
-          .monospacedDigit()
+      TypeShareButton(segment: segment) {
+        filter(
+          segment.name == MongoSchemaAnalyzer.undefinedTypeName ? .missing : .type(segment.name))
       }
-      .font(.smallest)
-      .lineLimit(1)
-      .fixedSize()
     }
+  }
+
+  /// Hands the clicked condition on, with Shift read at click time
+  private func filter(_ kind: MongoSchemaFilter.Kind) {
+    let adding = NSEvent.modifierFlags.contains(.shift)
+    onFilter(MongoSchemaFilter.Condition(keyPath: field.keyPath, kind: kind), adding)
   }
 
   // MARK: - Values
@@ -170,8 +192,19 @@ struct MongoSchemaFieldRow: View {
     switch detail {
     case .values(let points, let summary):
       VStack(alignment: .leading, spacing: Spacing.xs) {
-        ValueChart(points: points, showsLabels: points.count <= Layout.labeledValueLimit)
+        if isFilterable {
+          ValueChart(
+            points: points, showsLabels: points.count <= Layout.labeledValueLimit,
+            onSelect: { filter(.value($0)) }
+          )
           .frame(height: Layout.valueChartHeight)
+        } else {
+          ValueChart(
+            points: points, showsLabels: points.count <= Layout.labeledValueLimit, onSelect: nil
+          )
+          .frame(height: Layout.valueChartHeight)
+          .help(Self.unfilterableHelp)
+        }
         if let summary {
           caption(summary)
         }
@@ -269,7 +302,7 @@ struct MongoSchemaFieldRow: View {
         ValuePoint(
           key: "\(index)", label: share.value.isEmpty ? #""""# : share.value,
           fraction: fraction(share.count, of: present),
-          percent: percent(share.count, of: present))
+          percent: percent(share.count, of: present), filterValue: share.filterValue)
       }
       var parts: [String] = []
       if let distinct = field.distinctCount {
@@ -332,24 +365,103 @@ struct MongoSchemaFieldRow: View {
   }
 }
 
+// MARK: - Type share button
+
+/// One type of the legend; a click filters on it. Hover shows a pill behind it.
+private struct TypeShareButton: View {
+  let segment: MongoSchemaFieldRow.TypeSegment
+  let action: () -> Void
+
+  @Environment(\.isEnabled) private var isEnabled
+  @State private var isHovering = false
+
+  var body: some View {
+    if isEnabled {
+      button.linkPointer()
+    } else {
+      button
+    }
+  }
+
+  private var button: some View {
+    Button(action: action) {
+      HStack(spacing: Spacing.xs) {
+        Circle()
+          .fill(segment.color)
+          .frame(width: 6, height: 6)
+        Text(segment.name)
+          .foregroundColor(.foregroundMuted)
+        Text(segment.percent)
+          .foregroundColor(.foregroundSubtle)
+          .monospacedDigit()
+      }
+      .font(.smallest)
+      .lineLimit(1)
+      .fixedSize()
+      .opacity(isEnabled ? 1 : 0.5)
+      // The pill reaches past the label; the negative padding keeps the legend aligned
+      .padding(.horizontal, Spacing.xs)
+      .padding(.vertical, Spacing.xxs)
+      .background(
+        isHovering && isEnabled ? Color.cellBackgroundHover : Color.clear,
+        in: RoundedRectangle(cornerRadius: CornerRadius.md)
+      )
+      .contentShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .padding(.horizontal, -Spacing.xs)
+      .padding(.vertical, -Spacing.xxs)
+    }
+    .buttonStyle(.plain)
+    .onHover { isHovering = $0 }
+    .help(help)
+  }
+
+  private var help: String {
+    segment.name == MongoSchemaAnalyzer.undefinedTypeName
+      ? "Filter on documents without this field"
+      : "Filter on documents where this field is \(segment.name)"
+  }
+}
+
 // MARK: - Top values chart
 
 /// Share of the present values per top value, one accent color, a percent axis. Hovering a bar
-/// shows its value and share.
+/// shows its value and share; a click hands its value to `onSelect` (nil: bars do nothing).
+/// A value cut too long to filter by is dimmed.
 private struct ValueChart: View {
   let points: [MongoSchemaFieldRow.ValuePoint]
   let showsLabels: Bool
+  let onSelect: ((MongoValue) -> Void)?
 
   @State private var selectedKey: String?
 
   var body: some View {
     Chart(points) { point in
       BarMark(x: .value("Value", point.key), y: .value("Share", point.fraction))
-        .foregroundStyle(
-          Color.accent.opacity(selectedKey == nil || selectedKey == point.key ? 1 : 0.5))
+        .foregroundStyle(Color.accent.opacity(opacity(of: point)))
     }
     .chartXScale(domain: points.map(\.key))
-    .chartXSelection(value: $selectedKey)
+    // Hover and click read the bar under the pointer
+    .chartOverlay { proxy in
+      GeometryReader { geometry in
+        let origin = proxy.plotFrame.map { geometry[$0].origin } ?? .zero
+        hitArea
+          .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+              selectedKey = proxy.value(atX: location.x - origin.x, as: String.self)
+            case .ended:
+              selectedKey = nil
+            }
+          }
+          .onTapGesture { location in
+            guard let onSelect,
+              let key = proxy.value(atX: location.x - origin.x, as: String.self),
+              let value = points.first(where: { $0.key == key })?.filterValue
+            else { return }
+            onSelect(value)
+          }
+      }
+    }
     .chartXAxis {
       if showsLabels {
         AxisMarks { value in
@@ -379,17 +491,42 @@ private struct ValueChart: View {
     .chartLegend(.hidden)
     .overlay(alignment: .topTrailing) {
       if let point = selectedPoint {
-        Text("\(point.label)  \(point.percent)")
-          .font(.monoSmall)
-          .foregroundStyle(Color.foreground)
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .padding(.horizontal, Spacing.sm)
-          .padding(.vertical, Spacing.xxs)
-          .background(Color.cardBackground.opacity(0.92))
-          .allowsHitTesting(false)
+        VStack(alignment: .trailing, spacing: Spacing.xxs) {
+          Text("\(point.label)  \(point.percent)")
+            .font(.monoSmall)
+            .foregroundStyle(Color.foreground)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          if onSelect != nil, point.filterValue == nil {
+            Text("Value was cut; too long to filter by")
+              .font(.smallest)
+              .foregroundStyle(Color.foregroundMuted)
+              .lineLimit(1)
+          }
+        }
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.xxs)
+        .background(Color.cardBackground.opacity(0.92))
+        .allowsHitTesting(false)
       }
     }
+  }
+
+  /// Clear; the pointing hand when a click filters
+  @ViewBuilder
+  private var hitArea: some View {
+    let area = Rectangle().fill(Color.clear).contentShape(Rectangle())
+    if onSelect != nil {
+      area.linkPointer()
+    } else {
+      area
+    }
+  }
+
+  /// The hovered bar (or every bar, when none is) in full; a value too long to filter by at half
+  private func opacity(of point: MongoSchemaFieldRow.ValuePoint) -> Double {
+    let emphasis = selectedKey == nil || selectedKey == point.key ? 1.0 : 0.5
+    return onSelect != nil && point.filterValue == nil ? emphasis * 0.5 : emphasis
   }
 
   private var selectedPoint: MongoSchemaFieldRow.ValuePoint? {
