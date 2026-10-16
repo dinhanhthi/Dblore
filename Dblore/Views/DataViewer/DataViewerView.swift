@@ -15,6 +15,8 @@ struct DataViewerView: View {
   /// Opens a new query tab holding the text (Open in Query of the Aggregations section); nil
   /// disables it
   var openQuery: ((String) -> Void)? = nil
+  /// Workspace AI assistant behind the MongoDB filter and pipeline prompts; nil hides them
+  var aiAssistant: AIAssistantViewModel? = nil
 
   var body: some View {
     VStack(spacing: 0) {
@@ -34,7 +36,7 @@ struct DataViewerView: View {
           case .aggregations:
             MongoAggregationsView(
               model: model, openQuery: openQuery,
-              fieldSource: viewModel.autocompleteProvider)
+              fieldSource: viewModel.autocompleteProvider, aiAssistant: aiAssistant)
           case .schema:
             MongoSchemaView(model: model, autocompleteSource: viewModel.autocompleteProvider)
           case .indexes:
@@ -77,7 +79,7 @@ struct DataViewerView: View {
   private var documents: some View {
     VStack(spacing: 0) {
       if viewModel.isMongoDataViewer {
-        MongoFilterBar(viewModel: viewModel)
+        MongoFilterBar(viewModel: viewModel, aiAssistant: aiAssistant)
       }
       content
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -3,13 +3,15 @@
 //  Dblore
 //
 //  MongoDB data viewer filter: an Extended JSON / mongosh filter document above the grid, in
-//  place of the SQL filter form. Text that is not a document shows the error inline.
+//  place of the SQL filter form. Text that is not a document shows the error inline. An AI
+//  button writes the draft from a prompt.
 //
 
 import SwiftUI
 
 struct MongoFilterBar: View {
   @Bindable var viewModel: NotebookViewModel
+  var aiAssistant: AIAssistantViewModel? = nil
   @State private var draft = ""
   @State private var error: DataViewerState.DocumentFilterError?
 
@@ -45,6 +47,21 @@ struct MongoFilterBar: View {
         // radius makes a pill at one line and a rounded card at several
         .inputStyle()
         .onChange(of: draft) { error = nil }
+        if let aiAssistant {
+          MongoAIPromptButton(
+            assistant: aiAssistant,
+            placeholder: "Describe the filter, or paste a query (e.g. SQL)",
+            help: "Write the filter with AI"
+          ) { prompt in
+            guard let model = viewModel.mongoCollection else { return }
+            let reply = try await aiAssistant.mongoAssist(
+              .filter, prompt: prompt, database: model.database, collection: model.collection,
+              current: draft)
+            draft = try AIMongoAssist.filter(fromReply: reply)
+            error = nil
+          }
+          .frame(height: MongoQueryField.styledLineHeight)
+        }
         Button("Apply", action: apply)
           .buttonStyle(SecondaryButtonStyle())
           .disabled(viewModel.isEditorQueryRunning)
@@ -72,11 +89,23 @@ struct MongoFilterBar: View {
         .fill(Color.foregroundMuted.opacity(0.1))
         .frame(height: 1)
     }
-    .onAppear { draft = appliedFilter }
+    .onAppear {
+      draft = appliedFilter
+      consumePendingDraft()
+    }
     .onChange(of: collection) {
       draft = appliedFilter
       error = nil
     }
+    .onChange(of: viewModel.mongoCollection?.pendingFilterDraft) { consumePendingDraft() }
+  }
+
+  /// Takes a filter sent from outside the bar (the AI chat) into the draft, without applying it
+  private func consumePendingDraft() {
+    guard let pending = viewModel.mongoCollection?.pendingFilterDraft else { return }
+    draft = pending
+    error = nil
+    viewModel.mongoCollection?.pendingFilterDraft = nil
   }
 
   private func apply() {

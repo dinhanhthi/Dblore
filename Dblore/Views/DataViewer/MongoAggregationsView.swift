@@ -4,8 +4,9 @@
 //
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (stages, Add Stage and per-stage previews from `AggregationBuilderBody`), with
-//  Copy and Open in Query of the whole `aggregate`. Previews run read-only through the gate
-//  (`AggregationBuilderModel`), as in the builder sheet.
+//  Copy and Open in Query of the whole `aggregate`, and an AI button that builds the stages from a
+//  prompt. Previews run read-only through the gate (`AggregationBuilderModel`), as in the builder
+//  sheet.
 //
 
 import SwiftUI
@@ -16,6 +17,7 @@ struct MongoAggregationsView: View {
   var openQuery: ((String) -> Void)? = nil
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
   var fieldSource: SQLAutocompleteProvider? = nil
+  var aiAssistant: AIAssistantViewModel? = nil
 
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
 
@@ -28,6 +30,12 @@ struct MongoAggregationsView: View {
           model: builder, selectedStage: $selectedStage, fieldSource: fieldSource
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Stages replaced (AI popover or chat) leave a stale selection: select the first stage
+        .onChange(of: builder.stages.map(\.id)) { _, ids in
+          if selectedStage.map({ !ids.contains($0) }) ?? true {
+            selectedStage = ids.first
+          }
+        }
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,12 +46,23 @@ struct MongoAggregationsView: View {
 
   private func header(_ builder: AggregationBuilderModel) -> some View {
     HStack(spacing: Spacing.sm) {
-      Text(model.collection)
-        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-        .foregroundColor(.foreground)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .help(model.collection)
+      if let aiAssistant {
+        MongoAIPromptButton(
+          assistant: aiAssistant,
+          placeholder: "Describe the pipeline, or paste a query (e.g. SQL)",
+          help: "Build the pipeline with AI"
+        ) { prompt in
+          let current = AIMongoAssist.pipelineText(
+            builder.stages.filter(\.isEnabled).map {
+              AIMongoAssist.GeneratedStage(operator: $0.operator, body: $0.body)
+            })
+          let reply = try await aiAssistant.mongoAssist(
+            .pipeline, prompt: prompt, database: model.database, collection: model.collection,
+            current: current)
+          builder.replaceStages(
+            try AIMongoAssist.stages(fromReply: reply, collection: model.collection))
+        }
+      }
       Text(stageCount(builder))
         .font(.small)
         .foregroundColor(.foregroundMuted)

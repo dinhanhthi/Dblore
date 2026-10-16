@@ -721,7 +721,8 @@ struct WorkspaceTabContentView: View {
         ScrollView {
           DataViewerView(
             viewModel: viewModel,
-            openQuery: { _ = workspaceManager.newSQLFile(content: $0) }
+            openQuery: { _ = workspaceManager.newSQLFile(content: $0) },
+            aiAssistant: workspaceManager.aiAssistant
           )
           .frame(height: geometry.size.height)
         }
