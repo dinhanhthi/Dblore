@@ -50,6 +50,33 @@ extension NotebookViewModel {
     return state.databaseType == .mongodb || sqlDialect == .mongodb
   }
 
+  /// Collection screen of a MongoDB data viewer, nil for any other tab. A plain read, safe from
+  /// a view body: the model is created by `syncMongoCollectionModel()` when `dataViewer` changes.
+  var mongoCollection: MongoCollectionModel? {
+    isMongoDataViewer ? mongoCollectionModel : nil
+  }
+
+  /// Called on every `dataViewer` change: keep the model while the viewer shows the same
+  /// collection (its section and indexes stay), else cancel its read and start a new one.
+  func syncMongoCollectionModel() {
+    guard isMongoDataViewer, let state = dataViewer, let connectionManager else {
+      if mongoCollectionModel != nil {
+        mongoCollectionModel?.cancel()
+        mongoCollectionModel = nil
+      }
+      return
+    }
+    let database = state.schema.isEmpty ? nil : state.schema
+    if let model = mongoCollectionModel, model.database == database,
+      model.collection == state.name
+    {
+      return
+    }
+    mongoCollectionModel?.cancel()
+    mongoCollectionModel = MongoCollectionModel(
+      database: database, collection: state.name, connectionManager: connectionManager)
+  }
+
   /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
   /// SQL paging and WHERE helpers never run there), else the SQL. Nil, with the error shown, when
   /// the applied document filter does not parse.

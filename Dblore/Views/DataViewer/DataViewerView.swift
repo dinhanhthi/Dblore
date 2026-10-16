@@ -15,12 +15,26 @@ struct DataViewerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      if viewModel.isMongoDataViewer {
-        MongoFilterBar(viewModel: viewModel)
+      if let model = viewModel.mongoCollection {
+        MongoCollectionTabBar(model: model, documentCount: viewModel.dataViewer?.totalRows)
       }
-      content
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-      DataViewerPagingBar(viewModel: viewModel)
+      // The documents stay in the hierarchy, hidden, while Indexes shows: the filter draft and
+      // the grid's sort, search, value filter and scroll live in view state and would reset
+      ZStack {
+        documents
+          .opacity(showsIndexes ? 0 : 1)
+          .allowsHitTesting(!showsIndexes)
+          .disabled(showsIndexes)
+          .accessibilityHidden(showsIndexes)
+        if showsIndexes, let model = viewModel.mongoCollection {
+          MongoIndexesView(model: model)
+        }
+      }
+      // AppKit views ignore `disabled`: drop the focus so keys never reach the hidden filter
+      // field (Return would apply it) or grid
+      .onChange(of: showsIndexes) { _, hidden in
+        if hidden { NSApp.keyWindow?.makeFirstResponder(nil) }
+      }
     }
     .background(Color.appBackground)
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
@@ -41,6 +55,20 @@ struct DataViewerView: View {
   }
 
   // MARK: - Content
+
+  private var showsIndexes: Bool { viewModel.mongoCollection?.section == .indexes }
+
+  /// Filter bar (MongoDB), the page, and the paging bar
+  private var documents: some View {
+    VStack(spacing: 0) {
+      if viewModel.isMongoDataViewer {
+        MongoFilterBar(viewModel: viewModel)
+      }
+      content
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      DataViewerPagingBar(viewModel: viewModel)
+    }
+  }
 
   @ViewBuilder
   private var content: some View {

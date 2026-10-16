@@ -202,7 +202,10 @@ class NotebookViewModel {
   /// Table/view data viewer tab state (nil for every other tab).
   /// Changing page, page size, filter, or relation drops staged undo for the previous page.
   var dataViewer: DataViewerState? {
-    didSet { clearStagedUndoIfViewerPageChanged(from: oldValue) }
+    didSet {
+      clearStagedUndoIfViewerPageChanged(from: oldValue)
+      syncMongoCollectionModel()
+    }
   }
   /// Cells with an inline edit sent since the last Commit / Rollback; re-run after a Rollback
   /// so their result shows the original values again.
@@ -213,6 +216,9 @@ class NotebookViewModel {
   @ObservationIgnored var integerPrimaryKeyHasDefault: [String: Bool] = [:]
   /// Grid / Chart for the data viewer. The paging bar draws it; the grid reads it.
   var dataViewerDisplayMode: ResultDisplayMode = .grid
+  /// Collection screen of a MongoDB data viewer (section, indexes). Kept in step with
+  /// `dataViewer` by `syncMongoCollectionModel()`; read it through `mongoCollection`.
+  var mongoCollectionModel: MongoCollectionModel?
   /// How the user resolved a prompt that blocks paging, filter, sort, refresh, or tab close
   /// while row changes are staged.
   enum StagedLeaveChoice: Sendable {
