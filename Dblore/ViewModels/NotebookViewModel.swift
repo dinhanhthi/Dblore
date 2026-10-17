@@ -215,6 +215,8 @@ class NotebookViewModel {
   @ObservationIgnored var integerPrimaryKeyHasDefault: [String: Bool] = [:]
   /// Grid / Chart for the data viewer. The paging bar draws it; the grid reads it.
   var dataViewerDisplayMode: ResultDisplayMode = .grid
+  /// The filter bar's last Expand All / Collapse All for the data viewer's Documents view
+  var documentExpansionRequest: DocumentTreeExpansionRequest?
   /// Collection screen of a MongoDB data viewer (section, indexes). Kept in step with
   /// `dataViewer` by `syncMongoCollectionModel()`; read it through `mongoCollection`.
   var mongoCollectionModel: MongoCollectionModel?

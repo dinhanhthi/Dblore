@@ -124,6 +124,10 @@ struct MongoFilterBar: View {
           .disabled(viewModel.mongoCollection == nil || isExplaining)
           .help("Explain the filter and options as typed, with execution statistics")
           .frame(height: MongoQueryField.styledLineHeight)
+        if viewModel.dataViewerDisplayMode == .documents {
+          expansionButton
+            .frame(height: MongoQueryField.styledLineHeight)
+        }
         if let aiAssistant {
           MongoAIPromptButton(
             assistant: aiAssistant,
@@ -169,6 +173,21 @@ struct MongoFilterBar: View {
         .frame(height: MongoQueryField.styledLineHeight)
       }
     }
+  }
+
+  /// Expands every document card, or collapses them after an Expand All
+  private var expansionButton: some View {
+    let collapses = viewModel.documentExpansionRequest?.expands == true
+    return Button {
+      viewModel.documentExpansionRequest = DocumentTreeExpansionRequest(expands: !collapses)
+    } label: {
+      Image(
+        systemName: collapses
+          ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+    }
+    .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+    .help(collapses ? "Collapse all documents" : "Expand all documents")
+    .accessibilityLabel(collapses ? "Collapse All" : "Expand All")
   }
 
   /// The panel is shown, or options are set: the icon turns accent
