@@ -247,6 +247,13 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     context.coordinator.configureWordWrapIfNeeded(
       wordWrapEnabled, scrollView: scrollView, textView: textView)
 
+    // A fixed-height editor fills its frame, so a click below the text still lands in it
+    let minTextHeight = maxHeight ?? 0
+    if textView.minSize.height != minTextHeight {
+      textView.minSize = NSSize(width: 0, height: minTextHeight)
+      context.coordinator.updateHeight(textView: textView)
+    }
+
     let fontChanged = textView.font?.pointSize != fontSize
     if fontChanged {
       let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -634,9 +641,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         height.wrappedValue = newHeight
       }
 
-      // Update frame - textView can expand freely within scrollView
+      // Update frame - textView can expand freely within scrollView, never shorter than its
+      // `minSize` (the frame of a fixed-height editor)
       var frame = textView.frame
-      frame.size.height = newHeight
+      frame.size.height = max(newHeight, textView.minSize.height)
       textView.frame = frame
     }
 
