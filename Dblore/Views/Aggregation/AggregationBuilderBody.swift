@@ -122,6 +122,18 @@ struct AggregationBuilderBody: View {
         .padding(Spacing.xs)
       }
       .id(ObjectIdentifier(model))
+      // Format goes through the editor, so it is undoable as in the SQL editor
+      .overlay(alignment: .bottomTrailing) {
+        FormatSQLButton(help: "Format the pipeline") {
+          guard let text = model.format() else { return }
+          if let textViewRef {
+            textViewRef.replaceDocument(with: text)
+          } else {
+            model.pipelineText = text
+          }
+        }
+        .padding(Spacing.sm)
+      }
       .background(Color.inputBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
       .overlay(

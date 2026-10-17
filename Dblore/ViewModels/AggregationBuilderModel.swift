@@ -454,18 +454,46 @@ final class AggregationBuilderModel: Identifiable {
     return true
   }
 
+  /// The text formatted for Text mode's Format button: a stage array, a stage on one line when
+  /// it fits 80 columns, else one key per line (comments inside stages are dropped). The text's
+  /// collation and maxTimeMS move to `options`, so the array runs as the text did. Nil, with
+  /// `textError` set, when the text is not a pipeline.
+  func format() -> String? {
+    switch textDraft() {
+    case .failure(let error):
+      textError = error.message
+      return nil
+    case .success(let draft):
+      options = draft.options
+      guard !draft.stages.isEmpty else { return "" }
+      let lines = draft.stages.map { stage in
+        guard stage.isEnabled, let body = try? MongoRelaxedJSON.parse(stage.body) else {
+          return Self.line(of: stage)
+        }
+        let document = MongoValue.document([.init(stage.operator, body)])
+        let inline = "  " + MongoRelaxedJSON.render(document, as: .mongosh)
+        guard inline.count > 80 else { return inline }
+        return MongoRelaxedJSON.render(document, as: .mongosh, indented: true)
+          .components(separatedBy: "\n").map { "  " + $0 }.joined(separator: "\n")
+      }
+      return "[\n" + lines.joined(separator: ",\n") + "\n]"
+    }
+  }
+
   /// The stages as `AIMongoAssist.pipelineText` writes them, a disabled stage as a `// ` line
-  /// with its body on one line; `""` for no stages. A body whose last line has a `//` comment
-  /// closes on the next line, so the comment cannot swallow the closing brace and comma.
+  /// with its body on one line; `""` for no stages.
   private static func text(of stages: [Stage]) -> String {
     guard !stages.isEmpty else { return "" }
-    let lines = stages.map { stage in
-      guard stage.isEnabled else { return "  // { \(stage.operator): \(oneLine(stage.body)) }" }
-      let lastLine = stage.body.components(separatedBy: .newlines).last ?? ""
-      return lastLine.contains("//")
-        ? "  { \(stage.operator): \(stage.body)\n  }" : "  { \(stage.operator): \(stage.body) }"
-    }
-    return "[\n" + lines.joined(separator: ",\n") + "\n]"
+    return "[\n" + stages.map(line(of:)).joined(separator: ",\n") + "\n]"
+  }
+
+  /// One stage of `text(of:)`. A body whose last line has a `//` comment closes on the next
+  /// line, so the comment cannot swallow the closing brace and comma.
+  private static func line(of stage: Stage) -> String {
+    guard stage.isEnabled else { return "  // { \(stage.operator): \(oneLine(stage.body)) }" }
+    let lastLine = stage.body.components(separatedBy: .newlines).last ?? ""
+    return lastLine.contains("//")
+      ? "  { \(stage.operator): \(stage.body)\n  }" : "  { \(stage.operator): \(stage.body) }"
   }
 
   /// `body` on one line: rendered again when it parses, else its lines joined by spaces.

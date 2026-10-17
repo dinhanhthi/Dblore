@@ -19,11 +19,15 @@ extension SQLTextView {
   /// Replace the whole text with its formatted version (undoable)
   func formatDocument() {
     guard Self.canFormat(dialect: dialect), let textStorage = textStorage else { return }
+    replaceDocument(with: SQLFormatter.format(textStorage.string, dialect: dialect))
+  }
+
+  /// Replace the whole text with `newText` (undoable), as a format does
+  func replaceDocument(with newText: String) {
+    guard let textStorage = textStorage, newText != textStorage.string else { return }
 
     let caret = selectedRange().location
     let fullRange = NSRange(location: 0, length: textStorage.length)
-    let newText = SQLFormatter.format(textStorage.string, dialect: dialect)
-    guard newText != textStorage.string else { return }
 
     // Set flag to prevent autocomplete from showing during formatting
     setProgrammaticEditFlag(true)

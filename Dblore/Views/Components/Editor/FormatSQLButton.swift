@@ -9,20 +9,28 @@ import SwiftUI
 
 // MARK: - Format SQL Button
 
-/// Floating button that pretty-prints the editor's SQL.
+/// Floating button that pretty-prints the editor's SQL, or runs another format action.
 struct FormatSQLButton: View {
-  let textView: SQLTextView?
+  var help = "Format SQL"
+  let action: () -> Void
   @State private var isHovering = false
 
+  init(textView: SQLTextView?) {
+    action = { textView?.formatDocument() }
+  }
+
+  init(help: String, action: @escaping () -> Void) {
+    self.help = help
+    self.action = action
+  }
+
   var body: some View {
-    Button(action: {
-      textView?.formatDocument()
-    }) {
+    Button(action: action) {
       Image(systemName: "text.alignleft")
         .font(.system(size: 12))
     }
     .buttonStyle(FloatingPanelButtonStyle())
-    .help("Format SQL")
+    .help(help)
     .opacity(isHovering ? 1.0 : 0.6)
     .onHover { hovering in
       isHovering = hovering

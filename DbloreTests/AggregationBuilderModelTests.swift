@@ -410,6 +410,46 @@ struct AggregationBuilderModelTests {
     await manager.disconnect()
   }
 
+  @Test("Format writes the text as a stage array, a long stage indented; text options move over")
+  func formatText() async throws {
+    let (manager, _) = try await Self.connected()
+    let (model, _) = Self.model(manager, [("$limit", "1")])
+    model.showText()
+    model.pipelineText =
+      "db.users.aggregate([{$match:{a:1}},\n// {$sort: {b: -1}},\n"
+      + "{$project: {customerFirstName: 1, customerLastName: 1, customerEmail: 1, customerPhone: 1}}"
+      + "], {maxTimeMS: 50})"
+    let formatted = try #require(model.format())
+    #expect(
+      formatted
+        == """
+        [
+          { $match: { a: 1 } },
+          // { $sort: { b: -1 } },
+          {
+            $project: {
+              customerFirstName: 1,
+              customerLastName: 1,
+              customerEmail: 1,
+              customerPhone: 1
+            }
+          }
+        ]
+        """)
+    #expect(model.options.maxTimeMS == "50")
+    model.pipelineText = formatted
+    #expect(
+      model.commandText
+        == "db.users.aggregate([ { $match: { a: 1 } }, { $project: { customerFirstName: 1, "
+        + "customerLastName: 1, customerEmail: 1, customerPhone: 1 } } ], { maxTimeMS: 50 })")
+
+    model.pipelineText = "[{$match: ,]"
+    #expect(model.format() == nil)
+    #expect(model.textError != nil)
+    #expect(model.pipelineText == "[{$match: ,]")
+    await manager.disconnect()
+  }
+
   // MARK: - Run
 
   @Test("Run and Export Data refuse a pipeline with $out or $merge and send nothing")
