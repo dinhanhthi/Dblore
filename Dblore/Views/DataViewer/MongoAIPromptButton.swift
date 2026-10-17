@@ -108,9 +108,10 @@ private struct MongoAIPromptPopover: View {
         Button("Set up AI in Settings", action: openSettings)
           .buttonStyle(PrimaryButtonStyle())
       } else {
+        // A popover keeps the size it opened with: reserve the 3 lines up front, scroll past them
         TextField(placeholder, text: $prompt, axis: .vertical)
           .textFieldStyle(.plain)
-          .lineLimit(1...4)
+          .lineLimit(3, reservesSpace: true)
           .focused($promptFocused)
           .onSubmit(apply)
           .inputStyle()
