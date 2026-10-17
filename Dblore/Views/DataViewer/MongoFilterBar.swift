@@ -100,14 +100,8 @@ struct MongoFilterBar: View {
   // MARK: - Filter row
 
   private var filterRow: some View {
-    // Top aligned: the icon and buttons stay level with the first line as the field grows
+    // Top aligned: the buttons stay level with the first line as the field grows
     HStack(alignment: .top, spacing: Spacing.sm) {
-      Image(systemName: "line.3.horizontal.decrease")
-        .font(.system(size: 11))
-        .foregroundColor(
-          appliedFilter.isEmpty && appliedOptions.isEmpty ? .foregroundMuted : .accent
-        )
-        .frame(height: MongoQueryField.styledLineHeight)
       MongoQueryField(
         text: $draft,
         placeholder: #"Filter, e.g. {status: "active"}"#,
@@ -118,58 +112,75 @@ struct MongoFilterBar: View {
       // radius makes a pill at one line and a rounded card at several
       .inputStyle()
       .onChange(of: draft) { error = nil }
-      if let aiAssistant {
-        MongoAIPromptButton(
-          assistant: aiAssistant,
-          placeholder: "Describe the filter, or paste a query (e.g. SQL)",
-          help: "Write the filter with AI"
-        ) { prompt in
-          guard let model = viewModel.mongoCollection else { return }
-          let reply = try await aiAssistant.mongoAssist(
-            .filter, prompt: prompt, database: model.database, collection: model.collection,
-            current: draft)
-          draft = try AIMongoAssist.filter(fromReply: reply)
-          error = nil
+      // Tighter than the row: the buttons carry their own padding
+      HStack(alignment: .top, spacing: Spacing.xs) {
+        Button("Apply", action: apply)
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(viewModel.isEditorQueryRunning)
+          .help("Run the filter and options on the server")
+          .frame(height: MongoQueryField.styledLineHeight)
+        Button("Explain", action: explain)
+          .buttonStyle(SecondaryButtonStyle())
+          .disabled(viewModel.mongoCollection == nil || isExplaining)
+          .help("Explain the filter and options as typed, with execution statistics")
+          .frame(height: MongoQueryField.styledLineHeight)
+        if let aiAssistant {
+          MongoAIPromptButton(
+            assistant: aiAssistant,
+            placeholder: "Describe the filter, or paste a query (e.g. SQL)",
+            help: "Write the filter with AI"
+          ) { prompt in
+            guard let model = viewModel.mongoCollection else { return }
+            let reply = try await aiAssistant.mongoAssist(
+              .filter, prompt: prompt, database: model.database, collection: model.collection,
+              current: draft)
+            draft = try AIMongoAssist.filter(fromReply: reply)
+            error = nil
+          }
+          .frame(height: MongoQueryField.styledLineHeight)
         }
+        Button {
+          showsOptions.toggle()
+        } label: {
+          Image(systemName: "slider.horizontal.3")
+            .foregroundColor(optionsHighlighted ? .accent : nil)
+        }
+        .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+        .help(optionsHelp)
+        .accessibilityLabel("Options")
         .frame(height: MongoQueryField.styledLineHeight)
-      }
-      Button(optionsTitle) { showsOptions.toggle() }
-        .buttonStyle(GhostButtonStyle(isActive: showsOptions))
-        .help(showsOptions ? "Hide the query options" : "Show the query options")
-        .frame(height: MongoQueryField.styledLineHeight)
-      Button("Apply", action: apply)
-        .buttonStyle(SecondaryButtonStyle())
-        .disabled(viewModel.isEditorQueryRunning)
-        .help("Run the filter and options on the server")
-        .frame(height: MongoQueryField.styledLineHeight)
-      Button("Clear", action: clear)
-        .buttonStyle(GhostButtonStyle())
+        Button(action: clear) {
+          Image(systemName: "xmark.circle")
+        }
+        .buttonStyle(SecondaryButtonStyle(iconOnly: true))
         .disabled(viewModel.isEditorQueryRunning || isCleared)
         .help("Clear the filter and options and show every document")
+        .accessibilityLabel("Clear")
         .frame(height: MongoQueryField.styledLineHeight)
-      savedQueriesButton
+        savedQueriesButton
+          .frame(height: MongoQueryField.styledLineHeight)
+        Button(action: exportCode) {
+          Image(systemName: "curlybraces")
+        }
+        .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+        .disabled(viewModel.dataViewer == nil)
+        .help("Export Code: the filter and options as typed, as driver code")
+        .accessibilityLabel("Export Code")
         .frame(height: MongoQueryField.styledLineHeight)
-      Button("Explain", action: explain)
-        .buttonStyle(GhostButtonStyle())
-        .disabled(viewModel.mongoCollection == nil || isExplaining)
-        .help("Explain the filter and options as typed, with execution statistics")
-        .frame(height: MongoQueryField.styledLineHeight)
-      Button(action: exportCode) {
-        Image(systemName: "chevron.left.forwardslash.chevron.right")
-          .foregroundColor(.foregroundMuted)
       }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .disabled(viewModel.dataViewer == nil)
-      .help("Export Code: the filter and options as typed, as driver code")
-      .accessibilityLabel("Export Code")
-      .frame(height: MongoQueryField.styledLineHeight)
     }
   }
 
-  /// "Options", with the number of set options while the panel is hidden
-  private var optionsTitle: String {
+  /// The panel is shown, or options are set: the icon turns accent
+  private var optionsHighlighted: Bool {
+    showsOptions || draftOptions.setCount > 0
+  }
+
+  /// The tooltip carries the number of set options while the panel is hidden
+  private var optionsHelp: String {
+    if showsOptions { return "Hide the query options" }
     let count = draftOptions.setCount
-    return showsOptions || count == 0 ? "Options" : "Options (\(count))"
+    return count == 0 ? "Show the query options" : "Show the query options (\(count) set)"
   }
 
   // MARK: - Saved queries
@@ -180,9 +191,8 @@ struct MongoFilterBar: View {
       showsSavedQueries.toggle()
     } label: {
       Image(systemName: "bookmark")
-        .foregroundColor(.foregroundMuted)
     }
-    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .buttonStyle(SecondaryButtonStyle(iconOnly: true))
     .disabled(savedQueryKey == nil)
     .help("Saved queries")
     .popover(isPresented: $showsSavedQueries, arrowEdge: .bottom) {
