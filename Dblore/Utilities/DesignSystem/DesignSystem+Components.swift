@@ -423,20 +423,32 @@ extension View {
       )
   }
 
-  func inputStyle() -> some View {
+  /// `onPopover`: the field sits on a popover's material and takes the popover fill and border
+  func inputStyle(onPopover: Bool = false) -> some View {
     padding(Spacing.sm)
-      .background(Color.controlBackground)
+      .background(onPopover ? Color.popoverControlBackground : Color.controlBackground)
       .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
-      .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.xxl)))
+      .overlay(
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.xxl),
+          color: onPopover ? .popoverControlBorder : .border))
   }
 
-  /// Capsule style for input fields
-  func inputCapsuleStyle() -> some View {
+  /// Capsule style for input fields; `onPopover` as for `inputStyle`
+  func inputCapsuleStyle(onPopover: Bool = false) -> some View {
     padding(.vertical, Spacing.sm)
       .padding(.horizontal, Spacing.md)
-      .background(Color.controlBackground)
+      .background(onPopover ? Color.popoverControlBackground : Color.controlBackground)
       .clipShape(Capsule())
-      .overlay(HairlineBorder(shape: Capsule()))
+      .overlay(
+        HairlineBorder(shape: Capsule(), color: onPopover ? .popoverControlBorder : .border))
+  }
+
+  /// Inset of a small popover's content: the popover's own rounded edge already reads as a
+  /// margin on the sides, so the sides take less than the top and bottom
+  func popoverContentPadding() -> some View {
+    padding(.horizontal, Spacing.sm)
+      .padding(.vertical, Spacing.md)
   }
 
   /// Numeric field. `inputCapsuleStyle` adds `Spacing.sm` on top of the text

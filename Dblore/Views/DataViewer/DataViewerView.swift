@@ -37,7 +37,10 @@ struct DataViewerView: View {
             MongoAggregationsView(
               model: model, openQuery: openQuery,
               fieldSource: viewModel.autocompleteProvider,
-              database: MongoExportCodeSheet.database(for: viewModel), aiAssistant: aiAssistant)
+              database: MongoExportCodeSheet.database(for: viewModel), aiAssistant: aiAssistant,
+              runLimit: viewModel.dataViewer?.pageSize ?? 100,
+              savedPipelineStore: viewModel.savedFilterStore,
+              savedPipelineKey: savedPipelineKey)
           case .schema:
             MongoSchemaView(
               model: model, autocompleteSource: viewModel.autocompleteProvider,
@@ -71,6 +74,13 @@ struct DataViewerView: View {
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
       MongoDocumentEditorSheet(viewModel: viewModel, request: request)
     }
+  }
+
+  /// Saved pipelines are kept per connection and collection, as the filter bar's saved queries
+  private var savedPipelineKey: String? {
+    guard let state = viewModel.dataViewer, let config = viewModel.notebook.connectionConfig
+    else { return nil }
+    return SavedFilterStore.key(for: config, schema: state.schema, name: state.name)
   }
 
   /// MongoDB document editor: presented while `pendingDocumentEditor` is set; dismissing the

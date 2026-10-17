@@ -118,7 +118,8 @@ struct MongoshAutocompleteProviderTests {
     #expect(suggest("db.users.find({na|") == ["{name"])
     #expect(suggest("db.users.find({ a|") == ["\"address.city\"", "age"])
     #expect(suggest("db.users.find({am|").isEmpty)
-    #expect(suggest("db.users.find({age: {$G|") == ["{$gt", "{$gte"])
+    #expect(
+      suggest("db.users.find({age: {$G|") == ["{$geoIntersects", "{$geoWithin", "{$gt", "{$gte"])
     #expect(suggest("db.users.deleteMany({$o|") == ["{$or"])
     #expect(suggest("db.users.find({$or: [{na|") == ["[{name"])
     #expect(suggestions("db.users.find({na|").first?.type.isColumn == true)
@@ -162,8 +163,54 @@ struct MongoshAutocompleteProviderTests {
     #expect(suggest("db.users.aggregate([{$m|") == ["[{$match", "[{$merge"])
     #expect(
       suggest("db.users.aggregate([{$match: {}}, {$s|")
-        == ["{$sample", "{$set", "{$skip", "{$sort"])
+        == ["{$sample", "{$set", "{$setWindowFields", "{$skip", "{$sort", "{$sortByCount"])
     #expect(suggest("db.users.aggregate([{$match: {ag|") == ["{age"])
+  }
+
+  @Test("Stage bodies offer accumulators, expression operators and option keys by position")
+  func stageBodyOperators() {
+    let cases: [(marked: String, expected: [String])] = [
+      ("db.users.aggregate([{$group: {_|", ["{_id"]),
+      ("db.users.aggregate([{$group: {na|", []),
+      (
+        "db.users.aggregate([{$group: {_id: \"$a\", n: {$su|",
+        ["{$sum", "{$substr", "{$substrCP", "{$subtract"]
+      ),
+      ("db.users.aggregate([{$project: {na|", ["{name"]),
+      ("db.users.aggregate([{$project: {full: {$conc|", ["{$concat", "{$concatArrays"]),
+      (
+        "db.users.aggregate([{$project: {total: {$su|",
+        ["{$substr", "{$substrCP", "{$subtract", "{$sum"]
+      ),
+      ("db.users.aggregate([{$replaceWith: {$mer|", ["{$mergeObjects"]),
+      ("db.users.find({$expr: {$cm|", ["{$cmp"]),
+      ("db.users.find({$expr: {$and: [{$cm|", ["[{$cmp"]),
+      (
+        "db.users.aggregate([{$bucket: {output: {n: {$su|",
+        ["{$sum", "{$substr", "{$substrCP", "{$subtract"]
+      ),
+      ("db.users.aggregate([{$lookup: {fo|", ["{foreignField"]),
+      ("db.users.aggregate([{$lookup: {from: \"orders\", l|", ["let", "localField"]),
+    ]
+    for (marked, expected) in cases {
+      #expect(suggest(marked) == expected, "\(marked)")
+    }
+    let filter = MongoshAutocompleteProvider.documentSuggestions(
+      for: "{$expr: {$cm", at: 12, collection: "users", mode: .filter, tables: [])
+    #expect(filter.map(\.text) == ["{$cmp"])
+  }
+
+  @Test("Server-side JavaScript operators are never offered")
+  func noServerSideJavaScript() {
+    let contexts = [
+      "db.users.find({", "db.users.find({$expr: {", "db.users.aggregate([{",
+      "db.users.aggregate([{$group: {n: {", "db.users.aggregate([{$project: {a: {",
+    ]
+    for context in contexts {
+      for name in ["$where", "$function", "$accumulator"] {
+        #expect(suggest(context + name + "|").isEmpty, "\(context)\(name)")
+      }
+    }
   }
 
   @Test("Keys need a typed prefix and value positions offer nothing")

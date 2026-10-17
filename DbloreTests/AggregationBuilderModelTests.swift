@@ -249,14 +249,16 @@ struct AggregationBuilderModelTests {
 
   // MARK: - From a cell
 
-  @Test("A cell holding exactly one aggregate opens as stages that render back the same command")
+  @Test(
+    "A cell holding exactly one aggregate opens as stages and options that render back the same command"
+  )
   func fromCellAggregate() async throws {
     let (manager, _) = try await Self.connected()
     let text = """
       // grouped
       db.getCollection("a.b").aggregate([
         {$match: {n: {$gt: 1}}}, {$group: {_id: "$g", total: {$sum: 1}}}, {$limit: 5}
-      ]);
+      ], {collation: {locale: "en"}, maxTimeMS: 500});
       """
     let command = try #require(AggregationBuilderModel.aggregateCommand(in: text))
     let model = try #require(AggregationBuilderModel(command: command, connectionManager: manager))
@@ -265,6 +267,8 @@ struct AggregationBuilderModelTests {
     #expect(
       model.stages.map(\.body) == ["{ n: { $gt: 1 } }", #"{ _id: "$g", total: { $sum: 1 } }"#, "5"])
     #expect(model.stages.map(\.isEnabled) == [true, true, true])
+    #expect(model.options.collation == #"{ locale: "en" }"#)
+    #expect(model.options.maxTimeMS == "500")
     #expect(model.commandText == command.render())
     await manager.disconnect()
   }
@@ -275,6 +279,7 @@ struct AggregationBuilderModelTests {
       "db.users.find({})", "db.users.aggregate([{$match: {}}])\ndb.users.find()",
       "db.users.aggregate([{$match: {}, $sort: {a: 1}}])", "db.users.aggregate([1])",
       "db.users.aggregate([{}])", "db.users.aggregate([{$match: {}}", "",
+      #"db.users.aggregate([{$match: {}}], {hint: "a_1"})"#,
     ])
   func fromCellRefused(text: String) async throws {
     let (manager, _) = try await Self.connected()
@@ -285,16 +290,231 @@ struct AggregationBuilderModelTests {
     await manager.disconnect()
   }
 
+  // MARK: - Text mode
+
+  @Test("Text that does not parse keeps Text mode with the error and blocks the pipeline")
+  func invalidText() async throws {
+    let (manager, _) = try await Self.connected()
+    let (model, ids) = Self.model(manager, [("$match", "{a: 1}"), ("$limit", "5")])
+    model.showText()
+    #expect(model.editMode == .text)
+    #expect(
+      model.pipelineText
+        == AIMongoAssist.pipelineText([
+          .init(operator: "$match", body: "{a: 1}"), .init(operator: "$limit", body: "5"),
+        ]))
+
+    model.pipelineText = "[{$match: {a: 1},, ]"
+    #expect(!model.showStages())
+    #expect(model.editMode == .text)
+    let error = try #require(model.textError)
+    #expect(model.pipeline(verb: "run").reason == error)
+    #expect(model.commandText == nil)
+    #expect(model.stages.map(\.id) == ids)
+
+    model.pipelineText = "db.orders.aggregate([{$match: {a: 2}}])"
+    #expect(!model.showStages())
+    #expect(model.textError == "This builder runs on users: the text names orders")
+    #expect(model.commandText == nil)
+    #expect(model.stages.map(\.id) == ids)
+
+    model.pipelineText = "[{$match: {a: 2}}]"
+    #expect(model.textError == nil)
+    #expect(model.commandText == "db.users.aggregate([ { $match: { a: 2 } } ])")
+    await manager.disconnect()
+  }
+
+  @Test("A disabled stage stays disabled and in place through Text mode; text options are kept")
+  func textRoundTrip() async throws {
+    let (manager, _) = try await Self.connected()
+    let (model, ids) = Self.model(
+      manager, [("$match", "{\n  a: 1\n}"), ("$sort", "{b: -1}"), ("$limit", "5")])
+    model.setEnabled(false, for: ids[1])
+    model.showText()
+    let written = "[\n  { $match: {\n  a: 1\n} },\n  // { $sort: {b: -1} },\n  { $limit: 5 }\n]"
+    #expect(model.pipelineText == written)
+    #expect(model.showStages())
+    #expect(model.stages.map(\.id) == ids)
+
+    model.showText()
+    model.pipelineText =
+      "db.users.aggregate("
+      + written.replacingOccurrences(of: "$limit: 5", with: "$limit: 10")
+      + ", {maxTimeMS: 50})"
+    let command =
+      "db.users.aggregate([ { $match: { a: 1 } }, { $limit: 10 } ], { maxTimeMS: 50 })"
+    #expect(model.commandText == command)
+    #expect(model.showStages())
+    #expect(model.editMode == .stages)
+    #expect(model.stages.map(\.operator) == ["$match", "$sort", "$limit"])
+    #expect(model.stages.map(\.body) == ["{ a: 1 }", "{ b: -1 }", "10"])
+    #expect(model.stages.map(\.isEnabled) == [true, false, true])
+    #expect(Set(model.stages.map(\.id)).isDisjoint(with: ids))
+    #expect(model.options.maxTimeMS == "50")
+    #expect(model.commandText == command)
+
+    // Disabled stages in a row, and one after an enabled line with a trailing comment
+    let (adjacent, adjacentIDs) = Self.model(
+      manager,
+      [("$match", "{a: 1}"), ("$sort", "{b: -1}"), ("$project", "{c: 0}"), ("$limit", "5")])
+    adjacent.setEnabled(false, for: adjacentIDs[1])
+    adjacent.setEnabled(false, for: adjacentIDs[2])
+    adjacent.showText()
+    adjacent.pipelineText = adjacent.pipelineText.replacingOccurrences(
+      of: "$limit: 5", with: "$limit: 10")
+    #expect(adjacent.showStages())
+    #expect(adjacent.stages.map(\.operator) == ["$match", "$sort", "$project", "$limit"])
+    #expect(adjacent.stages.map(\.body) == ["{ a: 1 }", "{ b: -1 }", "{ c: 0 }", "10"])
+    #expect(adjacent.stages.map(\.isEnabled) == [true, false, false, true])
+
+    adjacent.showText()
+    adjacent.pipelineText =
+      "[\n  { $match: {a: 1} }, // note\n  // { $sort: {b: -1} },\n  { $limit: 5 }\n]"
+    #expect(adjacent.showStages())
+    #expect(adjacent.stages.map(\.operator) == ["$match", "$sort", "$limit"])
+    #expect(adjacent.stages.map(\.isEnabled) == [true, false, true])
+
+    // A body ending in a `//` comment closes on its own line, so an edit still parses
+    let (commented, commentedIDs) = Self.model(
+      manager, [("$match", "{a: 1} // note"), ("$sort", "{b: -1} // off"), ("$limit", "5")])
+    commented.setEnabled(false, for: commentedIDs[1])
+    commented.showText()
+    #expect(
+      commented.pipelineText
+        == "[\n  { $match: {a: 1} // note\n  },\n  // { $sort: {b: -1} // off },\n  { $limit: 5 }\n]"
+    )
+    commented.pipelineText = commented.pipelineText.replacingOccurrences(
+      of: "$limit: 5", with: "$limit: 10")
+    #expect(commented.commandText == "db.users.aggregate([ { $match: { a: 1 } }, { $limit: 10 } ])")
+    #expect(commented.showStages())
+    #expect(commented.stages.map(\.operator) == ["$match", "$sort", "$limit"])
+    #expect(commented.stages.map(\.body) == ["{ a: 1 }", "{b: -1} // off", "10"])
+    #expect(commented.stages.map(\.isEnabled) == [true, false, true])
+    await manager.disconnect()
+  }
+
+  @Test(
+    "A pasted fenced pipeline keeps its disabled stages",
+    arguments: [
+      "```js\n[\n  { $match: {a: 1} },\n  // { $sort: {b: -1} },\n  { $limit: 5 }\n]\n```",
+      "```\ndb.users.aggregate([\n  { $match: {a: 1} },\n  // { $sort: {b: -1} },\n  { $limit: 5 }\n])\n```",
+    ])
+  func fencedText(text: String) async throws {
+    let (manager, _) = try await Self.connected()
+    let (model, _) = Self.model(manager, [("$limit", "1")])
+    model.showText()
+    model.pipelineText = text
+    #expect(model.showStages())
+    #expect(model.stages.map(\.operator) == ["$match", "$sort", "$limit"])
+    #expect(model.stages.map(\.isEnabled) == [true, false, true])
+    await manager.disconnect()
+  }
+
+  // MARK: - Run
+
+  @Test("Run and Export Data refuse a pipeline with $out or $merge and send nothing")
+  func runRefusesWrites() async throws {
+    let (manager, factory) = try await Self.connected()
+    for (name, body) in [("$out", #""copy""#), ("$merge", #"{into: "x"}"#)] {
+      let (model, _) = Self.model(manager, [("$match", "{a: 1}"), (name, body)])
+      let reason = try #require(model.runTarget.reason, "\(name)")
+      #expect(model.run(maxRows: 50) == nil)
+      guard case .failed(let message) = model.runState else {
+        Issue.record("\(name) should be refused")
+        continue
+      }
+      #expect(message == reason)
+      #expect(model.showsRunResults)
+
+      #expect(model.exportData(.json) == nil)
+      guard case .failed(let exportMessage) = model.exportState else {
+        Issue.record("\(name) export should be refused")
+        continue
+      }
+      #expect(exportMessage.contains("not exported"))
+    }
+    #expect(factory.statements.isEmpty)
+    await manager.disconnect()
+  }
+
+  @Test(
+    "Run sends the enabled stages and options read-only, capped at maxRows, and shows the result")
+  func run() async throws {
+    let (manager, factory) = try await Self.connected()
+    let (model, ids) = Self.model(
+      manager, [("$match", "{a: 1}"), ("$sort", "{b: -1}"), ("$project", "{b: 1}")])
+    model.setEnabled(false, for: ids[1])
+    model.options.maxTimeMS = "250"
+    await model.run(maxRows: 50)?.value
+    let command =
+      "db.users.aggregate([ { $match: { a: 1 } }, { $project: { b: 1 } } ], { maxTimeMS: 250 })"
+    // The gate's cap rewrite appends its own limit of maxRows + 1, the options kept
+    #expect(
+      factory.statements == [
+        #"db.users.aggregate([ { $match: { a: 1 } }, { $project: { b: 1 } }, { $limit: NumberLong("51") } ], { maxTimeMS: 250 })"#
+      ])
+    guard case .done(let result, let sent) = model.runState else {
+      Issue.record("Run should be done, is \(model.runState)")
+      return
+    }
+    #expect(sent == command)
+    #expect(result.rowCount == 1)
+    #expect(model.showsRunResults)
+
+    // Previewing a stage switches the pane back to the preview
+    await model.preview(ids[0])?.value
+    #expect(!model.showsRunResults)
+    await manager.disconnect()
+  }
+
+  @Test("A saved pipeline restores its stages and only collation and maxTimeMS, in Stages mode")
+  func restore() async throws {
+    let (manager, _) = try await Self.connected()
+    let (source, ids) = Self.model(manager, [("$match", "{a: 1}"), ("$sort", "{b: -1}")])
+    source.setEnabled(false, for: ids[1])
+    var options = MongoQueryOptions()
+    options.collation = "{locale: 'fr'}"
+    options.maxTimeMS = "100"
+    options.sort = "{c: 1}"
+    let saved = SavedMongoPipeline(name: "p", stages: source.savedStages(), options: options)
+
+    let (model, _) = Self.model(manager, [("$limit", "5")])
+    model.showText()
+    model.pipelineText = "not a pipeline"
+    #expect(!model.showStages())
+    _ = model.run(maxRows: 50)
+    model.restore(saved)
+    #expect(model.editMode == .stages)
+    #expect(model.textError == nil)
+    #expect(model.stages.map(\.operator) == ["$match", "$sort"])
+    #expect(model.stages.map(\.body) == ["{a: 1}", "{b: -1}"])
+    #expect(model.stages.map(\.isEnabled) == [true, false])
+    #expect(model.options.collation == "{locale: 'fr'}")
+    #expect(model.options.maxTimeMS == "100")
+    #expect(model.options.sort.isEmpty)
+    guard case .idle = model.runState else {
+      Issue.record("Restore should reset the run, is \(model.runState)")
+      return
+    }
+    #expect(!model.showsRunResults)
+    await manager.disconnect()
+  }
+
   // MARK: - Insert and Copy
 
-  @Test("Insert/Copy text is the full aggregate: $out kept, disabled stages left out")
+  @Test("Insert/Copy text is the full aggregate: $out kept, disabled stages left out, options")
   func commandText() async throws {
     let (manager, _) = try await Self.connected()
     let (model, ids) = Self.model(
       manager, collection: "a.b",
       [("$match", "{a: 1}"), ("$sort", "{a: 1}"), ("$out", #""copy""#)])
     model.setEnabled(false, for: ids[1])
-    let text = #"db.getCollection("a.b").aggregate([ { $match: { a: 1 } }, { $out: "copy" } ])"#
+    model.options.maxTimeMS = "x"
+    #expect(model.commandText == nil)
+    #expect(model.pipeline(verb: "run").reason?.contains("maxTimeMS") == true)
+    model.options.maxTimeMS = "250"
+    let text =
+      #"db.getCollection("a.b").aggregate([ { $match: { a: 1 } }, { $out: "copy" } ], { maxTimeMS: 250 })"#
     #expect(model.commandText == text)
 
     let viewModel = NotebookViewModel()

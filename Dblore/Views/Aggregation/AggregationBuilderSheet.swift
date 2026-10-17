@@ -78,10 +78,12 @@ struct AggregationBuilderSheet: View {
         .disabled(model.commandText == nil)
         .help("Copy the aggregate command")
       if model.commandText == nil {
-        Text("Fix the stage errors to insert or copy")
-          .font(.small)
-          .foregroundColor(.foregroundMuted)
-          .lineLimit(1)
+        Text(
+          model.pipeline(verb: "insert or copy").reason ?? "Fix the stage errors to insert or copy"
+        )
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+        .lineLimit(1)
       } else if insertFailed {
         Text("Nothing was inserted: select a cell or open an editor")
           .font(.small)

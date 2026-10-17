@@ -50,6 +50,19 @@ extension Color {
     dark: Color(hex: "3c3c3c")  // VS Code input
   )
 
+  /// Fill of an input on a popover. The system popover is a translucent material about as light
+  /// as `controlBackground`, so the field sits one step darker in dark and stays white in light.
+  static let popoverControlBackground = Color(
+    light: Color(hex: "ffffff"),
+    dark: Color(hex: "1e1e1e")  // Same as `appBackground`
+  )
+
+  /// Border of an input on a popover: `border` disappears into the popover material.
+  static let popoverControlBorder = Color(
+    light: Color(hex: "d4d4d8"),  // Zinc 300
+    dark: Color(hex: "52525b")  // Zinc 600
+  )
+
   /// Body of a side panel. White in light so its `cardHeaderBackground` section boxes stand off
   /// it as clearly as they do in dark.
   static let panelBackground = Color(

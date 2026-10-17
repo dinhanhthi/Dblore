@@ -269,6 +269,24 @@ struct DocumentTreeModelTests {
     #expect(!tree.isFullyExpanded(document: 0))
   }
 
+  @Test("expand all documents opens every card and its containers; collapse all closes every card")
+  func expandAndCollapseAllDocuments() {
+    var tree = model([
+      doc(("_id", .int32(1)), ("a", doc(("b", .int32(1))))),
+      doc(("_id", .int32(2)), ("tags", .array([.int32(2)]))),
+    ])
+    tree.toggleExpansion(tree.cards[1].nodes[0].id)
+
+    tree.expandAllDocuments()
+    #expect(
+      tree.cards.map { $0.nodes.map(\.path) } == [
+        ["", "_id", "a", "a.b"], ["", "_id", "tags", "tags.0"],
+      ])
+
+    tree.collapseAllDocuments()
+    #expect(tree.cards.map { $0.nodes.map(\.path) } == [[""], [""]])
+  }
+
   @Test("staged inserts follow the stored documents; tree state survives inserts and rebuilds")
   func stagedInsertsAndCarryOver() throws {
     let stored = [doc(("_id", .int32(1)), ("sub", doc(("a", .int32(1))))), doc(("_id", .int32(2)))]

@@ -11,8 +11,8 @@ import UniformTypeIdentifiers
 /// Utility for exporting query results to various formats
 enum DataExporter {
 
-  /// Export result to CSV format
-  static func toCSV(
+  /// Export result to CSV format. Nonisolated: Export Data builds large files off the main actor
+  nonisolated static func toCSV(
     result: CellResult, includeHeader: Bool = true, quote: ExportQuote = .ifNeeded
   ) -> String {
     var csv = ""
@@ -508,7 +508,7 @@ enum DataExporter {
     }
   }
 
-  private static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
+  private nonisolated static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
     switch quote {
     case .always:
       return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
@@ -632,17 +632,26 @@ enum DataExporter {
     pasteboard.setString(content, forType: .string)
   }
 
-  static func saveFile(content: String, defaultFilename: String, allowedFileTypes: [String]) {
+  /// `completion` gets true once the file is written, false when the panel is cancelled or the
+  /// write fails (after its alert).
+  static func saveFile(
+    content: String, defaultFilename: String, allowedFileTypes: [String],
+    completion: @escaping @MainActor (Bool) -> Void = { _ in }
+  ) {
     let savePanel = NSSavePanel()
     savePanel.nameFieldStringValue = defaultFilename
     savePanel.allowedContentTypes = allowedFileTypes.compactMap { UTType(filenameExtension: $0) }
     savePanel.canCreateDirectories = true
 
     savePanel.begin { response in
-      guard response == .OK, let url = savePanel.url else { return }
-      completeSave(url) {
-        try content.write(to: url, atomically: true, encoding: .utf8)
+      guard response == .OK, let url = savePanel.url else {
+        completion(false)
+        return
       }
+      completion(
+        completeSave(url) {
+          try content.write(to: url, atomically: true, encoding: .utf8)
+        })
     }
   }
 
@@ -661,7 +670,9 @@ enum DataExporter {
   }
 
   /// Writes the file, then asks whether to open it or reveal it. Cancel leaves the saved file as is.
-  private static func completeSave(_ url: URL, write: () throws -> Void) {
+  /// False when the write failed.
+  @discardableResult
+  private static func completeSave(_ url: URL, write: () throws -> Void) -> Bool {
     do {
       try write()
     } catch {
@@ -670,13 +681,14 @@ enum DataExporter {
       alert.informativeText = "Could not save file: \(error.localizedDescription)"
       alert.alertStyle = .critical
       alert.runModal()
-      return
+      return false
     }
 
     // The save panel is still dismissing. Presenting now stacks the two modals.
     DispatchQueue.main.async {
       presentSavedFile(url)
     }
+    return true
   }
 
   private static func presentSavedFile(_ url: URL) {

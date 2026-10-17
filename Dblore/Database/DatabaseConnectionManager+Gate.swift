@@ -262,7 +262,7 @@ extension DatabaseConnectionManager {
   /// A pending app transaction keeps Protected mode rules until Commit / Rollback, even if the
   /// toggle was turned off meanwhile.
   /// - Returns: the classified statements and whether Protected mode applies.
-  private func authorize(
+  func authorize(
     _ sql: String, policy: ProtectionPolicy
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
     let effective = effectivePolicy(for: policy)

@@ -92,6 +92,14 @@ struct MongoCommandRewriterTests {
     #expect(
       MongoCommandRewriter.withLimit(.aggregate(collection: "c", pipeline: []), maxRows: 0)
         == .aggregate(collection: "c", pipeline: [limitStage(1)]))
+    // The gate sends the rewritten text: dropping the options would silently change the read.
+    let options = MongoCommand.CursorOptions(
+      collation: .document([MongoValue.Field("locale", .string("fr"))]), hint: .string("a_1"),
+      maxTimeMS: 500)
+    #expect(
+      MongoCommandRewriter.withLimit(
+        .aggregate(collection: "c", pipeline: [match], options: options), maxRows: 200)
+        == .aggregate(collection: "c", pipeline: [match, limitStage(201)], options: options))
   }
 
   @Test("aggregate: unchanged when the last stage is $out or $merge")

@@ -3,10 +3,12 @@
 //  Dblore
 //
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
-//  collection (stages, Add Stage and per-stage previews from `AggregationBuilderBody`), with
-//  Copy, Explain, Export Code and Open in Query of the whole `aggregate`, and an AI button that
-//  builds the stages from a prompt. Previews run read-only through the gate
-//  (`AggregationBuilderModel`), as in the builder sheet.
+//  collection (`AggregationBuilderBody`: stages or the pipeline as text, per-stage previews and
+//  the results of a Run) under a header. Its left side holds icon buttons: AI, Copy, the Export
+//  menu (driver code, or the documents as JSON or CSV), saved pipelines, the template Wizard and
+//  the aggregate options, then a status line (why the pipeline is blocked, or how an export went).
+//  Its right side holds the Stages | Text picker, Explain, Run and Open in Query. Previews, Run
+//  and Export Data read through the gate with a read-only policy (`AggregationBuilderModel`).
 //
 
 import SwiftUI
@@ -20,14 +22,31 @@ struct MongoAggregationsView: View {
   /// Database the exported driver code connects to
   var database: String = MongoSession.defaultDatabase
   var aiAssistant: AIAssistantViewModel? = nil
+  /// The most documents a Run shows
+  var runLimit: Int = 100
+  /// Where the saved pipelines are kept
+  var savedPipelineStore: SavedFilterStore
+  /// The connection and collection the pipelines are saved for; nil disables saved pipelines
+  var savedPipelineKey: String? = nil
 
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   @State private var exportRequest: MongoExportCodeSheet.Request?
+  @State private var showsOptions = false
+  /// The read of the Export Data in flight; it ends when the save panel opens, so Cancel only
+  /// shows while it runs (a Cancel cannot close the panel)
+  @State private var exportRead: Task<Void, Never>?
+
+  private typealias EditMode = AggregationBuilderModel.EditMode
 
   var body: some View {
     VStack(spacing: 0) {
       if let builder = model.aggregationModel {
         header(builder)
+        if showsOptions {
+          MongoAggregationOptionsPanel(builder: builder)
+            .padding(.horizontal, Spacing.md)
+            .padding(.bottom, Spacing.sm)
+        }
         Divider()
         AggregationBuilderBody(
           model: builder, selectedStage: $selectedStage, fieldSource: fieldSource
@@ -44,117 +63,291 @@ struct MongoAggregationsView: View {
 
   // MARK: - Header
 
+  /// The pipeline as each action sees it, read once per header evaluation: in Text mode every
+  /// read parses the edited text again
+  private struct Targets {
+    let commandText: String?
+    /// Why there is no `commandText` (Copy, Open in Query and the status line)
+    let blocked: String?
+    let run: AggregationBuilderModel.PipelineTarget
+    let explain: AggregationBuilderModel.PipelineTarget
+    /// Export Code: `$out` and `$merge` export too, since nothing runs
+    let code: AggregationBuilderModel.PipelineTarget
+    /// Export Data: reads, so a writing stage blocks it
+    let data: AggregationBuilderModel.PipelineTarget
+  }
+
   private func header(_ builder: AggregationBuilderModel) -> some View {
-    HStack(spacing: Spacing.sm) {
-      Text(stageCount(builder))
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(1)
-      if builder.commandText == nil {
-        Text("Fix the stage errors to copy or open in a query")
-          .font(.small)
-          .foregroundColor(.foregroundMuted)
-          .lineLimit(1)
-      }
-      Spacer(minLength: Spacing.sm)
+    let commandText = builder.commandText
+    let targets = Targets(
+      commandText: commandText,
+      blocked: commandText == nil ? builder.pipeline(verb: "copy or open").reason : nil,
+      run: builder.runTarget,
+      explain: builder.explainTarget,
+      code: builder.pipeline(verb: "export"),
+      data: builder.exportTarget)
+    let isText = builder.editMode == .text
+    return HStack(spacing: Spacing.sm) {
       // Tighter than the row: the buttons carry their own padding
       HStack(spacing: Spacing.xs) {
         if let aiAssistant {
           MongoAIPipelineButton(
-            assistant: aiAssistant, builder: builder, database: model.database)
+            assistant: aiAssistant, builder: builder, database: model.database
+          )
+          .disabled(isText)
+          .frame(height: MongoQueryField.styledLineHeight)
         }
-        Button("Copy") { builder.copy() }
-          .buttonStyle(SecondaryButtonStyle())
-          .disabled(builder.commandText == nil)
-          .help("Copy the aggregate command")
-        explainButton(builder)
-        exportButton(builder)
+        copyButton(builder, targets)
+        exportMenu(builder, targets)
+        MongoSavedPipelinesButton(
+          builder: builder, store: savedPipelineStore, key: savedPipelineKey
+        )
+        .frame(height: MongoQueryField.styledLineHeight)
+        MongoAggregationWizardButton(builder: builder) { id in
+          selectedStage = id
+          builder.showsRunResults = false
+        }
+        .disabled(isText)
+        .frame(height: MongoQueryField.styledLineHeight)
+        optionsButton(builder)
+      }
+      status(builder, targets, isText: isText)
+      Spacer(minLength: Spacing.sm)
+      HStack(spacing: Spacing.xs) {
+        modePicker(builder)
+        explainButton(targets.explain)
+        runButton(builder, targets.run)
         Button("Open in Query") {
-          guard let text = builder.commandText else { return }
+          guard let text = targets.commandText else { return }
           openQuery?(text)
         }
-        .buttonStyle(PrimaryButtonStyle())
-        .disabled(builder.commandText == nil || openQuery == nil)
-        .help(
-          builder.commandText == nil
-            ? "Fix the stage errors to open the aggregate in a query"
-            : "Open the aggregate command in a new query tab")
+        .buttonStyle(SecondaryButtonStyle())
+        .disabled(targets.commandText == nil || openQuery == nil)
+        .help(targets.blocked ?? "Open the aggregate command in a new query tab")
+        .frame(height: MongoQueryField.styledLineHeight)
       }
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
   }
 
-  // MARK: - Explain
+  private func copyButton(_ builder: AggregationBuilderModel, _ targets: Targets) -> some View {
+    Button {
+      builder.copy()
+    } label: {
+      Image(systemName: "doc.on.doc")
+    }
+    .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+    .disabled(targets.commandText == nil)
+    .help(targets.blocked ?? "Copy the aggregate command")
+    .accessibilityLabel("Copy")
+    .frame(height: MongoQueryField.styledLineHeight)
+  }
+
+  private func optionsButton(_ builder: AggregationBuilderModel) -> some View {
+    let isSet = [builder.options.collation, builder.options.maxTimeMS].contains {
+      !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    return Button {
+      showsOptions.toggle()
+    } label: {
+      Image(systemName: "slider.horizontal.3")
+        .foregroundColor(showsOptions || isSet ? .accent : nil)
+    }
+    .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+    .help(
+      showsOptions
+        ? "Hide the aggregate options"
+        : isSet ? "Show the aggregate options (set)" : "Show the aggregate options"
+    )
+    .accessibilityLabel("Options")
+    .frame(height: MongoQueryField.styledLineHeight)
+  }
+
+  // MARK: - Status
+
+  /// The stage count (Stages mode) or why the pipeline is blocked, then the export status
+  private func status(
+    _ builder: AggregationBuilderModel, _ targets: Targets, isText: Bool
+  ) -> some View {
+    HStack(spacing: Spacing.sm) {
+      if let blocked = targets.blocked {
+        statusText(blocked)
+      } else if !isText {
+        // In Text mode the stages are those of the text only once Stages takes it back
+        statusText(stageCount(builder))
+      }
+      switch builder.exportState {
+      case .idle:
+        EmptyView()
+      case .running:
+        statusText("Exporting…")
+        if exportRead != nil {
+          Button("Cancel") {
+            builder.cancelExport()
+            exportRead = nil
+          }
+          .buttonStyle(GhostButtonStyle())
+          .help("Stop reading the documents to export")
+        }
+      case .failed(let message):
+        statusText(message)
+      case .finished(let note):
+        if let note { statusText(note) }
+      }
+    }
+  }
+
+  private func statusText(_ text: String) -> some View {
+    Text(text)
+      .font(.small)
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .help(text)
+  }
+
+  private func stageCount(_ builder: AggregationBuilderModel) -> String {
+    let count = builder.stages.count
+    return count == 1 ? "1 stage" : "\(count) stages"
+  }
+
+  // MARK: - Export
+
+  /// Export Code opens the driver code sheet; Export Data reads the documents and asks where
+  /// to save them. One export at a time, so reads never stack.
+  private func exportMenu(_ builder: AggregationBuilderModel, _ targets: Targets) -> some View {
+    let isExporting: Bool
+    if case .running = builder.exportState { isExporting = true } else { isExporting = false }
+    let canExportData = targets.data.command != nil && !isExporting
+    return Menu {
+      Button("Export Code…") {
+        guard case .success(let command) = targets.code else { return }
+        exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
+      }
+      .disabled(targets.code.command == nil)
+      Button("Export Data as JSON…") { exportData(builder, .json) }
+        .disabled(!canExportData)
+      Button("Export Data as CSV…") { exportData(builder, .csv) }
+        .disabled(!canExportData)
+      // Menu items show no tooltip: a disabled line says why the data does not export
+      if let reason = targets.data.reason, targets.code.command != nil {
+        Divider()
+        Text(reason)
+      }
+    } label: {
+      ExportMenuLabel(isEnabled: targets.code.command != nil)
+    }
+    .menuStyle(.button)
+    .buttonStyle(.plain)
+    .menuIndicator(.hidden)
+    .disabled(targets.code.command == nil)
+    .help(targets.code.reason ?? "Export the pipeline as driver code, or its documents as a file")
+    .accessibilityLabel("Export")
+    .frame(height: MongoQueryField.styledLineHeight)
+  }
+
+  private func exportData(
+    _ builder: AggregationBuilderModel, _ format: AggregationBuilderModel.DataExportFormat
+  ) {
+    guard let task = builder.exportData(format) else { return }
+    exportRead = task
+    Task {
+      await task.value
+      if exportRead == task { exportRead = nil }
+    }
+  }
+
+  // MARK: - Mode, Explain and Run
+
+  /// Stages | Text. Stages may refuse a text that is not a pipeline: the picker follows the
+  /// model's mode, so it stays on Text then.
+  private func modePicker(_ builder: AggregationBuilderModel) -> some View {
+    let mode = Binding<EditMode>(
+      get: { builder.editMode },
+      set: { new in
+        guard new != builder.editMode else { return }
+        if new == .text { builder.showText() } else { builder.showStages() }
+      })
+    return CapsuleTabPicker(
+      selection: mode,
+      tabs: [EditMode.stages, .text],
+      height: MongoQueryField.styledLineHeight,
+      inset: 2,
+      verticalInset: 2
+    ) { tab in
+      let title = tab == .stages ? "Stages" : "Text"
+      // Sized by the semibold title, so a selection change keeps both tab widths
+      Text(title)
+        .font(.small)
+        .fontWeight(.semibold)
+        .hidden()
+        .overlay {
+          Text(title)
+            .font(.small)
+            .fontWeight(builder.editMode == tab ? .semibold : .regular)
+            .foregroundColor(builder.editMode == tab ? .onAccentFill : .foreground)
+        }
+        .lineLimit(1)
+    }
+    .fitsContent()
+    .accessibilityLabel("Editor mode")
+    .help("Edit the pipeline as stages or as text")
+    .frame(height: MongoQueryField.styledLineHeight)
+  }
 
   /// Explains the enabled stages as one `aggregate` (the sheet is in `DataViewerView`)
-  private func explainButton(_ builder: AggregationBuilderModel) -> some View {
-    let target = explainTarget(builder)
-    return Button("Explain") {
+  private func explainButton(_ target: AggregationBuilderModel.PipelineTarget) -> some View {
+    Button("Explain") {
       guard case .success(let command) = target else { return }
       model.explain(command)
     }
     .buttonStyle(SecondaryButtonStyle())
     .disabled(target.command == nil || model.explainState == .running)
     .help(target.reason ?? "Explain the pipeline with execution statistics")
+    .frame(height: MongoQueryField.styledLineHeight)
   }
 
-  /// The `aggregate` of the enabled stages, or why it cannot be explained: no enabled stage, a
-  /// stage error, or a stage that writes (`$out`, `$merge`: the gate's classifier decides)
-  private func explainTarget(_ builder: AggregationBuilderModel) -> PipelineTarget {
-    let target = pipelineTarget(builder, verb: "explain")
-    guard case .success(let command) = target else { return target }
-    guard MongoCommandClassifier.classifyStatement(command.render())?.kind == .read else {
-      return .blocked("A stage writes data ($out or $merge): such a pipeline is not explained")
-    }
-    return target
-  }
-
-  /// The `aggregate` of the enabled stages, or why there is none (no enabled stage, a stage
-  /// error); `verb` names the action in the reason
-  private func pipelineTarget(_ builder: AggregationBuilderModel, verb: String) -> PipelineTarget {
-    let enabled = builder.stages.filter(\.isEnabled)
-    guard !enabled.isEmpty else { return .blocked("Add an enabled stage to \(verb)") }
-    var pipeline: [MongoValue] = []
-    for stage in enabled {
-      guard case .success(let value) = AggregationBuilderModel.value(of: stage) else {
-        return .blocked("Fix the stage errors to \(verb) the pipeline")
+  /// Runs the pipeline and shows at most `runLimit` documents; Cancel while it runs
+  private func runButton(
+    _ builder: AggregationBuilderModel, _ target: AggregationBuilderModel.PipelineTarget
+  ) -> some View {
+    let isRunning: Bool
+    if case .running = builder.runState { isRunning = true } else { isRunning = false }
+    return Button(isRunning ? "Cancel" : "Run") {
+      if isRunning {
+        builder.cancelRun()
+      } else {
+        builder.run(maxRows: runLimit)
       }
-      pipeline.append(value)
     }
-    return .success(MongoCommand.aggregate(collection: builder.collection, pipeline: pipeline))
+    .buttonStyle(PrimaryButtonStyle())
+    .disabled(!isRunning && target.command == nil)
+    .help(
+      isRunning
+        ? "Stop waiting for the pipeline results"
+        : target.reason ?? "Run the pipeline and show up to \(runLimit.formatted()) documents"
+    )
+    .frame(height: MongoQueryField.styledLineHeight)
   }
+}
 
-  private enum PipelineTarget {
-    case success(MongoCommand)
-    case blocked(String)
+/// The Export menu's icon, drawn as `SecondaryButtonStyle(iconOnly: true)` draws it (a custom
+/// ButtonStyle is ignored on a Menu)
+private struct ExportMenuLabel: View {
+  let isEnabled: Bool
+  @State private var isHovering = false
 
-    var command: MongoCommand? {
-      if case .success(let command) = self { command } else { nil }
-    }
-
-    var reason: String? {
-      if case .blocked(let reason) = self { reason } else { nil }
-    }
-  }
-
-  // MARK: - Export Code
-
-  /// Opens the driver code of the enabled stages as one `aggregate`; `$out` and `$merge` export
-  /// too, since nothing runs
-  private func exportButton(_ builder: AggregationBuilderModel) -> some View {
-    let target = pipelineTarget(builder, verb: "export")
-    return Button("Export Code") {
-      guard case .success(let command) = target else { return }
-      exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
-    }
-    .buttonStyle(SecondaryButtonStyle())
-    .disabled(target.command == nil)
-    .help(target.reason ?? "Export the pipeline as driver code")
-  }
-
-  private func stageCount(_ builder: AggregationBuilderModel) -> String {
-    let count = builder.stages.count
-    return count == 1 ? "1 stage" : "\(count) stages"
+  var body: some View {
+    Image(systemName: "square.and.arrow.up")
+      .font(.system(size: 12))
+      .foregroundColor(.foreground)
+      .padding(Spacing.sm)
+      .background(Circle().fill(isHovering ? Color.cellBackgroundHover : Color.clear))
+      .overlay(HairlineBorder(shape: Circle()))
+      .contentShape(Circle())
+      .opacity(isEnabled ? 1 : 0.5)
+      .animation(.easeInOut(duration: 0.15), value: isHovering)
+      .onHover { isHovering = $0 }
+      .linkPointer()
   }
 }

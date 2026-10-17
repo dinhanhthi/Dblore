@@ -76,6 +76,19 @@ nonisolated enum AIMongoAssist {
   /// The stages of a reply: an array of stages, or a `db.<c>.aggregate([...])`. Throws when the
   /// reply is not a pipeline or has no stages.
   static func stages(fromReply reply: String, collection: String) throws -> [GeneratedStage] {
+    let stages = try aggregate(fromReply: reply, collection: collection).stages
+    guard !stages.isEmpty else { throw ReplyError(message: "The pipeline has no stages") }
+    return stages
+  }
+
+  /// The collection, stages (none allowed) and aggregate options of a reply: an array of stages
+  /// (`collection`, no options), or a `db.<c>.aggregate([...], {...})` (its own collection).
+  /// Throws when it is not a pipeline.
+  static func aggregate(
+    fromReply reply: String, collection: String
+  ) throws -> (
+    collection: String, stages: [GeneratedStage], options: MongoCommand.CursorOptions
+  ) {
     let text = unfenced(reply)
     let aggregate: MongoCommand
     if text.hasPrefix("db.") {
@@ -93,11 +106,12 @@ nonisolated enum AIMongoAssist {
       }
       aggregate = .aggregate(collection: collection, pipeline: pipeline)
     }
-    guard let stages = generatedStages(aggregate) else {
+    guard case .aggregate(let named, _, let options) = aggregate,
+      let stages = generatedStages(aggregate)
+    else {
       throw ReplyError(message: "Each stage must be a document with exactly one operator")
     }
-    guard !stages.isEmpty else { throw ReplyError(message: "The pipeline has no stages") }
-    return stages
+    return (named, stages, options)
   }
 
   /// The stages as a mongosh array, one stage per line; `""` for no stages.
@@ -118,7 +132,7 @@ nonisolated enum AIMongoAssist {
   }
 
   /// `reply` trimmed, without one surrounding code fence (with or without a language tag).
-  private static func unfenced(_ reply: String) -> String {
+  static func unfenced(_ reply: String) -> String {
     let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
     guard text.hasPrefix("```"), text.count >= 6, text.hasSuffix("```"),
       let lineEnd = text.firstIndex(of: "\n")

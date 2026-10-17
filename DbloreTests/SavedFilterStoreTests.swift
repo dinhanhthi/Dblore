@@ -94,6 +94,65 @@ struct SavedFilterStoreTests {
         .isEmpty)
   }
 
+  @Test("A saved Mongo pipeline round-trips and saving under its name replaces it")
+  func mongoPipelineRoundTripAndReplace() {
+    let store = makeStore()
+    let config = ConnectionConfig(databaseType: .mongodb, host: "h", port: 27017, database: "db")
+    let users = SavedFilterStore.key(for: config, schema: "db", name: "users")
+    var options = MongoQueryOptions()
+    options.maxTimeMS = "500"
+    let first = [
+      SavedMongoPipeline.Stage(operator: "$match", body: "{a: 1}", isEnabled: true),
+      SavedMongoPipeline.Stage(operator: "$limit", body: "5", isEnabled: false),
+    ]
+    store.saveMongoPipeline(stages: first, options: options, named: "mine", for: users)
+    let saved = store.listMongoPipelines(for: users)
+    #expect(saved.map(\.name) == ["mine"])
+    #expect(saved.first?.stages == first)
+    #expect(saved.first?.options == options)
+
+    let second = [SavedMongoPipeline.Stage(operator: "$sort", body: "{a: -1}", isEnabled: true)]
+    store.saveMongoPipeline(stages: second, options: .init(), named: "mine", for: users)
+    let replaced = store.listMongoPipelines(for: users)
+    #expect(replaced.count == 1)
+    #expect(replaced.first?.id == saved.first?.id)
+    #expect(replaced.first?.stages == second)
+    #expect(replaced.first?.options == MongoQueryOptions())
+    #expect(
+      store.listMongoPipelines(for: SavedFilterStore.key(for: config, schema: "db", name: "orders"))
+        .isEmpty)
+  }
+
+  @Test("A pipeline saved without options or stage enabled flags still decodes")
+  func decodesPipelineWithoutOptionsOrEnabledFlag() {
+    let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defaults.removePersistentDomain(forName: name)
+    let id = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
+    let json = """
+      {
+        "\(key())": [
+          {
+            "id": "\(id.uuidString)",
+            "name": "old",
+            "stages": [{"operator": "$match", "body": "{a: 1}"}]
+          }
+        ]
+      }
+      """
+    defaults.set(Data(json.utf8), forKey: "ace.thi.dblore.savedMongoPipelines")
+    let saved = SavedFilterStore(defaults: defaults).listMongoPipelines(for: key())
+    #expect(saved.count == 1)
+    #expect(saved.first?.id == id)
+    #expect(saved.first?.name == "old")
+    #expect(
+      saved.first?.stages == [
+        SavedMongoPipeline.Stage(operator: "$match", body: "{a: 1}", isEnabled: true)
+      ])
+    #expect(saved.first?.options == MongoQueryOptions())
+    defaults.removePersistentDomain(forName: name)
+  }
+
   @Test("A condition saved without the empty-string flag still decodes")
   func decodesConditionWithoutEmptyStringFlag() throws {
     let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"

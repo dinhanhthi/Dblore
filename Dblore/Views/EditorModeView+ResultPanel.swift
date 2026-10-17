@@ -475,7 +475,8 @@ struct EditorResultGridView: View {
           if let message = viewModel.revertStaged(rows: [row]) {
             viewModel.showToast(message, type: .error)
           }
-        } : nil
+        } : nil,
+      expansionRequest: viewModel.isMongoDataViewer ? viewModel.documentExpansionRequest : nil
     )
   }
 

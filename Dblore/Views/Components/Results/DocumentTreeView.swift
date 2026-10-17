@@ -11,10 +11,18 @@
 //  cancels) or hands any other value to `onEditField` (the editor sheet). Staged inserts follow
 //  the stored documents as "New" cards; documents staged for deletion are dimmed and struck.
 //  Without action closures the view is read-only.
+//  An expansion request (the data viewer's Expand All / Collapse All) opens or closes every card;
+//  a view built from scratch (a new page) applies the last request.
 //
 
 import AppKit
 import SwiftUI
+
+/// Expand or collapse every card of a `DocumentTreeView`; a new id is a new request.
+struct DocumentTreeExpansionRequest: Equatable {
+  let id = UUID()
+  let expands: Bool
+}
 
 /// The cards of a MongoDB result. The documents are rebuilt off the main actor per result.
 struct DocumentTreeView: View {
@@ -40,6 +48,8 @@ struct DocumentTreeView: View {
   var onDuplicate: ((Int) -> Void)? = nil
   var onDelete: ((Int) -> Void)? = nil
   var onRevert: ((Int) -> Void)? = nil
+  /// Expand or collapse every card; nil = none asked
+  var expansionRequest: DocumentTreeExpansionRequest? = nil
 
   @State private var model: DocumentTreeModel?
   /// Timestamp of the result `model` was built from
@@ -72,6 +82,9 @@ struct DocumentTreeView: View {
     }
     .task(id: result.timestamp) { await build() }
     .onChange(of: stagedInserts) { _, inserts in model?.setStagedInserts(inserts) }
+    .onChange(of: expansionRequest) { _, request in
+      if let request { apply(request) }
+    }
     // Focus leaving the edited line cancels it; a move to another edited line does not
     .onChange(of: focusedLine) { old, new in
       if let editing, old == editing, new != editing { self.editing = nil }
@@ -99,6 +112,17 @@ struct DocumentTreeView: View {
     model = built
     modelStamp = stamp
     if inserts != stagedInserts { model?.setStagedInserts(stagedInserts) }
+    // Nothing carried over (a new page): the cards follow the last Expand / Collapse All
+    if previous == nil, let expansionRequest { apply(expansionRequest) }
+  }
+
+  private func apply(_ request: DocumentTreeExpansionRequest) {
+    editing = nil
+    if request.expands {
+      model?.expandAllDocuments()
+    } else {
+      model?.collapseAllDocuments()
+    }
   }
 
   /// Fixed notebook height: the visible lines plus the gaps between their cards, at most as many

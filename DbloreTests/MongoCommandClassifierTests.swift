@@ -84,6 +84,7 @@ struct MongoCommandClassifierTests {
       // Not last (the server rejects it), still classified: fail closed
       "db.c.aggregate([{$out: \"copy\"}, {$match: {a: 1}}])",
       "db.c.aggregate([{$merge: {into: \"copy\"}}, {$out: \"copy\"}])",
+      "db.c.aggregate([{$out: \"copy\"}], {collation: {locale: \"fr\"}, maxTimeMS: 5})",
     ] {
       let statement = try classified(text)
       #expect(statement.kind == .ddl, "\(text)")
@@ -94,6 +95,7 @@ struct MongoCommandClassifierTests {
     for text in [
       "db.c.aggregate([{$match: {a: 1}}, {$merge: {into: \"copy\"}}])",
       "db.c.aggregate([{$merge: \"copy\"}, {$limit: 1}])",
+      "db.c.aggregate([{$merge: \"copy\"}], {hint: \"a_1\", maxTimeMS: 5})",
     ] {
       let statement = try classified(text)
       #expect(statement.kind == .dml, "\(text)")
@@ -162,9 +164,16 @@ struct MongoCommandClassifierTests {
   }
 
   /// The full table is `MCPMongoToolTests.javaScriptRefused`.
-  @Test("Server-side JavaScript in a find hint or countDocuments options is found as in a filter")
+  @Test(
+    "Server-side JavaScript in a find hint, aggregate options or countDocuments options is found"
+  )
   func javaScriptInCountOptions() {
     #expect(MongoCommandClassifier.usesServerSideJavaScript("db.c.find().hint({$where: \"1\"})"))
+    #expect(
+      MongoCommandClassifier.usesServerSideJavaScript(
+        "db.c.aggregate([], {hint: {$where: \"1\"}})"))
+    #expect(
+      !MongoCommandClassifier.usesServerSideJavaScript("db.c.aggregate([], {hint: {a: 1}})"))
     #expect(
       MongoCommandClassifier.usesServerSideJavaScript(
         "db.c.countDocuments({}, {hint: {$where: \"1\"}})"))

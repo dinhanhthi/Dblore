@@ -197,6 +197,23 @@ nonisolated struct DocumentTreeModel: Sendable {
     rebuildCard(document)
   }
 
+  /// Opens every card and every document and array inside it (within the shown pages).
+  mutating func expandAllDocuments() {
+    collapsed.removeAll()
+    for document in documents.indices {
+      let root = DocumentTreeNodeID(document: document, indexes: [])
+      expanded.formUnion(containerIDs(in: documents[document], id: root).dropFirst())
+    }
+    rebuildCards()
+  }
+
+  /// Closes every card down to its header, and every document and array inside it.
+  mutating func collapseAllDocuments() {
+    expanded.removeAll()
+    collapsed = Set(documents.indices.map { DocumentTreeNodeID(document: $0, indexes: []) })
+    rebuildCards()
+  }
+
   /// Whether the card of `document` and every document and array inside it are open.
   func isFullyExpanded(document: Int) -> Bool {
     guard documents.indices.contains(document) else { return false }

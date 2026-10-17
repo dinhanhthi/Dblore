@@ -114,7 +114,7 @@ private struct MongoAIPromptPopover: View {
           .lineLimit(3, reservesSpace: true)
           .focused($promptFocused)
           .onSubmit(apply)
-          .inputStyle()
+          .inputStyle(onPopover: true)
         if let error {
           Text(error)
             .font(.small)
@@ -135,7 +135,7 @@ private struct MongoAIPromptPopover: View {
         }
       }
     }
-    .padding(Spacing.md)
+    .popoverContentPadding()
     .frame(width: 360, alignment: .leading)
     .onAppear { promptFocused = true }
   }

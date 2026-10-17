@@ -18,9 +18,19 @@ import Foundation
 ///   chain methods `sort`, `limit`, `skip`;
 /// - at the start of a key in a document: field paths of the command's collection and query
 ///   operators in filters (also `$match` and the arrays of `$and`, `$or`, ...), field paths only
-///   in projections, sorts, inserted documents and update operator bodies, update operators only
-///   at the top level of an update's second argument, stage names directly inside the
-///   `aggregate([...])` array. A field path that is not a plain identifier is inserted quoted.
+///   at the top level of projections, in sorts, inserted documents and update operator bodies,
+///   update operators only at the top level of an update's second argument, stage names
+///   directly inside the `aggregate([...])` array. A field path that is not a plain identifier
+///   is inserted quoted;
+/// - expression operators inside `$expr`, inside a nested document of `$project`, `$addFields`
+///   and `$set` (whose top level offers field paths), in a `$replaceWith` or `$sortByCount`
+///   body, the `newRoot` of `$replaceRoot`, the `_id` of `$group`, the `groupBy` of `$bucket`,
+///   and in their nested documents and arrays;
+/// - option keys at the top level of `$lookup`, `$unwind`, `$bucket`, ... (`_id` for `$group`);
+///   accumulators and expression operators in the value document of a `$group` key or of a key
+///   of a `$bucket` `output`.
+///
+/// Server-side JavaScript (`$where`, `$function`, `$accumulator`) is never offered.
 ///
 /// Member completions (after `.`) show with an empty prefix; key completions need a typed
 /// prefix. Nothing is offered inside other strings, regex literals or comments. Prefixes match
@@ -45,7 +55,9 @@ enum MongoshAutocompleteProvider {
   ]
   static let queryOperators = [
     "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$exists", "$type", "$regex",
-    "$and", "$or", "$nor", "$not", "$elemMatch", "$size", "$all", "$expr",
+    "$and", "$or", "$nor", "$not", "$elemMatch", "$size", "$all", "$expr", "$mod", "$text",
+    "$jsonSchema", "$geoWithin", "$geoIntersects", "$near", "$nearSphere", "$bitsAllClear",
+    "$bitsAllSet", "$bitsAnyClear", "$bitsAnySet", "$comment",
   ]
   static let updateOperators = [
     "$set", "$unset", "$inc", "$push", "$pull", "$addToSet", "$rename", "$min", "$max", "$mul",
@@ -53,7 +65,49 @@ enum MongoshAutocompleteProvider {
   ]
   static let stages = [
     "$match", "$group", "$project", "$sort", "$limit", "$skip", "$lookup", "$unwind", "$count",
-    "$addFields", "$set", "$unset", "$replaceRoot", "$facet", "$sample", "$out", "$merge",
+    "$addFields", "$set", "$unset", "$replaceRoot", "$replaceWith", "$facet", "$sample", "$out",
+    "$merge", "$sortByCount", "$bucket", "$bucketAuto", "$unionWith", "$graphLookup",
+    "$setWindowFields", "$densify", "$fill", "$redact", "$geoNear",
+  ]
+  static let expressionOperators = [
+    // Arithmetic (the accumulators below also work as expressions on an array)
+    "$sum", "$avg", "$min", "$max", "$stdDevPop", "$stdDevSamp", "$add", "$subtract", "$multiply",
+    "$divide", "$mod", "$abs", "$ceil", "$floor", "$round",
+    "$trunc", "$pow", "$sqrt", "$exp", "$ln", "$log", "$log10",
+    // Comparison, boolean, conditional
+    "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$cmp", "$and", "$or", "$not", "$cond",
+    "$ifNull", "$switch",
+    // String
+    "$concat", "$substr", "$substrCP", "$toUpper", "$toLower", "$trim", "$ltrim", "$rtrim",
+    "$split", "$strLenCP", "$regexMatch", "$replaceAll",
+    // Array
+    "$size", "$arrayElemAt", "$filter", "$map", "$reduce", "$in", "$concatArrays", "$slice",
+    "$first", "$last", "$isArray", "$range", "$reverseArray",
+    // Date
+    "$dateToString", "$dateFromString", "$year", "$month", "$dayOfMonth", "$dayOfWeek", "$hour",
+    "$minute", "$second", "$dateAdd", "$dateDiff", "$dateTrunc",
+    // Type
+    "$toString", "$toInt", "$toLong", "$toDouble", "$toDecimal", "$toBool", "$toDate",
+    "$toObjectId", "$type", "$convert",
+    // Object, misc
+    "$mergeObjects", "$objectToArray", "$arrayToObject", "$getField", "$literal", "$let",
+  ]
+  static let accumulators = [
+    "$sum", "$avg", "$min", "$max", "$first", "$last", "$push", "$addToSet", "$count",
+    "$stdDevPop", "$stdDevSamp", "$mergeObjects", "$top", "$bottom", "$topN", "$bottomN",
+    "$firstN", "$lastN", "$maxN", "$minN", "$median", "$percentile",
+  ]
+  /// Keys at the top level of these stage bodies
+  static let stageOptions = [
+    "$group": ["_id"],
+    "$lookup": ["from", "localField", "foreignField", "as", "let", "pipeline"],
+    "$unwind": ["path", "includeArrayIndex", "preserveNullAndEmptyArrays"],
+    "$bucket": ["groupBy", "boundaries", "default", "output"],
+    "$bucketAuto": ["groupBy", "buckets", "output", "granularity"],
+    "$sample": ["size"],
+    "$unionWith": ["coll", "pipeline"],
+    "$merge": ["into", "on", "whenMatched", "whenNotMatched"],
+    "$replaceRoot": ["newRoot"],
   ]
 
   /// Suggestions at `position` (UTF-16 offset), sorted: exact match first, then in group
@@ -144,6 +198,15 @@ enum MongoshAutocompleteProvider {
       return keywords(updateOperators, "Update operator")
     case .stage:
       return keywords(stages, "Aggregation stage")
+    case .expression:
+      return keywords(expressionOperators, "Expression operator")
+    case .accumulator:
+      // `$first`, `$last`, ... are both: listed once, as accumulators
+      return keywords(accumulators, "Accumulator")
+        + keywords(
+          expressionOperators.filter { !accumulators.contains($0) }, "Expression operator")
+    case .options(let stage):
+      return keywords(stageOptions[stage] ?? [], "\(stage) option")
     }
   }
 
@@ -240,6 +303,11 @@ enum MongoshAutocompleteProvider {
       case fields(collection: String)
       case update
       case stage
+      case expression
+      /// Accumulators, then expression operators
+      case accumulator
+      /// Option keys of the stage
+      case options(stage: String)
     }
 
     let kind: Kind
@@ -338,8 +406,19 @@ extension MongoshAutocompleteProvider {
       case chainName(String, collection: String, used: Set<String>)
     }
 
-    enum Document: Equatable { case query, fields, update, stage, none }
-    enum List: Equatable { case pipeline, query, documents, none }
+    enum Document: Equatable {
+      case query, fields, update, stage, none
+      /// Keys are field paths, nested documents expressions (`$project`, `$addFields`, ...)
+      case projection
+      case expression
+      /// The value of a `$group` key or of a `$bucket` output
+      case accumulator
+      /// Top level of a stage body with option keys
+      case options(String)
+      /// A `$bucket` `output`: keys are new names, their values accumulators
+      case outputs
+    }
+    enum List: Equatable { case pipeline, query, documents, expression, none }
 
     struct Frame {
       enum Role: Equatable {
@@ -618,23 +697,41 @@ extension MongoshAutocompleteProvider {
       case (.document(let document), 0x7B):
         guard parent.inValue, let key = parent.key else { return .document(.none) }
         switch document {
-        case .query: return .document(.query)
+        case .query: return .document(key == "$expr" ? .expression : .query)
         case .update: return .document(.fields)
         case .stage:
           switch key {
           case "$match": return .document(.query)
-          case "$project", "$sort": return .document(.fields)
+          case "$sort": return .document(.fields)
+          case "$project", "$addFields", "$set": return .document(.projection)
+          case "$replaceWith", "$sortByCount": return .document(.expression)
+          case _ where MongoshAutocompleteProvider.stageOptions[key] != nil:
+            return .document(.options(key))
           default: return .document(.none)
           }
+        case .options(let stage):
+          switch (stage, key) {
+          case ("$group", "_id"), ("$bucket", "groupBy"), ("$bucketAuto", "groupBy"),
+            ("$replaceRoot", "newRoot"):
+            return .document(.expression)
+          case ("$group", _): return .document(.accumulator)
+          case ("$bucket", "output"), ("$bucketAuto", "output"): return .document(.outputs)
+          default: return .document(.none)
+          }
+        case .outputs: return .document(.accumulator)
+        case .projection, .expression, .accumulator: return .document(.expression)
         case .fields, .none: return .document(.none)
         }
       case (.document(.query), 0x5B):
         return .list(parent.inValue ? .query : .none)
+      case (.document(.expression), 0x5B), (.document(.accumulator), 0x5B):
+        return .list(parent.inValue ? .expression : .none)
       case (.list(let list), 0x7B):
         switch list {
         case .pipeline: return .document(.stage)
         case .query: return .document(.query)
         case .documents: return .document(.fields)
+        case .expression: return .document(.expression)
         case .none: return .document(.none)
         }
       case (_, 0x5B):
@@ -696,10 +793,13 @@ extension MongoshAutocompleteProvider {
       }
       switch document {
       case .query: return .query(collection: top.collection)
-      case .fields: return .fields(collection: top.collection)
+      case .fields, .projection: return .fields(collection: top.collection)
       case .update: return .update
       case .stage: return .stage
-      case .none: return nil
+      case .expression: return .expression
+      case .accumulator: return .accumulator
+      case .options(let stage): return .options(stage: stage)
+      case .outputs, .none: return nil
       }
     }
   }
