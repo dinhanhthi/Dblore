@@ -57,13 +57,17 @@ struct FloatingPanelButton: View {
   let helpText: String
   var useSymbolEffect: Bool = false
   let action: () -> Void
+  @ReduceMotion private var reduceMotion
 
   var body: some View {
     Button(action: action) {
       Image(systemName: icon)
         .font(.system(size: 12))
         .if(useSymbolEffect) { view in
+          // Opt out of the app-wide animation kill switch so the symbol swap plays
           view.contentTransition(.symbolEffect(.replace))
+            .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: icon)
+            .transaction(value: icon) { $0.disablesAnimations = false }
         }
     }
     .buttonStyle(FloatingPanelButtonStyle())

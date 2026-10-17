@@ -61,6 +61,7 @@ struct QueryCopyBar: View {
   @State private var isQueryCopied: Bool = false
   @State private var showCopyFeedback: CopyFeedbackType? = nil
   @State private var exportRequest: ExportRequest? = nil
+  @ReduceMotion private var reduceMotion
 
   /// Query with comments removed for display purposes
   private var displayQuery: String {
@@ -100,7 +101,9 @@ struct QueryCopyBar: View {
               .foregroundColor(.foregroundMuted)
               .frame(width: 11, height: 11, alignment: .center)
               .contentTransition(.symbolEffect(.replace))
-              .animation(.spring(duration: 0.1), value: isQueryCopied)
+              .animation(reduceMotion ? nil : .snappy(duration: 0.15), value: isQueryCopied)
+              // Opt out of the app-wide animation kill switch so the symbol swap plays
+              .transaction(value: isQueryCopied) { $0.disablesAnimations = false }
 
             // Hide label in intermediate mode, show in full mode
             if currentMode == .full {
