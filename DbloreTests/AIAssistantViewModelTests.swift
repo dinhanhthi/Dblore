@@ -810,4 +810,19 @@ struct AIAssistantViewModelTests {
     #expect(vm.messages.isEmpty)
     #expect(!vm.isGenerating)
   }
+
+  @Test("a one-shot cancelled after the last event throws instead of returning")
+  func mongoAssistCancelledAtEnd() async {
+    final class Holder { var task: Task<String, Error>? }
+    let holder = Holder()
+    let client = FakeAIChatClient(.eventsThenAct([]) { holder.task?.cancel() })
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    let task = Task {
+      try await vm.mongoAssist(
+        .filter, prompt: "paid orders", database: "shop", collection: "orders", current: "")
+    }
+    holder.task = task
+    await #expect(throws: CancellationError.self) { try await task.value }
+  }
 }

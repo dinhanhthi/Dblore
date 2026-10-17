@@ -307,6 +307,8 @@ final class AIAssistantViewModel {
       try Task.checkCancellation()
       if case .text(let delta) = event { reply += delta }
     }
+    // A stop that lands after the last event must not hand the reply to the caller's write
+    try Task.checkCancellation()
     return reply
   }
 
