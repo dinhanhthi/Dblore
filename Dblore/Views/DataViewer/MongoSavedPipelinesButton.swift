@@ -48,7 +48,7 @@ struct MongoSavedPipelinesButton: View {
       HStack(spacing: Spacing.xs) {
         TextField("Name", text: $saveName)
           .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+          .inputCapsuleStyle(onPopover: true)
           .onSubmit(save)
           .accessibilityLabel("Pipeline name")
         Button("Save", action: save)
@@ -90,7 +90,7 @@ struct MongoSavedPipelinesButton: View {
         }
       }
     }
-    .padding(Spacing.md)
+    .popoverContentPadding()
     .frame(width: 280)
   }
 

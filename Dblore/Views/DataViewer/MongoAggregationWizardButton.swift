@@ -74,7 +74,7 @@ private struct MongoAggregationWizardPopover: View {
         list
       }
     }
-    .padding(Spacing.md)
+    .popoverContentPadding()
     .frame(width: 320, alignment: .leading)
   }
 
@@ -85,6 +85,8 @@ private struct MongoAggregationWizardPopover: View {
       Text("Templates")
         .font(.small)
         .foregroundColor(.foregroundMuted)
+        // Level with the rows' text, inside their padding
+        .padding(.horizontal, Spacing.sm)
       ForEach(AggregationTemplate.all) { template in
         Button(action: { pick(template) }) {
           HStack(alignment: .top, spacing: Spacing.sm) {
@@ -105,7 +107,9 @@ private struct MongoAggregationWizardPopover: View {
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
         }
-        .buttonStyle(GhostButtonStyle(fillsWidth: true, vPadding: Spacing.xs))
+        .buttonStyle(
+          GhostButtonStyle(fillsWidth: true, hPadding: Spacing.sm, vPadding: Spacing.xsm)
+        )
         .help(template.summary)
         .accessibilityLabel(template.title)
       }
@@ -138,7 +142,7 @@ private struct MongoAggregationWizardPopover: View {
             .foregroundColor(.foregroundMuted)
           TextField(field.placeholder, text: value(at: index))
             .textFieldStyle(.plain)
-            .inputCapsuleStyle()
+            .inputCapsuleStyle(onPopover: true)
             .focused($focusedField, equals: index)
             .onSubmit(submit)
             .accessibilityLabel(field.label)

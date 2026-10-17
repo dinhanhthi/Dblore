@@ -229,7 +229,7 @@ struct MongoFilterBar: View {
       HStack(spacing: Spacing.xs) {
         TextField("Name", text: $saveName)
           .textFieldStyle(.plain)
-          .inputCapsuleStyle()
+          .inputCapsuleStyle(onPopover: true)
           .onSubmit(saveQuery)
         Button("Save", action: saveQuery)
           .buttonStyle(SecondaryButtonStyle())
@@ -259,7 +259,7 @@ struct MongoFilterBar: View {
         }
       }
     }
-    .padding(Spacing.md)
+    .popoverContentPadding()
     .frame(width: 280)
   }
 
